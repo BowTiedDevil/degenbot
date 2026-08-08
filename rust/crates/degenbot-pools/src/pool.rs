@@ -199,7 +199,7 @@ impl<'a> Pool<'a> {
 }
 
 /// Read-only reserve-pair view over V2 or AerodromeV2 state.
-#[allow(clippy::doc_markdown)]
+#[expect(clippy::doc_markdown)]
 pub enum ReservePairView<'a> {
     V2(&'a V2PoolIdentity, &'a V2PoolState),
     Aerodrome(&'a AerodromeV2PoolIdentity, &'a AerodromeV2PoolState),
@@ -240,7 +240,6 @@ impl ReservePairView<'_> {
 }
 
 /// Read-only concentrated-liquidity view over V3 or V4 state.
-#[allow(clippy::doc_markdown)]
 pub enum ConcentratedLiquidityView<'a> {
     V3(&'a V3PoolIdentity, &'a V3PoolState),
     V4(&'a V4PoolIdentity, &'a V4PoolState),
@@ -305,7 +304,6 @@ impl ConcentratedLiquidityView<'_> {
 }
 
 /// Read-only N-token balance view over Curve or Balancer state.
-#[allow(clippy::doc_markdown)]
 pub enum BalanceVectorView<'a> {
     Curve(&'a CurvePoolIdentity, &'a CurvePoolState),
     BalancerWeighted(

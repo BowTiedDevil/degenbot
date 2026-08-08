@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! Path-73385 V4 concentrated-liquidity swap gas probe (block 25706469).
 //!
 //! The live bot crashed at block 25706469 on a V3-V4-V3 USDC→…→USDT path

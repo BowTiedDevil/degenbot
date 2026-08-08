@@ -539,6 +539,7 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
 /// Panics if the in-range result would be negative (an invariant violation —
 /// on-chain liquidity can never be negative) or exceeds `u128::MAX` (real
 /// surprise overflow). Out-of-range events never reach the arithmetic.
+#[expect(clippy::expect_used)] // invariant-guarded conversions panic loudly on a true break
 fn in_range_active_liquidity(
     current_liquidity: u128,
     current_tick: i32,
@@ -710,14 +711,19 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         });
 
         if in_range {
-            self.liquidity = in_range_active_liquidity(
-                self.liquidity,
-                self.tick,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-            )
-            .expect("in-range branch implies the range straddles the current tick");
+            // Invariant-guarded: the in-range branch implies the range straddles
+            // the current tick, so `Some` is guaranteed (loud panic on a real break).
+            #[expect(clippy::expect_used)]
+            {
+                self.liquidity = in_range_active_liquidity(
+                    self.liquidity,
+                    self.tick,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                )
+                .expect("in-range branch implies the range straddles the current tick");
+            }
         }
 
         if block_number > self.initial_state_block {
@@ -877,14 +883,19 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         });
 
         if in_range {
-            self.liquidity = in_range_active_liquidity(
-                self.liquidity,
-                self.tick,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-            )
-            .expect("in-range branch implies the range straddles the current tick");
+            // Invariant-guarded: the in-range branch implies the range straddles
+            // the current tick, so `Some` is guaranteed (loud panic on a real break).
+            #[expect(clippy::expect_used)]
+            {
+                self.liquidity = in_range_active_liquidity(
+                    self.liquidity,
+                    self.tick,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                )
+                .expect("in-range branch implies the range straddles the current tick");
+            }
         }
 
         if block_number > self.initial_state_block {
@@ -915,6 +926,7 @@ pub struct TokenEntry {
     pub chain_id: u64,
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod projection_tests {
     #![allow(unused_imports)]

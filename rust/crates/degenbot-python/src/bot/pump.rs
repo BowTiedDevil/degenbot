@@ -78,7 +78,6 @@ pub(crate) struct PumpState {
 }
 
 impl PumpState {
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub(crate) fn new(
         engine: Arc<parking_lot::Mutex<ArbitrageEngine>>,
@@ -160,13 +159,16 @@ impl PumpState {
             })
             .map_err(PyRuntimeError::new_err)?;
         let (pump, state) = subscribe_result;
-        *self.subscribe_state.lock() = Some(PySubscribeState {
-            pump,
-            first_block: state.first_block,
-            combined_stream: state
-                .combined_stream
-                .expect("subscribe() always returns a stream"),
-        });
+        #[expect(clippy::expect_used)] // subscribe() guarantees a stream (documented)
+        {
+            *self.subscribe_state.lock() = Some(PySubscribeState {
+                pump,
+                first_block: state.first_block,
+                combined_stream: state
+                    .combined_stream
+                    .expect("subscribe() always returns a stream"),
+            });
+        }
         // J3FMDO regression fix: reflect whether the core already has a
         // snapshot loaded (the construction-time-load path —
         // `Bot::load_snapshot_from_db` at `Bot` construction writes the
@@ -275,7 +277,7 @@ impl PumpState {
     /// never fails in a way the caller can recover from. Typed `PyResult` keeps
     /// the surface symmetric with `subscribe`/`resume` and leaves room for a
     /// future timed-join error.
-    #[allow(clippy::unnecessary_wraps)]
+    #[expect(clippy::unnecessary_wraps)]
     pub(crate) fn stop(&self) -> PyResult<()> {
         self.shutdown
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -319,7 +321,10 @@ impl PumpState {
                 *self.verify_provider.lock() = Some(provider);
             }
             Err(e) => {
-                eprintln!("[warn] Failed to create verification provider: {e}");
+                #[expect(clippy::print_stderr)] // startup diagnostic
+                {
+                    eprintln!("[warn] Failed to create verification provider: {e}");
+                }
             }
         }
         *self.verify_rpc_url.lock() = Some(rpc_url.to_string());
@@ -335,7 +340,7 @@ impl PumpState {
 
     /// Verify all V3 + V4 pool liquidity maps against on-chain state (ADR-006 D4 T4).
     /// Async (`future_into_py`) — never `block_on` (the 2026-06-24 deadlock).
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn verify_liquidity_maps<'py>(
         &self,
         py: Python<'py>,
@@ -397,7 +402,6 @@ impl PumpState {
     }
 
     /// Verify V3 liquidity maps only (ADR-006 D4 T4).
-    #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn verify_v3_liquidity_maps<'py>(
         &self,
         py: Python<'py>,
@@ -440,7 +444,7 @@ impl PumpState {
     }
 
     /// Verify V4 liquidity maps only (ADR-006 D4 T4).
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn verify_v4_liquidity_maps<'py>(
         &self,
         py: Python<'py>,
@@ -496,7 +500,7 @@ impl PumpState {
     /// on every active pool during a rolling start (`resume()` precedes
     /// `build_paths`). The seed is taken (consumed) — verified exactly once;
     /// `None` for sparse pools or already-verified pools (no-op Ok).
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn verify_v3_snapshot_seed<'py>(
         &self,
         py: Python<'py>,
@@ -553,7 +557,7 @@ impl PumpState {
     /// Verify a single V4 pool's **pinned snapshot seed** against on-chain state
     /// at the snapshot block (CBCH6H — V4 twin of `verify_v3_snapshot_seed`).
     /// Keyed by `(pool_manager, pool_id_hex)`.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn verify_v4_snapshot_seed<'py>(
         &self,
         py: Python<'py>,
@@ -640,7 +644,7 @@ impl PumpState {
     /// `None` for sparse pools, un-drained pools, or already-verified pools
     /// (no-op Ok; the batch verify at `last_processed_block()` still covers
     /// the pool post-build_paths).
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn verify_v3_post_drain_snapshot<'py>(
         &self,
         py: Python<'py>,
@@ -703,7 +707,7 @@ impl PumpState {
     /// `verify_v3_post_drain_snapshot` for the full rationale). The pin is
     /// taken (consumed) — verified exactly once; `None` for sparse /
     /// un-drained / already-verified pools.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn verify_v4_post_drain_snapshot<'py>(
         &self,
         py: Python<'py>,
@@ -777,7 +781,7 @@ impl PumpState {
     /// `VerificationMismatchError` (fatal tripwire) / `VerificationRpcError`
     /// (transient) from the underlying verify, or `VerificationRpcError` when
     /// no verify provider was configured.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn run_v3_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
@@ -824,7 +828,7 @@ impl PumpState {
     /// using the stored `verify_state_view` contract address. A **tracked** V4
     /// pool with no `state_view` surfaced as `PyValueError` (D-C no-config
     /// fail-fast); Sparse pools never require `state_view`.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn run_v4_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
@@ -894,6 +898,7 @@ pub(crate) fn map_liquidity_verify_error(
     }
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     //! AGVGNH: pin the per-family verify exception mapping. The

@@ -216,7 +216,7 @@ impl BlockPump {
     /// observes until
     /// both a newHeads notification and a log for the same block arrive,
     /// confirming the logs subscription is live and caught up.
-    #[allow(clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub async fn subscribe(
         rpc_url: &str,
         bot: Arc<Bot>,
@@ -328,7 +328,6 @@ impl BlockPump {
     /// onward.
     ///
     /// Returns (`first_block` W, `timestamp_of_W`, `pending_logs`).
-    #[allow(clippy::too_many_lines)]
     async fn observe_complete_block(
         &self,
         combined: &mut stream::BoxStream<'static, WsEvent>,
@@ -482,6 +481,7 @@ impl BlockPump {
     /// Panics if `subscribe_state.combined_stream` is `None` (i.e., `subscribe()`
     /// was not called first).
     pub async fn resume_from_subscribe(&mut self, subscribe_state: SubscribeState) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let mut combined = subscribe_state
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
@@ -612,7 +612,6 @@ impl BlockPump {
         }
     }
 
-    #[allow(clippy::missing_panics_doc)]
     async fn verify_solver_state_against_chain(
         bot: &Arc<Bot>,
         provider: &Arc<AlloyProvider>,
@@ -698,7 +697,10 @@ impl BlockPump {
                     %fatal,
                     "DEGENBOT_ASSERT_SOLVER_STATE: verified desync — ABORT"
                 );
-                eprintln!("{fatal}");
+                #[expect(clippy::print_stderr)] // fatal diagnostic emitted before abort
+                {
+                    eprintln!("{fatal}");
+                }
                 std::process::abort();
             }
         }
@@ -710,7 +712,7 @@ impl BlockPump {
     /// immediately and affected paths are solved right away, without
     /// waiting for a block header. Block headers provide metadata
     /// (timestamp, fees) and handle empty-block detection.
-    #[allow(unused_assignments, clippy::too_many_lines)]
+    #[expect(unused_assignments, clippy::too_many_lines)]
     #[tracing::instrument(skip(self, combined), fields(first_observed_block))]
     pub async fn run_with_stream(
         &mut self,
@@ -1713,11 +1715,14 @@ impl BlockPump {
                 delivered_log_indices.len(),
             );
             // Flush best-effort before abort.
-            eprintln!(
-                "[WS-INVARIANT] ABORT: live websocket log drop at block {block} ({} of {} relevant logs missing); eth_getLogs vs WS divergence — see the untraced log for the log_index list.",
-                missing.len(),
-                onchain.len(),
-            );
+            #[expect(clippy::print_stderr)] // invariant-failure diagnostic before abort
+            {
+                eprintln!(
+                    "[WS-INVARIANT] ABORT: live websocket log drop at block {block} ({} of {} relevant logs missing); eth_getLogs vs WS divergence — see the untraced log for the log_index list.",
+                    missing.len(),
+                    onchain.len(),
+                );
+            }
             std::process::abort();
         }
         let extra: Vec<u64> = delivered_log_indices
@@ -1966,6 +1971,12 @@ fn stream_select(
     stream::select(block_events, log_events).boxed()
 }
 
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2056,7 +2067,6 @@ mod tests {
         }
 
         /// Configure the path-pool refs the AV42C7 gate verifies (test-only).
-        #[allow(clippy::type_complexity)]
         fn set_path_refs(&self, refs: Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>) {
             *self.path_refs.lock().unwrap() = refs;
         }
@@ -4278,7 +4288,7 @@ mod tests {
     /// Requires `DEGENBOT_RPC_WS_CHAINID_1` (a mainnet WS endpoint).
     #[tokio::test]
     #[ignore = "requires a live mainnet WS endpoint (DEGENBOT_RPC_WS_CHAINID_1)"]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     async fn ws_getlogs_large_filter_diagnostic() {
         use alloy::network::Ethereum;
         use alloy::providers::{Provider, ProviderBuilder, WebSocketConfig, WsConnect};

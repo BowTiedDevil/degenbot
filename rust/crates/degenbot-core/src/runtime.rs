@@ -77,12 +77,16 @@ fn build_runtime() -> Result<Runtime, std::io::Error> {
 /// spawn the required threads).
 pub fn get_runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
+        // Targeted expect (fulfilled): a global `&'static Runtime` initializer
+        // has no error channel, so a failed spawn is panic loudly, as the
+        // `# Panics` doc above documents.
+        #[expect(clippy::panic)]
         build_runtime().unwrap_or_else(|e| panic!("Failed to create Tokio runtime: {e}"))
     })
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::sync::Mutex;

@@ -179,10 +179,13 @@ fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
     // masking to `u16::MAX` (the prior `.unwrap_or(u16::MAX)` would have
     // surfaced a bogus 65535 fee tier if `gamma > denom` ever slipped past the
     // guard, hiding the bug instead of failing).
-    u16::try_from((fee_numer * 10_000) / fee_denom)
-        .expect("fee_bips <= 10000 <= u16::MAX under the gamma <= denom guard")
+    #[expect(clippy::expect_used)] // fee_bips <= 10000 under the guard (documented)
+    let fee_bips = u16::try_from((fee_numer * 10_000) / fee_denom)
+        .expect("fee_bips <= 10000 <= u16::MAX under the gamma <= denom guard");
+    fee_bips
 }
 
+#[expect(clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

@@ -421,7 +421,7 @@ pub struct AaveChunkWriteReport {
 ///
 /// Returns [`degenbot_db::DbError`] on any apply failure — the caller drops
 /// the `Transaction` (rollback) on `Err`.
-#[allow(clippy::missing_errors_doc, clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn apply_chunk_events_on_conn(
     conn: &Connection,
     _market_id: i64,
@@ -785,7 +785,6 @@ pub fn apply_chunk_events_on_conn(
 ///
 /// Returns [`degenbot_db::DbError`] on any apply/lookup failure — the caller
 /// drops the `Transaction` (rollback) on `Err`.
-#[allow(clippy::missing_errors_doc)]
 pub fn apply_aave_chunk_writes_on_conn(
     conn: &Connection,
     market_id: i64,
@@ -995,7 +994,10 @@ fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
     }
     order
         .into_iter()
-        .map(|k| groups.remove(&k).expect("present in order"))
+        .map(|k| {
+            #[expect(clippy::expect_used)] // `order` yields group keys known to `groups`
+            groups.remove(&k).expect("present in order")
+        })
         .collect()
 }
 
@@ -1106,7 +1108,6 @@ async fn bootstrap_pool_contracts(
 /// Returns `(spec, gho_asset)` — the `gho_asset` is the chain's GHO token row
 /// (`None` for non-GHO markets); the orchestrator passes it to the discount
 /// pre-pass + `process_transaction`.
-#[allow(clippy::too_many_arguments)]
 fn build_fetch_spec(
     db: &DegenbotDb,
     market_id: i64,
@@ -1205,11 +1206,9 @@ fn build_fetch_spec(
 ///   txs AFTER it would see the OLD revision → a non-zero discount instead of
 ///   0. In practice a vToken upgrade fires once per market lifetime, so the
 ///   drift is rare; flagged for the orchestrator's §4.2 review.
-#[allow(
-    clippy::await_holding_lock,
+#[expect(
     clippy::missing_errors_doc,
     clippy::needless_pass_by_value,
-    clippy::similar_names,
     clippy::too_many_arguments,
     clippy::too_many_lines
 )]
@@ -1642,12 +1641,7 @@ pub fn run_aave_update(
 /// Extracted from [`run_aave_update`] to keep the loop fn readable + to
 /// localize the `await_holding_lock` allow (the `&Transaction` borrow across
 /// `.await` — safe under `block_on`'s single-thread poll).
-#[allow(
-    clippy::await_holding_lock,
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::similar_names
-)]
+#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn process_chunk_on_conn(
     conn: &Connection,
     provider: &AlloyProvider,
@@ -1780,10 +1774,13 @@ async fn process_chunk_on_conn(
             &discounts,
         )
         .map_err(|e| {
-            eprintln!(
-                "AAVE-PARSE-FAIL block={block_number} tx=0x{} err={e}",
-                alloy::hex::encode(group.tx_hash)
-            );
+            #[expect(clippy::print_stderr)] // auditable stderr parse-fail line
+            {
+                eprintln!(
+                    "AAVE-PARSE-FAIL block={block_number} tx=0x{} err={e}",
+                    alloy::hex::encode(group.tx_hash)
+                );
+            }
             e
         })?;
 
@@ -1869,15 +1866,18 @@ async fn process_chunk_on_conn(
                     })
                     .ok();
                 if let Some((bal, idx)) = row {
-                    eprintln!(
-                        "AAVE-TXTRACE {{\"block\":{},\"tx\":\"0x{}\",\"kind\":\"{}\",\"pos\":{},\"bal\":\"{}\",\"idx\":\"{}\"}}",
-                        block_number,
-                        txhex,
-                        table,
-                        pid,
-                        bal.unwrap_or_default(),
-                        idx.unwrap_or_default(),
-                    );
+                    #[expect(clippy::print_stderr)] // env-gated debug tx trace
+                    {
+                        eprintln!(
+                            "AAVE-TXTRACE {{\"block\":{},\"tx\":\"0x{}\",\"kind\":\"{}\",\"pos\":{},\"bal\":\"{}\",\"idx\":\"{}\"}}",
+                            block_number,
+                            txhex,
+                            table,
+                            pid,
+                            bal.unwrap_or_default(),
+                            idx.unwrap_or_default(),
+                        );
+                    }
                 }
             }
         }
@@ -1954,7 +1954,6 @@ struct ChunkCoreReport {
 /// PARENT block (`16_291_070`) so the updater's chunk loop starts AT the
 /// deployment block (the `ProxyCreated` events the bootstrap pass resolves
 /// fire in `16_291_071`).
-#[allow(dead_code)] // used by the orchestrator `activate_aave_market`
 const ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK: i64 = 16_291_070;
 
 /// Seed (or re-activate) an Aave V3 market in ONE transaction.
@@ -1974,7 +1973,7 @@ const ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK: i64 = 16_291_070;
 /// # Errors
 ///
 /// Returns [`DbError`] on a `SQLite` query failure.
-#[allow(clippy::missing_errors_doc, clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn activate_aave_market_on_conn(
     conn: &Connection,
     chain_id: i64,
@@ -2042,7 +2041,6 @@ pub(crate) fn activate_aave_market_on_conn(
 ///
 /// Returns [`DbError::MissingRow`] if `market_id` doesn't exist, or
 /// [`DbError::Sqlite`] on a query failure.
-#[allow(clippy::missing_errors_doc)]
 pub(crate) fn deactivate_aave_market_on_conn(
     conn: &Connection,
     market_id: i64,
@@ -2104,11 +2102,6 @@ pub struct ActivatedMarket {
 ///
 /// Must NOT be called from within an existing `tokio` runtime (the core owns
 /// its runtime; nesting panics). Mirrors [`run_aave_update`]'s constraint.
-#[allow(
-    clippy::missing_errors_doc,
-    clippy::needless_pass_by_value,
-    clippy::too_many_lines
-)]
 pub fn activate_aave_market(
     database_path: &Path,
     chain_id: i64,
@@ -2229,7 +2222,6 @@ async fn fetch_market_id(
 ///
 /// Returns [`RunError::MarketNotFound`] if `market_id` doesn't exist, or
 /// [`RunError::Db`] on a DB failure.
-#[allow(clippy::missing_errors_doc)]
 pub fn deactivate_aave_market(database_path: &Path, market_id: i64) -> Result<(), RunError> {
     let (db, _state) = DegenbotDb::open_for_writes(database_path)?;
     {
@@ -2245,7 +2237,7 @@ pub fn deactivate_aave_market(database_path: &Path, market_id: i64) -> Result<()
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::too_many_lines)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

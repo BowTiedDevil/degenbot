@@ -97,6 +97,7 @@ where
     );
 
     if params.inject_code {
+        #[expect(clippy::expect_used)] // inject_code => injected_address required (guarded above)
         let injected = params.injected_address.expect(
             "inject_code is true but injected_address is None — supply the injection address",
         );
@@ -208,6 +209,7 @@ pub enum OverrideError {
     Insertion(String),
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

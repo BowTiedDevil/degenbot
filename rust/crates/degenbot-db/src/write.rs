@@ -64,7 +64,7 @@ use crate::error::DbError;
 /// by `_decode_reserve_configuration_bitmap` (`event_handlers.py` L133–L214).
 /// Every field maps 1:1 to a Python dict key (`snake_case` preserved) so the
 /// §4.2 parity fixture asserts field-by-field equivalence.
-#[allow(clippy::struct_excessive_bools)] // mirrors the Python dict's flag set 1:1
+#[expect(clippy::struct_excessive_bools)] // mirrors the Python dict's flag set 1:1
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReserveConfiguration {
     /// bits 0–15. Loan-to-value (basis points).
@@ -665,7 +665,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure.
-    #[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
     pub fn apply_e_mode_category_added(
         &self,
         market_id: i64,
@@ -697,7 +697,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
-    #[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
     pub fn apply_e_mode_category_added_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -1192,7 +1192,7 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure.
-    #[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
     pub fn apply_reserve_initialized(
         &self,
         market_id: i64,
@@ -1227,7 +1227,7 @@ impl DegenbotDb {
     /// Same error conditions as the `&self` wrapper variant.
     ///
     /// [`DbError::MissingRow`]: crate::error::DbError::MissingRow
-    #[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
     pub fn apply_reserve_initialized_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -1326,7 +1326,6 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a query failure, or
     /// [`DbError::MissingRow`] if the `aave_v3_assets` row + the `aave_gho_tokens`
     /// row (on deprecation) don't match the given ids.
-    #[allow(clippy::missing_errors_doc)]
     pub fn apply_upgraded_on_conn(
         conn: &rusqlite::Connection,
         asset_id: i64,
@@ -1388,7 +1387,6 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a query failure, or
     /// [`DbError::MissingRow`] if no `aave_v3_contracts` row matches
     /// `(market_id, contract_name)`.
-    #[allow(clippy::missing_errors_doc)]
     pub fn apply_contract_revision_updated_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -1420,7 +1418,6 @@ impl DegenbotDb {
     /// Returns [`DbError::Sqlite`] on a query failure, or
     /// [`DbError::MissingRow`] if the UPDATE path finds no row matching
     /// `old_address` (the Python `assert pool_data_provider is not None`).
-    #[allow(clippy::missing_errors_doc)]
     pub fn apply_pool_data_provider_updated_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -1466,7 +1463,6 @@ impl DegenbotDb {
     ///
     /// Returns [`DbError::Sqlite`] on a query failure (incl. a UNIQUE
     /// constraint violation).
-    #[allow(clippy::missing_errors_doc)]
     pub fn apply_contract_inserted_on_conn(
         conn: &rusqlite::Connection,
         market_id: i64,
@@ -2380,7 +2376,7 @@ impl DegenbotDb {
     /// landed them just before this call). Mirrors Python's
     /// `_refresh_discount_rate` reading `debt_position.balance` / `.last_index`
     /// + `user.address` / `.stk_aave_balance`.
-    #[allow(clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub fn lookup_debt_position_refresh_context_on_conn(
         conn: &rusqlite::Connection,
         position_id: i64,
@@ -2416,7 +2412,7 @@ impl DegenbotDb {
     /// `Staked`/`Transfer` event yet — the 890 None + the 1042 missing —
     /// `get_or_init_stk_aave_balance`). Mirrors Python's
     /// `user.stk_aave_balance = balance`.
-    #[allow(clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub fn set_user_stk_aave_balance_on_conn(
         conn: &rusqlite::Connection,
         user_id: i64,
@@ -2481,7 +2477,6 @@ impl DegenbotDb {
 /// revisions). Returned by [`DegenbotDb::lookup_asset_by_token_address_on_conn`].
 /// Owned (no lifetime) — small enough to clone.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(clippy::module_name_repetitions)]
 pub struct AssetRow {
     /// `aave_v3_assets.id`.
     pub id: i64,
@@ -2611,13 +2606,17 @@ fn apply_scaled_token_balance_delta_on_conn(
         && balance_delta.is_negative()
     {
         // Clamp to zero (= Aave's `min(amountScaled, scaledBalance) == scaledBalance`)
-        // and emit a tracing::warn so the surge is auditable — the drift
+        // and emit a stderr diagnostic so the surge is auditable — the drift
         // surface this masks is real (Rust's stored balance diverged from the
         // chain) but it's preferable to crashing every chunk where a
         // long-running position drifts by a single wei at full-withdraw.
-        eprintln!(
-            "AAVE-CLAMP table={table} pos={position_id} current={current_balance} delta={balance_delta} reason=aave-v3-_burnScaled-cap-to-scaledBalance"
-        );
+        // Deliberate stderr audit line (kept off the tracing path intentionally).
+        #[expect(clippy::print_stderr)]
+        {
+            eprintln!(
+                "AAVE-CLAMP table={table} pos={position_id} current={current_balance} delta={balance_delta} reason=aave-v3-_burnScaled-cap-to-scaledBalance"
+            );
+        }
         alloy::primitives::U256::ZERO
     } else {
         let new_balance: alloy::primitives::U256 = new_balance_i.try_into().map_err(|_| {
@@ -2784,7 +2783,6 @@ fn existing_user(
 /// Look up an `aave_gho_tokens.id` by the underlying GHO token's `(chain, address)`
 /// — joins through `erc20_tokens` (the `aave_gho_tokens` table is keyed by
 /// `token_id`, not by address).
-#[allow(clippy::missing_errors_doc)]
 fn existing_gho_token(
     conn: &rusqlite::Connection,
     chain_id: i64,
@@ -2816,6 +2814,7 @@ fn existing_erc20_token(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::connection::DegenbotDb;

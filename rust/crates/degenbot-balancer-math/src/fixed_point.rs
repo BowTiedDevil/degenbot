@@ -180,6 +180,7 @@ pub fn complement(x: U256) -> U256 {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

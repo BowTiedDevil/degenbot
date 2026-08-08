@@ -45,7 +45,6 @@ pub const TOKEN_AMOUNT_MATCH_TOLERANCE: u64 = 2;
 /// Mirrors `aave/operation_types.py::OperationType` (1:1, in declaration order
 /// to make the parity cross-check trivial).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[allow(clippy::module_name_repetitions)]
 pub enum OperationType {
     /// `Supply` → `CollateralMint`.
     Supply,
@@ -91,7 +90,6 @@ pub enum OperationType {
 /// classify each decoded `Mint`/`Burn`/`BalanceTransfer`/`Transfer` event
 /// into a [`ScaledTokenEventType`]). Mirrors `aave/types.py::TokenType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[allow(clippy::module_name_repetitions)]
 pub enum TokenType {
     /// An aToken (collateral) contract.
     Atoken,
@@ -116,7 +114,6 @@ pub enum TokenType {
 /// `Address` (aToken vs vToken vs GHO-vToken vs GHO-discount-token) + the
 /// operation context (interest-exceeds-principal → derived interest variant).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[allow(clippy::module_name_repetitions)]
 pub enum ScaledTokenEventType {
     // ── the 12 emission variants ──────────────────────────────────────
     CollateralMint,
@@ -214,7 +211,6 @@ impl ScaledTokenEventType {
 /// raw event for `transfer_events` / `balance_transfer_events` arrays (mirror
 /// of `operations.py::ScaledTokenEvent.event`).
 #[derive(Clone, Debug)]
-#[allow(clippy::module_name_repetitions)]
 pub struct ScaledTokenEvent<'a> {
     /// The source log (mirror of `ScaledTokenEvent.event`).
     pub log: &'a Log,
@@ -252,7 +248,6 @@ pub struct ScaledTokenEvent<'a> {
 /// 4 emission shapes — Mint/Burn/BalanceTransfer/Transfer — re-extracted from
 /// the ECFB5C `DecodedAaveEvent` variants). Owned data (no lifetime).
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(clippy::module_name_repetitions)]
 pub enum ScaledTokenEventData {
     /// `ScaledTokenMint` raw fields.
     Mint {
@@ -393,7 +388,6 @@ fn pool_ev_idx(log: &Log) -> u64 {
 
 /// Mirrors `aave/pattern_types.py::LiquidationPattern`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[allow(clippy::module_name_repetitions)]
 pub enum LiquidationPattern {
     /// 1 liquidation, 1 burn (standard).
     Single,
@@ -410,7 +404,6 @@ pub enum LiquidationPattern {
 /// dispatch (`dispatch_liquidation`) to apply the `COMBINED_BURN`
 /// aggregated-burn + Mint-skip behavior (Issue 0056).
 #[derive(Clone, Debug, Default)]
-#[allow(clippy::module_name_repetitions)]
 pub struct LiquidationPatternContext {
     /// `(user, debt_v_token)` → detected pattern.
     pub patterns: std::collections::HashMap<(Address, Address), LiquidationPattern>,
@@ -454,7 +447,6 @@ impl LiquidationPatternContext {
 
 /// Mirrors `aave/pattern_types.py::LiquidationGroup`.
 #[derive(Clone, Debug, Default)]
-#[allow(clippy::module_name_repetitions)]
 pub struct LiquidationGroup {
     /// `(operation_id, debt_to_cover, pool_event_log_index)` tuples.
     pub liquidations: Vec<(u32, U256, u64)>,

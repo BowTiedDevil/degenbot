@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! V3→V2→V3 fixture: Möbius solver V2-hop vs byte-exact constant-product (path 11354).
 //!
 #![allow(

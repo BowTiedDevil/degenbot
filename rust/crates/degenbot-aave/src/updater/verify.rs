@@ -118,7 +118,10 @@ fn load_position_rows(
         }
         _ => String::new(),
     };
-    let sql = if user_addresses.is_some() && !user_addresses.unwrap().is_empty() {
+    let filtered = user_addresses
+        .as_ref()
+        .is_some_and(|addrs| !addrs.is_empty());
+    let sql = if filtered {
         format!(
             "SELECT p.id, u.address, et.address, p.balance, p.last_index \
              FROM {table} p \
@@ -696,7 +699,6 @@ pub fn cleanup_zero_balance_positions_on_conn(
 /// Edge cases: `chunk_end == 0` → false (no block processed); `n == 0` is
 /// the caller's bug (the CLI/clamp it to >= 1) but is treated as never-fires
 /// to avoid a divide-by-zero panic.
-#[allow(dead_code)] // wired into the chunk loop in the YWEUIR task.
 pub(crate) fn should_run_full_verify_at_interval(
     working_start: u64,
     chunk_end: u64,
@@ -718,13 +720,12 @@ pub(crate) fn should_run_full_verify_at_interval(
 
 /// Whether `chunk_end` is the run's final block: `chunk_end >= last_block`
 /// OR `max_chunks_hit` (the loop broke because `max_chunks` was reached).
-#[allow(dead_code)] // wired into the chunk loop in the YWEUIR task.
 pub(crate) fn is_final_chunk(chunk_end: u64, last_block: u64, max_chunks_hit: bool) -> bool {
     max_chunks_hit || chunk_end >= last_block
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use rusqlite::Connection;

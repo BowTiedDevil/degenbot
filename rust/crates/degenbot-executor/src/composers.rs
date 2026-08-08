@@ -317,7 +317,7 @@ pub struct ComposerInputs<'a> {
 ///   the corresponding `encode_cmd_*` two-hop composer
 /// * 3-hop: [`encode_cmd_3_hop`] (all 27 V2/V3/V4 combinations)
 #[must_use]
-#[allow(clippy::too_many_arguments)] // encoder args (path + inputs + executor/pm/weth + opts)
+#[expect(clippy::too_many_arguments)] // encoder args (path + inputs + executor/pm/weth + opts)
 pub fn encode_cmd_stream(
     path_info: &PathInfo,
     optimal_input: u128,
@@ -392,7 +392,6 @@ pub fn encode_cmd_stream(
 ///
 /// Returns `None` if any hop is non-V2, N < 2, any output ≤ 0, or any `enc_*`
 /// step fails.
-#[allow(clippy::too_many_lines)]
 fn encode_cmd_v2_n_hop(path_info: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let hop_outputs = inputs.hop_outputs;
@@ -502,9 +501,9 @@ fn encode_cmd_v2_n_hop(path_info: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
 /// * **Pool A outputs native ETH, pool B needs WETH**: pool A compact →
 ///   `V4_TAKE(ETH)` → `WETH_DEPOSIT` → pool B compact → `V4_SETTLE(WETH)` →
 ///   `V4_TAKE_DELTA(profit)` → `V4_SETTLE_ALL`.
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::too_many_lines)]
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn encode_cmd_v4_v4(
     hop_a: &V4HopInfo,
     hop_b: &V4HopInfo,
@@ -715,7 +714,6 @@ fn encode_cmd_v4_v4(
 /// `WETH_DEPOSIT` between `V4_TAKE` and the V3 swap, then V3 auto-pays. When
 /// V4 outputs an ERC-20, V3 auto-pays; if V4's input was native ETH, `WETH_WITHDRAW`
 /// + `V4_SETTLE_DELTA(native)` before the final `V4_SETTLE_ALL`.
-#[allow(clippy::too_many_lines)]
 fn encode_cmd_v4_v3(
     hop_v4: &V4HopInfo,
     hop_v3: &V3HopInfo,
@@ -831,7 +829,7 @@ fn encode_cmd_v4_v3(
 /// `V3_SWAP_COMPACT` with a `forward_data` callback that runs `V4_UNLOCK`
 /// (sourcing the WETH the executor needs to pay V3's debt). When V4 requires
 /// native ETH input, the WETH output is unwrapped via `WETH_WITHDRAW` first.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn encode_cmd_v3_v4(
     hop_v3: &V3HopInfo,
     hop_v4: &V4HopInfo,
@@ -979,7 +977,6 @@ fn encode_cmd_v3_v4(
 /// V4 swap inside `V4_UNLOCK`; take the forward token to the V2 pair (direct
 /// custody or wrap/unwrap), `V2_SWAP_CALC` or `V2_SWAP_COMPACT` reads the
 /// excess and outputs to the executor, then settle V4's input debt.
-#[allow(clippy::too_many_lines)]
 fn encode_cmd_v4_v2(
     hop_v4: &V4HopInfo,
     hop_v2: &V2HopInfo,
@@ -1102,7 +1099,7 @@ fn encode_cmd_v4_v2(
 /// sync+transfer+settle+swap+take. When V4 requires native ETH input, V2's
 /// WETH output is unwrapped first; when V4 outputs native ETH, the callback
 /// wraps it back to WETH before paying V2.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn encode_cmd_v2_v4(
     hop_v2: &V2HopInfo,
     hop_v4: &V4HopInfo,
@@ -1245,8 +1242,8 @@ fn encode_cmd_v2_v4(
 /// Forward-order with explicit WETH payment. V3a sends its USDC output to the
 /// executor before the callback; the callback pays WETH to V3a, then V3b
 /// swaps (auto-pay) and sends WETH back to the executor.
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn encode_cmd_v3_v3(
     hop_a: &V3HopInfo,
     hop_b: &V3HopInfo,
@@ -1553,8 +1550,8 @@ impl V4V4ArbitragePayload {
 
     /// Configure pool A. `zero_for_one=None` derives `zfo` from the (unsorted)
     /// `currency0`/`currency1` ordering passed in.
-    #[allow(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
-                                         // collapsing into a params struct would harm call-site ergonomics.
+    #[expect(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
+                                          // collapsing into a params struct would harm call-site ergonomics.
     pub fn set_pool_a(
         &mut self,
         currency0: Address,
@@ -1581,8 +1578,8 @@ impl V4V4ArbitragePayload {
     }
 
     /// Configure pool B. See [`Self::set_pool_a`].
-    #[allow(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
-                                         // collapsing into a params struct would harm call-site ergonomics.
+    #[expect(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
+                                          // collapsing into a params struct would harm call-site ergonomics.
     pub fn set_pool_b(
         &mut self,
         currency0: Address,
@@ -1611,7 +1608,6 @@ impl V4V4ArbitragePayload {
     /// Encode the full command stream for V4→V4 arbitrage.
     ///
     /// Returns `None` if a pool is unconfigured or any `enc_*` step fails.
-    #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn encode(&self) -> Option<Vec<u8>> {
         let pool_a = self.pool_a_key.as_ref()?;
@@ -1815,8 +1811,8 @@ impl V4V3ArbitragePayload {
 
     /// Configure the V4 pool. `zero_for_one=None` derives `zfo` from the
     /// unsorted currency ordering.
-    #[allow(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
-                                         // collapsing into a params struct would harm call-site ergonomics.
+    #[expect(clippy::too_many_arguments)] // reason: builder setters take the per-pool V4 kwargs directly;
+                                          // collapsing into a params struct would harm call-site ergonomics.
     pub fn set_v4_pool(
         &mut self,
         currency0: Address,
@@ -2030,7 +2026,6 @@ impl CmdExecutorComposer {
     /// Uses `V4_SWAP_COMPACT` for both swaps, `V4_TAKE` for profit, and
     /// `V4_SETTLE_DELTA` for the remaining WETH input debt — all inside one
     /// `V4_UNLOCK`.
-    #[allow(clippy::too_many_lines)]
     fn encode_v4_v4(&self, swap_a: &V4SwapAmounts, swap_b: &V4SwapAmounts) -> Option<Vec<u8>> {
         let mut at = AddressTable::with_sentinels(
             Some(self.weth),
@@ -2153,10 +2148,9 @@ impl CmdExecutorComposer {
 /// hop-type combination.
 ///
 /// Returns `None` for an unknown combination or if any `enc_*` step fails.
-#[allow(clippy::too_many_lines)]
 #[doc(hidden)]
 #[must_use]
-#[allow(clippy::too_many_arguments)] // encoder args (path + inputs + executor/pm/weth + opts)
+#[expect(clippy::too_many_arguments)] // encoder args (path + inputs + executor/pm/weth + opts)
 pub fn encode_cmd_3_hop(
     path_info: &PathInfo,
     optimal_input: u128,
@@ -2213,7 +2207,7 @@ pub fn encode_cmd_3_hop(
 
 /// Shared helper: encode a V4 swap with amount=0 (caller overrides amount).
 /// Currently unused by any 3-hop pattern; retained as a reusable primitive.
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn enc_v4_swap_zero(hop: &V4HopInfo, at: &mut AddressTable) -> Option<Vec<u8>> {
     let c0_idx = at.add(hop.currency0_address).ok()?;
     let c1_idx = at.add(hop.currency1_address).ok()?;
@@ -2225,9 +2219,8 @@ fn enc_v4_swap_zero(hop: &V4HopInfo, at: &mut AddressTable) -> Option<Vec<u8>> {
 
 // ── V2-V2-V2 ──────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v2_v2(
     ha: &V2HopInfo,
     hb: &V2HopInfo,
@@ -2270,9 +2263,8 @@ fn three_hop_v2_v2_v2(
 
 // ── V2-V2-V3 ──────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v2_v3(
     ha: &V2HopInfo,
     hb: &V2HopInfo,
@@ -2320,9 +2312,8 @@ fn three_hop_v2_v2_v3(
 
 // ── V2-V2-V4 ──────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v2_v4(
     ha: &V2HopInfo,
     hb: &V2HopInfo,
@@ -2393,9 +2384,8 @@ fn three_hop_v2_v2_v4(
 
 // ── V2-V3-V2 ──────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v3_v2(
     ha: &V2HopInfo,
     hb: &V3HopInfo,
@@ -2449,9 +2439,8 @@ fn three_hop_v2_v3_v2(
 
 // ── V2-V3-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v3_v3(
     ha: &V2HopInfo,
     hb: &V3HopInfo,
@@ -2499,9 +2488,8 @@ fn three_hop_v2_v3_v3(
 
 // ── V2-V3-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v3_v4(
     ha: &V2HopInfo,
     hb: &V3HopInfo,
@@ -2594,9 +2582,8 @@ fn three_hop_v2_v3_v4(
 
 // ── V2-V4-V2 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v4_v2(
     ha: &V2HopInfo,
     hb: &V4HopInfo,
@@ -2687,9 +2674,8 @@ fn three_hop_v2_v4_v2(
 
 // ── V2-V4-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v4_v3(
     ha: &V2HopInfo,
     hb: &V4HopInfo,
@@ -2784,9 +2770,8 @@ fn three_hop_v2_v4_v3(
 
 // ── V2-V4-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v2_v4_v4(
     ha: &V2HopInfo,
     hb: &V4HopInfo,
@@ -2874,9 +2859,8 @@ fn three_hop_v2_v4_v4(
 
 // ── V3-V2-V2 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v2_v2(
     ha: &V3HopInfo,
     hb: &V2HopInfo,
@@ -2917,9 +2901,8 @@ fn three_hop_v3_v2_v2(
 
 // ── V3-V2-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v2_v3(
     ha: &V3HopInfo,
     hb: &V2HopInfo,
@@ -2976,9 +2959,8 @@ fn three_hop_v3_v2_v3(
 
 // ── V3-V2-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v2_v4(
     ha: &V3HopInfo,
     hb: &V2HopInfo,
@@ -3055,9 +3037,8 @@ fn three_hop_v3_v2_v4(
 
 // ── V3-V3-V2 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v3_v2(
     ha: &V3HopInfo,
     hb: &V3HopInfo,
@@ -3105,9 +3086,8 @@ fn three_hop_v3_v3_v2(
 
 // ── V3-V3-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v3_v3(
     ha: &V3HopInfo,
     hb: &V3HopInfo,
@@ -3155,9 +3135,8 @@ fn three_hop_v3_v3_v3(
 
 // ── V3-V3-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v3_v4(
     ha: &V3HopInfo,
     hb: &V3HopInfo,
@@ -3250,9 +3229,8 @@ fn three_hop_v3_v3_v4(
 
 // ── V3-V4-V2 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v4_v2(
     ha: &V3HopInfo,
     hb: &V4HopInfo,
@@ -3343,9 +3321,8 @@ fn three_hop_v3_v4_v2(
 
 // ── V3-V4-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v4_v3(
     ha: &V3HopInfo,
     hb: &V4HopInfo,
@@ -3453,9 +3430,8 @@ fn three_hop_v3_v4_v3(
 
 // ── V3-V4-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v3_v4_v4(
     ha: &V3HopInfo,
     hb: &V4HopInfo,
@@ -3562,9 +3538,8 @@ fn three_hop_v3_v4_v4(
 
 // ── V4-V2-V2 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v2_v2(
     ha: &V4HopInfo,
     hb: &V2HopInfo,
@@ -3635,9 +3610,8 @@ fn three_hop_v4_v2_v2(
 
 // ── V4-V2-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v2_v3(
     ha: &V4HopInfo,
     hb: &V2HopInfo,
@@ -3728,9 +3702,8 @@ fn three_hop_v4_v2_v3(
 
 // ── V4-V2-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v2_v4(
     ha: &V4HopInfo,
     hb: &V2HopInfo,
@@ -3825,9 +3798,8 @@ fn three_hop_v4_v2_v4(
 
 // ── V4-V3-V2 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v3_v2(
     ha: &V4HopInfo,
     hb: &V3HopInfo,
@@ -3915,9 +3887,8 @@ fn three_hop_v4_v3_v2(
 
 // ── V4-V3-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v3_v3(
     ha: &V4HopInfo,
     hb: &V3HopInfo,
@@ -4000,9 +3971,8 @@ fn three_hop_v4_v3_v3(
 
 // ── V4-V3-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v3_v4(
     ha: &V4HopInfo,
     hb: &V3HopInfo,
@@ -4099,7 +4069,6 @@ fn three_hop_v4_v3_v4(
 
 // ── V4-V4-V2 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
 fn three_hop_v4_v4_v2(
     ha: &V4HopInfo,
     hb: &V4HopInfo,
@@ -4195,9 +4164,8 @@ fn three_hop_v4_v4_v2(
 
 // ── V4-V4-V3 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v4_v3(
     ha: &V4HopInfo,
     hb: &V4HopInfo,
@@ -4291,9 +4259,9 @@ fn three_hop_v4_v4_v3(
 
 // ── V4-V4-V4 ───────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
-                                // canonical V4 pool-state vocabulary; renaming reduces clarity.
+#[expect(clippy::too_many_lines)]
+#[expect(clippy::similar_names)] // reason: a/b/c hop vars + c0_idx/c1_idx currency-index names are
+                                 // canonical V4 pool-state vocabulary; renaming reduces clarity.
 fn three_hop_v4_v4_v4(
     ha: &V4HopInfo,
     hb: &V4HopInfo,
@@ -4511,6 +4479,7 @@ fn three_hop_v4_v4_v4(
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::primitives::address;
@@ -4628,8 +4597,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::similar_names)] // canonical a/b/c + c0/c1 V4 currency-index names
-    #[allow(clippy::too_many_lines)] // full-stream hand-built expectation mirrors the parity goldens
+    #[expect(clippy::similar_names)] // canonical a/b/c + c0/c1 V4 currency-index names
     fn three_hop_v2_v4_v3_feeds_clamped_consumed_input_as_v4_swap_in() {
         // Proves the CL-hop clamp reaches the executor: with the V4 hop
         // over-fed (consumed_inputs[1] < hop_outputs[0]), the encoded V4

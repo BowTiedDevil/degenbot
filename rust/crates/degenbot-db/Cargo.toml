@@ -8,16 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[lints.rust]
-warnings = "deny"
-
-[lints.clippy]
-complexity = "warn"
-correctness = "warn"
-pedantic = "warn"
-perf = "warn"
-style = "warn"
-suspicious = "warn"
+[lints]
+workspace = true
 
 # Pure-Rust persistence leaf: rusqlite (bundled libsqlite3-sys, no system
 # SQLite required) + alloy primitives for Address/U256/B256 decode at the row

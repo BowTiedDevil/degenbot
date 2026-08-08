@@ -111,6 +111,7 @@ fn parse_block_priority_fees(
     })
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

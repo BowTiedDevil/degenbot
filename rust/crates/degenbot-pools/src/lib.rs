@@ -80,7 +80,7 @@ pub mod curve_strategies;
 // Domain-math prose (sqrtPriceX96, Solidity, …) moved verbatim from
 // `degenbot-bot/src/solvers/mobius_v3_int.rs`; mirrors the `#[allow]` on that
 // module in `degenbot-bot/src/solvers/mod.rs`.
-#[allow(clippy::doc_markdown)]
+#[expect(clippy::doc_markdown)]
 pub mod int_v3_hop;
 pub mod liquidity_event;
 pub mod liquidity_event_buffer;

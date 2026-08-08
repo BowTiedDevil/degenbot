@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 //! Decisive offline experiment for ergo task `E7ALWT` — resolves the
 //! "V3 solver-math vs. stale engine state" fork for the post-block-25647669
 //! IIA `+13` V3-hop over-prediction WITHOUT a live mainnet run.
@@ -64,12 +65,8 @@
 //! `v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class` is now a
 //! GREEN regression guard (was `#[ignore]`d RED).
 
-#![allow(
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::doc_lazy_continuation
-)]
-#![allow(
+#![expect(clippy::doc_markdown, clippy::doc_lazy_continuation)]
+#![expect(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     reason = "tick·spacing products fit i32 in this fixture"

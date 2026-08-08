@@ -19,6 +19,7 @@
 //! To regenerate the fixture (after changing seed data):
 //!   `uv run python rust/crates/degenbot-db/tests/fixtures/generate_parity.py`
 
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // parity/integration test harness
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -53,7 +54,6 @@ fn fixture_expected_path() -> PathBuf {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct Expected {
     chain_id: i64,
     v3_pool_address: String,
@@ -70,27 +70,23 @@ struct Expected {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct LiquidityMapJson {
     tick_bitmap: HashMap<String, BitmapJson>,
     tick_data: HashMap<String, LiquidityAtTickJson>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct BitmapJson {
     bitmap: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct LiquidityAtTickJson {
     liquidity_gross: String,
     liquidity_net: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct V4AllEntry {
     pool_manager: String,
     pool_hash: String,

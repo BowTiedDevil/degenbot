@@ -826,7 +826,6 @@ pub struct AaveV3Erc20TransferEvent {
 /// [`decode_aave_log`] dispatch fn returns `Option<DecodedAaveEvent>` (None
 /// on unknown topic — see the module doc on decode-error handling).
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(clippy::module_name_repetitions)]
 pub enum DecodedAaveEvent {
     Supply(AaveV3SupplyEvent),
     Borrow(AaveV3BorrowEvent),
@@ -1837,7 +1836,7 @@ pub fn decode_aave_log(log: &Log) -> Option<DecodedAaveEvent> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog};
@@ -1896,7 +1895,7 @@ mod tests {
     // value that's off-by-one would silently decode every log as Unknown).
 
     #[test]
-    #[allow(clippy::too_many_lines)] // fixture table — one entry per event is intrinsic
+    #[expect(clippy::too_many_lines)] // fixture table — one entry per event is intrinsic
     fn parity_topic_constants_match_python() {
         // (Rust constant, Python `events.py` topic0 hex string).
         let cases: [(&B256, &str); 34] = [

@@ -40,6 +40,15 @@
 //! After a harness-source edit, regenerate + publish via
 //! `tier3-oracle/build-tier3-harnesses.sh`.
 
+// The revm fuzz harness below uses `unwrap`/`expect`/`panic` freely to
+// enforce byte-exact oracle equality.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
+
 use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, Address, Bytes, U256};
@@ -441,7 +450,7 @@ fn v4_compute_swap_step_pinned_fee1_final_partial_step() {
 /// Run one step through the given Rust + on-chain harness and assert parity:
 /// both Ok ⇒ byte-equal fields; both Err ⇒ consistent; an Ok on one side and
 /// an Err on the other (a success/revert divergence) fails.
-#[allow(clippy::too_many_arguments)] // a test helper taking one step's worth of inputs
+#[expect(clippy::too_many_arguments)] // a test helper taking one step's worth of inputs
 fn assert_step_parity(
     which: (&str, &str),
     addr: Address,

@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used)]
 // 3-hop composer parity vectors.
 //
 // Every `parity_*` test here derives its expected bytestream from the Rust
@@ -10,7 +11,6 @@
 // covered by `enc_*`-derived expectations in `native_eth_3hop_bridge.rs`,
 // `native_v4_v2_v4_path_ends.rs`, `native_v4_v3_v4_path_ends.rs`, and
 // `native_v4_v2_mixed_path_ends.rs`.
-
 #![allow(
     clippy::too_many_lines,
     clippy::unreadable_literal,
@@ -26,7 +26,6 @@ use degenbot_executor::encoders::{
     self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH,
 };
 
-#[allow(dead_code)]
 const PM: Address = address!("000000000004444c5dc75cB358380D2e3dE08A90");
 const EXECUTOR: Address = address!("DeAd0000000000000000000000000000000000Be");
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
@@ -34,7 +33,6 @@ const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
 
 /// Build `enc_preamble(&at) + enc_v4_unlock(&inner)` — the V4 envelope every
 /// V4-containing 3-hop composer wraps around its `inner` opcode sequence.
-#[allow(dead_code)]
 fn v4_envelope(at: &AddressTable, inner: &[u8]) -> Vec<u8> {
     let mut out = encoders::enc_preamble(at);
     out.extend_from_slice(&encoders::enc_v4_unlock(inner).unwrap());

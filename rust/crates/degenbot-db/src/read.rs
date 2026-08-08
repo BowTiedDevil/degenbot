@@ -488,6 +488,7 @@ pub fn fetch_newest_update_block_on_conn(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::migrate::SchemaState;

@@ -31,6 +31,7 @@
 //! `lock()` shape), the second read sees the writer's advance — the
 //! false-verify-failure the Store was working around.
 
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 use rusqlite::{Connection, TransactionBehavior};
 use tempfile::TempDir;
 
@@ -56,7 +57,7 @@ CREATE TABLE IF NOT EXISTS liquidity_positions (
 ";
 
 #[test]
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "behavior test — split hurts the positive+negative narrative"
 )]

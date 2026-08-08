@@ -396,6 +396,7 @@ pub fn calculate_swap_fee(direction_protocol_fee: u32, lp_fee: u32) -> Result<u3
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod protocol_fee_tests {
     use super::*;
 
@@ -482,6 +483,7 @@ mod protocol_fee_tests {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::primitives::I256;

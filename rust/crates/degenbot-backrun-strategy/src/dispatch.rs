@@ -67,7 +67,6 @@ use crate::{
 /// slot8 that no on-chain block holds (synthetic / cached-intra-block /
 /// polluted) surfaces here even though every DB layer below the `CacheDB`
 /// forwards on-chain state. No-op unless `DEGENBOT_V2_CALC_TRACE` is set.
-#[expect(clippy::too_many_lines)]
 fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
     if !crate::simulator::flag_default_on("DEGENBOT_V2_CALC_TRACE") {
         return;
@@ -385,7 +384,6 @@ impl DispatchOutcome {
 /// spans, no `.await` held under either guard — so a poison indicates a bug in
 /// a sibling task (the arcs are shared with the submission seam's accessors;
 /// never locked across an `.await`).
-#[expect(clippy::too_many_lines, clippy::too_many_arguments)]
 /// Deterministically reorder `candidates` into the order index's net-profit
 /// ranking (profit descending, id ascending) before the `MAX_SIMULATE_CONCURRENT`
 /// cap — the `order-index` feature's substitute for the "candidates arrive
@@ -393,7 +391,7 @@ impl DispatchOutcome {
 /// per-path gas, so `gas = 0` and `net == gross == engine_profit`; the seam
 /// becomes net-aware as soon as per-path gas is available.
 #[cfg(feature = "order-index")]
-fn order_index_top_selection(candidates: &mut Vec<DispatchCandidate>) {
+fn order_index_top_selection(candidates: &mut [DispatchCandidate]) {
     use degenbot_order_index::{EnvelopeIndex, OrderIndex};
     let mut idx = EnvelopeIndex::<u64>::new();
     for c in candidates.iter() {
@@ -405,11 +403,20 @@ fn order_index_top_selection(candidates: &mut Vec<DispatchCandidate>) {
     if ranked.len() != candidates.len() {
         return;
     }
-    let pos: HashMap<u64, usize> =
-        ranked.into_iter().enumerate().map(|(i, id)| (id, i)).collect();
+    let pos: HashMap<u64, usize> = ranked
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| (id, i))
+        .collect();
     candidates.sort_by_key(|c| pos.get(&c.path_id).copied().unwrap_or(usize::MAX));
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::missing_panics_doc,
+    clippy::expect_used
+)] // faithful dispatch seam; mutex-poison guards panic loudly
 pub fn dispatch_profitable_results(
     mut candidates: Vec<DispatchCandidate>,
     ctx: &SimulateContext<'_>,
@@ -896,6 +903,7 @@ fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
     false
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]
@@ -1275,14 +1283,16 @@ mod tests {
             consumed_inputs: vec![],
             solve_block: 100,
             path_info: path.clone(),
-            opts: EncodeOptions { erc6909_profit: false, use_v4_batch: false },
+            opts: EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+            },
             state_nonces: vec![],
         };
         // Deliberately passed in a non-sorted order, with a profit tie (100).
         let mut cands = vec![mk(10, 100), mk(5, 500), mk(9, 100), mk(20, 300)];
         order_index_top_selection(&mut cands);
-        let order: Vec<(u64, u128)> =
-            cands.iter().map(|c| (c.path_id, c.engine_profit)).collect();
+        let order: Vec<(u64, u128)> = cands.iter().map(|c| (c.path_id, c.engine_profit)).collect();
         // profit descending, then id ascending on the 100-tie.
         assert_eq!(order, vec![(5, 500), (20, 300), (9, 100), (10, 100)]);
     }

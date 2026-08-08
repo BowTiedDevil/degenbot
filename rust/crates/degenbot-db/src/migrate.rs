@@ -258,6 +258,7 @@ fn stamp_rust_schema_version(conn: &Connection) -> Result<(), DbError> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::schema::table;

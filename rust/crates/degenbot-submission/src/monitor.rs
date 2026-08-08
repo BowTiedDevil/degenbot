@@ -223,6 +223,7 @@ pub async fn monitor_pending_transaction(
     // Extract the by-reference block clock handle ONCE (before the loop) so
     // the per-poll `current_block` read avoids acquiring the outer dispatcher
     // mutex (the handle is the inner `Arc<Mutex<u64>>`, M756BN).
+    #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
     let block_ref = dispatcher
         .lock()
         .expect("dispatcher mutex poisoned")
@@ -234,23 +235,31 @@ pub async fn monitor_pending_transaction(
 
         if probe.receipt_found(tx.tx_hash).await? {
             // receipt found → confirmed: release nonce + pools, return.
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
             let confirmed_at = *block_ref.lock().expect("current_block mutex poisoned");
-            dispatcher
-                .lock()
-                .expect("dispatcher mutex poisoned")
-                .release_tx(&committed);
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+            {
+                dispatcher
+                    .lock()
+                    .expect("dispatcher mutex poisoned")
+                    .release_tx(&committed);
+            }
             return Ok(MonitorOutcome::Confirmed {
                 confirmed_at_block: confirmed_at,
             });
         }
         // not yet included → check the expiry window.
+        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
         let current_block = *block_ref.lock().expect("current_block mutex poisoned");
         let blocks_waited = current_block.saturating_sub(tx.submission_block);
         if blocks_waited > blocks_before_nonce_expires {
-            dispatcher
-                .lock()
-                .expect("dispatcher mutex poisoned")
-                .release_tx(&committed);
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+            {
+                dispatcher
+                    .lock()
+                    .expect("dispatcher mutex poisoned")
+                    .release_tx(&committed);
+            }
             return Ok(MonitorOutcome::Expired { blocks_waited });
         }
         // else: keep polling.
@@ -275,6 +284,7 @@ pub async fn monitor_pending_transaction_default(
     monitor_pending_transaction(tx, probe, dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES).await
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -32,12 +32,14 @@ const AMP_PRECISION: U256 = U256::from_limbs([1_000, 0, 0, 0]);
 
 // `_calculate_invariant` (monorepo V1) — always-roundDown D_P accumulation.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `balances.len() > u64::MAX` (i.e. on a >64-bit platform with
-/// more than 2^64 balances — unreachable in practice).
+/// Returns [`BalancerMathError::TokenCountOverflow`] if `balances.len()`
+/// exceeds `u64::MAX` (unreachable on a 64-bit platform).
 pub fn calculate_invariant(amp: U256, balances: &[U256]) -> Result<U256> {
-    let num_tokens = U256::from(u64::try_from(balances.len()).expect("token count fits"));
+    let num_tokens = U256::from(
+        u64::try_from(balances.len()).map_err(|_| BalancerMathError::TokenCountOverflow)?,
+    );
     let mut sum_ = U256::ZERO;
     for i in 0..balances.len() {
         sum_ = sum_
@@ -121,12 +123,14 @@ pub fn calculate_invariant(amp: U256, balances: &[U256]) -> Result<U256> {
 
 // `_calculate_invariant_deployed` — round_up-parameter P_D accumulation.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `balances.len() > u64::MAX` (i.e. on a >64-bit platform with
-/// more than 2^64 balances — unreachable in practice).
+/// Returns [`BalancerMathError::TokenCountOverflow`] if `balances.len()`
+/// exceeds `u64::MAX` (unreachable on a 64-bit platform).
 pub fn calculate_invariant_deployed(amp: U256, balances: &[U256], round_up: bool) -> Result<U256> {
-    let num_tokens = U256::from(u64::try_from(balances.len()).expect("token count fits"));
+    let num_tokens = U256::from(
+        u64::try_from(balances.len()).map_err(|_| BalancerMathError::TokenCountOverflow)?,
+    );
     let mut sum_ = U256::ZERO;
     for i in 0..balances.len() {
         sum_ = sum_
@@ -282,15 +286,19 @@ pub fn calc_in_given_out(
 ///
 /// # Panics
 ///
-/// Panics if `balances.len() > u64::MAX` (i.e. on a >64-bit platform with
-/// more than 2^64 balances — unreachable in practice).
+/// # Errors
+///
+/// Returns [`BalancerMathError::TokenCountOverflow`] if `balances.len()`
+/// exceeds `u64::MAX` (unreachable on a 64-bit platform).
 pub fn get_token_balance_given_invariant_and_all_other_balances(
     amp: U256,
     balances: &[U256],
     invariant: U256,
     token_index: usize,
 ) -> Result<U256> {
-    let n = U256::from(u64::try_from(balances.len()).expect("token count fits"));
+    let n = U256::from(
+        u64::try_from(balances.len()).map_err(|_| BalancerMathError::TokenCountOverflow)?,
+    );
     let amp_times_total = amp.checked_mul(n).ok_or(BalancerMathError::MulOverflow)?;
 
     let mut sum_ = balances[0];
@@ -413,6 +421,7 @@ fn math_div(a: U256, b: U256, round_up: bool) -> Result<U256> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::ONE;

@@ -273,6 +273,7 @@ pub(crate) fn captured_swap_output(swap: &CapturedSwap) -> U256 {
         .max(U256::try_from(a1).unwrap_or(U256::ZERO))
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

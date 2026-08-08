@@ -61,7 +61,6 @@ use thiserror::Error;
 
 /// Errors from `process_transaction`.
 #[derive(Debug, Error)]
-#[allow(clippy::module_name_repetitions)]
 pub enum ProcessTxError {
     /// A parser failure (the `parse()` stage).
     #[error("parse error: {0}")]
@@ -110,9 +109,8 @@ pub enum ProcessTxError {
 /// points, `10_000 == 100.00%`) in effect at the tx's start. C3's
 /// [`GhoDiscountContext`] resolves the EFFECTIVE discount per event (adjusting
 /// for in-tx `DISCOUNT_PERCENT_UPDATED` events).
-#[allow(
+#[expect(
     clippy::too_many_arguments,
-    clippy::missing_errors_doc,
     clippy::similar_names,
     clippy::implicit_hasher
 )]
@@ -299,7 +297,7 @@ fn build_liquidation_patterns(
 
 /// Dispatch a single Operation's scaled-token events → [`AaveChunkEvent`]
 /// variants. Mirrors `_process_operation`'s per-event-type dispatch loop.
-#[allow(clippy::too_many_arguments, clippy::similar_names)]
+#[expect(clippy::too_many_arguments)]
 fn dispatch_operation(
     op: &Operation,
     market_id: i64,
@@ -441,7 +439,7 @@ fn extract_pool_amount_word1(pool_event: &Log) -> U256 {
 /// word 1 (`liquidatedCollateralAmount`). This is the
 /// `extract_liquidation_debt` / `extract_liquidation_collateral` special
 /// path.
-#[allow(clippy::match_same_arms)] // the debt-burn + fallback arms both return word0 (the LiquidationCall word0 = debtToCover)
+#[expect(clippy::match_same_arms)] // the debt-burn + fallback arms both return word0 (the LiquidationCall word0 = debtToCover)
 fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Operation) -> U256 {
     let is_liquidation = op.operation_type == OperationType::Liquidation
         || op.operation_type == OperationType::GhoLiquidation;
@@ -483,7 +481,7 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
 ///   event's amount (the enricher's `raw_amount`); the `scaled_amount` is
 ///   computed as `ray_div(raw_amount, index, strategy)` (the plumbing-
 ///   equivalence caveat — NOT the processor's None fallback path).
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn build_scaled_event_chunk_event(
     ev: &ScaledTokenEvent,
     op: &Operation,
@@ -532,17 +530,20 @@ fn build_scaled_event_chunk_event(
     // exact rounding/raw_amount site for a divergent position. Keys via
     // `log_index` (cross-ref the per-tx balance trace).
     if std::env::var("DEGENBOT_AAVE_EVTRACE").as_deref() == Ok("1") {
-        eprintln!(
-            "AAVE-EVTRACE {{\"li\":{},\"op\":\"{:?}\",\"ev\":\"{:?}\",\"user\":\"0x{}\",\"raw\":\"{}\",\"value\":\"{}\",\"balinc\":\"{}\",\"idx\":\"{}\"}}",
-            ev.log_index,
-            op.operation_type,
-            ev.event_type,
-            alloy::hex::encode(ev.user_address),
-            raw_amount,
-            ev.amount,
-            balance_increase,
-            index,
-        );
+        #[expect(clippy::print_stderr)] // env-gated event trace
+        {
+            eprintln!(
+                "AAVE-EVTRACE {{\"li\":{},\"op\":\"{:?}\",\"ev\":\"{:?}\",\"user\":\"0x{}\",\"raw\":\"{}\",\"value\":\"{}\",\"balinc\":\"{}\",\"idx\":\"{}\"}}",
+                ev.log_index,
+                op.operation_type,
+                ev.event_type,
+                alloy::hex::encode(ev.user_address),
+                raw_amount,
+                ev.amount,
+                balance_increase,
+                index,
+            );
+        }
     }
 
     // The `ScaledTokenProcessor` constructed below carries its OWN
@@ -1267,11 +1268,6 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 /// discount surface + the V4-ROUNDING divergence). The `actual_repay_amount`
 /// is threaded through from a paired `Repay` pool event for `GhoRepay` (the
 /// 1-wei rounding-error avoidance param).
-#[allow(
-    clippy::too_many_arguments,
-    clippy::similar_names,
-    clippy::too_many_lines
-)]
 fn dispatch_gho_standard(
     op: &Operation,
     market_id: i64,
@@ -1326,11 +1322,6 @@ fn dispatch_gho_standard(
 /// `_process_debt_mint_with_match` (the `COMBINED_BURN` Mint-skip for the
 /// aggregated-burn pattern). The collateral leg goes through the standard
 /// builder (aToken); the GHO debt leg goes through [`UnifiedGhoProcessor`].
-#[allow(
-    clippy::too_many_arguments,
-    clippy::similar_names,
-    clippy::too_many_lines
-)]
 fn dispatch_gho_liquidation(
     op: &Operation,
     market_id: i64,
@@ -1458,11 +1449,7 @@ fn dispatch_gho_liquidation(
 /// the [`UnifiedGhoProcessor`]. Mirrors the GHO branch of
 /// `_process_debt_mint_with_match` / `_process_debt_burn_with_match`. Resolves
 /// the effective discount + threads the `actual_repay_amount` (for `GhoRepay`).
-#[allow(
-    clippy::too_many_arguments,
-    clippy::similar_names,
-    clippy::too_many_lines
-)]
+#[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_gho_chunk_event(
     ev: &ScaledTokenEvent,
     op: &Operation,
@@ -1682,7 +1669,6 @@ fn lookup_gho_debt_asset(
 /// `gho_vtoken_address` is retained as a parameter for signature parity with
 /// the other dispatch fns (the former GHO-exclusion guard was removed — it
 /// caused the chunk-22122071 GHO bad-debt write-off to be skipped).
-#[allow(clippy::too_many_arguments, clippy::similar_names)]
 fn dispatch_liquidation(
     op: &Operation,
     market_id: i64,
@@ -1800,7 +1786,6 @@ fn dispatch_liquidation(
 /// directly from the burn's `amount` + `index` (skip enrichment validation
 /// — the deficit-coverage burn includes interest accrued between the
 /// transfer + the burn within the same tx).
-#[allow(clippy::too_many_lines)]
 fn dispatch_deficit_coverage(
     op: &Operation,
     market_id: i64,
@@ -1899,7 +1884,6 @@ fn dispatch_deficit_coverage(
 /// - rev >= 9: `ray_div_ceil(amountMinted, liquidity_index)` (reverse of `ray_mul_floor`).
 /// - rev <= 8: `ray_div(amountMinted, liquidity_index, HALF_UP)` (reverse of `ray_mul` half-up).
 ///   The `amountMinted` field is on `op.minted_to_treasury_amount` (A's DP3 field).
-#[allow(clippy::too_many_lines)]
 pub(crate) fn dispatch_mint_to_treasury(
     op: &Operation,
     market_id: i64,
@@ -1966,7 +1950,6 @@ pub(crate) fn dispatch_mint_to_treasury(
 
 /// Resolve a `position_id` via `get_or_create_*_position_on_conn`. First
 /// resolves the `user_id` via `get_or_create_user_on_conn`.
-#[allow(clippy::too_many_arguments)]
 fn resolve_position_id(
     conn: &Connection,
     market_id: i64,
@@ -1997,8 +1980,9 @@ fn resolve_position_id(
 // type-annotation parity; remove when C2 lands).
 // (Removed — no deferred path uses I256 directly; the processor returns it.)
 
+#[expect(clippy::expect_used, clippy::panic)]
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::too_many_lines)]
+#[expect(clippy::unwrap_used, clippy::too_many_lines)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog, B256};

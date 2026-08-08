@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! Path-5000 V4-leg seeded-state gas probe (block 25704509).
 //!
 //! The decisive follow-up to `path5000_executor_payload`: that harness runs the

@@ -29,6 +29,7 @@
 //! byte-compares it to the committed artifact. After a harness-source edit,
 //! regenerate + publish via `tier3-oracle/build-tier3-balancer-swap-harness.sh`.
 
+#![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;
 
 use alloy::primitives::{keccak256, Address, Bytes, U256};

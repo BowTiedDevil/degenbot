@@ -504,8 +504,9 @@ async fn fetch_logs_with_topics(
 // the chunk loop (Task `CKXCOB`) constructs the `LogFetcher` from the
 // provider + `max_blocks_per_request` pool config.)
 
+#[expect(clippy::panic)]
 #[cfg(test)]
-#[allow(clippy::unreadable_literal, clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog, I256, U256};

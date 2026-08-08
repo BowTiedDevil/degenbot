@@ -173,7 +173,6 @@ impl<'a> BlockSimHandle<'a> {
     /// path is unreachable in production — `None` means the dispatch host lost
     /// its runtime.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn build(
         provider: &degenbot_rpc::provider::AlloyProvider,
         base_fee_next: u128,

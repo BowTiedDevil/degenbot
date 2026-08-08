@@ -98,7 +98,6 @@ fn mark_progress() {
 /// Returns `PyErr` only if thread spawning fails (extremely rare).
 #[pyfunction]
 #[pyo3(signature = (interval_ms=50, threshold_ms=100, stuck_ms=30_000))]
-#[allow(clippy::too_many_arguments)]
 fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResult<()> {
     if PROBE_RUNNING.swap(true, Ordering::SeqCst) {
         tracing::warn!("[gil-probe] already running — start_gil_probe() call ignored (idempotent)");
@@ -295,7 +294,6 @@ pub fn add_diagnostics_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 // Keep the unused-import linter quiet in builds without the probe wired.
-#[allow(dead_code)]
 fn _unused_imports_keep_arc() -> Arc<()> {
     Arc::new(())
 }

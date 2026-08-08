@@ -354,6 +354,7 @@ pub async fn run_v4_registration_lifecycle(
     .await
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

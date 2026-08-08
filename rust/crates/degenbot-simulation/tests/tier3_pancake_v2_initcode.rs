@@ -24,7 +24,7 @@
 //!    fails loudly.
 
 #![allow(clippy::doc_markdown)]
-
+#![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;
 
 use alloy::hex;

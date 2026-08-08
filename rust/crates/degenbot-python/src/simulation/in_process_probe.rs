@@ -179,7 +179,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
 /// `ProviderResult` is honored for parity with the production signature).
 #[pyfunction]
 #[pyo3(signature = (path_id, runtime_bytecode))]
-#[allow(clippy::too_many_lines)] // PyO3 FFI dict-building surface; one set_item per field
+#[expect(clippy::too_many_lines)] // PyO3 FFI dict-building surface; one set_item per field
 pub fn simulate_in_process_revert_probe<'py>(
     py: Python<'py>,
     path_id: u64,

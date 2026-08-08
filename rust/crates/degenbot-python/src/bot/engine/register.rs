@@ -16,7 +16,7 @@ use crate::prelude::*;
 impl PyArbitrageEngine {
     #[new]
     #[pyo3(signature = (py_bot=None))]
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let py_bot_ref = py_bot.as_ref();
         let (result_tx, result_rx) = mpsc::unbounded_channel();
@@ -206,7 +206,7 @@ impl PyArbitrageEngine {
     /// authority for the gap between snapshot and WS start.
     ///
     /// Raises `RuntimeError` if the pump is already started or subscribed.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
     fn subscribe(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
         // ADR-006 D4 (T3): delegates to the shared `PumpState::subscribe` —
@@ -259,7 +259,6 @@ impl PyArbitrageEngine {
 /// subclass of `ValueError`, so a broad `except ValueError:` (or
 /// `except PoolRegistrationError:` to scope just admission refusals) keeps
 /// working.
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn map_register_v2_err(err: degenbot_bot::bot_core::RegisterV2PoolError) -> pyo3::PyErr {
     use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
     match err {
@@ -276,7 +275,6 @@ pub(crate) fn map_register_v2_err(err: degenbot_bot::bot_core::RegisterV2PoolErr
 
 /// Map a [`RegisterV3PoolError`] to a typed Python exception under the
 /// `PoolRegistrationError` hierarchy. Mirrors [`map_register_v2_err`].
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolError) -> pyo3::PyErr {
     use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
     match err {
@@ -312,7 +310,6 @@ pub(crate) fn map_register_v3_err(err: degenbot_bot::bot_core::RegisterV3PoolErr
 /// The message text for the V4-specific variants is byte-for-byte unchanged
 /// from the legacy `Err(String)` formatting so `build_paths`'s classification
 /// (now `isinstance`, was substring) matches the same diagnostics.
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolError) -> pyo3::PyErr {
     use crate::bot::engine::{PoolAlreadyRegisteredError, SpecViolationError};
     match err {
@@ -349,7 +346,6 @@ pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolErr
 /// builder stage) to a Python `RuntimeError` carrying the RPC/CREATE2/spec/DB
 /// failure cause. Registration-stage errors are mapped by the `map_register_v*`
 /// fns above, so this covers only the pre-registration build stage.
-#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn map_builder_err(
     err: degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError,
 ) -> pyo3::PyErr {

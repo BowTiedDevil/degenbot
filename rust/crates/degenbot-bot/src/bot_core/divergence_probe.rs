@@ -422,6 +422,7 @@ fn pack_tick_info_word(info: &degenbot_pools::TickInfo) -> B256 {
     (gross | net).into()
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

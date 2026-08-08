@@ -99,6 +99,7 @@ fn bal_err(e: BalancerMathError) -> PyErr {
         BalancerMathError::MaxOutRatio => "MAX_OUT_RATIO",
         BalancerMathError::StableInvariantDidntConverge => "STABLE_INVARIANT_DIDNT_CONVERGE",
         BalancerMathError::StableGetBalanceDidntConverge => "STABLE_GET_BALANCE_DIDNT_CONVERGE",
+        BalancerMathError::TokenCountOverflow => "TOO_MANY_TOKENS",
     };
     // Overflow-class errors (would exceed MAX_UINT256) surface as OverflowError;
     // the rest mirror the deployed-contract revert tags the Python oracle raises.

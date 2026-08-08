@@ -473,6 +473,7 @@ impl Default for LogDispatcher {
     }
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -669,7 +670,7 @@ mod tests {
     /// asserts tick 201020 == seed + amount. Red => the Mint is mis-routed/
     /// dropped at the decode+apply seam.
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn v3_mint_log_lands_on_decoded_tick_lower() {
         use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
         use alloy::primitives::{Address, B256, U256};

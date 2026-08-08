@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used)]
 // 2-hop composer regression vectors.
 //
 // Golden-master expected bytes for `encode_cmd_stream`'s 2-hop paths and the
@@ -7,7 +8,6 @@
 // output is a visible, reviewable diff. The native-ETH / WETH-bridge shapes —
 // where the opcode ORDER is the risk — are covered by `enc_*`-derived
 // expectations in `native_eth_3hop_bridge.rs` and the `native_v4_*` files.
-
 #![allow(
     clippy::too_many_lines,
     clippy::unreadable_literal,

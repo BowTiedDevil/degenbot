@@ -1,5 +1,11 @@
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr
+)]
 #[cfg(test)]
-#[allow(clippy::module_inception)]
+#[expect(clippy::module_inception)]
 mod tests {
     use std::collections::{HashMap, HashSet};
 
@@ -1816,7 +1822,7 @@ mod tests {
     /// `consumed_inputs[1]` to the pools twin's `input_consumed - 1` (the 1-wei
     /// VAASFM margin) — the UO3JM4 empty-march clamp, now enforced in
     /// production at the solve→result merge seam.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[test]
     fn clamp_cl_hop_capacity_caps_overfed_v4_input() {
         use crate::bot_core::TickInfo;
@@ -2302,7 +2308,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn solve_3hop_v3_v3_v3_path() {
         let mut engine = ArbitrageEngine::new();
 
@@ -2880,7 +2886,7 @@ mod tests {
     /// block 15) then couldn't restore a per-block landed-at state, and buffer
     /// expiry timestamps were off-block.
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn process_backfill_logs_stamps_per_log_block_number() {
         use crate::solvers::arb_engine::PoolTickCoverage;
         use alloy::primitives::{Bytes, B256};

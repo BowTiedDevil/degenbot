@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 //! Spike (ergo 77LOQT / ADR-015 deferred hop-shape deepening): measure the
 //! cost of the two *candidate* hop digests (Balancer stable `D`, Curve `xp`)
 //! relative to their family's Phase B golden-section solve. CL is the
@@ -15,9 +16,7 @@
 //! (18dp), which exercises the full 25-iteration golden-section search
 //! (no early-out).
 
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;

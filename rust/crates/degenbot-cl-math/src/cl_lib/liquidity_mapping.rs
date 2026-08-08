@@ -68,7 +68,6 @@ pub struct LiquidityAtTick {
 /// Result of applying a liquidity-mapping update to the tick bitmap and tick
 /// data.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(clippy::implicit_hasher)]
 pub struct LiquidityMapUpdateResult {
     /// The updated tick bitmap (word → bitmap word).
     pub tick_bitmap: HashMap<i32, BitmapAtWord>,
@@ -106,7 +105,7 @@ pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8)
 ///
 /// Panics if `tick` is not a multiple of `tick_spacing`, matching the Python
 /// `ValueError("Invalid tick or spacing")`.
-#[allow(clippy::implicit_hasher)]
+#[expect(clippy::implicit_hasher)]
 pub fn flip_tick(
     tick_bitmap: &mut HashMap<i32, BitmapAtWord>,
     tick: i32,
@@ -160,7 +159,10 @@ fn narrow_to_u128(v: I256) -> U128 {
     };
     debug_assert!(v <= max_u128, "liquidity value exceeds uint128");
     let bytes = v.to_be_bytes::<32>();
-    let low: [u8; 16] = bytes[16..32].try_into().expect("16 bytes");
+    // `bytes[16..32]` is exactly 16 bytes (fixed `[u8; 32]` source), so this
+    // slice→array copy is infallible — no `try_into().expect` needed.
+    let mut low = [0u8; 16];
+    low.copy_from_slice(&bytes[16..32]);
     U128::from_be_bytes(low)
 }
 
@@ -183,11 +185,7 @@ fn narrow_to_u128(v: I256) -> U128 {
 /// Python `assert`s, which are stripped under `python -O`. Release builds do
 /// not check.
 #[must_use = "the updated state must be used"]
-#[allow(
-    clippy::too_many_arguments,
-    clippy::similar_names,
-    clippy::implicit_hasher
-)]
+#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
 pub fn apply_liquidity_mapping_update(
     mut tick_bitmap: HashMap<i32, BitmapAtWord>,
     mut tick_data: HashMap<i32, LiquidityAtTick>,
@@ -233,6 +231,10 @@ pub fn apply_liquidity_mapping_update(
         }
 
         let (current_liquidity_net, current_liquidity_gross) = {
+            // `current_tick` is seeded with a placeholder immediately above when
+            // absent, so the map is guaranteed populated here; a targeted
+            // (fulfilled) expect surfaces that invariant loudly if it ever breaks.
+            #[expect(clippy::expect_used)]
             let info = tick_data
                 .get(&current_tick)
                 .expect("tick just seeded if absent");
@@ -281,6 +283,7 @@ pub fn apply_liquidity_mapping_update(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     #![allow(
         clippy::doc_markdown,

@@ -88,7 +88,7 @@ pub fn to_checksum_address_bytes(bytes: &[u8]) -> Result<String, AddressError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
 

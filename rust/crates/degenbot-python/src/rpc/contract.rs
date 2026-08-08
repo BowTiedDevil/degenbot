@@ -299,7 +299,7 @@ fn abi_value_to_python<'py>(
 }
 
 /// Add contract module to Python module.
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 pub fn add_contract_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.contract")?;

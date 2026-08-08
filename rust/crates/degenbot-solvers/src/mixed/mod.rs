@@ -273,7 +273,6 @@ pub struct CurveStableswapHopState {
 /// CL hops only carry a pre-built integer sequence pointer. This is
 /// intentional and not a hot allocation path.
 #[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
 pub enum ResolvedHop {
     /// V2 constant-product hop
     V2 { state: IntHopState },
@@ -299,7 +298,6 @@ pub enum ResolvedHop {
 
 impl ResolvedHop {
     /// The hop type for this resolved hop.
-    #[allow(dead_code)] // Used in unit tests and available for future dispatch.
     #[must_use]
     pub const fn hop_type(&self) -> HopType {
         match self {

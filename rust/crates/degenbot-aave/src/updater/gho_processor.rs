@@ -247,7 +247,7 @@ impl UnifiedGhoProcessor {
 
     /// Perform a `ray_div` with the strategy's rounding mode. Mirrors the
     /// Python `UnifiedGhoProcessor::_ray_div` (the `match mode` dispatch).
-    #[allow(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
+    #[expect(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
     fn ray_div(&self, a: U256, b: U256, mode: RayDivMode) -> Result<U256, GhoProcessorError> {
         Ok(ray_div(a, b, mode.into())?)
     }
@@ -267,7 +267,7 @@ impl UnifiedGhoProcessor {
     /// - `discount_percent` — the discount percent in effect (basis points,
     ///   `10_000 == 100.00%`).
     /// - `current_index` — the event's index (the current debt index).
-    #[allow(clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub fn accrue_debt_on_action(
         &self,
         prev_scaled_balance: U256,
@@ -299,7 +299,7 @@ impl UnifiedGhoProcessor {
     /// before a burn). Returns `0` for a zero scaled balance; returns the
     /// raw `ray_mul(scaled_balance, current_index)` for revisions without
     /// discount support.
-    #[allow(clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub fn get_discounted_balance(
         &self,
         scaled_balance: U256,
@@ -343,11 +343,7 @@ impl UnifiedGhoProcessor {
     ///   `Repay` event (avoids the 1-wei rounding error from deriving it
     ///   from Mint event fields). C3 threads this through when available.
     ///
-    #[allow(
-        clippy::too_many_lines,
-        clippy::missing_errors_doc,
-        clippy::missing_panics_doc
-    )]
+    #[expect(clippy::missing_errors_doc)]
     pub fn process_gho_debt_mint(
         &self,
         event_data: &ScaledTokenEventData,
@@ -518,7 +514,7 @@ impl UnifiedGhoProcessor {
     /// - `prev_discount` — the discount percent in effect at the event's log
     ///   index.
     ///
-    #[allow(clippy::too_many_lines, clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub fn process_gho_debt_burn(
         &self,
         event_data: &ScaledTokenEventData,
@@ -694,8 +690,9 @@ pub fn calculate_gho_discount_rate(
     }
 }
 
+#[expect(clippy::panic)]
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use degenbot_evm_math::RAY;

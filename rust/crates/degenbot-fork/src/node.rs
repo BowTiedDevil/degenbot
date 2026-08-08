@@ -403,6 +403,11 @@ impl AnvilFork {
     /// Panics if the fork is closed (its provider was taken by `Drop`).
     #[must_use]
     pub fn provider(&self) -> &DynProvider {
+        // Targeted expect (fulfilled): a closed fork has had its provider taken
+        // by `Drop`; calling `provider()` on it then is a programmer error, and
+        // panicing loudly (as the `# Panics` doc documents) beats returning a
+        // dangling reference.
+        #[expect(clippy::expect_used)]
         self.provider
             .as_ref()
             .expect("AnvilFork provider dropped (fork closed)")
@@ -588,6 +593,7 @@ impl AnvilFork {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     //! In-process tests on an in-memory (no-fork) anvil. No external RPC.
 

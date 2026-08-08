@@ -503,7 +503,7 @@ impl PyLiquidityPool {
 
     /// Shared override-sim inner: extracts Python args, builds the fetcher
     /// adapter, locks the core, calls `simulate_swap_with_override`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn sim_override_inner(
         &self,
         zero_for_one: bool,
@@ -564,7 +564,7 @@ impl PyLiquidityPool {
 impl PyLiquidityPool {
     /// The pool ID this handle references.
     #[getter]
-    #[allow(clippy::missing_const_for_fn)]
+    #[expect(clippy::missing_const_for_fn)]
     fn pool_id(&self) -> u64 {
         self.pool_id
     }
@@ -771,7 +771,7 @@ impl PyLiquidityPool {
     /// and the sim retries. Returns the same 5-tuple as
     /// `simulate_swap_with_fetch`, or `None` if not computable.
     #[pyo3(signature = (zero_for_one, amount_in, block, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn simulate_swap_with_override(
         &self,
         py: Python<'_>,
@@ -805,7 +805,7 @@ impl PyLiquidityPool {
     /// `simulate_swap_with_override`. Combines the override-state build with
     /// the V3/V4 exact-output sign convention (handled in the core).
     #[pyo3(signature = (zero_for_one, amount_out, block, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn simulate_exact_output_swap_with_override(
         &self,
         py: Python<'_>,
@@ -1618,6 +1618,7 @@ impl PyLiquidityPool {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(journal_err_to_py(e)),
                 Some(Ok(())) => {
+                    #[expect(clippy::expect_used)] // invariant-guarded (documented)
                     let state = core
                         .get_v2_pool_state(self.pool_id)
                         .expect("V2 pool confirmed above");
@@ -1680,6 +1681,7 @@ impl PyLiquidityPool {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(journal_err_to_py(e)),
                 Some(Ok(())) => {
+                    #[expect(clippy::expect_used)] // invariant-guarded (documented)
                     let state = core
                         .get_aerodrome_pool(self.pool_id)
                         .expect("Aerodrome pool confirmed above");
@@ -1936,6 +1938,7 @@ impl PyLiquidityPool {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(journal_err_to_py(e)),
                 Some(Ok(())) => {
+                    #[expect(clippy::expect_used)] // invariant-guarded (documented)
                     let s = core
                         .get_v3_or_v4_pool(self.pool_id)
                         .expect("V3/V4 pool confirmed above");
@@ -2142,7 +2145,7 @@ impl PyLiquidityPool {
     /// Each element is the option value so a non-ramping pool reports `None`
     /// for every field instead of a sentinel zero.
     // The nested-`Option` tuple mirrors the Python-facing Curve ramp shape.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn curve_a_ramp(
         &self,
     ) -> Option<(
@@ -2167,7 +2170,7 @@ impl PyLiquidityPool {
     /// out_fee, gamma)` — `None` for standard stableswap pools. Returns `None`
     /// for a non-Curve handle.
     // The nested-`Option` tuple mirrors the Python-facing Curve fee shape.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn curve_crypto_fees(
         &self,
     ) -> Option<(
@@ -2191,7 +2194,7 @@ impl PyLiquidityPool {
     /// Curve dedicated LP token address (EIP-55 checksummed) — `None` when the
     /// pool token itself is the LP. Returns `None` for a non-Curve handle.
     // `Option<Option<_>>` distinguishes no-pool / pool-no-lp-token / has-token.
-    #[allow(clippy::option_option)]
+    #[expect(clippy::option_option)]
     fn curve_lp_token(&self) -> Option<Option<String>> {
         let core = self.core.read();
         let id = core.get_curve_identity(self.pool_id)?;
@@ -2344,7 +2347,7 @@ impl PyLiquidityPool {
     /// Curve base-pool address (EIP-55 checksummed). `None` for plain pools.
     /// `None` for a non-Curve handle.
     // `Option<Option<_>>` distinguishes no-pool / pool-no-base / has-base.
-    #[allow(clippy::option_option)]
+    #[expect(clippy::option_option)]
     fn curve_base_pool_address(&self) -> Option<Option<String>> {
         let core = self.core.read();
         let id = core.get_curve_identity(self.pool_id)?;
@@ -3192,6 +3195,7 @@ impl PyPool {
 
     fn with_pool<T>(&self, f: impl FnOnce(degenbot_pools::Pool<'_>) -> T) -> T {
         let core = self.core.read();
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let entry = core
             .pool_entry(self.pool_id)
             .expect("PyPool references a registered pool");
@@ -3332,6 +3336,7 @@ impl PyPool {
         let amount_in = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let out = self.with_pool(|pool| pool.calculate_tokens_out(zero_for_one, amount_in));
         Ok(out.map(|v| {
+            #[expect(clippy::unwrap_used)] // u256 always converts to a PyInt
             crate::conversion::alloy::u256_to_py(py, &v)
                 .unwrap()
                 .unbind()

@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used)]
 // Structural + byte-exact tests for the native-ETH↔WETH wrap/unwrap bridge
 // in 3-hop V4 composers (ergo epic GVK2RY).
 //
@@ -5,7 +6,6 @@
 // address(0) as a V4 currency), so the bridge was never exercised. These tests
 // build the expected bytes from the individual `enc_*` primitives — if the
 // composer emits the right opcodes in the right order, the bytes match.
-
 #![allow(clippy::too_many_lines, clippy::unreadable_literal)]
 
 use alloy::primitives::{address, Address};

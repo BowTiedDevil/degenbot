@@ -125,6 +125,7 @@ pub trait TickBootstrapRpc: Send + Sync + std::fmt::Debug {
     ) -> Result<Option<BootstrapTickWord>, BootstrapTickError>;
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -152,7 +153,7 @@ mod tests {
     }
 
     impl TickBootstrapRpc for FakeBootstrapRpc {
-        #[allow(clippy::cast_possible_wrap, reason = "bit index 0..128 fits in i32")]
+        #[expect(clippy::cast_possible_wrap, reason = "bit index 0..128 fits in i32")]
         fn bootstrap_v3_tick_word(
             &self,
             _pool_address: &str,

@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr
+)]
 //! Network-gated mainnet-fixture reproduction (ergo task `E7ALWT`).
 //!
 //! The live `DEGENBOT_SIM_EXIT_ON_FAIL=1` trap captured a +13 wei V3-hop
@@ -32,7 +38,7 @@
 //! cargo test -p degenbot-solvers --test v3_iia_fixture_reproduction -- --nocapture
 //! ```
 
-#![allow(clippy::too_many_lines, clippy::doc_markdown)]
+#![expect(clippy::too_many_lines, clippy::doc_markdown)]
 
 use std::collections::HashMap;
 use std::sync::Arc;

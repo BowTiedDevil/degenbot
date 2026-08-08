@@ -141,7 +141,6 @@ impl PyDexIdentity {
     /// ```
     #[new]
     #[pyo3(signature = (factory, init_hash, fee_token0, fee_token1, variant, reserves_abi=None))]
-    #[allow(clippy::needless_pass_by_value)] // pyo3 extracts Python list → Option<Vec<String>>
     fn new(
         factory: &str,
         init_hash: &str,

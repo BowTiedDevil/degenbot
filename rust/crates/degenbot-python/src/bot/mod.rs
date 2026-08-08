@@ -168,7 +168,6 @@ impl PyBot {
     /// `Arc` clone — the caller owns the lifetime of the borrow; `PyBot`
     /// retains its own Arc so subsequent callers still get `Some`.
     #[must_use]
-    #[allow(dead_code)] // wired by the assemble_*_tick_map PyO3 wrappers.
     pub(crate) fn db_handle(&self) -> Option<Arc<degenbot_db::snapshot_db::SnapshotDb>> {
         self.db.lock().clone()
     }
@@ -183,8 +182,7 @@ impl PyBot {
 
     /// Borrow the attached `PumpState`, or error if no engine was constructed
     /// against this bot.
-    #[allow(dead_code)] // wired by the pump lifecycle methods (subscribe/
-                        // backfill_from_snapshot/resume) in the #[pymethods] impl
+    // backfill_from_snapshot/resume) in the #[pymethods] impl
     fn pump_state(&self) -> PyResult<Arc<crate::bot::pump::PumpState>> {
         self.pump.lock().clone().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
@@ -325,7 +323,7 @@ impl PyBot {
     /// `DegenbotDbConstruction`; construction DB reads route through this held
     /// connection (no per-call `DegenbotDb::open`).
     #[pyo3(signature = (provider, database_path=None))]
-    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)]
+    #[expect(clippy::unnecessary_wraps, clippy::needless_pass_by_value)]
     fn attach_construction_io(
         &self,
         py: Python<'_>,
@@ -449,7 +447,6 @@ impl PyBot {
 
     /// Verify all V3 + V4 pool liquidity maps against on-chain state
     /// (ADR-006 D4 T4). Delegates to the shared `PumpState`.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url, tick_lens_address, state_view_address, block_number))]
     fn verify_liquidity_maps<'py>(
         &self,
@@ -469,7 +466,6 @@ impl PyBot {
     }
 
     /// Verify V3 liquidity maps only (ADR-006 D4 T4).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url, block_number))]
     fn verify_v3_liquidity_maps<'py>(
         &self,
@@ -482,7 +478,6 @@ impl PyBot {
     }
 
     /// Verify V4 liquidity maps only (ADR-006 D4 T4).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url, state_view_address, block_number))]
     fn verify_v4_liquidity_maps<'py>(
         &self,
@@ -498,7 +493,6 @@ impl PyBot {
     /// Verify a single V3 pool's pinned snapshot seed against on-chain@snapshot
     /// block (CBCH6H — the rolling-start race fix). Step-1 of the two-step
     /// verify at the registry drain seam routes here.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (address, rpc_url, block_number))]
     fn verify_v3_snapshot_seed<'py>(
         &self,
@@ -514,7 +508,6 @@ impl PyBot {
     /// Verify a single V4 pool's pinned snapshot seed against on-chain@snapshot
     /// block (CBCH6H — V4 twin of `verify_v3_snapshot_seed`). Step-1 of the
     /// two-step verify routes here.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (pool_manager_address, pool_id_hex, rpc_url, state_view_address, block_number))]
     fn verify_v4_snapshot_seed<'py>(
         &self,
@@ -540,7 +533,6 @@ impl PyBot {
     /// `verify_v3_snapshot_seed`). Step-2 of the two-step verify routes here.
     /// The block is the one captured atomically with the drain — the pin
     /// owns its block (the caller passes no `block_number`).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (address, rpc_url))]
     fn verify_v3_post_drain_snapshot<'py>(
         &self,
@@ -555,7 +547,6 @@ impl PyBot {
     /// Verify a single V4 pool's pinned post-drain `tick_data` against
     /// on-chain@**pinned block** (step-2 race fix, V4 twin of
     /// `verify_v3_post_drain_snapshot`).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (pool_manager_address, pool_id_hex, rpc_url, state_view_address))]
     fn verify_v4_post_drain_snapshot<'py>(
         &self,
@@ -580,7 +571,6 @@ impl PyBot {
     /// driver's separate step calls. **Sparse** → immediate no-op (`Live`, no
     /// RPC); **Tracked** → verified with the mismatch tripwire before `Live`.
     /// Uses the bot's single verify provider + stored verify config (D-B/D-C).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (address, snapshot_block))]
     fn run_v3_registration_lifecycle<'py>(
         &self,
@@ -595,7 +585,6 @@ impl PyBot {
     /// V4 twin of `run_v3_registration_lifecycle`, keyed by
     /// (`pool_manager_address`, `pool_id_hex`). A tracked V4 pool with no
     /// `verify_state_view` configured fails fast (D-C no-config posture).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (pool_manager_address, pool_id_hex, snapshot_block))]
     fn run_v4_registration_lifecycle<'py>(
         &self,
@@ -615,7 +604,7 @@ impl PyBot {
     /// Register a V2 pool by contract address.
     ///
     /// Returns the auto-assigned pool ID.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory, update_block=0, variant="uniswap-v2", stable_swap=false, fee_denominator=None))]
     fn register_v2_pool(
         &self,
@@ -942,8 +931,8 @@ impl PyBot {
     /// [`map_builder_err`]; admission/filtering errors via
     /// [`map_register_v4_err`]).
     #[pyo3(signature = (chain_id, pool_manager, pool_id_hex, currency0=None, currency1=None, fee=None, tick_spacing=None, hook_address=None, state_view_address=None))]
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::too_many_arguments)]
+    #[expect(clippy::type_complexity)]
     fn resolve_v4_identity(
         &self,
         py: Python<'_>,
@@ -1012,8 +1001,8 @@ impl PyBot {
     }
 
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, state_view_address, block=None, db=true, tick_data_fetcher=None))]
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::too_many_arguments)]
+    #[expect(clippy::type_complexity)]
     fn build_v4_pool(
         &self,
         py: Python<'_>,
@@ -1144,8 +1133,7 @@ impl PyBot {
 
     /// Prototype test-only V2 registration that bypasses CREATE2 verification.
     /// Wire to a new method on Python so tests can build a synthetic V2 pool.
-    #[allow(dead_code)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn register_v2_pool_test_only(
         &self,
         address: &str,
@@ -1278,7 +1266,7 @@ impl PyBot {
     ///
     /// Returns:
     ///     The raw `dy` output amount as a Python int.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[pyo3(signature = (pool_id, i, j, dx, block_number, override_balances=None))]
     fn curve_get_dy(
         &self,
@@ -1441,7 +1429,7 @@ impl PyBot {
     /// Raises:
     ///     `ValueError`: If `address` cannot be parsed.
     #[pyo3(signature = (address, pool_id=None))]
-    #[allow(clippy::needless_pass_by_value)] // PyO3 binding idiom for optional bytes
+    #[expect(clippy::needless_pass_by_value)] // PyO3 binding idiom for optional bytes
     fn unregister_pool(&self, address: &str, pool_id: Option<Vec<u8>>) -> PyResult<bool> {
         let addr = parse_address(address)?;
         // V4 on PyBot is intentionally not exposed: registration for V4 lives
@@ -1481,7 +1469,7 @@ impl PyBot {
     ///   io: optional `PyBotIo` whose native alloy provider backs the Chain arm.
     ///     `None` (or a non-alloy provider) → no Chain arm (Store + Db only).
     #[pyo3(signature = (address, tick=0, tick_spacing=0, block=0, io=None))]
-    #[allow(
+    #[expect(
         clippy::needless_pass_by_value,
         reason = "PyO3 passes the pyclass Bound by value; borrow is internal"
     )]
@@ -1544,7 +1532,7 @@ impl PyBot {
     ///   `state_view`: the V4 `StateView` contract address (Chain-arm RPC target).
     ///   `tick`/`tick_spacing`/`block`/`io`: see [`Self::assemble_v3_tick_map`].
     #[pyo3(signature = (pool_manager, pool_id, state_view, tick=0, tick_spacing=0, block=0, io=None))]
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         clippy::needless_pass_by_value,
         reason = "PyO3 wrapper over the precedence helper; signature mirrors Python surface"
@@ -1622,7 +1610,7 @@ impl PyBot {
     /// Register a V3 pool by contract address.
     ///
     /// Returns the auto-assigned pool ID.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     /// Register a V3 pool, optionally seeding `tick_data` inline.
     ///
     /// ADR-006 rolling-start race closure: the builder previously called
@@ -1776,7 +1764,7 @@ impl PyBot {
     ///     `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode).
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None))]
     fn register_v4_pool(
         &self,
@@ -1888,7 +1876,6 @@ impl PyBot {
     ///
     /// Raises:
     ///     `ValueError`: If either address is malformed.
-    #[allow(clippy::needless_pass_by_value)]
     fn register_v4_state_view(
         &self,
         py: Python<'_>,
@@ -1918,12 +1905,12 @@ impl PyBot {
     /// Raises:
     ///     `ValueError`: If the pool address is malformed or already
     ///         registered, or the list lengths mismatch.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     // `y_variant` / `yd_variant` mirror the public Python kwargs and the
     // `resolve_y_variant` / `resolve_yd_variant` vocabulary in
     // `degenbot.curve._variant_groups`; they are intentional domain terms,
     // not a naming slip, so the `similar_names` nudge does not apply here.
-    #[allow(clippy::similar_names)]
+    #[expect(clippy::similar_names)]
     #[pyo3(signature = (
         address,
         tokens,
@@ -2115,7 +2102,7 @@ impl PyBot {
     ///     `ValueError`: If an address is malformed, the pool is already
     ///         registered, the list lengths mismatch, or `pool_id_hex` is not
     ///         a 32-byte hex string.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[pyo3(signature = (
         address,
         vault,
@@ -2182,7 +2169,7 @@ impl PyBot {
     ///     `ValueError`: If an address is malformed, the pool is already
     ///         registered, the list lengths mismatch, `bpt_idx` is
     ///         out-of-range, or `pool_id_hex` is not a 32-byte hex string.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[pyo3(signature = (
         address,
         vault,
@@ -2250,7 +2237,7 @@ impl PyBot {
     /// Raises:
     ///     `ValueError`: If an address is malformed, the pool is already
     ///         registered, or `variant` is not a recognized Aerodrome variant.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[pyo3(signature = (address, token0, token1, factory, variant, stable, fee_numer, fee_denom, token0_decimals, token1_decimals, reserve0, reserve1, update_block=0))]
     fn register_aerodrome_pool(
         &self,
@@ -2398,6 +2385,7 @@ impl PyBot {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(journal_err_to_py(e)),
                 Some(Ok(())) => {
+                    #[expect(clippy::expect_used)] // invariant-guarded (documented)
                     let state = core
                         .get_v3_or_v4_pool(pool_id)
                         .expect("V3/V4 pool confirmed above");
@@ -2492,7 +2480,7 @@ impl PyBot {
     ///     `chain_id`: chain ID.
     ///     `block`: optional block to read on-chain at (None = head).
     #[pyo3(signature = (address, chain_id, block=None))]
-    #[allow(clippy::cast_possible_wrap)] // chain_id u64 -> core i64 (ids are small)
+    #[expect(clippy::cast_possible_wrap)] // chain_id u64 -> core i64 (ids are small)
     fn build_erc20_token(
         &self,
         py: Python<'_>,
@@ -2627,6 +2615,7 @@ impl PyBot {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(journal_err_to_py(e)),
                 Some(Ok(())) => {
+                    #[expect(clippy::expect_used)] // invariant-guarded (documented)
                     let state = core
                         .get_v2_pool_state(pool_id)
                         .expect("V2 pool confirmed above");
@@ -2724,7 +2713,7 @@ pub(crate) fn journal_err_to_py(e: JournalError) -> PyErr {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
     use super::*;
 
     /// Lowercase hex encode (no `0x` prefix) — for `OfflineProvider` call keys.

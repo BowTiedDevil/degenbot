@@ -545,7 +545,9 @@ fn compute_big(hops: &[ShiftedPieceHop]) -> BigShiftedCoeffs {
             Some(prev) => matrix_compose_big(&local, &prev),
         });
     }
-    acc.expect("non-empty hops asserted by caller")
+    #[expect(clippy::expect_used)] // non-empty hops asserted by caller
+    let acc = acc.expect("non-empty hops asserted by caller");
+    acc
 }
 
 /// Closed-form model-optimum input of the piece:
@@ -587,6 +589,7 @@ pub fn shifted_piece_slope_exceeds_unity_at(
     }
 }
 
+#[expect(clippy::panic)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]

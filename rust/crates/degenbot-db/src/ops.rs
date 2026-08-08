@@ -271,6 +271,7 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, DbError> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::connection::DegenbotDb;

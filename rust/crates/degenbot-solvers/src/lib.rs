@@ -23,15 +23,13 @@
 //! both the standalone Rust path (`cargo add degenbot-solvers`) and the
 //! PyO3 driver shell.
 pub mod affected_keys;
-#[allow(clippy::doc_markdown)]
 pub mod basket;
-#[allow(clippy::doc_markdown)]
 pub mod mixed;
-#[allow(clippy::doc_markdown)]
+#[expect(clippy::doc_markdown)]
 pub mod mobius_int;
-#[allow(clippy::doc_markdown)]
+#[expect(clippy::doc_markdown)]
 pub mod mobius_int_exact;
 
 pub mod mobius_shifted_piece;
-#[allow(clippy::doc_markdown)]
+#[expect(clippy::doc_markdown)]
 pub mod mobius_v3_int;

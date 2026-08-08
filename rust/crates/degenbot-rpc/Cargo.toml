@@ -8,16 +8,8 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[lints.rust]
-warnings = "deny"
-
-[lints.clippy]
-complexity = "warn"
-correctness = "warn"
-pedantic = "warn"
-perf = "warn"
-style = "warn"
-suspicious = "warn"
+[lints]
+workspace = true
 
 [dependencies]
 alloy = { version = "^2.3", features = ["full", "transport-throttle", "json-rpc"] }

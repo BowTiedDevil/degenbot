@@ -14,6 +14,7 @@
 //! To regenerate the fixtures:
 //!   `uv run python rust/crates/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`
 
+#![expect(clippy::unwrap_used, clippy::panic)]
 use std::path::PathBuf;
 
 use alloy::primitives::{I256, U256};
@@ -25,7 +26,7 @@ const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
 #[derive(Debug, Deserialize)]
 struct Expected {
     chain_id: i64,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     tick_spacing: i32,
     #[serde(default)]
     pool_address: String,
@@ -490,5 +491,5 @@ fn to_initmap_tuple(rows: &[InitMapRow]) -> Vec<(i64, String)> {
 // Keep U256 import live (used implicitly via the JSON comparison of bitmap
 // decimal strings — the literals are compared as strings, but U256 is the
 // type the Rust side decodes to + re-encodes for the comparison).
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use U256 as _U256;

@@ -19,7 +19,7 @@
 //! `BlockEvm`, or any production call site (the prototype AC).
 
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
-
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 use alloy::primitives::{Address, Bytes, I256, U256};
 use degenbot_simulation::{
     AccessListCollector, CallTraceInspector, SwapEventCaptureInspector, SwapFamily,

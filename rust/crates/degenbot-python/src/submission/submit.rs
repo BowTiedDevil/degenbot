@@ -85,7 +85,7 @@ impl PySubmitCandidate {
         base_fee_next, execute_calldata, executor_address,
         access_list=None, path_pools=None,
     ))]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         path_id: u64,
@@ -236,7 +236,7 @@ impl ReceiptProbe for PyReceiptProbe {
 ///         (a non-"not-found" RPC error during broadcast/access-list/sign).
 #[pyfunction]
 #[pyo3(signature = (candidates, dispatcher, provider, signer, operator_nonce, current_block, dry_run, inject_code))]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn dispatch_and_submit_py<'py>(
     py: Python<'py>,
     candidates: &Bound<'_, PyList>,

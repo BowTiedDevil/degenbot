@@ -19,7 +19,6 @@ use std::sync::{Arc, LazyLock};
 // =============================================================================
 
 /// Maximum number of cached type sets.
-#[allow(clippy::expect_used)]
 const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
 
 // =============================================================================
@@ -74,7 +73,7 @@ static CACHE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Acquire the global cache-test mutex. Drop the guard to release.
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc, clippy::unwrap_used)]
+#[expect(clippy::missing_panics_doc, clippy::unwrap_used)]
 pub fn cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
     CACHE_TEST_MUTEX.lock().unwrap()
 }
@@ -422,7 +421,7 @@ impl CachedAbiTypes {
 /// Convert an `AbiValue` to a `DynSolValue` for a specific expected type.
 ///
 /// Handles special cases like `FixedBytes` and `FixedArray`.
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 pub fn value_to_alloy_for_type(
     value: &AbiValue,
     ty: &alloy::dyn_abi::DynSolType,
@@ -538,6 +537,7 @@ pub fn value_to_alloy_for_type(
 }
 
 #[cfg(test)]
+#[expect(clippy::panic)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 

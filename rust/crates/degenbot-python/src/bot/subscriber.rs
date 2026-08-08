@@ -125,10 +125,13 @@ pub(crate) fn init_subscriber_drainer() {
             shutdown: AtomicBool::new(false),
         });
         let drainer_state = Arc::clone(&state);
-        thread::Builder::new()
-            .name("subscriber-drainer".into())
-            .spawn(move || subscriber_drainer_loop(drainer_state))
-            .expect("spawn subscriber-drainer thread");
+        #[expect(clippy::expect_used)] // thread spawn fails only under resource exhaustion
+        {
+            thread::Builder::new()
+                .name("subscriber-drainer".into())
+                .spawn(move || subscriber_drainer_loop(drainer_state))
+                .expect("spawn subscriber-drainer thread");
+        }
         state
     });
 }
@@ -149,7 +152,7 @@ pub(crate) fn shutdown_subscriber_drainer() {
 /// Collects pending notifications from the queue, coalesces to
 /// latest-per-pool per callback, and forwards them to Python via one
 /// `Python::attach` per flush.
-#[allow(clippy::needless_pass_by_value)] // owned Arc moved into drainer thread closure
+#[expect(clippy::needless_pass_by_value)] // owned Arc moved into drainer thread closure
 fn subscriber_drainer_loop(state: Arc<SubscriberQueueState>) {
     let mut batch: Vec<SubscriberNotification> = Vec::with_capacity(SUBSCRIBER_BATCH_SIZE);
     let mut last_flush = Instant::now();

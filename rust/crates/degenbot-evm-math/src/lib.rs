@@ -89,7 +89,6 @@ pub const DEFAULT_ELASTICITY_MULTIPLIER: u128 = 2;
 /// The computed next base fee as a `u128`.
 ///
 /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
-#[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn next_base_fee(
     parent_base_fee: u128,
@@ -368,7 +367,7 @@ mod tests {
     /// target makes `gas_used_delta = gl - (gl//2)` exceed `target` by one — so
     /// the correct bound is `bf * (gl - target) / target / denom + 1`, not
     /// `bf/denom + 1`.
-    #[allow(clippy::manual_checked_ops)] // explicit `target > 0` guard above each division
+    #[expect(clippy::manual_checked_ops)] // explicit `target > 0` guard above each division
     #[test]
     fn property_max_change_bounded() {
         use proptest::prelude::*;

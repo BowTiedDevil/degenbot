@@ -78,6 +78,7 @@ pub fn encode_v2_swap(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

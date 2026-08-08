@@ -216,7 +216,7 @@ pub struct ManagedLiquidityPoolRow {
 
 impl ManagedLiquidityPoolRow {
     /// Decode from `SELECT id, kind, manager_id FROM managed_pools`.
-    #[allow(dead_code)] // exercised by a future managed-pool read fn (spike 4c siblings)
+    #[expect(dead_code)] // exercised by a future managed-pool read fn (spike 4c siblings)
     pub(crate) fn from_row(row: &Row<'_>) -> Result<Self, DbError> {
         Ok(Self {
             id: row.get(0)?,
@@ -249,7 +249,6 @@ pub(crate) fn decode_pool_hash(s: &str) -> Result<B256, DbError> {
 /// `true` if `kind` is an Aerodrome V2 (the only V2 subclass with a `stable`
 /// column).
 #[must_use]
-#[allow(dead_code)] // awaited by a future V2 read fn
 pub fn is_aerodrome_v2_kind(kind: &str) -> bool {
     matches!(kind, "aerodrome_v2")
 }
@@ -258,7 +257,6 @@ pub fn is_aerodrome_v2_kind(kind: &str) -> bool {
 ///
 /// Re-exported for convenience from [`crate::schema::table::is_v4_kind`].
 #[must_use]
-#[allow(dead_code)] // the schema::table helper is the canonical call site
 pub fn is_v4_kind(kind: &str) -> bool {
     table::is_v4_kind(kind)
 }

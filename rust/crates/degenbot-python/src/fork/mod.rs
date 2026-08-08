@@ -71,7 +71,7 @@ const DEFAULT_MNEMONIC: &str =
 /// `Rpc`) are reflected in the message text for now; if the Python
 /// companion shell gains typed exception subclasses (FF4-era), this mapping
 /// is the single place to upgrade them.
-#[allow(clippy::needless_pass_by_value)] // `Result::map_err` requires the arg by value.
+#[expect(clippy::needless_pass_by_value)] // `Result::map_err` requires the arg by value.
 fn map_fork_err(e: ForkError) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
@@ -128,7 +128,7 @@ impl PyAnvilFork {
         chain_id=None,
         anvil_opts=None,
     ))]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         fork_url: Option<String>,

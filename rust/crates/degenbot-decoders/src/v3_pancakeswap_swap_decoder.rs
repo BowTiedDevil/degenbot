@@ -121,6 +121,7 @@ pub fn decode_v3_pancakeswap_swap_log(log: &Log) -> Option<V3PancakeSwapEvent> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as InnerLog};

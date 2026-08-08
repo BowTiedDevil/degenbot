@@ -234,7 +234,6 @@ impl ArbitrageEngine {
     /// Uses the `pool_to_paths` reverse index to identify `affected_path_ids`,
     /// then re-resolves and re-solves only those. Unaffected paths carry
     /// their previous results forward.
-    #[allow(clippy::too_many_lines)]
     pub fn rebuild_and_solve_affected(
         &mut self,
         v2_affected: &HashSet<u64>,
@@ -509,7 +508,7 @@ impl ArbitrageEngine {
     /// `core` is the locked [`BotState`] snapshot to read V2 state from
     /// (ADR-003). V3/V4 hops still read the per-family block engines; their
     /// state migrates into `core` in Slices 2/3.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     pub fn resolve_path(
         core: &crate::bot_core::BotState,
         pool_refs: &[MixedPoolRef],

@@ -6,6 +6,7 @@
 //! live-admin effective balances / metapool prices), then that `calculate_dy`
 //! reproduces the recorded dy for the shared `standard_plain` fixture shape.
 
+#![expect(clippy::expect_used)]
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, U256};

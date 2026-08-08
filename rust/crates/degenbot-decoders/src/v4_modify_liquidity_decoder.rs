@@ -121,7 +121,7 @@ pub fn decode_v4_modify_liquidity_log(log: &Log) -> Option<V4ModifyLiquidityEven
 }
 
 #[cfg(test)]
-#[allow(clippy::unreadable_literal, clippy::unwrap_used)]
+#[expect(clippy::unreadable_literal, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::Bytes;

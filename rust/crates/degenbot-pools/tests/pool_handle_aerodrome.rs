@@ -1,5 +1,6 @@
 //! Prototype test: shared Pool handle for Aerodrome V2.
 
+#![expect(clippy::expect_used)]
 use alloy::primitives::{aliases::U112, Address, U256};
 use degenbot_pools::aerodrome_v2_state::{AerodromeV2PoolState, RegisterAerodromeV2PoolParams};
 use degenbot_pools::registry::PoolEntry;

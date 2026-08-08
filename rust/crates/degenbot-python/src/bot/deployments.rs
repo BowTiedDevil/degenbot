@@ -195,7 +195,7 @@ pub(crate) fn verify_aerodrome_v2(
 /// V3 salt includes the `tick_spacing`). `Ok(())` if it matches or is not
 /// applicable; `Err(PyValueError)` on a verified mismatch.
 /// (Fork A follow-on, S5SJXF/WLJD2Y.)
-#[allow(dead_code)] // wired when a tick_spacing-aware register_aerodrome_v3 lands
+#[expect(dead_code)] // wired when a tick_spacing-aware register_aerodrome_v3 lands
 pub(crate) fn verify_aerodrome_v3(
     chain_id: u64,
     factory: alloy::primitives::Address,

@@ -119,7 +119,7 @@ pub struct V3Slot0Parts {
 /// the V3/V4 valid range `[-887272, 887272]` (fits `int24`).
 #[must_use]
 pub fn sign_extend_int24(tick: i32) -> [u8; 32] {
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     let low24 = (tick as u32) & 0x00FF_FFFF;
     let mut bytes = [0u8; 32];
     // Place the 3 significant bytes at the low end (bytes 29..32).
@@ -139,7 +139,7 @@ pub fn sign_extend_int24(tick: i32) -> [u8; 32] {
 /// `tickBitmap(word)` + V4 per-bitmap-word mapping-slot keccak preimage.
 #[must_use]
 pub fn sign_extend_int16(word_pos: i16) -> [u8; 32] {
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     let low16 = (word_pos as u16) & 0xFFFF;
     let mut bytes = [0u8; 32];
     bytes[30..32].copy_from_slice(&low16.to_be_bytes());
@@ -164,7 +164,7 @@ pub fn encode_v3_slot0(parts: V3Slot0Parts) -> U256 {
     // int24 tick as an unsigned 24-bit field (two's-complement reinterpretation
     // masked to 24 bits) — occupies exactly bits [160..184), leaving the tail
     // fields intact even for negative ticks.
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     let tick_field = U256::from(parts.tick as u32 & 0x00FF_FFFF);
     let obs_index = U256::from(parts.observation_index);
     let obs_card = U256::from(parts.observation_cardinality);
@@ -194,7 +194,6 @@ pub fn decode_v3_slot0(word: U256) -> V3Slot0Parts {
     let fee_protocol = ((word >> 232u32) & U256::from(0xFFu32)).to::<u8>();
     let unlocked = !((word >> 240u32) & U256::from(1u32)).is_zero();
     // Sign-extend the 24-bit tick field back to i32 (bit 23 is the sign bit).
-    #[allow(clippy::cast_possible_wrap)]
     let tick_u32 = tick_field.to::<u32>();
     let tick = if (tick_u32 & 0x800000) != 0 {
         (tick_u32 as i32) - (1 << 24)
@@ -319,7 +318,7 @@ pub fn v3_tick_bitmap_word_slot(word_pos: i16) -> U256 {
 pub fn compute_v3_tick_bitmap_word(compressed_ticks_in_word: &[i32]) -> U256 {
     let mut word = U256::ZERO;
     for &c in compressed_ticks_in_word {
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_sign_loss)]
         let bit = (c & 0xFF) as u8;
         word |= U256::from(1u64) << bit;
     }
@@ -354,6 +353,7 @@ pub fn compute_v3_tick_bitmap_word_from_raw<S: std::hash::BuildHasher>(
 // Tests — mainnet-pinned (cast storage) + cast-keccak oracles. No live RPC.
 // ─────────────────────────────────────────────────────────────────────────
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,6 +7,7 @@
 
 pub use ::degenbot_pools::v3_state::*;
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(unused_imports)]

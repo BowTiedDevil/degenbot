@@ -239,9 +239,9 @@ const GAS_SAFETY_MARGIN: f64 = 1.5;
 /// Panics if the `dispatcher` mutex is poisoned (a coordinated task
 /// panicked while holding it — unrecoverable; matches the Python assumption
 /// that the dispatcher state is always readable).
-#[allow(clippy::doc_overindented_list_items)] // the a.-g. sub-steps use a deeper indent
-#[allow(clippy::too_many_arguments)] // the pipeline stages each need a param
-#[allow(clippy::too_many_lines)] // the 10-step pipeline is inherent
+#[expect(clippy::doc_overindented_list_items)] // the a.-g. sub-steps use a deeper indent
+#[expect(clippy::too_many_arguments)] // the pipeline stages each need a param
+#[expect(clippy::too_many_lines)] // the 10-step pipeline is inherent
 pub async fn dispatch_and_submit(
     mut candidates: Vec<SubmitCandidate>,
     dispatcher: &Arc<Mutex<Dispatcher>>,
@@ -268,6 +268,7 @@ pub async fn dispatch_and_submit(
 
         // 2a. Mutual-exclusivity guard (L2626). Lock briefly — no .await.
         let blocked = {
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
             let d = dispatcher.lock().expect("dispatcher mutex poisoned");
             d.is_path_blocked(&path_pools, &committed_pools)
         };
@@ -303,6 +304,7 @@ pub async fn dispatch_and_submit(
 
         // 2d. Claim nonce (L2636). Lock briefly — no .await.
         let nonce = {
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
             let mut d = dispatcher.lock().expect("dispatcher mutex poisoned");
             d.claim_nonce(operator_nonce)
         };
@@ -312,7 +314,7 @@ pub async fn dispatch_and_submit(
         //     (L2419). The truncate semantics: `gas_used as f64 * 1.5 as u64`
         //     matches Python `int(gas_used * 1.5)` (toward-zero) for any
         //     realistic gas value.
-        #[allow(
+        #[expect(
             clippy::cast_precision_loss,
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss
@@ -374,6 +376,7 @@ pub async fn dispatch_and_submit(
 
         // 2i. Reserve pools (L2662) + commit to the local set.
         {
+            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
             let mut d = dispatcher.lock().expect("dispatcher mutex poisoned");
             d.reserve_pools(path_pools.clone());
         }
@@ -392,17 +395,20 @@ pub async fn dispatch_and_submit(
         let dispatcher_clone = Arc::clone(dispatcher);
         let probe_clone = Arc::clone(&probe);
         let submitted_tx = SubmittedTx::new(tx_hash, nonce, path_pools, current_block);
-        dispatcher
-            .lock()
-            .expect("dispatcher mutex poisoned")
-            .track_task(async move {
-                let _ = monitor_pending_transaction_default(
-                    submitted_tx,
-                    &*probe_clone,
-                    &dispatcher_clone,
-                )
-                .await;
-            });
+        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+        {
+            dispatcher
+                .lock()
+                .expect("dispatcher mutex poisoned")
+                .track_task(async move {
+                    let _ = monitor_pending_transaction_default(
+                        submitted_tx,
+                        &*probe_clone,
+                        &dispatcher_clone,
+                    )
+                    .await;
+                });
+        }
     }
 
     Ok(outcome)
@@ -430,7 +436,7 @@ fn percentile_key(p: f64) -> Option<u64> {
     }
     // Guarded cast: `p` is finite, whole, and in `[0, 100]`, so it fits `u64`
     // exactly — no truncation, no sign loss.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let key = p as u64;
     Some(key)
 }
@@ -502,10 +508,13 @@ pub async fn fetch_fee_history(
         .collect();
 
     let recorded_block = history.oldest_block + block_count.saturating_sub(1);
-    dispatcher
-        .lock()
-        .expect("dispatcher mutex poisoned")
-        .record_priority_fees(recorded_block, fees);
+    #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+    {
+        dispatcher
+            .lock()
+            .expect("dispatcher mutex poisoned")
+            .record_priority_fees(recorded_block, fees);
+    }
     true
 }
 
@@ -537,6 +546,7 @@ fn build_transaction_request(params: &TxParams) -> TransactionRequest {
     }
 }
 
+#[expect(clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

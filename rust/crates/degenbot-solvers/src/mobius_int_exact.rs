@@ -392,7 +392,7 @@ pub fn u512_to_u256_internal(v: U512) -> U256 {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

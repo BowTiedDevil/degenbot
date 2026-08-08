@@ -241,6 +241,7 @@ where
 
 pub use crate::liquidity_event::LiquidityEvent;
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -82,6 +82,7 @@ impl PythonLogLayer {
             shutdown: AtomicBool::new(false),
         });
         let drainer_state = Arc::clone(&state);
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _drainer = thread::Builder::new()
             .name("rust-log-drainer".into())
             .spawn(move || drainer_loop(drainer_state))
@@ -241,7 +242,7 @@ fn format_event_message(event: &tracing::Event) -> String {
 ///
 /// Batches up to `BATCH_SIZE` records or flushes after `FLUSH_INTERVAL`,
 /// then forwards the batch to Python logging via a single `Python::attach`.
-#[allow(clippy::needless_pass_by_value)] // owned Arc moved into drainer thread closure
+#[expect(clippy::needless_pass_by_value)] // owned Arc moved into drainer thread closure
 fn drainer_loop(state: Arc<PythonLogLayerState>) {
     let mut batch: Vec<PythonLogRecord> = Vec::with_capacity(BATCH_SIZE);
     let mut last_flush = Instant::now();
@@ -432,6 +433,7 @@ pub fn init_logging_subscriber() {
     });
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

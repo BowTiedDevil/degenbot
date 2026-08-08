@@ -8,6 +8,7 @@
 //!  5. Store miss + Db error (`Err`) → `Err(DbError)` (propagated — Decision 8 (A)).
 //!  6. `db = None` (cold-start) → Store arm only; miss if store is empty.
 
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::collections::HashMap;
 
 use alloy::primitives::{aliases::U128, Address, I256, U256};

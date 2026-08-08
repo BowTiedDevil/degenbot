@@ -122,6 +122,7 @@ pub fn wrap_execute_calldata(
     Ok(Bytes::from(encoded.data))
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

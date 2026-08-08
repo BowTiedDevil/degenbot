@@ -176,6 +176,7 @@ impl Bot {
             .fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V4)
             .map_err(SnapshotLoadError::from)?;
         // S = min(fetch_newest_update_block(V3), V4), ignoring None families.
+        #[expect(clippy::expect_used)] // block numbers are non-negative (documented)
         let s = match (state.snapshot_seed_block, now_v3, now_v4) {
             (None, Some(v3), Some(v4)) => {
                 Some(u64::try_from(v3.min(v4)).expect("block number non-negative"))
@@ -275,11 +276,13 @@ impl Bot {
 
     /// Start the block pump. Placeholder — the `BlockPump` wiring lands in
     /// ADR-006 slice 5; until then this panics to make the unwired state loud.
+    #[expect(clippy::unimplemented)] // deliberate until ADR-006 slice 5 wires BlockPump
     pub fn start(&self) {
         unimplemented!("BlockPump wiring lands in ADR-006 slice 5");
     }
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use crate::bot_core::RegisterV2PoolParams;

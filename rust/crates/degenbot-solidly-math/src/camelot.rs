@@ -124,7 +124,7 @@ pub fn get_y_camelot(x_0: U256, xy: U256, y_seed: U256) -> U256 {
 /// - [`SolidlyMathError::InvalidTokenIn`] if `token_in` is not 0 or 1.
 /// - [`SolidlyMathError::Overflow`] on divide-by-zero.
 /// - Propagates [`k_camelot`]'s revert on uint256 overflow.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn calc_exact_in_stable_camelot(
     amount_in: U256,
     token_in: u8,

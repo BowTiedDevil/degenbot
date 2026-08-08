@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Aerodrome V2 pool builder identity
 //! + state (ADR-005 standalone claim, the behavioral tier; task SSSXG6).
 //!
@@ -34,14 +35,12 @@ const FIXTURE_PATH: &str = concat!(
 
 /// The shared fixture, deserialized once per test.
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct AerodromeFixtureFile {
     fixture: AerodromeFixtureInputs,
     expected: AerodromeExpected,
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct AerodromeFixtureInputs {
     token0: String,
     token1: String,
@@ -60,7 +59,6 @@ struct AerodromeFixtureInputs {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct AerodromeExpected {
     pool_id: u64,
 }

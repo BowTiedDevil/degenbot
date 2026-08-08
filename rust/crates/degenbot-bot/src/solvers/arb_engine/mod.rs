@@ -51,7 +51,6 @@ use crate::bot_core::BotState;
 
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
 mod delivery_policy;
-#[allow(clippy::module_inception)]
 mod diagnostic;
 pub mod engine_handle;
 pub mod engine_subscriber;
@@ -519,6 +518,7 @@ impl ArbitrageEngine {
 /// same ergonomics the old production `register_v*_pool` methods had; they
 /// delegate straight to `BotState::register_*`.
 #[cfg(test)]
+#[expect(clippy::expect_used)] // test convenience: assert registration succeeds
 impl ArbitrageEngine {
     /// Register a V2 pool into the engine's `BotState` and return its `pool_id`.
     ///

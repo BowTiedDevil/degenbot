@@ -73,7 +73,6 @@ fn u256_to_py_obj(py: Python<'_>, v: U256) -> PyResult<PyObject> {
 ///   `INSUFFICIENT_OUTPUT_AMOUNT`) surfaces as `ValueError` carrying the
 ///   Solidity revert string — matches how the on-chain pair reverts for a
 ///   zero `amountOut` rather than silently returning a wrong input.
-#[allow(clippy::needless_pass_by_value)]
 fn solidly_err(e: SolidlyMathError) -> PyErr {
     match e {
         SolidlyMathError::Overflow => {
@@ -185,7 +184,6 @@ pub fn camelot_k(
 ///
 /// Returns `ValueError` on non-convergence (after 255 iterations) or overflow.
 #[pyfunction(signature = (x0, xy, y, decimals_0, decimals_1))]
-#[allow(clippy::too_many_arguments)] // mirrors the deployed-contract 5-arg signature + decimals pair
 pub fn get_y_solidly(
     x0: &Bound<'_, PyAny>,
     xy: &Bound<'_, PyAny>,
@@ -239,7 +237,6 @@ pub fn camelot_get_y_camelot(
 /// Returns `ValueError` ("Invalid `token_in` identifier") if `token_in` is not
 /// 0 or 1.
 #[pyfunction(signature = (amount_in, token_in, reserves_0, reserves_1, fee_numer, fee_denom))]
-#[allow(clippy::too_many_arguments)]
 pub fn calc_exact_in_volatile(
     amount_in: &Bound<'_, PyAny>,
     token_in: u8,
@@ -268,7 +265,7 @@ pub fn calc_exact_in_volatile(
 ///
 /// Returns `ValueError` on invalid `token_in`, overflow, or non-convergence.
 #[pyfunction(signature = (amount_in, token_in, reserves_0, reserves_1, decimals_0, decimals_1, fee_numer, fee_denom))]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn calc_exact_in_stable_solidly(
     amount_in: &Bound<'_, PyAny>,
     token_in: u8,
@@ -302,7 +299,7 @@ pub fn calc_exact_in_stable_solidly(
 ///
 /// Returns `ValueError` on invalid `token_in`, overflow, or non-convergence.
 #[pyfunction(signature = (amount_out, token_in, reserves_0, reserves_1, decimals_0, decimals_1, fee_numer, fee_denom))]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn calc_exact_out_stable_solidly(
     amount_out: &Bound<'_, PyAny>,
     token_in: u8,
@@ -335,7 +332,7 @@ pub fn calc_exact_out_stable_solidly(
 ///
 /// Returns `ValueError` on invalid `token_in`, overflow, or non-convergence.
 #[pyfunction(signature = (amount_in, token_in, reserves_0, reserves_1, decimals_0, decimals_1, fee_numer, fee_denom))]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn calc_exact_in_stable_camelot(
     amount_in: &Bound<'_, PyAny>,
     token_in: u8,

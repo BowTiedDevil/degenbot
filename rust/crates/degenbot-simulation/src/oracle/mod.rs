@@ -102,6 +102,7 @@ pub fn set_tx_gas_limit_cap(evm: &mut FixtureEvm, cap: u64) {
 /// Panics if the revm transaction-environment builder rejects the provided
 /// spec (a programmer error — both `Deploy` and `Call` specs are valid).
 pub fn transact(evm: &mut FixtureEvm, spec: TxSpec) -> Verdict {
+    #[expect(clippy::expect_used)] // valid tx env by construction (documented)
     let tx = match spec {
         TxSpec::Deploy { init_code, gas } => TxEnv::builder()
             .kind(TxKind::Create)
@@ -148,6 +149,7 @@ pub fn transact(evm: &mut FixtureEvm, spec: TxSpec) -> Verdict {
 /// Panics if the revm transaction-environment builder rejects the provided
 /// spec (see [`transact`]).
 pub fn transact_with_gas(evm: &mut FixtureEvm, spec: TxSpec) -> (Verdict, u64) {
+    #[expect(clippy::expect_used)] // valid tx env by construction (documented)
     let tx = match spec {
         TxSpec::Deploy { init_code, gas } => TxEnv::builder()
             .kind(TxKind::Create)

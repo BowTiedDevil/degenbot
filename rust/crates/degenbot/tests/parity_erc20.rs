@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used)]
 //! Tier-2 behavioral dual-driver parity — ERC-20 metadata resolution
 //! (VK3YDM-S6).
 //!

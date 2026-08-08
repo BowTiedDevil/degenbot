@@ -268,6 +268,7 @@ where
     }
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]
@@ -281,7 +282,7 @@ mod tests {
     /// `EmptyDB` returns `None` for `basic_ref` + `KECCAK_EMPTY` bytecode for
     /// `code_by_hash_ref` (both error-free), so the mock serves as the
     /// cold-miss fallback the warm cache forwards to.
-    #[allow(clippy::struct_field_names)]
+    #[expect(clippy::struct_field_names)]
     struct CountingMockDb {
         basic_calls: Cell<u64>,
         code_by_hash_calls: Cell<u64>,

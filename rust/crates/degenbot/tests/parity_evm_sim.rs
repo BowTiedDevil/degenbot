@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — in-process sim SUCCESS path
 //! (ADR-005 §4.2, the behavioral tier).
 //!
@@ -149,7 +150,7 @@ fn mock_no_rpc_provider() -> AlloyProvider {
 /// fixture JSON. The Python half (`test_evm_sim_dual_driver.py`) drives the
 /// same fixture through the `simulate_in_process_success_probe` PyO3 binding.
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn evm_sim_success_path_dual_driver_parity() {
     let fx = load_fixture();
     let provider = mock_no_rpc_provider();

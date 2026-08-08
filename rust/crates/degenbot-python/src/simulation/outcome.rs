@@ -88,7 +88,6 @@ impl PyDispatchOutcome {
     /// Build from the core `DispatchOutcome`'s joined-field tally. A4 calls
     /// this after joining each `SimResult → SubmitCandidate`.
     #[must_use]
-    #[allow(dead_code)]
     pub(crate) fn from_join(
         gas_profitable: Vec<SubmitCandidate>,
         path_info_by_id: HashMap<u64, PathInfo>,

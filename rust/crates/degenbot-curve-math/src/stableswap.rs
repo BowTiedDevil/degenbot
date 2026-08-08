@@ -289,7 +289,7 @@ pub fn stableswap_get_d(
 ///
 /// Returns [`CurveMathError::IndexOutOfBounds`] if `i == j` or an index is out
 /// of range; [`CurveMathError::NotConverged`] after 255 steps.
-#[allow(clippy::too_many_arguments)] // mirrors the Vyper contract's 9-arg signature
+#[expect(clippy::too_many_arguments)] // mirrors the Vyper contract's 9-arg signature
 pub fn stableswap_get_y(
     i: usize,
     j: usize,
@@ -597,7 +597,6 @@ fn exp18() -> U256 {
 
 /// 10**n as a U256 (avoids `u64::pow` overflow for n ≥ 20). Mirrors the Vyper
 /// `10**N` literals.
-#[allow(clippy::excessive_precision)]
 fn pow10(n: u32) -> U256 {
     U256::from(10u64).pow(U256::from(n))
 }

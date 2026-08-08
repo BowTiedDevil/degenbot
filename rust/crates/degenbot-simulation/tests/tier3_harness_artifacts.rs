@@ -16,6 +16,7 @@
 //! the committed artifacts. It runs in the CI `tier3-oracle` job (has
 //! solc/forge); this source-hash test needs no toolchain.
 
+#![expect(clippy::expect_used, clippy::panic)]
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;

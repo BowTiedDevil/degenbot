@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! Path-26154 minimal executor-payload harness: run the EXACT encoded
 //! V2→V4→V3 arbitrage through the REAL `cmd_executor` bytecode, injected
 //! alone into an EmptyDB revm (per the "inject only the executor, then run
@@ -38,7 +44,7 @@ use degenbot_rpc::provider::AlloyProvider;
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 
-#[allow(dead_code)] // deserialized fixture fields are probe inputs
+#[expect(dead_code)] // deserialized fixture fields are probe inputs
 #[derive(serde::Deserialize)]
 struct Fixture {
     target_block: u64,
@@ -241,7 +247,7 @@ fn build_path(fx: &Fixture, path_id: u64) -> SimulatePath {
 /// failing frame. This is the trace/inspection that pins down WHICH contract
 /// call (if any) triggered the empty revert — independent of the sim's
 /// internal `[sim-trace]` tracing.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn run_executor_call_trace(fx: &Fixture, runtime: &[u8]) {
     use alloy::primitives::{Bytes, TxKind, U256};
     use degenbot::degenbot_backrun_strategy::calldata::{

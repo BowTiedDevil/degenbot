@@ -174,7 +174,7 @@ pub fn v4_tick_bitmap_word_slot(word_pos: i16, pool_state_base: U256) -> U256 {
 #[must_use]
 pub fn encode_v4_slot0(parts: V4Slot0Parts) -> U256 {
     let sqrt_price = parts.sqrt_price_x96 & MASK_160;
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     let tick_field = U256::from(parts.tick as u32 & 0x00FF_FFFF);
     let protocol_fee_field = U256::from(parts.protocol_fee & 0x00FF_FFFF);
     let lp_fee_field = U256::from(parts.lp_fee & 0x00FF_FFFF);
@@ -190,7 +190,6 @@ pub fn decode_v4_slot0(word: U256) -> V4Slot0Parts {
     let tick_field = (word >> 160u32) & U256::from(0x00FF_FFFFu32);
     let protocol_fee = ((word >> 184u32) & U256::from(0x00FF_FFFFu32)).to::<u32>();
     let lp_fee = ((word >> 208u32) & U256::from(0x00FF_FFFFu32)).to::<u32>();
-    #[allow(clippy::cast_possible_wrap)]
     let tick_u32 = tick_field.to::<u32>();
     let tick = if (tick_u32 & 0x800000) != 0 {
         (tick_u32 as i32) - (1 << 24)
@@ -253,6 +252,7 @@ fn write_uint24_padded(slot: &mut [u8], value: u32) {
 // Tests — mainnet-pinned (cast storage) + cast-keccak/abi-encode oracles.
 // ─────────────────────────────────────────────────────────────────────────
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

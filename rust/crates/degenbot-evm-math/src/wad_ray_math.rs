@@ -37,24 +37,24 @@ use alloy::primitives::U256;
 use thiserror::Error;
 
 /// 18-decimal fixed-point precision (`1e18`).
-#[allow(clippy::unreadable_literal)] // u64 limb — group separator porly groups
+#[expect(clippy::unreadable_literal)] // u64 limb — group separator porly groups
 pub const WAD: U256 = U256::from_limbs([0xde0b6b3a7640000, 0, 0, 0]);
 
 /// Half of [`WAD`] (`5e17`).
-#[allow(clippy::unreadable_literal)]
+#[expect(clippy::unreadable_literal)]
 pub const HALF_WAD: U256 = U256::from_limbs([0x6f05b59d3b20000, 0, 0, 0]);
 
 /// 27-decimal fixed-point precision (`1e27`).
-#[allow(clippy::unreadable_literal)]
+#[expect(clippy::unreadable_literal)]
 pub const RAY: U256 = U256::from_limbs([0x9fd0803ce8000000, 0x33b2e3c, 0, 0]);
 
 /// Half of [`RAY`] (`5e26`).
-#[allow(clippy::unreadable_literal)]
+#[expect(clippy::unreadable_literal)]
 pub const HALF_RAY: U256 = U256::from_limbs([0x4fe8401e74000000, 0x19d971e, 0, 0]);
 
 /// The ratio between ray and wad (`1e9`); `ray_to_wad` divides by this,
 /// `wad_to_ray` multiplies.
-#[allow(clippy::unreadable_literal)]
+#[expect(clippy::unreadable_literal)]
 pub const WAD_RAY_RATIO: U256 = U256::from_limbs([0x3b9aca00, 0, 0, 0]);
 
 /// `MAX_UINT256` (mirrors `degenbot.constants.MAX_UINT256`).
@@ -273,7 +273,7 @@ pub fn wad_to_ray(a: U256) -> Result<U256, WadRayError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

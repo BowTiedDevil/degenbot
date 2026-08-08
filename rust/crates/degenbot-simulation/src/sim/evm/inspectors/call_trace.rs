@@ -270,7 +270,7 @@ impl CallTraceInspector {
 }
 
 impl CallTraceHandle {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn push_frame(&self, depth: usize, inputs: &CallInputs) {
         let selector = selector_of(&inputs.input);
         self.buf.borrow_mut().frames.push(CallFrame {
@@ -369,6 +369,7 @@ where
     }
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

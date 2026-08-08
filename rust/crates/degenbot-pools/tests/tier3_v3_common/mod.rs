@@ -28,7 +28,7 @@
 //! dead-code warnings are therefore suppressed here rather than re-allowed at
 //! every call site.
 #![allow(dead_code)]
-
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -76,7 +76,6 @@ pub struct OnChainSwapResult {
     /// `Swap` event variant from these). Consumed by the Pancake-V3 consumer;
     /// the V3 consumer reads only the state-walk fields, so this is allowed to
     /// be temporarily dead in one consumer.
-    #[allow(dead_code)]
     pub logs: Vec<RpcLog>,
 }
 
@@ -204,9 +203,7 @@ pub type PoolSeeder = fn(&mut CacheDB<EmptyDB>, Address, &V3PoolState, i32);
 /// Revert vs halt is kept distinct: a Solidity `Revert` is a math-level verdict
 /// (the caller must match it against an engine rejection), a `Halt` (OOG) is
 /// the documented fixture gas trap with no verdict.
-#[allow(clippy::too_many_arguments)] // fork, seeder, state, fee, spacing, zfo, amount, limit
-#[allow(clippy::too_many_lines)] // one logical deploy → setup → seed → swap → read pipeline
-#[allow(clippy::match_wildcard_for_single_variants)] // `other` covers only the lone `Success{Create}`
+#[expect(clippy::too_many_arguments)] // fork, seeder, state, fee, spacing, zfo, amount, limit
 pub fn run_onchain_swap(
     fork: &V3Fork,
     seeder: PoolSeeder,

@@ -250,6 +250,7 @@ pub fn dump_divergence_summary() {
     );
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

@@ -88,6 +88,7 @@ fn narrow_sync_reserve(word: U256) -> Option<U112> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::primitives::Bytes;

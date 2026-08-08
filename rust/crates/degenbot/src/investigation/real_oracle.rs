@@ -11,13 +11,13 @@
 //! (matching the `path5000_v4_gas_probe` example it was extracted from). It
 //! still emits no `pyo3` and holds no engine state—it is a thin, contract-level
 //! revm driver over the reusable [`degenbot_simulation::oracle`] spine.
-#![allow(
+#![expect(
     clippy::cast_possible_wrap,
     clippy::doc_markdown,
-    clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::must_use_candidate,
-    clippy::implicit_hasher
+    clippy::expect_used,
+    clippy::panic
 )]
 //!
 //! Extracted from the `path5000_v4_gas_probe` example so the deploy+seed+drive
@@ -48,7 +48,7 @@ fn repo_root() -> PathBuf {
 
 /// Load a foundry-shaped harness artifact's creation bytecode (committed, so no
 /// toolchain is needed at runtime).
-#[allow(clippy::missing_panics_doc)]
+#[expect(clippy::missing_panics_doc)]
 pub fn load_creation_bytecode(file: &str, contract: &str) -> Bytes {
     let artifact_path = repo_root()
         .join("tier3-oracle")

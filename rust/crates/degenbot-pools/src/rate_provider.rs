@@ -99,6 +99,7 @@ impl BalancerRateProvider for StaticRateProvider {
     }
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

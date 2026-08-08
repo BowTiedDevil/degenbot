@@ -1,5 +1,6 @@
 //! Prototype test: shared Pool handle for V2 (RED → GREEN).
 
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 use alloy::primitives::{aliases::U112, Address, B256, U256};
 use degenbot_pools::registry::PoolEntry;
 use degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};

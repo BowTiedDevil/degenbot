@@ -99,6 +99,7 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
             // The Solidity `tickBitmap(int16)` selector takes an int16; the
             // helper's `word: i32` is guaranteed to fit in int16 for any valid
             // V3 tick (tick range is int24, word = tick.div_euclid(spacing) >> 8).
+            #[expect(clippy::expect_used)] // V3 tick word always fits in int16
             let word_i16 = i16::try_from(word).expect("tick word fits in int16");
 
             // 2. Fetch the bitmap for this word.
@@ -152,6 +153,7 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
                     tick,
                     tick_spacing,
                 );
+            #[expect(clippy::expect_used)] // V3 tick word always fits in int16
             let word_i16 = i16::try_from(word).expect("tick word fits in int16");
 
             let bitmap =
@@ -207,7 +209,7 @@ fn parse_address(s: &str) -> Result<Address, BootstrapTickError> {
 ///
 /// Takes the error by value to match the `Result::map_err` callsite contract
 /// (which moves the error in).
-#[allow(
+#[expect(
     clippy::needless_pass_by_value,
     reason = "map_err passes the error by value"
 )]
@@ -220,7 +222,7 @@ fn map_provider_err(err: degenbot_core::errors::ProviderError) -> BootstrapTickE
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::offline::OfflineProvider;

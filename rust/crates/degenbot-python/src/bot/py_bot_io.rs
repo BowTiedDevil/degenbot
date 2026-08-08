@@ -187,7 +187,7 @@ impl PyBotIo {
     /// construction-time DB reads/writes through Rust (the `SQLAlchemy`
     /// `session.scalar(select(...))` / `session.commit()` bodies retire).
     #[new]
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (provider, db=None, database_path=None))]
     pub(crate) fn new(
         py: Python<'_>,
@@ -247,7 +247,7 @@ impl PyBotIo {
     /// RPC methods delegate through the trait objects; the 27 choreography
     /// wrappers stay unchanged. The Python `Bot.__init__` calls this right after
     /// `PyBot.attach_construction_io` so the two stay in lockstep.
-    #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+    #[expect(clippy::unnecessary_wraps)]
     fn attach_construction_io(&self, py_bot: &Bound<'_, crate::bot::PyBot>) -> PyResult<()> {
         *self.construction_io.lock() = py_bot.borrow().bot.construction_io_arc();
         Ok(())
@@ -876,12 +876,15 @@ impl PyBotIo {
         // the construction-IO / address / block conversions `expect`: for the
         // alloy-backed Offline/RPC providers the builder dispatches through,
         // all three succeed.
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let io = self
             .required_construction_io()
             .expect("probe_pool_type requires the alloy-backed construction IO");
         let addr = alloy::primitives::Address::from(
+            #[expect(clippy::expect_used)] // invariant-guarded (documented)
             parse_address_for_call(address).expect("probe_pool_type address parse"),
         );
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let block_num = extract_block_u64(block).expect("probe_pool_type block parse");
         let family = py.detach(|| {
             get_runtime().block_on(async move {

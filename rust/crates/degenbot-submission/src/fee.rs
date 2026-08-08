@@ -95,7 +95,7 @@ pub fn compute_max_fee(base_fee_next: u128, priority_fee: u128) -> SubmissionRes
     // Python: int(1.5 * base_fee_next) — float multiply then toward-zero
     // truncate via Python `int()`. The Rust `as u128` cast on an `f64` is
     // the same toward-zero truncation. See module docs for the float boundary.
-    #[allow(
+    #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
@@ -109,6 +109,7 @@ pub fn compute_max_fee(base_fee_next: u128, priority_fee: u128) -> SubmissionRes
         })
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,7 +151,7 @@ mod tests {
             // Property: computed >= priority (1.5x headroom is non-negative)
             proptest::prop_assert!(computed >= priority);
             // Property: computed >= int(1.5 * base_fee) (priority added)
-            #[allow(
+            #[expect(
                 clippy::cast_precision_loss,
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss

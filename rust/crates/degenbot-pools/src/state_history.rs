@@ -691,6 +691,7 @@ impl ReorgJournal<V3BlockDelta> {
         let mut tick_data_block_before: Option<u64> = None;
         let mut oldest_popped_block: Option<u64> = None;
         while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
+            #[expect(clippy::expect_used)] // loop guard above guarantees non-empty
             let popped = self.deltas.pop_back().expect("checked non-empty above");
             for (tick_idx, tick_before) in &popped.tick_priors {
                 accumulated_priors.insert(*tick_idx, tick_before.clone());
@@ -822,6 +823,7 @@ impl<D: FullStateDelta> ReorgJournal<D> {
             self.deltas.pop_back();
         }
 
+        #[expect(clippy::expect_used)] // `earliest < block` guarantees a surviving delta
         let landed = self
             .deltas
             .back()
@@ -830,6 +832,7 @@ impl<D: FullStateDelta> ReorgJournal<D> {
     }
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1166,6 +1169,7 @@ mod tests {
 // V3 delta scalar_priors tests (ADR-004)
 // ---------------------------------------------------------------------------
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod v3_delta_priors_tests {
     use super::*;
@@ -1681,6 +1685,7 @@ fn restore_keeps_oldest_clock_prior_when_newest_delta_is_tick_only() {
 // Property-based tests
 // ---------------------------------------------------------------------------
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod proptests {
     use super::*;

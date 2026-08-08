@@ -8,6 +8,7 @@
 //!
 //! Run with: `cargo test --features auto-initialize --test python_integration`
 
+#![expect(clippy::panic)]
 #![cfg(feature = "auto-initialize")]
 #![allow(
     clippy::unwrap_used,

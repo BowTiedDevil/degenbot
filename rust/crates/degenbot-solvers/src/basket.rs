@@ -87,7 +87,7 @@ impl BalancerMultiTokenState {
     }
 
     /// Reserves upscaled to 18-decimal (Balancer Vault convention).
-    #[allow(clippy::cast_precision_loss)] // f64 is the paper's derivation space
+    #[expect(clippy::cast_precision_loss)] // f64 is the paper's derivation space
     fn upscaled_reserves(&self) -> Vec<f64> {
         let factors = self.scaling_factors();
         self.reserves
@@ -98,7 +98,7 @@ impl BalancerMultiTokenState {
     }
 
     /// Descale a trade from 18-decimal units back to native token units.
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
     fn descale_trade(&self, trade: f64, token_index: usize) -> i128 {
         if self.decimals.is_empty() {
             return trade.round() as i128;
@@ -187,7 +187,7 @@ fn compute_d(signature: &[i8]) -> Vec<i32> {
 /// All reserves are internally upscaled to 18-decimal before applying
 /// the formula. The resulting trades are in the upscaled 18-decimal space
 /// and must be descaled to native token units for on-chain use.
-#[allow(clippy::cast_precision_loss)] // weights are 18-dp fixed-point → f64
+#[expect(clippy::cast_precision_loss)] // weights are 18-dp fixed-point → f64
 fn compute_optimal_trade(
     pool: &BalancerMultiTokenState,
     market_prices: &[f64],
@@ -260,7 +260,7 @@ fn compute_optimal_trade(
 /// 3. Maintains the invariant with fees.
 ///
 /// All calculations use upscaled 18-decimal reserves.
-#[allow(clippy::cast_precision_loss)]
+#[expect(clippy::cast_precision_loss)]
 fn validate_trade(trades: &[f64], signature: &[i8], pool: &BalancerMultiTokenState) -> bool {
     let gamma = 1.0 - (pool.fee_numer as f64) / (pool.fee_denom as f64);
     let reserves_f = pool.upscaled_reserves();
@@ -319,7 +319,6 @@ fn validate_trade(trades: &[f64], signature: &[i8], pool: &BalancerMultiTokenSta
 /// multiplying by market prices, ensuring dimensional consistency.
 ///
 /// `Profit = -sum(market_price_i * Phi_i_in_tokens)`
-#[allow(clippy::cast_precision_loss)]
 fn compute_profit_token_units(trades: &[f64], market_prices: &[f64]) -> f64 {
     let mut total = 0.0_f64;
     for i in 0..trades.len() {
@@ -339,11 +338,6 @@ fn compute_profit_token_units(trades: &[f64], market_prices: &[f64]) -> f64 {
 /// units (accounting for each token's decimals), round, and search
 /// ±[`SEARCH_RADIUS`] candidates around the base for the max-profit
 /// integer combination.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 fn refine_to_integer(
     trades: &[f64],
     signature: &[i8],
@@ -441,7 +435,7 @@ fn refine_to_integer(
 /// Compute profit for native integer trades:
 /// `-sum(market_prices[i] * candidate[i] / 10^decimals[i])` when decimals are
 /// present, or `-sum(market_prices[i] * candidate[i])` when empty.
-#[allow(clippy::cast_precision_loss)]
+#[expect(clippy::cast_precision_loss)]
 fn compute_int_profit(
     pool: &BalancerMultiTokenState,
     market_prices: &[f64],
@@ -473,7 +467,6 @@ fn compute_int_profit(
 /// optimum for each, validating, and selecting the highest-profit
 /// integer-refined result.
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
 pub fn solve_balancer_weighted(
     pool: &BalancerMultiTokenState,
     market_prices: &[f64],
@@ -553,7 +546,7 @@ mod tests {
     /// Oracle values from Python `solve_balancer_weighted` with `decimals=()`:
     /// reserves=(100e18, 2e12, 1e12), weights=(5e17, 2.5e17, 2.5e17),
     /// `fee=3/1000`, `market_prices=(2000.0, 1.0, 1.0)`.
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_precision_loss)]
     #[test]
     fn tdd_red_three_token_basket_matches_python_oracle() {
         let pool = BalancerMultiTokenState {

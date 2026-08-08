@@ -71,6 +71,7 @@ pub fn mulmod(a: U256, b: U256, k: U256) -> U256 {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

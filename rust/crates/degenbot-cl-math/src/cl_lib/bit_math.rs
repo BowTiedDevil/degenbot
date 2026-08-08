@@ -24,7 +24,7 @@ pub fn most_significant_bit(x: U256) -> Result<u8, ClMathError> {
     // U256 is 256 bits; bit_length() returns 1..=256 for non-zero values.
     // MSB position = bit_length - 1. Subtract before cast: result is 0..=255,
     // which fits in u8 without truncation.
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_possible_truncation)]
     Ok((x.bit_len() - 1) as u8)
 }
 
@@ -42,7 +42,7 @@ pub fn least_significant_bit(x: U256) -> Result<u8, ClMathError> {
     }
     // Trailing zeros count gives the LSB position directly.
     // Safe: trailing_zeros() returns 0..=255 for non-zero U256, which fits in u8.
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(clippy::cast_possible_truncation)]
     Ok(x.trailing_zeros() as u8)
 }
 

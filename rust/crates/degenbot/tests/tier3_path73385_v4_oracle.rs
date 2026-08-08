@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-3 path-73385 V4 oracle byte-exactness guard (block 25706469).
 //!
 //! Pins the byte-exact V4 concentrated-liquidity twin for the exact topology

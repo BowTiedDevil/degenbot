@@ -99,7 +99,6 @@ pub fn register_cancel(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

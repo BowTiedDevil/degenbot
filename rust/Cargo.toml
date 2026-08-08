@@ -25,6 +25,44 @@ publish = false
 repository = "https://github.com/BowTiedDevil/degenbot"
 authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 
+# Single source of truth for lint policy across all workspace members
+# (ADR: centralize per-crate [lints] duplication). Every member inherits these
+# via `[lints] workspace = true`, so adjusting a clippy group or adding a lint
+# is a one-line edit here instead of a 27-file sweep. This is the in-tree
+# POLICY; the push gate's `cargo clippy -- --deny warnings` is what escalates
+# the warn-level groups to hard failure at push/CI time.
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+
+# Panic safety - must handle errors, not crash
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+
+# The "no cheating" rule
+allow_attributes = "deny"
+
+# Code hygiene - no debug leftovers
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+# Prevents deadlocks
+await_holding_lock = "deny"
+
+# Libraries shouldn't exit
+exit = "deny"
+
 [workspace]
 resolver = "2"
 members = [

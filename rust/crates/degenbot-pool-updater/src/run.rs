@@ -232,7 +232,6 @@ pub enum MapError {
 ///
 /// Returns [`MapError::AerodromeFeeNeeded`] if the event is an Aerodrome V2
 /// pool + `aerodrome_fee` is `None` (the caller forgot to resolve the fee).
-#[allow(clippy::missing_errors_doc)]
 pub fn map_pool_creation(
     spec: &ExchangeSpec,
     event: &DecodedPoolCreated,
@@ -328,7 +327,7 @@ pub fn map_pool_creation(
 /// caller drops the `Transaction` (rollback) on `Err`. When `verify` is
 /// `Some`, a pre-commit on-chain-truth divergence surfaces as
 /// [`RunError::Verification`] (also a rollback — the stamp does NOT advance).
-#[allow(clippy::missing_errors_doc, clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn apply_chunk_writes_on_conn(
     conn: &Connection,
     chain_id: i64,
@@ -685,8 +684,7 @@ pub enum RunError {
 /// Returns [`RunError`] on a DB/RPC failure (the in-flight chunk is rolled
 /// back before returning — the committed chunks stay durable) or
 /// [`RunError::Cancelled`] if the `cancel` flag was set.
-#[allow(
-    clippy::missing_errors_doc,
+#[expect(
     clippy::too_many_lines,
     clippy::needless_pass_by_value,
     clippy::too_many_arguments
@@ -1026,11 +1024,14 @@ async fn fetch_pool_creations(
                     // (a follow-up task resolves getFee(address, stable)).
                     // Logged via stderr (the chunk's progress sink doesn't carry
                     // per-pool warnings; a future sink revision might).
-                    eprintln!(
-                        "degenbot-pool-updater: skipping Aerodrome V2 pool \
-                         {pool_address} (exchange {}): per-pool getFee RPC not wired yet",
-                        spec.name,
-                    );
+                    #[expect(clippy::print_stderr)] // deliberate per-pool stderr warning
+                    {
+                        eprintln!(
+                            "degenbot-pool-updater: skipping Aerodrome V2 pool \
+                             {pool_address} (exchange {}): per-pool getFee RPC not wired yet",
+                            spec.name,
+                        );
+                    }
                 }
             }
         }
@@ -1038,8 +1039,9 @@ async fn fetch_pool_creations(
     Ok(out)
 }
 
+#[expect(clippy::panic)]
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::verify::LiquidityDivergence;

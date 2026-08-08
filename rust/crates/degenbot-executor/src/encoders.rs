@@ -886,7 +886,7 @@ pub fn make_pool_key(
 }
 
 #[cfg(test)]
-#[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
+#[expect(clippy::unwrap_used, clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
     use alloy::primitives::{address, U256};

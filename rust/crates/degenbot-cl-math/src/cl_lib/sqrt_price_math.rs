@@ -328,6 +328,7 @@ pub fn v3_virtual_reserves(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

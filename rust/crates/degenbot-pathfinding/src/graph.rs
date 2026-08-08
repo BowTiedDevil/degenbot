@@ -131,6 +131,8 @@ impl PathGraph {
         let mut adj: Vec<Vec<CompactEdge>> = Vec::new();
 
         for (token0, token1, pool_id, pool_kind) in edges {
+            // u32 compact-index invariant: a graph cannot reach u32::MAX nodes.
+            #[expect(clippy::expect_used)]
             let pool_idx = u32::try_from(pools.len()).expect("pool count exceeds u32::MAX");
             pools.push((pool_id, pool_kind));
 
@@ -164,6 +166,7 @@ impl PathGraph {
         if let Some(&idx) = token_index.get(&token) {
             idx
         } else {
+            #[expect(clippy::expect_used)] // u32 compact-index invariant (see `from_edges`)
             let idx = u32::try_from(token_index.len()).expect("token count exceeds u32::MAX");
             token_index.insert(token, idx);
             adj.push(Vec::new());
@@ -224,7 +227,11 @@ impl PathGraph {
             // incident edges) is ≤ 1.
             let to_prune: Vec<u32> = (0..n)
                 .filter(|&i| !removed[i] && self.adj[i].len() <= 1)
-                .map(|i| u32::try_from(i).expect("node index exceeds u32::MAX"))
+                .map(|i| {
+                    // u32 node-index invariant: a graph cannot reach u32::MAX nodes.
+                    #[expect(clippy::expect_used)]
+                    u32::try_from(i).expect("node index exceeds u32::MAX")
+                })
                 .collect();
             if to_prune.is_empty() {
                 break;
@@ -567,9 +574,7 @@ enum AdvanceOutcome {
 
 impl OwnedPathFinder {
     /// Create from owned graph + search parameters.
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
-    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         graph: PathGraph,
         start: u64,
@@ -655,7 +660,7 @@ impl OwnedPathFinder {
     /// done. This is the shared DFS core — both [`Self::next_path`] (which
     /// materializes `EdgeKey`s) and [`Self::next_path_indices_into`] (which
     /// appends pool indices, avoiding allocation) dispatch through it.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn advance(&mut self) -> AdvanceOutcome {
         if self.done {
             return AdvanceOutcome::Exhausted;
@@ -700,11 +705,16 @@ impl OwnedPathFinder {
                 if now.duration_since(self.last_heartbeat) >= DISCOVERY_HEARTBEAT {
                     self.last_heartbeat = now;
                     let elapsed = now.duration_since(self.search_started);
-                    eprintln!(
-                        "[pathfinding] discovery heartbeat: elapsed={elapsed:?} \
-                         paths_yielded={} advances_since_yield={} max_stack_depth={}",
-                        self.paths_yielded, self.advances_since_yield, self.max_stack_depth
-                    );
+                    // Low-frequency stderr diagnostic on a zero-dependency leaf; no
+                    // logging crate is available and this runs off the hot path.
+                    #[expect(clippy::print_stderr)]
+                    {
+                        eprintln!(
+                            "[pathfinding] discovery heartbeat: elapsed={elapsed:?} \
+                             paths_yielded={} advances_since_yield={} max_stack_depth={}",
+                            self.paths_yielded, self.advances_since_yield, self.max_stack_depth
+                        );
+                    }
                 }
             }
             let frame = &mut self.stack[stack_len - 1];
@@ -894,10 +904,15 @@ impl OwnedPathFinder {
     /// the throttled heartbeat).
     fn emit_discovery_complete(&self) {
         let elapsed = self.search_started.elapsed();
-        eprintln!(
-            "[pathfinding] discovery complete: elapsed={elapsed:?} paths_yielded={} max_stack_depth={}",
-            self.paths_yielded, self.max_stack_depth
-        );
+        // Low-frequency stderr diagnostic on a zero-dependency leaf (no logging
+        // crate available); one line at discovery completion.
+        #[expect(clippy::print_stderr)]
+        {
+            eprintln!(
+                "[pathfinding] discovery complete: elapsed={elapsed:?} paths_yielded={} max_stack_depth={}",
+                self.paths_yielded, self.max_stack_depth
+            );
+        }
     }
 
     /// Advance the DFS and return the next complete path, or `None` if
@@ -982,7 +997,7 @@ impl PathGraph {
     /// one path at a time, avoiding the memory cost of collecting all results
     /// into a `Vec`. Use this when the graph may produce a large number of
     /// paths.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[must_use]
     pub fn find_paths_iter<'a>(
         &'a self,
@@ -1054,7 +1069,7 @@ impl PathGraph {
     ///
     /// # Returns
     /// A `Vec` of paths, each a `Vec` of `(pool_id, PoolKind)` hops.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[must_use]
     pub fn find_paths(
         &self,

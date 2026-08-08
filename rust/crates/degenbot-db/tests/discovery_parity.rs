@@ -8,6 +8,7 @@
 //! `tests/rust/test_discovery_seam.py`; this Rust test pins the Rust
 //! trajectory so that the Python oracle gate has a stable reference.
 
+#![expect(clippy::unwrap_used)]
 use alloy::primitives::Address;
 use degenbot_db::{DegenbotDb, V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 

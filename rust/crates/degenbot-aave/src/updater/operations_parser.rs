@@ -94,7 +94,7 @@ use std::collections::{HashMap, HashSet};
 /// the input `&'b [&&'b Log]` slice independently — the parser struct itself
 /// doesn't borrow the logs.
 #[derive(Debug)]
-#[allow(clippy::module_name_repetitions)]
+#[expect(clippy::module_name_repetitions)]
 pub struct TransactionOperationsParser<'a> {
     /// `aave_v3_markets.id`.
     pub market_id: i64,
@@ -148,7 +148,6 @@ pub enum ParseError {
 /// The parser's output (mirror of `operations.py::TransactionOperations`).
 /// Borrows the source logs for the lifetime of the input slice.
 #[derive(Debug)]
-#[allow(clippy::module_name_repetitions)]
 pub struct TransactionOperations<'a> {
     /// The tx hash (raw bytes). Set by the caller.
     pub tx_hash: [u8; 32],
@@ -170,7 +169,7 @@ impl<'a> TransactionOperationsParser<'a> {
     /// before instantiation; the parser doesn't RPC).
     /// # Errors
     /// Returns [`ParseError::Substrate`] if the pool-revision lookup fails.
-    #[allow(clippy::similar_names)] // gho_token vs gho_vtoken is intrinsic to the domain
+    #[expect(clippy::similar_names)] // gho_token vs gho_vtoken is intrinsic to the domain
     pub fn new(
         market_id: i64,
         chain_id: i64,
@@ -394,6 +393,7 @@ impl<'a> TransactionOperationsParser<'a> {
                 _ => unreachable!("event_category is mint|burn"),
             };
         }
+        #[expect(clippy::panic)] // unexpected token = invariant break; fail loudly (documented)
         let token_type = self.classify_token_type(token_address).unwrap_or_else(|| {
             panic!(
                 "unexpected token at {token_address} for market {}",
@@ -401,20 +401,39 @@ impl<'a> TransactionOperationsParser<'a> {
             )
         });
         match (token_type, event_category) {
-            (ScaledTokenEventType::CollateralMint |
-ScaledTokenEventType::CollateralTransfer |
-ScaledTokenEventType::Erc20CollateralTransfer, "mint") => ScaledTokenEventType::CollateralMint,
-            (ScaledTokenEventType::CollateralBurn |
-ScaledTokenEventType::CollateralTransfer |
-ScaledTokenEventType::Erc20CollateralTransfer, "burn") => ScaledTokenEventType::CollateralBurn,
-            (ScaledTokenEventType::DebtMint | ScaledTokenEventType::DebtTransfer |
-ScaledTokenEventType::Erc20DebtTransfer, "mint") => ScaledTokenEventType::DebtMint,
-            (ScaledTokenEventType::DebtBurn | ScaledTokenEventType::DebtTransfer |
-ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBurn,
+            (
+                ScaledTokenEventType::CollateralMint
+                | ScaledTokenEventType::CollateralTransfer
+                | ScaledTokenEventType::Erc20CollateralTransfer,
+                "mint",
+            ) => ScaledTokenEventType::CollateralMint,
+            (
+                ScaledTokenEventType::CollateralBurn
+                | ScaledTokenEventType::CollateralTransfer
+                | ScaledTokenEventType::Erc20CollateralTransfer,
+                "burn",
+            ) => ScaledTokenEventType::CollateralBurn,
+            (
+                ScaledTokenEventType::DebtMint
+                | ScaledTokenEventType::DebtTransfer
+                | ScaledTokenEventType::Erc20DebtTransfer,
+                "mint",
+            ) => ScaledTokenEventType::DebtMint,
+            (
+                ScaledTokenEventType::DebtBurn
+                | ScaledTokenEventType::DebtTransfer
+                | ScaledTokenEventType::Erc20DebtTransfer,
+                "burn",
+            ) => ScaledTokenEventType::DebtBurn,
             // classify_token_type returns a transfer variant on aToken/vToken;
             // re-derive here (the Python's helper). The conversion is
             // aToken → CollateralMint/Burn, vToken → DebtMint/Burn.
-            _ => panic!("classify_token_type returned a non-token-type variant for token at {token_address} (event_category={event_category})"),
+            _ => {
+                #[expect(clippy::panic)] // non-token-type variant = invariant break (loud)
+                {
+                    panic!("classify_token_type returned a non-token-type variant for token at {token_address} (event_category={event_category})")
+                }
+            }
         }
     }
 
@@ -425,6 +444,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         if self.gho_vtoken_address == Some(token_address) {
             return ScaledTokenEventType::GhoDebtTransfer;
         }
+        #[expect(clippy::panic)] // unexpected token = invariant break; fail loudly (documented)
         let token_type = self.classify_token_type(token_address).unwrap_or_else(|| {
             panic!(
                 "unexpected token at {token_address} for market {}",
@@ -508,7 +528,11 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// `_validate_*` fns) are routed to `Operation.validation_errors`
     /// (non-fatal — the caller can decide; the Python's
     /// `TransactionOperations.validate` is the strict top-level pass + is HQF5NQ-C).
-    #[allow(clippy::missing_panics_doc, clippy::too_many_lines)] // parse() is intrinsic — §4.2-drift mirror
+    #[expect(
+        clippy::missing_panics_doc,
+        clippy::too_many_lines,
+        clippy::panic_in_result_fn
+    )] // parse() is intrinsic — §4.2-drift mirror
     pub fn parse(
         &self,
         events: &'a [&'a Log],
@@ -651,7 +675,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
 
     // ── the per-pool-event dispatch (`_create_operation_from_pool_event`) ──
 
-    #[allow(clippy::too_many_arguments)]
     fn create_operation_from_pool_event(
         &self,
         operation_id: u32,
@@ -704,6 +727,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
 
     /// Mirrors `_create_supply_operation`. Pool Supply → match `CollateralMint`
     /// by `onBehalfOf` + amount (value - `balance_increase` vs `supply_amount`).
+    #[expect(clippy::panic_in_result_fn)] // deliberate panic guard surfaces a bad state lazily
     fn create_supply_operation(
         &self,
         operation_id: u32,
@@ -800,7 +824,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// by user + amount (value + `balance_increase` vs `withdraw_amount`). The
     /// "interest-exceeds-withdrawal → Mint instead of Burn" branch is the
     /// §4.2-drift edge — verify plumbing equivalence.
-    #[allow(clippy::too_many_lines)] // mirror's body intrinsic — §4.2-drift match has 6 branches
+    #[expect(clippy::too_many_lines)] // mirror's body intrinsic — §4.2-drift match has 6 branches
     fn create_withdraw_operation(
         &self,
         operation_id: u32,
@@ -920,7 +944,9 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         let scaled_token_events: Vec<ScaledTokenEvent<'a>> = if let Some(im) = interest_mint {
             vec![clone_scaled_event(im)]
         } else {
-            vec![clone_scaled_event(collateral_burn.unwrap())]
+            #[expect(clippy::unwrap_used)] // interest_mint absent ⇒ collateral_burn is Some
+            let burn = collateral_burn.unwrap();
+            vec![clone_scaled_event(burn)]
         };
 
         // Mark assignments.
@@ -946,6 +972,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// Mirrors `_create_borrow_operation`. Pool Borrow → match `DebtMint` (or
     /// `GhoDebtMint` if the reserve is the GHO token). Includes GHO-BORROW
     /// detection.
+    #[expect(clippy::panic_in_result_fn)] // deliberate panic guard surfaces a bad state lazily
     fn create_borrow_operation(
         &self,
         operation_id: u32,
@@ -1036,6 +1063,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// Mirrors `_create_repay_operation`. Pool Repay → match `DebtBurn` (or
     /// `GhoDebtBurn`), dispatching to `_create_repay_with_atokens_operation` if
     /// `useATokens=true`.
+    #[expect(clippy::panic_in_result_fn)] // deliberate panic guard surfaces a bad state lazily
     fn create_repay_operation(
         &self,
         operation_id: u32,
@@ -1099,7 +1127,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// + _`find_collateral_adjustment_event` (the paired vToken-Burn +
     ///   aToken-Transfer matching). GHO repayment with aTokens is impossible
     ///   (asserted in caller).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn create_repay_with_atokens_operation(
         &self,
         operation_id: u32,
@@ -1143,7 +1171,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// units → apply `ray_div(amountMinted, liquidity_index, HALF_UP)` to
     /// derive the scaled amount; for `pool_revision` >= 9, `amountMinted`
     /// equals the scaled amount directly.
-    #[allow(clippy::too_many_lines)] // mirror's body intrinsic — phased loop
     fn create_mint_to_treasury_operations(
         &self,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -1254,7 +1281,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// `BalanceTransfer` + Burn pair (phase 4c). ERC20-Transfer +
     /// `BalanceTransfer` + Burn triplet matching (the §4.2-drift knife-edge
     /// per DP6 — kept in A; escalate to B if gnarly).
-    #[allow(clippy::too_many_lines)] // phased loop body intrinsic
     fn create_deficit_coverage_operations(
         &self,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -1366,7 +1392,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// Mirrors `_create_interest_accrual_operations`. Unassigned Mint events
     /// (with `amount == balance_increase` or small balanceIncrease) → pure
     /// interest accrual operations. Includes dust mints from discounts.
-    #[allow(clippy::too_many_lines)] // phased loop + paired Transfer check
     fn create_interest_accrual_operations(
         &self,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -1437,7 +1462,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// Unassigned transfer events → standalone `BALANCE_TRANSFER` (or
     /// `STKAAVE_TRANSFER`) operations. Pairs ERC20 Transfer + `BalanceTransfer`
     /// for the same movement.
-    #[allow(clippy::too_many_lines)] // phased loop + pairing
     fn create_transfer_operations(
         &self,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -1530,7 +1554,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// Mirrors `_find_principal_repay_event`. For REPAY: match either Burn
     /// (amount + `balance_increase` == `repay_amount`) or Mint (`balance_increase`
     /// - amount == `repay_amount` — interest > repayment path).
-    #[allow(clippy::unused_self)] // keep &self cadence — the future B-version (layer helpers) will need it
     fn find_principal_repay_event<'b>(
         &self,
         repay_amount: U256,
@@ -1582,7 +1605,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// Mirrors `_find_collateral_adjustment_event` (`REPAY_WITH_ATOKENS` paired
     /// vToken-Burn + aToken-Transfer matching). Both Burn + Mint branches
     /// (the interest-exceeds-repayment edge).
-    #[allow(clippy::too_many_arguments)]
     fn find_collateral_adjustment_event<'b>(
         &self,
         user: Address,
@@ -1634,7 +1656,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
 
     /// Mirrors `_find_debt_transfer_to_zero`. Find debt transfer event to
     /// zero address matching the principal burn amount. Returns 0 or 1 events.
-    #[allow(clippy::unused_self)] // mirror's symmetric API to siblings
+    #[expect(clippy::unused_self)] // mirror's symmetric API to siblings
     fn find_debt_transfer_to_zero<'b>(
         &self,
         user: Address,
@@ -1705,7 +1727,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// (user) + `decode_address(ev["topics"][2])` (`debt_asset`) per
     /// `LiquidationCall` event → resolves `debt_asset` → vToken via
     /// `_get_v_token_for_asset`; we mirror the same per-event vToken resolution.
-    #[allow(clippy::missing_panics_doc)] // assert on missing vToken substrate
     fn analyze_liquidation_scenarios(
         &self,
         all_events: &[&Log],
@@ -1784,7 +1805,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// `assert ev.index is not None; assert ev.index > 0` (the runtime panic on
     /// ill-formed events) as `debug_assert!`. Output parity verified: the
     /// `assigned_indices` state never affects the parsed Operation output.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // mirror's intrinsic shape
     fn collect_debt_burns<'b>(
         user: Address,
         debt_v_token_address: Option<Address>,
@@ -1823,6 +1843,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
                 // ray-scale `index` field); omitted (u64 set can't hold it).
             }
         } else {
+            #[expect(clippy::expect_used)] // required on the multi-liquidation path (documented)
             let debt_v =
                 debt_v_token_address.expect("multi-liquidation requires debt_v_token_address");
             let liquidation_count_for_asset = liquidation_analysis
@@ -2023,7 +2044,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     ///
     /// Returns [`ParseError::Substrate`] if either the aToken or vToken sibling
     /// lookup fails (parity: `assert debt_v_token_address is not None`).
-    #[allow(clippy::too_many_lines)] // mirror of Python's 5-nested-branch fn — intrinsic
+    #[expect(clippy::too_many_lines)] // mirror of Python's 5-nested-branch fn — intrinsic
     fn create_liquidation_operation(
         &self,
         operation_id: u32,
@@ -2196,7 +2217,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// 2–8 lines of predicate checks; splitting would fragment the validation
     /// logic across ~10 helpers without improving clarity (the Python uses a
     /// validators dict, not per-op fns here).
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn validate_operation(op: &mut Operation<'_>) {
         // The API dispatch mirrors the Python validators dictionary; the
         // actual validation is per-op (`_validate_*` in Python). For A's
@@ -2462,7 +2483,6 @@ pub fn amounts_match_with_tolerance(calculated: U256, expected: U256, tolerance:
 
 /// Bare-bytes comparison helper — repeated in a handful of test expressions;
 /// kept here for parity (the Python field-tests on a similar helper).
-#[allow(dead_code)]
 fn _amounts_match_eq(a: U256, b: U256) -> bool {
     a == b
 }
@@ -2639,6 +2659,7 @@ fn is_part_of_mint(
     false
 }
 
+#[expect(clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;

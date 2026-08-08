@@ -152,7 +152,6 @@ impl PyDispatcher {
     /// for the `dispatch_profitable_results` call; the `Dispatcher` arc is
     /// NOT touched, so monitor-task contention on the `Dispatcher` is
     /// unaffected).
-    #[allow(dead_code)]
     pub(crate) fn suppression_arc(&self) -> Arc<Mutex<PathSuppression>> {
         Arc::clone(&self.suppression)
     }
@@ -175,6 +174,7 @@ impl PyDispatcher {
 }
 
 #[pymethods]
+#[expect(clippy::expect_used)] // idiomatic mutex/suppression-poison guards panic loudly
 impl PyDispatcher {
     /// Construct a fresh dispatcher seeded at `current_block`.
     ///

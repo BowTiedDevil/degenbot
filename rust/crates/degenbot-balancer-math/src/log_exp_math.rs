@@ -188,7 +188,6 @@ pub(crate) fn truncated_div(a: I256, b: I256) -> I256 {
 /// - [`BalancerMathError::YOutOfBounds`] if `y >= MILD_EXPONENT_BOUND`.
 /// - [`BalancerMathError::ProductOutOfBounds`] if `y * ln(x)` is outside
 ///   `[MIN_NATURAL_EXPONENT, MAX_NATURAL_EXPONENT]`.
-#[allow(clippy::fn_params_excessive_bools)]
 pub fn pow(x: U256, y: I256) -> Result<U256> {
     if y.is_zero() {
         // 0^0 indeterminate: defined as 1 (matching deployed contract).
@@ -335,12 +334,12 @@ fn exp_internal(x: I256) -> Result<I256> {
         x -= X1;
         first_an = A1;
     } else {
-        first_an = I256::try_from(1i64).expect("1 fits");
+        first_an = I256::from_raw(U256::from(1u64));
     }
 
     // Promote x to 20-decimal fixed point for higher precision on the
     // remaining small terms.
-    x *= I256::try_from(100i64).expect("100 fits");
+    x *= I256::from_raw(U256::from(100u64));
 
     // `product` accumulates the 20-decimal-fixed-point a_n product.
     let mut product = ONE_20;
@@ -393,7 +392,7 @@ fn exp_internal(x: I256) -> Result<I256> {
         let prod = term * x;
         term = truncated_div(
             truncated_div(prod, ONE_20),
-            I256::try_from(n).expect("n in 2..=12"),
+            I256::from_raw(U256::from(u64::try_from(n).unwrap_or_default())),
         );
         series_sum += term;
     }
@@ -403,7 +402,7 @@ fn exp_internal(x: I256) -> Result<I256> {
     // first_an multiplication is plain integer (no /ONE_20 division).
     Ok(truncated_div(
         truncated_div(product * series_sum, ONE_20) * first_an,
-        I256::try_from(100i64).expect("100 fits"),
+        I256::from_raw(U256::from(100u64)),
     ))
 }
 
@@ -432,8 +431,8 @@ fn ln_internal(a: I256) -> I256 {
     }
 
     // Promote to 20-decimal precision for the smaller terms.
-    working_sum *= I256::try_from(100i64).expect("100 fits");
-    a *= I256::try_from(100i64).expect("100 fits");
+    working_sum *= I256::from_raw(U256::from(100u64));
+    a *= I256::from_raw(U256::from(100u64));
 
     // For the remaining a_n (20-dp fixed-point), division requires
     // multiplying by ONE_20.
@@ -490,15 +489,15 @@ fn ln_internal(a: I256) -> I256 {
 
     for n in [3, 5, 7, 9, 11] {
         num = truncated_div(num * z_squared, ONE_20);
-        series_sum += truncated_div(num, I256::try_from(n).expect("odd n"));
+        series_sum += truncated_div(
+            num,
+            I256::from_raw(U256::from(u64::try_from(n).unwrap_or_default())),
+        );
     }
 
     // Multiply by 2 (non-fixed-point), then drop the two extra decimal places.
-    let series_sum = series_sum * I256::try_from(2i64).expect("2 fits");
-    truncated_div(
-        working_sum + series_sum,
-        I256::try_from(100i64).expect("100 fits"),
-    )
+    let series_sum = series_sum * I256::from_raw(U256::from(2u64));
+    truncated_div(working_sum + series_sum, I256::from_raw(U256::from(100u64)))
 }
 
 /// `_ln_36(x)` — the 36-decimal precision ln variant for arguments close to
@@ -517,14 +516,18 @@ fn ln_36(x: I256) -> I256 {
 
     for n in [3, 5, 7, 9, 11, 13, 15] {
         num = truncated_div(num * z_squared, ONE_36);
-        series_sum += truncated_div(num, I256::try_from(n).expect("odd n"));
+        series_sum += truncated_div(
+            num,
+            I256::from_raw(U256::from(u64::try_from(n).unwrap_or_default())),
+        );
     }
 
     // 8 terms suffice for 36-decimal precision. Multiply by 2 (non-fp).
-    series_sum * I256::try_from(2i64).expect("2 fits")
+    series_sum * I256::from_raw(U256::from(2u64))
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

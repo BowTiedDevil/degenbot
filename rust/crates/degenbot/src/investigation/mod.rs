@@ -37,20 +37,11 @@
 
 /// Ignore pedantic doc/must_use/hasher nits for this run-once tooling (see
 /// module comment for rationale).
-#[allow(
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::must_use_candidate,
-    clippy::implicit_hasher
-)]
+#[expect(clippy::missing_errors_doc)]
 pub mod fixture;
-#[allow(
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::must_use_candidate
-)]
+#[expect(clippy::missing_panics_doc, clippy::must_use_candidate)]
 pub mod hop_oracle;
-#[allow(
+#[expect(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::must_use_candidate,

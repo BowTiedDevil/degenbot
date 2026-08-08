@@ -366,6 +366,7 @@ pub const AERODROME_V2_STABLE: DexIdentity = DexIdentity {
 };
 
 #[cfg(test)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
 

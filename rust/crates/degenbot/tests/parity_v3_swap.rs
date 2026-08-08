@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — V3 concentrated-liquidity swap
 //! (ADR-005 standalone claim, the behavioral tier).
 //!
@@ -54,7 +55,6 @@ const FIXTURE_PATH: &str = concat!(
 
 /// The shared V3 fixture, deserialized once per test.
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct V3FixtureFile {
     fixture: V3FixtureInputs,
     probe: V3Probe,
@@ -62,7 +62,7 @@ struct V3FixtureFile {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct V3FixtureInputs {
     token0: String,
     token1: String,
@@ -80,21 +80,18 @@ struct V3FixtureInputs {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct V3Probe {
     amount_in: String,
     zero_for_one: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct V3Expected {
     amount_out_zfo: String,
 }
 
 /// Load + parse the shared fixture. Panics on any parse/IO failure (a corrupt
 /// fixture file is a test-infrastructure failure, not a test skip).
-#[allow(dead_code)]
 fn load_shared_v3_fixture() -> V3FixtureFile {
     let text = std::fs::read_to_string(FIXTURE_PATH)
         .unwrap_or_else(|e| panic!("read shared V3 fixture {FIXTURE_PATH}: {e}"));

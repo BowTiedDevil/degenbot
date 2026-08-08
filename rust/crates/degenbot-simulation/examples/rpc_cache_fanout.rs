@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used, clippy::print_stderr, clippy::print_stdout)]
 //! Synthetic benchmark — production-shaped: one warm-up trigger + many
 //! read-only `eth_call`-style transacts against a shared cache.
 //!
@@ -720,7 +721,7 @@ struct MultiBlockResult {
     per_block: Vec<PerBlockRpc>,
     total_basic: u64,
     total_storage: u64,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     total_wall: Duration,
 }
 

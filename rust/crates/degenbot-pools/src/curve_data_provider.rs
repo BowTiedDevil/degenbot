@@ -59,7 +59,7 @@ pub enum CurveDataProviderError {
 // Every method returns `Result<_, CurveDataProviderError>`; the three error
 // variants are documented on the enum above and apply uniformly. Per-method
 // `# Errors` sections would just restate that, so they are omitted.
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 pub trait CurveDataProvider: Send + Sync + std::fmt::Debug {
     /// Latest block number known to the provider.
     fn block_number(&self) -> Result<u64, CurveDataProviderError>;
@@ -113,6 +113,7 @@ pub trait CurveDataProvider: Send + Sync + std::fmt::Debug {
     fn virtual_price(&self, block_number: u64) -> Result<U256, CurveDataProviderError>;
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

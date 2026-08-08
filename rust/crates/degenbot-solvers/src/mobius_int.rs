@@ -148,7 +148,7 @@ pub fn compute_int_mobius_coefficients(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::U256;

@@ -248,6 +248,7 @@ impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for AccessListCollector {
     }
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Rust pool builder identity+state
 //! (ADR-005 standalone claim, the behavioral tier; task A2QRWO).
 //!
@@ -36,14 +37,12 @@ const FIXTURE_PATH: &str = concat!(
 
 /// The shared builder fixture, deserialized once per test.
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct PoolBuilderFixtureFile {
     fixture: PoolBuilderFixtureInputs,
     expected: PoolBuilderExpected,
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct PoolBuilderFixtureInputs {
     token0: String,
     token1: String,
@@ -60,7 +59,6 @@ struct PoolBuilderFixtureInputs {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct PoolBuilderExpected {
     pool_id: u64,
 }

@@ -1,3 +1,10 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::panic_in_result_fn
+)]
 //! Path-73385 full production-shaped reproduction (block 25706469).
 //!
 //! Re-runs the EXACT failing V3→V4→V3 path (the recurring `bucket=empty

@@ -16,6 +16,7 @@
 //! `aave_writer_parity.db` fixture) is the sibling Python-side gate; this
 //! Rust test pins the Rust trajectory so that gate has a stable oracle.
 
+#![expect(clippy::unwrap_used)]
 use alloy::primitives::U256;
 
 use degenbot_db::DegenbotDb;
@@ -75,7 +76,7 @@ fn fresh_seeded_db() -> (DegenbotDb, i64) {
     (db, 1)
 }
 
-#[allow(clippy::too_many_lines)] // one coherent end-to-end replay scenario
+#[expect(clippy::too_many_lines)] // one coherent end-to-end replay scenario
 #[test]
 fn replay_event_sequence_produces_coherent_multitable_state() {
     let (db, asset) = fresh_seeded_db();

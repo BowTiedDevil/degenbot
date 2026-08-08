@@ -118,4 +118,7 @@ pub enum BalancerMathError {
     /// `_get_token_balance_given_invariant_and_all_other_balances` Newton
     /// iteration failed to converge in 255 steps.
     StableGetBalanceDidntConverge,
+    /// `TOO_MANY_TOKENS` — `balances.len()` exceeds `u64::MAX` (unreachable on
+    /// any 64-bit platform; kept a fallible `Result` instead of panicking).
+    TokenCountOverflow,
 }

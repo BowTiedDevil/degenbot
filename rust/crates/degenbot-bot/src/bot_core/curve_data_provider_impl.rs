@@ -37,7 +37,7 @@ use crate::bot_core::pool_builder::choreography::selector;
 /// `_lending_rate_cache` (a `dict[int, tuple[int, ...]]`).
 type LendingCache = Mutex<HashMap<u64, Vec<U256>>>;
 
-#[allow(clippy::missing_fields_in_debug)] // `Arc<dyn RpcConstruction>` is not Debug
+#[expect(clippy::missing_fields_in_debug)] // `Arc<dyn RpcConstruction>` is not Debug
 impl std::fmt::Debug for RpcCurveDataProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // `Arc<dyn RpcConstruction>` is not `Debug`; print the identifiable
@@ -86,7 +86,7 @@ pub struct RpcCurveDataProvider {
 impl RpcCurveDataProvider {
     /// Construct a provider bound to an RPC double.
     #[must_use]
-    #[allow(clippy::too_many_arguments)] // data-dense constructor
+    #[expect(clippy::too_many_arguments)] // data-dense constructor
     pub fn new(
         rpc: Arc<dyn RpcConstruction>,
         pool_address: Address,
@@ -186,13 +186,9 @@ impl CurveDataProvider for RpcCurveDataProvider {
 
     fn lending_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
         // Per-block cache (mirrors the Python `_lending_rate_cache`).
-        if let Some(cached) = self
-            .lending_rate_cache
-            .lock()
-            .unwrap()
-            .get(&block_number)
-            .cloned()
-        {
+        #[expect(clippy::unwrap_used)] // internal cache mutex; poison = process bug
+        let cache = self.lending_rate_cache.lock().unwrap();
+        if let Some(cached) = cache.get(&block_number).cloned() {
             return Ok(cached);
         }
 
@@ -211,10 +207,9 @@ impl CurveDataProvider for RpcCurveDataProvider {
             _ => return Err(CurveDataProviderError::Unsupported),
         };
 
-        self.lending_rate_cache
-            .lock()
-            .unwrap()
-            .insert(block_number, result.clone());
+        #[expect(clippy::unwrap_used)] // internal cache mutex; poison = process bug
+        let mut cache = self.lending_rate_cache.lock().unwrap();
+        cache.insert(block_number, result.clone());
         Ok(result)
     }
 
@@ -229,11 +224,11 @@ impl CurveDataProvider for RpcCurveDataProvider {
     fn price_scale(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
         let mut scale = Vec::with_capacity(self.n_coins.saturating_sub(1));
         for k in 0..self.n_coins.saturating_sub(1) {
+            #[expect(clippy::expect_used)] // n_coins <= 8 (documented contract invariant)
+            let n_coins = u8::try_from(k).expect("n_coins <= 8");
             scale.push(self.call_uint(
                 self.pool_address,
-                Bytes::from(abi::encode_curve_price_scale(
-                    u8::try_from(k).expect("n_coins <= 8"),
-                )),
+                Bytes::from(abi::encode_curve_price_scale(n_coins)),
                 block_number,
             )?);
         }
@@ -407,16 +402,19 @@ fn block_on<F, T>(fut: F) -> T
 where
     F: Future<Output = T> + Send,
 {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
-        Err(_) => tokio::runtime::Builder::new_current_thread()
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(fut))
+    } else {
+        #[expect(clippy::expect_used)] // driver-thread runtime build cannot fail
+        let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("failed to build driver runtime")
-            .block_on(fut),
+            .expect("failed to build driver runtime");
+        rt.block_on(fut)
     }
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

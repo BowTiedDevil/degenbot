@@ -125,10 +125,6 @@ pub type TickMapAssemblyResult =
 /// Propagates [`TickMapAssemblyError::Db`] from `fetch_liquidity_map` and
 /// [`TickMapAssemblyError::Chain`] from `bootstrap_v3_tick_word` (Decision 8
 /// (A) — neither is swallowed).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "precedence helper composes 2 arms; a params struct would obscure it"
-)]
 pub fn assemble_v3_tick_map(
     db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     address: Address,
@@ -168,7 +164,7 @@ pub fn assemble_v3_tick_map(
 ///
 /// Propagates [`TickMapAssemblyError::Db`] from `fetch_liquidity_map_v4` and
 /// [`TickMapAssemblyError::Chain`] from `bootstrap_v4_tick_word`.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "precedence helper composes 2 arms; a params struct would obscure it"
 )]

@@ -211,7 +211,7 @@ pub fn calc_exact_in_volatile(
 /// - [`SolidlyMathError::Overflow`] on divide-by-zero (matches the Python
 ///   oracle's `EVMRevertError("Division by zero")` raise).
 /// - Propagates [`get_y_solidly`]'s revert on non-convergence.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn calc_exact_in_stable_solidly(
     amount_in: U256,
     token_in: u8,
@@ -300,7 +300,7 @@ pub fn calc_exact_in_stable_solidly(
 /// above). This is unreachable on a valid path; the `.expect` surfaces a real
 /// invariant violation loudly rather than masking to a phantom 0 the way the
 /// prior `.unwrap_or(U256::ZERO)` did.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn calc_exact_out_stable_solidly(
     amount_out: U256,
     token_in: u8,
@@ -391,6 +391,9 @@ pub fn calc_exact_out_stable_solidly(
     // therefore cannot underflow on a valid path; if it ever does (a real
     // invariant break), `.expect` panics loudly rather than masking to a
     // phantom 0 the way the prior `.unwrap_or(U256::ZERO)` did.
+    // Targeted expect (fulfilled): the guarded break is unreachable-internal, and
+    // failing loudly rather than returning an error is the deliberate behavior.
+    #[expect(clippy::expect_used)]
     let m_minus_one = m
         .checked_sub(U256::from(1u64))
         .expect("M >= 1 invariant: amount_in_after_fee_scaled > 0 after the zero-output guard");

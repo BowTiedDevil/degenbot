@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used, clippy::panic, clippy::print_stdout)]
 //! Spike probe for ergo epic 63I7WJ (task KCKGP4): revm `Inspector` hooks on
 //! the simulation stack.
 //!
@@ -60,7 +61,6 @@ fn hex_encode(bytes: &[u8]) -> String {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct CapturedFrame {
     depth: usize,
     caller: Address,
@@ -71,7 +71,7 @@ struct CapturedFrame {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 enum FrameOutcome {
     Success { gas_used: u64, output: Bytes },
     Revert { gas_used: u64, data: Bytes },

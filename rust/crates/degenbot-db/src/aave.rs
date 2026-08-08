@@ -620,7 +620,7 @@ impl DegenbotDb {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use crate::connection::DegenbotDb;
     use rusqlite::params;

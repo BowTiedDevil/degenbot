@@ -10,6 +10,7 @@
 //! To regenerate the fixture:
 //!   `uv run python rust/crates/degenbot-db/tests/fixtures/generate_aave_parity.py`
 
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // parity/integration test harness
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -62,7 +63,7 @@ fn parse_u256(s: &str) -> U256 {
 
 #[derive(Debug, Deserialize)]
 struct Expected {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     chain_id: i64,
     market_id: i64,
     users: Vec<UserJson>,

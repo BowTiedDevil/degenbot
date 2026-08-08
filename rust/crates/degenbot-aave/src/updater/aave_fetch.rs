@@ -315,7 +315,7 @@ async fn fetch_single_address_multi_topic(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog};

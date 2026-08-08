@@ -312,7 +312,6 @@ fn drain_dbg_log_buf(
 /// race this probe exists to catch). Fires when the pool matches
 /// `DEGENBOT_DRAIN_DBG` OR the global liquidity trace is on AND the topic is
 /// a liquidity-mutating one (V3 Mint/Burn, V4 `ModifyLiquidity`)..
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn trace_ws_log_dispatch(
     address: Address,
     block_number: u64,
@@ -356,7 +355,6 @@ pub(crate) fn trace_ws_log_dispatch(
 /// value) — the discriminator between a swap that was never delivered and one
 /// that was delivered but not applied. Fires only when the pool matches
 /// `DEGENBOT_DRAIN_DBG`; zero cost otherwise.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn trace_apply_swap_v3(
     pool_address: Address,
     sqrt_price_x96: U256,
@@ -381,7 +379,6 @@ pub(crate) fn trace_apply_swap_v3(
 /// V4 twin of [`trace_apply_swap_v3`] — logs a V4 `Swap` dispatch keyed by
 /// `pool_id_hex` (the V4 analog of the pool address for `DEGENBOT_DRAIN_DBG`
 /// matching). Fires when `DEGENBOT_DRAIN_DBG` names this `pool_id_hex`.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn trace_apply_swap_v4(
     pool_manager: Address,
     pool_id_hex: &str,
@@ -407,7 +404,6 @@ pub(crate) fn trace_apply_swap_v4(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn trace_apply_route_v3(
     address: Address,
     tick_lower: i32,
@@ -439,7 +435,7 @@ pub(crate) fn trace_apply_route_v3(
 /// failing V4 pool's add/remove split is visible across the registration
 /// lifecycle transition. Fires on the global liquidity trace OR when
 /// `DEGENBOT_DRAIN_DBG` names this pool's `pool_id_hex`.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn trace_apply_route_v4(
     pool_manager: Address,
     pool_id_hex: &str,
@@ -1046,8 +1042,8 @@ impl BotState {
     /// is not computable, the fetcher fails, or the override's tick data is
     /// missing a required word the fetcher cannot resolve.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines)]
     pub fn simulate_swap_with_override(
         &self,
         pool_id: u64,
@@ -1873,6 +1869,12 @@ pub struct BlockMetadata {
     pub gas_limit: u64,
 }
 
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2288,7 +2290,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn pool_family_dispatches_every_registered_family() {
         // Each non-V2 `PoolEntry` variant resolves to its own family tag.
         // Registers one pool of each family with minimal params and asserts
@@ -3671,7 +3673,7 @@ mod tests {
     /// blocks — every pool's pin's `update_block` ≤ `last_complete_block`
     /// while Quarantined (the family-level closure of the single-pool fix).
     #[test]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn concurrent_registration_lifecycle_invariant() {
         use alloy::primitives::U128;
         let pool_manager = Address::from([0x44u8; 20]);

@@ -184,11 +184,16 @@ impl SnapshotDb {
         let now_v3 = fetch_newest_update_block_on_conn(&conn, chain, ExchangeFamily::V3)?;
         let now_v4 = fetch_newest_update_block_on_conn(&conn, chain, ExchangeFamily::V4)?;
         let s_live = match (now_v3, now_v4) {
-            (Some(v3), Some(v4)) => {
-                Some(u64::try_from(v3.min(v4)).expect("block number non-negative"))
-            }
-            (Some(v3), None) => Some(u64::try_from(v3).expect("block number non-negative")),
-            (None, Some(v4)) => Some(u64::try_from(v4).expect("block number non-negative")),
+            (Some(v3), Some(v4)) => Some(
+                u64::try_from(v3.min(v4))
+                    .map_err(|_| DbError::Decode("negative block number".into()))?,
+            ),
+            (Some(v3), None) => Some(
+                u64::try_from(v3).map_err(|_| DbError::Decode("negative block number".into()))?,
+            ),
+            (None, Some(v4)) => Some(
+                u64::try_from(v4).map_err(|_| DbError::Decode("negative block number".into()))?,
+            ),
             (None, None) => None,
         };
         let advanced = match (s_snapshot, s_live) {
@@ -232,6 +237,7 @@ impl TickMapDb for SnapshotDb {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use std::path::PathBuf;

@@ -243,10 +243,15 @@ type Table = HashMap<(u64, Address), DeploymentRecord>;
 fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
     TABLE.get_or_init(|| {
+        // Embedded, commit-time-validated constant; a parse failure is a build
+        // artifact regression, so a loud panic (targeted expect, fulfilled) with
+        // no error channel from the `&'static Table` OnceLock initializer.
+        #[expect(clippy::expect_used)]
         let root: Root = serde_json::from_str(DEPLOYMENTS_JSON)
             .expect("embedded deployments.json must parse (validated at commit time)");
         let mut map = HashMap::with_capacity(root.deployments.len());
         for raw in root.deployments {
+            #[expect(clippy::expect_used)]
             let factory = address_utils::parse_address(&raw.factory)
                 .expect("embedded deployments.json factory must be a valid address");
             let deployer = raw
@@ -587,6 +592,7 @@ pub fn verify_aerodrome_v3_pool_address(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{address, b256};

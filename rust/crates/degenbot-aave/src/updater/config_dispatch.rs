@@ -226,7 +226,6 @@ pub fn dispatch_asset_source_updated(
 /// `EModeCategoryAdded(id, label, ltv, lt, bonus, oracle)` →
 /// [`AaveChunkEvent::EModeCategoryAdded`]. Mirrors
 /// `_process_e_mode_category_added_event`.
-#[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub fn dispatch_e_mode_category_added(
     market_id: i64,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeCategoryAddedEvent,
@@ -703,7 +702,7 @@ pub async fn resolve_collateral_configuration(
 /// substrate `get_or_create_erc20_token_on_conn` takes metadata as a caller
 /// param, so this is consistent with the existing contract — the gap is
 /// isolated to this fn's token resolution).
-#[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub async fn resolve_reserve_initialized(
     provider: &AlloyProvider,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
@@ -891,7 +890,7 @@ pub async fn build_discount_snapshot(
 /// `process_transaction` handles) + the 6 missing-variant events (-2b's
 /// scope: `Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
 /// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`).
-#[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub async fn dispatch_config_events(
     provider: &AlloyProvider,
     tx_logs: &[&alloy::rpc::types::Log],
@@ -965,7 +964,7 @@ fn resolve_reserve_oracle_address(
 /// [`AaveChunkEvent`] (`None` for skipped/non-config events). Extracted from
 /// [`dispatch_config_events`] to keep the loop fn under the 100-line
 /// `clippy::too_many_lines` limit (the 14-arm match is naturally one unit).
-#[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 async fn dispatch_single_config_event(
     decoded: &DecodedAaveEvent,
     provider: &AlloyProvider,
@@ -1329,11 +1328,11 @@ fn discount_to_i64(v: U256) -> i64 {
 /// `discount_token` is the chain's (freshly-per-tx-resolved)
 /// `v_gho_discount_token` — `None` (no discount token configured) → no-op.
 /// `market_id` is unused (the refresh target is `aave_v3_users.id`).
-#[allow(clippy::missing_errors_doc, clippy::too_many_arguments)]
+#[expect(clippy::missing_errors_doc)]
 pub async fn refresh_gho_discount(
     provider: &AlloyProvider,
     conn: &Connection,
-    #[allow(unused_variables)] market_id: i64,
+    #[expect(unused_variables)] market_id: i64,
     position_id: i64,
     block_number: u64,
     discount_token: Option<Address>,
@@ -1655,8 +1654,9 @@ async fn fetch_erc20_decimals(
     None
 }
 
+#[expect(clippy::expect_used, clippy::panic)]
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog, B256};

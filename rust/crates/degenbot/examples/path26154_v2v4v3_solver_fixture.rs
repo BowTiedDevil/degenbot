@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::panic, clippy::print_stdout)]
 //! V2→V4→V3 fixture: Möbius solver replay of the path-26154 empty-Halt
 //! (block 25700805), driven through the shared `degenbot::investigation`
 //! toolkit instead of a re-derived per-example preamble.

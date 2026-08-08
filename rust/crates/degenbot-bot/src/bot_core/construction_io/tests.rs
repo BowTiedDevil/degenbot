@@ -2,6 +2,7 @@
 //! + the adapter tests (`NoDb`, `DegenbotDbConstruction`,
 //!   `AlloyRpcConstruction`).
 
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 use std::sync::Arc;
 
 use alloy::primitives::{Address, Bytes, U256};

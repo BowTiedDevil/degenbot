@@ -120,7 +120,7 @@ fn hash(x: u32) -> usize {
 /// let round = decompress(&compressed).unwrap();
 /// assert_eq!(round, data);
 /// ```
-#[allow(clippy::cast_possible_truncation)]
+#[expect(clippy::cast_possible_truncation)]
 pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
     // `compressible_bytes = ib.length - 4`: the final 4 bytes are incompressible
     // tail reserved so the inner hash/match window never reads out of bounds
@@ -257,7 +257,7 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
 ///
 /// Mirrors the JS `literals(r, s)`: emit up to `MAX_LITERALS` literals per
 /// opcode, looping until the run is exhausted.
-#[allow(clippy::cast_possible_truncation)]
+#[expect(clippy::cast_possible_truncation)]
 fn add_literals(input: &[u8], output: &mut Vec<u8>, mut run_length: usize, mut start: usize) {
     while run_length > 0 {
         let number_of_literals = run_length.min(MAX_LITERALS);
@@ -354,7 +354,7 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
 ///
 /// Returns [`LibZipError::InvalidReferenceOffset`] if `reference_offset >=
 /// output.len()` (the back-reference would read before the output start).
-#[allow(clippy::explicit_counter_loop)]
+#[expect(clippy::explicit_counter_loop)]
 fn copy_match(
     output: &mut Vec<u8>,
     reference_offset: usize,
@@ -380,6 +380,7 @@ fn copy_match(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

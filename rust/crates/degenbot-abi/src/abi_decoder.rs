@@ -76,8 +76,7 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDeco
 ///
 /// Panics if `cached.decode()` returns a different number of values than
 /// the length check allows. This is a logic error and should never occur.
-#[allow(clippy::missing_errors_doc)]
-#[allow(clippy::missing_panics_doc)]
+#[expect(clippy::missing_errors_doc)]
 pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDecodeError> {
     if abi_type.contains("fixed") || abi_type.contains("ufixed") {
         return Err(AbiDecodeError::FixedPointNotImplemented);
@@ -97,7 +96,7 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
         )));
     }
     // Length verified as 1 above; pop is infallible.
-    #[allow(clippy::expect_used)]
+    #[expect(clippy::expect_used)]
     Ok(values.pop().expect("length verified above"))
 }
 
@@ -155,6 +154,7 @@ pub fn decode_for_types(
     cached.decode(data)
 }
 #[cfg(test)]
+#[expect(clippy::panic)]
 mod tests {
     #![allow(
         clippy::useless_vec,

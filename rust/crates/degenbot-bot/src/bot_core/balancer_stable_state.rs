@@ -7,6 +7,7 @@
 
 pub use ::degenbot_pools::balancer_stable_state::*;
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(unused_imports)]

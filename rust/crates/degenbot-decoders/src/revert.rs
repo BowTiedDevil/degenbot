@@ -246,7 +246,6 @@ pub fn classify_revert(revert_data: &[u8]) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

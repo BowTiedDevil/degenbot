@@ -1068,10 +1068,9 @@ pub enum SimulateSwapError {
 ///
 /// See: `contract_reference/uniswap/V3/UniswapV3Factory.sol` (`SwapMath`,
 /// `TickBitmap`, `TickMath`).
-#[allow(unused_assignments)]
 // `tick` tracks the contract's post-step tick; kept faithful to the V3
 // `_calculate_swap` loop even though this pure simulator returns only amounts.
-#[allow(clippy::too_many_lines)] // faithful port of V3's `_calculate_swap`; splitting would obscure the loop.
+#[expect(clippy::too_many_lines)] // faithful port of V3's `_calculate_swap`; splitting would obscure the loop.
 pub fn v3_simulate_swap(
     state: &V3PoolState,
     fee: u32,
@@ -1306,6 +1305,7 @@ pub fn v3_simulate_swap(
 // the registry dispatch) stays in `bot_core/v3_state.rs` / `bot_core/mod.rs`
 // as the dispatch regression net.
 // ===========================================================================
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
 #[cfg(test)]
 mod apply_inherent_tests {
     #![allow(unused_imports)]

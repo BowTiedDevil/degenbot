@@ -78,7 +78,7 @@ use std::sync::Arc;
 /// only ever locked for short synchronous spans).
 #[pyfunction]
 #[pyo3(signature = (candidates, context, dispatcher, base_fee_next, current_block, block_timestamp, min_profit_net, min_profit_margin_bps, *, engine=None))]
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     clippy::needless_pass_by_value,
     clippy::too_many_lines
@@ -134,6 +134,7 @@ pub fn dispatch_profitable_py<'py>(
     // the Python empty-dict behavior — no panic).
     let dispatcher_arc = dispatcher.inner_arc();
     let block_priority_fees: Option<BlockPriorityFees> = {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let guard = dispatcher_arc.lock().expect("dispatcher mutex poisoned");
         guard
             .block_priority_fees()

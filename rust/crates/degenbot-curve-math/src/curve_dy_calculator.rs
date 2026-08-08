@@ -878,4 +878,5 @@ pub fn calculate_dy_underlying(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests;

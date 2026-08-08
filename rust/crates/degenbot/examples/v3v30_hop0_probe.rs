@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 //! Prove the live path-10338 V3-30 hop0 `+1` is a STALE-STATE artifact, not a
 //! crossing-math bug (ergo UO3JM4/W2UWZO closure).
 //!

@@ -486,7 +486,7 @@ fn negate_to_i256(value: U256) -> Result<I256, ProcessorError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use degenbot_evm_math::RAY;

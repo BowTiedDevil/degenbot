@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 //! Word-boundary flooring divergence — the root cause of the residual V4
 //! `CurrencyNotSettled` (ergo ON5QMD).
 //!
@@ -42,11 +43,7 @@
 //! 15360) and the solver's crossing path (single-shot — no floor). It does
 //! not: the solver over-predicts. RED.
 
-#![allow(
-    clippy::doc_markdown,
-    clippy::cast_possible_wrap,
-    clippy::cast_possible_truncation
-)]
+#![expect(clippy::doc_markdown)]
 
 use std::collections::HashMap;
 

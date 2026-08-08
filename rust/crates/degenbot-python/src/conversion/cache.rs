@@ -104,7 +104,7 @@ pub fn create_hexbytes<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound<'py
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![expect(clippy::unwrap_used, clippy::print_stderr)]
 
     use super::*;
 

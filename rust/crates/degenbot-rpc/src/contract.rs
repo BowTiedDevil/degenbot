@@ -100,7 +100,7 @@ impl FunctionSignature {
             if i > 0 {
                 result.push(',');
             }
-            #[allow(clippy::expect_used)]
+            #[expect(clippy::expect_used)]
             write!(&mut result, "{ty}").expect("writing to String is infallible");
         }
         result
@@ -394,7 +394,6 @@ impl Contract {
             .await?;
 
         // Decode into typed values
-        #[allow(clippy::option_if_let_else)]
         func.output_cache().map_or_else(
             || decode_return_data_typed(&func.outputs, &result).map_err(Into::into),
             |cached| {
@@ -444,8 +443,9 @@ impl Contract {
     }
 }
 
+#[expect(clippy::panic)]
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::I256;

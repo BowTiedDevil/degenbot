@@ -147,7 +147,7 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
 
         // SAFETY: next_tick is within i32 range because it was clamped
         // to [MIN_TICK, MAX_TICK] which are both i32 values.
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_possible_truncation)]
         let tick_i32 = next_tick as i32;
 
         result.push(TickAlongPath {
@@ -194,7 +194,7 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
         // SAFETY: push_tick is within i32 range because it is clamped to
         // [MIN_TICK, MAX_TICK] which are both i32 values, or an unclamped
         // boundary still inside them.
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_possible_truncation)]
         result.push(TickAlongPath {
             tick: push_tick as i32,
             is_initialized: false,
@@ -640,6 +640,12 @@ pub fn apply_liquidity_to_tick_range<S: std::hash::BuildHasher>(
     }
 }
 
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

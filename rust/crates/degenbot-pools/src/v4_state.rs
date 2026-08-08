@@ -787,8 +787,7 @@ impl ReorgPoolState for V4PoolState {
 /// for zero amount / overflow / invariant violations;
 /// [`SimulateSwapError::MissingTickWord(w)`] when `coverage == Sparse` and the
 /// walk entered an unfetched tick-bitmap word (caller fetches + retries).
-#[allow(clippy::too_many_lines)] // faithful port of V3/V4's `_calculate_swap`; mirroring `v3_simulate_swap`.
-#[allow(unused_assignments)] // `tick` tracks the contract's post-step tick; faithful to the loop.
+#[expect(clippy::too_many_lines)] // faithful port of V3/V4's `_calculate_swap`; mirroring `v3_simulate_swap`.
 pub fn v4_simulate_swap(
     state: &V4PoolState,
     fee: u32,
@@ -1018,6 +1017,7 @@ pub fn v4_simulate_swap(
 // apply contract is the same shape (scalars-on-swap, tick-only-on-mint). These
 // exercise `V4PoolState::apply_swap` / `apply_liquidity_update` directly.
 // ===========================================================================
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod apply_inherent_tests {
     #![allow(unused_imports)]

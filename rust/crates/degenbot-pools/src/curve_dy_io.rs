@@ -101,7 +101,7 @@ fn resolve_rates(
 /// Returns [`CurveInputsError::NoProvider`] when a style/metapool needs a
 /// provider that isn't stored, [`CurveInputsError::Provider`] on a fetch
 /// failure, and [`CurveInputsError::LengthMismatch`] on mismatched arrays.
-#[allow(clippy::too_many_lines)] // cohesive I/O orchestration ported 1:1 from the companion
+#[expect(clippy::too_many_lines)] // cohesive I/O orchestration ported 1:1 from the companion
 pub fn resolve_dy_inputs(
     identity: &CurvePoolIdentity,
     balances: &[U256],

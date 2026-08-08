@@ -72,7 +72,7 @@ pub use ::degenbot_pools::int_v3_hop::{
 // ON5QMD rounding-parity nets and the uncapped enumeration
 // references in the test module. PXSY47 retires it when the solver
 // objective unifies with the step-faithful walker.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(test), expect(dead_code))]
 fn int_simulate_cl_path_n(
     amount_in: U256,
     crossings: &[Option<IntTickRangeCrossing>],
@@ -164,7 +164,7 @@ fn int_simulate_cl_path_n(
 // ON5QMD rounding-parity nets and the uncapped enumeration
 // references in the test module. PXSY47 retires it when the solver
 // objective unifies with the step-faithful walker.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(test), expect(dead_code))]
 fn int_simulate_v3_v3_path(
     amount_in: U256,
     crossing1: Option<&IntTickRangeCrossing>,
@@ -861,8 +861,11 @@ fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossin
     // typically ≤ 15 — negligible against a single simulation.
     (0..seq.ranges.len())
         .map(|k| {
-            seq.compute_crossing(k)
-                .expect("k in 0..ranges.len() is always in bounds")
+            #[expect(clippy::expect_used)] // k is always in 0..ranges.len() (documented)
+            {
+                seq.compute_crossing(k)
+                    .expect("k in 0..ranges.len() is always in bounds")
+            }
         })
         .collect()
 }
@@ -1059,7 +1062,7 @@ pub fn exact_solve_mixed_v2_v3_sequence(
 // simulator; production solving now uses `simulate_walk_path`.
 // Retained for the test module's uncapped-enumeration reference and
 // N-hop parity nets.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(test), expect(dead_code))]
 fn int_simulate_mixed_path_n(
     amount_in: U256,
     v2_hops: &[Option<IntHopState>],
@@ -1224,7 +1227,7 @@ fn u512_to_u256(v: U512) -> U256 {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
 mod tests {
     use super::*;
     use alloy::primitives::I256;

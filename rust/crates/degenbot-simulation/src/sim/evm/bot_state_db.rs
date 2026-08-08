@@ -184,6 +184,7 @@ where
     /// # Errors
     ///
     /// Returns the fallback's error if the RPC `basic` fetch fails.
+    #[expect(clippy::panic_in_result_fn, clippy::panic)] // code-less tracked pool = invariant break (loud)
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         let info = self.fallback.basic_ref(address)?;
         // A tracked pool address MUST resolve to a contract with code. If the
@@ -317,6 +318,7 @@ fn raw_uncached_eth_get_code(rpc_url: &str, address: Address, block: u64) -> Opt
     v.get("result")?.as_str().map(str::to_string)
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

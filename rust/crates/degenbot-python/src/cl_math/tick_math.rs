@@ -33,7 +33,7 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
             return Ok(U160::from_be_bytes::<20>(padded));
         }
         // SAFETY: `bytes` was checked to be exactly BYTES_PER_WORD (20) bytes.
-        #[allow(clippy::unwrap_used)]
+        #[expect(clippy::unwrap_used)]
         return Ok(U160::from_be_bytes::<20>(bytes.try_into().unwrap()));
     }
 

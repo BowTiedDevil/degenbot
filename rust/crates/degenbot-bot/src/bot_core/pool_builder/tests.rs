@@ -8,6 +8,7 @@
 //! `tests/builders/test_pybot_io.py` as Python fake-provider tests (removed
 //! together with the Python-provider seam).
 
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::collections::HashMap;
 
 use alloy::dyn_abi::DynSolValue;
@@ -26,7 +27,7 @@ const POOL_ID: [u8; 32] = [0xab; 32];
 /// ABI-encode a single return value → return bytes (inherent
 /// `DynSolValue::abi_encode`, the same independent encoder path the crate's
 /// `degenbot-rpc::abi` decoder-oracle tests use).
-#[allow(clippy::needless_pass_by_value)] // test helper takes owned DynSolValue for inline call sites
+#[expect(clippy::needless_pass_by_value)] // test helper takes owned DynSolValue for inline call sites
 fn enc(v: DynSolValue) -> Vec<u8> {
     v.abi_encode()
 }

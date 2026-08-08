@@ -49,7 +49,7 @@
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 #![allow(clippy::doc_markdown)] // Solidity/V3 identifiers (slot0, tickBitmap…) in doc comments
-
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tier3_v3_common;
 
 use std::collections::HashSet;
@@ -179,7 +179,6 @@ fn seed_pancake_pool_storage_impl(
 /// NOT decodable by the Uniswap V3 decoder, is decodable by the PancakeSwap
 /// decoder, and whose 5 state fields match the sim byte-exact. Optionally
 /// asserts the trailing `protocolFeesToken0` word is nonzero (`protocol_fee_on`).
-#[allow(clippy::too_many_lines)]
 fn assert_event_variant(logs: &[RpcLog], sim: &V3SwapOutcome, protocol_fee_on: bool) {
     let swap_log = logs
         .iter()
@@ -241,8 +240,7 @@ fn assert_event_variant(logs: &[RpcLog], sim: &V3SwapOutcome, protocol_fee_on: b
 /// variant); on-chain Revert (a verdict) ⇒ engine `NotComputable`; only a
 /// verbless Halt (the OOG gas trap) is a legitimate skip. `protocol_fee_on`
 /// selects the parallel seeder that splits the LP fee with the protocol.
-#[allow(clippy::match_same_arms)] // two parity arms legitimately share an empty body
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::match_same_arms)] // two parity arms legitimately share an empty body
 fn assert_byte_exact_and_variant(
     state: &V3PoolState,
     fee: u32,

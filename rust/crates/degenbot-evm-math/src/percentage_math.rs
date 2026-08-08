@@ -172,7 +172,7 @@ pub fn percent_div_ceil(value: U256, percentage: U256) -> Result<U256, PercentEr
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

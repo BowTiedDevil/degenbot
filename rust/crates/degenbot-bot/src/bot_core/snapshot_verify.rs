@@ -244,7 +244,6 @@ where
 /// is supplied at the call sites in `degenbot-python::bot::engine::register`.
 ///
 /// Returns the registration key + the captured backfill-boundary snapshot.
-#[allow(clippy::type_complexity)] // matches the upstream signature's closure tuple
 pub fn register_with_cl_buffers<E, Key, BackfillSnapshot>(
     engine: &Arc<Mutex<E>>,
     register: impl FnOnce(&mut E) -> Key,
@@ -260,6 +259,7 @@ pub fn register_with_cl_buffers<E, Key, BackfillSnapshot>(
     (key, backfill_snapshot)
 }
 
+#[expect(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;

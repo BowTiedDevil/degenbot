@@ -1,8 +1,5 @@
-#![allow(
-    clippy::uninlined_format_args,
-    clippy::doc_markdown,
-    clippy::doc_lazy_continuation
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
+#![expect(clippy::doc_markdown)]
 //! Decisive root-cause confirmation + fix guard for ergo `BZBOLL` — the V4
 //! `CurrencyNotSettled` divergence is the V4 protocol fee. `RZKFKR` pinned
 //! it (offline replay of the path=97 fixture); this test guards the FIX

@@ -226,7 +226,7 @@ impl PyArbitrageEngine {
     /// after `build_paths` finishes so a Tracked pool built but never reached
     /// by `register_v3/v4_pool` (path skipped before registration) is released
     /// to `Live` instead of deferring events to its buffer indefinitely.
-    #[allow(clippy::unnecessary_wraps)]
+    #[expect(clippy::unnecessary_wraps)]
     fn release_all_v3_v4_quarantined(&self, py: Python<'_>) -> PyResult<()> {
         let engine = Arc::clone(&self.engine);
         py.detach(move || {
@@ -240,7 +240,6 @@ impl PyArbitrageEngine {
     /// is applied directly (mirroring `BotState::buffer_backfill_v3_liquidity_update`);
     /// otherwise it is buffered for a later [`apply_buffer_v3`] drain. Used to
     /// test `apply_buffer_v3` against a primed buffer without an RPC backfill.
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (pool_address, tick_lower, tick_upper, liquidity_delta, block_number))]
     fn debug_buffer_v3_liquidity_update(
         &self,
@@ -331,7 +330,7 @@ impl PyArbitrageEngine {
     /// `engine_processed_block`, and a `hops` list with per-hop engine state.
     ///
     /// Raises `KeyError` if `path_id` is not registered.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (path_id, rpc_url=None))]
     fn diagnostic_inspect_path(
         &self,

@@ -139,6 +139,7 @@ fn hex_padded_u256(word: U256) -> String {
     hex::encode(word.to_be_bytes::<32>())
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

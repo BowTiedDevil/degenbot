@@ -197,7 +197,7 @@ pub async fn multicall3_batch(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::hex_literal::hex;

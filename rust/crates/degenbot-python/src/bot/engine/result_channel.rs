@@ -28,7 +28,7 @@ impl PyArbitrageEngine {
     ///     - "`tick_spacing"`: int (V3/V4 only)
     ///   Returns None if the `path_id` is not found.
     #[pyo3(signature = (path_id))]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn inspect_path(&self, path_id: u64, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
         // Phase 1: Collect pool refs from the path
         let pool_refs: Vec<MixedPoolRef> = {
@@ -175,7 +175,7 @@ impl PyArbitrageEngine {
 
     /// Returns (`results`, `block_number`) where results is a flat list:
     /// [`path_id_0`, `optimal_input_0`, `profit_0`, `path_id_1`, ...]
-    #[allow(clippy::significant_drop_tightening)]
+    #[expect(clippy::significant_drop_tightening)]
     fn latest_results(&self, py: Python<'_>) -> PyResult<(Py<PyList>, u64)> {
         let (results, block_num) = {
             let engine = self.engine.lock();
@@ -283,7 +283,7 @@ impl PyArbitrageEngine {
     }
 
     /// Return self as an async iterator over result batches.
-    #[allow(clippy::missing_const_for_fn)]
+    #[expect(clippy::missing_const_for_fn)]
     fn __aiter__(slf: PyClassGuard<'_, Self>) -> PyClassGuard<'_, Self> {
         slf
     }
@@ -491,7 +491,7 @@ impl BlockStream {
 #[pymethods]
 impl BlockStream {
     /// Return self as the async iterator.
-    #[allow(clippy::missing_const_for_fn)]
+    #[expect(clippy::missing_const_for_fn)]
     fn __aiter__(slf: PyClassGuard<'_, Self>) -> PyClassGuard<'_, Self> {
         slf
     }

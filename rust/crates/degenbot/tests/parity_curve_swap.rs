@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Curve `get_dy` (ADR-005 standalone
 //! claim, the behavioral tier; epic `TV72EG`, task `SGJR2W`).
 //!

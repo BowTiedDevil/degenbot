@@ -28,8 +28,7 @@ use crate::mixed::{
 /// `solve_all` invoke `solve_path` from a rayon `par_iter` closure without
 /// borrowing `self` (which would conflict with the `&mut self` write to
 /// `self.results` that follows the solve).
-#[allow(clippy::unused_self)]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
@@ -222,7 +221,7 @@ pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
                         } else {
                             "V4"
                         };
-                        #[allow(clippy::cast_possible_truncation)]
+                        #[expect(clippy::cast_possible_truncation)]
                         let fee_bps = 10000u64.saturating_sub(range.gamma_numer / 100) as u16;
                         format!(
                             "{family}:sq={},liq={},fee={fee_bps},zfo={}",
@@ -835,7 +834,7 @@ fn simulate_balancer_weighted_hop(amount_in: U256, hop: &BalancerWeightedHopStat
 /// Balancer stable solve — Möbius precheck + golden-section search,
 /// mirroring `solve_balancer_weighted_path_int` with the stable math
 /// leaf (`calc_out_given_in` with pre-computed invariant).
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn solve_balancer_stable_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     use crate::mobius_int::compute_int_mobius_coefficients;
     use crate::mobius_int_exact::compute_mobius_model_optimal_input;
@@ -1039,7 +1038,6 @@ fn balancer_stable_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option
 /// Curve stableswap solve — Möbius precheck + golden-section search,
 /// mirroring the Balancer stable solve with the Curve stableswap math
 /// leaf (`stableswap_get_y` + fee/rate conversion).
-#[allow(clippy::too_many_lines)]
 fn solve_curve_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     use crate::mobius_int::compute_int_mobius_coefficients;
     use crate::mobius_int_exact::compute_mobius_model_optimal_input;

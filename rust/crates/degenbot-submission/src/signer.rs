@@ -165,6 +165,7 @@ impl std::fmt::Debug for TxSigner {
     }
 }
 
+#[expect(clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;

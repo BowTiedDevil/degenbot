@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! Path-26154 payload probe: does the production composer encode a VALID
 //! `cmd_executor` command stream for the exact recorded V2-V4-V3 arbitrage?
 //!

@@ -609,7 +609,7 @@ impl PyAlloyProvider {
     // -----------------------------------------------------------------------
 
     /// Close the underlying connection pool and release resources.
-    #[allow(clippy::unused_self, clippy::missing_const_for_fn)]
+    #[expect(clippy::unused_self, clippy::missing_const_for_fn)]
     fn close(&self) {
         // AlloyProvider doesn't have an explicit close method,
         // but the connection pool is released when the Arc is dropped.
@@ -731,7 +731,7 @@ impl PyAlloyProvider {
     /// This is a deterministic, timing-free test — no sleep or scheduling
     /// assumptions required.
     #[pyo3(signature = ())]
-    #[allow(clippy::unused_self)]
+    #[expect(clippy::unused_self)]
     fn verify_gil_release(&self, py: Python<'_>) -> bool {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
@@ -749,7 +749,10 @@ impl PyAlloyProvider {
                     flag.store(true, Ordering::SeqCst);
                 });
             });
-            handle.join().expect("GIL re-acquisition thread panicked");
+            #[expect(clippy::expect_used)] // join fails only if the thread itself panicked
+            {
+                handle.join().expect("GIL re-acquisition thread panicked");
+            }
         });
 
         gil_acquired_by_other.load(Ordering::SeqCst)
@@ -757,7 +760,7 @@ impl PyAlloyProvider {
 }
 
 /// Add provider module to Python module.
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 pub fn add_provider_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.provider")?;

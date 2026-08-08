@@ -300,6 +300,7 @@ impl ArbitrageEngine {
     }
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

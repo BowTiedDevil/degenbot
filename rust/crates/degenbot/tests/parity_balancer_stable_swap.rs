@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 //! Tier-2 behavioral dual-driver parity — Balancer V2 stable swap calc,
 //! ComposableStable `bpt_idx = Some(..)` path (ADR-005 standalone claim,
 //! RPSW4Z).

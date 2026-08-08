@@ -5,7 +5,6 @@
 //! (`crate::bot::engine::errors`); `engine::mod` re-exports them so `c_api`
 //! and the sibling concern files reference them as `crate::bot::engine::*`.
 
-#[allow(unused_imports)]
 use pyo3::create_exception;
 
 // Distinct Python exception types for the two verification failure

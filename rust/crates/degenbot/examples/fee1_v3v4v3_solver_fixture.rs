@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! Fee-1 V3→V4→V3 fixture: Möbius solver V4-hop vs byte-exact on-chain (UO3JM4).
 //!
 #![allow(

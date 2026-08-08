@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! Standalone-Rust consumer smoke test (ADR-005 standalone claim, made concrete).
 //!
 //! Proves a Rust consumer can `cargo add degenbot`, construct a `BotState`,
@@ -181,7 +187,7 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
     seed_block
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn main() {
     // 2b reaches ArbitrageEngine for the standalone lifecycle slice.
     use degenbot::solvers::arb_engine::{ArbitrageEngine, EnginePhase};
@@ -495,7 +501,7 @@ fn registration_lifecycle_standalone_slice() {
 /// bytecode (`getEthBalance`) deployed so the pre/post balance reads return
 /// real ETH balances. No RPC — `CacheDB<EmptyDB>` + a mock provider with an
 /// empty queue.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn in_process_sim_standalone_slice() {
     const OWNER: Address = address!("9c56a29c7231974c269e24f9fb3c29203039089e");
     const EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");

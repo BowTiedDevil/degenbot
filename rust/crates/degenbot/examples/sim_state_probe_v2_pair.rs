@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used, clippy::print_stdout)]
 //! Live in-process sim-state probe for the path-11354 V2 pair (block 25678283).
 //!
 //! Builds the PRODUCTION layered DB stack exactly as `BlockSimHandle::build`
@@ -85,7 +86,6 @@ const SYNC_TOPIC: &str = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b
 const SWAP_TOPIC: &str = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822";
 
 /// The executor `_v2_get_amount_out`: `floor(amt*fm*reserve_out/(reserve_in*10000+amt*fm))`.
-#[allow(clippy::cast_possible_truncation)]
 fn v2_get_amount_out(amount_in: u128, reserve_in: u128, reserve_out: u128) -> u128 {
     (amount_in * FEE_MULTIPLIER * reserve_out) / (reserve_in * 10_000 + amount_in * FEE_MULTIPLIER)
 }

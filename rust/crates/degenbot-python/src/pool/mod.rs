@@ -193,7 +193,7 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
     verify_all_interval = None,
     verify_all_at_completion = false,
 ))]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn run_pool_update(
     py: Python<'_>,
     database_path: &str,
@@ -254,7 +254,6 @@ fn run_pool_update(
 /// `AlloyProvider` are owned internally (mirrors the aave verify seam).
 #[pyfunction]
 #[pyo3(signature = (database_path, rpc_url, chain_id, pool_address, block_number))]
-#[allow(clippy::needless_pass_by_value)]
 fn verify_v3_liquidity_map(
     py: Python<'_>,
     database_path: &str,
@@ -333,7 +332,6 @@ fn verify_v3_liquidity_map(
 /// owned internally.
 #[pyfunction]
 #[pyo3(signature = (database_path, rpc_url, chain_id, pool_hash, pool_manager_address, block_number))]
-#[allow(clippy::needless_pass_by_value)]
 fn verify_v4_liquidity_map(
     py: Python<'_>,
     database_path: &str,
@@ -411,6 +409,7 @@ fn verify_v4_liquidity_map(
 /// Encode a [`degenbot_pool_updater::LiquidityDivergence`] list as a list of
 /// dicts (empty = GREEN). Each dict carries `variant` + the named fields for
 /// bisect-able triage (the same shape the pre-commit gate surfaces).
+#[expect(clippy::unwrap_used)] // dict.set_item can't fail on these literal values
 fn divergences_to_dicts(
     py: Python<'_>,
     divergences: &[degenbot_pool_updater::LiquidityDivergence],
@@ -506,7 +505,7 @@ pub fn add_pool_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use degenbot_pool_updater::run::ChunkProgress;

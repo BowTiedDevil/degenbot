@@ -42,7 +42,7 @@ fn map_encode_error(e: &AbiDecodeError) -> PyErr {
 /// # Returns
 ///
 /// The ABI-encoded bytes.
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 #[pyfunction]
 pub fn encode_single<'py>(
     py: Python<'py>,
@@ -70,7 +70,7 @@ pub fn encode_single<'py>(
 /// # Returns
 ///
 /// The ABI-encoded bytes.
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (types, values))]
 pub fn encode<'py>(
@@ -118,7 +118,7 @@ pub fn encode<'py>(
 /// # Returns
 ///
 /// The packed-encoded bytes (no padding, no length prefixes).
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (types, values))]
 pub fn encode_packed<'py>(

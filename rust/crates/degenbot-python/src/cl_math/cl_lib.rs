@@ -349,7 +349,7 @@ pub fn get_next_sqrt_price_from_output(
 /// # Errors
 ///
 /// Returns `PyValueError` on invalid input, overflow, or if liquidity exceeds int128.
-#[allow(clippy::similar_names)]
+#[expect(clippy::similar_names)]
 #[pyfunction(signature = (sqrt_price_current, sqrt_price_target, liquidity, amount_remaining, fee_pips))]
 pub fn compute_swap_step_v3(
     sqrt_price_current: &Bound<'_, PyAny>,
@@ -370,7 +370,6 @@ pub fn compute_swap_step_v3(
         return Err(PyValueError::new_err("liquidity exceeds int128 range"));
     }
     // Safe: validated above that liquidity_u128 <= i128::MAX.
-    #[allow(clippy::similar_names)]
     let liquidity_i128 = liquidity_u128.cast_signed();
 
     let result = swap_math::compute_swap_step_v3(
@@ -398,7 +397,7 @@ pub fn compute_swap_step_v3(
 /// # Errors
 ///
 /// Returns `PyValueError` on invalid input, overflow, or if liquidity exceeds int128.
-#[allow(clippy::similar_names)]
+#[expect(clippy::similar_names)]
 #[pyfunction(signature = (sqrt_price_current, sqrt_price_target, liquidity, amount_remaining, fee_pips))]
 pub fn compute_swap_step_v4(
     sqrt_price_current: &Bound<'_, PyAny>,
@@ -422,7 +421,6 @@ pub fn compute_swap_step_v4(
         return Err(PyValueError::new_err("liquidity exceeds int128 range"));
     }
     // Safe: validated above that liquidity_u128 <= i128::MAX.
-    #[allow(clippy::similar_names)]
     let liquidity_i128 = liquidity_u128.cast_signed();
 
     let result = swap_math::compute_swap_step_v4(
@@ -450,7 +448,7 @@ pub fn compute_swap_step_v4(
 /// Maximum usable tick for the given spacing (delegates to the cl-math core).
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
-#[allow(clippy::missing_const_for_fn)]
+#[expect(clippy::missing_const_for_fn)]
 pub fn max_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::max_usable_tick(tick_spacing)
 }
@@ -458,7 +456,7 @@ pub fn max_usable_tick(tick_spacing: i32) -> i32 {
 /// Minimum usable tick for the given spacing (delegates to the cl-math core).
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
-#[allow(clippy::missing_const_for_fn)]
+#[expect(clippy::missing_const_for_fn)]
 pub fn min_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::min_usable_tick(tick_spacing)
 }
@@ -519,7 +517,7 @@ fn u128_to_py_obj(py: Python<'_>, v: U128) -> PyResult<PyObject> {
 ///
 /// Returns `PyValueError` on invalid input types, non-uint128 liquidity, or
 /// non-i32 ticks.
-#[allow(clippy::too_many_arguments, clippy::similar_names)]
+#[expect(clippy::too_many_arguments)]
 #[pyfunction]
 pub fn apply_liquidity_mapping_update(
     tick_bitmap: &Bound<'_, PyAny>,

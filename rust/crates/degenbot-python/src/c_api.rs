@@ -35,11 +35,7 @@ use pyo3::wrap_pyfunction;
 /// Returns `ValueError` if reserves and `market_prices` lengths don't match,
 /// or if reserves/weights can't be converted to u128/u64.
 #[cfg(feature = "bot")]
-#[allow(
-    clippy::too_many_arguments,
-    clippy::needless_pass_by_value,
-    clippy::type_complexity
-)]
+#[expect(clippy::needless_pass_by_value, clippy::type_complexity)]
 #[pyfunction]
 #[pyo3(signature = (
     reserves, weights, fee_numer, fee_denom, decimals, market_prices, max_input=None
@@ -84,7 +80,7 @@ pub fn solve_balancer_weighted_basket(
 /// Returns a [`PyErr`] if any individual `add_class`/`add_function`/`add` call
 /// fails (e.g. a name collision). Errors are propagated unchanged — the
 /// `#[pymodule]` caller in `lib.rs` converts them into the module-init failure.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Concentrated-liquidity math (feature = "cl-math") — registered on a real
     // Python submodule `degenbot._ffi.cl_math` (21 fns + 4 tick-boundary

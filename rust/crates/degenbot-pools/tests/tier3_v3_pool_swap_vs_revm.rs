@@ -32,7 +32,7 @@
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 #![allow(clippy::doc_markdown)] // Solidity/V3 identifiers (MIN_TICK, slot0…) in doc comments
-
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tier3_v3_common;
 
 use std::collections::HashMap;
@@ -159,7 +159,6 @@ fn probe_accepted(
 /// (then compared byte-for-byte); an on-chain `Revert` (a verdict) MUST be
 /// matched by an engine `NotComputable`; only a verbless `Halt` (the documented
 /// OOG gas trap / deploy failure — no EVM verdict) is a legitimate skip.
-#[allow(clippy::too_many_lines)]
 fn assert_byte_exact(
     state: &V3PoolState,
     fee: u32,
@@ -225,7 +224,7 @@ fn assert_byte_exact(
 /// storage-encoder-seeding pipeline reads back byte-exact (the prerequisite
 /// for the swap byte-exact assertion).
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn v3_pool_reads_back_seeded_state_byte_exact() {
     use revm::context_interface::ContextTr;
     use revm::primitives::TxKind;
@@ -584,8 +583,8 @@ fn v3_pool_edge_corpus_is_byte_exact() {
 /// Proptest: dense-band swap byte-exactness across a widened (state, amount,
 /// direction, fee, topology) domain (H4). Amount is coupled to liquidity so
 /// the walk terminates with real per-step price movement (the OOG trap).
-#[allow(clippy::items_after_statements)] // `fn strategy` is local to the test
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::items_after_statements)] // `fn strategy` is local to the test
+#[expect(clippy::too_many_lines)]
 #[test]
 fn v3_pool_dense_swap_matches_sim_proptest() {
     let tick_spacing = 60i32;
@@ -726,8 +725,7 @@ fn v3_pool_dense_swap_matches_sim_proptest() {
 /// between far-apart boundaries, and one-sided ranges that run to a price
 /// limit / the bitmap end. The H1 verdict protocol (Accepted↔Ok byte-exact,
 /// Revert↔NotComputable, verbless Halt = the OOG gas trap = skip) is kept.
-#[allow(clippy::items_after_statements)] // `fn strategy` is local to the test
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 #[test]
 fn v3_pool_arbitrary_liquidity_matches_sim_proptest() {
     fn strategy() -> impl Strategy<Value = (i32, i32, Vec<ArbV3Position>, u32, i32, u32, i32)> {
@@ -891,7 +889,7 @@ fn v3_pool_arbitrary_liquidity_matches_sim_proptest() {
 /// the concrete shapes the proptest randomizes, pinned so a regression can't
 /// hide behind a changed seed.
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn v3_pool_arbitrary_topology_edge_corpus() {
     let fee = 3000u32;
     let tick_spacing = 60i32;

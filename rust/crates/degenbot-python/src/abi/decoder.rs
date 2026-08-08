@@ -102,7 +102,7 @@ fn map_decode_error(e: &AbiDecodeError) -> PyErr {
 /// - Parallel decoding without GIL contention
 /// - Pure Rust unit testing
 /// - Clean separation of concerns
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (types, data, checksum = true))]
 pub fn decode(
@@ -133,7 +133,7 @@ pub fn decode(
 /// # Architecture
 ///
 /// This PyO3-exposed function wraps `decode_single_rust` for consistent architecture.
-#[allow(clippy::missing_errors_doc)]
+#[expect(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (abi_type, data, checksum = true))]
 pub fn decode_single(

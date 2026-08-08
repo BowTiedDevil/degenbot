@@ -8,6 +8,7 @@
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::needless_range_loop)]
+#![expect(clippy::unwrap_used)]
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;

@@ -2074,6 +2074,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-executor",
+ "degenbot-order-index",
  "degenbot-rpc",
  "degenbot-simulation",
  "degenbot-submission",
@@ -2218,6 +2219,7 @@ dependencies = [
 name = "degenbot-order-index"
 version = "0.6.0-alpha.3"
 dependencies = [
+ "alloy-primitives",
  "proptest",
 ]
 

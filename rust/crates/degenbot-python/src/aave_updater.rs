@@ -207,7 +207,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
     verify_all_interval=None,
     verify_all_at_completion=false,
 ))]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn run_aave_update(
     py: Python<'_>,
     database_path: &str,
@@ -335,13 +335,12 @@ fn run_err_to_py(err: RunError) -> PyErr {
 ///   `run_aave_update`'s progress dict for efficiency).
 #[pyfunction]
 #[pyo3(signature = (database_path, rpc_url, market_id, chain_id, block_number, touched_users=None))]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn verify_touched_positions_on_chain(
     py: Python<'_>,
     database_path: &str,
     rpc_url: &str,
     market_id: i64,
-    #[allow(unused_variables)] chain_id: i64,
+    #[expect(unused_variables)] chain_id: i64,
     block_number: u64,
     touched_users: Option<Vec<String>>,
 ) -> PyResult<Vec<Py<PyDict>>> {
@@ -459,11 +458,7 @@ fn verify_touched_positions_on_chain(
 ///   `Some(["0x...", ...])` verifies only those users.
 #[pyfunction]
 #[pyo3(signature = (database_path, rpc_url, market_id, chain_id, block_number, touched_users=None))]
-#[allow(
-    clippy::needless_pass_by_value,
-    clippy::too_many_arguments,
-    clippy::too_many_lines
-)]
+#[expect(clippy::too_many_lines)]
 fn verify_all_positions_on_chain(
     py: Python<'_>,
     database_path: &str,
@@ -589,7 +584,6 @@ fn verify_all_positions_on_chain(
 /// Opens the DB for writes, deletes, + commits. The GIL is released across
 /// the call.
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 fn cleanup_zero_balance_positions(
     py: Python<'_>,
     database_path: &str,
@@ -634,7 +628,6 @@ fn cleanup_zero_balance_positions(
 ///
 /// `ValueError` on a DB / RPC / address-parse failure.
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 fn activate_aave_market(
     py: Python<'_>,
     database_path: &str,
@@ -673,7 +666,6 @@ fn activate_aave_market(
 ///
 /// `ValueError` if `market_id` doesn't exist or on a DB failure.
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 fn deactivate_aave_market(py: Python<'_>, database_path: &str, market_id: i64) -> PyResult<()> {
     let path = PathBuf::from(database_path);
     py.detach(move || core_deactivate_aave_market(&path, market_id))
@@ -709,7 +701,7 @@ pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

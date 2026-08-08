@@ -366,7 +366,7 @@ pub fn build_debt_position_data(
 /// Panics if the `BASIS_POINTS` (`10_000`) constant fails its cast to `u64` —
 /// it cannot, `BASIS_POINTS` is a compile-time `const` well within `u64` range.
 #[must_use]
-#[allow(clippy::cast_sign_loss)]
+#[expect(clippy::cast_sign_loss)]
 pub fn calculate_health_factor(
     collateral_positions: &[CollateralPositionData],
     debt_positions: &[DebtPositionData],
@@ -401,6 +401,7 @@ pub fn calculate_health_factor(
         return None;
     }
 
+    #[expect(clippy::expect_used)] // BASIS_POINTS (10_000) always fits u64
     let denom = total_debt * U256::try_from(BASIS_POINTS).expect("BASIS_POINTS fits u64");
     Some(u256_to_f64(weighted_collateral) / u256_to_f64(denom))
 }
@@ -415,7 +416,7 @@ pub fn calculate_health_factor(
 ///
 /// Panics if the `BASIS_POINTS` (`10_000`) constant fails its cast to `u64` —
 /// it cannot, `BASIS_POINTS` is a compile-time `const` well within `u64` range.
-#[allow(clippy::cast_sign_loss, clippy::implicit_hasher)]
+#[expect(clippy::cast_sign_loss, clippy::implicit_hasher)]
 pub fn analyze_user_position(
     user: &AaveUserRecord,
     collateral_positions: &[AaveCollateralPositionRecord],
@@ -480,6 +481,7 @@ pub fn analyze_user_position(
     let total_debt_raw = total_debt_value;
 
     let max_ltv_ratio = if total_debt_raw > U256::ZERO && max_ltv_capacity > U256::ZERO {
+        #[expect(clippy::expect_used)] // BASIS_POINTS (10_000) always fits u64
         let numer = total_debt_raw * U256::try_from(BASIS_POINTS).expect("BASIS_POINTS fits u64");
         Some(u256_to_f64(numer) / u256_to_f64(max_ltv_capacity))
     } else {
@@ -514,7 +516,7 @@ pub fn analyze_user_position(
 /// rational; this conversion rounds each limb individually, which is exact for
 /// values ≤ `2^53` and within `rel-1e-6` for all realistic magnitudes (the
 /// tolerance the Python `test_core.py` suite uses via `pytest.approx`).
-#[allow(clippy::cast_precision_loss)]
+#[expect(clippy::cast_precision_loss)]
 fn u256_to_f64(v: U256) -> f64 {
     let limbs = v.into_limbs();
     (limbs[0] as f64)
@@ -523,8 +525,8 @@ fn u256_to_f64(v: U256) -> f64 {
         + (limbs[3] as f64) * 2f64.powi(192)
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
-#[allow(clippy::too_many_lines)]
 mod tests {
     //! 1:1 port of `tests/aave/analysis/test_core.py`. Each Python test class
     //! becomes a Rust test module; the int inputs + asserted outputs are
@@ -544,7 +546,7 @@ mod tests {
         format!("0x{zero39}{n:x}", zero39 = "0".repeat(39))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn make_collateral_position_data(
         asset_address: &str,
         asset_symbol: &str,
@@ -922,7 +924,7 @@ mod tests {
 
     // ── TestBuildCollateralPositionData ──────────────────────────────────
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn make_collateral_record(
         asset_id: i64,
         balance: u128,

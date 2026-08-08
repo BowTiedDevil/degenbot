@@ -9,6 +9,8 @@
 //! to the real `UniswapV2Pair` / `UniswapV3Pool` / V4 `PoolManager` bytecode
 //! (see `degenbot-pools/tests/tier3_*_swap_vs_revm.rs`).
 
+#![expect(clippy::expect_used)]
+
 use alloy::primitives::{I256, U256};
 
 use crate::degenbot_pools::v3_state::{

@@ -92,6 +92,7 @@ impl SolveCoordinator {
     /// held the lock). Panics on cursor divergence — a wiring bug (engines
     /// must backfill to the same block before `start`).
     pub fn start(&self) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let mut state = self.drain_lock.lock().expect("drain_lock poisoned");
         // Precondition 2: all engines agree on the starting block.
         let cursors: Vec<Option<u64>> = self
@@ -116,12 +117,14 @@ impl DrainSink for SolveCoordinator {
         // Take drain_lock so the read is consistent with any in-flight fan-out
         // (engines can't be mid-`solve_dirty` while we iterate their dirty
         // flags — `on_drain` holds the same lock through the fan-out).
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         self.engines.iter().any(|e| e.has_dirty_paths())
     }
 
     #[hotpath::measure(label = "SolveCoordinator::on_drain")]
     fn on_drain(&self, block: u64, metadata: &BlockMetadata) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let mut state = self.drain_lock.lock().expect("drain_lock poisoned");
         // DEFERRED (ADR-006): `SolvePolicy::Eager`/`Block`/`Manual` would
         // dispatch here — today hardcoded to `Drain` (forward to every
@@ -138,6 +141,7 @@ impl DrainSink for SolveCoordinator {
 
     #[hotpath::measure(label = "SolveCoordinator::on_send")]
     fn on_send(&self, metadata: &BlockMetadata) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         for engine in &self.engines {
             engine.send_result_batch(metadata);
@@ -146,6 +150,7 @@ impl DrainSink for SolveCoordinator {
 
     #[hotpath::measure(label = "SolveCoordinator::finalize_block")]
     fn finalize_block(&self, block: u64, metadata: &BlockMetadata) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let mut state = self.drain_lock.lock().expect("drain_lock poisoned");
         for engine in &self.engines {
             engine.finalize_block(block, metadata);
@@ -154,6 +159,7 @@ impl DrainSink for SolveCoordinator {
     }
 
     fn set_last_solved_block(&self, block: u64) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         // Fan-out mirrors `finalize_block`/`on_drain` — every engine seeds
         // its own `last_solved_block` (engine-owned since LEZJAS; the prior
@@ -164,6 +170,7 @@ impl DrainSink for SolveCoordinator {
     }
 
     fn record_logs_this_block(&self) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         for engine in &self.engines {
             engine.record_logs_this_block();
@@ -174,6 +181,7 @@ impl DrainSink for SolveCoordinator {
         // Block until any in-flight drain completes, then return the "good"
         // drained block. Python polls paying this latency is the explicit
         // trade for never seeing a mid-drain cursor.
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let state = self.drain_lock.lock().expect("drain_lock poisoned");
         state.last_drained_block
     }
@@ -187,6 +195,7 @@ impl DrainSink for SolveCoordinator {
         // (it awaits `block_rx.recv()`). `notify_block` must NOT advance
         // `last_drained_block` (that clock is solve-driven; the *block*
         // clock lives on the block channel).
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         for engine in &self.engines {
             engine.notify_block(block, metadata);
@@ -194,6 +203,7 @@ impl DrainSink for SolveCoordinator {
     }
 
     fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         self.engines
             .iter()
@@ -202,6 +212,7 @@ impl DrainSink for SolveCoordinator {
     }
 
     fn take_solver_path_pool_refs_change_set(&self) -> Vec<Vec<MixedPoolRef>> {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
         self.engines
             .iter()
@@ -210,6 +221,7 @@ impl DrainSink for SolveCoordinator {
     }
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

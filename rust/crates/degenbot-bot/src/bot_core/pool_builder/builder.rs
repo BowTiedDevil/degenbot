@@ -554,7 +554,7 @@ pub fn detect_pow_version(bytecode: &[u8]) -> u8 {
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Spec`] if the token's decimals cannot be read.
-#[allow(clippy::cast_possible_truncation)]
+#[expect(clippy::cast_possible_truncation)]
 async fn compute_scaling_factor(
     io: &ConstructionIo,
     token: Address,
@@ -771,7 +771,7 @@ async fn assemble_db_or_chain_v3(
 
 /// V4 twin of [`assemble_db_or_chain_v3`]: `TickMapDb.fetch_liquidity_map_v4`
 /// hit → [`PoolTickCoverage::Tracked`]; miss → Chain-arm → Sparse.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 async fn assemble_db_or_chain_v4(
     db: Option<&dyn TickMapDb>,
     io: &ConstructionIo,
@@ -817,6 +817,7 @@ async fn bootstrap_v3_tick_map(
         tick,
         tick_spacing,
     );
+    #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V3 tick word fits in int16");
     // Best-effort single-word probe for a Sparse pool: an unreadable word
     // (decode error on a provider that can't serve `tickBitmap`) degrades to
@@ -867,7 +868,7 @@ async fn bootstrap_v3_tick_map(
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
 /// [`PoolBuilderError::Spec`] when the pool exposes fewer than 2 coins
 /// (mirrors the `BrokenPool` minimum-tokens guard).
-#[allow(clippy::too_many_lines)] // data-dense assembly (mirrors the Python builder)
+#[expect(clippy::too_many_lines)] // data-dense assembly (mirrors the Python builder)
 pub async fn build_curve_pool(
     address: Address,
     registry_addresses: &[Address],
@@ -1088,6 +1089,7 @@ async fn bootstrap_v4_tick_map(
         tick,
         tick_spacing,
     );
+    #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V4 tick word fits in int16");
     // Same best-effort single-word probe + graceful decode-error degradation as
     // the V3 arm (`bootstrap_v3_tick_map`): an unreadable word → empty/Sparse.
@@ -1278,7 +1280,7 @@ pub struct V4PoolBuildOverrides {
 /// The `expect(\"checked present\")` calls on the override path are
 /// unreachable-by-construction: the `missing` completeness check above returns
 /// [`PoolBuilderError::MissingIdentity`] before any field is read.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::expect_used)] // all overrides verified present by the `missing` check (see # Panics)
 pub async fn resolve_v4_identity(
     chain_id: u64,
     pool_manager: Address,
@@ -1339,6 +1341,7 @@ pub async fn resolve_v4_identity(
         });
     }
 
+    #[expect(clippy::expect_used)] // overrides validated present above (documented)
     let (currency0, currency1) = order_currencies(
         overrides.currency0.expect("checked present"),
         overrides.currency1.expect("checked present"),

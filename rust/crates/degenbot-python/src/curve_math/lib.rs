@@ -92,7 +92,6 @@ fn yd_variant_from_u8(d: u8) -> PyResult<YDVariant> {
 /// (`calculations/stableswap.py`) raises `ValueError` for the same conditions
 /// (Python big-ints can't overflow, so the only oracle raises are
 /// non-convergence / index / unsafe-value).
-#[allow(clippy::needless_pass_by_value)]
 fn curve_err(e: CurveMathError) -> PyErr {
     match e {
         CErr::Overflow => PyValueError::new_err("OVERFLOW"),
@@ -135,7 +134,7 @@ pub fn stableswap_get_d(
 ///
 /// Returns `ValueError` ("Index out of bounds") if `i == j` or out of range; "Not converged" after 255 iterations; `OverflowError` on overflow.
 #[pyfunction(signature = (i, j, x, xp, amp, n_coins, a_precision, y_variant, d_variant))]
-#[allow(clippy::too_many_arguments)] // mirrors the Vyper contract's 9-arg signature
+#[expect(clippy::too_many_arguments)] // mirrors the Vyper contract's 9-arg signature
 pub fn stableswap_get_y(
     i: usize,
     j: usize,

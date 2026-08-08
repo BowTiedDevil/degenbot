@@ -128,7 +128,7 @@ const fn compress_tick(tick: i32, tick_spacing: i32) -> i32 {
 /// In Uniswap V3, `compressedTick` is an `int24` (24-bit signed), so the
 /// range is [-887272, 887272]. After `>> 8`, `wordPos` fits in `i16`
 /// and `bitPos` fits in `u8`.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 const fn tick_bitmap_position(compressed_tick: i32) -> (i16, u8) {
     // wordPos = compressed_tick >> 8 (arithmetic shift right = floor by 256)
     let word_pos = (compressed_tick >> 8) as i16;
@@ -190,6 +190,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     for (&tick_idx, our_info) in tick_data {
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let result = on_chain
             .get(&tick_idx)
             .copied()
@@ -282,6 +283,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
     for (&tick_idx, our_info) in tick_data {
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let result = on_chain
             .get(&tick_idx)
             .copied()
@@ -343,7 +345,7 @@ pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
 ///
 /// Returns [`LiquidityVerifyError::Mismatch`] on a bitmap/tick divergence or
 /// [`LiquidityVerifyError::Rpc`] on a per-call transport/decode failure.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub async fn verify_v3_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
     pool: &T,
@@ -406,8 +408,9 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
         }
         for bit in 0..256u64 {
             // SAFETY: bit is 0..255, so cast to usize is safe on any target.
-            #[allow(clippy::cast_possible_truncation)]
+            #[expect(clippy::cast_possible_truncation)]
             if bitmap_val.bit(bit as usize) {
+                #[expect(clippy::unwrap_used)] // invariant-guarded (documented)
                 let compressed_tick = i32::from(*word) * 256 + i32::try_from(bit).unwrap();
                 // SAFETY: compressed_tick * tick_spacing fits in the int24 range
                 // that Uniswap V3 uses, so the truncation to i32 is safe.
@@ -669,7 +672,7 @@ pub async fn verify_v4_pools<S: std::hash::BuildHasher>(
 ///
 /// Returns [`LiquidityVerifyError::Mismatch`] on a bitmap/tick divergence or
 /// [`LiquidityVerifyError::Rpc`] on a per-call transport/decode failure.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
     state_view: Address,
@@ -733,9 +736,10 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
         if bitmap_val.is_zero() {
             continue;
         }
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_possible_truncation)]
         for bit in 0..256u64 {
             if bitmap_val.bit(bit as usize) {
+                #[expect(clippy::unwrap_used)] // invariant-guarded (documented)
                 let compressed_tick = i32::from(*word) * 256 + i32::try_from(bit).unwrap();
                 let tick_i32 = compressed_tick * tick_spacing;
                 on_chain_tick_indices.insert(tick_i32);
@@ -847,6 +851,7 @@ fn collect_bitmap_words<S: std::hash::BuildHasher>(
 // Tests — tick bitmap word/bit calculation
 // ---------------------------------------------------------------------------
 
+#[expect(clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1067,7 +1072,7 @@ mod tests {
             let py_word = tick >> 8; // arithmetic shift right
             let py_bit = tick.rem_euclid(256); // Python's % always non-negative for positive divisor
                                                // SAFETY: py_word fits in i16 and py_bit fits in u8 for any int24 tick value
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             {
                 assert_eq!(
                     rust_word, py_word as i16,

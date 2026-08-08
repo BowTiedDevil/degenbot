@@ -13,12 +13,12 @@ use crate::fixed_point::{
 };
 
 /// `_MIN_WEIGHT = 0.01e18` — minimum allowed normalized weight.
-#[allow(dead_code)]
+#[expect(dead_code)]
 const MIN_WEIGHT: U256 = U256::from_limbs([10_000_000_000_000_000, 0, 0, 0]);
 
 /// `_MAX_WEIGHTED_TOKENS = 100` — the largest possible pool given the
 /// minimum normalized weight.
-#[allow(dead_code)]
+#[expect(dead_code)]
 const MAX_WEIGHTED_TOKENS: u64 = 100;
 
 /// `_MAX_IN_RATIO = 0.3e18` — swap inputs may not exceed 30% of the
@@ -30,9 +30,9 @@ const MAX_IN_RATIO: U256 = U256::from_limbs([300_000_000_000_000_000, 0, 0, 0]);
 const MAX_OUT_RATIO: U256 = U256::from_limbs([300_000_000_000_000_000, 0, 0, 0]);
 
 // Invariant growth / shrink limits (unused by swap math; ported for fidelity).
-#[allow(dead_code)]
+#[expect(dead_code)]
 const MAX_INVARIANT_RATIO: U256 = U256::from_limbs([3_000_000_000_000_000_000, 0, 0, 0]);
-#[allow(dead_code)]
+#[expect(dead_code)]
 const MIN_INVARIANT_RATIO: U256 = U256::from_limbs([700_000_000_000_000_000, 0, 0, 0]);
 
 /// Calculate the weighted-product invariant

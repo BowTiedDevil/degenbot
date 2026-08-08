@@ -21,6 +21,7 @@
 //! via `cmd_executor.error_map.json` (arithmetic-revert PCs) + method-
 //! delegation + direct source inspection (recorded on task 4O7BPZ).
 
+#![expect(clippy::expect_used, clippy::panic)]
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;

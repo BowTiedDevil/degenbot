@@ -39,7 +39,7 @@
 //! the two tests cannot drift (the HRT356 class).
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-
+#![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;
 
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
@@ -225,7 +225,7 @@ fn decode_swap_event(logs: &[revm::primitives::Log], pair: Address) -> Option<De
 /// `recipient = harness`. Fully self-contained: each call rebuilds the evm +
 /// harness so reserves/balances are pristine (a `doSwap` mutates them, so
 /// reuse would compound and break the K-boundary crispness).
-#[allow(clippy::too_many_lines)] // one logical deploy → setup → swap → read pipeline
+#[expect(clippy::too_many_lines)] // one logical deploy → setup → swap → read pipeline
 pub fn probe(
     fork: &V2Fork,
     r0: u128,

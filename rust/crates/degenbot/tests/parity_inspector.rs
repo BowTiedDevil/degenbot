@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — revm inspector (ADR-005 standalone
 //! claim, the behavioral tier).
 //!
@@ -100,7 +101,7 @@ struct FixtureInput {
 #[derive(Debug, Deserialize)]
 struct ExpectedOutcome {
     #[serde(default)]
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     result: Option<serde_json::Value>,
     fail_buckets: HashMap<String, u64>,
     failures: Vec<ExpectedFailure>,
@@ -185,7 +186,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
 /// (`tests/standalone_parity/test_inspector_dual_driver.py`) drives the same
 /// fixture through the `simulate_in_process_revert_probe` PyO3 binding.
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn inspector_dual_driver_parity_cafebabe_revert() {
     let fx = load_fixture();
     let provider = mock_no_rpc_provider();

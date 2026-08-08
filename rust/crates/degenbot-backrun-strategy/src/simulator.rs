@@ -221,7 +221,7 @@ pub struct SimResult {
 impl SimResult {
     /// The 1.5× safety-margin gas assigned to `tx_params["gas"]` (L2421).
     #[must_use]
-    #[allow(
+    #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
@@ -439,7 +439,7 @@ impl FailBuckets {
     /// distinguish a no-op encoding (`captured_swaps` empty — `execute()` did
     /// nothing) from a solver calc divergence (`captured_swaps` non-empty but
     /// the balance delta netted to zero).
-    #[allow(clippy::too_many_arguments)] // path attribution + swap/trace/weth detail
+    #[expect(clippy::too_many_arguments)] // path attribution + swap/trace/weth detail
     pub fn record_no_profit(
         &mut self,
         path_id: u64,
@@ -483,7 +483,7 @@ impl FailBuckets {
     /// reverting-frame attribution. Like [`record`](Self::record) but populates
     /// [`SimFailure::reverting_frame`] — the deep (depth/target/selector/
     /// revert-data/label) attribution of the frame that actually reverted.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn record_revert(
         &mut self,
         path_id: u64,
@@ -576,11 +576,10 @@ impl FailBuckets {
 /// possible here (the inputs are non-negative ints + the floor at 1 ensures
 /// non-negativity).
 #[must_use]
-#[allow(
+#[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::too_many_lines
+    clippy::cast_sign_loss
 )]
 pub fn compute_priority_fee(
     gross_profit: U256,
@@ -625,7 +624,7 @@ pub fn compute_priority_fee(
 /// with `float` ratio); the §4.2 parity is on the `int(...)` truncation of the
 /// final float, not on the f64 precision of the gross (which is exact for any
 /// realistic Wei-denominated gross < 2^53).
-#[allow(clippy::cast_precision_loss)]
+#[expect(clippy::cast_precision_loss)]
 fn u256_to_f64_lossy(v: U256) -> f64 {
     // `U256` → `f64` via the little-endian u64 limbs (high limb first).
     //
@@ -937,7 +936,7 @@ where
 ///
 /// Panics if a `TxEnv::builder().build()` fails (cannot happen with the
 /// well-formed balance/execute calldata + addresses this fn constructs).
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub fn simulate_path_on_evm<E>(
     evm: &mut E,
     ctx: &SimulateContext<'_>,
@@ -1032,10 +1031,13 @@ where
         })?;
 
     // Build the 7 calldata blobs (the balance reads + the execute call).
+    #[expect(clippy::expect_used)] // address always encodes (documented)
     let weth_call =
         encode_balance_of_calldata(ctx.executor_address).expect("valid address encodes");
+    #[expect(clippy::expect_used)] // address always encodes (documented)
     let eth_call =
         encode_get_eth_balance_calldata(ctx.executor_address).expect("valid address encodes");
+    #[expect(clippy::expect_used)] // address + weth always encode (documented)
     let erc6909_call = encode_erc6909_balance_of_calldata(ctx.executor_address, ctx.weth_address)
         .expect("valid address + weth encode");
 
@@ -1071,6 +1073,7 @@ where
     let mut inspector_opt = Some((al, (ct, se)));
     for (idx, tx) in txs.into_iter().enumerate() {
         let result = if idx == 3 {
+            #[expect(clippy::expect_used)] // taken only at idx 3 (documented)
             let inspector = inspector_opt.take().expect("inspector taken only at idx 3");
             evm.inspect_one(tx, inspector)
         } else {
@@ -1158,12 +1161,15 @@ where
             // V4_UNLOCK → unlockCallback → swap → …` chain that ends in a
             // depth-8 empty-calldata PoolManager Halt.
             if flag_default_on("DEGENBOT_DUMP_CALL_TRACE") {
-                eprintln!(
-                    "[sim-trace] path={} first_fail_call={} full_call_trace\n{}",
-                    path.path_id,
-                    fail_idx,
-                    captured_call_trace.render_debug()
-                );
+                #[expect(clippy::print_stderr)] // env-gated diagnostic call-trace dump
+                {
+                    eprintln!(
+                        "[sim-trace] path={} first_fail_call={} full_call_trace\n{}",
+                        path.path_id,
+                        fail_idx,
+                        captured_call_trace.render_debug()
+                    );
+                }
             }
             let frame_revert_data = match &frame.outcome {
                 Some(degenbot_simulation::FrameOutcome::Revert { data, .. }) => data.clone(),
@@ -1404,7 +1410,8 @@ fn build_balance_tx(
     to: Address,
     data: &alloy::primitives::Bytes,
 ) -> TxEnv {
-    TxEnv::builder()
+    #[expect(clippy::expect_used)] // valid tx env by construction (documented)
+    let env = TxEnv::builder()
         .caller(ctx.executor_owner)
         .kind(TxKind::Call(to))
         .data(alloy::primitives::Bytes::copy_from_slice(data))
@@ -1412,14 +1419,16 @@ fn build_balance_tx(
         .gas_limit(BALANCE_CALL_GAS_LIMIT)
         .gas_price(ctx.base_fee_next.max(1))
         .build()
-        .expect("valid balance-call TxEnv")
+        .expect("valid balance-call TxEnv");
+    env
 }
 
 /// Build the `execute(bytes, uint256)` `TxEnv` (caller = owner, target =
 /// executor, gas = [`execute_gas_limit()`] — overridable via
 /// [`EXECUTE_GAS_ENV`] to raise the artificial 5M ceiling).
 fn build_execute_tx(ctx: &SimulateContext<'_>, data: &alloy::primitives::Bytes) -> TxEnv {
-    TxEnv::builder()
+    #[expect(clippy::expect_used)] // valid tx env by construction (documented)
+    let env = TxEnv::builder()
         .caller(ctx.executor_owner)
         .kind(TxKind::Call(ctx.executor_address))
         .data(alloy::primitives::Bytes::copy_from_slice(data))
@@ -1427,7 +1436,8 @@ fn build_execute_tx(ctx: &SimulateContext<'_>, data: &alloy::primitives::Bytes) 
         .gas_limit(execute_gas_limit())
         .gas_price(ctx.base_fee_next.max(1))
         .build()
-        .expect("valid execute TxEnv")
+        .expect("valid execute TxEnv");
+    env
 }
 
 /// Decode a 32-byte big-endian uint256 from a revm call's return output.
@@ -1731,6 +1741,7 @@ fn log_reverted_swaps_vs_hop_outputs(
     }
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::too_many_lines)]

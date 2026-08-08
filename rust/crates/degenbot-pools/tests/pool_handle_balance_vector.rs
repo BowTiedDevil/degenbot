@@ -1,5 +1,6 @@
 //! Prototype test: shared Pool handle for Curve and Balancer balance-vector pools.
 
+#![expect(clippy::expect_used)]
 use alloy::primitives::{Address, U256};
 use degenbot_pools::balancer_stable_state::{
     BalancerStablePoolState, RegisterBalancerStablePoolParams,

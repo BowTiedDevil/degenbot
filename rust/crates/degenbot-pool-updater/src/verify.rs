@@ -165,7 +165,6 @@ fn compare_bitmap_word(
 /// Returns [`RunError::Provider`] only if the Multicall3 batch + its
 /// sequential `eth_call` fallback BOTH fail (a transport/node fault — not a
 /// per-tick revert, which surfaces as a divergence, not an error).
-#[allow(clippy::missing_errors_doc)]
 pub async fn verify_v3_liquidity_map_on_chain(
     provider: &AlloyProvider,
     pool_address: Address,
@@ -188,7 +187,7 @@ pub async fn verify_v3_liquidity_map_on_chain(
         // for any valid word (the old `int_selector_calldata` path treated the
         // same `i32` as its low-2-byte int16). Suppress `cast_possible_truncation`
         // because the narrowing is the documented semantic, not an accident.
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_possible_truncation)]
         let word_i16 = word as i16;
         calls.push((pool_address, Bytes::from(encode_tick_bitmap(word_i16))));
     }
@@ -250,7 +249,7 @@ const EXTSLOAD_BATCH_SELECTOR: [u8; 4] = [0xdb, 0xd0, 0x35, 0xff];
 
 /// Compute `S_state = keccak256(abi.encode(poolId, uint256(6)))` — the
 /// `Pool.State` value base for `pool_id` (the on-chain `PoolId` bytes32).
-#[allow(clippy::cast_possible_truncation)] // V4_POOLS_BASE_SLOT == 6, fits u8
+#[expect(clippy::cast_possible_truncation)] // V4_POOLS_BASE_SLOT == 6, fits u8
 fn v4_state_base_slot(pool_id: B256) -> U256 {
     let mut buf = [0u8; 64];
     buf[0..32].copy_from_slice(pool_id.as_slice());
@@ -284,8 +283,10 @@ fn nested_mapping_slot(key: i32, base: U256) -> B256 {
 /// `I256` the in-memory map carries.
 fn decode_tick_from_slot(word: B256) -> (U128, I256) {
     let bytes: &[u8; 32] = word.as_ref();
-    // gross = low 128 bits (bytes [16..32]).
-    let gross_low: [u8; 16] = bytes[16..32].try_into().expect("16 bytes");
+    // gross = low 128 bits (bytes [16..32]); fixed-length slice → array copy is
+    // infallible — no `try_into().expect` needed.
+    let mut gross_low = [0u8; 16];
+    gross_low.copy_from_slice(&bytes[16..32]);
     let gross = U128::from_be_bytes(gross_low);
     // net = high 128 bits (bytes [0..16]) as an int128, sign-extended to I256.
     let mut net_buf = [0u8; 32];
@@ -368,7 +369,6 @@ fn decode_extsload_or_error(data: &Bytes, n: usize, pool_id: B256) -> Result<Vec
 /// overload, or a transport fault). An uninitialized on-chain tick reads as
 /// `bytes32(0)` (NOT an error) — it surfaces as a divergence if the in-memory
 /// map has non-zero liquidity for that tick.
-#[allow(clippy::missing_errors_doc)]
 pub async fn verify_v4_liquidity_map_on_chain(
     provider: &AlloyProvider,
     pool_manager_address: Address,
@@ -559,7 +559,6 @@ pub fn verify_all_pools_committed_on_conn(
 /// Edge cases: `chunk_end == 0` → false (no block processed); `n == 0` is
 /// the caller's bug (the CLI/clamp it to >= 1) but is treated as never-fires
 /// to avoid a divide-by-zero panic.
-#[allow(dead_code)] // wired into the chunk loop in the YWEUIR task.
 pub(crate) fn should_run_full_verify_at_interval(
     working_start: u64,
     chunk_end: u64,
@@ -581,7 +580,8 @@ pub(crate) fn should_run_full_verify_at_interval(
 
 /// Whether `chunk_end` is the run's final block: `chunk_end >= last_block`
 /// OR `max_chunks_hit` (the loop broke because `max_chunks` was reached).
-#[allow(dead_code)] // wired into the chunk loop in the YWEUIR task.
+// wired into the chunk loop in the YWEUIR task.
+#[cfg(test)] // only exercised by tests today; move back to production when the YWEUIR task wires it
 pub(crate) fn is_final_chunk(chunk_end: u64, last_block: u64, max_chunks_hit: bool) -> bool {
     max_chunks_hit || chunk_end >= last_block
 }
@@ -595,6 +595,7 @@ pub(crate) fn is_final_chunk(chunk_end: u64, last_block: u64, max_chunks_hit: bo
 /// `degenbot-rpc::abi::tests`).
 #[cfg(test)]
 fn encode_ticks_return_ref(gross: u128, net: i128) -> Vec<u8> {
+    #[expect(clippy::unwrap_used)] // i128 always fits in I256
     let val = DynSolValue::Tuple(vec![
         DynSolValue::Uint(U256::from(gross), 128),
         DynSolValue::Int(I256::try_from(net).unwrap(), 128),
@@ -614,7 +615,7 @@ fn encode_uint256_return_ref(word: U256) -> Vec<u8> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::primitives::hex_literal::hex;

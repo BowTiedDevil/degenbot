@@ -39,7 +39,6 @@ use pyo3::exceptions::PyValueError;
 )]
 // `inner` is read by `dispatch_profitable_py` (A4, QQFTB4) — not yet landed;
 // the field is dead until then.
-#[allow(dead_code)]
 pub struct PyDispatchCandidate {
     pub(crate) inner: DispatchCandidate,
 }
@@ -81,7 +80,7 @@ impl PyDispatchCandidate {
     ///         or `hop_outputs`/`consumed_inputs` length ≠ path hops.
     #[new]
     #[pyo3(signature = (engine, path_id, optimal_input, engine_profit, hop_outputs, consumed_inputs, solve_block, state_nonces, *, erc6909_profit=false, use_v4_batch=false))]
-    #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
+    #[expect(clippy::too_many_arguments, clippy::needless_pass_by_value)]
     fn new(
         py: Python<'_>,
         engine: Py<PyArbitrageEngine>,

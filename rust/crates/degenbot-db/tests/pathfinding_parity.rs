@@ -11,6 +11,7 @@
 //! To regenerate the fixture:
 //!   `uv run python rust/crates/degenbot-db/tests/fixtures/generate_pathfinding.py`
 
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // parity/integration test harness
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -34,7 +35,6 @@ fn fixture_expected() -> Expected {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct Expected {
     chain_id: i64,
     /// Unfiltered `[token0, token1, pool_id, kind_u8]` edges (sorted).

@@ -42,6 +42,7 @@
 //!    strict upper bound on committed work, so a restart never re-applies
 //!    committed work.
 
+#![expect(clippy::unwrap_used)]
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, B256};

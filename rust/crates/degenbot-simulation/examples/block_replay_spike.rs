@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used, clippy::print_stderr)]
 //! Block-replay spike — measure the wall-clock delta between receiving a
 //! fresh mainnet block and replaying ALL of its transactions through a
 //! persistent `CacheDB<AlloyDB>` EVM (`transact_commit` per tx).

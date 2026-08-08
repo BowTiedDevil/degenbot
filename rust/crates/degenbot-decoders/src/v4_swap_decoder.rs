@@ -136,11 +136,12 @@ pub fn decode_v4_swap_log(log: &Log) -> Option<V4SwapEvent> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::Bytes;
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn make_v4_swap_log(
         pool_id: V4PoolId,
         sender: Address,

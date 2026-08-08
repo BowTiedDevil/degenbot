@@ -435,7 +435,7 @@ pub(crate) fn db_apply_collateral_configuration_changed(
 /// on a DB failure.
 #[pyfunction]
 #[pyo3(signature = (database_path, market_id, category_id, ltv, liquidation_threshold, liquidation_bonus, price_source=None, label=""))]
-#[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+#[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub(crate) fn db_apply_e_mode_category_added(
     py: Python<'_>,
     database_path: &str,

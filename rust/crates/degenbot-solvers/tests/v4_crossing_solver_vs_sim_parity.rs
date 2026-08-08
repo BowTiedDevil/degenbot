@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 //! Decisive offline experiment for ergo task `W2UWZO` — resolves the
 //! "stale active state vs. compute_crossing residual" fork for the V4
 //! CurrencyNotSettled `+1` divergence WITHOUT a live mainnet run.
@@ -33,17 +34,17 @@
 //! tick-bitmap → `IntV3TickRangeSequence` transformation, not a hand-built
 //! fixture.
 
-#![allow(
+#![expect(
     clippy::too_many_lines,
     clippy::doc_markdown,
     clippy::doc_lazy_continuation
 )]
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     reason = "60·i (i ≤ tick_count ≤ 8) fits i32"
 )]
-#![allow(
+#![expect(
     clippy::unreadable_literal,
     reason = "machine-generated 134-tick UNI fixture payload; separators would be noise"
 )]
@@ -324,7 +325,7 @@ fn v4_crossing_solver_matches_v4_simulate_swap_single_high_liquidity_corner() {
 /// initialized ticks at ±`spacing·i`, alternating nets (liquidity toggles
 /// `L ↔ 2L`), mirroring `build_multi_tick_v4_state` but with fee=1, the
 /// tightest tick spacing, and the reproduction's tiny liquidity + active price.
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn build_fee1_tiny_state(
     base_liquidity: u128,
     tick_count: usize,

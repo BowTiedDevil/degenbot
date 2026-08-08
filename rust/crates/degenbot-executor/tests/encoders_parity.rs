@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used)]
 // Opcode-format golden spec for the `enc_*` primitive builders.
 //
 // The byte literals in this file ARE the authoritative definition of each
@@ -5,7 +6,6 @@
 // (deriving them from the `enc_*` functions under test would be circular).
 // Each assertion pins a primitive's exact output so a format change is a
 // visible, reviewable diff here.
-
 #![allow(
     clippy::too_many_lines,
     clippy::expect_used,

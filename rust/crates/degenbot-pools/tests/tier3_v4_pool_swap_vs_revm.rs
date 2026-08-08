@@ -50,7 +50,7 @@
 
 #![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 #![allow(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, slot0…)
-
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // Reuse the CL-family shared driver + the arbitrary-topology position type and
 // grid-snapping helpers from the V3/Pancake-V3 oracle's common module.
 mod tier3_v3_common;
@@ -393,7 +393,7 @@ fn encode_v4_swap_call(
 /// [`ProbeOutcome::Reverted`] with the raw revert data on a Solidity/V4-error
 /// revert, or [`ProbeOutcome::Halted`] when the pipeline itself broke (deploy/
 /// getter failure or the OOG gas trap — no EVM verdict).
-#[allow(clippy::too_many_lines)] // one logical deploy → seed → unlock → swap → verdict pipeline
+#[expect(clippy::too_many_lines)] // one logical deploy → seed → unlock → swap → verdict pipeline
 fn probe_v4(
     state: &V4PoolState,
     fee: u32,
@@ -567,8 +567,7 @@ fn probe_accepted(
 /// Revert (a verdict — e.g. `CurrencyNotSettled`, decoded via
 /// `degenbot_decoders::revert`) ⇒ engine `NotComputable`; only a verbless
 /// Halt (pipeline break / OOG) is a legitimate skip.
-#[allow(clippy::match_same_arms)] // two parity arms legitimately share an empty body
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::match_same_arms)] // two parity arms legitimately share an empty body
 fn assert_v4_byte_exact(
     state: &V4PoolState,
     fee: u32,
@@ -907,8 +906,7 @@ fn v4_pool_dense_swap_matches_sim_proptest() {
 /// limit / the bitmap end — same axes as the V3 topology fuzz, plus the
 /// fee/protocol-fee combination. Reuses the shared H1 verdict protocol via
 /// [`assert_v4_byte_exact`].
-#[allow(clippy::items_after_statements)] // `fn strategy` is local to the test
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 #[test]
 fn v4_pool_arbitrary_liquidity_matches_sim_proptest() {
     fn strategy() -> impl Strategy<
@@ -1047,7 +1045,6 @@ fn v4_pool_arbitrary_liquidity_matches_sim_proptest() {
 /// corpus): explicit topologies that cross initialized ticks, span empty
 /// words, and run to a bitmap end, each driven through the byte-exact oracle.
 #[test]
-#[allow(clippy::too_many_lines)]
 fn v4_pool_arbitrary_topology_edge_corpus() {
     let fee = 3000u32;
     let protocol_fee = 0u32;

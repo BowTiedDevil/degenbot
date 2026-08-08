@@ -187,7 +187,7 @@ pub(crate) fn compute_tx_hash_from_signed_payload(encoded_tx: &[u8]) -> Provider
 /// `self.call_timeout`, `self.max_attempts`, `tx_hash`, the broadcast op, and
 /// the receipt-reconcile op) so the decision logic is unit-testable without
 /// a live provider — the tests inject closures simulating each branch.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub(crate) async fn send_raw_transaction_with_reconciliation<F, Fut, G, FutR>(
     tx_hash: B256,
     broadcast: F,
@@ -1661,8 +1661,9 @@ impl LogFetcher {
     }
 }
 
+#[expect(clippy::panic)]
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};

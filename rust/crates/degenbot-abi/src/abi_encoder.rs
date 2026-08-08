@@ -221,6 +221,7 @@ pub fn encode_packed_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>
     cached.encode_packed(values)
 }
 #[cfg(test)]
+#[expect(clippy::panic)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 

@@ -1,5 +1,6 @@
 //! Prototype test: shared Pool handle for Uniswap V4.
 
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 use alloy::primitives::{Address, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::registry::PoolEntry;

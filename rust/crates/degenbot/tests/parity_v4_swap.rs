@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — V4 concentrated-liquidity swap
 //! (ADR-005 standalone claim, the behavioral tier).
 //!
@@ -49,7 +50,6 @@ const FIXTURE_PATH: &str = concat!(
 
 /// The shared V4 fixture, deserialized once per test.
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct V4FixtureFile {
     fixture: V4FixtureInputs,
     probe: V4Probe,
@@ -57,7 +57,7 @@ struct V4FixtureFile {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct V4FixtureInputs {
     pool_manager: String,
     currency0: String,
@@ -74,14 +74,12 @@ struct V4FixtureInputs {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct V4Probe {
     amount_in: String,
     zero_for_one: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[allow(dead_code)]
 struct V4Expected {
     amount_out_zfo: String,
 }
@@ -104,7 +102,6 @@ fn parse_pool_id(hex: &str) -> [u8; 32] {
 
 /// Load + parse the shared fixture. Panics on any parse/IO failure (a corrupt
 /// fixture file is a test-infrastructure failure, not a test skip).
-#[allow(dead_code)]
 fn load_shared_v4_fixture() -> V4FixtureFile {
     let text = std::fs::read_to_string(FIXTURE_PATH)
         .unwrap_or_else(|e| panic!("read shared V4 fixture {FIXTURE_PATH}: {e}"));

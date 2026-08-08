@@ -58,7 +58,7 @@ use std::path::Path;
 /// # Errors
 ///
 /// Returns `PyValueError` if any pool-kind discriminant is not 0 or 1.
-#[allow(clippy::too_many_arguments, clippy::implicit_hasher)]
+#[expect(clippy::implicit_hasher)]
 #[pyfunction]
 #[pyo3(signature = (
     edges,
@@ -182,7 +182,7 @@ pub fn find_paths_rust(
 /// mapping for the snapshot seam).
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 #[pyfunction]
-#[allow(clippy::implicit_hasher, clippy::needless_pass_by_value)]
+#[expect(clippy::implicit_hasher, clippy::needless_pass_by_value)]
 #[pyo3(signature = (database_path, chain_id, pool_kinds, allowed_intermediate_token_ids=None))]
 pub fn build_path_graph<'py>(
     py: Python<'py>,

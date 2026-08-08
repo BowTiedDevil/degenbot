@@ -118,11 +118,12 @@ pub fn decode_v3_swap_log(log: &Log) -> Option<V3SwapEvent> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::Bytes;
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn make_v3_swap_log(
         pool_address: Address,
         sender: Address,

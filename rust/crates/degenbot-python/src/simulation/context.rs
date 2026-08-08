@@ -47,7 +47,6 @@ use std::sync::Arc;
 // Every field is consumed by `dispatch_profitable_py` (A4, QQFTB4) when it
 // stitches them into the borrowed `SimulateContext<'_>`; until A4 lands only
 // `provider` is read (by the `rpc_url` getter).
-#[allow(dead_code)]
 pub struct PySimulateContext {
     /// The typed RPC provider handle (cloned from the `PyAsyncAlloyProvider`
     /// the cockpit holds). Moved into A4's async block; the borrowed
@@ -97,7 +96,7 @@ impl PySimulateContext {
         provider, executor_owner, executor_address, weth_address, pool_manager_address,
         multicall3_address, inject_code, executor_runtime_bytecode, injected_address=None,
     ))]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn new(
         provider: &PyAsyncAlloyProvider,
         executor_owner: &str,

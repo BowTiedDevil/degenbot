@@ -486,7 +486,6 @@ fn missing_key(key: &str) -> PyErr {
 ///         balance computation overflow.
 #[pyfunction]
 #[pyo3(signature = (user, collateral_positions, debt_positions, collateral_config_map, price_map=None))]
-#[allow(clippy::needless_pass_by_value)] // pyo3 signature convention
 pub(crate) fn analyze_aave_user_position(
     py: Python<'_>,
     user: &Bound<'_, PyAny>,
@@ -532,7 +531,7 @@ pub fn register_aave_analysis(submod: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

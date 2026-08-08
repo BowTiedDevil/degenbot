@@ -4,6 +4,8 @@
 //! `tick_map`/`v4_pool_id_bytes`/`build_*_state` boilerplate every path-fixture
 //! example previously re-derived.
 
+#![expect(clippy::unwrap_used, clippy::expect_used)] // run-once investigation tooling
+
 use std::collections::HashMap;
 
 use alloy::primitives::{aliases::U112, Address, B256, I256, U256};

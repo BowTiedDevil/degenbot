@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-3 path-5000 V4 CL-hop clamp regression (ergo BHTWBZ, epic PJLIAE) —
 //! RED→GREEN proof that the CL-hop input clamp turns the 20.7M-gas EMPTY-HALT
 //! into a clean byte-exact fill under the executor's 5M gas ceiling.

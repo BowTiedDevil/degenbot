@@ -211,12 +211,12 @@ pub fn decode_v3_burn_log(log: &Log) -> Option<V3BurnEvent> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unreadable_literal, clippy::unwrap_used)]
+#[expect(clippy::unreadable_literal, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, I256};
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn make_v3_mint_log(
         pool_address: Address,
         sender: Address,

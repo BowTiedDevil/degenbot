@@ -1387,7 +1387,10 @@ fn encode_i256(v: &I256) -> String {
 #[must_use]
 fn u256_to_u128(v: &U256) -> U128 {
     let bytes = v.to_be_bytes::<32>();
-    let low: [u8; 16] = bytes[16..32].try_into().expect("16-byte slice fits");
+    // `bytes[16..32]` is exactly 16 bytes (fixed `[u8; 32]` source), so this
+    // slice→array copy is infallible — no `try_into().expect` needed.
+    let mut low = [0u8; 16];
+    low.copy_from_slice(&bytes[16..32]);
     U128::from_be_bytes(low)
 }
 
@@ -1404,6 +1407,7 @@ fn u128_to_u256(v: U128) -> U256 {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

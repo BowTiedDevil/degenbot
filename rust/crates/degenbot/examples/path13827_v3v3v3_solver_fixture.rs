@@ -1,3 +1,10 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stderr,
+    clippy::print_stdout
+)]
 //! Path-13827 V3-V3-V3 solver fixture (thin-tick-spacing over-prediction family).
 //!
 //! Loads `tests/fixtures/path13827_v3v3v3_block25696329.json` — the exact

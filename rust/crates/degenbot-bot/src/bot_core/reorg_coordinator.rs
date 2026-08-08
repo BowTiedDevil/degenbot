@@ -135,6 +135,7 @@ impl ReorgCoordinator {
     }
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,7 +473,6 @@ mod tests {
     /// Build a V3 `Swap` log. `sender`/`recipient`/`amount0`/`amount1` are
     /// filler — the reorg path only consumes `pool_address` + `block_number`
     /// + the `removed` flag (the journal's stored "before" values are truth).
-    #[allow(clippy::too_many_arguments)]
     fn make_v3_swap_log(
         pool_address: Address,
         sqrt_price_x96: U256,
@@ -687,7 +687,6 @@ mod tests {
     /// `amount1`/`fee` are filler — the reorg path consumes only
     /// `pool_manager` (the log emitter) + `pool_id` (topic[1]) + `block_number`
     /// + the `removed` flag.
-    #[allow(clippy::too_many_arguments)]
     fn make_v4_swap_log(
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,

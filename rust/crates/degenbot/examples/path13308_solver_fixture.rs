@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
 //! Path-13308 (V3-V4-V3) snapshot: Möbius solver vs on-chain reality — driven
 //! through the shared `degenbot::investigation` toolkit.
 //!

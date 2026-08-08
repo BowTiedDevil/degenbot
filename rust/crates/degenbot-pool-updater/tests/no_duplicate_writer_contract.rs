@@ -55,6 +55,7 @@
 //! second-writers BLOCK. (This mirrors the WAL contract the chunk loop relies
 //! on for its read-modify-write under a single writer.)
 
+#![expect(clippy::unwrap_used)]
 use alloy::primitives::Address;
 use degenbot_db::DbError;
 use degenbot_db::DegenbotDb;

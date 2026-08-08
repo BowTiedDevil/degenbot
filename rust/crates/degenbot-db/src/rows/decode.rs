@@ -32,7 +32,7 @@ pub(crate) fn decode_i256(s: &str) -> Result<alloy::primitives::I256, DbError> {
 /// # Errors
 ///
 /// Returns [`DbError::Decode`] if the non-null value is not a valid `U256`.
-#[allow(dead_code)] // exercised by Aave Option<U256> rows once fetch_aave_* lands (AZGJUN)
+#[expect(dead_code)] // exercised by Aave Option<U256> rows once fetch_aave_* lands (AZGJUN)
 pub(crate) fn decode_opt_u256(s: Option<&str>) -> Result<Option<U256>, DbError> {
     s.map(decode_u256).transpose()
 }
@@ -51,7 +51,6 @@ pub(crate) fn decode_address(s: &str) -> Result<Address, DbError> {
 /// # Errors
 ///
 /// Returns [`DbError::Decode`] if the non-null value fails the EIP-55 checksum.
-#[allow(dead_code)] // exercised by Aave/Pool Option<Address> rows once their fetch fns land
 pub(crate) fn decode_opt_address(s: Option<&str>) -> Result<Option<Address>, DbError> {
     s.map(decode_address).transpose()
 }
@@ -65,6 +64,7 @@ pub fn encode_u256(v: &U256) -> String {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

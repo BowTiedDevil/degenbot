@@ -154,11 +154,12 @@ impl OfflineProvider {
     /// empty data — construction with zero blocks is a usage error).
     #[must_use]
     pub fn latest_block(&self) -> u64 {
-        *self
+        #[expect(clippy::expect_used)] // provider always records at least one block
+        let (block, _) = self
             .blocks
             .last_key_value()
-            .expect("OfflineProvider must have at least one recorded block")
-            .0
+            .expect("OfflineProvider must have at least one recorded block");
+        *block
     }
 
     /// All recorded block numbers, ascending.
@@ -302,6 +303,8 @@ impl OfflineTransport {
             .data
             .resolve_block(arr.get(1))
             .ok_or_else(|| block_not_recorded_block_id(arr.get(1)))?;
+        // `resolve_block` guarantees the block number is recorded (see above).
+        #[expect(clippy::expect_used)]
         let block_data = self
             .data
             .blocks
@@ -325,6 +328,8 @@ impl OfflineTransport {
         let Some(block) = self.data.resolve_block(arr.first()) else {
             return Ok(success_null());
         };
+        // `resolve_block` guarantees the block number is recorded (see above).
+        #[expect(clippy::expect_used)]
         let block_data = self
             .data
             .blocks
@@ -364,7 +369,9 @@ fn success<T: serde::Serialize>(value: &T) -> Result<ResponsePayload, ErrorPaylo
 
 /// Build a `Success(null)` payload (for an unrecorded `get_block`).
 fn success_null() -> ResponsePayload {
-    ResponsePayload::Success(to_raw_value(&serde_json::Value::Null).expect("null encodes"))
+    #[expect(clippy::expect_used)] // serializing JSON null cannot fail
+    let null = to_raw_value(&serde_json::Value::Null).expect("null encodes");
+    ResponsePayload::Success(null)
 }
 
 /// Build the JSON-RPC block object for an `eth_getBlockByNumber` response.
@@ -468,7 +475,7 @@ fn revert_data(_to: &str, _data: &str) -> Option<Box<RawValue>> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::primitives::{address, U256};

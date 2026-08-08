@@ -533,10 +533,10 @@ pub fn decode_tick_bitmap(bytes: &[u8]) -> ProviderResult<U256> {
 /// user-supplied values should validate the range first.
 #[must_use]
 pub fn encode_tick_data(tick: i32) -> Vec<u8> {
-    IUniswapV3Pool::ticksCall {
-        tick: tick.try_into().expect("tick within int24 range"),
-    }
-    .abi_encode()
+    // V3 ticks are guaranteed within the signed 24-bit range (documented).
+    #[expect(clippy::expect_used)]
+    let tick24 = tick.try_into().expect("tick within int24 range");
+    IUniswapV3Pool::ticksCall { tick: tick24 }.abi_encode()
 }
 
 /// Decode `ticks(int24)` return data into `(liquidity_gross, liquidity_net)`
@@ -626,9 +626,12 @@ pub fn encode_v4_tick_bitmap(pool_id: &[u8; 32], word_position: i16) -> Vec<u8> 
 /// user-supplied values should validate the range first.
 #[must_use]
 pub fn encode_v4_tick_data(pool_id: &[u8; 32], tick: i32) -> Vec<u8> {
+    // All valid V4 ticks fit the signed 24-bit range (documented).
+    #[expect(clippy::expect_used)]
+    let tick24 = tick.try_into().expect("tick within int24 range");
     IUniswapV4StateView::getTickLiquidityCall {
         poolId: (*pool_id).into(),
-        tick: tick.try_into().expect("tick within int24 range"),
+        tick: tick24,
     }
     .abi_encode()
 }
@@ -1083,11 +1086,13 @@ pub fn decode_lending_token(bytes: &[u8]) -> ProviderResult<Address> {
 /// Widen a signed 24-bit `tick` value (already extracted as `i32`) into
 /// `I256`, preserving sign. The value always fits in `I256`; `expect` is safe.
 fn widen_int24(tick: i32) -> I256 {
-    I256::try_from(i128::from(tick)).expect("int24 value always fits in I256")
+    #[expect(clippy::expect_used)] // int24 -> i128 -> I256 always fits (documented)
+    let widened = I256::try_from(i128::from(tick)).expect("int24 value always fits in I256");
+    widened
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use alloy::dyn_abi::DynSolValue;

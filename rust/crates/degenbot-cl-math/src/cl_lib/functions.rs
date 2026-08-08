@@ -28,7 +28,7 @@ pub const fn tick_position(compressed: i32) -> (i16, u8) {
     // SAFETY: word_pos after >> 8 fits in i16 for any valid compressed tick
     // (max compressed tick ~887272 / 60 ~14787, which fits in i16)
     // bit_pos is 0..255, fits in u8
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     (word_pos as i16, bit_pos as u8)
 }
 
@@ -111,6 +111,7 @@ pub const fn to_int256(x: I256) -> Result<I256, ClMathError> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

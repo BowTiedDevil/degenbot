@@ -329,7 +329,7 @@ fn skip_in_progress_hop(update_block: u64, block: u64) -> bool {
 ///
 /// Returns [`SolverStateMismatch`] on any hop whose stored state diverges
 /// from the chain at `block`, or on an `eth_call` transport/decode failure.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub async fn verify_solver_hop_states(
     provider: &AlloyProvider,
     hops: &[SolverHopScalarState],
@@ -585,7 +585,6 @@ impl degenbot_pools::tick_map::TickMap for SolverTickMapCarrier<'_> {
 /// verifying at the map's own claimed anchor lets a 1-2 block price lag or a
 /// never-advanced liquidity clock pass legitimately and only trips on a truly
 /// desynced map.
-#[allow(clippy::too_many_arguments)]
 async fn probe_cl_tick_map_fidelity(
     provider: &AlloyProvider,
     hop: &SolverHopScalarState,
@@ -650,6 +649,7 @@ async fn probe_cl_tick_map_fidelity(
     }
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,3 +1,4 @@
+#![expect(clippy::expect_used, clippy::panic, clippy::print_stdout)]
 //! Tier-3b executor deploy-contract oracle (BHL2R2 / S2 foundation).
 //!
 //! Verifies that the committed Vyper executor artifact deploys correctly in

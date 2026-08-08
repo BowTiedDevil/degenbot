@@ -66,7 +66,6 @@ fn u256_to_py_obj(py: Python<'_>, v: U256) -> PyResult<PyObject> {
 /// Translate a `CurveSwapError` into a Python exception. Invariant failures
 /// surface as `ValueError` (the Python `DyCalculator` re-wraps those as
 /// `EVMRevertError`); wiring failures surface as `TypeError`/`ValueError`.
-#[allow(clippy::needless_pass_by_value)]
 fn curve_swap_err(e: CurveSwapError) -> PyErr {
     match e {
         CurveSwapError::Invariant(inner) => PyValueError::new_err(format!("{inner:?}")),
@@ -427,7 +426,6 @@ fn calculate_dy(
 ///
 /// Returns `ValueError` on an invariant failure / base-pool delegation failure.
 #[pyfunction(signature = (i, j, dx, inputs, base))]
-#[allow(clippy::needless_pass_by_value)]
 fn calculate_dy_underlying(
     i: usize,
     j: usize,

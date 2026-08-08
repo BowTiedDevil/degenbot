@@ -528,13 +528,13 @@ fn verify_row_counts(old_path: &Path, tmp_path: &Path) -> Result<(), DbError> {
 
 struct ColumnInfo {
     name: String,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     ty: String,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     notnull: bool,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     dflt: Option<String>,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pk: i64,
 }
 
@@ -566,4 +566,5 @@ fn quote_ident(name: &str) -> String {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)] // heal integration tests assert with unwrap
 mod tests;

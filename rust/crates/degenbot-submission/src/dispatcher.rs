@@ -368,7 +368,6 @@ impl Dispatcher {
     /// feeds futures in). Matches Python `track_task(task)` + the
     /// `add_done_callback(discard)` auto-removal; `JoinSet` reaps finished
     /// tasks on [`Self::reap_finished`] / abort.
-    #[allow(clippy::future_not_send)] // task may be !Send (per-dispatch local)
     pub fn track_task<F>(&mut self, task: F)
     where
         F: std::future::Future<Output = ()> + Send + 'static,
@@ -408,10 +407,12 @@ impl Dispatcher {
     /// the single-element list is always readable).
     #[must_use]
     pub fn current_block(&self) -> u64 {
-        *self
+        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+        let guard = self
             .current_block
             .lock()
-            .expect("current_block mutex poisoned")
+            .expect("current_block mutex poisoned");
+        *guard
     }
 
     /// Update the current block (read by monitor tasks by reference).
@@ -419,10 +420,12 @@ impl Dispatcher {
     /// # Panics
     /// Panics if the internal `Mutex` is poisoned.
     pub fn advance_block(&self, block: u64) {
-        *self
+        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+        let mut guard = self
             .current_block
             .lock()
-            .expect("current_block mutex poisoned") = block;
+            .expect("current_block mutex poisoned");
+        *guard = block;
     }
 
     /// Get a clone of the by-reference block handle (so monitor tasks can
@@ -475,10 +478,13 @@ impl Dispatcher {
     /// condition).
     #[must_use]
     pub fn latest_priority_fees(&self) -> &BTreeMap<u64, u128> {
-        self.block_priority_fees
+        #[expect(clippy::expect_used)] // ring always holds >= 1 entry (documented)
+        let last = self
+            .block_priority_fees
             .last_key_value()
             .map(|(_, v)| v)
-            .expect("latest_priority_fees called before any record_priority_fees")
+            .expect("latest_priority_fees called before any record_priority_fees");
+        last
     }
 
     /// Borrow the full per-block priority-fee ring (the
@@ -534,8 +540,8 @@ impl Dispatcher {
     }
 }
 
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
-#[allow(clippy::too_many_lines)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
@@ -733,7 +739,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::duration_suboptimal_units)] // std has no min-unit
+    #[expect(clippy::duration_suboptimal_units)] // std has no min-unit
     async fn abort_all_tasks_cancels_pending() {
         let mut d = Dispatcher::for_block(1);
         d.track_task(async {

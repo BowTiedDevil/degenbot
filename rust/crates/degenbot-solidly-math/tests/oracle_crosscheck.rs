@@ -13,6 +13,11 @@
 //! ground truth; if the Python oracle changes shape, the snapshot must be
 //! regenerated deliberately, not silently).
 
+// The corpus loader + parity assertions below use `unwrap`/`expect`/`panic`
+// freely — idiomatic for a test harness that replays a frozen snapshot and
+// asserts byte-identical output.
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::path::Path;
 
 use alloy::primitives::U256;

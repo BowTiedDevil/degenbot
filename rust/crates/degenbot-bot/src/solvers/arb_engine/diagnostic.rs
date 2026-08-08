@@ -65,7 +65,7 @@ impl FieldDiff {
 ///
 /// `serde`'s `skip_serializing_if` passes the field by reference, so this must
 /// take `&bool` despite clippy wanting pass-by-value.
-#[allow(clippy::trivially_copy_pass_by_ref)]
+#[expect(clippy::trivially_copy_pass_by_ref)]
 fn is_false(b: &bool) -> bool {
     !*b
 }
@@ -165,7 +165,6 @@ pub fn compute_field_diffs(
 /// compare against RPC results.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "pool_family")]
-#[allow(clippy::module_name_repetitions)]
 pub enum DiagnosticPoolState {
     /// V2 constant-product pool state.
     V2 {
@@ -541,6 +540,7 @@ fn build_engine_pool_state(
     }
 }
 
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -561,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn diagnostic_path_state_captures_mixed_hops() {
         let mut engine = ArbitrageEngine::new();
 

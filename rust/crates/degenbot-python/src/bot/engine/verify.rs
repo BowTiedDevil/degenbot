@@ -23,7 +23,6 @@ impl PyArbitrageEngine {
     ///     `rpc_url`: RPC endpoint URL (WS or HTTP).
     ///     `tick_lens_address`: Deployed `TickLens` contract address (hex string).
     ///     `state_view_address`: Deployed `StateView` contract address (hex string).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url, tick_lens_address, state_view_address, block_number))]
     fn verify_liquidity_maps<'py>(
         &self,
@@ -48,7 +47,6 @@ impl PyArbitrageEngine {
     ///
     /// Same as `verify_liquidity_maps` but only checks V3 pools.
     /// Useful for verifying against a V3-specific snapshot block.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url, block_number))]
     fn verify_v3_liquidity_maps<'py>(
         &self,
@@ -65,7 +63,6 @@ impl PyArbitrageEngine {
     ///
     /// Same as `verify_liquidity_maps` but only checks V4 pools.
     /// Useful for verifying against a V4-specific snapshot block.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url, state_view_address, block_number))]
     fn verify_v4_liquidity_maps<'py>(
         &self,
@@ -82,7 +79,6 @@ impl PyArbitrageEngine {
     /// Verify a single V3 pool's pinned snapshot seed against on-chain@snapshot
     /// block (CBCH6H — the rolling-start race fix). Step-1 of the two-step
     /// verify routes here. Delegates to the shared `PumpState`.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (address, rpc_url, block_number))]
     fn verify_v3_snapshot_seed<'py>(
         &self,
@@ -97,7 +93,6 @@ impl PyArbitrageEngine {
 
     /// Verify a single V4 pool's pinned snapshot seed against on-chain@snapshot
     /// block (CBCH6H — V4 twin of `verify_v3_snapshot_seed`).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (pool_manager_address, pool_id_hex, rpc_url, state_view_address, block_number))]
     fn verify_v4_snapshot_seed<'py>(
         &self,
@@ -128,7 +123,6 @@ impl PyArbitrageEngine {
     /// `verify_backfill_block`, and verifying against that constant
     /// fabricated a mismatch and crashed the bot (2026-06-29). Delegates to
     /// the shared `PumpState`.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (address, rpc_url))]
     fn verify_v3_post_drain_snapshot<'py>(
         &self,
@@ -143,7 +137,6 @@ impl PyArbitrageEngine {
     /// Verify a single V4 pool's **pinned post-drain** `tick_data` against
     /// on-chain@**pinned block** (step-2 of the two-step verify — V4 twin of
     /// `verify_v3_post_drain_snapshot`).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (pool_manager_address, pool_id_hex, rpc_url, state_view_address))]
     fn verify_v4_post_drain_snapshot<'py>(
         &self,
@@ -169,7 +162,6 @@ impl PyArbitrageEngine {
     /// immediate no-op (`Live`, no RPC); **Tracked** → verified with the
     /// mismatch tripwire before `Live`. Uses the bot's single verify provider
     /// (D-B).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (address, snapshot_block))]
     fn run_v3_registration_lifecycle<'py>(
         &self,
@@ -184,7 +176,6 @@ impl PyArbitrageEngine {
     /// V4 twin of `run_v3_registration_lifecycle`, keyed by
     /// (`pool_manager_address`, `pool_id_hex`). A tracked V4 pool with no
     /// `verify_state_view` configured fails fast (`PyValueError`, D-C).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (pool_manager_address, pool_id_hex, snapshot_block))]
     fn run_v4_registration_lifecycle<'py>(
         &self,
@@ -210,7 +201,6 @@ impl PyArbitrageEngine {
     /// This is an async method — returns a coroutine that must be awaited.
     /// Uses `future_into_py` instead of `block_on` so it integrates with
     /// the Python asyncio event loop (no deadlock when called from async code).
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (address, rpc_url, block_number))]
     fn verify_v3_pool<'py>(
         &self,
@@ -274,7 +264,7 @@ impl PyArbitrageEngine {
     /// using the `StateView` contract.
     ///
     /// This is an async method — returns a coroutine that must be awaited.
-    #[allow(clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (pool_id_hex, rpc_url, state_view_address, block_number))]
     fn verify_v4_pool<'py>(
         &self,

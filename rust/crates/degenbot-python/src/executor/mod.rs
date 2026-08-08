@@ -81,7 +81,6 @@ fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
 /// `PoolManager` ERC6909 `balanceOf(executor, native_id)`). Each is set to 1 wei
 /// to warm the slot and avoid cold-access gas penalties.
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
 fn compute_simulation_warmup_slots<'py>(
     py: Python<'py>,
     executor_address: &str,
