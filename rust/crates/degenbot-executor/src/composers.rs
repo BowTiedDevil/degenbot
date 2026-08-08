@@ -2703,16 +2703,21 @@ fn three_hop_v2_v4_v3(
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
     }
     // The V4 hop's swap-in is the solver's executable forward (`consumed_inputs`),
     // which the CL-hop clamp caps at `input_consumed - 1` when the solver
-    // over-predicts capacity (path-5000 EMPTY-HALT). The V3 exit take stays on
-    // `hop_outputs[1]` — for an over-feeding CL pool output(capacity) == output
-    // (over-feed), so the exit amount is unchanged.
+    // over-predicts capacity (path-5000 EMPTY-HALT). The V3 exit take AND the
+    // v3c swap-in both use `consumed_inputs[2]` (the byte-exact V4 output / CL
+    // clamp) — NOT the raw `hop_outputs[1]`, which can over-predict the V4
+    // output and over-take the pool, leaving a residual delta the settle repays
+    // via a failing USDT transfer (path-73385 class, same as three_hop_v3_v4_v3).
     let v4_swap_in = consumed_inputs.get(1).copied()?;
+    let c_swap_in = consumed_inputs.get(2).copied()?;
+    if !fits_int128(c_swap_in) {
+        return None;
+    }
     if !fits_int128(optimal_input) {
         return None;
     }
@@ -2757,7 +2762,8 @@ fn three_hop_v2_v4_v3(
         )
         .ok()?,
     );
-    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?);
+    v4_inner
+        .extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, c_swap_in).ok()?);
     // The CL-hop clamp caps the V4 swap-in (`consumed_inputs[1]`) below the full
     // V2 forward that `V4_SETTLE` credits to the PM, leaving a residual positive
     // delta on the settled currency (forward_a). Sweep it back to the executor so
@@ -2769,7 +2775,7 @@ fn three_hop_v2_v4_v3(
     c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
 
     let commands =
-        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &c_fwd).ok()?;
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, c_swap_in, executor_idx, &c_fwd).ok()?;
 
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
@@ -4205,7 +4211,6 @@ fn three_hop_v4_v4_v3(
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_b = hop_outputs[1];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -4215,7 +4220,9 @@ fn three_hop_v4_v4_v3(
     // Hop0 V4a and hop1 V4b are CL — swap-ins = the solver's clamped
     // consumed_inputs[0]/[1], so an over-fed V4 pool stops at capacity. Hop2
     // (V3c, CL exit) swap-in = consumed_inputs[2]; the V4_TAKE that deposits
-    // the forward into v3c stays on `out_b` (real).
+    // the forward into v3c uses consumed_inputs[2] too (exact-match — NOT the
+    // solver's over-predictable `out_b`), so the take can never over-take the
+    // pool's actual yield.
     let a_swap_in = consumed_inputs.first().copied()?;
     if !fits_int128(a_swap_in) {
         return None;
@@ -4246,7 +4253,11 @@ fn three_hop_v4_v4_v3(
         .ok()?;
     let v3c_idx = at.add(hc.pool_address).ok()?;
 
-    let c_take = encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?;
+    // Exact-match-on-amount (UO3JM4 / path-73385 class): the V4 take uses
+    // `consumed_inputs[2]` (= the v3c exit swap-in), NOT the raw `out_b`, so a
+    // take can never over-take the pool's actual yield (the residual settle
+    // via a failing USDT transfer is what crashed the bot).
+    let c_take = encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, c_swap_in).ok()?;
 
     let fee_a = u16::try_from(ha.fee).ok()?;
     let ts_a = i16::try_from(ha.tick_spacing).ok()?;
@@ -4709,8 +4720,9 @@ mod tests {
                 .unwrap(),
         );
         v4_inner.extend_from_slice(
-            &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000)
-                .unwrap(),
+            // Exact-match: the V4 take carries consumed_inputs[2] (the v3c exit
+            // swap-in), NOT the solver's over-predictable out_b (path-73385).
+            &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000).unwrap(),
         );
         // The CL clamp caps the V4 swap-in below the settled V2 forward, leaving
         // a residual on the settled currency (forward_a). Sweep it back so the
@@ -4725,7 +4737,8 @@ mod tests {
         let commands = encoders::enc_v3_swap_compact(
             v3c_idx,
             true,
-            2_001_000_000_000_000_000,
+            // exact-match: the v3c exit swap-in = consumed_inputs[2]
+            2_001_000_000,
             executor_idx,
             &c_fwd,
         )

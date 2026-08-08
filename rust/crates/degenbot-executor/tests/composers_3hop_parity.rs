@@ -665,9 +665,12 @@ fn parity_v2_v4_v3() {
         )
         .unwrap(),
     );
+    // Exact-match-on-amount (path-73385 class): the V4 take + v3c exit swap-in
+    // both use consumed_inputs[2] (=2_001_000_000), NOT the solver's
+    // over-predictable out_b (2_001_000_000_000_000_000), so a take can never
+    // over-take the pool's actual yield.
     v4_inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000u128)
-            .unwrap(),
+        &encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000u128).unwrap(),
     );
     // The CL clamp caps the V4 swap-in below the settled V2 forward, leaving a
     // residual on the settled currency (forward_a). Sweep it back to the
@@ -679,14 +682,9 @@ fn parity_v2_v4_v3() {
             .unwrap(),
     );
     c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).unwrap());
-    let commands = encoders::enc_v3_swap_compact(
-        v3c_idx,
-        true,
-        2_001_000_000_000_000_000u128,
-        executor_idx,
-        &c_fwd,
-    )
-    .unwrap();
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, true, 2_001_000_000u128, executor_idx, &c_fwd)
+            .unwrap();
     let mut expected = encoders::enc_preamble(&at);
     expected.extend_from_slice(&commands);
     assert_eq!(rust, Some(expected));
@@ -2254,8 +2252,11 @@ fn parity_v4_v4_v3() {
     let v3c_idx = at
         .add(address!("6666666666666666666666666666666666666666"))
         .unwrap();
+    // Exact-match-on-amount (path-73385 class): the V4 take uses
+    // consumed_inputs[2] (=2_000_999_999_999_999_999, matching the v3c exit
+    // swap-in below), NOT the over-predictable out_b (2_001_000_000_000_000_000).
     let c_take =
-        encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_001_000_000_000_000_000u128)
+        encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, 2_000_999_999_999_999_999u128)
             .unwrap();
     let c0_a_idx = at.add(WETH).unwrap();
     let c1_a_idx = at.add(USDC).unwrap();

@@ -173,7 +173,7 @@ impl CallTrace {
                 }
                 _ => String::new(),
             };
-            let data = if kind != "ok" {
+            let data = if matches!(kind, "revert" | "halt") {
                 format!(" data=0x{}", alloy::primitives::hex::encode(&f.data))
             } else {
                 String::new()

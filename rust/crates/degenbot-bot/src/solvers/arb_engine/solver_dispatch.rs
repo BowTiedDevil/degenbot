@@ -171,6 +171,15 @@ impl ArbitrageEngine {
                 _ => continue,
             };
             let Some(twin) = twin else { continue };
+            // The output-token amount this CL hop actually yields for its input
+            // (`amount1` when zfo — the pool sells currency0 — else `amount0`);
+            // the byte-exact twin value, authoritative over the solver's
+            // frozen-int prediction which can drift by a few wei on tiny pools.
+            let out = if pool_ref.zero_for_one {
+                twin.amount1
+            } else {
+                twin.amount0
+            };
             // (a) Input clamp: cap this CL hop's committed input at
             // `input_consumed - margin` when over-fed (the empty-march class).
             if let Some(clamped) = twin.exact_input_clamp_bound(requested, margin) {
@@ -184,17 +193,28 @@ impl ArbitrageEngine {
                     result.consumed_inputs[i] = clamped;
                 }
             }
-            // (b) Forward/output clamp: the amount this hop actually yields in
-            // the output token (`amount1` when zfo, else `amount0`) becomes the
-            // next hop's executable input (`consumed_inputs[i+1]`) — and hence
-            // the composer's V4 take. Cap it at the byte-exact twin output so a
-            // take can never exceed the pool's actual yield (path-73385 reusidual).
+            // (c) Align the solver's REPORTED output (`hop_outputs[i]`) to the
+            // byte-exact twin output, so the solver is exact (not merely the
+            // consumed forward). This is the path-73385 fix: the solver
+            // over-predicted the V4 output by 3 wei; the twin is the on-chain
+            // truth, so the published hop_outputs become byte-exact too.
+            if let Some(hop_out) = result.hop_outputs.get_mut(i) {
+                if *hop_out != out {
+                    tracing::info!(
+                        "[clamp-cl-hop] path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
+                         twin_out={out} delta={}",
+                        pool_ref.hop_type,
+                        if *hop_out > out { *hop_out - out } else { out - *hop_out }
+                    );
+                    *hop_out = out;
+                }
+            }
+            // (b) Forward clamp: the next hop's executable input
+            // (`consumed_inputs[i+1]` — what the composer's V4 take/exchange
+            // withdraws from this hop's output) must not exceed this hop's
+            // actual yield, or the pool is over-taken and a residual delta is
+            // repaid via a failing USDT transfer (path-73385).
             if i + 1 < pools.len() {
-                let out = if pool_ref.zero_for_one {
-                    twin.amount1
-                } else {
-                    twin.amount0
-                };
                 let forward = result.consumed_inputs[i + 1];
                 if out < forward {
                     tracing::info!(

@@ -1928,6 +1928,25 @@ mod tests {
             outcome.input_consumed
         };
         let expected = input_consumed.saturating_sub(U256::ONE);
+        // The twin's output-token amount (zfo=false → output = amount0) — the
+        // byte-exact value the clamp aligns hop_outputs[1] to.
+        let twin_out = {
+            let core = engine.core.read();
+            let state = core.get_v4_pool(v4_id).unwrap();
+            let identity = core.get_v4_identity(v4_id).unwrap();
+            let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
+            let limit = V3PoolState::default_sqrt_price_limit(false);
+            v4_simulate_swap(
+                state,
+                identity.pool_key.fee,
+                identity.pool_key.tick_spacing,
+                false,
+                neg,
+                limit,
+            )
+            .expect("twin simulates")
+            .amount0
+        };
 
         // The clamp engages: consumed_inputs[1] is capped below the request.
         assert!(
@@ -1941,8 +1960,13 @@ mod tests {
         );
         // The V2 hop (index 0) is untouched — only CL hops are clamped.
         assert_eq!(result.consumed_inputs[0], huge);
-        // hop_outputs are NOT modified (output(capacity) == output(over-feed)).
-        assert_eq!(result.hop_outputs[1], U256::ONE);
+        // hop_outputs[1] is now ALIGNED to the byte-exact twin output (the
+        // path-73385 fix): the solver's reported output = the on-chain truth, so
+        // the composer's take (derived from consumed_inputs[1+1]) is exact.
+        assert_eq!(
+            result.hop_outputs[1], twin_out,
+            "hop_outputs[1] must be aligned to the twin output"
+        );
     }
 
     /// The clamp is a strict no-op when a CL hop's committed input is within
