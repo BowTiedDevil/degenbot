@@ -57,6 +57,15 @@ V4_INPUT = _env_int("FIX_V4_INPUT", 85060245)
 V4_PREDICTED = _env_int("FIX_V4_PREDICTED", 85097884)
 V4_ACTUAL = _env_int("FIX_V4_ACTUAL", 85097881)
 
+# The two V3 pools (hop0 USDC/WETH, hop2 WETH/USDT — both uniswap_v3, ts=1):
+V3_0 = _env("FIX_V3_0", "0xE0554a476A092703abdB3Ef35c80e0D76d32939F")
+V3_2 = _env("FIX_V3_2", "0xc7bBeC68d12a0d1830360F8Ec58fA599bA1b0e9b")
+V3_0_POOLID = _env_int("FIX_V3_0_POOLID", 604427)
+V3_2_POOLID = _env_int("FIX_V3_2_POOLID", 609252)
+HOP0_ZFO = _env("FIX_HOP0_ZFO", "0") == "1"  # USDC/WETH t0=USDC t1=WETH, zfo=False
+HOP1_ZFO = _env("FIX_HOP1_ZFO", "1") == "1"  # V4 USDC/USDT, zfo=True
+HOP2_ZFO = _env("FIX_HOP2_ZFO", "0") == "1"  # WETH/USDT t0=WETH t1=USDT, zfo=False
+
 
 def rpc(method, params):
     import urllib.request
@@ -69,6 +78,42 @@ def rpc(method, params):
     if "error" in resp:
         raise RuntimeError(f"{method}: {resp['error']}")
     return resp["result"]
+
+
+def v3_scalars(addr):
+    def cc(sig):
+        cmd = ["cast", "call", addr, sig, "--rpc-url", RPC, "--block", str(TARGET)]
+        out = subprocess.check_output(cmd, text=True)
+        res = []
+        for ln in out.splitlines():
+            if ln.strip():
+                try:
+                    res.append(int(ln.split()[0], 0))
+                except ValueError:
+                    pass  # slot0's trailing bool ('true'/'false')
+        return res
+
+    vals = cc("slot0()(uint160,int24,uint16,uint16,uint16,uint8,bool)")
+    liquidity = cc("liquidity()(uint128)")[0]
+    return vals[0], vals[1], liquidity
+
+
+def load_v3_liquidity_pool(cur, pool_id, addr):
+    (t0, t1, ts, f0, f1, fd) = cur.execute(
+        """SELECT t0.address, t1.address, uv.tick_spacing, uv.fee_token0,
+                  uv.fee_token1, uv.fee_denominator
+           FROM uniswap_v3_pools uv
+           JOIN pools p ON p.id=uv.pool_id
+           JOIN erc20_tokens t0 ON t0.id=p.token0_id
+           JOIN erc20_tokens t1 ON t1.id=p.token1_id
+           WHERE p.id=?""", (pool_id,)).fetchone()
+    tick_rows = cur.execute(
+        "SELECT tick, liquidity_net, liquidity_gross FROM liquidity_positions WHERE pool_id=?",
+        (pool_id,)).fetchall()
+    tick_data = {t: {"liquidity_net": n, "liquidity_gross": g} for t, n, g in tick_rows}
+    return {"family": "uniswap_v3", "address": addr, "token0": t0, "token1": t1,
+            "tick_spacing": ts, "fee_token0": f0, "fee_token1": f1, "fee_denominator": fd,
+            "liquidity_update_block": TARGET, "tick_data": tick_data}
 
 
 def v4_scalars():
@@ -105,10 +150,16 @@ def load_v4_pool(cur):
 def main():
     cur = sqlite3.connect(DB)
     v4 = load_v4_pool(cur)
+    v3a = load_v3_liquidity_pool(cur, V3_0_POOLID, V3_0)
+    v3c = load_v3_liquidity_pool(cur, V3_2_POOLID, V3_2)
     cur.close()
     sq, tick, liq, pf, lf = v4_scalars()
     v4.update(sqrt_price_x96=str(sq), tick=tick, liquidity=str(liq),
               protocol_fee=pf, lp_fee=lf)
+    sa, ta, lqa = v3_scalars(V3_0)
+    v3a.update(sqrt_price_x96=str(sa), tick=ta, liquidity=str(lqa))
+    sw, tw, lqw = v3_scalars(V3_2)
+    v3c.update(sqrt_price_x96=str(sw), tick=tw, liquidity=str(lqw))
 
     fixture = {
         "_doc": (f"Exact V4 CL pool state (path 73385 V3-V4-V3, USDC/USDT fee10 ts1) at "
@@ -124,17 +175,21 @@ def main():
             "v4_predicted_output": str(V4_PREDICTED),
             "v4_onchain": str(V4_ACTUAL),
         },
-        "pools": {"v4": v4},
-        "path": [{"hop": 1, "pool": "v4", "zero_for_one": V4_ZFO}],
+        "pools": {"v3_0": v3a, "v4": v4, "v3_2": v3c},
+        "path": [
+            {"hop": 0, "pool": "v3_0", "zero_for_one": HOP0_ZFO},
+            {"hop": 1, "pool": "v4", "zero_for_one": HOP1_ZFO},
+            {"hop": 2, "pool": "v3_2", "zero_for_one": HOP2_ZFO},
+        ],
     }
     out = f"/workspaces/degenbot/tests/fixtures/path73385_v4_block{TARGET}.json"
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as f:
         json.dump(fixture, f, indent=1)
     print("wrote", out)
-    print("v4 ticks=%d sqrt=%s liq=%s tick=%s protocol_fee=%d lp_fee=%d"
-          % (len(v4["tick_data"]), v4["sqrt_price_x96"], v4["liquidity"], v4["tick"],
-             v4["protocol_fee"], v4["lp_fee"]))
+    for n, p in (("v3_0", v3a), ("v4", v4), ("v3_2", v3c)):
+        print("%s ticks=%d sqrt=%s liq=%s tick=%s"
+              % (n, len(p["tick_data"]), p["sqrt_price_x96"], p["liquidity"], p["tick"]))
     print("recorded_solve:", fixture["recorded_solve"])
 
 
