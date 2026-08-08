@@ -3244,7 +3244,6 @@ fn three_hop_v3_v4_v2(
     let pool_manager_address = inputs.pool_manager_address;
     let weth_address = inputs.weth_address;
 
-    let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -3260,6 +3259,22 @@ fn three_hop_v3_v4_v2(
     if !fits_int128(b_swap_in) {
         return None;
     }
+    // Hop2 (V2c) is the TERMINAL hop. It is fed the USDT the V4 b-hop actually
+    // produced (`consumed_inputs[2]` = the byte-exact V4 output, minted into
+    // the V2 pool via `enc_v4_take_delta`). The V2 swap MUST be encoded with
+    // `V2_SWAP_CALC` (swap from the pool's delivered balance) rather than
+    // `V2_SWAP_DIRECT` with the solver's raw `hop_outputs[2]`.
+    //
+    // path-110302 (V3-V4-V2, block 25711761) reverts `UniswapV2: K` because
+    // the solver emits hop_outputs[2] = getAmountOut(consumed_inputs[2] + 1)
+    // (30263206881291235 @ 58233015 USDT in), i.e. it over-predicts by the
+    // margin of ONE input wei. The executor then commits that inflated value
+    // as the exact-out `amount0Out`; the pair needs `getAmountIn = 58233016`
+    // USDT but only 58233015 is delivered -> 1-wei shortfall -> K. Using
+    // `V2_SWAP_CALC` makes the V2 hop swap from whatever USDT `V4_TAKE_DELTA`
+    // actually minted into the pool (the CL-clamped / byte-exact forward), so
+    // the output is `getAmountOut(consumed_inputs[2])` by construction and the
+    // exact-in round-trip is clean (getAmountIn == delivered, shortfall 0).
 
     let mut at = AddressTable::with_sentinels(
         Some(weth_address),
@@ -3304,9 +3319,12 @@ fn three_hop_v3_v4_v2(
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
-    a_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, executor_idx).ok()?,
-    );
+    a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2c_idx,
+        hc.zfo,
+        executor_idx,
+        hc.fee,
+    ));
     a_fwd.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
 
     let mut commands = encoders::enc_v4_sync(forward_a_idx);
