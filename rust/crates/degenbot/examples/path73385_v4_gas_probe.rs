@@ -107,11 +107,19 @@ fn main() {
 
     // Recorded V4 input: exact-in (=> negative), selling USDC/currency0 for
     // USDT/currency1, zero_for_one=true.
-    let v4_input = rec.v4_input.unwrap().0;
-    let amount_specified = I256::ZERO
-        .checked_sub(I256::try_from(v4_input).expect("v4_input fits i256"))
-        .expect("no underflow");
+    let recorded_input = rec.v4_input.unwrap().0;
     let zfo = rec.v4_zero_for_one.unwrap();
+
+    // Optional input sweep (comma-separated raw-wei amounts). If set, probe
+    // EVERY input so we can characterize gas-vs-overfeed on this CL pool: the
+    // real tx feeds the CLAMP-capped swap-in (`consumed_inputs[1]`), which can
+    // be much larger than the recorded 85e6 if the solver over-predicted. If
+    // gas explodes with input, the CL swap is the 16.7M hog (march); if it
+    // stays ~200k, it is not.
+    let sweep: Vec<u128> = match std::env::var("SWEEP_INPUT") {
+        Ok(s) => s.split(',').filter_map(|x| x.trim().parse().ok()).collect(),
+        Err(_) => vec![u128::try_from(recorded_input).expect("recorded fits u128")],
+    };
 
     // Price limit: for zfo=true (sell currency0) the executor's extreme bound
     // is MIN_SQRT_RATIO (the floor) — the unbounded price march in the sell-
@@ -127,13 +135,17 @@ fn main() {
         MIN_SQRT_RATIO + U160::from(1u64)
     };
 
-    // Rust twin (what v4_simulate_swap says from the reconstructed state).
+    // Rust twin (what v4_simulate_swap says from the reconstructed state) at
+    // the RECORDED input.
+    let recorded_amount = I256::ZERO
+        .checked_sub(I256::try_from(recorded_input).expect("recorded fits i256"))
+        .expect("no underflow");
     let sim = v4_simulate_swap(
         &state,
         fx.pools["v4"].fee_currency0.unwrap(),
         fx.pools["v4"].tick_spacing.unwrap(),
         zfo,
-        amount_specified,
+        recorded_amount,
         U256::from(sqrt_price_limit),
     );
     println!(
@@ -141,39 +153,45 @@ fn main() {
         rec.v4_predicted_output.unwrap()
     );
 
-    let probe = |gas: u64| -> (Verdict, (U256, U256), u64) {
-        let fee = fx.pools["v4"].fee_currency0.unwrap();
-        let spacing = fx.pools["v4"].tick_spacing.unwrap();
-        let swap = real_oracle::drive_real_v4_swap(
-            &state,
-            fee,
-            spacing,
-            zfo,
-            amount_specified,
-            sqrt_price_limit,
-            gas,
-        );
-        (swap.verdict, swap.delta, swap.gas_used)
-    };
+    for v4_input in sweep {
+        let amount_specified = I256::ZERO
+            .checked_sub(I256::try_from(v4_input).expect("v4_input fits i256"))
+            .expect("no underflow");
+        println!("--- V4 CL swap, input={v4_input} ---");
+        let probe = |gas: u64| -> (Verdict, (U256, U256), u64) {
+            let fee = fx.pools["v4"].fee_currency0.unwrap();
+            let spacing = fx.pools["v4"].tick_spacing.unwrap();
+            let swap = real_oracle::drive_real_v4_swap(
+                &state,
+                fee,
+                spacing,
+                zfo,
+                amount_specified,
+                sqrt_price_limit,
+                gas,
+            );
+            (swap.verdict, swap.delta, swap.gas_used)
+        };
 
-    for (label, gas) in [("5M", gas_5m), ("30M", gas_30m)] {
-        let (verdict, (am0, am1), gas_used) = probe(gas);
-        println!("--- CL swap @ {label} budget ({gas}) ---");
-        match &verdict {
-            Verdict::Accepted { .. } => {
-                println!(
-                    "  ACCEPTED -> BalanceDelta amount0(USDC)={am0} amount1(USDT)={am1} | recorded V4 output={} | gas_used={gas_used}",
-                    rec.v4_predicted_output.unwrap()
-                );
-            }
-            Verdict::Reverted(r) => {
-                println!("  REVERTED (gas_used={gas_used}) -> {r:?}");
-                if let Some(msg) = oracle::decode_error_string(r.as_ref()) {
-                    println!("    decoded: {msg}");
+        for (label, gas) in [("5M", gas_5m), ("30M", gas_30m)] {
+            let (verdict, (am0, am1), gas_used) = probe(gas);
+            println!("  @ {label} budget ({gas}) -> gas_used={gas_used}; verdict + delta:");
+            match &verdict {
+                Verdict::Accepted { .. } => {
+                    println!(
+                        "    ACCEPTED amount0(USDC)={am0} amount1(USDT)={am1} | recorded V4 output={}",
+                        rec.v4_predicted_output.unwrap()
+                    );
                 }
-            }
-            Verdict::Halted(h) => {
-                println!("  HALTED (gas_used={gas_used}) -> {h}");
+                Verdict::Reverted(r) => {
+                    println!("    REVERTED -> {r:?}");
+                    if let Some(msg) = oracle::decode_error_string(r.as_ref()) {
+                        println!("      decoded: {msg}");
+                    }
+                }
+                Verdict::Halted(h) => {
+                    println!("    HALTED -> {h}");
+                }
             }
         }
     }
