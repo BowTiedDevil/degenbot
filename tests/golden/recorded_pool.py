@@ -198,7 +198,7 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
     if family == "v3":
         from tests.helpers.v3_pool_factory import make_v3_pool
 
-        return make_v3_pool(
+        pool = make_v3_pool(
             state["address"],
             token0=token0,
             token1=token1,
@@ -211,6 +211,19 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
             state_block=block,
             tick_data=state.get("tick_data"),
         )
+        # ``make_v3_pool`` seeds tick_data but not the Rust bitmap, so swap
+        # simulation can't tell where liquidity ends (swap-for-all /
+        # IncompleteSwap). ``update_tick_data`` seeds the Rust bitmap AND the
+        # companion override from the recorded words, restoring fork parity.
+        tick_data = state.get("tick_data")
+        tick_bitmap = state.get("tick_bitmap")
+        if tick_bitmap or tick_data:
+            pool.update_tick_data(
+                tick_bitmap={int(word): info for word, info in (tick_bitmap or {}).items()},
+                tick_data=({int(t): v for t, v in tick_data.items()} if tick_data else {}),
+                block=block,
+            )
+        return pool
 
     if family == "v4":
         from tests.helpers.v4_pool_factory import make_v4_pool
