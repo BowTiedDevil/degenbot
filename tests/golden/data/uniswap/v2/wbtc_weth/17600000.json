@@ -1,0 +1,30 @@
+{
+  "address": "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940",
+  "block": 17600000,
+  "chain_id": 1,
+  "factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+  "family": "v2",
+  "fee_token0": "3/1000",
+  "fee_token1": "3/1000",
+  "init_hash": "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+  "recorded_at": "2026-08-08T00:24:45+00:00",
+  "reserves_token0": 16231137593,
+  "reserves_token1": 2571336301536722443178,
+  "schema": 1,
+  "tokens": [
+    {
+      "address": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+      "chain_id": 1,
+      "decimals": 8,
+      "name": "Wrapped BTC",
+      "symbol": "WBTC"
+    },
+    {
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "chain_id": 1,
+      "decimals": 18,
+      "name": "Wrapped Ether",
+      "symbol": "WETH"
+    }
+  ]
+}

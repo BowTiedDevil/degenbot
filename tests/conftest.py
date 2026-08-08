@@ -13,6 +13,7 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.fork import AnvilFork
 from degenbot.logging import set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
+from tests.golden.recorded_pool import RecordedPool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.offline import is_offline
 
@@ -191,6 +192,26 @@ def golden_factory(request: pytest.FixtureRequest):
 
     def bind(*, chain_id: int, block_number: int) -> GoldenOracle:
         return GoldenOracle(path=path, chain_id=chain_id, block_number=block_number, mode=mode)
+
+    return bind
+
+
+@pytest.fixture
+def recorded_pool_factory(request: pytest.FixtureRequest):
+    """Factory for :class:`tests.golden.recorded_pool.RecordedPool` (T0 pool-state golden seam).
+
+    Yields a callable ``bind(chain_id, block_number)`` returning a ``RecordedPool``
+    bound to a per-test JSON file derived from ``request.node.nodeid``. Mode is driven
+    by ``--golden-mode`` (replay by default, record to (re)populate the file against a
+    pinned fork). See ``docs/architecture/golden-onchain-parity.md``.
+    """
+    mode: str = request.config.getoption("--golden-mode")
+    root = Path(request.config.getoption("--golden-root"))
+    rel = _nodeid_to_path(request.node.nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
+    path = root / rel
+
+    def bind(*, chain_id: int, block_number: int) -> RecordedPool:
+        return RecordedPool(path=path, chain_id=chain_id, block=block_number, mode=mode)
 
     return bind
 
