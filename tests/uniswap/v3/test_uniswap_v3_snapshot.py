@@ -31,8 +31,7 @@ SNAPSHOT_AT_BLOCK_12_369_870_DIR = "tests/uniswap/v3/snapshot"
 
 
 @pytest.fixture
-def empty_mainnet_snapshot_from_file(fork_mainnet_full: AnvilFork) -> UniswapV3LiquiditySnapshot:
-
+def empty_mainnet_snapshot_from_file() -> UniswapV3LiquiditySnapshot:
     return UniswapV3LiquiditySnapshot(
         source=MonolithicJsonFileSnapshot(EMPTY_SNAPSHOT_FILENAME),
     )
@@ -56,18 +55,14 @@ def empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870(
 
 
 @pytest.fixture
-def mainnet_snapshot_at_block_12_369_870_from_file(
-    fork_mainnet_full: AnvilFork,
-) -> UniswapV3LiquiditySnapshot:
+def mainnet_snapshot_at_block_12_369_870_from_file() -> UniswapV3LiquiditySnapshot:
     return UniswapV3LiquiditySnapshot(
         source=MonolithicJsonFileSnapshot(SNAPSHOT_AT_BLOCK_12_369_870_FILENAME),
     )
 
 
 @pytest.fixture
-def mainnet_snapshot_at_block_12_369_870_from_dir(
-    fork_mainnet_full: AnvilFork,
-) -> UniswapV3LiquiditySnapshot:
+def mainnet_snapshot_at_block_12_369_870_from_dir() -> UniswapV3LiquiditySnapshot:
     return UniswapV3LiquiditySnapshot(
         source=IndividualJsonFileSnapshot(SNAPSHOT_AT_BLOCK_12_369_870_DIR),
     )

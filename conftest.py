@@ -8,7 +8,6 @@ relative to its path. It is picked up because pyproject.toml includes
 "README.md" in testpaths.
 """
 
-import os
 from collections.abc import Iterable
 
 import pytest
@@ -19,23 +18,21 @@ from sybil.parsers.markdown.codeblock import PythonCodeBlockParser
 from sybil.parsers.markdown.lexers import DirectiveInHTMLCommentLexer
 from sybil.parsers.markdown.skip import SkipParser
 
+from tests.offline import is_offline
+
 
 def _live_rpc_blocks_enabled() -> bool:
     """Report whether the README's live-RPC examples should execute.
 
     They run in local dev (RPC + anvil reachable) and are skipped in the constrained
-    CI/CD runner that has neither. Offline mode is the CI default (GitHub Actions
-    exports ``CI=true``) and can be forced either way with ``DEGENBOT_OFFLINE=1|0``
-    for local reproduction of CI behaviour.
+    CI/CD runner that has neither. Offline mode is the CI default, shared with the
+    test-suite fork fixtures via :func:`tests._offline.is_offline`.
 
     Returns:
         True when live-RPC blocks should run (online); False to skip them (offline).
 
     """
-    override = os.environ.get("DEGENBOT_OFFLINE")
-    if override is not None:
-        return override.lower() not in {"1", "true", "yes"}
-    return os.environ.get("CI", "").lower() != "true"
+    return not is_offline()
 
 
 class _LiveRpcSkipParser(AbstractSkipParser):

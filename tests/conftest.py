@@ -14,6 +14,7 @@ from degenbot.fork import AnvilFork
 from degenbot.logging import set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.offline import is_offline
 
 env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
@@ -73,6 +74,17 @@ ETHEREUM_FULL_NODE_WS_URI: str = _rpc(
     "ETHEREUM_FULL_NODE_WS_URI",
     "wss://ethereum-rpc.publicnode.com",
 )
+
+
+def _require_live_node() -> None:
+    """Skip a live-network test in the constrained (no-RPC, no-anvil) CI runner.
+
+    Guards the root ``fork_*`` fixtures: any test that chains off them (bot_*, per-file
+    bot/token/pool fixtures, …) skips transitively via ``pytest.skip``, so a fork/anvil
+    test can never fail offline CI. Local dev (RPC + anvil reachable) runs them normally.
+    """
+    if is_offline():
+        pytest.skip("requires live RPC/anvil (not available in offline CI)")
 
 
 def pytest_addoption(parser: Parser):
@@ -185,6 +197,7 @@ def golden_factory(request: pytest.FixtureRequest):
 
 @pytest.fixture
 def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
+    _require_live_node()
     fork = AnvilFork(
         fork_url=ARBITRUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
@@ -205,6 +218,7 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
     ```
     """
     block_number = getattr(request, "param", None)
+    _require_live_node()
 
     fork = AnvilFork(
         fork_url=BASE_ARCHIVE_NODE_HTTP_URI,
@@ -218,6 +232,7 @@ def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, No
 
 @pytest.fixture
 def fork_base_full() -> Generator[AnvilFork, None, None]:
+    _require_live_node()
     fork = AnvilFork(
         fork_url=BASE_FULL_NODE_HTTP_URI,
         storage_caching=False,
@@ -238,6 +253,7 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
     ```
     """
     block_number = getattr(request, "param", None)
+    _require_live_node()
 
     fork = AnvilFork(
         fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
@@ -251,6 +267,7 @@ def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork,
 
 @pytest.fixture
 def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
+    _require_live_node()
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
