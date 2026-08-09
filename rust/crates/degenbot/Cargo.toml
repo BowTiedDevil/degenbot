@@ -34,6 +34,7 @@ degenbot-curve-math = { path = "../degenbot-curve-math" }
 degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-evm-math = { path = "../degenbot-evm-math" }
+degenbot-execution = { path = "../degenbot-execution" }
 degenbot-executor = { path = "../degenbot-executor" }
 degenbot-fork = { path = "../degenbot-fork" }
 degenbot-pathfinding = { path = "../degenbot-pathfinding" }

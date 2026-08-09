@@ -2017,6 +2017,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-evm-math",
+ "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
  "degenbot-pathfinding",
@@ -2191,6 +2192,27 @@ version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "proptest",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "degenbot-execution"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-executor",
+ "degenbot-solvers",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "degenbot-execution-sample"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-execution",
+ "degenbot-executor",
+ "degenbot-solvers",
  "thiserror 2.0.19",
 ]
 
@@ -2402,6 +2424,8 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
+ "degenbot-evm-math",
+ "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
  "degenbot-pathfinding",

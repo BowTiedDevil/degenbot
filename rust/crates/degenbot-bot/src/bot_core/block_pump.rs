@@ -43,11 +43,14 @@ use std::time::Duration;
 
 use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
+use degenbot_solvers::mixed::HopType;
 use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
 
 use crate::bot_core::solver_state_verifier::{
-    extract_solver_hop_states, verify_solver_hop_states, SolverStateMismatch,
+    aggregate_lagging_hops, divergence_scan_enabled, extract_solver_hop_states,
+    scan_lagging_hops_for_divergence, verify_solver_hop_states, DivergenceVerdict,
+    SolverHopScalarState, SolverStateMismatch,
 };
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
 use crate::bot_core::{BlockClock, HeaderDecision, LogDecision};
@@ -61,6 +64,15 @@ use degenbot_rpc::provider::AlloyProvider;
 
 /// How long to wait with no activity before assuming the connection is dead.
 const BACKFILL_TIMEOUT_SECS: u64 = 60;
+
+/// Staleness (in blocks) at which a Tracked Live CL hop is treated as a genuine
+/// outlier in the aggregated lagging-hop reporter, vs. the benign natural WS
+/// settle-lag baseline (~4-5 blocks). The reporter WARNs individually only for
+/// hops at/above this; everything beneath is folded into the single per-block
+/// summary (and logged at DEBUG). Set well above the baseline so the common,
+/// harmless settle lag never floods the log — observed true outliers in the
+/// 2026-08-09 run were 12-20 blocks.
+const SOLVER_STATE_ABNORMAL_STALE_BLOCKS: u64 = 10;
 
 /// After the first dirty WS log for a block, wait this long for more logs
 /// before solving and dispatching results to Python. Each new log resets
@@ -612,6 +624,7 @@ impl BlockPump {
         }
     }
 
+    #[expect(clippy::too_many_lines)] // the ADR-021 divergence dry-run scanner
     async fn verify_solver_state_against_chain(
         bot: &Arc<Bot>,
         provider: &Arc<AlloyProvider>,
@@ -640,6 +653,142 @@ impl BlockPump {
             anchor = block.max(core.pool_state_head());
         }
         let block = anchor;
+        if divergence_scan_enabled() {
+            // **Dev-only** non-aborting divergence scanner (dry-run low-MTBF failure
+            // hunting). When `DEGENBOT_SOLVER_DIVERGENCE_SCAN=1` we log every lagging
+            // Tracked CL hop's stored-vs-on-chain fidelity (HONEST vs the rare REAL
+            // DIVERGENT desync) WITHOUT aborting, so one long dry-run accumulates all
+            // genuine desyncs instead of dying on the first. The UO3JM4 abort is
+            // bypassed ONLY while this opt-in env is set — it must never be enabled to
+            // silence the production abort.
+            let mut seen = std::collections::HashSet::new();
+            let mut uniq: Vec<&SolverHopScalarState> = Vec::new();
+            for hop_states in &path_hop_states {
+                for hop in hop_states {
+                    // Dedupe by generalized identity (one on-chain read per unique pool).
+                    let key = match hop.hop_type {
+                        HopType::V3 => hop.v3.as_ref().map(|(a, ..)| format!("v3:{a}")),
+                        HopType::V4 => hop.v4.as_ref().map(|(_, id, ..)| {
+                            let mut h = String::with_capacity(8);
+                            for b in &id[..4] {
+                                let _ = std::fmt::Write::write_fmt(&mut h, format_args!("{b:02x}"));
+                            }
+                            format!("v4:{h}")
+                        }),
+                        _ => None,
+                    };
+                    if let Some(k) = key {
+                        if seen.insert(k) {
+                            uniq.push(hop);
+                        }
+                    }
+                }
+            }
+            let mut n_scanned = 0usize;
+            let mut n_honest = 0usize;
+            let mut n_divergent = 0usize;
+            for r in scan_lagging_hops_for_divergence(provider, &uniq, block).await {
+                n_scanned += 1;
+                match r.verdict {
+                    DivergenceVerdict::Honest => {
+                        n_honest += 1;
+                        tracing::debug!(
+                            hop_idx = r.hop_index,
+                            %r.pool,
+                            update_block = r.update_block,
+                            tick_data_block = r.tick_data_block,
+                            stale_by = r.stale_by,
+                            "solver-state divergence scan: HONEST (quiet-but-correct)"
+                        );
+                    }
+                    DivergenceVerdict::Divergent => {
+                        n_divergent += 1;
+                        tracing::error!(
+                            hop_idx = r.hop_index,
+                            %r.pool,
+                            block,
+                            update_block = r.update_block,
+                            tick_data_block = r.tick_data_block,
+                            stale_by = r.stale_by,
+                            solver_sqrt = ?r.solver_sqrt,
+                            chain_sqrt = ?r.chain_sqrt,
+                            "solver-state divergence scan: REAL-DESYNC — pool moved on-chain \
+                             but its stored state was not advanced (missed/delayed swap)."
+                        );
+                    }
+                }
+            }
+            if n_scanned > 0 {
+                tracing::info!(
+                    block,
+                    n_scanned,
+                    n_honest,
+                    n_divergent,
+                    "solver-state divergence scan: summary"
+                );
+            }
+            return;
+        }
+        // ═ Generalized lagging-hop reporter (ADR-021 supplement), AGGREGATED ═
+        // BEFORE the strict gate, surface ANY Tracked Live CL hop whose
+        // `update_block` trails the promoted solve anchor past
+        // `MAX_CL_STALENESS_BLOCKS`. Pool-agnostic; observational only — it does
+        // NOT weaken the UO3JM4 abort below.
+        //
+        // The natural WS settle lag (~4 blocks) sits just past the threshold, so
+        // a naive per-hop WARN re-reported the SAME benign pools ~100× per block
+        // across paths (≈143 WARNs/block, 0 desyncs in a 5k-WARN run). We
+        // therefore aggregate across all paths into ONE per-block summary (dedupe
+        // per pool, keep max stale_by) and WARN individually only for genuine
+        // outliers (`stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS`, well above
+        // the baseline); the quiet-but-benign bulk stays at DEBUG.
+        let lags_by_pool = aggregate_lagging_hops(block, &path_hop_states);
+        if !lags_by_pool.is_empty() {
+            let n_pools = lags_by_pool.len();
+            let max_stale_by = lags_by_pool.values().map(|l| l.stale_by).max().unwrap_or(0);
+            tracing::warn!(
+                block,
+                n_pools,
+                max_stale_by,
+                "[solver-state] Tracked Live CL hop pools trail the solve anchor past the staleness \
+                 threshold (summarized — genuine-outlier pools logged below, benign settle-lag \
+                 baseline at debug)"
+            );
+            for lag in lags_by_pool.values() {
+                let update_block = lag.update_block;
+                let tick_data_block = lag.tick_data_block;
+                let stale_by = lag.stale_by;
+                let pool = &lag.pool;
+                if lag.stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS {
+                    tracing::warn!(
+                        block,
+                        hop_type = ?lag.hop_type,
+                        coverage = %lag.coverage,
+                        lifecycle = %lag.lifecycle,
+                        update_block,
+                        tick_data_block,
+                        stale_by,
+                        %pool,
+                        "[solver-state] Tracked Live CL hop pool is a genuine staleness outlier \
+                         (well past the natural settle lag) — the strict gate may escalate this \
+                         to an abort"
+                    );
+                } else {
+                    tracing::debug!(
+                        block,
+                        hop_type = ?lag.hop_type,
+                        coverage = %lag.coverage,
+                        lifecycle = %lag.lifecycle,
+                        update_block,
+                        tick_data_block,
+                        stale_by,
+                        %pool,
+                        "[solver-state] Tracked Live CL hop pool trails the solve anchor \
+                         (benign settle-lag baseline, folded into the summary above)"
+                    );
+                }
+            }
+        }
         for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
             if let Err(mismatch) = verify_solver_hop_states(provider, hop_states, block).await {
                 // Diagnose the cause class before panicking: log every hop's

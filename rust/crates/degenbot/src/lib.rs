@@ -78,6 +78,12 @@ pub use degenbot_price;
 
 /// cmd-executor domain — simulation warmup-slot storage math (pure-Rust leaf).
 pub use degenbot_executor;
+
+/// The `ExecutionStrategy` seam (ADR-025) — the `PayloadComposer` Encode part +
+/// the gate protocol + solve-result view value types, consumed alike by the
+/// standalone Rust path and the `PyO3` driver shell. No default strategy ships
+/// here; `degenbot-backrun-strategy` implements it as the default adapter.
+pub use degenbot_execution;
 /// Transaction submission pipeline — fee sizing, signer, dispatcher, and the
 /// pending-tx receipt monitor (pure-Rust leaf).
 pub use degenbot_submission;

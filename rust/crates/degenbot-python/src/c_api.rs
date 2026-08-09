@@ -141,6 +141,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;
 
+    // EVM math (next_base_fee) — always on (degenbot-evm-math is a non-optional,
+    // no-extra-feature dep).
+    crate::evm_math::add_evm_math_module(m)?;
+
     // `CancelHandle` — the cooperative cancel flag for the updater loops
     // (`run_pool_update`, `run_aave_update`). Gated on either updater feature
     // (whichever needs it); registered once, top-level. Lives in `cancel.rs`.
@@ -162,6 +166,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Command-stream encoding seam (feature = "executor")
     #[cfg(feature = "executor")]
     crate::executor::add_executor_module(m)?;
+
+    // ExecutionStrategy seam lift (feature = "execution") — `PySolveResult`,
+    // `PyPayloadComposer`, `abi_encode_call` (ADR-025). Foreign-contract path;
+    // never threaded into the canonical dispatch fan-out (D3).
+    #[cfg(feature = "execution")]
+    crate::execution::add_execution_module(m)?;
 
     // Anvil-fork seam (feature = "fork") — `PyAnvilFork` over the
     // `degenbot-fork` core crate (epic NXYVYU). Lifecycle + dev-RPC.

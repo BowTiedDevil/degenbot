@@ -1,0 +1,24 @@
+[package]
+name = "degenbot-execution"
+description = "The ExecutionStrategy seam (ADR-025) — a pyo3-free crate owning the user-owned execution layer: the ExecutionStrategy trait + its value types (solve-result view, gate protocol, ExecutionResult, ComposerInputs) and the PayloadComposer Encode part. No default strategy ships here."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "^2.3" }
+thiserror = { version = "^2.0" }
+# `PathInfo` (hop descriptors) — the solve-result view's hop side (ADR-025 D4).
+# `degenbot-executor` is the developer's `cmd_executor` adapter, NOT a general
+# execution layer; this crate only borrows its `PathInfo`/`HopInfo` descriptor
+# types so the seam's Encode input (`path: &PathInfo`) matches what a Rust
+# consumer already reaches.
+degenbot-executor = { path = "../degenbot-executor" }
+# `SolvePathResult` (amounts) — the solve-result view's amount side (ADR-025 D4).
+degenbot-solvers = { path = "../degenbot-solvers" }

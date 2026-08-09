@@ -1,0 +1,22 @@
+[package]
+name = "degenbot-execution-sample"
+description = "TLQ5VH — a standalone-Rust sample user-defined ExecutionStrategy for a FOREIGN contract (not cmd_executor). Implements the degenbot-execution seam (Encode blob + Probe declared reads + Assess gate + Fee default) for a sample `SimpleExecutor` contract, producing a payload shape deliberately distinct from the default adapter. Exercises the seam end-to-end at the Rust layer with no pyo3 and no dependency on degenbot-backrun-strategy."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "^2.3", features = ["signers"] }
+thiserror = { version = "^2.0" }
+# The seam itself — `PayloadComposer` / `ExecutionStrategy` + value types.
+degenbot-execution = { path = "../degenbot-execution" }
+# `PathInfo` / `HopInfo` hop descriptors (the seam's Encode input).
+degenbot-executor = { path = "../degenbot-executor" }
+# `SolvePathResult` amounts (the solve-result view's amount side).
+degenbot-solvers = { path = "../degenbot-solvers" }

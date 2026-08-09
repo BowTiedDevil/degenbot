@@ -6,9 +6,10 @@ the block clock (``engine.block_stream()``) and the result batches
 (``engine``) concurrently, driving the dispatcher's block clock and dispatching
 profitable results through the Rust seam.
 
-Also owns the once-only block-stream tee (:func:`_tee_block_stream`) that fans
-the single-consumer pump stream to both the result consumer and the
-recurring-verify ticker.
+The single-consumer pump block stream is consumed directly here (no tee): the
+redundant Python recurring liquidity-map re-verify and its block-stream fan-out
+were removed — pools are verified by the Rust two-step seed/drain gate and the
+Rust solve-time solver-state verifier, not a Python whole-batch re-check.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from typing import Any, cast
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.calculations.evm_math import next_base_fee
+from degenbot._ffi import evm_math
 from degenbot.diagnostics import mark_progress
 from degenbot.dispatch import Dispatcher, SimulateContext, fetch_fee_history
 from degenbot.logging import logger as bot_logger
@@ -102,51 +103,6 @@ async def consume_result_batches(
         mark_progress()
 
 
-_TEE_SENTINEL: Any = object()
-
-
-def _tee_block_stream(
-    source: AsyncIterator[dict[str, int]],
-) -> tuple[
-    AsyncIterator[dict[str, int]],
-    AsyncIterator[dict[str, int]],
-    asyncio.Task[None],
-]:
-    """Fan a single once-only block stream to two independent async iterators.
-
-    The pump's ``engine.block_stream()`` is single-consumer: ``BlockStream.__anext__``
-    moves the mpsc receiver out of an ``Arc<Mutex<Option<rx>>>`` per call, so two
-    ``async for`` loops over one stream object race (the second sees ``None`` and
-    raises ``StopAsyncIteration`` immediately). This tee drives the source once and
-    copies each block to two unbounded queues, yielding two independent iterators
-    that EACH see every block.
-
-    Returns ``(branch_a, branch_b, driver_task)``. ``branch_a`` feeds the result
-    consumer; ``branch_b`` feeds the recurring-verify ticker.
-    """
-    q_a: asyncio.Queue[Any] = asyncio.Queue()
-    q_b: asyncio.Queue[Any] = asyncio.Queue()
-
-    async def _driver() -> None:
-        try:
-            async for block in source:
-                await q_a.put(block)
-                await q_b.put(block)
-        finally:
-            await q_a.put(_TEE_SENTINEL)
-            await q_b.put(_TEE_SENTINEL)
-
-    async def _branch(q: asyncio.Queue[Any]) -> AsyncIterator[dict[str, int]]:
-        while True:
-            item = await q.get()
-            if item is _TEE_SENTINEL:
-                return
-            yield item
-
-    driver = asyncio.create_task(_driver(), name="block-stream-tee")
-    return _branch(q_a), _branch(q_b), driver
-
-
 def _reprime(
     stream: AsyncIterator[Any],
     fut: asyncio.Task[Any],
@@ -182,7 +138,7 @@ async def _apply_block_if_ready(
     gas_used = int(block["gas_used"])
     gas_limit = int(block["gas_limit"])
 
-    base_fee_next = next_base_fee(
+    base_fee_next = evm_math.next_base_fee(
         parent_base_fee=base_fee,
         parent_gas_used=gas_used,
         parent_gas_limit=gas_limit,
@@ -275,7 +231,7 @@ async def _apply_result_if_ready(
             dispatcher=dispatcher,
             current_block=current_block,
             block_timestamp=dispatcher.block_timestamp_for(current_block) or 0,
-            base_fee_next=next_base_fee(
+            base_fee_next=evm_math.next_base_fee(
                 parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
                 parent_gas_used=int(cast("Any", batch["gas_used"])),
                 parent_gas_limit=int(cast("Any", batch["gas_limit"])),

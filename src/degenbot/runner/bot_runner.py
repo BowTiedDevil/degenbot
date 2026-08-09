@@ -43,14 +43,13 @@ from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner.build_paths import ConstructionContext, PathRegistrationPipeline, build_paths
 from degenbot.runner.config import BackrunConfig
-from degenbot.runner.consume import _tee_block_stream, consume_result_batches
+from degenbot.runner.consume import consume_result_batches
 from degenbot.runner.dispatch import _load_executor_runtime_bytecode
 from degenbot.runner.driver_constants import (
     ETH_MAINNET_ALLOWED_TOKENS,
     INJECT_EXECUTOR_CODE,
     INJECTED_EXECUTOR_ADDRESS,
     MULTICALL3_ADDRESS,
-    RECURRING_VERIFY_INTERVAL,
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
@@ -339,16 +338,13 @@ class BotRunner:
         cfg = self.cfg
         consumer = self._consumer or consume_result_batches
 
-        # 1. Acquire the once-only block_stream EXACTLY ONCE and fan it to two
-        # branches: the result consumer (full block dicts) + the recurring-
-        # verify ticker (block numbers). The pump's `engine.block_stream()`
-        # moves the mpsc receiver out of a Mutex on each call — a second call
-        # raises RuntimeError("block_stream() can only be called once"), which
-        # previously crashed entering the main loop (the consumer self-acquired
-        # one, run() acquired another for recurring-verify). See
-        # `_tee_block_stream` for the full rationale + regression.
+        # 1. Acquire the once-only block_stream and feed it DIRECTLY to the result
+        # consumer (no tee, no recurring-verify branch — the redundant Python
+        # whole-batch re-verify was removed; the Rust two-step gate + solve-time
+        # solver-state verifier own verification). The pump's
+        # `engine.block_stream()` moves the mpsc receiver out of a Mutex on each
+        # call — a second call raises RuntimeError("block_stream() can only be called once").
         block_stream = self.engine_registry.engine.block_stream()
-        consumer_branch, verify_branch, tee_driver = _tee_block_stream(block_stream)
 
         # Attach the consumer BEFORE resume (consumer-safety invariant).
         self._result_consumer_task = asyncio.create_task(
@@ -361,7 +357,7 @@ class BotRunner:
                 operator_private_key=cfg.operator_private_key,
                 dispatcher=self.dispatcher,
                 dry_run=cfg.dry_run,
-                block_stream=consumer_branch,
+                block_stream=block_stream,
             ),
             name="result-consumer",
         )
@@ -444,31 +440,19 @@ class BotRunner:
         # now keys `verify_basis` on the per-pool `[verify-seed]`/`[verify-drain]`
         # lines (see permutation_analyzer._VERIFY_OK_RE).
 
-        # 5. Main loop — runs until the consumer task ends. A recurring verify
-        # task (T7) runs alongside: every RECURRING_VERIFY_INTERVAL blocks it
-        # re-checks liquidity maps so post-release / in-loop desyncs surface
-        # instead of trading silently. Both complete together.
-        #
-        # In production (Sub-B) the consumer races the background registration
-        # task: a fatal registration error cancels the main loop and re-raises
-        # (fail-fast channel); a clean registration completion is a no-op.
+        # 5. Main loop — runs until the consumer task ends. (The recurring-
+        # verify task T7 was REMOVED: it redundantly re-checked the whole pool
+        # set that already passed the Rust two-step seed/drain gate, and its raw-
+        # head anchor caused sporadic false liquidity-map mismatches at the
+        # moving head. In-loop solver-state divergence is owned by the Rust
+        # solve-time verifier, not a Python whole-batch re-verify.)
         assert self._result_consumer_task is not None
-        recurring_verify = asyncio.ensure_future(
-            run_recurring_verify_until_done(
-                registry=self.engine_registry,
-                block_ticker=(b["number"] async for b in verify_branch),
-                interval=RECURRING_VERIFY_INTERVAL,
-                retry_policy=cfg.verification_retry_policy,
-            ),
-        )
         try:
             if self._registration_task is not None:
                 await self._await_main_loop_with_registration_fail_fast()
             else:
                 await self._result_consumer_task
         finally:
-            recurring_verify.cancel()
-            tee_driver.cancel()
             registration_task = self._registration_task
             if (
                 registration_task is not None
@@ -480,10 +464,6 @@ class BotRunner:
                 registration_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await registration_task
-            with contextlib.suppress(asyncio.CancelledError):
-                await recurring_verify
-            with contextlib.suppress(asyncio.CancelledError):
-                await tee_driver
 
     # ── Sub-B: background registration + trim + fail-fast channel ──
     async def enqueue_path(
@@ -819,33 +799,6 @@ class BotRunner:
             engine.stop()
         except Exception as exc:
             bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
-
-
-# _shim_run_recurring_verify_until_done
-
-
-async def _shim_run_recurring_verify_until_done(
-    *,
-    registry: EngineRegistry,
-    block_ticker: AsyncIterator[int],
-    interval: int,
-    retry_policy: VerificationRetryPolicy,
-) -> None:
-    """T7: delegate to the library recurring-verify (kept in
-    degenbot.arbitrage.recurring_verify so tests can import it without the
-    example's cmd_stream import chain).
-    """
-    from degenbot.arbitrage.recurring_verify import run_recurring_verify_until_done
-
-    await run_recurring_verify_until_done(
-        registry=registry,
-        block_ticker=block_ticker,
-        interval=interval,
-        retry_policy=retry_policy,
-    )
-
-
-run_recurring_verify_until_done = _shim_run_recurring_verify_until_done
 
 
 # get_snapshots

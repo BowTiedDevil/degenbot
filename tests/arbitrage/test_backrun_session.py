@@ -459,25 +459,21 @@ class TestBackrunSessionContextManager:
 
 
 class TestBackrunSessionRunBlockStreamAcquiredOnce:
-    """Regression: `run()` must acquire `engine.block_stream()` exactly once and
-    fan the blocks to both the result consumer and the T7 recurring-verify
-    ticker via `_tee_block_stream`.
+    """Regression: `run()` must acquire the once-only `engine.block_stream()`
+    exactly ONCE and feed it DIRECTLY to the single result consumer (the tee and
+    the redundant Python recurring-verify branch were removed).
 
-    Pre-fix `run()` called `engine.block_stream()` twice: once consumed inside
-    the real `consume_result_batches` (which self-acquires when
-    `block_stream=None`), and once at run() line 967 for the recurring-verify
-    ticker. The real `PyArbitrageEngine.block_stream()` is once-only — the
-    second call raised `RuntimeError("block_stream() can only be called once")`
-    entering the main loop, crashing every permutation run. This test uses an
-    engine whose `block_stream()` raises on the second call (mimicking the real
-    once-only seam) and asserts both branches receive every block.
+    The real `PyArbitrageEngine.block_stream()` is once-only — a second call
+    raises `RuntimeError("block_stream() can only be called once")`. This test
+    uses an engine whose `block_stream()` raises on the second call (mimicking
+    the real once-only seam) and asserts the single consumer receives every
+    block.
     """
 
-    async def test_run_acquires_block_stream_once_and_fans_to_both_consumers(
+    async def test_run_acquires_block_stream_once_for_single_consumer(
         self,
     ) -> None:
         seen_by_consumer: list[int] = []
-        seen_by_verify: list[int] = []
 
         class _OnceOnlyEngine:
             """Mimics the real `block_stream()` once-only receiver semantics."""
@@ -525,9 +521,6 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
                 # No backfill target beyond current_block (12_345) — main-loop entry.
                 return 0
 
-            async def verify_liquidity_maps(self, *, block_number=None) -> None:
-                seen_by_verify.append(block_number)
-
         registry = _Registry()
 
         async def recording_consumer(*, block_stream=None, **_kw) -> None:
@@ -551,17 +544,9 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
             "run() must acquire engine.block_stream() exactly once (was 2 → crash)"
         )
         assert registry.engine.resumed is True
-        # Both branches received every block (fan-out, not a split).
+        # The single consumer received every block.
         assert seen_by_consumer == [500, 550, 600], (
-            "result-consumer branch must receive every block"
-        )
-        # The recurring-verify ticker fires at each block divisible by
-        # RECURRING_VERIFY_INTERVAL (50). (Pre-removal, a leading `None` from
-        # the now-removed step-3b startup batch verify_liquidity_maps() appeared
-        # here — that gate is redundant with the per-pool step-1/step-2 gates
-        # and racy at the moving head, so it no longer runs.)
-        assert seen_by_verify == [500, 550, 600], (
-            "recurring-verify ticker must fire at each interval block"
+            "result-consumer must receive every block"
         )
 
 
@@ -1198,11 +1183,10 @@ class TestSubCBgRegistrationConcurrency:
         assert reg.done()
         assert isinstance(reg.exception(), VerificationRpcError)
 
-    async def test_recurring_verify_proceeds_while_registration_climbs(self) -> None:
-        """The T7 recursive liquidity-map verify keeps firing on every
-        divisible-by-interval block while a forever-discovery registration is
-        still climbing — discovery never stalls recursive verify."""
-        seen_by_verify: list[int] = []
+    async def test_registration_climbs_concurrently_with_main_loop(self) -> None:
+        """Background discovery registration keeps climbing in its own task
+        while the main loop runs (the recurring-verify task was removed, but the
+        registration/main-loop concurrency contract remains)."""
         climbed = -1
 
         class _Engine:
@@ -1247,9 +1231,6 @@ class TestSubCBgRegistrationConcurrency:
             def start(self, *_a, **_kw) -> int:
                 return 0  # no backfill beyond current_block — main-loop entry
 
-            async def verify_liquidity_maps(self, *, block_number=None) -> None:
-                seen_by_verify.append(block_number)
-
         async def forever_path_builder(**_kwargs):
             nonlocal climbed
             i = 0
@@ -1276,12 +1257,9 @@ class TestSubCBgRegistrationConcurrency:
         await session.start()
         await session.run()
 
-        # T7 fired for every divisible-by-interval block WHILE registration
-        # climbed — recursive verify was never stalled by discovery.
-        assert seen_by_verify == [500, 550, 600]
         assert registry.engine.block_stream_calls == 1
         assert registry.engine.resumed is True
-        assert climbed > 0, "registration must have climbed concurrently"
+        assert climbed > 0, "registration must have climbed concurrently with the main loop"
         # Main loop ended on the finite block stream; finally cancelled the
         # still-climbing registration.
         assert session._registration_task is not None

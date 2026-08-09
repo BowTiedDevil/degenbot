@@ -85,7 +85,7 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-cl-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-evm-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index; do
+    for crate in degenbot-core degenbot-cl-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-evm-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1

@@ -77,6 +77,8 @@ members = [
     "crates/degenbot-db",
     "crates/degenbot-decoders",
     "crates/degenbot-evm-math",
+    "crates/degenbot-execution",
+    "crates/degenbot-execution-sample",
     "crates/degenbot-executor",
     "crates/degenbot-fork",
     "crates/degenbot-pathfinding",
@@ -97,18 +99,36 @@ members = [
 
 # Release profile.
 #
-# The `degenbot_rs` cdylib (the Python extension, built from
-# `crates/degenbot-python`) gets the heavy optimizations — `lto = "thin"` +
-# `strip` + `codegen-units = 1` — because it is the shipped runtime artifact.
-# `lto`/`strip` are profile-level (Cargo has no per-package `lto`), so they apply
-# workspace-wide, but the final thin-LTO link only spans codegen units that
-# survive into the cdylib.
+# IMPORTANT framing for the two first-class consumers (see AGENTS.md): Cargo
+# only honors `[profile.*]` from the top-level package being built — profile
+# settings in the manifests of *dependencies* are ignored entirely. So every
+# block below tunes ONLY degenbot's own in-repo builds (the `degenbot_rs`
+# cdylib and in-workspace `cargo test`/`clippy`).
+#
+# The pure-Rust consumer (`cargo add degenbot`, building the umbrella crate
+# into their own binary — see `examples/standalone_consumer.rs`) is entirely
+# unaffected: their build reads *their* workspace's `[profile.release]`, which
+# applies uniformly across the whole dependency graph including these crates.
+# Their binary's LTO/codegen is theirs to own, not this file's.
+#
+# Within this workspace, the only shipped runtime artifact is the `degenbot_rs`
+# cdylib (the Python extension, built from `crates/degenbot-python`), and it
+# gets the heavy optimizations — `lto = "thin"` + `strip` + `codegen-units = 1`.
+# `lto`/`strip` are profile-level (Cargo has no per-package `lto`), so they
+# apply workspace-wide, but the final thin-LTO link only spans codegen units
+# that survive into the cdylib.
 #
 # The pure-Rust core crates (`degenbot-core`, `-cl-math`, `-abi`, `-rpc`,
 # `-bot`) get per-package overrides below: more `codegen-units` for faster
 # compilation during a cdylib release build. They are libraries consumed (and
 # inlined at the final link) by the cdylib, so the looser per-package codegen
 # does not meaningfully hurt runtime — the cdylib's thin LTO re-converges.
+#
+# If a Rust bot is ever shipped as a *binary built inside this workspace* (no
+# `[[bin]]` target exists today — all members are libraries), revisit this:
+# the per-package loosening and the cdylib-singular framing would then apply
+# to that second shipped artifact. Downstream consumers building it from the
+# umbrella are unaffected regardless.
 [profile.release]
 lto = "thin"
 strip = true

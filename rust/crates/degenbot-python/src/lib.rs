@@ -47,6 +47,9 @@ pub mod curve_math;
 #[cfg(feature = "db")]
 pub mod db;
 pub mod diagnostics;
+pub mod evm_math;
+#[cfg(feature = "execution")]
+pub mod execution;
 #[cfg(feature = "executor")]
 pub mod executor;
 #[cfg(feature = "fork")]

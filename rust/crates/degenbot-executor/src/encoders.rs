@@ -11,10 +11,9 @@
 //! # Scope
 //!
 //! The primitive encoders + `AddressTable` + `pack_config` + `make_pool_key`
-//! ONLY. The per-path-type composers (`V4V4ArbitragePayload`,
-//! `V4V3ArbitragePayload`, `CmdExecutorComposer`) and the PyO3 wrappers are
-//! sibling / cutover tasks. `# Errors` doc sections appear on every `pub fn`
-//! returning `Result`.
+//! ONLY. The per-path-type composers (in `composers.rs`) and the PyO3
+//! wrappers are sibling / cutover tasks. `# Errors` doc sections appear on
+//! every `pub fn` returning `Result`.
 //!
 //! # Parity (§4.2 hard gate)
 //!
