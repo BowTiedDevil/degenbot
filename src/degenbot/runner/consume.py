@@ -22,7 +22,7 @@ from typing import Any, cast
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot._ffi import evm_math
+from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
 from degenbot.dispatch import Dispatcher, SimulateContext, fetch_fee_history
 from degenbot.logging import logger as bot_logger
@@ -138,7 +138,7 @@ async def _apply_block_if_ready(
     gas_used = int(block["gas_used"])
     gas_limit = int(block["gas_limit"])
 
-    base_fee_next = evm_math.next_base_fee(
+    base_fee_next = next_base_fee(
         parent_base_fee=base_fee,
         parent_gas_used=gas_used,
         parent_gas_limit=gas_limit,
@@ -231,7 +231,7 @@ async def _apply_result_if_ready(
             dispatcher=dispatcher,
             current_block=current_block,
             block_timestamp=dispatcher.block_timestamp_for(current_block) or 0,
-            base_fee_next=evm_math.next_base_fee(
+            base_fee_next=next_base_fee(
                 parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
                 parent_gas_used=int(cast("Any", batch["gas_used"])),
                 parent_gas_limit=int(cast("Any", batch["gas_limit"])),
