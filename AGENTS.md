@@ -11,15 +11,6 @@ degenbot is migrating from a pure-Python library to a Rust core composed of stan
 
 The two consumers share one Rust core, and that core must own **everything** a functional MEV bot needs: pool/token state, swap math, event decoding, solvers, the pump loop, swap encoding, and the supporting infrastructure — the database (persistence, not just ORM calls), RPC interaction, pub-sub, price oracles, DB-aware pool and lending-market updaters, simulation, and transaction submission. The Rust core must be capable of performing **every action the bot requires**, driven either by a Rust consumer directly or by a Python interface shell that instructs the Rust core to do them. The framing is: **Rust is the engine; Python is a driver shell, not a co-implementation.**
 
-## Terminology
-
-**"Backrun" is a legacy label in the codebase, not a description of the mechanism.** Do not read the crate name `degenbot-backrun-strategy`, the example `eth_backrun_*.py`, or the ADR-019/025 references as classic victim-transaction backrunning. The bot's strategy is **block-settlement arbitrage**, and the two must never be conflated:
-
-- **Backrun (classic MEV — NOT this bot):** position a transaction/bundle immediately *after a specific, identified victim transaction* (mempool-ordered), profiting from that victim's price impact. A *named victim tx* and ordering relative to it are essential; you watch the mempool for a specific flow.
-- **Settlement arbitrage (this bot):** after a block settles and its trades shift pool states, arbitrage the resulting cross-pool price discrepancies with a transaction at the head of the next block. There is **no labeled victim** — the opportunity is the post-settlement *state discrepancy* itself, detected by the solver from settled pool-state changes (no mempool victim watching, no tx-to-tx ordering).
-
-Use **"settlement arbitrage"** (equivalently "block-settlement / next-block / state-driven arbitrage") when describing the opportunity this bot captures. Keep **"backrun" only as the legacy name** of the crate, example, and execution-strategy adapter (`degenbot-backrun-strategy`) — never to describe the mechanism. Do not rename crates/examples/ADRs absent an explicit directive.
-
 ## Backwards Compatibility
 Unless directed otherwise, design standalone features without a backwards compatibility layer. You may add a feature flag to allow toggling parallel implementations and a hard cutover.
 

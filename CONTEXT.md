@@ -5,6 +5,34 @@ names used in architecture reviews (the `/improve-codebase-architecture`
 skill), ADRs, and the three-layer transition. Keep this current as
 deepening decisions crystallize.
 
+## Settlement arbitrage (the bot's strategy)
+
+**"Backrun" is a legacy label in the codebase, not a description of the
+mechanism.** Do not read the crate name `degenbot-backrun-strategy`, the
+example `eth_backrun_*.py`, or the ADR-019/025 references as classic
+victim-transaction backrunning. The bot's strategy is **block-settlement
+arbitrage**, and the two must never be conflated:
+
+- **Backrun (classic MEV — NOT this bot):** position a transaction/bundle
+  immediately *after a specific, identified victim transaction*
+  (mempool-ordered), profiting from that victim's price impact. A *named
+  victim tx* and ordering relative to it are essential; you watch the
+  mempool for a specific flow.
+- **Settlement arbitrage (this bot):** after a block settles and its trades
+  shift pool states, arbitrage the resulting cross-pool price discrepancies
+  with a transaction at the head of the next block. There is **no labeled
+  victim** — the opportunity is the post-settlement *state discrepancy*
+  itself, detected by the solver from settled pool-state changes (no mempool
+  victim watching, no tx-to-tx ordering).
+
+The defining properties are: (1) the opportunity source is a **settled
+pool-state discrepancy** (not a victim's flow), and (2) execution is a single
+transaction at the **next-block head** (not ordered against a specific tx).
+Use **"settlement arbitrage"** (equivalently "block-settlement / next-block /
+state-driven arbitrage") when describing the opportunity. Keep **"backrun"
+only as the legacy name** of the crate, example, and execution-strategy
+adapter (`degenbot-backrun-strategy`) — never to describe the mechanism.
+
 ## Architecture (from `/codebase-design` vocabulary)
 
 - **Module** — anything with an interface and an implementation (function, crate, package, tier-spanning slice). Not "component"/"service."
