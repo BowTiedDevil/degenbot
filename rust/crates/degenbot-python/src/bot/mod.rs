@@ -445,44 +445,6 @@ impl PyBot {
         }
     }
 
-    /// Verify a single V3 pool's pinned snapshot seed against on-chain@snapshot
-    /// block (CBCH6H — the rolling-start race fix). Step-1 of the two-step
-    /// verify at the registry drain seam routes here.
-    #[pyo3(signature = (address, rpc_url, block_number))]
-    fn verify_v3_snapshot_seed<'py>(
-        &self,
-        py: Python<'py>,
-        address: String,
-        rpc_url: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?
-            .verify_v3_snapshot_seed(py, address, rpc_url, block_number)
-    }
-
-    /// Verify a single V4 pool's pinned snapshot seed against on-chain@snapshot
-    /// block (CBCH6H — V4 twin of `verify_v3_snapshot_seed`). Step-1 of the
-    /// two-step verify routes here.
-    #[pyo3(signature = (pool_manager_address, pool_id_hex, rpc_url, state_view_address, block_number))]
-    fn verify_v4_snapshot_seed<'py>(
-        &self,
-        py: Python<'py>,
-        pool_manager_address: String,
-        pool_id_hex: String,
-        rpc_url: String,
-        state_view_address: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?.verify_v4_snapshot_seed(
-            py,
-            pool_manager_address,
-            pool_id_hex,
-            rpc_url,
-            state_view_address,
-            block_number,
-        )
-    }
-
     /// Verify a single V3 pool's pinned post-drain `tick_data` against
     /// on-chain@**pinned block** (step-2 race fix, twin of
     /// `verify_v3_snapshot_seed`). Step-2 of the two-step verify routes here.

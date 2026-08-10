@@ -971,20 +971,6 @@ class PyBot:
     def stop(self) -> None: ...
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
     def set_verify_state_view(self, state_view_address: str) -> None: ...
-    def verify_v3_snapshot_seed(
-        self,
-        address: str,
-        rpc_url: str,
-        block_number: int | None,
-    ) -> Coroutine[Any, Any, None]: ...
-    def verify_v4_snapshot_seed(
-        self,
-        pool_manager_address: str,
-        pool_id_hex: str,
-        rpc_url: str,
-        state_view_address: str,
-        block_number: int | None,
-    ) -> Coroutine[Any, Any, None]: ...
     def verify_v3_post_drain_snapshot(
         self,
         address: str,
@@ -1229,20 +1215,6 @@ class ArbitrageEngine:
         self,
         address: str,
         rpc_url: str,
-        block_number: int | None,
-    ) -> Coroutine[Any, Any, None]: ...
-    def verify_v3_snapshot_seed(
-        self,
-        address: str,
-        rpc_url: str,
-        block_number: int | None,
-    ) -> Coroutine[Any, Any, None]: ...
-    def verify_v4_snapshot_seed(
-        self,
-        pool_manager_address: str,
-        pool_id_hex: str,
-        rpc_url: str,
-        state_view_address: str,
         block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v3_post_drain_snapshot(
