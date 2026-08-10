@@ -97,6 +97,7 @@ impl ArbitrageEngine {
     /// CL hops (V3/V4) have the word-boundary empty-march class; V2 / Curve /
     /// Balancer / Solidly consume their full input at the boundary and need no
     /// clamp.
+    #[expect(clippy::too_many_lines)] // multi-hop CL twin loop + post-clamp profit recompute
     pub(crate) fn clamp_cl_hop_capacity(&self, path_id: u64, result: &mut SolvePathResult) {
         let Some(path) = self.path_pools.get(&path_id) else {
             return; // Unknown path → nothing to clamp
@@ -227,6 +228,44 @@ impl ArbitrageEngine {
                 }
             }
         }
+
+        // BUG-B FIX (path-142603 `no-profit` crash): the solver's `profit` is
+        // computed on its RAW (over-predicted) hop outputs; the CL clamp above
+        // realigns execution to the twin but was not feeding back a recomputed
+        // profit, so an actually-unprofitable path stayed `> min_profit` and was
+        // dispatched → executed to a loss → `no-profit` abort. Recompute the
+        // selection profit from the clamped values (see `recompute_clamped_profit`);
+        // a post-clamp loss saturates to 0 and is dropped.
+        if let Some(recomputed) = Self::recompute_clamped_profit(result) {
+            let profit_before = result.profit;
+            if recomputed != profit_before {
+                tracing::info!(
+                    path_id,
+                    profit_before = %profit_before,
+                    profit_after = %recomputed,
+                    profit_delta = %profit_before.saturating_sub(recomputed),
+                    "[profit-clamp] recomputed selection profit from twin-aligned outputs"
+                );
+                result.profit = recomputed;
+            }
+        }
+    }
+
+    /// Recompute a path result's selection profit from its CLAMPED
+    /// (twin-aligned) outputs, per the documented `SolvePathResult::profit`
+    /// semantics `final_output - consumed_inputs[0]` (with
+    /// `final_output = hop_outputs[last]`), evaluated on the corrected values
+    /// so it reflects the executable state rather than the solver's pre-clamp
+    /// over-prediction. A post-clamp loss saturates to `0`, which is dropped by
+    /// the `profit > min_profit` delivery gate. Returns `None` for a degenerate
+    /// path (no `hop_outputs` / `consumed_inputs`). Pure (no env, no `core`
+    /// lock) so it is directly unit-testable independent of the CL-twin
+    /// machinery.
+    #[must_use]
+    fn recompute_clamped_profit(result: &SolvePathResult) -> Option<U256> {
+        let final_output = result.hop_outputs.last().copied()?;
+        let first_consumed = result.consumed_inputs.first().copied()?;
+        Some(final_output.saturating_sub(first_consumed))
     }
 
     /// Re-resolve and re-solve only paths that contain updated pools.
@@ -937,5 +976,95 @@ mod staleness_gate_tests {
         // Behind (normal latency) is NOT future.
         assert!(!hop_is_future(99, 100));
         assert!(!hop_is_future(0, 100));
+    }
+}
+
+#[cfg(test)]
+mod profit_clamp_recompute_tests {
+    use super::{ArbitrageEngine, SolvePathResult, U256};
+
+    /// Path-142603 (V4-V4-V3 @25723658) regression: the solver reported a
+    /// phantom +346,369,630 wei profit because its V3 hop2 output
+    /// (351,476,391,576,684) over-predicted the byte-exact twin
+    /// (351,475,872,056,229) by 519,520,455 wei. After the CL clamp aligns
+    /// `hop_outputs`/`consumed_inputs` to the twin, the selection profit MUST
+    /// be recomputed from the clamped values: the round trip nets
+    /// -173,150,825 wei -> saturates to 0 -> dropped by the `profit > min_profit`
+    /// delivery gate instead of being selected and executing to a `no-profit`
+    /// trap. (Regression for the BUG-B fix in `clamp_cl_hop_capacity`.)
+    #[test]
+    fn post_clamp_last_hop_loss_saturates_profit_to_zero() {
+        let mut r = SolvePathResult {
+            optimal_input: U256::from(351_476_045_207_054u64),
+            // Profit the SOLVER computed on its over-predicted raw hop2 output
+            // (= 351_476_391_576_684 - 351_476_045_207_054 = +346,369,630).
+            profit: U256::from(346_369_630u64),
+            // Twin-aligned outputs after the CL clamp: hop2 (last) clamped
+            // DOWN to the byte-exact twin 351,475,872,056,229.
+            hop_outputs: vec![
+                U256::from(676_293u64),
+                U256::from(676_607u64),
+                U256::from(351_475_872_056_229u64),
+            ],
+            consumed_inputs: vec![U256::from(351_476_045_207_054u64)],
+            ..Default::default()
+        };
+        let recomputed = ArbitrageEngine::recompute_clamped_profit(&r).expect("has outputs");
+        // final_output - consumed_inputs[0] = -173,150,825 -> saturating 0.
+        assert_eq!(recomputed, U256::ZERO, "post-clamp loss must saturate to 0");
+        // The clamp writes the recomputed value back (the fix).
+        r.profit = recomputed;
+        assert!(
+            r.profit.is_zero(),
+            "selection profit must be zero (dropped)"
+        );
+    }
+
+    /// The recompute is a no-op safety for a genuinely-profitable path whose
+    /// outputs were twin-aligned with no net change: profit is preserved.
+    #[test]
+    fn genuine_profit_preserved_after_clamp() {
+        let r = SolvePathResult {
+            optimal_input: U256::from(1000u64),
+            profit: U256::from(50u64),
+            hop_outputs: vec![U256::from(200u64), U256::from(1050u64)],
+            consumed_inputs: vec![U256::from(1000u64), U256::from(200u64)],
+            ..Default::default()
+        };
+        let recomputed = ArbitrageEngine::recompute_clamped_profit(&r).expect("has outputs");
+        assert_eq!(
+            recomputed,
+            U256::from(50u64),
+            "genuine profit must be preserved"
+        );
+    }
+
+    /// `profit = final_output - consumed_inputs[0]` (the documented semantics):
+    /// a first hop that partial-fills at a range boundary consumes less than the
+    /// full `optimal_input`, so the recompute must key off `consumed_inputs[0]`.
+    #[test]
+    fn recompute_uses_consumed_inputs_zero_not_optimal_input() {
+        let r = SolvePathResult {
+            optimal_input: U256::from(1000u64),
+            profit: U256::from(0u64),
+            hop_outputs: vec![U256::from(300u64), U256::from(1050u64)],
+            // hop0 consumes 900, not the full 1000 (partial fill at boundary).
+            consumed_inputs: vec![U256::from(900u64), U256::from(300u64)],
+            ..Default::default()
+        };
+        let recomputed = ArbitrageEngine::recompute_clamped_profit(&r).expect("has outputs");
+        assert_eq!(
+            recomputed,
+            U256::from(150u64),
+            "1050 - 900, not 1050 - 1000"
+        );
+    }
+
+    /// A degenerate path (no hop outputs / consumed inputs) recomputes to None
+    /// and is left untouched by the clamp.
+    #[test]
+    fn degenerate_path_returns_none() {
+        let r = SolvePathResult::default();
+        assert!(ArbitrageEngine::recompute_clamped_profit(&r).is_none());
     }
 }
