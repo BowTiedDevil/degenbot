@@ -162,3 +162,17 @@ The bot stopped on a GENUINE solver-state desync (UO3JM4 abort) at solve block 2
 **Hypothesis:** after the backfill→live handoff, the per-pool drain does not re-arm to keep advancing pool update_block while the engine clock advances — the first few re-injected (drained-during-backfill) blocks apply, then it stalls. recovery_anchor starts at 0 (not pre-raised at resume), so it does not appear to be dropping the live blocks.
 
 **Next (instrumentation, not a blind fix):** add a per-loop drain-progress probe in run_with_stream on the post-backfill path (e.g. log pool-apply block vs clock per settle tick) so the next resume from a stale snapshot pins which component (drain sink vs per-pool pump vs WS log arm) stops advancing. Then fix + regression test. After ANY stale-snapshot resume the bot's pool state can trail the solve head by 15+ blocks, so a restart should re-seed from a fresh snapshot until this is fixed.
+
+## Addendum 7: post-backfill freeze CONFIRMED + reproduced (probe 3YA7ZJ)
+
+Added a DIAG freeze-probe to `run_with_stream` (logs `current_block` vs `pool_state_head` every ~10s) and re-ran from the stale snapshot (resume 25711404 -> backfill 7151 blocks -> live 25718555).
+
+**Result — freeze reproduces, with a crucial refinement:**
+- `pool_state_head` (MAX pool update_block) tracks `current_block` at ~1 behind (25718574 vs 25718575 ...). So the MAX pool keeps advancing — the pump DOES per-block drain (even no-event blocks) for the pools it drains.
+- BUT the per-pool aggregate/outlier reporter shows the lagging pools' `update_block` clustered tight at **25718556-25718561 = backfill boundary (+1..+6)**, while the clock climbs to 25718577+ (16+ behind). 178 pools at 25718557, 53 at 25718556, 50 at 25718559, etc.
+- Therefore the frozen pools are NOT merely inactive: since per-block drain advances even no-event pools (proved by the max tracking), a pool stuck at the boundary has stopped being per-block DRAINED. A subset of tracked/live pools is dropped from the live drain after the backfill handoff.
+- Earlier "wholesale freeze" framing was WRONG — it is not everything freezing; a MAX-based probe masks the tail. The per-pool summary (n_pools, max_stale_by, per-pool update_block) is the signal that reveals it. (Same pattern as the 25714793-95 cluster in the original abort run.)
+
+**Implication for the gate:** the abort is the CORRECT backstop — a boundary-frozen pool whose on-chain price later moves (e.g. a swap at the solve block) diverges from the solver's frozen snapshot, and the bot must not backrun with pre-swap state. Not yet aborted in the repro run (no swap has landed on a frozen pool at a solve block yet).
+
+**Fix locus (next step):** find where a subset of pools seeded/active around the backfill boundary is dropped from the live per-block drain after `resume_from_subscribe` -> `run_with_stream`. Prime suspect: the per-pool drain rotation/tracked set after the handoff (the max keeps advancing, so the drain is alive but shrinking/not covering the backfill-seeded tail). Needs one more code trace to pin the exact dispatch/registration drop before a repair + regression test.
