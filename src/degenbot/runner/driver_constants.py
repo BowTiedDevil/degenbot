@@ -83,11 +83,6 @@ INJECTED_EXECUTOR_ADDRESS = get_checksum_address(
     ),
 )
 
-# T7 (ADR-006 D4): blocks between recurring liquidity-map verifies in the hot
-# loop. Default 50 bounds RPC cost; a post-release / in-loop desync is caught
-# within this window.
-RECURRING_VERIFY_INTERVAL = 50
-
 # Cap on per-batch `[sim-fail]` lines emitted by the renderer. A thin-margin
 # revert storm can otherwise flood the log during a stalled head.
 _SIM_FAIL_RENDER_CAP = 25

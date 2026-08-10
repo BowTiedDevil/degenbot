@@ -10,11 +10,6 @@ risk of unbounded backlog or stale-batch dispatch.
 
 from __future__ import annotations
 
-import asyncio
-import inspect
-
-import pytest
-
 import degenbot.arbitrage.engine_registry as runner
 
 
@@ -30,8 +25,6 @@ class FakeEngine:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.backfill_args: list[tuple[str, int]] = []
-        self.verify_args: dict | None = None
-        self._last_processed_block: int | None = 18_000_042
         # JUCFCB: the DB path reads `snapshot_seed_block` from the engine.
         # FakeEngine defaults to None (cold-start → no backfill) unless a test
         # sets it.
@@ -71,31 +64,6 @@ class FakeEngine:
 
     def set_verify_state_view(self, addr: str) -> None:
         self.calls.append("set_verify_state_view")
-
-    def last_processed_block(self) -> int | None:
-        return self._last_processed_block
-
-    def verify_liquidity_maps(
-        self,
-        *,
-        rpc_url: str,
-        tick_lens_address: str,
-        state_view_address: str,
-        block_number: int | None,
-    ) -> None:
-        # Mirrors the real engine seam: async (driven by asyncio via
-        # `future_into_py`), so the registry `await`s it. A plain sync return
-        # here would make the registry's `await` raise — keep it async.
-        async def _verify() -> None:
-            self.calls.append("verify_liquidity_maps")
-            self.verify_args = {
-                "rpc_url": rpc_url,
-                "tick_lens_address": tick_lens_address,
-                "state_view_address": state_view_address,
-                "block_number": block_number,
-            }
-
-        return _verify()  # coroutine — registry `await`s it
 
     def resume(self) -> None:
         self.calls.append("resume")
@@ -201,10 +169,11 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
 
 
 def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
-    """T4 (ADR-006 D4): PyBot exposes set_verify_rpc_url, set_verify_state_view,
-    verify_liquidity_maps, verify_v3_liquidity_maps, verify_v4_liquidity_maps as
-    delegating entry points once a ArbitrageEngine is constructed against it.
-    The batch verify still passes (same behavior, new home on PyBot)."""
+    """T4 (ADR-006 D4): PyBot exposes the verify CONFIG + per-pool two-step
+    lifecycle entry points once an ArbitrageEngine is constructed against it.
+    The whole-batch `verify_liquidity_maps` (and V3/V4 twins) was REMOVED as
+    redundant + racy (the per-pool two-step lifecycle is the verify authority),
+    so those must NOT be present."""
     from degenbot.arbitrage.engine_registry import ArbitrageEngine
     from degenbot.bot import PyBot
 
@@ -213,11 +182,14 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
     for method in (
         "set_verify_rpc_url",
         "set_verify_state_view",
+    ):
+        assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
+    for method in (
         "verify_liquidity_maps",
         "verify_v3_liquidity_maps",
         "verify_v4_liquidity_maps",
     ):
-        assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
+        assert not hasattr(bot, method), f"removed batch verify {method} must not exist"
 
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
@@ -293,107 +265,3 @@ def test_start_stashes_None_blocks_when_no_snapshots() -> None:
 
     assert registry._verify_snapshot_block is None
     assert not hasattr(registry, "_verify_backfill_block")
-
-
-def test_verify_liquidity_maps_raises_when_start_not_called() -> None:
-    """Before start() stashes verify config, verify_liquidity_maps is a
-    RuntimeError — never a silent skip or an unconfigured-RPC failure deep in
-    the engine. Mirrors the WFDTUR fail-fast posture."""
-    fake = FakeEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake)
-
-    with pytest.raises(RuntimeError, match="verify config"):
-        asyncio.run(registry.verify_liquidity_maps())
-    assert "verify_liquidity_maps" not in fake.calls
-
-
-def test_verify_liquidity_maps_delegates_with_stashed_config() -> None:
-    """After start(..., verify_state_view=...), verify_liquidity_maps delegates
-    to the engine with the stashed RPC + StateView, a zero tick_lens (unused by
-    the V3 batch path), and block_number = the engine's last_processed_block()
-    (NOT ``pending``/latest — engine-state@N vs chain@N is deterministic).
-    Emits exactly one delegate call — the [verify] line the analyzer keys on."""
-    fake = FakeEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake)
-    state_view = "0x0000000000000000000000000000000000000abc"
-
-    registry.start(
-        "http://localhost:8545",
-        "ws://localhost:8546",
-        verify_state_view=state_view,
-    )
-
-    asyncio.run(registry.verify_liquidity_maps())
-
-    assert fake.verify_args == {
-        "rpc_url": "http://localhost:8545",
-        "tick_lens_address": "0x0000000000000000000000000000000000000000",
-        "state_view_address": state_view,
-        "block_number": 18_000_042,
-    }
-
-
-def test_verify_liquidity_maps_explicit_block_overrides_default() -> None:
-    """An explicit block_number wins over the engine's last_processed_block —
-    lets a caller pin a specific checkpoint (e.g. the snapshot block)."""
-    fake = FakeEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake)
-    registry.start(
-        "http://localhost:8545",
-        "ws://localhost:8546",
-        verify_state_view="0x0000000000000000000000000000000000000abc",
-    )
-
-    asyncio.run(registry.verify_liquidity_maps(block_number=25_384_822))
-
-    assert fake.verify_args["block_number"] == 25_384_822
-
-
-def test_verify_liquidity_maps_falls_back_to_pending_when_no_block() -> None:
-    """If the engine has processed no block yet (last_processed_block() is None),
-    verify falls through to ``pending`` (latest) rather than crashing — the
-    engine state is empty so a latest-check is the only honest comparison."""
-    fake = FakeEngine()
-    fake._last_processed_block = None
-    registry = runner.EngineRegistry(bot=None, engine=fake)
-    registry.start(
-        "http://localhost:8545",
-        "ws://localhost:8546",
-        verify_state_view="0x0000000000000000000000000000000000000abc",
-    )
-
-    asyncio.run(registry.verify_liquidity_maps())
-
-    assert fake.verify_args["block_number"] is None
-
-
-def test_verify_liquidity_maps_is_async_driven_by_asyncio_not_block_on() -> None:
-    """verify_liquidity_maps MUST be an async function (driven by asyncio via
-    pyo3 `future_into_py`), NOT a sync `runtime.block_on` on the shared
-    multi-threaded tokio runtime.
-
-    Regression guard for the 2026-06-24 deadlock: `run()` called the sync
-    `engine.verify_liquidity_maps` (pyo3) which did `runtime.block_on(...)`
-    from a foreign (Python) thread while the pump WS loop was a task on that
-    same runtime. Under the pump's concurrent lock churn the verify future's
-    worker couldn't get scheduled → MainThread + all tokio workers parked on
-    `futex_do_wait` (proven via py-spy + wchan) → permanent stall, no
-    `[DIAG] HEADER` and no `[verify] ... OK`. The async seam (driven by the
-    asyncio loop the consumer already runs on) eliminates the foreign-thread
-    `block_on`, so verify runs concurrently with the pump and cannot deadlock.
-    """
-    assert inspect.iscoroutinefunction(runner.EngineRegistry.verify_liquidity_maps), (
-        "verify_liquidity_maps must be async — sync block_on deadlocks the pump "
-        "(see 2026-06-24 diagnosis)."
-    )
-
-
-def test_verify_liquidity_maps_raises_when_state_view_omitted() -> None:
-    """V4 batch verify needs StateView; start() without verify_state_view must
-    surface as a config error at verify time, not a silent pass."""
-    fake = FakeEngine()
-    registry = runner.EngineRegistry(bot=None, engine=fake)
-    registry.start("http://localhost:8545", "ws://localhost:8546")  # no state_view
-
-    with pytest.raises(RuntimeError, match="verify config"):
-        asyncio.run(registry.verify_liquidity_maps())

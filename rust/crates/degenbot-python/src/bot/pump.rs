@@ -301,14 +301,13 @@ impl PumpState {
         Ok(())
     }
 
-    // -- Verify config + batch verification (ADR-006 D4 T4) ------------------
+    // -- Verify config (ADR-006 D4 T4) --------------------------------------
     //
-    // The batch verify methods read `self.engine` (BotState snapshots) + emit
-    // `future_into_py` async I/O. They live here on the shared pump state so
-    // PyBot::verify_liquidity_maps (the D4 owner entry point) delegates here.
-    // The engine keeps thin delegating wrappers so existing
-    // `engine.verify_liquidity_maps` calls keep resolving until T8 rewires them
-    // to PyBot. `set_verify_on_register` is excluded (deleted in T5).
+    // The whole-batch liquidity-map verifier (`verify_liquidity_maps` and its
+    // V3/V4 twins) was REMOVED as redundant + racy (the per-pool two-step
+    // registration lifecycle below is the verify authority; see
+    // dev-run-solver-state-findings.md Addendum 3). What remains here is only
+    // the verify CONFIG the per-pool lifecycle consumes.
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
     pub(crate) fn set_verify_rpc_url(&self, rpc_url: &str) {
@@ -336,157 +335,6 @@ impl PumpState {
             .parse()
             .unwrap_or(alloy::primitives::Address::ZERO);
         *self.verify_state_view.lock() = Some(addr);
-    }
-
-    /// Verify all V3 + V4 pool liquidity maps against on-chain state (ADR-006 D4 T4).
-    /// Async (`future_into_py`) — never `block_on` (the 2026-06-24 deadlock).
-    #[expect(clippy::needless_pass_by_value)]
-    pub(crate) fn verify_liquidity_maps<'py>(
-        &self,
-        py: Python<'py>,
-        rpc_url: String,
-        tick_lens_address: String,
-        state_view_address: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let tick_lens: alloy::primitives::Address = tick_lens_address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid tick_lens address: {e}"))
-        })?;
-        let state_view: alloy::primitives::Address = state_view_address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
-        })?;
-        let (v3_pools, v4_pools) = {
-            let engine = self.engine.lock();
-            let core = engine.core().read();
-            let v3 = core.v3_pools_snapshot();
-            let v4 = core.v4_pools_snapshot();
-            (v3, v4)
-        };
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(
-                &rpc_url,
-                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
-            )
-            .await
-            .map_err(|e| {
-                crate::bot::engine::VerificationRpcError::new_err(format!(
-                    "verify_liquidity_maps: failed to create provider: {e}"
-                ))
-            })?;
-            let v3_result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
-                &provider,
-                tick_lens,
-                &v3_pools,
-                block_number,
-            )
-            .await;
-            if let Err(err) = v3_result {
-                return Err(map_liquidity_verify_error(err));
-            }
-            let v4_result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider,
-                state_view,
-                &v4_pools,
-                block_number,
-            )
-            .await;
-            if let Err(err) = v4_result {
-                return Err(map_liquidity_verify_error(err));
-            }
-            tracing::info!(
-                block = block_number.unwrap_or_default(),
-                "[verify] V3 + V4 liquidity maps OK"
-            );
-            Ok(())
-        })
-    }
-
-    /// Verify V3 liquidity maps only (ADR-006 D4 T4).
-    pub(crate) fn verify_v3_liquidity_maps<'py>(
-        &self,
-        py: Python<'py>,
-        rpc_url: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let v3_pools = {
-            let engine = self.engine.lock();
-            let v3 = engine.core().read().v3_pools_snapshot();
-            v3
-        };
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(
-                &rpc_url,
-                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
-            )
-            .await
-            .map_err(|e| {
-                crate::bot::engine::VerificationRpcError::new_err(format!(
-                    "verify_v3_liquidity_maps: failed to create provider: {e}"
-                ))
-            })?;
-            let tick_lens = alloy::primitives::Address::ZERO;
-            let v3_result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
-                &provider,
-                tick_lens,
-                &v3_pools,
-                block_number,
-            )
-            .await;
-            if let Err(err) = v3_result {
-                return Err(map_liquidity_verify_error(err));
-            }
-            tracing::info!(
-                block = block_number.unwrap_or_default(),
-                "[verify] V3 liquidity maps OK"
-            );
-            Ok(())
-        })
-    }
-
-    /// Verify V4 liquidity maps only (ADR-006 D4 T4).
-    #[expect(clippy::needless_pass_by_value)]
-    pub(crate) fn verify_v4_liquidity_maps<'py>(
-        &self,
-        py: Python<'py>,
-        rpc_url: String,
-        state_view_address: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let state_view: alloy::primitives::Address = state_view_address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
-        })?;
-        let v4_pools = {
-            let engine = self.engine.lock();
-            let v4 = engine.core().read().v4_pools_snapshot();
-            v4
-        };
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(
-                &rpc_url,
-                degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
-            )
-            .await
-            .map_err(|e| {
-                crate::bot::engine::VerificationRpcError::new_err(format!(
-                    "verify_v4_liquidity_maps: failed to create provider: {e}"
-                ))
-            })?;
-            let v4_result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider,
-                state_view,
-                &v4_pools,
-                block_number,
-            )
-            .await;
-            if let Err(err) = v4_result {
-                return Err(map_liquidity_verify_error(err));
-            }
-            tracing::info!(
-                block = block_number.unwrap_or_default(),
-                "[verify] V4 liquidity maps OK"
-            );
-            Ok(())
-        })
     }
 
     /// Verify a single V3 pool's **pinned snapshot seed** against on-chain state

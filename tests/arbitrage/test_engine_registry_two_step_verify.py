@@ -105,13 +105,6 @@ class _RecordingVerifyEngine:
         if self.fail_next == "v4":
             raise VerificationMismatchError("synthetic V4 seed tick mismatch")
 
-    # Batch verify (post-build_paths) — still called via verify_liquidity_maps;
-    # kept on the fake for API parity.
-    async def verify_liquidity_maps(
-        self, rpc_url: str, tick_lens_address: str, state_view_address: str, block_number: int | None
-    ) -> None:
-        self.calls.append("verify_liquidity_maps")
-
 
 class _FakeSnapshot:
     def __init__(self, newest_block: int) -> None:

@@ -105,9 +105,6 @@ class EngineRegistry:
         # (HookedPoolRejectedError / DynamicFeePoolRejectedError). Default:
         # NoOpPathPredicate (accept all).
         self.path_predicate: PathCompositionPredicate = path_predicate or NoOpPathPredicate()
-        # Verify config (stashed in start(), consumed by verify_liquidity_maps).
-        self._verify_rpc_url: str | None = None
-        self._verify_state_view: str | None = None
         # T1 (ADR-006 D4 + two-step verify prep): the snapshot seed block and
         # the backfill target block, stashed in start() for the per-pool
         # two-step verify (T6) to pass to the verify closures — NOT wired into
@@ -203,79 +200,10 @@ class EngineRegistry:
         self.engine.set_verify_rpc_url(node_http)
         if verify_state_view is not None:
             self.engine.set_verify_state_view(verify_state_view)
-        # Stash the verify RPC + StateView for the post-register batch
-        # verification (verify_liquidity_maps, T6 per-pool two-step, T7
-        # recurring). ADR-006 D3 (T5): the orphaned
-        # engine.register_v2/v3/v4_pool + verify_on_register gate is deleted —
-        # pools enter BotState via the bot builders (py_bot.register_*) and the
-        # verify seam is the registry drain (T6), not the dead register gate.
-        self._verify_rpc_url = node_http
-        self._verify_state_view = verify_state_view
 
         # Intentionally NOT calling resume() — the caller attaches its
         # consumer next, then calls resume() as the single batch-flow gate.
         return backfill_target
-
-    async def verify_liquidity_maps(
-        self,
-        *,
-        block_number: int | None = None,
-    ) -> None:
-        """Verify the engine's V3+V4 liquidity maps against on-chain state.
-
-        Reads BotState directly (``core.v3_pools_snapshot`` /
-        ``v4_pools_snapshot``) and compares each pool's tick map to the chain
-        via ``TickLens`` (V3) / ``StateView`` (V4), emitting
-        ``[verify] V3 + V4 liquidity maps OK at block {}`` on success.
-
-        **Block tag.** The comparison must be engine-state@N vs on-chain@N at
-        the *same* block — otherwise a high-activity pool (e.g. USDC/WETH 0.05%)
-        will mismatch on liquidity that changed between the engine's anchored
-        block and the chain tip. ``block_number=None`` (the default) resolves
-        to the engine's ``last_processed_block()`` — the latest block whose
-        events the pump has fully applied — so the verify is deterministic.
-        Pass an explicit block only to pin a specific checkpoint.
-
-        A pass transitively confirms the snapshot seed: backfill + pump apply
-        *deltas* on top of the seed, so a wrong seed cannot converge to a
-        matching on-chain state at block N. Run it after paths are built
-        (pools registered in BotState) and before the hot loop. Raises
-        (fail-fast) on mismatch — do not arb against an unverified engine.
-
-        Args:
-            block_number: Block to verify against. ``None`` (default) resolves
-                to the engine's ``last_processed_block()`` — deterministic.
-
-        Raises:
-            RuntimeError: verify config was never stashed (``start()`` not
-                called, or called without ``verify_state_view``).
-
-        """
-        if self._verify_rpc_url is None or self._verify_state_view is None:
-            msg = (
-                "verify_liquidity_maps requires verify config — call "
-                "EngineRegistry.start() with verify_state_view set first."
-            )
-            raise RuntimeError(msg)
-        # block_number=None (the default) resolves
-        # to the engine's ``last_processed_block()`` — the latest block whose
-        # events the pump has fully applied — so the verify is deterministic.
-        # Pass an explicit block only to pin a specific checkpoint.
-        #
-        # Async (`await`) because the engine pyo3 method is `future_into_py` —
-        # the sync `runtime.block_on` variant deadlocked the pump (2026-06-24
-        # diagnosis). The asyncio loop driving the consumer also drives this.
-        resolved_block = block_number
-        if resolved_block is None:
-            resolved_block = self.engine.last_processed_block()
-        # tick_lens_address is unused by the V3 batch path (it calls
-        # pool.ticks() directly); a zero address satisfies the parser.
-        await self.engine.verify_liquidity_maps(
-            rpc_url=self._verify_rpc_url,
-            tick_lens_address="0x0000000000000000000000000000000000000000",
-            state_view_address=self._verify_state_view,
-            block_number=resolved_block,
-        )
 
     def register_v2_pool(self, pool: UniswapV2Pool) -> int:  # ruff:ignore[undocumented-public-method]
         if pool.address in self._v2_keys:

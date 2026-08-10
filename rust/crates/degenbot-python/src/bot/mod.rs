@@ -445,51 +445,6 @@ impl PyBot {
         }
     }
 
-    /// Verify all V3 + V4 pool liquidity maps against on-chain state
-    /// (ADR-006 D4 T4). Delegates to the shared `PumpState`.
-    #[pyo3(signature = (rpc_url, tick_lens_address, state_view_address, block_number))]
-    fn verify_liquidity_maps<'py>(
-        &self,
-        py: Python<'py>,
-        rpc_url: String,
-        tick_lens_address: String,
-        state_view_address: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?.verify_liquidity_maps(
-            py,
-            rpc_url,
-            tick_lens_address,
-            state_view_address,
-            block_number,
-        )
-    }
-
-    /// Verify V3 liquidity maps only (ADR-006 D4 T4).
-    #[pyo3(signature = (rpc_url, block_number))]
-    fn verify_v3_liquidity_maps<'py>(
-        &self,
-        py: Python<'py>,
-        rpc_url: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?
-            .verify_v3_liquidity_maps(py, rpc_url, block_number)
-    }
-
-    /// Verify V4 liquidity maps only (ADR-006 D4 T4).
-    #[pyo3(signature = (rpc_url, state_view_address, block_number))]
-    fn verify_v4_liquidity_maps<'py>(
-        &self,
-        py: Python<'py>,
-        rpc_url: String,
-        state_view_address: String,
-        block_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?
-            .verify_v4_liquidity_maps(py, rpc_url, state_view_address, block_number)
-    }
-
     /// Verify a single V3 pool's pinned snapshot seed against on-chain@snapshot
     /// block (CBCH6H — the rolling-start race fix). Step-1 of the two-step
     /// verify at the registry drain seam routes here.
