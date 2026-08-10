@@ -54,6 +54,12 @@ pub trait Engine: Send + Sync {
     /// LEZJAS). See `DrainSink::set_last_solved_block`.
     fn set_last_solved_block(&self, block: u64);
 
+    /// Seed the cold-start `results_block` anchor to a settled block (the pump
+    /// passes its resume/backfill boundary at resume so registration eager-solve
+    /// candidates deliver at a valid, verification-safe solve block instead of
+    /// block 0 or a deferred deferral). Only fills while `results_block` is 0.
+    fn set_solve_anchor(&self, block: u64);
+
     /// Record a forward-log applied this block (engine-owned since LEZJAS).
     fn record_logs_this_block(&self);
 

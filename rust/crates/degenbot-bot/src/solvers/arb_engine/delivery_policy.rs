@@ -281,6 +281,12 @@ impl ArbitrageEngine {
     /// Compute the incremental diff and send a batch to Python. Delegates to
     /// the [`DeliveryPolicy`], which consumes the solve output
     /// (`latest_results`) as its input.
+    ///
+    /// The cold-start `results_block` anchor is established by the pump's
+    /// `set_solve_anchor(current_block)` seed at resume (the settled resume
+    /// boundary — a completed, fully-applied block within the backfill
+    /// window). The [`DeliveryPolicy`] refuses to publish at block 0 (safety
+    /// net) if no anchor has been seeded yet.
     pub fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
         let results_block = self.results_block;
         self.delivery

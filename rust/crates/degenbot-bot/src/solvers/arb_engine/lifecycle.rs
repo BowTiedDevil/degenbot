@@ -197,6 +197,26 @@ impl ArbitrageEngine {
         self.last_solved_block = block;
     }
 
+    /// Seed the cold-start `results_block` anchor to a **settled** block (the
+    /// pump calls this at resume with the backfill/resume boundary). Backfill
+    /// deliberately does not solve and `register_and_solve_path` eager-solves
+    /// without advancing `results_block`, so before the first real `on_drain`
+    /// it is `0`. Without a seed, delivery would either publish at block 0 (the
+    /// strategy sims every tracked pool as an EOA → code-less panic) or defer
+    /// every registration eager-solve until the first dirty event (losing a
+    /// capturable window). Seeding `results_block` to the settled resume block
+    /// — a completed, fully-applied block within the backfill window — lets
+    /// cold-start candidates deliver immediately at a valid, verification-safe
+    /// solve block.
+    ///
+    /// Only fills when `results_block` is still `0`: once a real solve has
+    /// established a (possibly higher) anchor, we never regress it.
+    pub fn set_solve_anchor(&mut self, block: u64) {
+        if self.results_block == 0 {
+            self.results_block = block;
+        }
+    }
+
     /// Whether any forward log applied since the last `finalize_block` (the
     /// pump's forward-log path calls this before the next `finalize_block` so
     /// the empty-block branch sends the advance diff). Owned by the engine

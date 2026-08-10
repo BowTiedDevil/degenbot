@@ -845,6 +845,85 @@ mod tests {
         );
     }
 
+    /// Cold-start solved-state anchor (closes the deferral gap SAFELY):
+    /// backfill brings pool state to the chain tip (persisting, so capturable
+    /// in the next block), registration eager-solves over that live state, but
+    /// backfill doesn't solve and `register_and_solve_path` doesn't advance
+    /// `results_block`. The pump seeds `set_solve_anchor(resume_boundary)` at
+    /// resume — a SETTLED, in-backfill-window block — so these candidates
+    /// deliver immediately at a valid, verification-safe solve_block instead of
+    /// block 0 (sim panic) or a deferred deferral. It must NOT anchor to the
+    /// pool-state head (which a partially-applied live event can race past the
+    /// backfill window → premature verification failures).
+    #[test]
+    fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = ArbitrageEngine::new();
+        engine.set_result_channel(tx);
+
+        // Pump seeds the settled resume boundary (block 500) at resume.
+        engine.set_solve_anchor(500);
+        assert_eq!(
+            engine.results_block, 500,
+            "cold-start anchor seeded to settled resume block"
+        );
+
+        // Register two V2 pools + an eager-solved (profitable) path.
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_fwd_a = engine.register_v2_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_fwd_b = engine.register_v2_pool(
+            v2_addr_b,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+        let (results_before, _) = engine.latest_results();
+        assert!(!results_before.get(&path_id).unwrap().profit.is_zero());
+
+        // Delivery uses the seeded settled anchor — immediate, no deferral.
+        engine.compute_diff_and_send(&BlockMetadata::default());
+        let batch = rx
+            .try_recv()
+            .expect("compute_diff_and_send should deliver a batch");
+        assert_eq!(
+            batch.solve_block, 500,
+            "cold-start candidates deliver at the settled resume anchor"
+        );
+        assert!(
+            batch.fresh.iter().any(|(id, _)| *id == path_id),
+            "capturable cold-start candidate must be delivered at the settled anchor"
+        );
+        assert!(engine.delivery.delivered.contains_key(&path_id));
+
+        // Never regress a real solve anchor: a later seed must not lower it.
+        engine.results_block = 900;
+        engine.set_solve_anchor(600);
+        assert_eq!(
+            engine.results_block, 900,
+            "set_solve_anchor never clobbers a real anchor"
+        );
+    }
+
     #[test]
     fn profit_threshold_includes_results_above_u64_max_when_unbounded() {
         // Contract: profits above `u64::MAX` (~1.84e19) are reachable for

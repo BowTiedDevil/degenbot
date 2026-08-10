@@ -966,6 +966,17 @@ impl BlockPump {
         // init). A mid-flight-joining engine inherits via `set_last_solved_block`
         // (ADR-006 D4).
         self.sink.set_last_solved_block(current_block);
+        // Seed the cold-start solve-results anchor to the settled resume
+        // boundary (`current_block` = `first_observed_block` = backfill end):
+        // `results_block` is 0 until the first real `on_drain` solve, but
+        // registration eagerly solves paths over this backfilled (tip-persisting)
+        // state and would otherwise deliver at block 0 or be deferred until the
+        // first dirty event. Anchoring it to the settled resume block (a
+        // completed, fully-applied block within the backfill window) lets those
+        // candidates deliver immediately at a valid, verification-safe solve
+        // block — NOT the chain head, which a partially-applied live event could
+        // race past the backfill window.
+        self.sink.set_solve_anchor(current_block);
         // Whether we're past the first header after resume. The first
         // header establishes our anchor but shouldn't trigger a solve
         // (backfill already solved up to this point).
@@ -2344,6 +2355,7 @@ mod tests {
         fn set_last_solved_block(&self, block: u64) {
             self.solved.lock().unwrap().push(block);
         }
+        fn set_solve_anchor(&self, _block: u64) {}
         fn record_logs_this_block(&self) {}
         fn last_processed_block(&self) -> Option<u64> {
             let v = self.last_processed.load(Ordering::Relaxed);

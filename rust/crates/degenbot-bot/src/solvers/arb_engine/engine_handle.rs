@@ -133,6 +133,10 @@ impl Engine for EngineHandle {
         self.engine.lock().set_last_solved_block(block);
     }
 
+    fn set_solve_anchor(&self, block: u64) {
+        self.engine.lock().set_solve_anchor(block);
+    }
+
     fn record_logs_this_block(&self) {
         self.engine.lock().record_logs_this_block();
     }

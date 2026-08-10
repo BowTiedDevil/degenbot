@@ -57,6 +57,13 @@ pub trait DrainSink: Send + Sync {
     /// mid-flight-joining engine can inherit it (ADR-006 D4).
     fn set_last_solved_block(&self, block: u64);
 
+    /// Seed the cold-start solve-results anchor (`results_block`) to `block` —
+    /// the pump passes its settled resume/backfill boundary at resume. Lets
+    /// registration eager-solve candidates deliver at a valid, verification-
+    /// safe solve block without waiting for the first dirty event (and without
+    /// ever publishing at block 0). See `Engine::set_solve_anchor`.
+    fn set_solve_anchor(&self, block: u64);
+
     /// Record that at least one forward log applied this block (clears on the
     /// next `finalize_block`). Replaces the pump's `has_logs_this_block = true;`
     /// local write (ergo task LEZJAS).

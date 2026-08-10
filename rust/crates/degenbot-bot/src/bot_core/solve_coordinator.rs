@@ -169,6 +169,19 @@ impl DrainSink for SolveCoordinator {
         }
     }
 
+    /// Seed every engine's cold-start `results_block` anchor to the pump's
+    /// settled resume boundary (`set_solve_anchor`). Mirrors
+    /// `set_last_solved_block`'s fan-out (ADR-006 D4); the pump calls it once
+    /// at resume so registration eager-solve candidates deliver at a valid,
+    /// verification-safe solve block instead of block 0 or a deferred deferral.
+    fn set_solve_anchor(&self, block: u64) {
+        #[expect(clippy::expect_used)] // invariant-guarded (documented)
+        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
+        for engine in &self.engines {
+            engine.set_solve_anchor(block);
+        }
+    }
+
     fn record_logs_this_block(&self) {
         #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
@@ -287,6 +300,7 @@ mod tests {
             *self.finalize_block_calls.lock().unwrap() += 1;
         }
         fn set_last_solved_block(&self, _block: u64) {}
+        fn set_solve_anchor(&self, _block: u64) {}
         fn record_logs_this_block(&self) {}
         fn notify_block(&self, block: u64, _metadata: &BlockMetadata) {
             *self.notify_block_calls.lock().unwrap() += 1;
