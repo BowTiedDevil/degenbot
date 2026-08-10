@@ -487,6 +487,19 @@ pub(crate) fn bot_env_flag_default_on(name: &str) -> bool {
     }
 }
 
+/// Opt-in-only environment flag (inverse of [`bot_env_flag_default_on`]):
+/// `true` only when `name` is set to a truthy value (`1`, `true`, `on`, `yes`);
+/// `false` when unset or set to a falsey value. Used for behavior-changing
+/// opt-ins that must stay OFF unless explicitly enabled (e.g.
+/// `DEGENBOT_DECOUPLE_DRAIN`) — a default-ON flag would silently flip a
+/// conservative posture into an active refactor for anyone who omits it.
+pub(crate) fn bot_env_flag_default_off(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => parse_bot_flag_value(&v),
+        Err(_) => false,
+    }
+}
+
 /// Whether the verify-diagnostics probes are enabled.
 ///
 /// Conservative default ON (`DEGENBOT_VERIFY_DBG`, via [`bot_env_flag_default_on`]);
@@ -1900,6 +1913,23 @@ mod tests {
         assert!(parse_bot_flag_value("true"));
         assert!(parse_bot_flag_value("on"));
         assert!(parse_bot_flag_value("yes"));
+    }
+
+    #[test]
+    fn opt_in_bot_flag_default_off() {
+        // Opt-in only (inverse of the conservative default): unset ⇒ disabled,
+        // so a behavior-changing refactor like DEGENBOT_DECOUPLE_DRAIN stays
+        // OFF for anyone who omits it. This var is not set by any test, so the
+        // default-off path is deterministic.
+        assert!(!bot_env_flag_default_off("DEGENBOT_UNUSED_TEST_FLAG"));
+        // Explicitly setting a truthy value opts IN.
+        std::env::set_var("DEGENBOT_UNUSED_TEST_FLAG", "1");
+        assert!(bot_env_flag_default_off("DEGENBOT_UNUSED_TEST_FLAG"));
+        std::env::remove_var("DEGENBOT_UNUSED_TEST_FLAG");
+        // A falsey value stays OFF.
+        std::env::set_var("DEGENBOT_UNUSED_TEST_FLAG", "0");
+        assert!(!bot_env_flag_default_off("DEGENBOT_UNUSED_TEST_FLAG"));
+        std::env::remove_var("DEGENBOT_UNUSED_TEST_FLAG");
     }
 
     fn make_pool_addr() -> Address {

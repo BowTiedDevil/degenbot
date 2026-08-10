@@ -313,7 +313,7 @@ impl BlockPump {
             ws_completeness_enabled: crate::bot_core::bot_env_flag_default_on(
                 "DEGENBOT_WS_COMPLETENESS",
             ),
-            decouple_drain: crate::bot_core::bot_env_flag_default_on("DEGENBOT_DECOUPLE_DRAIN"),
+            decouple_drain: crate::bot_core::bot_env_flag_default_off("DEGENBOT_DECOUPLE_DRAIN"),
         };
 
         // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
