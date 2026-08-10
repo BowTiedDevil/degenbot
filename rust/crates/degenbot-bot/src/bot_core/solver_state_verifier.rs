@@ -520,6 +520,307 @@ fn solver_anchor_block(update_block: u64, block: u64) -> u64 {
     }
 }
 
+/// FSM-seed classifier: is this CL pool's scalar state in-consensus with the
+/// solve `anchor` (i.e. may the pump legitimately SOLVE through it at `anchor`)?
+///
+/// This is the pure, unit-testable seed of the solve-anchor FSM the tracing
+/// suite feeds. A hop whose `update_block` is `> 0` and trails `anchor` by
+/// more than `tol` is a [`SolveAnchorAdvancement::Laggard`] — solving at
+/// `anchor` consumes a state older than the block being solved, which is the
+/// header-promote-ahead-of-apply transition (the `0x99ac8c` abort: a quiet pool
+/// whose in-block Swap was not applied before the solver consumed the pool). A
+/// hop at/within `tol`, or never-updated (`0`, verified at the anchor instead),
+/// is [`SolveAnchorAdvancement::Consensus`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolveAnchorAdvancement {
+    /// The pool has advanced to/at the anchor or within the normal settle
+    /// tolerance — solving through it at `anchor` is a legal transition.
+    Consensus,
+    /// The pool trails the anchor past the tolerance — a SOLVE through it at
+    /// `anchor` would consume pre-`anchor` state. `stale_by` is how far behind.
+    Laggard { stale_by: u64 },
+}
+
+/// Classify a hop's scalar advancement relative to the solve `anchor`. Pure
+/// (no on-chain read, no env) so it is directly unit-testable. Mirrors
+/// [`is_lagging_tracked`]'s tolerance notion but is hop-metadata-free: it takes
+/// the raw `update_block` + `anchor` + `tol`, so a test can drive it directly.
+#[must_use]
+pub fn solve_anchor_advancement(
+    update_block: u64,
+    anchor: u64,
+    tol: u64,
+) -> SolveAnchorAdvancement {
+    if update_block > 0 && anchor.saturating_sub(update_block) > tol {
+        SolveAnchorAdvancement::Laggard {
+            stale_by: anchor.saturating_sub(update_block),
+        }
+    } else {
+        SolveAnchorAdvancement::Consensus
+    }
+}
+
+/// A lagging hop's solve-anchor probe verdict — the discrimination the plain
+/// lagging-hop reporter cannot make ([`lagging_tracked_hops`] only says *how* a
+/// Tracked hop trails the anchor, not *whether on-chain moved at the anchor*).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaggardProbeVerdict {
+    /// On-chain scalar state at the anchor MATCHES the solver's stored state —
+    /// a benign-inactive pool (correct-but-old). NOT the defect.
+    Quiet,
+    /// On-chain scalar state at the anchor DIVERGES from the solver's stored
+    /// state — on-chain moved AT the solve block but the in-block Swap was not
+    /// applied before the solver consumed the pool. The improper
+    /// header-promote-ahead-of-apply transition (`0x99ac8c`).
+    MovedInBlockNotApplied,
+    /// The on-chain read failed (transport hiccup) — classify as unknown so a
+    /// transient read error is never mis-flagged as Quiet or Moved.
+    ReadFailed,
+}
+
+/// One lagging hop's solve-anchor probe result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SolveAnchorProbeResult {
+    /// Generalized pool identity (`v3:<addr>` / `v4:0x<leading-hex>…`).
+    pub pool: String,
+    pub hop_type: HopType,
+    pub update_block: u64,
+    pub tick_data_block: u64,
+    pub stale_by: u64,
+    pub verdict: LaggardProbeVerdict,
+}
+
+/// Opt-in solve-anchor consistency probe stance: `DEGENBOT_TRACE_SOLVE_ANCHOR=1`.
+/// Default off — zero cost (a single cheap getenv) unless set. It is a pure
+/// observational probe and never weakens the UO3JM4 abort.
+#[must_use]
+pub fn solve_anchor_probe_enabled() -> bool {
+    std::env::var("DEGENBOT_TRACE_SOLVE_ANCHOR").as_deref() == Ok("1")
+}
+
+/// The `stale_by` cutoff that distinguishes a *genuine* lagging outlier (worth a
+/// solve-anchor read to classify) from the benign WS settle-lag baseline. Must
+/// match the `block_pump` `SOLVER_STATE_ABNORMAL_STALE_BLOCKS` reporter cutoff so
+/// the probe and the reporter agree on what is "abnormal".
+pub const SOLVER_STATE_ABNORMAL_STALE_BLOCKS: u64 = 10;
+
+/// The solve-anchor consistency probe. For every genuinely-abnormal lagging
+/// Tracked Live CL hop (`stale_by >= abnormal_tol`), read on-chain at the solve
+/// `anchor` and classify it ([`LaggardProbeVerdict`]). This surfaces the one
+/// transition the existing reporter cannot observe — *did on-chain move AT the
+/// solve block while the pool's in-block Swap was not yet applied?* — WITHOUT
+/// aborting (unlike the strict gate) and WITHOUT bypassing the abort (unlike the
+/// dev-only `DIVERGENCE_SCAN`). In-progress (`update_block >= anchor`) and
+/// never-updated hops are skipped; a failed read is `ReadFailed` (never
+/// mis-classified). Observational only — the production abort runs regardless.
+pub async fn probe_solve_anchor_consistency(
+    provider: &AlloyProvider,
+    path_hop_states: &[Vec<SolverHopScalarState>],
+    anchor: u64,
+    abnormal_tol: u64,
+) -> Vec<SolveAnchorProbeResult> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for hop_states in path_hop_states {
+        for hop in hop_states {
+            if hop.update_block >= anchor || hop.update_block == 0 {
+                continue; // in-progress or never-updated
+            }
+            if !is_lagging_tracked(hop, anchor) {
+                continue;
+            }
+            let stale_by = anchor.saturating_sub(hop.update_block);
+            if stale_by < abnormal_tol {
+                continue; // benign settle-lag baseline, not worth a read
+            }
+            let pool = match hop.hop_type {
+                HopType::V3 => hop.v3.as_ref().map(|(a, ..)| format!("v3:{a}")),
+                HopType::V4 => hop.v4.as_ref().map(|(_, id, ..)| {
+                    let mut head = String::with_capacity(8);
+                    for b in &id[..4] {
+                        let _ = std::fmt::Write::write_fmt(&mut head, format_args!("{b:02x}"));
+                    }
+                    format!("v4:0x{head}…")
+                }),
+                _ => None,
+            };
+            let Some(pool) = pool else {
+                continue;
+            };
+            if !seen.insert(pool.clone()) {
+                continue; // dedupe: one on-chain read per unique pool per anchor
+            }
+            let verdict = match hop.hop_type {
+                HopType::V3 => {
+                    let Some((addr, s_sqrt, s_liq, s_tick)) = hop.v3 else {
+                        continue;
+                    };
+                    match fetch_v3_slot0_liquidity(provider, &addr, Some(anchor)).await {
+                        Ok((c_sqrt, c_tick, c_liq)) => {
+                            if cl_state_matches(s_sqrt, s_liq, s_tick, c_sqrt, c_liq, c_tick) {
+                                LaggardProbeVerdict::Quiet
+                            } else {
+                                LaggardProbeVerdict::MovedInBlockNotApplied
+                            }
+                        }
+                        Err(_) => LaggardProbeVerdict::ReadFailed,
+                    }
+                }
+                HopType::V4 => {
+                    let Some((_pm, pool_id, state_view, s_sqrt, s_liq, s_tick)) = hop.v4 else {
+                        continue;
+                    };
+                    match fetch_v4_slot0_liquidity(provider, &state_view, &pool_id, Some(anchor))
+                        .await
+                    {
+                        Ok((c_sqrt, c_tick, _pf, _lp, c_liq)) => {
+                            if cl_state_matches(s_sqrt, s_liq, s_tick, c_sqrt, c_liq, c_tick) {
+                                LaggardProbeVerdict::Quiet
+                            } else {
+                                LaggardProbeVerdict::MovedInBlockNotApplied
+                            }
+                        }
+                        Err(_) => LaggardProbeVerdict::ReadFailed,
+                    }
+                }
+                _ => continue,
+            };
+            out.push(SolveAnchorProbeResult {
+                pool,
+                hop_type: hop.hop_type,
+                update_block: hop.update_block,
+                tick_data_block: hop.tick_data_block,
+                stale_by,
+                verdict,
+            });
+        }
+    }
+    out
+}
+
+// -----------------------------------------------------------------------------
+// D3 staged-clock probe (Bug-A hardening) — fresh price clock, stale in-range
+// `liquidity()` scalar.
+// -----------------------------------------------------------------------------
+
+/// Opt-in staged-clock probe stance: `DEGENBOT_TRACE_STAGED_CLOCK=1`. Default
+/// off — zero cost unless set. Observational (non-aborting): it surfaces the
+/// fresh-price + stale-in-range-liquidity desync at solve time instead of
+/// letting the gate silently skip it. Never weakens or bypasses the hard abort.
+#[must_use]
+pub fn staged_clock_probe_enabled() -> bool {
+    std::env::var("DEGENBOT_TRACE_STAGED_CLOCK").as_deref() == Ok("1")
+}
+
+/// The two-stamp clock gap (`update_block - tick_data_block`) above which a
+/// skipped CL hop is worth a staged-clock probe read. A healthy pool advances
+/// both clocks together (every `apply_swap` advances both), so a pronounced
+/// price-ahead-of-map gap is genuinely anomalous — the map clock stopped
+/// advancing while the price clock kept moving.
+pub const STAGED_CLOCK_GAP_BLOCKS: u64 = 3;
+
+/// Pure classifier: is a CL hop a **staged-clock candidate** — SKIPPED by the
+/// gate (`update_block >= block`, its price clock reached the solve block) with
+/// a COMPLETED, non-zero map anchor (`tick_data_block < block`) and a pronounced
+/// price-ahead-of-map clock gap? `skip_in_progress_hop` short-circuits
+/// verification for exactly this hop, so its in-range `liquidity` scalar is
+/// never diffed — this surfaces that gap. Pure (no env / provider) so it is
+/// unit-testable.
+#[must_use]
+fn staged_clock_candidate(
+    update_block: u64,
+    tick_data_block: u64,
+    solve_block: u64,
+    gap_tol: u64,
+) -> bool {
+    update_block >= solve_block
+        && tick_data_block > 0
+        && tick_data_block < solve_block
+        && update_block.saturating_sub(tick_data_block) > gap_tol
+}
+
+/// D3 probe body: for a staged-clock candidate, compare the solver's in-range
+/// `liquidity` scalar against on-chain `liquidity()` at the hop's **tick-data
+/// anchor** (`tick_data_block` — a completed block, so reproducible, unlike a
+/// mid-block capture). A mismatch means a fresh price but a stale in-range
+/// liquidity scalar — the Bug-A staged-clock desync. Observational: logs a WARN
+/// on divergence; a transport failure is logged and skipped (never a false flag).
+async fn probe_staged_clock_scalar(
+    provider: &AlloyProvider,
+    hop: &SolverHopScalarState,
+    solve_block: u64,
+    i: usize,
+) {
+    if !staged_clock_candidate(
+        hop.update_block,
+        hop.tick_data_block,
+        solve_block,
+        STAGED_CLOCK_GAP_BLOCKS,
+    ) {
+        return;
+    }
+    let anchor = hop.tick_data_block;
+    let (pool_name, solver_liq, chain_liq) = match hop.hop_type {
+        HopType::V3 => {
+            let Some((addr, _s, liq, _t)) = hop.v3 else {
+                return;
+            };
+            let Ok((_, _, cl)) = fetch_v3_slot0_liquidity(provider, &addr, Some(anchor)).await
+            else {
+                tracing::warn!(
+                    pool = %format!("v3:{addr}"),
+                    anchor,
+                    hop_index = i,
+                    "[staged-clock] read failed (transient, not flagged)"
+                );
+                return;
+            };
+            let Ok(cl) = u128::try_from(cl) else {
+                return;
+            };
+            (format!("v3:{addr}"), liq, cl)
+        }
+        HopType::V4 => {
+            let Some((_pm, pool_id, sv, _s, liq, _t)) = hop.v4 else {
+                return;
+            };
+            let mut head = String::with_capacity(8);
+            for b in &pool_id[..4] {
+                let _ = std::fmt::Write::write_fmt(&mut head, format_args!("{b:02x}"));
+            }
+            let Ok((_, _, _pf, _lp, cl)) =
+                fetch_v4_slot0_liquidity(provider, &sv, &pool_id, Some(anchor)).await
+            else {
+                tracing::warn!(
+                    pool = %format!("v4:0x{head}…"),
+                    anchor,
+                    hop_index = i,
+                    "[staged-clock] read failed (transient, not flagged)"
+                );
+                return;
+            };
+            let Ok(cl) = u128::try_from(cl) else {
+                return;
+            };
+            (format!("v4:0x{head}…"), liq, cl)
+        }
+        _ => return,
+    };
+    if solver_liq != chain_liq {
+        tracing::warn!(
+            pool = %pool_name,
+            hop_index = i,
+            block = solve_block,
+            update_block = hop.update_block,
+            tick_data_block = anchor,
+            solver_in_range_liquidity = %solver_liq,
+            onchain_liquidity = %chain_liq,
+            "[staged-clock] solver in-range liquidity scalar != on-chain liquidity() at the \
+             tick-data anchor (fresh price, stale in-range liquidity — Bug-A class)"
+        );
+    }
+}
+
 /// Maximum acceptable lag (in blocks) of a CL pool's stored `update_block`
 /// behind the solve block before it is considered suspicious. The anchor-match
 /// (exact diff at the hop's OWN `update_block`) tolerates 1-2 blocks of normal
@@ -659,6 +960,17 @@ pub async fn verify_solver_hop_states(
         // construction and unverifiable via historical slot0 — skip it. Only
         // a hop whose state reflects a COMPLETED block is diffed.
         if skip_in_progress_hop(hop.update_block, block) {
+            // D3 (Bug-A): a skipped hop's in-range `liquidity` scalar is NOT
+            // diffed here (the price clock reaching the solve block short-
+            // circuits the scalar gate). Surface the two-stamp staged-clock
+            // desync — fresh price, stale in-range liquidity — via an opt-in,
+            // non-aborting probe that compares the solver's scalar to on-chain
+            // `liquidity()` at the hop's completed tick-data anchor. This turns
+            // the silently-skipped stale-liquidity class into an observable
+            // `[staged-clock]` WARN without weakening or bypassing the abort.
+            if staged_clock_probe_enabled() {
+                probe_staged_clock_scalar(provider, hop, block, i).await;
+            }
             continue;
         }
         match hop.hop_type {
@@ -1005,6 +1317,152 @@ mod tests {
         // Behind (normal latency) is NOT future.
         assert!(!is_future_price(99, 100));
         assert!(!is_future_price(0, 100));
+    }
+
+    // ---------------------------------------------------------------
+    // Solve-anchor FSM seed (`solve_anchor_advancement`)
+    //
+    // The pure classifier behind the possible-legal-transition gate: may a SOLVE
+    // at `anchor` consume this pool? A Tracked Live hop whose `update_block`
+    // trails the anchor past `tol` (Consensus Laggard) is the header-promote-
+    // ahead-of-apply transition — the 0x99ac8c abort (a quiet pool whose in-
+    // block Swap was not applied before solve).
+    // ---------------------------------------------------------------
+    #[test]
+    fn advancement_consensus_within_tolerance() {
+        // At the anchor.
+        assert_eq!(
+            solve_anchor_advancement(100, 100, 3),
+            SolveAnchorAdvancement::Consensus
+        );
+        // Within tolerance (1-2 blocks of normal settle lag).
+        assert_eq!(
+            solve_anchor_advancement(98, 100, 3),
+            SolveAnchorAdvancement::Consensus
+        );
+        // Exactly at the tolerance boundary.
+        assert_eq!(
+            solve_anchor_advancement(97, 100, 3),
+            SolveAnchorAdvancement::Consensus
+        );
+        // Ahead of the anchor (mid-block capture / future) is consensus for the
+        // gate (handled by the in-progress skip), not a Laggard.
+        assert_eq!(
+            solve_anchor_advancement(101, 100, 3),
+            SolveAnchorAdvancement::Consensus
+        );
+    }
+
+    #[test]
+    fn advancement_never_updated_is_consensus() {
+        // update_block == 0 (never advanced) is verified at the anchor instead;
+        // never a Laggard.
+        assert_eq!(
+            solve_anchor_advancement(0, 100, 3),
+            SolveAnchorAdvancement::Consensus
+        );
+    }
+
+    #[test]
+    fn advancement_laggard_past_tolerance_reports_stale_by() {
+        // One past the tolerance boundary -> Laggard with the exact distance.
+        assert_eq!(
+            solve_anchor_advancement(96, 100, 3),
+            SolveAnchorAdvancement::Laggard { stale_by: 4 }
+        );
+        // The observed failure: a quiet pool 15 blocks behind the solve anchor.
+        assert_eq!(
+            solve_anchor_advancement(25_714_794, 25_714_809, 3),
+            SolveAnchorAdvancement::Laggard { stale_by: 15 }
+        );
+        // A zero tolerance flags any strictly-behind hop.
+        assert_eq!(
+            solve_anchor_advancement(99, 100, 0),
+            SolveAnchorAdvancement::Laggard { stale_by: 1 }
+        );
+        // A large behind distance stays a saturating u64 Laggard (no wrap).
+        // (update_block=0 is never-updated -> Consensus, so start from a non-zero
+        // behind clock.)
+        assert_eq!(
+            solve_anchor_advancement(1, u64::MAX, 3),
+            SolveAnchorAdvancement::Laggard {
+                stale_by: u64::MAX - 1
+            }
+        );
+    }
+
+    #[test]
+    fn probe_verdicts_distinct() {
+        // The three probe verdicts are distinct discriminators.
+        use LaggardProbeVerdict as V;
+        assert_ne!(V::Quiet, V::MovedInBlockNotApplied);
+        assert_ne!(V::Quiet, V::ReadFailed);
+        assert_ne!(V::MovedInBlockNotApplied, V::ReadFailed);
+        // Debug round-trips the discriminant.
+        assert_eq!(format!("{:?}", V::Quiet), "Quiet");
+        assert_eq!(
+            format!("{:?}", V::MovedInBlockNotApplied),
+            "MovedInBlockNotApplied"
+        );
+    }
+
+    #[test]
+    fn probe_default_off_single_env_get() {
+        // Default is OFF (probe must be opt-in).
+        std::env::remove_var("DEGENBOT_TRACE_SOLVE_ANCHOR");
+        assert!(!solve_anchor_probe_enabled());
+        std::env::set_var("DEGENBOT_TRACE_SOLVE_ANCHOR", "1");
+        assert!(solve_anchor_probe_enabled());
+        std::env::remove_var("DEGENBOT_TRACE_SOLVE_ANCHOR");
+    }
+
+    #[test]
+    fn staged_clock_default_off_single_env_get() {
+        std::env::remove_var("DEGENBOT_TRACE_STAGED_CLOCK");
+        assert!(!staged_clock_probe_enabled());
+        std::env::set_var("DEGENBOT_TRACE_STAGED_CLOCK", "1");
+        assert!(staged_clock_probe_enabled());
+        std::env::remove_var("DEGENBOT_TRACE_STAGED_CLOCK");
+    }
+
+    #[test]
+    fn staged_clock_candidate_detects_skipped_price_ahead_of_map() {
+        // Bug-A signature: price clock reached the solve block, map clock trails
+        // by far (pool B: update 25723658, tick_data 25722568 vs solve).
+        assert!(staged_clock_candidate(
+            25_723_658, 25_722_568, 25_723_658, 3
+        ));
+        assert!(staged_clock_candidate(
+            25_723_660, 25_723_000, 25_723_658, 3
+        ));
+    }
+
+    #[test]
+    fn staged_clock_candidate_false_for_benign_and_ambiguous() {
+        let tol = 3;
+        // Not skipped (price clock one block behind a completed solve) → gate
+        // diffs it normally; not a skip-path staged-clock case.
+        assert!(!staged_clock_candidate(
+            25_723_657, 25_723_650, 25_723_658, tol
+        ));
+        // Map anchor at the solve block (mid-block capture) → ambiguous, never
+        // comparable.
+        assert!(!staged_clock_candidate(
+            25_723_658, 25_723_658, 25_723_658, tol
+        ));
+        // Never-updated map clock (0) → no completed anchor.
+        assert!(!staged_clock_candidate(25_723_658, 0, 25_723_658, tol));
+        // Small/benign gap (at or under tolerance) → not worth a read.
+        assert!(!staged_clock_candidate(
+            25_723_658, 25_723_656, 25_723_658, tol
+        ));
+        assert!(!staged_clock_candidate(
+            25_723_658, 25_723_655, 25_723_658, tol
+        ));
+        // Price behind map (out-of-range liquidity event) → not a candidate.
+        assert!(!staged_clock_candidate(
+            25_723_650, 25_723_658, 25_723_658, tol
+        ));
     }
 
     #[test]
