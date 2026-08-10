@@ -20,6 +20,7 @@ RUN dnf install -y \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
         bash-completion \
+        xdg-utils \
     && dnf clean all
 
 # Create the dev user (uid 1000 to match host uid — avoids updateRemoteUserUID
