@@ -10,48 +10,6 @@ use crate::prelude::*;
 
 #[pymethods]
 impl PyArbitrageEngine {
-    /// Verify a single V3 pool's **pinned post-drain** `tick_data` against
-    /// on-chain@**pinned block** (step-2 of the two-step verify — the
-    /// rolling-start race fix, twin of `verify_v3_snapshot_seed`). The block
-    /// is the one captured atomically with the drain inside
-    /// `pin_v3_post_drain_snapshot` (the `update_block` at pin time) — NOT a
-    /// caller-supplied constant; for an active pool on a slow `build_paths`,
-    /// pumping Mint/Burn events land at blocks PAST the start()-time
-    /// `verify_backfill_block`, and verifying against that constant
-    /// fabricated a mismatch and crashed the bot (2026-06-29). Delegates to
-    /// the shared `PumpState`.
-    #[pyo3(signature = (address, rpc_url))]
-    fn verify_v3_post_drain_snapshot<'py>(
-        &self,
-        py: Python<'py>,
-        address: String,
-        rpc_url: String,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump
-            .verify_v3_post_drain_snapshot(py, address, rpc_url)
-    }
-
-    /// Verify a single V4 pool's **pinned post-drain** `tick_data` against
-    /// on-chain@**pinned block** (step-2 of the two-step verify — V4 twin of
-    /// `verify_v3_post_drain_snapshot`).
-    #[pyo3(signature = (pool_manager_address, pool_id_hex, rpc_url, state_view_address))]
-    fn verify_v4_post_drain_snapshot<'py>(
-        &self,
-        py: Python<'py>,
-        pool_manager_address: String,
-        pool_id_hex: String,
-        rpc_url: String,
-        state_view_address: String,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump.verify_v4_post_drain_snapshot(
-            py,
-            pool_manager_address,
-            pool_id_hex,
-            rpc_url,
-            state_view_address,
-        )
-    }
-
     /// Run a single V3 pool's registration verify-lifecycle end-to-end
     /// (IKGQ6F / ADR-022 D1) — the core-owned
     /// `quarantine → seed-verify → drain+pin → post-drain-verify → set_live`
