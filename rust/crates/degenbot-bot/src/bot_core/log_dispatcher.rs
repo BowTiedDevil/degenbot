@@ -411,6 +411,18 @@ impl LogDispatcher {
             self.decoders.iter().find_map(|d| d.try_decode(log))
         });
         let Some(decoded) = decoded else {
+            // [trace-dispatch] (DEGENBOT_TRACE_DISPATCH): a relevant-topic log that
+            // NO decoder recognized. Distinct from "apply miss". Zero-cost unless
+            // the env is set. (The WS_COMPLETENESS assert below only fires in strict
+            // loud mode; this surfaces the same miss in dry runs.)
+            if std::env::var("DEGENBOT_TRACE_DISPATCH").is_ok() {
+                tracing::warn!(
+                    block = log.block_number,
+                    topic0 = format!("{:#x}", log.topics().first().copied().unwrap_or_default()),
+                    address = format!("{:#x}", log.address()),
+                    "dispatch: DECODE MISS — relevant-topic log matched no decoder"
+                );
+            }
             // LOUD failure: a log carrying a KNOWN degenbot event signature
             // (topic0 in RELEVANT_TOPICS) failed every decoder. The forward
             // path only dispatches logs that already passed the relevant-topic
@@ -435,6 +447,29 @@ impl LogDispatcher {
         };
         // Apply under the write guard, then RELEASE before notifying.
         let pool_id = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
+        // [trace-dispatch] report the apply outcome (applied pool vs "not
+        // registered / dropped by apply") for the 0x99ac8c / PancakeSwap desync
+        // investigation. Zero-cost unless the env is set.
+        if std::env::var("DEGENBOT_TRACE_DISPATCH").is_ok() {
+            let topic0_s = format!("{:#x}", log.topics().first().copied().unwrap_or_default());
+            let address_s = format!("{:#x}", log.address());
+            if let Some(pid) = pool_id {
+                tracing::info!(
+                    block = log.block_number,
+                    pool_id = pid,
+                    %topic0_s,
+                    %address_s,
+                    "dispatch: applied to pool"
+                );
+            } else {
+                tracing::warn!(
+                    block = log.block_number,
+                    %topic0_s,
+                    %address_s,
+                    "dispatch: APPLY MISS — decoded event matched no registered pool"
+                );
+            }
+        }
         let Some(pool_id) = pool_id else {
             return;
         };
