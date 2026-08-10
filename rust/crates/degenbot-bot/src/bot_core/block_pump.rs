@@ -49,8 +49,9 @@ use tokio::time::timeout;
 
 use crate::bot_core::solver_state_verifier::{
     aggregate_lagging_hops, divergence_scan_enabled, extract_solver_hop_states,
-    scan_lagging_hops_for_divergence, verify_solver_hop_states, DivergenceVerdict,
-    SolverHopScalarState, SolverStateMismatch,
+    probe_solve_anchor_consistency, scan_lagging_hops_for_divergence, solve_anchor_probe_enabled,
+    verify_solver_hop_states, DivergenceVerdict, LaggardProbeVerdict, SolverHopScalarState,
+    SolverStateMismatch,
 };
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
 use crate::bot_core::{BlockClock, HeaderDecision, LogDecision};
@@ -789,6 +790,49 @@ impl BlockPump {
                 }
             }
         }
+
+        // Solve-anchor consistency probe (observational; env-gated default off):
+        // discriminate the lagging-outlier population into QUIET (benign-
+        // inactive — correct-but-old) vs MOVED-IN-BLOCK-NOT-APPLIED (on-chain
+        // moved AT the solve anchor but the pool's in-block Swap was not applied
+        // before the solver consumed it — the improper header-promote-ahead-of-
+        // apply transition behind the 0x99ac8c abort). The lagging reporter
+        // above cannot make this distinction (it only measures stale_by); the
+        // probe reads on-chain at the anchor to classify. NON-aborting and does
+        // NOT bypass the production abort below — it accumulates observability
+        // so the ordering race isn't only visible as a process kill. Only
+        // abnormal outliers (`stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS`)
+        // are read, one read per unique pool per anchor, so cost is bounded.
+        if solve_anchor_probe_enabled() {
+            let probe = probe_solve_anchor_consistency(
+                provider,
+                &path_hop_states,
+                block,
+                SOLVER_STATE_ABNORMAL_STALE_BLOCKS,
+            )
+            .await;
+            for r in probe {
+                let verdict = match r.verdict {
+                    LaggardProbeVerdict::Quiet => "QUIET (benign-inactive, correct-but-old)",
+                    LaggardProbeVerdict::MovedInBlockNotApplied => {
+                        "MOVED-IN-BLOCK-NOT-APPLIED (on-chain moved at the solve anchor but the \
+                         in-block Swap was not applied before solve — header-promote-ahead-of-apply)"
+                    }
+                    LaggardProbeVerdict::ReadFailed => "READ-FAILED (unclassified)",
+                };
+                tracing::warn!(
+                    block,
+                    hop_type = ?r.hop_type,
+                    %r.pool,
+                    update_block = r.update_block,
+                    tick_data_block = r.tick_data_block,
+                    stale_by = r.stale_by,
+                    %verdict,
+                    "[solve-anchor-probe] lagging Tracked Live CL hop classified at solve anchor"
+                );
+            }
+        }
+
         for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
             if let Err(mismatch) = verify_solver_hop_states(provider, hop_states, block).await {
                 // Diagnose the cause class before panicking: log every hop's
@@ -1067,15 +1111,30 @@ impl BlockPump {
                     // but on a header stall ordered backfill advances the
                     // state clock past it. The solve anchor must never be
                     // below the state it solves against (MQIZ5M +1-wei / IIA
-                    // class), so promote active_block = max(current_block,
+                    // class), so promote active_block = max(anchor,
                     // pool_state_head()) ONCE here — the single pump-owned
                     // transition that on_drain/solve/verify/sim all derive
-                    // from. `pool_state_head` is the state clock
-                    // (max update_block); newHead drives `current_block`;
-                    // the max catches the pump up on a stall. This also makes
-                    // the solver's internal re-anchor a defensive no-op.
-                    let active_block =
-                        current_block.max(self.bot.state_arc().read().pool_state_head());
+                    // from. `pool_state_head` is the state clock (max
+                    // update_block); the max catches the pump up on a stall.
+                    // This also makes the solver's internal re-anchor a
+                    // defensive no-op.
+                    //
+                    // Solver-release gate (ADR-008 D2 realization): the solve
+                    // anchor is the LOG-DRIVEN settled block
+                    // (`clock.latest_observed()`, `open_block` — headers do
+                    // NOT advance it), falling back to the header `current_block`
+                    // only when no block logs are open yet. This is the
+                    // "move the debounce gate to the solver" design: never
+                    // solve a block whose event burst has not settled — a
+                    // header that races a head ahead of the applied state
+                    // would otherwise make the solve consume a quiet path
+                    // pool pre-in-block-swap (the 0x99ac8c false-abort). The
+                    // `pool_state_head` max keeps the backfill-ahead semantics.
+                    let active_block = solve_anchor(
+                        clock.latest_observed(),
+                        current_block,
+                        self.bot.state_arc().read().pool_state_head(),
+                    );
                     self.sink.on_drain(active_block, &current_metadata);
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
@@ -1184,16 +1243,29 @@ impl BlockPump {
                                 if let Some(ref tx) = verify_tx {
                                     // Capture this block's change-set path refs
                                     // (consume-and-clear) and hand them to the
-                                    // verifier atomically with the block number,
-                                    // so it diffs exactly the paths re-solved
-                                    // this block — never the whole registered
-                                    // set. Non-blocking latest-wins handoff;
-                                    // the pump never awaits the verifier, so
-                                    // block advancement stays decoupled from
-                                    // assertion.
+                                    // verifier atomically with the block number, so
+                                    // it diffs exactly the paths re-solved this
+                                    // block — never the whole registered set. Non-
+                                    // blocking latest-wins handoff; the pump never
+                                    // awaits the verifier, so block advancement
+                                    // stays decoupled from assertion.
+                                    //
+                                    // The anchor is `open` — the LOG-DRIVEN block
+                                    // that just QUIESCED (the one `consume_quiesced`
+                                    // released) — NOT `current_block` (the header,
+                                    // which can race a head ahead of the applied
+                                    // state). Verifying at a header ahead of the
+                                    // quiesced block reads on-chain at a block that
+                                    // contains swaps not yet applied to a quiet path
+                                    // pool (e.g. 0x99ac8c: a 15-block-quiet pool
+                                    // whose in-block Swap is delivered late) and
+                                    // false-aborts — the `open` anchor verifies
+                                    // against the block the published solve actually
+                                    // reflects, matching the design intent ("the
+                                    // coalesced, quiesce-gated (block-final) solve").
                                     let change_set =
                                         self.sink.take_solver_path_pool_refs_change_set();
-                                    let _ = tx.send(Some((current_block, change_set)));
+                                    let _ = tx.send(Some((open, change_set)));
                                 }
                             }
                         }
@@ -1586,12 +1658,19 @@ impl BlockPump {
                     diag_log_count += 1;
                     if diag_last_stats.elapsed() >= DIAG_STATS_INTERVAL {
                         let diag_since_header = last_header_at.elapsed().as_secs();
+                        // [DIAG] pool-state freeze probe (ergo 3YA7ZJ): surface the
+                        // max pool update_block alongside the engine clock so a
+                        // post-backfill drain freeze is visible LIVE — pool
+                        // application stalling while `current_block` keeps climbing
+                        // (logs/headers still arriving) is the freeze signature.
+                        let diag_pool_state_head = self.bot.state_arc().read().pool_state_head();
                         tracing::info!(
                             diag_header_count,
                             diag_log_count,
                             last_header_secs = diag_since_header,
                             current_block,
-                            "BlockPump: [DIAG] stats"
+                            pool_state_head = diag_pool_state_head,
+                            "BlockPump: [DIAG] stats (clock vs pool-state freeze probe)"
                         );
                         diag_last_stats = tokio::time::Instant::now();
                     }
@@ -2078,6 +2157,26 @@ impl BlockPump {
     pub fn log_silence_alarm_count(&self) -> u64 {
         self.log_silence_alarms
     }
+}
+
+/// Compute the single pump-owned SOLVE anchor that `on_drain`/solve/verify/sim all
+/// derive from (BO5FBS + ADR-008 D2 solver-release gate).
+///
+/// `anchor = max(open, pool_state_head)`, where:
+/// - `open` is the LOG-DRIVEN settled block (`BlockClock::latest_observed`),
+///   falling back to the header `current_block` only when no block's logs are
+///   currently open (`open.is_none()`). A header that races a head ahead of the
+///   applied state must NOT pull the solve anchor up to it — otherwise a quiet
+///   path pool's pre-in-block-swap state is consumed while the block is still
+///   settling (the 0x99ac8c false-abort).
+/// - `pool_state_head` (the state clock, `max update_block`) still dominates so a
+///   backfill-ahead state is never solved below (MQIZ5M +1-wei / IIA class).
+///
+/// Pure (no env, no core lock) so it is directly unit-testable.
+#[must_use]
+fn solve_anchor(open: Option<u64>, current_block: u64, state_head: u64) -> u64 {
+    let base = open.unwrap_or(current_block);
+    base.max(state_head)
 }
 
 /// Build an Alloy `Filter` for backfill via `eth_getLogs`.
@@ -2687,6 +2786,25 @@ mod tests {
             drained.iter().all(|&b| b >= 103),
             "no on_drain may lag below the state clock: {drained:?}"
         );
+    }
+
+    /// Solve-anchor regression (ADR-008 D2 solver-release gate): the SOLVE anchor
+    /// follows the LOG-DRIVEN settled block (`open`), not a header that raced a
+    /// head ahead of the applied state — and the pool-state head still dominates.
+    #[test]
+    fn solve_anchor_follows_log_driven_block_not_racing_header() {
+        use super::solve_anchor;
+        // Header races ahead to 102 while only block 101's logs are open:
+        // anchor at 101 (open), NOT 102 (current_block).
+        assert_eq!(solve_anchor(Some(101), 102, 100), 101);
+        // State head dominates both clocks on a backfill-ahead stall.
+        assert_eq!(solve_anchor(Some(101), 102, 500), 500);
+        // No open block yet (cold start, headers only): fall back to the header.
+        assert_eq!(solve_anchor(None, 102, 100), 102);
+        // State head ahead of everything still wins.
+        assert_eq!(solve_anchor(None, 102, 200), 200);
+        // A header equal to the open block is unchanged.
+        assert_eq!(solve_anchor(Some(102), 102, 100), 102);
     }
 
     /// RED→GREEN tracer (epic 6W35AI, 22Y7AB): the pump forwards a
