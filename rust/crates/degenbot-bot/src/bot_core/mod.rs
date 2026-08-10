@@ -2621,6 +2621,65 @@ mod tests {
         .expect("test setup: V3 registration")
     }
 
+    /// Bug-A regression (path-142603): a **backfill→Live** in-range
+    /// ModifyLiquidity with block > seed must adjust the in-range `liquidity()`
+    /// scalar. Pre-fix the backfill→Live branch applied the tick map via the
+    /// low-level `apply_liquidity_to_tick_range` and NEVER adjusted the scalar,
+    /// producing the staged-clock desync (fresh tick map, stale in-range
+    /// liquidity). Now it routes through the shared, in-range-aware
+    /// `apply_liquidity_update`. (Sparse → Live registration per DFQYM5.)
+    #[test]
+    fn backfill_live_in_range_post_seed_adjusts_in_range_liquidity() {
+        let mut core = BotState::new();
+        let pool_id = register_v3(&mut core, 5); // seed block 5, liq 0, tick 0 (Sparse -> Live)
+                                                 // Post-seed in-range Mint (tick 0 in [-60,60), block 6 > seed 5):
+        core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 123_456_i128, 6);
+        let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
+            panic!("pool missing")
+        };
+        assert_eq!(
+            state.liquidity, 123_456,
+            "in-range post-seed Mint must adjust the active scalar"
+        );
+        assert_eq!(state.tick_data_block, 6, "liquidity clock advanced");
+        assert_eq!(
+            state.update_block, 6,
+            "price clock advanced (in-range post-seed)"
+        );
+        assert!(
+            state.tick_data.contains_key(&-60) && state.tick_data.contains_key(&60),
+            "both boundary ticks mutated"
+        );
+    }
+
+    /// Bug-A companion: a backfill→Live in-range event at/before the seed block
+    /// is a historical replay — the seed's `liquidity` already reflects every
+    /// on-chain event <= seed, so the tick map mutates but the scalar must NOT
+    /// change (the guard in the shared `apply_liquidity_update` survives the
+    /// unification).
+    #[test]
+    fn backfill_live_in_range_pre_seed_does_not_adjust_scalar() {
+        let mut core = BotState::new();
+        let pool_id = register_v3(&mut core, 5); // seed block 5
+                                                 // Pre-seed in-range Mint (block 4 <= seed 5):
+        core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 250_000_i128, 4);
+        let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
+            panic!("pool missing")
+        };
+        assert_eq!(
+            state.liquidity, 0,
+            "pre-seed replay must NOT adjust the scalar"
+        );
+        assert!(
+            state.tick_data.contains_key(&-60),
+            "pre-seed replay still mutates the tick map"
+        );
+        assert_eq!(
+            state.tick_data_block, 5,
+            "pre-seed replay is a monotonic no-op: clock stays at the seed block (5 > 4)"
+        );
+    }
+
     /// Regression (WZWKKU): `v3_restore_before_block(B)` with `B` strictly past
     /// the journal's newest delta must leave the pool's current state
     /// UNTOUCHED. This is the per-pool path `dispatch_reorg_log` hits for a

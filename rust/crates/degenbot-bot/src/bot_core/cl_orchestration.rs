@@ -412,23 +412,24 @@ impl BotState {
                 // backfill chunk interleaving with a re-register must respect
                 // the lifecycle for the invariant to hold.
                 if state.registration_lifecycle == RegistrationLifecycle::Live {
-                    ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-                        &mut state.tick_data,
+                    // Unify the backfill->Live ModifyLiquidity apply through the
+                    // shared, in-range-aware path (Bug-A fix). The prior inline
+                    // `apply_liquidity_to_tick_range` + manual clock advance
+                    // applied the tick map but NEVER adjusted the in-range
+                    // `liquidity()` scalar, so a post-seed in-range event (a late
+                    // backfill chunk on a Live pool) left the active-liquidity
+                    // scalar stale while the tick map advanced — the staged-clock
+                    // desync (fresh tick map, stale in-range liquidity) behind
+                    // path-142603. The shared `apply_liquidity_update` carries
+                    // the historical-replay guard (block <= seed -> tick map only),.
+                    // the in-range scalar adjust, the two-stamp clock advance, and
+                    // reorg journaling in one place.
+                    state.apply_liquidity_update(
                         tick_lower,
                         tick_upper,
                         liquidity_delta,
                         block_number,
                     );
-                    // OB7UNY two-stamp: the backfill replay mutates the TICK
-                    // MAP only (the seed already holds the slot0 head, and this
-                    // path never adjusts the scalar), so advance ONLY the
-                    // liquidity clock. Backfill drains in ascending block order
-                    // (monotonic by construction; a slip is a no-op, not a
-                    // panic — the sanctioned replay carve-out).
-                    if block_number > state.tick_data_block {
-                        state.tick_data_block = block_number;
-                    }
-                    state.invalidate_tick_range_cache();
                     return;
                 }
             }
@@ -1247,20 +1248,18 @@ impl BotState {
                 // backfill chunk interleaving with a re-register must respect
                 // the lifecycle for the invariant to hold.
                 if state.registration_lifecycle == RegistrationLifecycle::Live {
+                    // V4 twin of the V3 backfill->Live unification (Bug-A fix):
+                    // the shared `apply_liquidity_update` adjusts the in-range
+                    // `liquidity()` scalar for a post-seed event (and carries the
+                    // historical-replay guard + two-stamp clocks + journal), where
+                    // the prior inline `apply_liquidity_to_tick_range` did not.
                     if let Ok(delta_i128) = i128::try_from(liquidity_delta) {
-                        ::degenbot_pools::tick_bitmap::apply_liquidity_to_tick_range(
-                            &mut state.tick_data,
+                        state.apply_liquidity_update(
                             tick_lower,
                             tick_upper,
                             delta_i128,
                             block_number,
                         );
-                        // OB7UNY two-stamp (V4 twin): backfill replay advances
-                        // only the liquidity clock; monotonic by construction.
-                        if block_number > state.tick_data_block {
-                            state.tick_data_block = block_number;
-                        }
-                        state.invalidate_tick_range_cache();
                         return;
                     }
                 }
