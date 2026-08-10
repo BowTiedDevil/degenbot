@@ -815,6 +815,11 @@ mod tests {
             .expect("eagerly solved path present");
         assert!(!solve_result.profit.is_zero());
 
+        // A real solve has anchored `results_block` (the delivery-policy
+        // solve-anchor guard defers candidates while it is still 0 — see
+        // `diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit`).
+        engine.results_block = 100;
+
         // send_result_batch computes the diff, sends it, and advances
         // `delivered` to the above-threshold subset.
         engine.send_result_batch(&BlockMetadata::default());
@@ -871,6 +876,10 @@ mod tests {
             },
         );
 
+        // Anchor the solve at a real block: candidates are only deliverable
+        // once `results_block` is non-zero (solve-anchor delivery guard — a 0
+        // anchor would sim at block 0, the 0x841820 code-less panic).
+        engine.results_block = 100;
         engine.compute_diff_and_send(&BlockMetadata::default());
 
         let batch = rx
@@ -914,6 +923,9 @@ mod tests {
             },
         );
 
+        // Anchor the solve at a real block (solve-anchor delivery guard — see
+        // `diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit`).
+        engine.results_block = 100;
         engine.compute_diff_and_send(&BlockMetadata::default());
 
         let batch = rx

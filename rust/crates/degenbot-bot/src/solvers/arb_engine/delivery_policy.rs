@@ -150,21 +150,50 @@ impl DeliveryPolicy {
         results_block: u64,
         metadata: &BlockMetadata,
     ) {
+        // A non-zero `results_block` is the invariant that a batch's candidates
+        // are dispatchable: the strategy sims each candidate at its
+        // `solve_block` (= `results_block`), so a 0 anchor would execute every
+        // tracked pool as an EOA at block 0 (`eth_getCode(0)` → `KECCAK_EMPTY`
+        // → the Sim DB invariant panic). `results_block` is only advanced by a
+        // real solve (`rebuild_and_solve_affected` / `solve_all_paths`);
+        // registration-time eager solves (`register_and_solve_path`) and
+        // backfill (Backfilled-phase invariant: no solve) leave it 0 until the
+        // first live `on_drain` solve. Until anchored, publish an EMPTY batch
+        // (metadata only) and do NOT commit these candidates to `delivered` —
+        // they are re-delivered once the first real solve anchors them at a
+        // valid block.
+        let anchored = results_block != 0;
+        if !anchored && !results.is_empty() {
+            tracing::warn!(
+                results = results.len(),
+                "delivery: deferring {} candidate(s) — no solve anchor yet (results_block=0)",
+                results.len(),
+            );
+        }
+
         // Fresh: above-threshold in results, not in delivered
-        let fresh: Vec<(u64, SolvePathResult)> = results
-            .iter()
-            .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
-            .filter(|(id, _)| !self.delivered.contains_key(id))
-            .map(|(&id, r)| (id, r.clone()))
-            .collect();
+        let fresh: Vec<(u64, SolvePathResult)> = if anchored {
+            results
+                .iter()
+                .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
+                .filter(|(id, _)| !self.delivered.contains_key(id))
+                .map(|(&id, r)| (id, r.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Updated: above-threshold in both, values differ
-        let updated: Vec<(u64, SolvePathResult)> = results
-            .iter()
-            .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
-            .filter(|(id, new)| matches!(self.delivered.get(id), Some(old) if old != *new))
-            .map(|(&id, r)| (id, r.clone()))
-            .collect();
+        let updated: Vec<(u64, SolvePathResult)> = if anchored {
+            results
+                .iter()
+                .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
+                .filter(|(id, new)| matches!(self.delivered.get(id), Some(old) if old != *new))
+                .map(|(&id, r)| (id, r.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Expired: in delivered but not above-threshold in results
         let expired: Vec<u64> = self
@@ -189,14 +218,16 @@ impl DeliveryPolicy {
         //      `deregistered`);
         //   2. insert/overwrite current values so `updated` paths stop
         //      re-firing every batch once their new value is delivered.
-        self.delivered.retain(|id, _| {
-            results
-                .get(id)
-                .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
-        });
-        for (&id, r) in results {
-            if r.profit > self.min_profit && r.profit <= self.max_profit {
-                self.delivered.insert(id, r.clone());
+        if anchored {
+            self.delivered.retain(|id, _| {
+                results
+                    .get(id)
+                    .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
+            });
+            for (&id, r) in results {
+                if r.profit > self.min_profit && r.profit <= self.max_profit {
+                    self.delivered.insert(id, r.clone());
+                }
             }
         }
 
@@ -366,6 +397,54 @@ mod tests {
         let mut results: HashMap<u64, SolvePathResult> = HashMap::new();
         results.insert(1, solve_result(500));
         policy.diff_and_send(&results, 7, &BlockMetadata::default());
+        assert!(policy.delivered.contains_key(&1));
+    }
+
+    /// Solve-anchor guard (bot_run.log 0x841820 code-less panic): a batch
+    /// whose candidates are published with `solve_block = results_block = 0`
+    /// makes the strategy sim every tracked pool at block 0 (EOA → KECCAK_EMPTY
+    /// → Sim DB invariant panic). Registration-time eager solves populate
+    /// `results` before any real solve has advanced `results_block`. So a 0
+    /// anchor must (a) publish an EMPTY batch — no fresh/updated candidates —
+    /// and (b) NOT commit those candidates to `delivered`, so the first real
+    /// solve re-delivers them at a valid block.
+    #[test]
+    fn diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut policy = DeliveryPolicy::default();
+        policy.set_result_channel(tx);
+
+        let mut results: HashMap<u64, SolvePathResult> = HashMap::new();
+        results.insert(1, solve_result(500)); // above threshold, would be fresh if anchored
+
+        // results_block == 0 (cold start, no solve yet): batch is EMPTY.
+        policy.diff_and_send(&results, 0, &BlockMetadata::default());
+        let batch = rx
+            .try_recv()
+            .expect("zero-anchor still sends metadata batch");
+        assert!(
+            batch.fresh.is_empty(),
+            "no candidates at an un-anchored solve"
+        );
+        assert!(
+            batch.updated.is_empty(),
+            "no candidates at an un-anchored solve"
+        );
+        assert_eq!(batch.solve_block, 0);
+        assert!(
+            !policy.delivered.contains_key(&1),
+            "un-anchored candidates must stay pending, not be marked delivered"
+        );
+
+        // First real solve advances results_block to 42: the deferred candidate
+        // is now delivered as fresh at a valid anchor.
+        policy.diff_and_send(&results, 42, &BlockMetadata::default());
+        let batch = rx.try_recv().expect("anchored solve delivers");
+        assert!(
+            batch.fresh.iter().any(|(id, _)| *id == 1),
+            "candidate re-delivered once anchored"
+        );
+        assert_eq!(batch.solve_block, 42);
         assert!(policy.delivered.contains_key(&1));
     }
 
