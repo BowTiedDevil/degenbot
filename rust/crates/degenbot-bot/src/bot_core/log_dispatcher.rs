@@ -431,7 +431,13 @@ impl LogDispatcher {
             // engine. Panic loudly rather than silently skip. Gated on
             // `DEGENBOT_WS_COMPLETENESS` (the strict loud mode) so synthetic
             // test fixtures that use a relevant-topic log purely as a block
-            // tombstone (not for state) don't trip it; production enables it.
+            // tombstone (not for state) don't trip it; production enables it
+            // explicitly by setting the env var. Deliberately opt-in (presence-
+            // gated), distinct from the block-pump completeness cross-check
+            // which is default-ON: surfacing a decode miss is a malformed-data
+            // hard-fault that should be switched on deliberately, not silently
+            // defaulted, and it has no per-pump opt-out here to keep the
+            // synthetic-fixture tests deterministic.
             assert!(
                 std::env::var("DEGENBOT_WS_COMPLETENESS").is_err()
                     || !is_known_pool_topic(log.topics().first()),

@@ -192,6 +192,21 @@ pub struct BlockPump {
     /// `bot_env_flag_default_on`): set `=0` to disable. Held as a field (not a
     /// global env read) so tests deterministically opt out per-pump (Z4KQXF).
     solver_state_verify: bool,
+    /// Whether the per-block WS-delivery completeness cross-check runs
+    /// (`assert_ws_block_complete` — aborts on any relevant-topic log that
+    /// `eth_getLogs` has but the live websocket dropped). Conservative default
+    /// ON (`DEGENBOT_WS_COMPLETENESS`, via `bot_env_flag_default_on`): set
+    /// `=0` to disable. Held as a field (not a global env read) so tests
+    /// deterministically opt out per-pump (same pattern as `solver_state_verify`,
+    /// Z4KQXF). When OFF the `ws_delivered` index-tracking map is not populated
+    /// (no work on the hot loop).
+    ws_completeness_enabled: bool,
+    /// Whether the GIL-bound publish (`sink.on_send` → Python dispatch) is
+    /// deferred onto a background task so the WS poller is never parked off
+    /// `combined.next()` waiting on the Python GIL. Opt-in via
+    /// `DEGENBOT_DECOUPLE_DRAIN` (default OFF — the inline path is unchanged).
+    /// Held as a field so tests deterministically select the mode per-pump.
+    decouple_drain: bool,
 }
 
 /// State held between `subscribe()` and `resume()` calls.
@@ -215,6 +230,29 @@ pub struct SubscribeState {
 /// the verifier diffs exactly what this block re-solved against the chain — never
 /// the whole registered set (the root of the confirmed pump freeze).
 type SolverVerifyRequest = (u64, Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>);
+
+/// A deferred drain-sink operation (B4GX7C). Under the opt-in
+/// `DEGENBOT_DECOUPLE_DRAIN` flag the sink's solve/dispatch/finalize/notify
+/// calls run on a background drainer task via these messages, so the WS poller
+/// is never parked behind GIL-bound or heavy sink work (`Python::attach`,
+/// Möbius solve). FIFO ordering + the existing engine/sink locks preserve the
+/// exact inline semantics. The verifier anchor (`open`) and the change-set for
+/// `Publish` are consumed atomically in the pump (single-writer).
+enum DrainWork {
+    /// A `newHeads` tick to forward to Python's block clock.
+    Notify { block: u64, metadata: BlockMetadata },
+    /// Eager solve of every dirty path at `block`.
+    Drain { block: u64, metadata: BlockMetadata },
+    /// Solve + emit the block-boundary batch (tombstone path).
+    Finalize { block: u64, metadata: BlockMetadata },
+    /// The quiesce-gated publish: flush `sink.on_send` to Python, then hand
+    /// the log-driven quiesced `block` + change-set to the latest-wins verifier.
+    Publish {
+        open: u64,
+        metadata: BlockMetadata,
+        change_set: Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>,
+    },
+}
 
 impl BlockPump {
     /// Subscribe phase: open WS connections and observe until first complete block.
@@ -272,6 +310,10 @@ impl BlockPump {
             solver_state_verify: crate::bot_core::bot_env_flag_default_on(
                 "DEGENBOT_ASSERT_SOLVER_STATE",
             ),
+            ws_completeness_enabled: crate::bot_core::bot_env_flag_default_on(
+                "DEGENBOT_WS_COMPLETENESS",
+            ),
+            decouple_drain: crate::bot_core::bot_env_flag_default_on("DEGENBOT_DECOUPLE_DRAIN"),
         };
 
         // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
@@ -987,10 +1029,11 @@ impl BlockPump {
         // WS-delivery completeness tracker (see `assert_ws_block_complete`):
         // the set of relevant-topic log indices delivered per block, cross-
         // checked against `eth_getLogs` at the block's tombstone to panic on a
-        // live websocket log drop. Gated on `DEGENBOT_WS_COMPLETENESS`; the map
-        // is only populated when the gate is on (so the hot loop adds no work
-        // when disabled).
-        let ws_completeness_enabled = std::env::var("DEGENBOT_WS_COMPLETENESS").is_ok();
+        // live websocket log drop. Default-ON (`DEGENBOT_WS_COMPLETENESS`, via
+        // `bot_env_flag_default_on`; disable with `=0`); the map is only
+        // populated when the gate is on (so the hot loop adds no work when
+        // disabled).
+        let ws_completeness_enabled = self.ws_completeness_enabled;
         let mut ws_delivered: std::collections::HashMap<u64, std::collections::HashSet<u64>> =
             std::collections::HashMap::new();
         // `has_logs_this_block` is engine-owned since LEZJAS — driven through
@@ -1087,6 +1130,51 @@ impl BlockPump {
                 None
             };
 
+        // B4GX7C drain-decoupling: when `decouple_drain` is on, the sink's
+        // solve/dispatch/finalize/notify calls are deferred to this spawned
+        // task so the WS poller returns to `combined.next()` promptly instead
+        // of parking behind `Python::attach` / heavy Möbius solve. FIFO order
+        // + the engine/sink locks preserve the inline semantics; the change-set
+        // is consumed atomically in the pump (single-writer) and the verifier
+        // anchor is carried in the message. When the flag is OFF (default)
+        // `drain_send` is `None` and every call runs inline (below), unchanged.
+        let drain_send: Option<tokio::sync::mpsc::UnboundedSender<DrainWork>> =
+            if self.decouple_drain {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DrainWork>();
+                let sink = Arc::clone(&self.sink);
+                let vt = verify_tx.clone();
+                let _drainer = tokio::spawn(async move {
+                    while let Some(work) = rx.recv().await {
+                        match work {
+                            DrainWork::Notify { block, metadata } => {
+                                sink.notify_block(block, &metadata);
+                            }
+                            DrainWork::Drain { block, metadata } => {
+                                sink.on_drain(block, &metadata);
+                            }
+                            DrainWork::Finalize { block, metadata } => {
+                                sink.finalize_block(block, &metadata);
+                            }
+                            DrainWork::Publish {
+                                open,
+                                metadata,
+                                change_set,
+                            } => {
+                                // on_send first, then the latest-wins verifier
+                                // (same ordering as the inline path).
+                                sink.on_send(&metadata);
+                                if let Some(ref tx) = vt {
+                                    let _ = tx.send(Some((open, change_set)));
+                                }
+                            }
+                        }
+                    }
+                });
+                Some(tx)
+            } else {
+                None
+            };
+
         // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
         // selected against `combined.next()` (below) whose internal `Sleep`
         // elapses independently of stream activity. This catches a silent
@@ -1146,7 +1234,14 @@ impl BlockPump {
                         current_block,
                         self.bot.state_arc().read().pool_state_head(),
                     );
-                    self.sink.on_drain(active_block, &current_metadata);
+                    self.route_drain_work(
+                        drain_send.as_ref(),
+                        verify_tx.as_ref(),
+                        DrainWork::Drain {
+                            block: active_block,
+                            metadata: current_metadata,
+                        },
+                    );
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
                     self.sink.set_last_solved_block(active_block);
@@ -1227,57 +1322,26 @@ impl BlockPump {
                     if publish_pending {
                         if let Some(open) = clock.latest_observed() {
                             if clock.consume_quiesced(open) {
-                                self.sink.on_send(&current_metadata);
-                                // Option-A solver-state accuracy gate (AV42C7),
-                                // triggered at the PUBLISH point but RUN on a
-                                // dedicated verifier task (ADR-021 relocation —
-                                // the pump-freeze fix). The result being sent
-                                // here is the coalesced, quiesce-gated
-                                // (block-final) solve — the one Python will
-                                // actually simulate. Publishing here, not after
-                                // every transient `on_drain`, means a mid-block
-                                // stale solve that the eager design discards
-                                // (re-solved when the block completes) never
-                                // trips the hard panic, while a desync on a
-                                // result that SURVIVES to publication still
-                                // aborts the whole process. Each hop is
-                                // diffed against the chain at its own anchor
-                                // block (`verify_solver_hop_states`); hops
-                                // touched in the in-progress block are skipped
-                                // (mid-block captures are unverifiable via
-                                // historical slot0). Because the verify runs
-                                // off the pump task, the pump never waits on
-                                // it — advancement is decoupled from
-                                // assertion; the latest-wins handoff ensures
-                                // only the most recent published block is
-                                // ever verified.
-                                if let Some(ref tx) = verify_tx {
-                                    // Capture this block's change-set path refs
-                                    // (consume-and-clear) and hand them to the
-                                    // verifier atomically with the block number, so
-                                    // it diffs exactly the paths re-solved this
-                                    // block — never the whole registered set. Non-
-                                    // blocking latest-wins handoff; the pump never
-                                    // awaits the verifier, so block advancement
-                                    // stays decoupled from assertion.
-                                    //
-                                    // The anchor is `open` — the LOG-DRIVEN block
-                                    // that just QUIESCED (the one `consume_quiesced`
-                                    // released) — NOT `current_block` (the header,
-                                    // which can race a head ahead of the applied
-                                    // state). Verifying at a header ahead of the
-                                    // quiesced block reads on-chain at a block that
-                                    // contains swaps not yet applied to a quiet path
-                                    // pool (e.g. 0x99ac8c: a 15-block-quiet pool
-                                    // whose in-block Swap is delivered late) and
-                                    // false-aborts — the `open` anchor verifies
-                                    // against the block the published solve actually
-                                    // reflects, matching the design intent ("the
-                                    // coalesced, quiesce-gated (block-final) solve").
-                                    let change_set =
-                                        self.sink.take_solver_path_pool_refs_change_set();
-                                    let _ = tx.send(Some((open, change_set)));
-                                }
+                                // Option-A solver-state accuracy gate (AV42C7):
+                                // publish on_send to Python, then hand the
+                                // quiesced `open` block + its change set to the
+                                // latest-wins verifier task. `publish` defers
+                                // on_send to the drainer under
+                                // `DEGENBOT_DECOUPLE_DRAIN` (so the WS poller
+                                // never parks behind the Python GIL) or runs
+                                // inline otherwise — same order + anchor in both
+                                // modes. The anchor is `open`, the LOG-DRIVEN
+                                // quiesced block, NOT the racing header.
+                                let change_set = self.sink.take_solver_path_pool_refs_change_set();
+                                self.route_drain_work(
+                                    drain_send.as_ref(),
+                                    verify_tx.as_ref(),
+                                    DrainWork::Publish {
+                                        open,
+                                        metadata: current_metadata,
+                                        change_set,
+                                    },
+                                );
                             }
                         }
                         publish_pending = false;
@@ -1389,7 +1453,14 @@ impl BlockPump {
                             // already; mark it solved on the engine so the next
                             // `finalize_block` guard no-ops for this block.
                             self.sink.set_last_solved_block(number);
-                            self.sink.notify_block(current_block, &current_metadata);
+                            self.route_drain_work(
+                                drain_send.as_ref(),
+                                verify_tx.as_ref(),
+                                DrainWork::Notify {
+                                    block: current_block,
+                                    metadata: current_metadata,
+                                },
+                            );
                         }
                         first_header = false;
                     } else if number > current_block {
@@ -1420,7 +1491,14 @@ impl BlockPump {
                         }
 
                         current_block = number;
-                        self.sink.notify_block(current_block, &current_metadata);
+                        self.route_drain_work(
+                            drain_send.as_ref(),
+                            verify_tx.as_ref(),
+                            DrainWork::Notify {
+                                block: current_block,
+                                metadata: current_metadata,
+                            },
+                        );
                     }
                     // The `PendingSuccessor` / `OpenNew` decisions carry no
                     // pump action beyond the above — the liveness-probe signal
@@ -1615,7 +1693,14 @@ impl BlockPump {
                                 .get(&prev)
                                 .copied()
                                 .unwrap_or(current_metadata);
-                            self.finalize_if_dirty(prev, &prev_meta);
+                            self.route_drain_work(
+                                drain_send.as_ref(),
+                                verify_tx.as_ref(),
+                                DrainWork::Finalize {
+                                    block: prev,
+                                    metadata: prev_meta,
+                                },
+                            );
                             clock.advance_to_drained(prev);
                             if log_block > current_block {
                                 current_block = log_block;
@@ -1693,7 +1778,16 @@ impl BlockPump {
                     if publish_pending {
                         if let Some(open) = clock.latest_observed() {
                             if clock.consume_quiesced(open) {
-                                self.sink.on_send(&current_metadata);
+                                let change_set = self.sink.take_solver_path_pool_refs_change_set();
+                                self.route_drain_work(
+                                    drain_send.as_ref(),
+                                    verify_tx.as_ref(),
+                                    DrainWork::Publish {
+                                        open,
+                                        metadata: current_metadata,
+                                        change_set,
+                                    },
+                                );
                             }
                         }
                         publish_pending = false;
@@ -1714,8 +1808,43 @@ impl BlockPump {
     /// the engine since ergo task LEZJAS (the pump's out-params retired);
     /// all engine-state mutation happens inside the sink under its lock.
     /// ADR-006 D4: the pump no longer holds the engine `Mutex` directly.
-    fn finalize_if_dirty(&self, block: u64, metadata: &BlockMetadata) {
-        self.sink.finalize_block(block, metadata);
+    /// Route one drain-sink operation either to the background drainer task
+    /// (under `DEGENBOT_DECOUPLE_DRAIN`, so the WS poller never parks behind
+    /// GIL-bound `Python::attach` / heavy Möbius solve) or inline (flag OFF,
+    /// the unchanged behavior). FIFO ordering + the engine/sink locks preserve
+    /// the inline semantics in the deferred mode. For `Publish` the change-set
+    /// is already consumed atomically by the caller (single-writer); the inline
+    /// `None` arm runs `on_send` then hands the quiesced `open` + change-set to
+    /// the latest-wins verifier — the same order the drainer uses.
+    fn route_drain_work(
+        &self,
+        drain_send: Option<&tokio::sync::mpsc::UnboundedSender<DrainWork>>,
+        verify_tx: Option<&tokio::sync::watch::Sender<Option<SolverVerifyRequest>>>,
+        work: DrainWork,
+    ) {
+        if let Some(tx) = drain_send {
+            let _ = tx.send(work);
+            return;
+        }
+        match work {
+            DrainWork::Notify { block, metadata } => {
+                self.sink.notify_block(block, &metadata);
+            }
+            DrainWork::Drain { block, metadata } => self.sink.on_drain(block, &metadata),
+            DrainWork::Finalize { block, metadata } => {
+                self.sink.finalize_block(block, &metadata);
+            }
+            DrainWork::Publish {
+                open,
+                metadata,
+                change_set,
+            } => {
+                self.sink.on_send(&metadata);
+                if let Some(tx) = verify_tx {
+                    let _ = tx.send(Some((open, change_set)));
+                }
+            }
+        }
     }
 
     /// Handle a 60s timeout by backfilling any missed blocks (eager variant).
@@ -1893,8 +2022,9 @@ impl BlockPump {
     /// relevant log is missing — a catastrophic websocket delivery failure that
     /// must NOT be masked or silently corrected.
     ///
-    /// Gated on `DEGENBOT_WS_COMPLETENESS`; when unset (default, incl. tests
-    /// that feed synthetic logs through `run_test_loop`) it is a no-op. On an
+    /// Gated on `DEGENBOT_WS_COMPLETENESS` (default ON via
+    /// `bot_env_flag_default_on`; disable with `=0`; deterministically OFF in
+    /// the test constructor). When disabled it is a no-op. On an
     /// `eth_getLogs` transport error (not a mismatch) it logs loudly and
     /// returns — the check cannot run, but the bot is not taken down by a
     /// transient RPC failure.
@@ -2122,6 +2252,14 @@ impl BlockPump {
             // the struct field doc). Tests arm it explicitly when they exercise
             // the verifier (e.g. the desync-abort tests).
             solver_state_verify: false,
+            // Same per-pump opt-out for the WS-delivery completeness cross-check:
+            // default-ON in production, deterministically OFF in tests so the
+            // synthetic log streams (which use relevant-topic logs as pure block
+            // tombstones) never trip a spurious eth_getLogs comparison/abort.
+            ws_completeness_enabled: false,
+            // Drain-decoupling OFF by default in tests (deterministic; arm it
+            // explicitly via `set_decouple_drain_for_test`).
+            decouple_drain: false,
         }
     }
 
@@ -2141,6 +2279,12 @@ impl BlockPump {
         first_observed_block: u64,
     ) {
         self.run_with_stream(combined, first_observed_block).await;
+    }
+
+    /// Arm the opt-in drain-decoupling mode for a test (production default is
+    /// OFF). Test-only.
+    pub fn set_decouple_drain_for_test(&mut self, on: bool) {
+        self.decouple_drain = on;
     }
 
     /// Test-only override of the header-staleness watchdog window (JIABO3).
@@ -2413,6 +2557,127 @@ mod tests {
         assert!(
             !pump.solver_state_verify,
             "test pumps must disable the tripwire"
+        );
+    }
+
+    #[test]
+    fn test_pump_disables_ws_completeness_by_default() {
+        // Same per-pump opt-out as the solver-state tripwire: the per-block
+        // WS-delivery completeness cross-check is conservative-ON in production
+        // (`DEGENBOT_WS_COMPLETENESS`, via `bot_env_flag_default_on`) but
+        // deterministically OFF in the test constructor so synthetic log
+        // streams (relevant-topic logs used as pure block tombstones) never
+        // trip a spurious eth_getLogs comparison/abort.
+        let (pump, _sink) = pump_for_test(None);
+        assert!(
+            !pump.ws_completeness_enabled,
+            "test pumps must disable the WS-delivery completeness cross-check"
+        );
+        // And the production default (env unset) must be ON so drops surface
+        // loudly out of the box.
+        assert!(
+            crate::bot_core::bot_env_flag_default_on("DEGENBOT_WS_COMPLETENESS"),
+            "production default for DEGENBOT_WS_COMPLETENESS must be ON"
+        );
+    }
+
+    /// B4GX7C: under `DEGENBOT_DECOUPLE_DRAIN` the GIL-bound `on_send`
+    /// (Python dispatch) is deferred to the drainer task so the WS poller is
+    /// never parked behind `Python::attach`. This exercises the flagged path
+    /// end-to-end: a header opens block 101, a V2 Sync log for 101 opens +
+    /// quiesces it, and the stream-exhaust settle point flushes the
+    /// quiesce-gated publish — which MUST still fire on_send (with the block
+    /// metadata), just from the drainer instead of inline. It also cross-
+    /// checks that the drainer believes `decouple_drain` default-off by
+    /// asserting the inline `for_test` constructor leaves it disabled.
+    #[tokio::test]
+    async fn decoupled_drain_still_publishes_with_block_metadata() {
+        use alloy::primitives::{aliases::U112, Address as A};
+        use stream::StreamExt;
+        let bot = Arc::new(Bot::new(1));
+        {
+            let arc = bot.state_arc();
+            let mut core = arc.write();
+            core.register_v2_pool(&RegisterV2PoolParams {
+                address: A::from([0xccu8; 20]),
+                token0: A::from([0xa0u8; 20]),
+                token1: A::from([0xa1u8; 20]),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: A::from([0xf0u8; 20]),
+                update_block: 500,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+        }
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
+        pump.set_decouple_drain_for_test(true);
+        sink.set_dirty(true); // fake sink: mark dirty so the eager drain fires
+
+        // Header(101) + V2 Sync@101 opens + quiesces block 101; stream end
+        // flushes the quiesce-gated publish.
+        let pool = A::from([0xccu8; 20]);
+        let events: Vec<WsEvent> = vec![
+            WsEvent::BlockHeader {
+                number: 101,
+                timestamp: 101_000,
+                base_fee_per_gas: Some(1_000_000_001),
+                gas_used: 10_000_001,
+                gas_limit: 30_000_001,
+            },
+            WsEvent::Log(make_v2_sync_log(
+                pool,
+                alloy::primitives::U256::ZERO,
+                alloy::primitives::U256::ZERO,
+                101,
+                false,
+            )),
+        ];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, 100).await;
+
+        // All sink ops were deferred to the drainer; wait until the drain,
+        // the header notify, and the publish have all landed.
+        let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+        loop {
+            let done = !sink.drained.lock().unwrap().is_empty()
+                && !sink.notified.lock().unwrap().is_empty()
+                && !sink.sent.lock().unwrap().is_empty();
+            if done || std::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Notify(header 101) routed to the drainer.
+        let notified = sink.notified.lock().unwrap().clone();
+        assert!(
+            notified.iter().any(|&(b, _)| b == 101),
+            "decoupled header notify must fire (got {notified:?})"
+        );
+
+        // Drain(eager solve of the dirty pool) routed to the drainer.
+        let drained = sink.drained.lock().unwrap().clone();
+        assert!(
+            !drained.is_empty(),
+            "decoupled eager drain must solve dirty paths (got {drained:?})"
+        );
+
+        // Publish(on_send) routed to the drainer — with the block metadata.
+        let sent = sink.sent.lock().unwrap().clone();
+        assert!(
+            !sent.is_empty(),
+            "decoupled publish must still fire on_send (got {sent:?})"
+        );
+        assert_eq!(
+            sent[0].timestamp, 101_000,
+            "publish carries the quiesced block's metadata"
         );
     }
 

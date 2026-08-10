@@ -28,7 +28,13 @@ mkdir -p "$LOGDIR"
 #   DEGENBOT_SIM_LOG_REVERTED_SWAPS (per-hop actual-vs-predicted on revert)
 #   DEGENBOT_SIM_EXIT_ON_FAIL=1  (stop on first sim failure) + IGNORE_BUCKETS
 #     default "" (empty allowlist = trap on EVERY bucket, sys.exit(3))
+#   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-
+#     check; NEW default-ON since B4GX7C, so a live WS log drop aborts loudly)
 # Per-target/high-noise (still OFF): DEGENBOT_DRAIN_DBG, DEGENBOT_TRACE_REGISTER_SEED
+#
+# B4GX7C opt-in prevention (off by default, set `=1` to trial):
+#   DEGENBOT_DECOUPLE_DRAIN     (offload on_drain/on_send/finalize/notify to a
+#     background drainer task so the WS poller never parks behind the Python GIL)
 #
 # To run a long-lived soak that trades through thin-margin/no-profit reverts
 # (the routine arb-filter outcome), override the fail-fast:
