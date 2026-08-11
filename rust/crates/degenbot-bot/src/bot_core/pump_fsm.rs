@@ -10,14 +10,18 @@
 //!
 //! The I/O the FSM cannot do — backfill over `eth_getLogs`, the reorg
 //! coordinator, WS-completeness RPC — is expressed as `PumpDecision`
-//! variants the driver executes. The FSM's decision state is `pub` so the
-//! driver's I/O helpers (which are the *executor*, not the decider) can fold
-//! results back; A2–A5 replace those scattered writes with explicit FSM
-//! update methods as each rule is encapsulated.
+//! variants the driver executes. The FSM is a **capsule**: all decision state
+//! is private, and every transition is reached through an aggregate method
+//! (`on_header`, `on_log` + `on_log_applied`, `on_tick`, `on_settle`,
+//! `on_stream_end`, `drain_decision`, `completeness_decision`, backfill
+//! transitions) that returns the effects for the driver to run. No driver
+//! code reaches into the FSM's fields.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 
-use crate::bot_core::block_clock::{BlockClock, HeaderDecision};
+use crate::bot_core::block_clock::{BlockClock, HeaderDecision, LogDecision};
 use crate::bot_core::block_pump::RELEVANT_TOPICS;
 use crate::bot_core::BlockMetadata;
 use alloy::primitives::B256;
@@ -82,30 +86,26 @@ impl PumpDecision {
 /// is returned as [`PumpDecision`] / handled by the driver.
 pub struct PumpFSM {
     /// The last block the pump's cursor has reached.
-    pub current_block: u64,
+    current_block: u64,
     /// Metadata of `current_block` (held from its header).
-    pub current_metadata: BlockMetadata,
+    current_metadata: BlockMetadata,
     /// Whether we're before the first header after a resume/backfill.
-    pub first_header: bool,
+    first_header: bool,
     /// Whether a quiesce-gated publish is armed (a forward log applied).
-    pub publish_pending: bool,
+    publish_pending: bool,
     /// BQ7ZBC — the highest block an authoritative catch-up has owned.
-    pub recovery_anchor: u64,
+    recovery_anchor: u64,
     /// Per-block metadata snapshots (deferred tombstone finalize, VTWCIG).
-    pub block_metadata: HashMap<u64, BlockMetadata>,
+    block_metadata: HashMap<u64, BlockMetadata>,
     /// WS-delivery completeness tracker (relevant log indices per block).
-    pub ws_delivered: HashMap<u64, HashSet<u64>>,
+    ws_delivered: HashMap<u64, HashSet<u64>>,
     /// [DIAG] + watchdog time anchors, injected as wall-clock ms by the driver.
-    pub last_header_at_ms: u64,
-    pub last_log_at_ms: u64,
-    pub last_diag_ms: u64,
-    /// [DIAG] counters.
-    pub diag_header_count: u64,
-    pub diag_log_count: u64,
+    last_header_at_ms: u64,
+    last_log_at_ms: u64,
     /// Logs-silence watchdog re-arm.
-    pub log_silence_alarm_armed: bool,
+    log_silence_alarm_armed: bool,
     /// The per-block clock (the tombstone/cursor authority, ADR-008).
-    pub clock: BlockClock,
+    clock: BlockClock,
 }
 
 impl PumpFSM {
@@ -121,12 +121,40 @@ impl PumpFSM {
             ws_delivered: HashMap::new(),
             last_header_at_ms: now_ms,
             last_log_at_ms: now_ms,
-            last_diag_ms: now_ms,
-            diag_header_count: 0,
-            diag_log_count: 0,
             log_silence_alarm_armed: false,
             clock: BlockClock::new(),
         }
+    }
+
+    /// The last block the pump's cursor has reached (read accessor).
+    #[must_use]
+    pub fn current_block(&self) -> u64 {
+        self.current_block
+    }
+
+    /// Metadata of the current block (read accessor).
+    #[must_use]
+    pub fn current_metadata(&self) -> BlockMetadata {
+        self.current_metadata
+    }
+
+    /// Whether a quiesce-gated publish is armed (read accessor).
+    #[must_use]
+    pub fn publish_pending(&self) -> bool {
+        self.publish_pending
+    }
+
+    /// The clock's highest fully-applied/delivered block handle (shared with
+    /// `BotState` as the pump-complete cutoff, ADR-008).
+    #[must_use]
+    pub fn highest_applied_handle(&self) -> Arc<AtomicU64> {
+        self.clock.highest_applied_handle()
+    }
+
+    /// The snapshotted metadata for `block` (deferred tombstone finalize, VTWCIG).
+    #[must_use]
+    pub fn block_metadata_for(&self, block: u64) -> Option<BlockMetadata> {
+        self.block_metadata.get(&block).copied()
     }
 
     /// Whether a `WsEvent::Log` is relevant to any tracked pool (the driver's
@@ -166,6 +194,67 @@ impl PumpFSM {
         self.recovery_anchor = self.recovery_anchor.max(through);
     }
 
+    /// Record that a relevant live `WsEvent::Log` was delivered for `block`
+    /// (the WS-completeness tracker cross-checked at the tombstone).
+    pub fn record_ws_delivered(&mut self, block: u64, log_index: u64) {
+        self.ws_delivered
+            .entry(block)
+            .or_default()
+            .insert(log_index);
+    }
+
+    /// The per-event decision + state transition for a relevant WS log whose
+    /// `removed` flag has NOT passed the single-writer / boundary drops. Owns
+    /// the ADC-008 clock transition, the reorg-entry/close cursor moves, the
+    /// tombstone advance, and the publish disarm on reorg — returning the
+    /// `LogDecision` so the driver knows which I/O effects to run (apply the
+    /// log, reach for the reorg coordinator, finalize a tombstoned block,
+    /// or shut down on a late forward). Reorg/panic paths deliberately do NOT
+    /// arm the publish.
+    pub fn on_log(&mut self, block: u64, removed: bool) -> LogDecision {
+        let decision = self.clock.observe_log(block, removed);
+        match decision {
+            LogDecision::EnterReorg(_) | LogDecision::ContinueReorg => {
+                // A reorg invalidates any publish armed from pre-reorg state.
+                self.publish_pending = false;
+            }
+            LogDecision::CloseReorg { new_head } => {
+                self.publish_pending = false;
+                self.current_block = new_head;
+            }
+            LogDecision::TombstonePrevious(prev) => {
+                self.publish_pending = false;
+                self.clock.advance_to_drained(prev);
+                if block > self.current_block {
+                    self.current_block = block;
+                }
+            }
+            LogDecision::DispatchForward => {
+                if block > self.current_block {
+                    self.current_block = block;
+                }
+            }
+            LogDecision::PanicLateForward(_) => {}
+        }
+        decision
+    }
+
+    /// Mark a forward/tombstone log as applied to engine state (call AFTER the
+    /// driver ran `dispatch_log`). Arms the quiesce-gated publish and records
+    /// the clock's received/applied edges (ADR-008).
+    pub fn on_log_applied(&mut self, block: u64) {
+        self.clock.log_received(block);
+        self.clock.log_applied(block);
+        self.publish_pending = true;
+    }
+
+    /// Mark an authoritative backfill-range complete: advance the cursor and
+    /// extend the single-writer recovery anchor (BQ7ZBC).
+    pub fn on_backfill_range_done(&mut self, through: u64) {
+        self.current_block = self.current_block.max(through);
+        self.record_backfill(through);
+    }
+
     /// The per-event decision for a `WsEvent::BlockHeader`. Returns the effects
     /// the driver must execute (notify, backfill, mark-solved).
     pub fn on_header(
@@ -175,7 +264,6 @@ impl PumpFSM {
         now_ms: u64,
     ) -> Vec<PumpDecision> {
         let mut decisions = Vec::new();
-        self.diag_header_count += 1;
         self.last_header_at_ms = now_ms;
 
         // Snapshot the just-finished block's metadata BEFORE overwriting
@@ -210,6 +298,10 @@ impl PumpFSM {
                     from: self.current_block + 1,
                     to: Some(number - 1),
                 });
+                // BQ7ZBC — this authoritative header-gap catch-up OWNS
+                // `[old+1, number-1]`; a recovering WS flushing those blocks
+                // must be discarded (single-writer), not re-asserted.
+                self.recovery_anchor = self.recovery_anchor.max(number - 1);
             }
             self.current_block = number;
             decisions.push(PumpDecision::Notify {
@@ -384,6 +476,66 @@ mod tests {
         let d = fsm.on_header(100, meta(100_000), 2_000);
         assert!(d.is_empty());
         assert_eq!(fsm.current_block, before);
+    }
+
+    #[test]
+    fn non_first_gap_header_extends_recovery_anchor() {
+        // The non-first-header gap branch must also own `[old+1, number-1]` for
+        // the single-writer recovery anchor (BQ7ZBC) — the old inline driver
+        // copy did; `on_header` is now the single authority and must too.
+        let mut fsm = PumpFSM::new(100, 0);
+        let _ = fsm.on_header(101, meta(101_000), 1_000); // contiguous first header
+        assert_eq!(fsm.recovery_anchor, 0);
+        let d = fsm.on_header(105, meta(105_000), 2_000); // non-first gap
+        assert!(d.iter().any(|x| matches!(
+            x,
+            PumpDecision::Backfill {
+                from: 102,
+                to: Some(104)
+            }
+        )));
+        assert_eq!(fsm.recovery_anchor, 104);
+        assert_eq!(fsm.current_block(), 105);
+    }
+
+    #[test]
+    fn on_log_forward_advances_cursor_and_applied_arms_publish() {
+        let mut fsm = PumpFSM::new(100, 0);
+        // A forward log on the next block advances the cursor (forward edge).
+        let d = fsm.on_log(101, false);
+        assert!(matches!(d, LogDecision::DispatchForward));
+        assert_eq!(fsm.current_block(), 101);
+        assert!(!fsm.publish_pending());
+        // The driver applies the log, then arms the quiesce-gated publish.
+        fsm.on_log_applied(101);
+        assert!(fsm.publish_pending());
+    }
+
+    #[test]
+    fn on_log_tombstone_advances_cursor_and_publish_rearms() {
+        let mut fsm = PumpFSM::new(100, 0);
+        // Open block 100 with an applied log.
+        fsm.on_log(100, false);
+        fsm.on_log_applied(100);
+        // First log of 101 tombstones 100, advances the cursor to 101.
+        let d = fsm.on_log(101, false);
+        assert!(matches!(d, LogDecision::TombstonePrevious(100)));
+        assert_eq!(fsm.current_block(), 101);
+        fsm.on_log_applied(101);
+        assert!(fsm.publish_pending());
+    }
+
+    #[test]
+    fn on_log_reorg_disarms_publish() {
+        let mut fsm = PumpFSM::new(100, 0);
+        // Arm a publish from a forward apply.
+        fsm.on_log(101, false);
+        fsm.on_log_applied(101);
+        assert!(fsm.publish_pending());
+        // A removed log reorgs the open block and disarms the stale publish.
+        let d = fsm.on_log(101, true);
+        assert!(matches!(d, LogDecision::EnterReorg(_)));
+        assert!(!fsm.publish_pending());
     }
 
     #[test]
