@@ -201,15 +201,17 @@ impl DrainSink for SolveCoordinator {
 
     #[hotpath::measure(label = "SolveCoordinator::notify_block")]
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-        // Fan out to every engine under the drain lock — same shape as
-        // `on_drain`/`on_send`. Each engine forwards to its `block_tx`;
-        // `send` on an unbounded mpsc is non-blocking, so the hold is brief,
-        // and Python's block-clock consumer never acquires the engine lock
-        // (it awaits `block_rx.recv()`). `notify_block` must NOT advance
-        // `last_drained_block` (that clock is solve-driven; the *block*
-        // clock lives on the block channel).
-        #[expect(clippy::expect_used)] // invariant-guarded (documented)
-        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
+        // Fan out to every engine DIRECTLY — no `drain_lock` (B2). The
+        // `engines` vec is frozen after construction (ADR-006: engines are
+        // registered before `start`, late registration panics), so iterating it
+        // needs no lock. Each `engine.notify_block` is a non-blocking `mpsc`
+        // send into the engine's block channel, and Python's block-clock
+        // consumer never acquires the engine lock (it awaits `block_rx.recv()`).
+        // NOT taking `drain_lock` is what keeps the block clock from contending
+        // with an in-flight solve fan-out (B2: the clock is never queued / gated
+        // behind solver work). `notify_block` must NOT advance
+        // `last_drained_block` (that clock is solve-driven; the *block* clock
+        // lives on the block channel).
         for engine in &self.engines {
             engine.notify_block(block, metadata);
         }

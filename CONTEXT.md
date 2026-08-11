@@ -225,6 +225,39 @@ Three options surfaced: (A) merge the seam — make IO a constructor arg of `Bot
 
 **Broader ArcSwap audit (closed alongside).** Surveyed the other `parking_lot::{Mutex,RwLock}` sites in `degenbot-bot` for ArcSwap fit. The result: three of four candidate sites are **incrementally-mutated state** (`Arc<RwLock<BotState>>` — `apply_swap` mutates one pool's reserves per log; `Arc<Mutex<ArbitrageEngine>>` — `solve_dirty` mutates dirty sets + builds paths + solves; `Mutex<HashMap<…subscribers…>>` in `LogDispatcher` — `subscribe` appends), which is the wrong model for ArcSwap (a publish-snapshot primitive that swaps a whole `Arc<T>` atomically — would require COW-cloning the entire state per mutation). Only `construction_io` fit the shape, and it isn't worth touching. `arc-swap 1.9.2` remains transitive-only in `Cargo.lock` (no `degenbot-*` crate pulls it directly); formalizing it as a direct dep is deferred until a genuinely-fitting, contended publish-snapshot site lands.
 
+## Block-pump dispatch seam (B — unified event seams, 2026-08)
+
+The pump's hand-offs to the sink, the solver-state verifier, and Python's block
+clock are owned by ONE module — one **dispatch owner** — but delivered over three
+**application-specific pipes**, each with the delivery semantics its task needs.
+"One seam" means one coordinated home, never one queue forced to fit every task.
+
+- **Dispatch owner** — the module that owns all three pipes and coordinates
+  liveness/ordering in one place. The seam worth having; NOT a single bus.
+- **Drain pipe** — an ordered FIFO (`mpsc`) taking `Drain`/`Finalize`/`Publish`
+  to a background drainer task → sink. Solve/dispatch/finalize must run in
+  enqueue order (FIFO + engine/sink locks are what make the deferred path equal
+  to the old inline one).
+- **Verifier pipe** — a latest-wins `watch` to the solver-state verifier task.
+  Only the most recent published block is ever verified (ADR-021); non-blocking
+  so a slow verify can never stall the pump.
+- **Block-clock pipe** — a DIRECT `notify_block` dispatch to the sink's
+  engine notification channels, deliberately NOT a `DrainWork` item (B2), so
+  a `newHeads` tick is delivered ASAP and never rides the drain FIFO behind
+  solver work. Every accepted header is delivered 1:1 (no coalescing). The
+  sink's `notify_block` no longer takes the `drain_lock` (the `engines` vec is
+  frozen after start), so the clock does not contend with the drain fan-out.
+  Callers hold no ordering guarantee on solver results.
+- **Stall backstop** — the drain-pipe liveness check (B3), soak-hardened: the
+  pump aborts when the queue holds a backlog (`depth >= BACKLOG_FLOOR=2`) AND
+  the drainer has completed no work for `STALL_WINDOW` (~30s). The wall-clock
+  window (not event-counting) is what correctly distinguishes a *frozen*
+  drainer from one mid-way through a single exceptionally long solve — a live
+  mainnet dry-run proved that pure strike-counting (on depth or on completion)
+  false-positives under heavy multi-path solve load. A drainer that progresses
+  but falls behind is observed via `pending()` (a lag metric), never aborted;
+  a dead (closed-channel) drainer still aborts immediately.
+
 ### Simulation engine vs. searcher strategy (DECIDED, 2026-07-20 — architecture review)
 
 **The seam.** degenbot is a library consumed by many searchers with different on-chain strategies (backrun, sandwich, JIT-L, liquidation, …). The Rust core therefore owns only the **in-process representation of pool/token state** + the **solver methods** (the value-only swap math the operator constrains) + a **thin, general simulation executor**. The **transaction encoding** for a searcher's bot, the **profit-detection strategy** (e.g. the backrun example's 3-pre-balance → `execute()` → 3-post-balance WETH9/ERC6909/Multicall3 bundle, `decode_balance`, gross/net + priority-fee sizing), and the **operator policy** (thin-margin filtering, path suppression, sort order) are **out of scope for the core** — they are the searcher's code, assembled at runtime from the tools the core exposes. The backrun bot (`examples/eth_backrun_v2_v3_v4_rust.py` + its Rust strategy leaves) is ONE example strategy, not the simulation surface.

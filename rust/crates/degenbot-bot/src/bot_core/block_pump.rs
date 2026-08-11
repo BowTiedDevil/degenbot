@@ -37,7 +37,7 @@
 //! core, driven automatically by `resume`.)
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,6 +47,7 @@ use degenbot_solvers::mixed::HopType;
 use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
 
+use crate::bot_core::event_dispatch::{DispatchOwner, DrainWork, SolverVerifyRequest};
 use crate::bot_core::solver_state_verifier::{
     aggregate_lagging_hops, divergence_scan_enabled, extract_solver_hop_states,
     probe_solve_anchor_consistency, scan_lagging_hops_for_divergence, solve_anchor_probe_enabled,
@@ -74,14 +75,6 @@ const BACKFILL_TIMEOUT_SECS: u64 = 60;
 /// harmless settle lag never floods the log — observed true outliers in the
 /// 2026-08-09 run were 12-20 blocks.
 const SOLVER_STATE_ABNORMAL_STALE_BLOCKS: u64 = 10;
-
-/// How long the background drainer (B4GX7C) may have unacknowledged work
-/// (enqueued > processed) with no progress before the pump aborts. Catches a
-/// drainer that is alive but stalled — e.g. parked behind the Python GIL —
-/// rather than silently losing every solve/dispatch/publish while the WS loop
-/// keeps advancing. Set well clear of the routine per-solve cost; the
-/// send-into-closed-channel abort handles the truly-dead drainer immediately.
-const DRAINER_STALL_SECS: u64 = 30;
 
 /// After the first dirty WS log for a block, wait this long for more logs
 /// before solving and dispatching results to Python. Each new log resets
@@ -209,12 +202,6 @@ pub struct BlockPump {
     /// Z4KQXF). When OFF the `ws_delivered` index-tracking map is not populated
     /// (no work on the hot loop).
     ws_completeness_enabled: bool,
-    /// Whether the GIL-bound publish (`sink.on_send` → Python dispatch) is
-    /// deferred onto a background task so the WS poller is never parked off
-    /// `combined.next()` waiting on the Python GIL. Opt-in via
-    /// `DEGENBOT_DECOUPLE_DRAIN` (default OFF — the inline path is unchanged).
-    /// Held as a field so tests deterministically select the mode per-pump.
-    decouple_drain: bool,
 }
 
 /// State held between `subscribe()` and `resume()` calls.
@@ -230,58 +217,6 @@ pub struct SubscribeState {
     /// The merged stream of WS events (block headers + logs).
     /// `None` after `resume()` consumes it.
     pub combined_stream: Option<stream::BoxStream<'static, WsEvent>>,
-}
-
-/// The payload handed from the pump to the solver-state verifier task at each
-/// publish point: the solve block and the pool refs for ONLY the paths re-solved
-/// that block (the ADR-021 change set). Captured atomically at the publish so
-/// the verifier diffs exactly what this block re-solved against the chain — never
-/// the whole registered set (the root of the confirmed pump freeze).
-type SolverVerifyRequest = (u64, Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>);
-
-/// A deferred drain-sink operation (B4GX7C). Under the opt-in
-/// `DEGENBOT_DECOUPLE_DRAIN` flag the sink's solve/dispatch/finalize/notify
-/// calls run on a background drainer task via these messages, so the WS poller
-/// is never parked behind GIL-bound or heavy sink work (`Python::attach`,
-/// Möbius solve). FIFO ordering + the existing engine/sink locks preserve the
-/// exact inline semantics. The verifier anchor (`open`) and the change-set for
-/// `Publish` are consumed atomically in the pump (single-writer).
-enum DrainWork {
-    /// A `newHeads` tick to forward to Python's block clock.
-    Notify { block: u64, metadata: BlockMetadata },
-    /// Eager solve of every dirty path at `block`.
-    Drain { block: u64, metadata: BlockMetadata },
-    /// Solve + emit the block-boundary batch (tombstone path).
-    Finalize { block: u64, metadata: BlockMetadata },
-    /// The quiesce-gated publish: flush `sink.on_send` to Python, then hand
-    /// the log-driven quiesced `block` + change-set to the latest-wins verifier.
-    Publish {
-        open: u64,
-        metadata: BlockMetadata,
-        change_set: Vec<Vec<degenbot_solvers::mixed::MixedPoolRef>>,
-    },
-}
-
-/// Shared progress counters giving the WS poller feedback on the background
-/// drainer (B4GX7C): `enqueued` is bumped by the pump on every successful send,
-/// `processed` by the drainer after each completed sink operation. The pump
-/// uses these to detect a dead or stalled drainer and fail loudly instead of
-/// silently losing every solve/dispatch/publish while its own loop keeps
-/// advancing (the exact half-alive failure the codebase otherwise aborts on).
-struct DrainerHealth {
-    /// Work items the pump enqueued (bumped on a successful send).
-    enqueued: AtomicU64,
-    /// Work items the drainer completed (bumped after each sink call returns).
-    processed: AtomicU64,
-}
-
-impl DrainerHealth {
-    fn new() -> Self {
-        Self {
-            enqueued: AtomicU64::new(0),
-            processed: AtomicU64::new(0),
-        }
-    }
 }
 
 impl BlockPump {
@@ -343,7 +278,6 @@ impl BlockPump {
             ws_completeness_enabled: crate::bot_core::bot_env_flag_default_on(
                 "DEGENBOT_WS_COMPLETENESS",
             ),
-            decouple_drain: crate::bot_core::bot_env_flag_default_off("DEGENBOT_DECOUPLE_DRAIN"),
         };
 
         // MJXP5Z (Alternative B): single-stream handshake - NO resubscribe.
@@ -982,10 +916,10 @@ impl BlockPump {
     ///
     /// Hard-aborts the process (never unwinds a half-alive pump) on any
     /// verified solver-state desync (ADR-021 `DEGENBOT_ASSERT_SOLVER_STATE`),
-    /// a live-websocket log drop (`DEGENBOT_WS_COMPLETENESS`), or — under the
-    /// opt-in `DEGENBOT_DECOUPLE_DRAIN` — a dead or stalled background drainer
-    /// task (a send into a closed channel or no drainer progress past
-    /// `DRAINER_STALL_SECS` with unacknowledged work). Also shuts down on a
+    /// a live-websocket log drop (`DEGENBOT_WS_COMPLETENESS`), or a dead or
+    /// stalled background drainer (a send into a closed channel, or
+    /// `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes). Also shuts
+    /// down on a
     /// late-forward log on a tombstoned block (unreliable WS, ADR-008 D3).
     #[expect(unused_assignments, clippy::too_many_lines)]
     #[tracing::instrument(skip(self, combined), fields(first_observed_block))]
@@ -1170,60 +1104,27 @@ impl BlockPump {
                 None
             };
 
-        // B4GX7C drain-decoupling: when `decouple_drain` is on, the sink's
-        // solve/dispatch/finalize/notify calls are deferred to this spawned
-        // task so the WS poller returns to `combined.next()` promptly instead
-        // of parking behind `Python::attach` / heavy Möbius solve. FIFO order
-        // + the engine/sink locks preserve the inline semantics; the change-set
-        // is consumed atomically in the pump (single-writer) and the verifier
-        // anchor is carried in the message. When the flag is OFF (default)
-        // `drain_send` is `None` and every call runs inline (below), unchanged.
+        // B4GX7C drain-decoupling: the sink's solve/dispatch/finalize calls run
+        // on this spawned background drainer task so the WS poller returns to
+        // `combined.next()` promptly instead of parking behind `Python::attach`
+        // / heavy Möbius solve. FIFO order + the engine/sink locks give the
+        // deferred work the inline semantics it replaced (the sole mode). The
+        // change-set is consumed atomically in the pump (single-writer) and the
+        // verifier anchor is carried in the message.
         //
         // The poller gets FEEDBACK on the drainer through `drainer_health`: a
-        // send into a closed channel (drainer task dead) aborts loudly, and a
-        // watchdog aborts if the drainer is alive but stalls (no progress while
-        // work is pending) — a dead/stalled drainer must never silently lose
-        // every solve/dispatch/publish while the WS loop keeps advancing.
-        let drainer_health: Option<Arc<DrainerHealth>> =
-            self.decouple_drain.then(|| Arc::new(DrainerHealth::new()));
-        let drain_send: Option<tokio::sync::mpsc::UnboundedSender<DrainWork>> =
-            if let Some(health) = &drainer_health {
-                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DrainWork>();
-                let sink = Arc::clone(&self.sink);
-                let vt = verify_tx.clone();
-                let health = Arc::clone(health);
-                let _drainer = tokio::spawn(async move {
-                    while let Some(work) = rx.recv().await {
-                        match work {
-                            DrainWork::Notify { block, metadata } => {
-                                sink.notify_block(block, &metadata);
-                            }
-                            DrainWork::Drain { block, metadata } => {
-                                sink.on_drain(block, &metadata);
-                            }
-                            DrainWork::Finalize { block, metadata } => {
-                                sink.finalize_block(block, &metadata);
-                            }
-                            DrainWork::Publish {
-                                open,
-                                metadata,
-                                change_set,
-                            } => {
-                                // on_send first, then the latest-wins verifier
-                                // (same ordering as the inline path).
-                                sink.on_send(&metadata);
-                                if let Some(ref tx) = vt {
-                                    let _ = tx.send(Some((open, change_set)));
-                                }
-                            }
-                        }
-                        health.processed.fetch_add(1, Ordering::Relaxed);
-                    }
-                });
-                Some(tx)
-            } else {
-                None
-            };
+        // send into a closed channel (drainer task dead) aborts loudly, and the
+        // B3 no-progress detector aborts if the drainer is alive but makes no
+        // progress — a dead/stalled drainer must never silently lose every
+        // solve/dispatch/publish while the WS loop keeps advancing.
+        // One dispatch owner (epic B) owns the drain pipe + the drainer task +
+        // the verifier latest-wins transmitter. All sink work is deferred to the
+        // background drainer task (sole mode) so the WS poller never parks
+        // behind GIL-bound `Python::attach` / heavy Möbius solve. FIFO order +
+        // the engine/sink locks give the deferred work the inline semantics it
+        // replaced; the verifier anchor + change-set ride the `Publish` message
+        // (single-writer). A dead or stalled drainer never silently loses work.
+        let dispatch = DispatchOwner::new(Arc::clone(&self.sink), &verify_tx);
 
         // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
         // selected against `combined.next()` (below) whose internal `Sleep`
@@ -1247,21 +1148,13 @@ impl BlockPump {
 
         // B4GX7C drainer-liveness heartbeat: a 2s cadence that aborts if the
         // background drainer has unacknowledged work and makes no progress for
-        // `DRAINER_STALL_SECS` (a dead drainer is caught immediately via the
-        // send-into-closed-channel abort; this catches a live-but-stalled one).
-        // Armed ONLY when `decouple_drain` is on — when off the sleep is
-        // effectively infinite, so the default loop is never perturbed by an
-        // extra periodic wake (a 2s tick could otherwise collide with the 50ms
-        // debounce and delay a quiesce-gated publish).
-        let drainer_check_period = if self.decouple_drain {
-            Duration::from_secs(2)
-        } else {
-            Duration::from_secs(u64::MAX)
-        };
-        let drainer_check = tokio::time::sleep(drainer_check_period);
-        tokio::pin!(drainer_check);
-        let mut drainer_last_processed: u64 = 0;
-        let mut drainer_stall_since: Option<tokio::time::Instant> = None;
+        // B3 no-progress liveness now lives INSIDE `DispatchOwner` (see
+        // `track_progress` + `dispatch`): a dead drainer aborts immediately on
+        // a closed-channel send; a frozen drainer aborts at
+        // `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes; a drainer
+        // that progresses but falls behind only WARNs (lag metric). The old
+        // 30s `DRAINER_STALL_SECS` poll watchdog and the pump-side
+        // `drainer_check` timer are retired — no time-based knob remains.
 
         loop {
             // Solve any dirty paths accumulated from the previous iteration's
@@ -1302,15 +1195,10 @@ impl BlockPump {
                         current_block,
                         self.bot.state_arc().read().pool_state_head(),
                     );
-                    self.route_drain_work(
-                        drain_send.as_ref(),
-                        drainer_health.as_deref(),
-                        verify_tx.as_ref(),
-                        DrainWork::Drain {
-                            block: active_block,
-                            metadata: current_metadata,
-                        },
-                    );
+                    dispatch.dispatch(DrainWork::Drain {
+                        block: active_block,
+                        metadata: current_metadata,
+                    });
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
                     self.sink.set_last_solved_block(active_block);
@@ -1380,58 +1268,6 @@ impl BlockPump {
                     }
                     continue;
                 }
-                () = &mut drainer_check => {
-                    // B4GX7C drainer-liveness watchdog. A no-op when
-                    // `decouple_drain` is OFF (the sleep is effectively
-                    // infinite and the health counters are absent). When there
-                    // is unacknowledged work (enqueued > processed) and the
-                    // drainer has made no progress for `DRAINER_STALL_SECS`,
-                    // the drainer is dead-or-stalled (e.g. parked behind the
-                    // Python GIL) — abort loudly rather than silently lose the
-                    // solve/dispatch/publish path while the WS loop advances.
-                    if let Some(h) = drainer_health.as_deref() {
-                        let processed = h.processed.load(Ordering::Relaxed);
-                        let enqueued = h.enqueued.load(Ordering::Relaxed);
-                        if enqueued > processed {
-                            // Re-arm the stall timer whenever the drainer makes
-                            // progress; otherwise measure the stall length.
-                            if processed != drainer_last_processed {
-                                drainer_last_processed = processed;
-                                drainer_stall_since = Some(tokio::time::Instant::now());
-                            } else if let Some(since) = drainer_stall_since {
-                                if since.elapsed() >= Duration::from_secs(DRAINER_STALL_SECS) {
-                                    tracing::error!(
-                                        enqueued,
-                                        processed,
-                                        stall_secs = DRAINER_STALL_SECS,
-                                        "[B4GX7C] drainer stalled: unacknowledged work with \
-                                         no progress for {DRAINER_STALL_SECS}s — ABORT"
-                                    );
-                                    #[expect(clippy::print_stderr)] // fatal diagnostic
-                                    {
-                                        eprintln!(
-                                            "[B4GX7C] ABORT: background drainer task stalled for \
-                                             {DRAINER_STALL_SECS}s (enqueued={enqueued}, \
-                                             processed={processed}) — solve/dispatch/publish is \
-                                             not advancing. Fail loud, never half-alive."
-                                        );
-                                    }
-                                    std::process::abort();
-                                }
-                            } else {
-                                drainer_stall_since = Some(tokio::time::Instant::now());
-                            }
-                        } else {
-                            // Caught up.
-                            drainer_last_processed = processed;
-                            drainer_stall_since = None;
-                        }
-                    }
-                    drainer_check
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + drainer_check_period);
-                    continue;
-                }
                 event = timeout(wait_timeout, combined.next()) => event,
             };
 
@@ -1446,24 +1282,17 @@ impl BlockPump {
                                 // Option-A solver-state accuracy gate (AV42C7):
                                 // publish on_send to Python, then hand the
                                 // quiesced `open` block + its change set to the
-                                // latest-wins verifier task. `publish` defers
-                                // on_send to the drainer under
-                                // `DEGENBOT_DECOUPLE_DRAIN` (so the WS poller
-                                // never parks behind the Python GIL) or runs
-                                // inline otherwise — same order + anchor in both
-                                // modes. The anchor is `open`, the LOG-DRIVEN
-                                // quiesced block, NOT the racing header.
+                                // latest-wins verifier task. The publish defers
+                                // on_send to the drainer (so the WS poller never
+                                // parks behind the Python GIL). The anchor is
+                                // `open`, the LOG-DRIVEN quiesced block, NOT the
+                                // racing header.
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
-                                self.route_drain_work(
-                                    drain_send.as_ref(),
-                                    drainer_health.as_deref(),
-                                    verify_tx.as_ref(),
-                                    DrainWork::Publish {
-                                        open,
-                                        metadata: current_metadata,
-                                        change_set,
-                                    },
-                                );
+                                dispatch.dispatch(DrainWork::Publish {
+                                    open,
+                                    metadata: current_metadata,
+                                    change_set,
+                                });
                             }
                         }
                         publish_pending = false;
@@ -1575,15 +1404,7 @@ impl BlockPump {
                             // already; mark it solved on the engine so the next
                             // `finalize_block` guard no-ops for this block.
                             self.sink.set_last_solved_block(number);
-                            self.route_drain_work(
-                                drain_send.as_ref(),
-                                drainer_health.as_deref(),
-                                verify_tx.as_ref(),
-                                DrainWork::Notify {
-                                    block: current_block,
-                                    metadata: current_metadata,
-                                },
-                            );
+                            dispatch.notify_block(current_block, &current_metadata);
                         }
                         first_header = false;
                     } else if number > current_block {
@@ -1614,15 +1435,7 @@ impl BlockPump {
                         }
 
                         current_block = number;
-                        self.route_drain_work(
-                            drain_send.as_ref(),
-                            drainer_health.as_deref(),
-                            verify_tx.as_ref(),
-                            DrainWork::Notify {
-                                block: current_block,
-                                metadata: current_metadata,
-                            },
-                        );
+                        dispatch.notify_block(current_block, &current_metadata);
                     }
                     // The `PendingSuccessor` / `OpenNew` decisions carry no
                     // pump action beyond the above — the liveness-probe signal
@@ -1817,15 +1630,10 @@ impl BlockPump {
                                 .get(&prev)
                                 .copied()
                                 .unwrap_or(current_metadata);
-                            self.route_drain_work(
-                                drain_send.as_ref(),
-                                drainer_health.as_deref(),
-                                verify_tx.as_ref(),
-                                DrainWork::Finalize {
-                                    block: prev,
-                                    metadata: prev_meta,
-                                },
-                            );
+                            dispatch.dispatch(DrainWork::Finalize {
+                                block: prev,
+                                metadata: prev_meta,
+                            });
                             clock.advance_to_drained(prev);
                             if log_block > current_block {
                                 current_block = log_block;
@@ -1904,91 +1712,17 @@ impl BlockPump {
                         if let Some(open) = clock.latest_observed() {
                             if clock.consume_quiesced(open) {
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
-                                self.route_drain_work(
-                                    drain_send.as_ref(),
-                                    drainer_health.as_deref(),
-                                    verify_tx.as_ref(),
-                                    DrainWork::Publish {
-                                        open,
-                                        metadata: current_metadata,
-                                        change_set,
-                                    },
-                                );
+                                dispatch.dispatch(DrainWork::Publish {
+                                    open,
+                                    metadata: current_metadata,
+                                    change_set,
+                                });
                             }
                         }
                         publish_pending = false;
                     }
                     tracing::warn!("BlockPump: both subscription streams ended");
                     return;
-                }
-            }
-        }
-    }
-
-    /// Finalize the current block: solve any dirty paths and send the result
-    /// batch to Python, carrying the caller's real `current_metadata`.
-    ///
-    /// Delegates to the `DrainSink`'s `finalize_block` (the slice-6
-    /// `SolveCoordinator` fans to every attached `Engine`). The
-    /// `last_solved_block` / `has_logs_this_block` bookkeeping is owned by
-    /// the engine since ergo task LEZJAS (the pump's out-params retired);
-    /// all engine-state mutation happens inside the sink under its lock.
-    /// ADR-006 D4: the pump no longer holds the engine `Mutex` directly.
-    /// Route one drain-sink operation either to the background drainer task
-    /// (under `DEGENBOT_DECOUPLE_DRAIN`, so the WS poller never parks behind
-    /// GIL-bound `Python::attach` / heavy Möbius solve) or inline (flag OFF,
-    /// the unchanged behavior). FIFO ordering + the engine/sink locks preserve
-    /// the inline semantics in the deferred mode. For `Publish` the change-set
-    /// is already consumed atomically by the caller (single-writer); the inline
-    /// `None` arm runs `on_send` then hands the quiesced `open` + change-set to
-    /// the latest-wins verifier — the same order the drainer uses.
-    fn route_drain_work(
-        &self,
-        drain_send: Option<&tokio::sync::mpsc::UnboundedSender<DrainWork>>,
-        drain_health: Option<&DrainerHealth>,
-        verify_tx: Option<&tokio::sync::watch::Sender<Option<SolverVerifyRequest>>>,
-        work: DrainWork,
-    ) {
-        if let Some(tx) = drain_send {
-            // A closed channel means the drainer task is dead (panicked or
-            // aborted). That must NOT be silently swallowed: the WS poller
-            // would keep advancing while every solve/dispatch/publish is lost.
-            if tx.send(work).is_ok() {
-                if let Some(h) = drain_health {
-                    h.enqueued.fetch_add(1, Ordering::Relaxed);
-                }
-            } else {
-                tracing::error!(
-                    "[B4GX7C] drainer task dead: channel closed, cannot enqueue drain work"
-                );
-                #[expect(clippy::print_stderr)] // fatal diagnostic before abort
-                {
-                    eprintln!(
-                        "[B4GX7C] ABORT: background drainer task is dead (channel closed) \
-                         — the WS poller can no longer enqueue solve/dispatch/publish. Fail \
-                         loud, never half-alive."
-                    );
-                }
-                std::process::abort();
-            }
-            return;
-        }
-        match work {
-            DrainWork::Notify { block, metadata } => {
-                self.sink.notify_block(block, &metadata);
-            }
-            DrainWork::Drain { block, metadata } => self.sink.on_drain(block, &metadata),
-            DrainWork::Finalize { block, metadata } => {
-                self.sink.finalize_block(block, &metadata);
-            }
-            DrainWork::Publish {
-                open,
-                metadata,
-                change_set,
-            } => {
-                self.sink.on_send(&metadata);
-                if let Some(tx) = verify_tx {
-                    let _ = tx.send(Some((open, change_set)));
                 }
             }
         }
@@ -2404,9 +2138,6 @@ impl BlockPump {
             // synthetic log streams (which use relevant-topic logs as pure block
             // tombstones) never trip a spurious eth_getLogs comparison/abort.
             ws_completeness_enabled: false,
-            // Drain-decoupling OFF by default in tests (deterministic; arm it
-            // explicitly via `set_decouple_drain_for_test`).
-            decouple_drain: false,
         }
     }
 
@@ -2426,12 +2157,6 @@ impl BlockPump {
         first_observed_block: u64,
     ) {
         self.run_with_stream(combined, first_observed_block).await;
-    }
-
-    /// Arm the opt-in drain-decoupling mode for a test (production default is
-    /// OFF). Test-only.
-    pub fn set_decouple_drain_for_test(&mut self, on: bool) {
-        self.decouple_drain = on;
     }
 
     /// Test-only override of the header-staleness watchdog window (JIABO3).
@@ -2728,15 +2453,13 @@ mod tests {
         );
     }
 
-    /// B4GX7C: under `DEGENBOT_DECOUPLE_DRAIN` the GIL-bound `on_send`
-    /// (Python dispatch) is deferred to the drainer task so the WS poller is
-    /// never parked behind `Python::attach`. This exercises the flagged path
-    /// end-to-end: a header opens block 101, a V2 Sync log for 101 opens +
-    /// quiesces it, and the stream-exhaust settle point flushes the
-    /// quiesce-gated publish — which MUST still fire on_send (with the block
-    /// metadata), just from the drainer instead of inline. It also cross-
-    /// checks that the drainer believes `decouple_drain` default-off by
-    /// asserting the inline `for_test` constructor leaves it disabled.
+    /// B4GX7C/sole-mode: the GIL-bound `on_send` (Python dispatch) runs on the
+    /// background drainer task so the WS poller is never parked behind
+    /// `Python::attach`. This exercises the (now sole) mode end-to-end: a
+    /// header opens block 101, a V2 Sync log for 101 opens + quiesces it, and
+    /// the stream-exhaust settle point flushes the quiesce-gated publish —
+    /// which MUST still fire `on_send` (with the block metadata) from the
+    /// drainer.
     #[tokio::test]
     async fn decoupled_drain_still_publishes_with_block_metadata() {
         use alloy::primitives::{aliases::U112, Address as A};
@@ -2763,7 +2486,6 @@ mod tests {
             .expect("test setup: V2 registration");
         }
         let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
-        pump.set_decouple_drain_for_test(true);
         sink.set_dirty(true); // fake sink: mark dirty so the eager drain fires
 
         // Header(101) + V2 Sync@101 opens + quiesces block 101; stream end
@@ -2790,7 +2512,7 @@ mod tests {
 
         // All sink ops were deferred to the drainer; wait until the drain,
         // the header notify, and the publish have all landed.
-        let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
         loop {
             let done = !sink.drained.lock().unwrap().is_empty()
                 && !sink.notified.lock().unwrap().is_empty()
@@ -3126,6 +2848,7 @@ mod tests {
         ];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, 100).await;
+        drainer_settle(|| !sink.finalized.lock().unwrap().is_empty()).await;
 
         let finalized = sink.finalized.lock().unwrap().clone();
         assert!(
@@ -3196,6 +2919,7 @@ mod tests {
             .collect();
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, 100).await;
+        drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
         let drained = sink.drained_blocks();
         assert!(
@@ -3338,6 +3062,7 @@ mod tests {
         ];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, w).await;
+        drainer_settle(|| !sink.finalized.lock().unwrap().is_empty()).await;
 
         let finalized = sink.finalized.lock().unwrap().clone();
         assert!(!finalized.is_empty(), "log w+1 should tombstone+finalize w");
@@ -3543,6 +3268,7 @@ mod tests {
         ];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, w).await;
+        drainer_settle(|| !sink.finalized.lock().unwrap().is_empty()).await;
 
         // log(W+2) tombstones W+1 — carrying meta_w1 (W+1's own metadata,
         // snapshotted when header W+1 arrived). Proves the anchor held: we
@@ -3784,6 +3510,22 @@ mod tests {
         let sink = Arc::new(FakeDrainSink::new(last_processed));
         let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, Arc::clone(&shutdown));
         (pump, sink, shutdown)
+    }
+
+    /// Wait (with a deadline, in `rt` runtime ticks) until `cond` returns true.
+    /// After `run_test_loop` returns, the background drainer task may still be
+    /// processing the final queued work asynchronously (the sole mode since
+    /// B4); tests that assert on the sink must settle the drainer first.
+    async fn drainer_settle(cond: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !cond() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "drainer did not settle within timeout"
+            );
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
     }
 
     /// A `removed: true` V2 Sync log for a registered pool, when its block is
@@ -4703,6 +4445,7 @@ mod tests {
         let combined =
             stream::iter(vec![mk(1_500, 2_500), mk(1_600, 2_600), mk(1_700, 2_700)]).boxed();
         pump.run_test_loop(combined, 100).await;
+        drainer_settle(|| !sink.sent.lock().unwrap().is_empty()).await;
 
         let sent = sink.sent.lock().unwrap().clone();
         assert_eq!(
@@ -4759,6 +4502,7 @@ mod tests {
         }];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, 100).await;
+        drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
         let drained = sink.drained_blocks();
         assert!(
