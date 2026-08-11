@@ -22,7 +22,7 @@
 //!   - pool C (V3 WETH/USDT) `(sqrt, liq)` == solver   — honest
 //!   - pool B (V4 USDC/USDT) `(sqrt, tick)` == solver (current) BUT solver
 //!     `liq = 1_018_741_430_873` while on-chain = `718_152_690_765` — a
-//!     ~3.05e11 ModifyLiquidity removal at ~block 25720300 was NOT applied;
+//!     ~3.05e11 `ModifyLiquidity` removal at ~block 25720300 was NOT applied;
 //!     solver liq is frozen at the pre-removal value, ~3,300 blocks stale.
 //! This is a **staged-clock desync** (two-stamp OB7UNY): the price clock
 //! (`update_block`) reached the solve block via swap incorporation while the
@@ -33,12 +33,12 @@
 //!
 //! Test by overriding pool B's liquidity:
 //!   # Reproduce the PHANTOM solve (solver liq, stale):
-//!   FIXTURE_V4_B_LIQ=1018741430873 cargo run -p degenbot --example path142603_v4v4v3_solver_fixture
+//!   `FIXTURE_V4_B_LIQ=1018741430873` cargo run -p degenbot --example `path142603_v4v4v3_solver_fixture`
 //!   # True on-chain state (fixture default 718152690765) should return None:
-//!   cargo run -p degenbot --example path142603_v4v4v3_solver_fixture
+//!   cargo run -p degenbot --example `path142603_v4v4v3_solver_fixture`
 //!
-//! Other overrides: FIXTURE_V4_A_PROTO_FEE / FIXTURE_V4_B_PROTO_FEE
-//! (protocol fee), FIXTURE_V3_C_SQRT / FIXTURE_V3_C_TICK.
+//! Other overrides: `FIXTURE_V4_A_PROTO_FEE` / `FIXTURE_V4_B_PROTO_FEE`
+//! (protocol fee), `FIXTURE_V3_C_SQRT` / `FIXTURE_V3_C_TICK`.
 
 use std::collections::HashMap;
 

@@ -406,9 +406,9 @@ mod tests {
         assert!(policy.delivered.contains_key(&1));
     }
 
-    /// Solve-anchor guard (bot_run.log 0x841820 code-less panic): a batch
+    /// Solve-anchor guard (`bot_run.log` 0x841820 code-less panic): a batch
     /// whose candidates are published with `solve_block = results_block = 0`
-    /// makes the strategy sim every tracked pool at block 0 (EOA → KECCAK_EMPTY
+    /// makes the strategy sim every tracked pool at block 0 (EOA → `KECCAK_EMPTY`
     /// → Sim DB invariant panic). Registration-time eager solves populate
     /// `results` before any real solve has advanced `results_block`. So a 0
     /// anchor must (a) publish an EMPTY batch — no fresh/updated candidates —

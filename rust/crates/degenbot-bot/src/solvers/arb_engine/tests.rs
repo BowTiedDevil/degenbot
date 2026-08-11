@@ -851,7 +851,7 @@ mod tests {
     /// backfill doesn't solve and `register_and_solve_path` doesn't advance
     /// `results_block`. The pump seeds `set_solve_anchor(resume_boundary)` at
     /// resume — a SETTLED, in-backfill-window block — so these candidates
-    /// deliver immediately at a valid, verification-safe solve_block instead of
+    /// deliver immediately at a valid, verification-safe `solve_block` instead of
     /// block 0 (sim panic) or a deferred deferral. It must NOT anchor to the
     /// pool-state head (which a partially-applied live event can race past the
     /// backfill window → premature verification failures).
