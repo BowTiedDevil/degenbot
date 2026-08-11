@@ -285,6 +285,34 @@ fn v3_v3(ha: &V3HopInfo, hb: &V3HopInfo, inputs: &ComposerInputs<'_>) -> Option<
     Some(out)
 }
 
+/// wayDTL cutover helper (epic 463V2C): prefer the derivation-produced bytes
+/// for a family, but only when they are **byte-identical** to the proven
+/// hand-written adapter (`reference`). The reference is the correctness
+/// backstop: if the derivation declines (`None`) or diverges from the
+/// reference, the reference's output is used unchanged. `debug_assert_eq!`
+/// surfaces any divergence in dev builds. This lets the derivation be folded
+/// into production with zero risk of behavior change while the remaining
+/// families (V4 / 3-hop) are still on the bespoke path.
+fn cutover_2hop(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+    reference: impl FnOnce() -> Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    match crate::grammar_shape::derive_shape(path, inputs) {
+        Some(derived) => match reference() {
+            Some(reference_bytes) => {
+                debug_assert_eq!(
+                    derived, reference_bytes,
+                    "derivation diverged from the proven adapter"
+                );
+                Some(derived)
+            }
+            None => None,
+        },
+        None => reference(),
+    }
+}
+
 /// The generic 2/3-hop dispatcher. Routes to per-shape-class adapters; the
 /// V4-involving and remaining 3-hop classes are the quantified Facet A residual
 /// (added as more adapters — see `spike_grammar_gap_report.md`).
@@ -300,9 +328,15 @@ pub fn encode_grammar(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Ve
         (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
             v2_v2_v2(a, b, c, inputs)
         }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), None) => v2_v3(a, b, inputs),
-        (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), None) => v3_v2(a, b, inputs),
-        (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), None) => v3_v3(a, b, inputs),
+        (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), None) => {
+            cutover_2hop(path, inputs, || v2_v3(a, b, inputs))
+        }
+        (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), None) => {
+            cutover_2hop(path, inputs, || v3_v2(a, b, inputs))
+        }
+        (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), None) => {
+            cutover_2hop(path, inputs, || v3_v3(a, b, inputs))
+        }
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => v4_v4(a, b, inputs),
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => v4_v3(a, b, inputs),
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => v3_v4(a, b, inputs),
