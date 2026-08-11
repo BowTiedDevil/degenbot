@@ -1631,11 +1631,21 @@ impl BlockPump {
                             // the registration drain reads.
                             // LOUD WS-completeness check: block `prev` is now
                             // confirmed complete (tombstoned by the first log of
-                            // N+1); cross-check delivered relevant logs vs
-                            // `eth_getLogs` and panic on a websocket drop.
+                            // N+1); the FSM emits the VerifyCompleteness verdict
+                            // (the tracked delivered set); the driver cross-checks
+                            // vs `eth_getLogs` and aborts on a websocket drop.
                             if ws_completeness_enabled {
-                                let delivered = fsm.ws_delivered.remove(&prev).unwrap_or_default();
-                                self.assert_ws_block_complete(prev, delivered).await;
+                                let PumpDecision::VerifyCompleteness {
+                                    block,
+                                    delivered_log_indices,
+                                } = fsm.completeness_decision(prev)
+                                else {
+                                    unreachable!(
+                                        "completeness_decision always emits VerifyCompleteness"
+                                    )
+                                };
+                                self.assert_ws_block_complete(block, delivered_log_indices)
+                                    .await;
                             }
                             let prev_meta = fsm
                                 .block_metadata

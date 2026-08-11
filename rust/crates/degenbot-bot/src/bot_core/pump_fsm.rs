@@ -57,6 +57,16 @@ pub enum PumpDecision {
     /// fresh but no log arrived in the window). The driver emits one diagnostic
     /// warning per silence episode, then re-arms on the next log.
     LogSilence,
+    /// WS-delivery completeness cross-check (DFQYM5 / WS-DROP): a block has
+    /// been tombstoned (confirmed fully delivered); the FSM hands the tracked
+    /// delivered relevant log-index set to the driver, which fetches
+    /// `eth_getLogs` and aborts on any on-chain log the websocket missed. The
+    /// FSM owns *when* to verify (only a complete block); the abort is the
+    /// executor's consequence of the authoritative mismatch.
+    VerifyCompleteness {
+        block: u64,
+        delivered_log_indices: HashSet<u64>,
+    },
 }
 
 impl PumpDecision {
@@ -263,6 +273,21 @@ impl PumpFSM {
         decisions
     }
 
+    /// The WS-completeness verdict decision (DFQYM5 / WS-DROP) at a block's
+    /// tombstone. The FSM owns the rule — only a just-confirmed-complete block
+    /// (`prev`, tombstoned by the first log of N+1) is verified, and only when
+    /// it was actually tracked (a block with no delivered relevant logs has
+    /// nothing to cross-check; the authoritative side is also empty). Hands the
+    /// tracked delivered log-index set to the driver, which runs the `eth_getLogs`
+    /// cross-check and aborts on a live-websocket log drop.
+    #[must_use]
+    pub fn completeness_decision(&mut self, prev: u64) -> PumpDecision {
+        PumpDecision::VerifyCompleteness {
+            block: prev,
+            delivered_log_indices: self.ws_delivered.remove(&prev).unwrap_or_default(),
+        }
+    }
+
     /// The settle-point decision (no new event in the window): the quiesce-
     /// gated publish (ADR-008 D2) when armed, else the inactivity backfill.
     pub fn on_settle(&mut self) -> Vec<PumpDecision> {
@@ -359,6 +384,61 @@ mod tests {
         let d = fsm.on_header(100, meta(100_000), 2_000);
         assert!(d.is_empty());
         assert_eq!(fsm.current_block, before);
+    }
+
+    #[test]
+    fn completeness_decision_verifies_tracked_block_and_clears_it() {
+        let mut fsm = PumpFSM::new(200, 0);
+        // Track delivered relevant log indices for block 201.
+        fsm.ws_delivered.entry(201).or_default().extend([7, 8, 9]);
+
+        // Tombstone → the FSM passes the delivered set to the driver and
+        // clears the tracking map (one-shot: a re-verify yields empty).
+        let PumpDecision::VerifyCompleteness {
+            block,
+            delivered_log_indices,
+        } = fsm.completeness_decision(201)
+        else {
+            panic!("completeness_decision must emit VerifyCompleteness");
+        };
+        assert_eq!(block, 201);
+        assert_eq!(delivered_log_indices, HashSet::from([7, 8, 9]));
+        assert!(!fsm.ws_delivered.contains_key(&201), "tracked set consumed");
+
+        // A block with no tracked relevant logs yields an empty set (the
+        // authoritative side is empty too, so the cross-check is a no-op).
+        let PumpDecision::VerifyCompleteness {
+            delivered_log_indices,
+            ..
+        } = fsm.completeness_decision(202)
+        else {
+            unreachable!()
+        };
+        assert!(delivered_log_indices.is_empty());
+    }
+
+    #[test]
+    fn reorg_routing_owned_by_clock_classification() {
+        // Reorg routing is FSM state: the clock (part of the FSM) classifies
+        // removed logs into an unwind window (enter → continue → close). The
+        // driver only executes the classified routing against the coordinator.
+        let mut fsm = PumpFSM::new(200, 0);
+        use crate::bot_core::block_clock::LogDecision;
+        // Enter: a removed:true log opens the reorg window at its block.
+        assert!(matches!(
+            fsm.clock.observe_log(201, true),
+            LogDecision::EnterReorg(_)
+        ));
+        // Continue: a further removed log in the same window.
+        assert!(matches!(
+            fsm.clock.observe_log(201, true),
+            LogDecision::ContinueReorg
+        ));
+        // Close: the window ends and forward tracking resumes from a new head.
+        assert!(matches!(
+            fsm.clock.observe_log(202, false),
+            LogDecision::CloseReorg { .. }
+        ));
     }
 
     #[test]
