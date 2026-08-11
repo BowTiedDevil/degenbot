@@ -399,7 +399,7 @@ mod tests {
             delivered_log_indices,
         } = fsm.completeness_decision(201)
         else {
-            panic!("completeness_decision must emit VerifyCompleteness");
+            unreachable!("completeness_decision must emit VerifyCompleteness");
         };
         assert_eq!(block, 201);
         assert_eq!(delivered_log_indices, HashSet::from([7, 8, 9]));
@@ -419,11 +419,11 @@ mod tests {
 
     #[test]
     fn reorg_routing_owned_by_clock_classification() {
+        use crate::bot_core::block_clock::LogDecision;
         // Reorg routing is FSM state: the clock (part of the FSM) classifies
         // removed logs into an unwind window (enter → continue → close). The
         // driver only executes the classified routing against the coordinator.
         let mut fsm = PumpFSM::new(200, 0);
-        use crate::bot_core::block_clock::LogDecision;
         // Enter: a removed:true log opens the reorg window at its block.
         assert!(matches!(
             fsm.clock.observe_log(201, true),
@@ -588,7 +588,7 @@ fn drain_decision_anchor_follows_log_driven_block_not_racing_header() {
     fsm.clock.log_received(101);
     fsm.clock.log_applied(101);
     let PumpDecision::Drain { block, .. } = fsm.drain_decision(100) else {
-        panic!("drain_decision must emit a Drain");
+        unreachable!("drain_decision must emit a Drain");
     };
     assert_eq!(
         block, 101,

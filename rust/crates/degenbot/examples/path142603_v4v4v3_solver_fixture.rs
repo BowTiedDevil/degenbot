@@ -24,6 +24,7 @@
 //!     `liq = 1_018_741_430_873` while on-chain = `718_152_690_765` — a
 //!     ~3.05e11 `ModifyLiquidity` removal at ~block 25720300 was NOT applied;
 //!     solver liq is frozen at the pre-removal value, ~3,300 blocks stale.
+//!
 //! This is a **staged-clock desync** (two-stamp OB7UNY): the price clock
 //! (`update_block`) reached the solve block via swap incorporation while the
 //! **liquidity clock** (`tick_data_block`, observed 25722568) did not — and
@@ -71,7 +72,7 @@ fn main() {
     let v4_a_proto: Option<u32> = std::env::var("FIXTURE_V4_A_PROTO_FEE")
         .ok()
         .map(|s| s.parse().unwrap());
-    let v4_b_proto: Option<u32> = std::env::var("FIXTURE_V4_B_PROTO_FEE")
+    let v4_b_proto_fee: Option<u32> = std::env::var("FIXTURE_V4_B_PROTO_FEE")
         .ok()
         .map(|s| s.parse().unwrap());
     let v3_c_sqrt: Option<U256> = std::env::var("FIXTURE_V3_C_SQRT")
@@ -112,7 +113,7 @@ fn main() {
     let engine = ArbitrageEngine::new();
     let a_id = register_v4_with(&mut engine.core().write(), &p_a, v4_a_proto)
         .unwrap_or_else(|e| panic!("{e}"));
-    let b_id = register_v4_with(&mut engine.core().write(), &p_b, v4_b_proto)
+    let b_id = register_v4_with(&mut engine.core().write(), &p_b, v4_b_proto_fee)
         .unwrap_or_else(|e| panic!("{e}"));
     let c_id = register_v3_with(&mut engine.core().write(), &p_c, v3_c_sqrt, v3_c_tick)
         .unwrap_or_else(|e| panic!("{e}"));
