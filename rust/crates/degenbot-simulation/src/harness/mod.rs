@@ -47,6 +47,9 @@ use crate::oracle::{
     set_disable_nonce_check, set_tx_gas_limit_cap, transact, FixtureEvm, TxSpec, Verdict,
 };
 
+pub mod declarative;
+pub use declarative::{assert_profitable, ChainResult, Hop, HopPool};
+
 /// Repo root = this crate + three up.
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
