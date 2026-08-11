@@ -26,5 +26,5 @@ def next_base_fee(
 
     Returns:
         The computed next base fee in wei.
+
     """
-    ...

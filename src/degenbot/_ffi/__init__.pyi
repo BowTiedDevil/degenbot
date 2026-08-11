@@ -45,9 +45,9 @@ from . import curve_math as curve_math
 from . import db as db
 from . import deployments as deployments
 from . import dex_identity as dex_identity
+from . import evm_math as evm_math
 from . import executor as executor
 from . import fork as fork
-from . import evm_math as evm_math
 from . import pool as pool
 from . import price as price
 from . import provider as provider

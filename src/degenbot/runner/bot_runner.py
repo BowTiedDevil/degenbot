@@ -28,7 +28,7 @@ import asyncio
 import contextlib
 import gc
 import signal
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Self, cast
 
