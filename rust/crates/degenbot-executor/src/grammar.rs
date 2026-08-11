@@ -493,8 +493,6 @@ fn v3_v2_v2(
     hc: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
     if inputs.hop_outputs.contains(&0) {
         return None;
     }
@@ -507,10 +505,19 @@ fn v3_v2_v2(
     let v2c_idx = at.add(hc.pool_address).ok()?;
     let v3a_idx = at.add(ha.pool_address).ok()?;
 
-    let mut a_fwd = encoders::enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, v2c_idx).ok()?;
-    a_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, SENTINEL_SELF).ok()?,
-    );
+    // Both V2 hops (b, then terminal c) encode as V2_SWAP_CALC (swap from delta
+    // actually delivered to the pool) rather than V2_SWAP_DIRECT exact-out with
+    // the raw solver hop_outputs. The V3 a-hop's output can deliver 1 wei less
+    // than the solver forward (CL twin/clamp), so an exact-out on b (and hence
+    // on c) over-draws by 1 input wei -> `UniswapV2: K` (path-110302/182449
+    // class; see the sibling v4_v4_v2 / v3_v4_v2 composers).
+    let mut a_fwd = encoders::enc_v2_swap_calc(v2b_idx, hb.zfo, v2c_idx, hb.fee);
+    a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2c_idx,
+        hc.zfo,
+        SENTINEL_SELF,
+        hc.fee,
+    ));
     a_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, inputs.optimal_input).ok()?,
     );
@@ -561,7 +568,6 @@ fn v3_v3_v2(
     hc: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    let out_c = inputs.hop_outputs[2];
     if inputs.hop_outputs.contains(&0) {
         return None;
     }
@@ -577,7 +583,11 @@ fn v3_v3_v2(
     let v2c_idx = at.add(hc.pool_address).ok()?;
     let v3a_idx = at.add(ha.pool_address).ok()?;
 
-    let mut v3a_fwd = encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, SENTINEL_SELF).ok()?;
+    // Terminal V2 hop: swap from the USDT the V3 b-hop actually delivered to
+    // the pool (V2_SWAP_CALC), not the raw exact-out hop_outputs[2] — the CL
+    // b-hop output can be 1 wei below the solver forward, so an exact-out
+    // over-draws by 1 input wei -> `UniswapV2: K` (path-110302/182449 class).
+    let mut v3a_fwd = encoders::enc_v2_swap_calc(v2c_idx, hc.zfo, SENTINEL_SELF, hc.fee);
     v3a_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, inputs.optimal_input).ok()?,
     );
@@ -2272,7 +2282,6 @@ fn v4_v3_v2(
     let weth_address = inputs.weth_address;
 
     let out_a = hop_outputs[0];
-    let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -2313,9 +2322,17 @@ fn v4_v3_v2(
     let v2c_idx = at.add(hc.pool_address).ok()?;
 
     let mut b_fwd = encoders::enc_v4_take_compact(forward_a_idx, v3b_idx, out_a).ok()?;
-    b_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, SENTINEL_SELF).ok()?,
-    );
+    // Terminal V2 hop: swap from the USDT the V3 b-hop actually delivered to
+    // the pool (V2_SWAP_CALC), not the raw exact-out `out_c` (=hop_outputs[2]).
+    // The CL b-hop output can be 1 wei below the solver forward, so an exact-out
+    // over-draws by 1 input wei -> `UniswapV2: K` (path-110302/182449 class; see
+    // the sibling v4_v4_v2 / v3_v4_v2 composers).
+    b_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2c_idx,
+        hc.zfo,
+        SENTINEL_SELF,
+        hc.fee,
+    ));
 
     let mut inner = encoders::enc_v4_swap_compact(
         c0_a_idx,
@@ -2515,7 +2532,6 @@ fn v4_v4_v2(
     let weth_address = inputs.weth_address;
 
     let out_b = hop_outputs[1];
-    let out_c = hop_outputs[2];
     if hop_outputs.contains(&0) {
         return None;
     }
@@ -2551,9 +2567,15 @@ fn v4_v4_v2(
     let ts_b = i16::try_from(hb.tick_spacing).ok()?;
 
     // Inline add() in Python execution order (forward_b, P2C, V4a currencies, V4b currencies).
-    let c_cmd =
-        encoders::enc_v2_swap_direct(at.add(hc.pool_address).ok()?, hc.zfo, out_c, SENTINEL_SELF)
-            .ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+    // Terminal V2 hop (hc): encode as V2_SWAP_CALC (swap from whatever USDT the
+    // V4 b-hop take_compact actually minted into the pool) rather than
+    // V2_SWAP_DIRECT with the solver's raw hop_outputs[2]. The Möbius solver
+    // emits getAmountOut(consumed_inputs[2] + 1) — one input wei above the
+    // byte-exact twin — so an exact-out amount0Out=hop_outputs[2] over-draws by
+    // 1 wei and trips `UniswapV2: K` (path-182449; mirrors the already-fixed
+    // v3_v4_v2 composer, path-110302 / 460f23bf).
+    let c_cmd = encoders::enc_v2_swap_calc(v2c_idx, hc.zfo, SENTINEL_SELF, hc.fee);
 
     let mut inner = encoders::enc_v4_swap_compact(
         at.add(ha.currency0_address).ok()?,
@@ -2577,9 +2599,7 @@ fn v4_v4_v2(
         )
         .ok()?,
     );
-    inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(forward_b_idx, at.add(hc.pool_address).ok()?, out_b).ok()?,
-    );
+    inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v2c_idx, out_b).ok()?);
     inner.extend_from_slice(&c_cmd);
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
 

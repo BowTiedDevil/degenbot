@@ -818,8 +818,9 @@ fn parity_v3_v2_v2() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a flash → V2b → V2c. V3a callback: V2b direct, V2c direct, then WETH
-    // repays V3a.
+    // V3a flash → V2b → V2c. V3a callback: V2b calc, V2c calc, then WETH
+    // repays V3a. (Terminal + CL-fed V2 hops are V2_SWAP_CALC, not
+    // V2_SWAP_DIRECT — 1-wei exact-out K over-draw class.)
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), None);
     let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
@@ -833,13 +834,8 @@ fn parity_v3_v2_v2() {
         .add(address!("4444444444444444444444444444444444444444"))
         .unwrap(); // 2
     let mut a_fwd = Vec::new();
-    a_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2b_idx, true, 2_001_000_000_000_000_000u128, v2c_idx)
-            .unwrap(),
-    );
-    a_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2c_idx, true, 2_001_000_000u128, executor_idx).unwrap(),
-    );
+    a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2b_idx, true, v2c_idx, 30));
+    a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2c_idx, true, executor_idx, 30));
     a_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(weth_idx, v3a_idx, 1_000_000_000_000_000_000u128).unwrap(),
     );
@@ -1076,8 +1072,9 @@ fn parity_v3_v3_v2() {
         address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         EncodeOptions::default(),
     );
-    // V3a → V3b → V2c. V3a callback: V2c direct to executor, then WETH repays
-    // V3a. V3b is nested inside V3a's forward_data.
+    // V3a → V3b → V2c. V3a callback: V2c calc to executor, then WETH repays
+    // V3a. V3b is nested inside V3a's forward_data. (Terminal V2 is
+    // V2_SWAP_CALC, not V2_SWAP_DIRECT — 1-wei exact-out K over-draw class.)
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), None);
     let weth_idx = SENTINEL_WETH;
     let executor_idx = SENTINEL_SELF;
@@ -1091,9 +1088,7 @@ fn parity_v3_v3_v2() {
         .add(address!("5555555555555555555555555555555555555555"))
         .unwrap(); // 2
     let mut v3a_fwd = Vec::new();
-    v3a_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2c_idx, true, 2_001_000_000u128, executor_idx).unwrap(),
-    );
+    v3a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2c_idx, true, executor_idx, 30));
     v3a_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(weth_idx, v3a_idx, 1_000_000_000_000_000_000u128).unwrap(),
     );
@@ -1890,7 +1885,8 @@ fn parity_v4_v3_v2() {
         EncodeOptions::default(),
     );
     // V4a→V3b→V2c, all inside one V4_UNLOCK. Inner = swap_compact(A) +
-    // V3_SWAP_COMPACT(b: V4_TAKE_COMPACT(USDC→V3b) + V2_DIRECT(c→executor)) + settle_delta(WETH).
+    // V3_SWAP_COMPACT(b: V4_TAKE_COMPACT(USDC→V3b) + V2_CALC(c→executor)) + settle_delta(WETH).
+    // Terminal V2 is V2_SWAP_CALC, not V2_SWAP_DIRECT (1-wei exact-out K over-draw).
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let executor_idx = SENTINEL_SELF;
     let v3b_idx = at
@@ -1905,9 +1901,7 @@ fn parity_v4_v3_v2() {
         .unwrap();
     let mut b_fwd =
         encoders::enc_v4_take_compact(forward_a_idx, v3b_idx, 2_000_000_000u128).unwrap();
-    b_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2c_idx, true, 2_001_000_000u128, executor_idx).unwrap(),
-    );
+    b_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2c_idx, true, executor_idx, 30));
     let mut inner = encoders::enc_v4_swap_compact(
         c0_a_idx,
         c1_a_idx,
@@ -2150,15 +2144,17 @@ fn parity_v4_v4_v2() {
         EncodeOptions::default(),
     );
     // V4a→V4b→V2c, all inside one V4_UNLOCK. Inner = swap_compact(A) +
-    // swap_compact(B) + take_compact(WETH→V2c) + V2_DIRECT(c→executor) + settle_all.
+    // swap_compact(B) + take_compact(WETH→V2c) + V2_SWAP_CALC(c→executor) + settle_all.
+    // Terminal V2 hop is V2_SWAP_CALC (exact-output via hopper), matching the
+    // production `v3_v4_v2`/`v4_v4_v2` composers — not V2_SWAP_DIRECT (460f23bf
+    // / path-182449 closes the 1-wei exact-out K over-draw).
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let executor_idx = SENTINEL_SELF;
     let forward_b_idx = at.add(WETH).unwrap(); // V4b output (zfo→currency1) → SENTINEL_WETH
     let v2c_idx = at
         .add(address!("3333333333333333333333333333333333333333"))
         .unwrap();
-    let c_cmd =
-        encoders::enc_v2_swap_direct(v2c_idx, true, 2_001_000_000u128, executor_idx).unwrap();
+    let c_cmd = encoders::enc_v2_swap_calc(v2c_idx, true, executor_idx, 30);
     let c0_a_idx = at.add(WETH).unwrap();
     let c1_a_idx = at.add(USDC).unwrap();
     let c0_b_idx = at.add(USDC).unwrap();
