@@ -41,6 +41,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::bot_core::pump_fsm::PumpFSM;
+
 use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
 use degenbot_solvers::mixed::HopType;
@@ -921,7 +923,7 @@ impl BlockPump {
     /// `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes). Also shuts
     /// down on a
     /// late-forward log on a tombstoned block (unreliable WS, ADR-008 D3).
-    #[expect(unused_assignments, clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[tracing::instrument(skip(self, combined), fields(first_observed_block))]
     pub async fn run_with_stream(
         &mut self,
@@ -994,12 +996,15 @@ impl BlockPump {
         // race past the backfill window.
         self.sink.set_solve_anchor(current_block);
         // Whether we're past the first header after resume. The first
+        // Epic A1: the pump's decision state now lives in the PumpFSM; the
+        // driver routes the decision arms through it. `current_block` seeds the FSM.
+        let mut fsm = PumpFSM::new(current_block, 0);
         // header establishes our anchor but shouldn't trigger a solve
         // (backfill already solved up to this point).
-        let mut first_header = true;
+
         // Current block metadata — updated from headers, used for
         // solve batches when logs close out a block.
-        let mut current_metadata: BlockMetadata = BlockMetadata::default();
+
         // WS-delivery completeness tracker (see `assert_ws_block_complete`):
         // the set of relevant-topic log indices delivered per block, cross-
         // checked against `eth_getLogs` at the block's tombstone to panic on a
@@ -1008,8 +1013,7 @@ impl BlockPump {
         // populated when the gate is on (so the hot loop adds no work when
         // disabled).
         let ws_completeness_enabled = self.ws_completeness_enabled;
-        let mut ws_delivered: std::collections::HashMap<u64, std::collections::HashSet<u64>> =
-            std::collections::HashMap::new();
+
         // `has_logs_this_block` is engine-owned since LEZJAS — driven through
         // `self.sink.record_logs_this_block()` (cleared by `finalize_block`).
         // Debounce timer: started when the first dirty log arrives, reset on
@@ -1017,46 +1021,43 @@ impl BlockPump {
         // to Python. This ensures one dispatch per burst of logs rather than
         // one per individual log.
         // ADR-008 D2: solver-release gate (see the flush in the Err + Ok(None) arms
-        // below). `publish_pending` is armed when a forward log applies; the
+        // below). `fsm.publish_pending` is armed when a forward log applies; the
         // flush fires `on_send` (gated on `consume_quiesced`) at a settle
         // point — a `DEBOUNCE_MS` window with no new event (coalescing a
         // same-block burst into one publish at the tail) OR stream exhaustion.
-        // Replaces the wall-clock `DEBOUNCE_MS` send timer: publication is
+        // Replaces the wall-fsm.clock `DEBOUNCE_MS` send timer: publication is
         // gated on the truth condition (all dispatched logs applied).
-        let mut publish_pending = false;
 
-        // BQ7ZBC — FSM recovery state: `recovery_anchor` is the highest block an
+        // BQ7ZBC — FSM recovery state: `fsm.recovery_anchor` is the highest block an
         // authoritative (eth_getLogs) catch-up has OWNEed — either a live-loop
         // gap/`handle_timeout_eager` backfill, or (at resume) the backfilled
         // snapshot→WS first block. Per the single-writer rule (DFQYM5
-        // precedent), the live WS NO LONGER owns any block ≤ `recovery_anchor`:
+        // precedent), the live WS NO LONGER owns any block ≤ `fsm.recovery_anchor`:
         // when a stalled WS recovers and flushes buffered forward logs for
         // those blocks, they are duplicates of state we already applied and are
         // dropped (they never reach the `PanicLateForward` hard fault). Reorg
         // logs (`removed: true`) are NEVER dropped — they always reach the
-        // reorg classifier. A forward ABOVE `recovery_anchor` that is stale
+        // reorg classifier. A forward ABOVE `fsm.recovery_anchor` that is stale
         // still faults (ADR-008 D3): only blocks the pump itself backfilled are
         // benign duplicates by construction.
-        let mut recovery_anchor: u64 = 0;
 
-        // ADR-008 per-block state machine. The clock is the authority for
+        // ADR-008 per-block state machine. The fsm.clock is the authority for
         // block completeness (the tombstone) and the cursor; the pump loop is
         // a thin async driver translating its decisions into sink calls +
         // backfill + shutdown. A header alone NEVER advances the cursor —
         // only `advance_to_drained` (after the tombstone) does.
-        let mut clock = BlockClock::new();
-        // 3M5PO5: share the clock's tombstone cutoff with BotState so the
+
+        // 3M5PO5: share the fsm.clock's tombstone cutoff with BotState so the
         // registration drain reads the SAME "highest fully-delivered block"
-        // the pump's clock tracks (no buffer-local shadow marker).
+        // the pump's fsm.clock tracks (no buffer-local shadow marker).
         self.bot
             .state_arc()
             .write()
-            .set_pump_complete_cutoff(clock.highest_applied_handle());
+            .set_pump_complete_cutoff(fsm.clock.highest_applied_handle());
         // Per-block metadata, snapshotted from each block's header. A block's
         // tombstone (first log for N+1) may arrive AFTER header N+1 overwrote
-        // `current_metadata`, so the result batch that finalizes N must carry
+        // `fsm.current_metadata`, so the result batch that finalizes N must carry
         // N's OWN metadata, retrieved here (VTWCIG).
-        let mut block_metadata: HashMap<u64, BlockMetadata> = HashMap::new();
 
         // [DIAG] newHeads-stall counters (JIABO3: `last_header_at` is shared
         // with the header-staleness watchdog below — not DIAG-only).
@@ -1165,24 +1166,24 @@ impl BlockPump {
             {
                 if self.sink.has_dirty_paths() {
                     // Pump-owned ACTIVE BLOCK promotion (QMSTSV/BO5FBS):
-                    // `current_block` is newHead+log driven (the promote
+                    // `fsm.current_block` is newHead+log driven (the promote
                     // signal — a push WS cannot prove the last event for a
                     // block arrived, so the new head IS the promote signal),
                     // but on a header stall ordered backfill advances the
-                    // state clock past it. The solve anchor must never be
+                    // state fsm.clock past it. The solve anchor must never be
                     // below the state it solves against (MQIZ5M +1-wei / IIA
                     // class), so promote active_block = max(anchor,
                     // pool_state_head()) ONCE here — the single pump-owned
                     // transition that on_drain/solve/verify/sim all derive
-                    // from. `pool_state_head` is the state clock (max
+                    // from. `pool_state_head` is the state fsm.clock (max
                     // update_block); the max catches the pump up on a stall.
                     // This also makes the solver's internal re-anchor a
                     // defensive no-op.
                     //
                     // Solver-release gate (ADR-008 D2 realization): the solve
                     // anchor is the LOG-DRIVEN settled block
-                    // (`clock.latest_observed()`, `open_block` — headers do
-                    // NOT advance it), falling back to the header `current_block`
+                    // (`fsm.clock.latest_observed()`, `open_block` — headers do
+                    // NOT advance it), falling back to the header `fsm.current_block`
                     // only when no block logs are open yet. This is the
                     // "move the debounce gate to the solver" design: never
                     // solve a block whose event burst has not settled — a
@@ -1191,13 +1192,13 @@ impl BlockPump {
                     // pool pre-in-block-swap (the 0x99ac8c false-abort). The
                     // `pool_state_head` max keeps the backfill-ahead semantics.
                     let active_block = solve_anchor(
-                        clock.latest_observed(),
-                        current_block,
+                        fsm.clock.latest_observed(),
+                        fsm.current_block,
                         self.bot.state_arc().read().pool_state_head(),
                     );
                     dispatch.dispatch(DrainWork::Drain {
                         block: active_block,
-                        metadata: current_metadata,
+                        metadata: fsm.current_metadata,
                     });
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
@@ -1205,12 +1206,12 @@ impl BlockPump {
                 }
             }
 
-            // ADR-008 D2: solver-release gate. `publish_pending` is set when a forward
+            // ADR-008 D2: solver-release gate. `fsm.publish_pending` is set when a forward
             // log applies (block becomes quiesced). The flush below fires
             // `on_send` (gated on `consume_quiesced`) only at a settle point —
             // a timeout with no new event (coalescing a same-block burst into
             // one publish at the tail) OR stream exhaustion. This replaces the
-            // wall-clock `DEBOUNCE_MS` send timer: publication is gated on the
+            // wall-fsm.clock `DEBOUNCE_MS` send timer: publication is gated on the
             // truth condition (all dispatched logs applied), not schedule.
 
             // Check shutdown
@@ -1224,7 +1225,7 @@ impl BlockPump {
             // arrives (coalescing a same-block burst); otherwise the long
             // inactivity backfill window. A new event arriving before the
             // window elapses cancels the flush (the burst is still in flight).
-            let wait_timeout = if publish_pending {
+            let wait_timeout = if fsm.publish_pending {
                 Duration::from_millis(DEBOUNCE_MS)
             } else {
                 Duration::from_secs(BACKFILL_TIMEOUT_SECS)
@@ -1242,11 +1243,11 @@ impl BlockPump {
                 _ = staleness_tick.tick() => {
                     if last_header_at.elapsed() >= self.header_staleness {
                         self.handle_timeout_eager(
-                            &mut current_block,
-                            &mut clock,
-                            &mut block_metadata,
-                            &mut publish_pending,
-                            &mut recovery_anchor,
+                            &mut fsm.current_block,
+                            &mut fsm.clock,
+                            &mut fsm.block_metadata,
+                            &mut fsm.publish_pending,
+                            &mut fsm.recovery_anchor,
                         )
                         .await;
                     } else if last_log_at.elapsed() >= self.log_silence {
@@ -1276,9 +1277,9 @@ impl BlockPump {
                 // quiesce-gated publish, OR (if nothing pending) the 60s
                 // inactivity backfill path.
                 Err(_) => {
-                    if publish_pending {
-                        if let Some(open) = clock.latest_observed() {
-                            if clock.consume_quiesced(open) {
+                    if fsm.publish_pending {
+                        if let Some(open) = fsm.clock.latest_observed() {
+                            if fsm.clock.consume_quiesced(open) {
                                 // Option-A solver-state accuracy gate (AV42C7):
                                 // publish on_send to Python, then hand the
                                 // quiesced `open` block + its change set to the
@@ -1290,20 +1291,20 @@ impl BlockPump {
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
                                 dispatch.dispatch(DrainWork::Publish {
                                     open,
-                                    metadata: current_metadata,
+                                    metadata: fsm.current_metadata,
                                     change_set,
                                 });
                             }
                         }
-                        publish_pending = false;
+                        fsm.publish_pending = false;
                     } else {
                         // No activity for 60s — try to backfill
                         self.handle_timeout_eager(
-                            &mut current_block,
-                            &mut clock,
-                            &mut block_metadata,
-                            &mut publish_pending,
-                            &mut recovery_anchor,
+                            &mut fsm.current_block,
+                            &mut fsm.clock,
+                            &mut fsm.block_metadata,
+                            &mut fsm.publish_pending,
+                            &mut fsm.recovery_anchor,
                         )
                         .await;
                     }
@@ -1339,11 +1340,11 @@ impl BlockPump {
                     }
                     last_header_at = tokio::time::Instant::now();
                     // Snapshot the just-finished block's metadata BEFORE
-                    // overwriting `current_metadata` with the incoming
-                    // header's. `current_metadata` at this point holds the
-                    // metadata of `current_block` (set when ITS header arrived
+                    // overwriting `fsm.current_metadata` with the incoming
+                    // header's. `fsm.current_metadata` at this point holds the
+                    // metadata of `fsm.current_block` (set when ITS header arrived
                     // and held through that block's log processing), so the
-                    // batch that finalizes `current_block` must carry THAT
+                    // batch that finalizes `fsm.current_block` must carry THAT
                     // metadata — NOT the incoming header's. Passing the
                     // post-overwrite value here would make Python compute
                     // `base_fee_next` from the wrong block and submit
@@ -1351,79 +1352,79 @@ impl BlockPump {
                     // metadata (assigned just below) drives the empty-block
                     // send path, which is correctly about the NEW block.
                     // ADR-008: a header alone NEVER finalizes/drain. The
-                    // clock records the block's metadata (so a later
+                    // fsm.clock records the block's metadata (so a later
                     // tombstone-driven finalize carries the CORRECT block's
                     // metadata — the tombstone log for N+1 may arrive AFTER
-                    // header N+1, at which point `current_metadata` would
+                    // header N+1, at which point `fsm.current_metadata` would
                     // already hold N+1's). `notify_block` still fires so
-                    // Python's block clock tracks `newHeads`.
-                    current_metadata = BlockMetadata {
+                    // Python's block fsm.clock tracks `newHeads`.
+                    fsm.current_metadata = BlockMetadata {
                         timestamp,
                         base_fee_per_gas,
                         gas_used,
                         gas_limit,
                     };
-                    let header_decision = clock.observe_header(number);
+                    let header_decision = fsm.clock.observe_header(number);
                     if matches!(header_decision, HeaderDecision::Stale) {
                         // duplicate/stale header — ignore
                         continue;
                     }
                     // Snapshot this block's metadata so its (deferred)
                     // tombstone-finalize carries the correct block's metadata.
-                    block_metadata.insert(number, current_metadata);
+                    fsm.block_metadata.insert(number, fsm.current_metadata);
 
-                    let is_first_header = first_header;
+                    let is_first_header = fsm.first_header;
                     if is_first_header {
                         // First header after backfill. The backfill already
                         // solved up to this point — just record the anchor and
                         // skip solving. Set up for normal operation.
-                        if number > current_block {
-                            if number > current_block + 1 {
+                        if number > fsm.current_block {
+                            if number > fsm.current_block + 1 {
                                 tracing::info!(
-                                    from_block = current_block + 1,
+                                    from_block = fsm.current_block + 1,
                                     to_block = number,
                                     "BlockPump: gap from block to block — backfilling"
                                 );
                                 self.backfill_range(
-                                    current_block + 1,
+                                    fsm.current_block + 1,
                                     number - 1,
-                                    &mut current_block,
-                                    &mut clock,
-                                    &mut block_metadata,
-                                    &mut publish_pending,
+                                    &mut fsm.current_block,
+                                    &mut fsm.clock,
+                                    &mut fsm.block_metadata,
+                                    &mut fsm.publish_pending,
                                 )
                                 .await;
                                 // BQ7ZBC — FSM RESET: the header-gap backfill
                                 // now owns `[old+1, number-1]`; a recovering WS
                                 // flushing buffered logs for that range must be
                                 // discarded (single-writer), not re-asserted.
-                                recovery_anchor = recovery_anchor.max(number - 1);
+                                fsm.recovery_anchor = fsm.recovery_anchor.max(number - 1);
                             }
-                            current_block = number;
+                            fsm.current_block = number;
                             // LEZJAS: the backfill path solved up to `number`
                             // already; mark it solved on the engine so the next
                             // `finalize_block` guard no-ops for this block.
                             self.sink.set_last_solved_block(number);
-                            dispatch.notify_block(current_block, &current_metadata);
+                            dispatch.notify_block(fsm.current_block, &fsm.current_metadata);
                         }
-                        first_header = false;
-                    } else if number > current_block {
+                        fsm.first_header = false;
+                    } else if number > fsm.current_block {
                         // New block header, but the previous block is NOT
                         // finalized here — only the tombstone (first log for
                         // N+1) closes it (ADR-008 D1). Gap backfill still runs.
-                        if number > current_block + 1 {
+                        if number > fsm.current_block + 1 {
                             tracing::info!(
-                                from_block = current_block + 1,
+                                from_block = fsm.current_block + 1,
                                 to_block = number,
                                 "BlockPump: gap from block to block — backfilling"
                             );
                             self.backfill_range(
-                                current_block + 1,
+                                fsm.current_block + 1,
                                 number - 1,
-                                &mut current_block,
-                                &mut clock,
-                                &mut block_metadata,
-                                &mut publish_pending,
+                                &mut fsm.current_block,
+                                &mut fsm.clock,
+                                &mut fsm.block_metadata,
+                                &mut fsm.publish_pending,
                             )
                             .await;
                             // BQ7ZBC — FSM RESET: extend the single-writer
@@ -1431,11 +1432,11 @@ impl BlockPump {
                             // catch-up (see the first-header branch above — the
                             // range this backfill owns must not be re-asserted
                             // by the recovering WS).
-                            recovery_anchor = recovery_anchor.max(number - 1);
+                            fsm.recovery_anchor = fsm.recovery_anchor.max(number - 1);
                         }
 
-                        current_block = number;
-                        dispatch.notify_block(current_block, &current_metadata);
+                        fsm.current_block = number;
+                        dispatch.notify_block(fsm.current_block, &fsm.current_metadata);
                     }
                     // The `PendingSuccessor` / `OpenNew` decisions carry no
                     // pump action beyond the above — the liveness-probe signal
@@ -1470,9 +1471,9 @@ impl BlockPump {
                         continue;
                     }
 
-                    let log_block = log.block_number.unwrap_or(current_block);
+                    let log_block = log.block_number.unwrap_or(fsm.current_block);
                     // BQ7ZBC — FSM single-writer recovery discard. After an
-                    // authoritative eth_getLogs catch-up (`recovery_anchor`), a
+                    // authoritative eth_getLogs catch-up (`fsm.recovery_anchor`), a
                     // stalled WS that recovers flushes buffered forward logs for
                     // blocks ≤ the anchor — those are duplicates of state the
                     // backfill already applied and are DROPPED (they never reach
@@ -1480,10 +1481,10 @@ impl BlockPump {
                     // resume-boundary rule, generalized to mid-run recovery.
                     // Reorg logs (`removed: true`) are NEVER dropped — they must
                     // reach the reorg classifier to unwind the backfilled range.
-                    // A forward ABOVE `recovery_anchor` that is still stale
+                    // A forward ABOVE `fsm.recovery_anchor` that is still stale
                     // remains a hard ADR-008 D3 fault (only the pump's own
                     // single-writer range is benign).
-                    if !log.removed && recovery_anchor > 0 && log_block <= recovery_anchor {
+                    if !log.removed && fsm.recovery_anchor > 0 && log_block <= fsm.recovery_anchor {
                         continue;
                     }
                     // Boundary-block delivery alignment (DFQYM5): when the
@@ -1495,7 +1496,7 @@ impl BlockPump {
                     // after it engaged (observed: 6 of 35 at the boundary).
                     // Those partial duplicates must NOT be re-applied
                     // (double-apply → state corruption), and must not re-anchor
-                    // the clock at W (which would tombstone W and trip the
+                    // the fsm.clock at W (which would tombstone W and trip the
                     // WS-completeness check on a block the backfill owns, not
                     // the WS). Drop any WS log for block ≤ W when backfill
                     // covered W — this is the single-writer rule: backfill owns
@@ -1512,18 +1513,18 @@ impl BlockPump {
                     // on to keep the default hot loop at zero-cost.
                     if ws_completeness_enabled {
                         if let Some(li) = log.log_index {
-                            ws_delivered.entry(log_block).or_default().insert(li);
+                            fsm.ws_delivered.entry(log_block).or_default().insert(li);
                         }
                     }
 
                     // ADR-008: route the log via the per-block state machine.
-                    // The clock decides whether this is a forward dispatch, a
+                    // The fsm.clock decides whether this is a forward dispatch, a
                     // tombstone (first removed:false log for N+1), a reorg
                     // signal, or an unreliable-WS late forward (→ shutdown).
-                    let log_decision = clock.observe_log(log_block, log.removed);
+                    let log_decision = fsm.clock.observe_log(log_block, log.removed);
                     // Per-pool trace: log EVERY relevant-topic WS log for the
                     // `DEGENBOT_DRAIN_DBG` pool — block, log-index, tx-index,
-                    // topic0, removed, and the clock decision — so the
+                    // topic0, removed, and the fsm.clock decision — so the
                     // delivery order of same-block Mint/Burn logs is visible
                     // against the registration drain+pin that follows. No-op
                     // for other pools / when the env var is unset.
@@ -1566,7 +1567,7 @@ impl BlockPump {
                             }
                             // Cancel any pending publish: results accumulated
                             // from pre-reorg state are invalid.
-                            publish_pending = false;
+                            fsm.publish_pending = false;
                             continue;
                         }
                         LogDecision::ContinueReorg => {
@@ -1583,7 +1584,7 @@ impl BlockPump {
                                 self.shutdown.store(true, Ordering::Relaxed);
                                 return;
                             }
-                            publish_pending = false;
+                            fsm.publish_pending = false;
                             continue;
                         }
                         LogDecision::CloseReorg { new_head } => {
@@ -1594,14 +1595,14 @@ impl BlockPump {
                                 new_head,
                                 "BlockPump: reorg window closed — resuming forward tracking"
                             );
-                            current_block = new_head;
-                            publish_pending = false;
+                            fsm.current_block = new_head;
+                            fsm.publish_pending = false;
                             // Fall through to dispatch this forward log.
                         }
                         LogDecision::TombstonePrevious(prev) => {
                             // First removed:false log for N+1 → tombstone N.
                             // Finalize N with N's OWN metadata (snapshotted
-                            // when N's header arrived), not current_metadata
+                            // when N's header arrived), not fsm.current_metadata
                             // which may now hold N+1's — VTWCIG. The terminal
                             // publish (finalize_block) supersedes any pending
                             // quiesce publish for the open block.
@@ -1613,9 +1614,9 @@ impl BlockPump {
                             // registration drain+pin cannot capture a
                             // half-delivered `prev` (the rolling-start race
                             // where a later same-block log lands after the pin).
-                            publish_pending = false;
+                            fsm.publish_pending = false;
                             // 3M5PO5: no explicit `mark_pump_blocks_complete`
-                            // here — the clock's own `tombstone(prev)` (inside
+                            // here — the fsm.clock's own `tombstone(prev)` (inside
                             // `observe_log`) already advanced the shared cutoff
                             // the registration drain reads.
                             // LOUD WS-completeness check: block `prev` is now
@@ -1623,32 +1624,33 @@ impl BlockPump {
                             // N+1); cross-check delivered relevant logs vs
                             // `eth_getLogs` and panic on a websocket drop.
                             if ws_completeness_enabled {
-                                let delivered = ws_delivered.remove(&prev).unwrap_or_default();
+                                let delivered = fsm.ws_delivered.remove(&prev).unwrap_or_default();
                                 self.assert_ws_block_complete(prev, delivered).await;
                             }
-                            let prev_meta = block_metadata
+                            let prev_meta = fsm
+                                .block_metadata
                                 .get(&prev)
                                 .copied()
-                                .unwrap_or(current_metadata);
+                                .unwrap_or(fsm.current_metadata);
                             dispatch.dispatch(DrainWork::Finalize {
                                 block: prev,
                                 metadata: prev_meta,
                             });
-                            clock.advance_to_drained(prev);
-                            if log_block > current_block {
-                                current_block = log_block;
+                            fsm.clock.advance_to_drained(prev);
+                            if log_block > fsm.current_block {
+                                fsm.current_block = log_block;
                             }
                         }
                         LogDecision::DispatchForward => {
-                            if log_block > current_block {
-                                current_block = log_block;
+                            if log_block > fsm.current_block {
+                                fsm.current_block = log_block;
                             }
                         }
                         LogDecision::PanicLateForward(b) => {
                             // A removed:false log on a tombstoned block, NOT in a
                             // reorg → unreliable WS (out-of-order / duplicated
                             // forward events). Blocks ≤ the authoritative
-                            // `recovery_anchor` are already dropped by the
+                            // `fsm.recovery_anchor` are already dropped by the
                             // single-writer recovery discard (BQ7ZBC) before they
                             // reach this classifier — so firing HERE means b is a
                             // genuine late forward ABOVE the recovery anchor that
@@ -1668,8 +1670,8 @@ impl BlockPump {
                     // apply to BotState → notify EngineSubscriber → dirty the
                     // engine) — NOT `engine.apply_log`.
                     self.bot.dispatch_log(&log);
-                    clock.log_received(log_block);
-                    clock.log_applied(log_block);
+                    fsm.clock.log_received(log_block);
+                    fsm.clock.log_applied(log_block);
 
                     // LEZJAS: engine owns `has_logs_this_block` now — routed
                     // through the sink so the next `finalize_block` sees it.
@@ -1678,7 +1680,7 @@ impl BlockPump {
                     // ADR-008 D2: arm the quiesce-gated publish. The flush
                     // fires at the next settle point (timeout or stream end)
                     // if `consume_quiesced` is true — once per quiesce cycle.
-                    publish_pending = true;
+                    fsm.publish_pending = true;
 
                     // [DIAG] count logs + emit periodic stats so we can see,
                     // during a freeze, that the pump IS polling logs while
@@ -1688,18 +1690,18 @@ impl BlockPump {
                     if diag_last_stats.elapsed() >= DIAG_STATS_INTERVAL {
                         let diag_since_header = last_header_at.elapsed().as_secs();
                         // [DIAG] pool-state freeze probe (ergo 3YA7ZJ): surface the
-                        // max pool update_block alongside the engine clock so a
+                        // max pool update_block alongside the engine fsm.clock so a
                         // post-backfill drain freeze is visible LIVE — pool
-                        // application stalling while `current_block` keeps climbing
+                        // application stalling while `fsm.current_block` keeps climbing
                         // (logs/headers still arriving) is the freeze signature.
                         let diag_pool_state_head = self.bot.state_arc().read().pool_state_head();
                         tracing::info!(
                             diag_header_count,
                             diag_log_count,
                             last_header_secs = diag_since_header,
-                            current_block,
+                            fsm.current_block,
                             pool_state_head = diag_pool_state_head,
-                            "BlockPump: [DIAG] stats (clock vs pool-state freeze probe)"
+                            "BlockPump: [DIAG] stats (fsm.clock vs pool-state freeze probe)"
                         );
                         diag_last_stats = tokio::time::Instant::now();
                     }
@@ -1708,18 +1710,18 @@ impl BlockPump {
                 Ok(None) => {
                     // ADR-008 D2: stream exhausted — final settle point. Flush
                     // any pending quiesce-gated publish before returning.
-                    if publish_pending {
-                        if let Some(open) = clock.latest_observed() {
-                            if clock.consume_quiesced(open) {
+                    if fsm.publish_pending {
+                        if let Some(open) = fsm.clock.latest_observed() {
+                            if fsm.clock.consume_quiesced(open) {
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
                                 dispatch.dispatch(DrainWork::Publish {
                                     open,
-                                    metadata: current_metadata,
+                                    metadata: fsm.current_metadata,
                                     change_set,
                                 });
                             }
                         }
-                        publish_pending = false;
+                        fsm.publish_pending = false;
                     }
                     tracing::warn!("BlockPump: both subscription streams ended");
                     return;
