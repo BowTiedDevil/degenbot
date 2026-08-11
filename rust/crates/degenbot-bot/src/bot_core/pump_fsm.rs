@@ -325,3 +325,31 @@ mod tests {
         assert!(d.last().is_some_and(PumpDecision::stops));
     }
 }
+
+#[test]
+fn drain_decision_anchor_follows_log_driven_block_not_racing_header() {
+    // Header races ahead to 102 while only block 101's logs are open:
+    // anchor at 101 (open), NOT 102 (current_block).
+    let mut fsm = PumpFSM::new(102, 0);
+    fsm.clock.observe_log(101, false);
+    fsm.clock.log_received(101);
+    fsm.clock.log_applied(101);
+    let PumpDecision::Drain { block, .. } = fsm.drain_decision(100) else {
+        panic!("drain_decision must emit a Drain");
+    };
+    assert_eq!(
+        block, 101,
+        "anchor at the open (log-driven) block, not the racing header"
+    );
+    // State head dominates on a backfill-ahead stall.
+    let PumpDecision::Drain { block, .. } = fsm.drain_decision(500) else {
+        unreachable!()
+    };
+    assert_eq!(block, 500);
+    // No open block yet (cold start, headers only): fall back to the header.
+    let fsm2 = PumpFSM::new(102, 0);
+    let PumpDecision::Drain { block, .. } = fsm2.drain_decision(100) else {
+        unreachable!()
+    };
+    assert_eq!(block, 102);
+}

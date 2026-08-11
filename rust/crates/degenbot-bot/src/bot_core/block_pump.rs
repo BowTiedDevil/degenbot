@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::bot_core::pump_fsm::PumpFSM;
+use crate::bot_core::pump_fsm::{PumpDecision, PumpFSM};
 
 use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
@@ -1021,42 +1021,42 @@ impl BlockPump {
         // to Python. This ensures one dispatch per burst of logs rather than
         // one per individual log.
         // ADR-008 D2: solver-release gate (see the flush in the Err + Ok(None) arms
-        // below). `fsm.publish_pending` is armed when a forward log applies; the
+        // below). `publish_pending` is armed when a forward log applies; the
         // flush fires `on_send` (gated on `consume_quiesced`) at a settle
         // point — a `DEBOUNCE_MS` window with no new event (coalescing a
         // same-block burst into one publish at the tail) OR stream exhaustion.
-        // Replaces the wall-fsm.clock `DEBOUNCE_MS` send timer: publication is
+        // Replaces the wall-clock `DEBOUNCE_MS` send timer: publication is
         // gated on the truth condition (all dispatched logs applied).
 
-        // BQ7ZBC — FSM recovery state: `fsm.recovery_anchor` is the highest block an
+        // BQ7ZBC — FSM recovery state: `recovery_anchor` is the highest block an
         // authoritative (eth_getLogs) catch-up has OWNEed — either a live-loop
         // gap/`handle_timeout_eager` backfill, or (at resume) the backfilled
         // snapshot→WS first block. Per the single-writer rule (DFQYM5
-        // precedent), the live WS NO LONGER owns any block ≤ `fsm.recovery_anchor`:
+        // precedent), the live WS NO LONGER owns any block ≤ `recovery_anchor`:
         // when a stalled WS recovers and flushes buffered forward logs for
         // those blocks, they are duplicates of state we already applied and are
         // dropped (they never reach the `PanicLateForward` hard fault). Reorg
         // logs (`removed: true`) are NEVER dropped — they always reach the
-        // reorg classifier. A forward ABOVE `fsm.recovery_anchor` that is stale
+        // reorg classifier. A forward ABOVE `recovery_anchor` that is stale
         // still faults (ADR-008 D3): only blocks the pump itself backfilled are
         // benign duplicates by construction.
 
-        // ADR-008 per-block state machine. The fsm.clock is the authority for
+        // ADR-008 per-block state machine. The clock is the authority for
         // block completeness (the tombstone) and the cursor; the pump loop is
         // a thin async driver translating its decisions into sink calls +
         // backfill + shutdown. A header alone NEVER advances the cursor —
         // only `advance_to_drained` (after the tombstone) does.
 
-        // 3M5PO5: share the fsm.clock's tombstone cutoff with BotState so the
+        // 3M5PO5: share the clock's tombstone cutoff with BotState so the
         // registration drain reads the SAME "highest fully-delivered block"
-        // the pump's fsm.clock tracks (no buffer-local shadow marker).
+        // the pump's clock tracks (no buffer-local shadow marker).
         self.bot
             .state_arc()
             .write()
             .set_pump_complete_cutoff(fsm.clock.highest_applied_handle());
         // Per-block metadata, snapshotted from each block's header. A block's
         // tombstone (first log for N+1) may arrive AFTER header N+1 overwrote
-        // `fsm.current_metadata`, so the result batch that finalizes N must carry
+        // `current_metadata`, so the result batch that finalizes N must carry
         // N's OWN metadata, retrieved here (VTWCIG).
 
         // [DIAG] newHeads-stall counters (JIABO3: `last_header_at` is shared
@@ -1166,7 +1166,7 @@ impl BlockPump {
             {
                 if self.sink.has_dirty_paths() {
                     // Pump-owned ACTIVE BLOCK promotion (QMSTSV/BO5FBS):
-                    // `fsm.current_block` is newHead+log driven (the promote
+                    // `current_block` is newHead+log driven (the promote
                     // signal — a push WS cannot prove the last event for a
                     // block arrived, so the new head IS the promote signal),
                     // but on a header stall ordered backfill advances the
@@ -1191,18 +1191,15 @@ impl BlockPump {
                     // would otherwise make the solve consume a quiet path
                     // pool pre-in-block-swap (the 0x99ac8c false-abort). The
                     // `pool_state_head` max keeps the backfill-ahead semantics.
-                    let active_block = solve_anchor(
-                        fsm.clock.latest_observed(),
-                        fsm.current_block,
-                        self.bot.state_arc().read().pool_state_head(),
-                    );
-                    dispatch.dispatch(DrainWork::Drain {
-                        block: active_block,
-                        metadata: fsm.current_metadata,
-                    });
+                    let state_head = self.bot.state_arc().read().pool_state_head();
+                    let PumpDecision::Drain { block, metadata } = fsm.drain_decision(state_head)
+                    else {
+                        unreachable!("drain_decision always drains when called");
+                    };
+                    dispatch.dispatch(DrainWork::Drain { block, metadata });
                     // LEZJAS: engine owns `last_solved_block` now — mark this
                     // block solved so the next `finalize_block` guard no-ops.
-                    self.sink.set_last_solved_block(active_block);
+                    self.sink.set_last_solved_block(block);
                 }
             }
 
@@ -1211,7 +1208,7 @@ impl BlockPump {
             // `on_send` (gated on `consume_quiesced`) only at a settle point —
             // a timeout with no new event (coalescing a same-block burst into
             // one publish at the tail) OR stream exhaustion. This replaces the
-            // wall-fsm.clock `DEBOUNCE_MS` send timer: publication is gated on the
+            // wall-clock `DEBOUNCE_MS` send timer: publication is gated on the
             // truth condition (all dispatched logs applied), not schedule.
 
             // Check shutdown
@@ -1481,7 +1478,7 @@ impl BlockPump {
                     // resume-boundary rule, generalized to mid-run recovery.
                     // Reorg logs (`removed: true`) are NEVER dropped — they must
                     // reach the reorg classifier to unwind the backfilled range.
-                    // A forward ABOVE `fsm.recovery_anchor` that is still stale
+                    // A forward ABOVE `recovery_anchor` that is still stale
                     // remains a hard ADR-008 D3 fault (only the pump's own
                     // single-writer range is benign).
                     if !log.removed && fsm.recovery_anchor > 0 && log_block <= fsm.recovery_anchor {
@@ -2201,13 +2198,6 @@ impl BlockPump {
 /// - `pool_state_head` (the state clock, `max update_block`) still dominates so a
 ///   backfill-ahead state is never solved below (MQIZ5M +1-wei / IIA class).
 ///
-/// Pure (no env, no core lock) so it is directly unit-testable.
-#[must_use]
-fn solve_anchor(open: Option<u64>, current_block: u64, state_head: u64) -> u64 {
-    let base = open.unwrap_or(current_block);
-    base.max(state_head)
-}
-
 /// Build an Alloy `Filter` for backfill via `eth_getLogs`.
 ///
 /// Uses topic filtering server-side to reduce response size. No address
@@ -2940,23 +2930,6 @@ mod tests {
 
     /// Solve-anchor regression (ADR-008 D2 solver-release gate): the SOLVE anchor
     /// follows the LOG-DRIVEN settled block (`open`), not a header that raced a
-    /// head ahead of the applied state — and the pool-state head still dominates.
-    #[test]
-    fn solve_anchor_follows_log_driven_block_not_racing_header() {
-        use super::solve_anchor;
-        // Header races ahead to 102 while only block 101's logs are open:
-        // anchor at 101 (open), NOT 102 (current_block).
-        assert_eq!(solve_anchor(Some(101), 102, 100), 101);
-        // State head dominates both clocks on a backfill-ahead stall.
-        assert_eq!(solve_anchor(Some(101), 102, 500), 500);
-        // No open block yet (cold start, headers only): fall back to the header.
-        assert_eq!(solve_anchor(None, 102, 100), 102);
-        // State head ahead of everything still wins.
-        assert_eq!(solve_anchor(None, 102, 200), 200);
-        // A header equal to the open block is unchanged.
-        assert_eq!(solve_anchor(Some(102), 102, 100), 102);
-    }
-
     /// RED→GREEN tracer (epic 6W35AI, 22Y7AB): the pump forwards a
     /// `BlockNotification` for every `newHeads` header it accepts (one per
     /// header, carrying the header's number + metadata), via
