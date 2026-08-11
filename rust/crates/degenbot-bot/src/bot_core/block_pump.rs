@@ -1274,9 +1274,13 @@ impl BlockPump {
                 // quiesce-gated publish, OR (if nothing pending) the 60s
                 // inactivity backfill path.
                 Err(_) => {
-                    if fsm.publish_pending {
-                        if let Some(open) = fsm.clock.latest_observed() {
-                            if fsm.clock.consume_quiesced(open) {
+                    // A2: settle-point rules live in the FSM (`on_settle`)
+                    // — the quiesce-before-publish gate + solver-release gate
+                    // (ADR-008 D2) vs the inactivity backfill. The driver only
+                    // executes the emitted decisions.
+                    for decision in fsm.on_settle() {
+                        match decision {
+                            PumpDecision::Publish { open, metadata } => {
                                 // Option-A solver-state accuracy gate (AV42C7):
                                 // publish on_send to Python, then hand the
                                 // quiesced `open` block + its change set to the
@@ -1288,22 +1292,26 @@ impl BlockPump {
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
                                 dispatch.dispatch(DrainWork::Publish {
                                     open,
-                                    metadata: fsm.current_metadata,
+                                    metadata,
                                     change_set,
                                 });
                             }
+                            PumpDecision::Backfill { from, to } => {
+                                // No activity for 60s — backfill `[from, to)`.
+                                debug_assert!(from == fsm.current_block + 1 && to.is_none());
+                                self.handle_timeout_eager(
+                                    &mut fsm.current_block,
+                                    &mut fsm.clock,
+                                    &mut fsm.block_metadata,
+                                    &mut fsm.publish_pending,
+                                    &mut fsm.recovery_anchor,
+                                )
+                                .await;
+                            }
+                            other => {
+                                unreachable!("on_settle only emits Publish|Backfill, got {other:?}")
+                            }
                         }
-                        fsm.publish_pending = false;
-                    } else {
-                        // No activity for 60s — try to backfill
-                        self.handle_timeout_eager(
-                            &mut fsm.current_block,
-                            &mut fsm.clock,
-                            &mut fsm.block_metadata,
-                            &mut fsm.publish_pending,
-                            &mut fsm.recovery_anchor,
-                        )
-                        .await;
                     }
                 }
 

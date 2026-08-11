@@ -318,6 +318,51 @@ mod tests {
     }
 
     #[test]
+    fn quiesce_gate_emits_exactly_one_publish_never_premature() {
+        // Premature: a log is armed but still in-flight (received, not yet
+        // applied) — the block is NOT quiesced, so a settle must NOT publish.
+        // The arm is still cleared (the burst is still draining).
+        let mut fsm = PumpFSM::new(200, 0);
+        fsm.clock.observe_log(201, false);
+        fsm.clock.log_received(201); // in_flight = 1, never quiesced
+        fsm.publish_pending = true;
+        let d = fsm.on_settle();
+        assert!(
+            d.iter().all(|x| !matches!(x, PumpDecision::Publish { .. })),
+            "premature publish before the block quiesces: {d:?}"
+        );
+        assert!(
+            !fsm.publish_pending,
+            "arm cleared even when not yet quiesced"
+        );
+
+        // Quiesced: the applied log flips `ever_quiesced`. A settle emits
+        // EXACTLY one Publish for the block, never a second.
+        let mut fsm = PumpFSM::new(200, 0);
+        fsm.clock.observe_log(201, false);
+        fsm.clock.log_received(201);
+        fsm.clock.log_applied(201); // in_flight = 0 → quiesced
+        fsm.publish_pending = true;
+        let d = fsm.on_settle();
+        let publishes = d
+            .iter()
+            .filter(|x| matches!(x, PumpDecision::Publish { .. }))
+            .count();
+        assert_eq!(publishes, 1, "exactly one publish for the quiesced block");
+        assert!(d
+            .iter()
+            .any(|x| matches!(x, PumpDecision::Publish { open: 201, .. })));
+        // A second settle with nothing new armed must not re-publish: the
+        // quiesce signal was consumed by the first settle.
+        let d2 = fsm.on_settle();
+        assert!(
+            d2.iter()
+                .all(|x| !matches!(x, PumpDecision::Publish { .. })),
+            "no duplicate publish — the quiesce signal was consumed: {d2:?}"
+        );
+    }
+
+    #[test]
     fn stream_end_flushes_then_stops() {
         let mut fsm = PumpFSM::new(300, 0);
         fsm.publish_pending = true;
