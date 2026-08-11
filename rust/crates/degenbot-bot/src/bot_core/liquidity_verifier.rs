@@ -147,6 +147,13 @@ const fn tick_bitmap_position(compressed_tick: i32) -> (i16, u8) {
 /// `tick_data` against on-chain at the snapshot block, before any buffer events
 /// are applied. Catches snapshot loading/serialization bugs.
 ///
+/// The `phase` labels WHICH registration verify step produced the comparison
+/// (`"seed"` = step-1 seed verify, `"post-drain"` = step-2 post-drain verify)
+/// so a `VerificationMismatchError` can be attributed without re-inspection. A
+/// wrong-block recurred across both steps (both task 4TWM7C/A1): step-1 anchors
+/// at the caller-supplied snapshot block (global `S`, reactivated wrong-block
+/// class) while step-2 anchors at the pin's own liquidity clock.
+///
 /// # Panics
 ///
 /// Panics if a tick in `tick_data` is absent from the internally-built
@@ -162,6 +169,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     pool_address: Address,
     tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
     block_number: u64,
+    phase: &str,
 ) -> Result<(), LiquidityVerifyError> {
     let block_tag = format!("block={block_number}");
     // Batch-fetch all `ticks(tick)` in ONE Multicall3 `aggregate3` eth_call.
@@ -203,7 +211,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
             ));
             if first_mismatch.is_none() {
                 first_mismatch = Some(format!(
-                    "V3 pool {pool_address} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
+                    "V3 pool {pool_address} at {phase} block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
                 ));
             }
         }
@@ -214,6 +222,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
         {
             tracing::warn!(
                 %pool_address,
+                phase,
                 block_number,
                 divergent_tick_count = all_mismatches.len(),
                 rows = ?all_mismatches,
@@ -256,6 +265,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
     pool_id: [u8; 32],
     tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
     block_number: u64,
+    phase: &str,
 ) -> Result<(), LiquidityVerifyError> {
     let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
     let block_tag = format!("block={block_number}");
@@ -294,7 +304,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
             let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
             return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
-                    "V4 pool {pool_id_hex} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
+                    "V4 pool {pool_id_hex} at {phase} block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
                 ),
             }));
         }
@@ -1330,6 +1340,46 @@ mod tests {
                 );
             }
             other @ LiquidityVerifyError::Rpc { .. } => panic!("expected Mismatch, got {other:?}"),
+        }
+        assert!(asserter.read_q().is_empty());
+    }
+
+    // --- Phase discriminator (task 4TWM7C/A1) ---
+    //
+    // Both registration verify steps (step-1 seed, step-2 post-drain) call this
+    // same snapshot-liquidity-map verifier. Without a phase label the two
+    // produced byte-identical "at snapshot block {block}" messages, so a
+    // recurrence could not be attributed. Confirm the `phase` param surfaces in
+    // the mismatch message (here "seed").
+    #[tokio::test]
+    async fn verify_v3_liquidity_map_surfaces_phase_in_mismatch() {
+        // One response per phase iteration (2 verify calls total).
+        let resp = encode_mc3_return(&[(true, ticks_return(100, 50))]);
+        let (provider, asserter) = mock_provider(vec![resp.clone(), resp]);
+        let addr = Address::from([0xabu8; 20]);
+        let mut tick_data = HashMap::new();
+        // Gross 999 ≠ on-chain 100 → a genuine per-tick mismatch.
+        tick_data.insert(0, tick_info(999, 50));
+
+        for phase in ["seed", "post-drain"] {
+            let err = verify_v3_liquidity_map(&provider, addr, &tick_data, 42, phase)
+                .await
+                .unwrap_err();
+            match err {
+                LiquidityVerifyError::Mismatch(m) => {
+                    assert_eq!(
+                        m.message,
+                        format!(
+                            "V3 pool {addr} at {phase} block 42: tick 0 mismatch — snapshot: \
+                             (lg=999, ln=50), on-chain: (lg=100, ln=50)"
+                        ),
+                        "the phase tag must disambiguate the firing verify step"
+                    );
+                }
+                other @ LiquidityVerifyError::Rpc { .. } => {
+                    panic!("expected Mismatch, got {other:?}")
+                }
+            }
         }
         assert!(asserter.read_q().is_empty());
     }

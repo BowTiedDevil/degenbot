@@ -150,10 +150,24 @@ where
     // seed is consumed exactly once so memory is bounded. The comparison is
     // seed-vs-on-chain@snapshot, NOT engine-current (which would
     // false-mismatch every active pool under a rolling start).
+    //
+    // Task 4TWM7C/B1 (reactivated wrong-block regression, 4GQWZ4): anchor at
+    // the pool's OWN liquidity clock (the block its seed data reflects — a
+    // DB-seeded `Tracked` pool's `liquidity_update_block`) rather than the
+    // aggregate snapshot-seed block `S`. The builder stamps a DB-seeded pool's
+    // `tick_data_block` at that block; using it here means a stale-but-
+    // internally-consistent DB pool is verified against on-chain @ ITS block
+    // (passes), not @ `S` (fabricated mismatch on any tick that moved in
+    // between). Falls back to `S` only when the pool clock is unset (0).
     if let Some(snapshot_block) = snapshot_block {
         let seed = { core.write().take_v3_snapshot_seed(address) };
         if let Some(seed) = seed {
-            verify_seed(seed, snapshot_block).await?;
+            let own = core
+                .read()
+                .pool_id_by_address(&address)
+                .map_or(0, |id| core.read().pool_tick_data_block(id));
+            let seed_block = if own > 0 { own } else { snapshot_block };
+            verify_seed(seed, seed_block).await?;
         }
     }
 
@@ -227,10 +241,18 @@ where
     core.write().set_v4_pool_quarantined(pool_manager, pool_id);
 
     // Step-1: verify the pinned snapshot seed @ snapshot block (CBCH6H).
+    // Anchored at the pool's OWN liquidity clock (task 4TWM7C/B1), falling back
+    // to the aggregate `S` only when the pool clock is unset — see the V3
+    // commentary above.
     if let Some(snapshot_block) = snapshot_block {
         let seed = { core.write().take_v4_snapshot_seed(pool_manager, &pool_id) };
         if let Some(seed) = seed {
-            verify_seed(seed, snapshot_block).await?;
+            let own = core
+                .read()
+                .v4_pool_id_by_key(pool_manager, &pool_id)
+                .map_or(0, |id| core.read().pool_tick_data_block(id));
+            let seed_block = if own > 0 { own } else { snapshot_block };
+            verify_seed(seed, seed_block).await?;
         }
     }
 
@@ -286,7 +308,7 @@ pub async fn run_v3_registration_lifecycle(
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
-                verify_v3_liquidity_map(&p, address, &seed, block)
+                verify_v3_liquidity_map(&p, address, &seed, block, "seed")
                     .await
                     .map_err(RegistrationLifecycleError::Verify)
             }
@@ -295,7 +317,7 @@ pub async fn run_v3_registration_lifecycle(
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
-                verify_v3_liquidity_map(&p, address, &tick_data, block)
+                verify_v3_liquidity_map(&p, address, &tick_data, block, "post-drain")
                     .await
                     .map_err(RegistrationLifecycleError::Verify)
             }
@@ -335,7 +357,7 @@ pub async fn run_v4_registration_lifecycle(
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
                 let state_view = state_view.ok_or(RegistrationLifecycleError::MissingStateView)?;
-                verify_v4_liquidity_map(&p, state_view, pool_id, &seed, block)
+                verify_v4_liquidity_map(&p, state_view, pool_id, &seed, block, "seed")
                     .await
                     .map_err(RegistrationLifecycleError::Verify)
             }
@@ -345,7 +367,7 @@ pub async fn run_v4_registration_lifecycle(
             async move {
                 let p = provider.ok_or(RegistrationLifecycleError::MissingProvider)?;
                 let state_view = state_view.ok_or(RegistrationLifecycleError::MissingStateView)?;
-                verify_v4_liquidity_map(&p, state_view, pool_id, &tick_data, block)
+                verify_v4_liquidity_map(&p, state_view, pool_id, &tick_data, block, "post-drain")
                     .await
                     .map_err(RegistrationLifecycleError::Verify)
             }
@@ -548,6 +570,74 @@ mod tests {
         // post-drain verify runs @ the pin's OWN block (the drain block), NOT
         // the snapshot block 42 — the rolling-start race fix.
         assert_ne!(calls[1].1, 42);
+    }
+
+    /// Task 4TWM7C/B1 — the reactivated wrong-block seed-verify regression:
+    /// a DB-seeded (`Tracked`) pool whose liquidity clock (`tick_data_block`,
+    /// stamps the builder at the DB `liquidity_update_block`) trails the
+    /// aggregate snapshot-seed block `S` must have step-1 anchor at the pool's
+    /// OWN clock, NOT `S`. Before the fix step-1 always used `S`, fabricating a
+    /// seed mismatch on any stale-DB pool that moved on-chain in `(own, S]`.
+    #[tokio::test]
+    async fn tracked_v3_seed_verify_anchors_at_pool_own_liquidity_clock_not_global_s() {
+        let core = new_core();
+        let addr = Address::from([0x70u8; 20]);
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 100,
+            },
+        );
+        let _pid = {
+            let mut c = core.write();
+            // DB-seeded Tracked pool whose liquidity clock is 100 (the DB
+            // `liquidity_update_block`), far behind the global S = 200.
+            c.register_v3_pool(&RegisterV3PoolParams {
+                address: addr,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 200,
+                tick_data_block: Some(100),
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seed_calls = Arc::clone(&calls);
+        let result = run_cl_v3_lifecycle::<_, _, _, _, ()>(
+            &core,
+            addr,
+            Some(200), // global snapshot-seed block S
+            move |seed, block| {
+                let calls = seed_calls;
+                async move {
+                    calls.lock().unwrap().push(("seed", block, seed.len()));
+                    Ok(())
+                }
+            },
+            move |_tick_data, _block| async move { Ok(()) },
+        )
+        .await;
+        assert!(result.is_ok());
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0].0, "seed");
+        assert_eq!(
+            calls[0].1, 100,
+            "step-1 seed verify must anchor at the pool's OWN liquidity clock (100), \
+             NOT the global snapshot-seed block S (200)"
+        );
     }
 
     /// A Tracked V3 pool whose seed verify mismatches must NEVER reach `Live`

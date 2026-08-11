@@ -1036,6 +1036,23 @@ pub async fn build_v3(
 
     let (tick_data, coverage) =
         assemble_db_or_chain_v3(db, io, address, tick, imm.tick_spacing, update_block).await?;
+    // Two-stamp OB7UNY (task 4TWM7C / regression 8c50e0cd): the PRICE clock
+    // (`update_block`) stays at the fresh caller-supplied head read, but the
+    // LIQUIDITY clock (`tick_data_block`) of a DB-seeded (`Tracked`) pool must
+    // be the block its DB liquidity map is EXACT at (`liquidity_update_block`),
+    // not the head — otherwise the seed/post-drain verify compares stale seed
+    // data against on-chain at head and false-positives on every tick that
+    // moved in the `(liquidity_update_block, head]` window. Sparse (Chain-
+    // seeded) pools keep the head clock. Falls back to `update_block` when the
+    // DB block is unavailable/zero.
+    let tick_data_block = if coverage == PoolTickCoverage::Tracked {
+        db.and_then(|d| d.fetch_liquidity_update_block(address).ok().flatten())
+            .and_then(|b| u64::try_from(b).ok())
+            .filter(|b| *b > 0)
+            .unwrap_or(update_block)
+    } else {
+        update_block
+    };
 
     deployments::verify_v3_pool_address(
         chain_id,
@@ -1062,7 +1079,7 @@ pub async fn build_v3(
         tick,
         tick_data,
         update_block,
-        tick_data_block: Some(update_block),
+        tick_data_block: Some(tick_data_block),
         coverage,
         fetcher: None,
         deployer,
@@ -1208,6 +1225,21 @@ pub async fn build_v4(
         update_block,
     )
     .await?;
+    // Two-stamp OB7UNY (V4 twin of build_v3): a DB-seeded (`Tracked`) pool's
+    // liquidity clock is its DB `liquidity_update_block`, not the head price
+    // clock (task 4TWM7C / regression 8c50e0cd).
+    let tick_data_block = if coverage == PoolTickCoverage::Tracked {
+        db.and_then(|d| {
+            d.fetch_liquidity_update_block_v4(id.pool_manager, B256::from(id.pool_id))
+                .ok()
+                .flatten()
+        })
+        .and_then(|b| u64::try_from(b).ok())
+        .filter(|b| *b > 0)
+        .unwrap_or(update_block)
+    } else {
+        update_block
+    };
 
     Ok(V4BuildResult {
         params: RegisterV4PoolParams {
@@ -1227,7 +1259,7 @@ pub async fn build_v4(
             tick,
             tick_data,
             update_block,
-            tick_data_block: Some(update_block),
+            tick_data_block: Some(tick_data_block),
             coverage,
             fetcher: None,
         },

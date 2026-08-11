@@ -99,6 +99,38 @@ impl DegenbotDb {
         fetch_liquidity_map_v4_on_conn(&conn, pool_manager, pool_id_hash)
     }
 
+    /// The `uniswap_v3_pools.liquidity_update_block` for a pool (the block its
+    /// DB liquidity map is EXACT at, i.e. the authoritative liquidity clock of
+    /// a DB-seeded `Tracked` pool). Task 4TWM7C: the Rust `PoolBuilder` uses
+    /// this to stamp a DB-seeded pool's `tick_data_block` at the DB seed block
+    /// rather than the live head, so the seed/post-drain verify anchors at the
+    /// block the tick data actually reflects — not the aggregate `S`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn fetch_liquidity_update_block(
+        &self,
+        pool_address: Address,
+    ) -> Result<Option<i64>, DbError> {
+        let conn = self.lock();
+        fetch_liquidity_update_block_on_conn(&conn, pool_address)
+    }
+
+    /// V4 twin of [`Self::fetch_liquidity_update_block`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn fetch_liquidity_update_block_v4(
+        &self,
+        pool_manager: Address,
+        pool_id_hash: B256,
+    ) -> Result<Option<i64>, DbError> {
+        let conn = self.lock();
+        fetch_liquidity_update_block_v4_on_conn(&conn, pool_manager, pool_id_hash)
+    }
+
     /// All V3 or V4 tick data for a chain as a batch (mirrors Python
     /// `DatabaseSnapshot.get_all_liquidity_maps`). V3 keyed by address; V4
     /// keyed by (pool-manager address, `pool_hash` hex). Returns one entry per
@@ -504,6 +536,62 @@ pub fn fetch_liquidity_map_v4_on_conn(
     }))
 }
 
+/// The `uniswap_v3_pools.liquidity_update_block` for a pool, by address — the
+/// block the DB liquidity map is exact at (the authoritative liquidity clock of
+/// a DB-seeded `Tracked` pool; task 4TWM7C). Resolves the pool id by address
+/// then reads the V3 row's `liquidity_update_block`.
+///
+/// Returns `None` if no such pool exists or it is not registered as a
+/// V3-family kind (mirrors [`fetch_liquidity_map_on_conn`]'s miss semantics).
+///
+/// # Errors
+/// [`DbError::Sqlite`] on a query failure.
+pub fn fetch_liquidity_update_block_on_conn(
+    conn: &Connection,
+    pool_address: Address,
+) -> Result<Option<i64>, DbError> {
+    let block: Option<i64> = match conn.query_row(
+        "SELECT v3.liquidity_update_block \
+         FROM pools p \
+         JOIN uniswap_v3_pools v3 ON v3.pool_id = p.id \
+         WHERE p.address = ?1 LIMIT 1",
+        rusqlite::params![pool_address.to_checksum(None)],
+        |r| r.get(0),
+    ) {
+        Ok(b) => b,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(block)
+}
+
+/// V4 twin of [`fetch_liquidity_update_block_on_conn`] — reads the V4 row's
+/// `liquidity_update_block` resolved through the pool-manager join.
+///
+/// # Errors
+/// [`DbError::Sqlite`] on a query failure.
+pub fn fetch_liquidity_update_block_v4_on_conn(
+    conn: &Connection,
+    pool_manager: Address,
+    pool_id_hash: B256,
+) -> Result<Option<i64>, DbError> {
+    let hash_hex = format!("{pool_id_hash}"); // B256 Display includes the 0x prefix
+    let block: Option<i64> = match conn.query_row(
+        "SELECT v4.liquidity_update_block \
+         FROM uniswap_v4_pools v4 \
+         JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
+         JOIN pool_managers pm ON pm.id = mp.manager_id \
+         WHERE v4.pool_hash = ?1 AND pm.address = ?2",
+        rusqlite::params![hash_hex, pool_manager.to_checksum(None)],
+        |r| r.get(0),
+    ) {
+        Ok(b) => b,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(block)
+}
+
 /// The tick-map-DB surface the `assemble_*_tick_map` Db arm reads against.
 /// Implemented by [`DegenbotDb`] (per-call `lock()` — each read its own
 /// snapshot) AND [`crate::snapshot_db::SnapshotDb`] (held read transaction —
@@ -539,6 +627,25 @@ pub trait TickMapDb: Send + Sync {
         chain: i64,
         family: ExchangeFamily,
     ) -> Result<Option<i64>, DbError>;
+
+    /// The V3 pool's `liquidity_update_block` (the block its DB liquidity map
+    /// is exact at). Used as the authoritative liquidity clock of a DB-seeded
+    /// `Tracked` pool so seed verification anchors at the pool's OWN block
+    /// rather than the aggregate `S` (task 4TWM7C).
+    ///
+    /// # Errors
+    /// [`DbError::Sqlite`] on a query failure.
+    fn fetch_liquidity_update_block(&self, pool_address: Address) -> Result<Option<i64>, DbError>;
+
+    /// V4 twin of [`Self::fetch_liquidity_update_block`].
+    ///
+    /// # Errors
+    /// [`DbError::Sqlite`] on a query failure.
+    fn fetch_liquidity_update_block_v4(
+        &self,
+        pool_manager: Address,
+        pool_id_hash: B256,
+    ) -> Result<Option<i64>, DbError>;
 }
 
 impl TickMapDb for DegenbotDb {
@@ -558,5 +665,15 @@ impl TickMapDb for DegenbotDb {
         family: ExchangeFamily,
     ) -> Result<Option<i64>, DbError> {
         DegenbotDb::fetch_newest_update_block(self, chain, family)
+    }
+    fn fetch_liquidity_update_block(&self, pool_address: Address) -> Result<Option<i64>, DbError> {
+        DegenbotDb::fetch_liquidity_update_block(self, pool_address)
+    }
+    fn fetch_liquidity_update_block_v4(
+        &self,
+        pool_manager: Address,
+        pool_id_hash: B256,
+    ) -> Result<Option<i64>, DbError> {
+        DegenbotDb::fetch_liquidity_update_block_v4(self, pool_manager, pool_id_hash)
     }
 }

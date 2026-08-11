@@ -33,7 +33,9 @@ use crate::error::DbError;
 use crate::migrate::{ensure_schema, SchemaState};
 use crate::read::{fetch_newest_update_block_on_conn, ExchangeFamily};
 use crate::snapshot::{
-    fetch_liquidity_map_on_conn, fetch_liquidity_map_v4_on_conn, LiquidityMap, TickMapDb,
+    fetch_liquidity_map_on_conn, fetch_liquidity_map_v4_on_conn,
+    fetch_liquidity_update_block_on_conn, fetch_liquidity_update_block_v4_on_conn, LiquidityMap,
+    TickMapDb,
 };
 use alloy::primitives::{Address, B256};
 
@@ -233,6 +235,18 @@ impl TickMapDb for SnapshotDb {
     ) -> Result<Option<i64>, DbError> {
         let conn = self.lock();
         fetch_newest_update_block_on_conn(&conn, chain, family)
+    }
+    fn fetch_liquidity_update_block(&self, pool_address: Address) -> Result<Option<i64>, DbError> {
+        let conn = self.lock();
+        fetch_liquidity_update_block_on_conn(&conn, pool_address)
+    }
+    fn fetch_liquidity_update_block_v4(
+        &self,
+        pool_manager: Address,
+        pool_id_hash: B256,
+    ) -> Result<Option<i64>, DbError> {
+        let conn = self.lock();
+        fetch_liquidity_update_block_v4_on_conn(&conn, pool_manager, pool_id_hash)
     }
 }
 

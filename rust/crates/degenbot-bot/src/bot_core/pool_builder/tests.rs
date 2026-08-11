@@ -819,7 +819,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
 }
 
 /// A `TickMapDb` fake returning a canned `LiquidityMap` (V3 + V4 both query it).
-struct FakeTickMapDb(degenbot_db::snapshot::LiquidityMap);
+struct FakeTickMapDb(degenbot_db::snapshot::LiquidityMap, Option<i64>);
 
 impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
     fn fetch_liquidity_map(
@@ -841,6 +841,19 @@ impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
         _family: degenbot_db::read::ExchangeFamily,
     ) -> Result<Option<i64>, degenbot_db::error::DbError> {
         Ok(None)
+    }
+    fn fetch_liquidity_update_block(
+        &self,
+        _address: Address,
+    ) -> Result<Option<i64>, degenbot_db::error::DbError> {
+        Ok(self.1)
+    }
+    fn fetch_liquidity_update_block_v4(
+        &self,
+        _pool_manager: Address,
+        _pool_id_hash: alloy::primitives::B256,
+    ) -> Result<Option<i64>, degenbot_db::error::DbError> {
+        Ok(self.1)
     }
 }
 
@@ -883,21 +896,24 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
     // NOTE: no tick_bitmap response — if the chain arm were reached it would error.
     let io = io_with(f);
 
-    let db = FakeTickMapDb(LiquidityMap {
-        tick_bitmap: HashMap::from([(
-            0i64,
-            BitmapAtWord {
-                bitmap: U256::from(1u128 << 60),
-            },
-        )]),
-        tick_data: HashMap::from([(
-            60,
-            LiquidityAtTick {
-                liquidity_gross: U256::from(100u64),
-                liquidity_net: I256::try_from(100i128).unwrap(),
-            },
-        )]),
-    });
+    let db = FakeTickMapDb(
+        LiquidityMap {
+            tick_bitmap: HashMap::from([(
+                0i64,
+                BitmapAtWord {
+                    bitmap: U256::from(1u128 << 60),
+                },
+            )]),
+            tick_data: HashMap::from([(
+                60,
+                LiquidityAtTick {
+                    liquidity_gross: U256::from(100u64),
+                    liquidity_net: I256::try_from(100i128).unwrap(),
+                },
+            )]),
+        },
+        None,
+    );
 
     let params = builder::build_v3(1, pool, Some(&db), &io, Some(9_000_000))
         .await
@@ -908,6 +924,82 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
     assert_eq!(
         params.tick_data[&60].liquidity_net,
         I256::try_from(100i128).unwrap()
+    );
+}
+
+/// Task 4TWM7C/B1 — a DB-seeded (`Tracked`) pool's LIQUIDITY clock
+/// (`tick_data_block`) must be the DB `liquidity_update_block`, NOT the
+/// caller-supplied head price clock. Before the fix the builder stamped
+/// `tick_data_block = update_block = head`, so the seed/post-drain verify
+/// compared stale DB seed data against on-chain at head and fabricated a
+/// mismatch (the 4GQWZ4 reactivation of regression 8c50e0cd).
+#[tokio::test]
+async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
+    use crate::bot_core::PoolTickCoverage;
+    use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
+    use std::collections::HashMap;
+
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(choreography::selector(b"token0()"), addr_word(tok0));
+    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        choreography::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::encode_slot0()[..4].try_into().unwrap(),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::encode_liquidity()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 128)),
+    );
+    let io = io_with(f);
+
+    // DB-seeded pool whose liquidity map is exact at block 123.
+    let db = FakeTickMapDb(
+        LiquidityMap {
+            tick_bitmap: HashMap::from([(
+                0i64,
+                BitmapAtWord {
+                    bitmap: U256::from(1u128 << 60),
+                },
+            )]),
+            tick_data: HashMap::from([(
+                60,
+                LiquidityAtTick {
+                    liquidity_gross: U256::from(100u64),
+                    liquidity_net: I256::try_from(100i128).unwrap(),
+                },
+            )]),
+        },
+        Some(123),
+    );
+
+    // Caller-supplied build block (the live head price clock) = 9_000_000.
+    let params = builder::build_v3(1, pool, Some(&db), &io, Some(9_000_000))
+        .await
+        .unwrap();
+    assert_eq!(params.coverage, PoolTickCoverage::Tracked);
+    assert_eq!(
+        params.tick_data_block,
+        Some(123),
+        "DB-seeded pool's liquidity clock must be the DB liquidity_update_block, not the head"
+    );
+    assert_eq!(
+        params.update_block, 9_000_000,
+        "the PRICE clock stays at the fresh head read (two-stamp OB7UNY)"
     );
 }
 
