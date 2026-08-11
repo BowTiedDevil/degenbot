@@ -49,6 +49,14 @@ pub enum PumpDecision {
     /// A graceful stop (shutdown flag or unrecoverable state). The driver
     /// returns from the loop.
     Stop,
+    /// A watchdog tick concluded headers have been stale for >= the staleness
+    /// window (JIABO3). The driver runs `handle_timeout_eager` (an
+    /// authoritative `eth_getLogs` catch-up).
+    Recover,
+    /// A watchdog tick concluded the logs subscription is silent (headers
+    /// fresh but no log arrived in the window). The driver emits one diagnostic
+    /// warning per silence episode, then re-arms on the next log.
+    LogSilence,
 }
 
 impl PumpDecision {
@@ -215,6 +223,46 @@ impl PumpFSM {
         !removed && self.recovery_anchor > 0 && log_block <= self.recovery_anchor
     }
 
+    /// Feed a log-activity event (a `WsEvent::Log` that passed the topic
+    /// pre-filter). Refreshes the logs-silence watchdog clock and re-arms the
+    /// alarm so one diagnostic warning fires per silence episode.
+    pub fn record_log(&mut self, now_ms: u64) {
+        self.last_log_at_ms = now_ms;
+        self.log_silence_alarm_armed = false;
+    }
+
+    /// Feed a header-activity event. Refreshes the header-staleness watchdog
+    /// clock (the still-inline header arm updates it here; `on_header` sets it
+    /// too once the arm routes through the FSM).
+    pub fn record_header(&mut self, now_ms: u64) {
+        self.last_header_at_ms = now_ms;
+    }
+
+    /// The watchdog tick (JIABO3 / logs-silence): the driver's interval fires
+    /// and feeds a synthetic `now_ms`; the windows enter as data
+    /// (`header_staleness_ms`, `log_silence_ms`). Decides, from elapsed-time
+    /// only: `Recover` when headers have been stale >= the staleness window
+    /// (an authoritative `eth_getLogs` catch-up), else `LogSilence` (once per
+    /// silenced episode) when headers are fresh but no log has arrived in
+    /// `log_silence_ms`. The FSM owns no timer.
+    pub fn on_tick(
+        &mut self,
+        now_ms: u64,
+        header_staleness_ms: u64,
+        log_silence_ms: u64,
+    ) -> Vec<PumpDecision> {
+        let mut decisions = Vec::new();
+        if now_ms.saturating_sub(self.last_header_at_ms) >= header_staleness_ms {
+            decisions.push(PumpDecision::Recover);
+        } else if now_ms.saturating_sub(self.last_log_at_ms) >= log_silence_ms
+            && !self.log_silence_alarm_armed
+        {
+            self.log_silence_alarm_armed = true;
+            decisions.push(PumpDecision::LogSilence);
+        }
+        decisions
+    }
+
     /// The settle-point decision (no new event in the window): the quiesce-
     /// gated publish (ADR-008 D2) when armed, else the inactivity backfill.
     pub fn on_settle(&mut self) -> Vec<PumpDecision> {
@@ -311,6 +359,37 @@ mod tests {
         let d = fsm.on_header(100, meta(100_000), 2_000);
         assert!(d.is_empty());
         assert_eq!(fsm.current_block, before);
+    }
+
+    #[test]
+    fn watchdog_tick_fires_on_stale_not_fresh_and_arms_code_episode() {
+        let mut fsm = PumpFSM::new(200, 1_000);
+        // Fresh (just recorded a header): a tick must not fire.
+        fsm.record_header(1_000);
+        fsm.record_log(1_000);
+        assert!(fsm.on_tick(1_050, 500, 300).is_empty());
+
+        // Headers stale: Recover fires (header clock quiet long enough).
+        let d = fsm.on_tick(1_600, 500, 300);
+        assert!(d.iter().any(|x| matches!(x, PumpDecision::Recover)));
+
+        // Fresh headers (new header), but logs silent: one LogSilence per
+        // episode — a second tick without a log doesn't re-emit.
+        fsm.record_header(1_600); // headers fresh again at 1600
+        let d = fsm.on_tick(2_000, 500, 300);
+        assert!(d.iter().any(|x| matches!(x, PumpDecision::LogSilence)));
+        assert!(d.iter().all(|x| !matches!(x, PumpDecision::Recover)));
+        // Still silent but the alarm is armed and headers stay fresh → no
+        // re-emit (one LogSilence per episode).
+        fsm.record_header(2_300);
+        let d = fsm.on_tick(2_500, 500, 300);
+        assert!(d.is_empty());
+        // A log arrives → re-arms; another silence window (headers kept fresh)
+        // fires a fresh LogSilence.
+        fsm.record_log(2_500);
+        fsm.record_header(2_600);
+        let d = fsm.on_tick(2_900, 500, 300);
+        assert!(d.iter().any(|x| matches!(x, PumpDecision::LogSilence)));
     }
 
     #[test]

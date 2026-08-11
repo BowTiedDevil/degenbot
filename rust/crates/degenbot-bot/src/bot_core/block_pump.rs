@@ -923,7 +923,7 @@ impl BlockPump {
     /// `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes). Also shuts
     /// down on a
     /// late-forward log on a tombstoned block (unreliable WS, ADR-008 D3).
-    #[expect(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, clippy::cast_possible_truncation)]
     #[tracing::instrument(skip(self, combined), fields(first_observed_block))]
     pub async fn run_with_stream(
         &mut self,
@@ -1071,8 +1071,8 @@ impl BlockPump {
         // staleness tick wins and headers are FRESH but this has elapsed past
         // `self.log_silence`, the logs sub is presumed stalled → one warning
         // per silence episode (re-armed when the next log resumes).
-        let mut last_log_at = tokio::time::Instant::now();
-        let mut log_silence_alarm_armed = false;
+        // (the logs-silence clock + re-arm alarm now live in the FSM, fed via
+        // `record_log`; `last_header_at` stays here as the DIAG gap anchor).
         let mut diag_last_stats = tokio::time::Instant::now();
 
         // Option-A solver-state accuracy gate (AV42C7): when enabled, diff each
@@ -1146,6 +1146,10 @@ impl BlockPump {
         let mut staleness_tick = tokio::time::interval(self.header_staleness);
         staleness_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         staleness_tick.tick().await; // discard the immediate first tick
+                                     // A4: a monotonic ms epoch feeding the FSM's pure watchdog `Tick` input
+                                     // (time enters as data; the FSM owns no timer or `Instant`).
+        let tick_epoch = tokio::time::Instant::now();
+        let now_ms = || tick_epoch.elapsed().as_millis() as u64;
 
         // B4GX7C drainer-liveness heartbeat: a 2s cadence that aborts if the
         // background drainer has unacknowledged work and makes no progress for
@@ -1238,23 +1242,37 @@ impl BlockPump {
                 // restarts — acceptable since `DEBOUNCE_MS << header_staleness`
                 // and the no-activity path is now superseded by this watchdog.
                 _ = staleness_tick.tick() => {
-                    if last_header_at.elapsed() >= self.header_staleness {
-                        self.handle_timeout_eager(&mut fsm).await;
-                    } else if last_log_at.elapsed() >= self.log_silence {
-                        // Logs-subscription liveness watchdog (inverse of
-                        // header staleness): headers are FRESH (above branch did
-                        // not fire) but no `WsEvent::Log` has arrived in
-                        // `self.log_silence` — the `eth_subscribe "logs"` arm
-                        // is presumed stalled/dead while `newHeads` is alive.
-                        // One warning per silence episode (re-armed when the
-                        // next log resumes the sub).
-                        if !log_silence_alarm_armed {
-                            tracing::warn!(
-                                silence_secs = self.log_silence.as_secs(),
-                                "[pump] logs subscription silent: headers flowing but no log"
-                            );
-                            self.log_silence_alarms = self.log_silence_alarms.saturating_add(1);
-                            log_silence_alarm_armed = true;
+                    // A4: the watchdog window decision lives in the FSM
+                    // (`on_tick`), fed a synthetic `now_ms`; the interval only
+                    // drives it. The driver executes the emitted decisions.
+                    for decision in fsm.on_tick(
+                        now_ms(),
+                        self.header_staleness.as_millis() as u64,
+                        self.log_silence.as_millis() as u64,
+                    ) {
+                        match decision {
+                            PumpDecision::Recover => {
+                                self.handle_timeout_eager(&mut fsm).await;
+                            }
+                            PumpDecision::LogSilence => {
+                                // Logs-subscription liveness watchdog (inverse
+                                // of header staleness): headers are FRESH (the
+                                // Recover branch did not fire) but no
+                                // `WsEvent::Log` arrived in `self.log_silence`
+                                // — the `eth_subscribe "logs"` arm is presumed
+                                // stalled/dead while `newHeads` is alive. One
+                                // warning per silence episode (re-armed when
+                                // the next log resumes the sub).
+                                tracing::warn!(
+                                    silence_secs = self.log_silence.as_secs(),
+                                    "[pump] logs subscription silent: headers flowing but no log"
+                                );
+                                self.log_silence_alarms =
+                                    self.log_silence_alarms.saturating_add(1);
+                            }
+                            other => unreachable!(
+                                "on_tick only emits Recover|LogSilence, got {other:?}"
+                            ),
                         }
                     }
                     continue;
@@ -1309,6 +1327,8 @@ impl BlockPump {
                     gas_used,
                     gas_limit,
                 })) => {
+                    // A4: feed the header-watchdog clock (pure FSM state).
+                    fsm.record_header(now_ms());
                     // [DIAG]
                     diag_header_count += 1;
                     let diag_gap = if diag_header_count == 1 {
@@ -1442,9 +1462,8 @@ impl BlockPump {
                     // pre-filter drops below) proves the `eth_subscribe
                     // "logs"` arm is delivering. Refresh before the pre-filter
                     // and re-arm the silence alarm so a single warning fires
-                    // per silence episode (not per tick).
-                    last_log_at = tokio::time::Instant::now();
-                    log_silence_alarm_armed = false;
+                    // per silence episode (not per tick) — fed to the FSM.
+                    fsm.record_log(now_ms());
                     // Fast-path topic pre-filter: the `logs` WS subscription
                     // is unfiltered (no topic/address filter on the server —
                     // see `stream_select`), so the overwhelming majority of
