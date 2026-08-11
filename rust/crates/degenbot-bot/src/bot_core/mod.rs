@@ -30,6 +30,7 @@ pub mod event_dispatch;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
 pub mod pool_builder;
+pub mod pump_fsm;
 pub mod registration_lifecycle;
 pub mod reorg_coordinator;
 pub mod reserve_pair_orchestration;
