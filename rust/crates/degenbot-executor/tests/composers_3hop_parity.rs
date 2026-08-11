@@ -228,7 +228,7 @@ fn parity_v2_v2_v4() {
     let mut inner = Vec::new();
     inner.extend_from_slice(&encoders::enc_v4_sync(forward_b_idx));
     inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
             .unwrap(), // placeholder
     );
     inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, v2b_idx, 30));
@@ -750,7 +750,7 @@ fn parity_v2_v4_v4() {
     let mut v4_inner = Vec::new();
     v4_inner.extend_from_slice(&encoders::enc_v4_sync(forward_a_idx));
     v4_inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, 1_000_000_000_000_000_000u128)
             .unwrap(),
     );
     v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, true, pm_idx, 30));

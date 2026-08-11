@@ -1333,7 +1333,7 @@ fn v2_v2_v4(
 
     let mut inner = encoders::enc_v4_sync(forward_b_idx);
     inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(SENTINEL_WETH, v2a_idx, optimal_input).ok()?,
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, optimal_input).ok()?,
     );
     inner.extend_from_slice(&encoders::enc_v2_swap_calc(
         v2a_idx, ha.zfo, v2b_idx, ha.fee,
@@ -1631,7 +1631,7 @@ fn v2_v4_v4(
 
     let mut v4_inner = encoders::enc_v4_sync(forward_a_idx);
     v4_inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(SENTINEL_WETH, v2a_idx, optimal_input).ok()?,
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, optimal_input).ok()?,
     );
     v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, ha.fee));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle());
