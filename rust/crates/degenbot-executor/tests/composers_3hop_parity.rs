@@ -1357,9 +1357,10 @@ fn parity_v3_v4_v2() {
     v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(forward_b_idx, v2c_idx));
     v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).unwrap();
-    a_fwd.extend_from_slice(
-        &encoders::enc_v2_swap_direct(v2c_idx, true, 2_001_000_000u128, executor_idx).unwrap(),
-    );
+    // Terminal V2 hop is V2_SWAP_CALC (exact-output via hopper), matching the
+    // production `v3_v4_v2` composer — not V2_SWAP_DIRECT (460f23bf closes the
+    // 1-wei exact-out K over-draw by letting the pair compute its own amount).
+    a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2c_idx, true, executor_idx, 30));
     a_fwd.extend_from_slice(
         &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, 1_000_000_000_000_000_000u128)
             .unwrap(),
