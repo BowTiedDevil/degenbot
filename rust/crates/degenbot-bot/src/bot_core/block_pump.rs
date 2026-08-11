@@ -1239,14 +1239,7 @@ impl BlockPump {
                 // and the no-activity path is now superseded by this watchdog.
                 _ = staleness_tick.tick() => {
                     if last_header_at.elapsed() >= self.header_staleness {
-                        self.handle_timeout_eager(
-                            &mut fsm.current_block,
-                            &mut fsm.clock,
-                            &mut fsm.block_metadata,
-                            &mut fsm.publish_pending,
-                            &mut fsm.recovery_anchor,
-                        )
-                        .await;
+                        self.handle_timeout_eager(&mut fsm).await;
                     } else if last_log_at.elapsed() >= self.log_silence {
                         // Logs-subscription liveness watchdog (inverse of
                         // header staleness): headers are FRESH (above branch did
@@ -1299,14 +1292,7 @@ impl BlockPump {
                             PumpDecision::Backfill { from, to } => {
                                 // No activity for 60s — backfill `[from, to)`.
                                 debug_assert!(from == fsm.current_block + 1 && to.is_none());
-                                self.handle_timeout_eager(
-                                    &mut fsm.current_block,
-                                    &mut fsm.clock,
-                                    &mut fsm.block_metadata,
-                                    &mut fsm.publish_pending,
-                                    &mut fsm.recovery_anchor,
-                                )
-                                .await;
+                                self.handle_timeout_eager(&mut fsm).await;
                             }
                             other => {
                                 unreachable!("on_settle only emits Publish|Backfill, got {other:?}")
@@ -1403,7 +1389,7 @@ impl BlockPump {
                                 // now owns `[old+1, number-1]`; a recovering WS
                                 // flushing buffered logs for that range must be
                                 // discarded (single-writer), not re-asserted.
-                                fsm.recovery_anchor = fsm.recovery_anchor.max(number - 1);
+                                fsm.record_backfill(number - 1);
                             }
                             fsm.current_block = number;
                             // LEZJAS: the backfill path solved up to `number`
@@ -1437,7 +1423,7 @@ impl BlockPump {
                             // catch-up (see the first-header branch above — the
                             // range this backfill owns must not be re-asserted
                             // by the recovering WS).
-                            fsm.recovery_anchor = fsm.recovery_anchor.max(number - 1);
+                            fsm.record_backfill(number - 1);
                         }
 
                         fsm.current_block = number;
@@ -1489,7 +1475,7 @@ impl BlockPump {
                     // A forward ABOVE `recovery_anchor` that is still stale
                     // remains a hard ADR-008 D3 fault (only the pump's own
                     // single-writer range is benign).
-                    if !log.removed && fsm.recovery_anchor > 0 && log_block <= fsm.recovery_anchor {
+                    if fsm.should_drop_recovered_forward(log_block, log.removed) {
                         continue;
                     }
                     // Boundary-block delivery alignment (DFQYM5): when the
@@ -1736,14 +1722,7 @@ impl BlockPump {
     }
 
     /// Handle a 60s timeout by backfilling any missed blocks (eager variant).
-    async fn handle_timeout_eager(
-        &self,
-        current_block: &mut u64,
-        clock: &mut BlockClock,
-        block_metadata: &mut HashMap<u64, BlockMetadata>,
-        publish_pending: &mut bool,
-        recovery_anchor: &mut u64,
-    ) {
+    async fn handle_timeout_eager(&self, fsm: &mut PumpFSM) {
         tracing::warn!(
             backfill_timeout_secs = BACKFILL_TIMEOUT_SECS,
             "BlockPump: no activity — attempting backfill"
@@ -1756,18 +1735,18 @@ impl BlockPump {
             }
         };
 
-        if latest_block > *current_block {
-            let mut lpb = *current_block;
+        if latest_block > fsm.current_block {
+            let mut lpb = fsm.current_block;
             self.backfill_range(
-                *current_block + 1,
+                fsm.current_block + 1,
                 latest_block,
                 &mut lpb,
-                clock,
-                block_metadata,
-                publish_pending,
+                &mut fsm.clock,
+                &mut fsm.block_metadata,
+                &mut fsm.publish_pending,
             )
             .await;
-            *current_block = lpb;
+            fsm.current_block = lpb;
             // LEZJAS: engine owns `last_solved_block` + `has_logs_this_block`
             // now — mark the backfilled range solved + clear the logs flag
             // through the sink (mirrors the retired pump-local writes).
@@ -1778,7 +1757,7 @@ impl BlockPump {
             // duplicates of what we just applied and are dropped (never
             // reaching `PanicLateForward`). Anomalies ABOVE `recovery_anchor`
             // still fault.
-            *recovery_anchor = (*recovery_anchor).max(latest_block);
+            fsm.record_backfill(latest_block);
         }
     }
 

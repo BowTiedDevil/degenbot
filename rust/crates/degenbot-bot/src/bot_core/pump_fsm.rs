@@ -139,6 +139,15 @@ impl PumpFSM {
             .max(state_head)
     }
 
+    /// BQ7ZBC — record that an authoritative catch-up (a header-gap backfill
+    /// or a `handle_timeout_eager` recovery) has OWNED the range up to
+    /// `through`. Per the single-writer rule (DFQYM5), the live WS no longer
+    /// owns any block ≤ `recovery_anchor`, so later recovered forwards there
+    /// are benign duplicates (dropped) rather than re-asserted faults.
+    pub fn record_backfill(&mut self, through: u64) {
+        self.recovery_anchor = self.recovery_anchor.max(through);
+    }
+
     /// The per-event decision for a `WsEvent::BlockHeader`. Returns the effects
     /// the driver must execute (notify, backfill, mark-solved).
     pub fn on_header(
@@ -191,6 +200,19 @@ impl PumpFSM {
             });
         }
         decisions
+    }
+
+    /// BQ7ZBC / DFQYM5 single-writer recovery discard. A stalled WS that
+    /// recovers flushes buffered forward logs for blocks ≤ `recovery_anchor` —
+    /// duplicates of state the authoritative catch-up already applied. These
+    /// are DROPPED (never reaching `observe_log`/`PanicLateForward`). Reorg
+    /// logs (`removed: true`) are NEVER dropped — they must reach the reorg
+    /// classifier to unwind the backfilled range. A forward ABOVE
+    /// `recovery_anchor` that is still stale remains a hard ADR-008 D3 fault
+    /// (only the pump's own single-writer range is benign).
+    #[must_use]
+    pub fn should_drop_recovered_forward(&self, log_block: u64, removed: bool) -> bool {
+        !removed && self.recovery_anchor > 0 && log_block <= self.recovery_anchor
     }
 
     /// The settle-point decision (no new event in the window): the quiesce-
@@ -289,6 +311,33 @@ mod tests {
         let d = fsm.on_header(100, meta(100_000), 2_000);
         assert!(d.is_empty());
         assert_eq!(fsm.current_block, before);
+    }
+
+    #[test]
+    fn single_writer_recovery_anchor_drops_owned_range_only() {
+        // Record an authoritative catch-up owning [.., 205]. Per the
+        // single-writer rule (DFQYM5) the WS no longer owns those blocks.
+        let mut fsm = PumpFSM::new(200, 0);
+        fsm.record_backfill(205);
+        assert_eq!(fsm.recovery_anchor, 205);
+
+        // A recovered forward INSIDE the owned range is a benign duplicate:…
+        // dropped, not re-asserted (no BQ7ZBC / PanicLateForward fault).
+        assert!(fsm.should_drop_recovered_forward(205, false));
+        assert!(fsm.should_drop_recovered_forward(201, false));
+        // A reorg log (removed:true) is NEVER dropped — it must unwind the
+        // backfilled range through the reorg classifier.
+        assert!(!fsm.should_drop_recovered_forward(205, true));
+        assert!(!fsm.should_drop_recovered_forward(150, true));
+        // A forward ABOVE the anchor is not owned — still a hard D3 fault
+        // (surfaces to the driver, never silently dropped).
+        assert!(!fsm.should_drop_recovered_forward(206, false));
+
+        // record_backfill only extends the anchor (monotone), never shrinks.
+        fsm.record_backfill(200);
+        assert_eq!(fsm.recovery_anchor, 205);
+        fsm.record_backfill(210);
+        assert_eq!(fsm.recovery_anchor, 210);
     }
 
     #[test]
