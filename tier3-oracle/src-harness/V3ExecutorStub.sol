@@ -227,7 +227,11 @@ contract PoolV3 {
 
         bytes memory balanceCheck = abi.encodeWithSignature("balanceOf(address)", address(this));
         uint256 balBefore = _erc20Balance(token0, balanceCheck);
-        IUniswapV3Callback(recipient).uniswapV3SwapCallback(amount0, amount1, data);
+                // Real v3-core calls back `msg.sender` (the entity that initiated the swap),
+        // NOT the `recipient`. The composer may set `recipient` to the PoolManager
+        // (V4-out paths) so the pool output feeds the PM delta; calling back the
+        // recipient would misfire at the PM, which has no `uniswapV3SwapCallback`.
+        IUniswapV3Callback(msg.sender).uniswapV3SwapCallback(amount0, amount1, data);
         uint256 balAfter = _erc20Balance(token0, balanceCheck);
         // IIA: the callback must have paid the input into the pool.
         uint256 expected = zeroForOne ? uint256(amount0) : 0;

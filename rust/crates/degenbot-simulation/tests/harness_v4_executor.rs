@@ -396,3 +396,332 @@ fn v4_v3_two_pool_path_executes() {
         "V4-V3 payload must execute (reach both pools): {outcome:?}"
     );
 }
+
+// ── 3-hop funding-topology conversion families ──────────────────────────────
+// These are the deferred conversions (v2_v3_v2, v2_v4_v2, v3_v2_v4) plus the
+// v3_v4_v2 sibling — the explicit purpose of this harness: prove the composed
+// payload executes over the real executor without a command-decode / flash-
+// repay failure. WETH -> T1 -> T2 -> WETH through the family's pool mix.
+
+#[test]
+fn v2_v3_v2_three_pool_path_executes() {
+    let mut h = degenbot_simulation::harness::Harness::new().unwrap();
+    let (t1, t2) = (h.add_token().unwrap(), h.add_token().unwrap());
+    // pool0 V2: WETH -> T1 (balanced ~1x)
+    let p0 = h
+        .add_pool(h.weth, t1, 1_000_000_000, 1_000_000_000)
+        .unwrap();
+    // pool1 V3: T1 -> T2, priced 1.05x (captures the profit)
+    let mid = price_one() * U256::from(105u64) / U256::from(100u64);
+    let p1 = h
+        .add_v3_pool(
+            t1,
+            t2,
+            3000,
+            mid,
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+    // pool2 V2: T2 -> WETH (terminal, balanced ~1x)
+    let p2 = h
+        .add_pool(t2, h.weth, 1_000_000_000, 1_000_000_000)
+        .unwrap();
+
+    let optimal_input = 100_000u128;
+    let ho0 = v2_out(reserve_of(p0, h.weth), reserve_of(p0, t1), optimal_input); // WETH->T1
+    let ho1 = v3_amount_out(p1.sqrt_price, p1.liquidity, ho0, true, p1.fee); // T1->T2
+    let out = v2_out(reserve_of(p2, t2), reserve_of(p2, h.weth), ho1); // T2->WETH
+    let hop_outputs = [ho0, ho1, out];
+    assert!(
+        out > optimal_input,
+        "must be profitable (out={out} vs optimal={optimal_input})"
+    );
+
+    h.fund(h.weth, h.executor, optimal_input * 2).unwrap();
+    h.fund(t1, h.executor, ho0 * 2).unwrap();
+    h.fund(t2, h.executor, ho1 * 2).unwrap();
+    h.executor_approve_pair(p0).unwrap();
+    h.executor_approve_pair(p2).unwrap();
+
+    let path = PathInfo::new(vec![
+        HopInfo::V2(V2HopInfo {
+            pool_address: p0.pair,
+            token0_address: p0.token0,
+            token1_address: p0.token1,
+            fee: 30,
+            zfo: v2_zfo(p0, h.weth),
+        }),
+        HopInfo::V3(V3HopInfo {
+            pool_address: p1.pool,
+            token0_address: p1.token0,
+            token1_address: p1.token1,
+            fee: p1.fee,
+            zfo: true,
+        }),
+        HopInfo::V2(V2HopInfo {
+            pool_address: p2.pair,
+            token0_address: p2.token0,
+            token1_address: p2.token1,
+            fee: 30,
+            zfo: v2_zfo(p2, t2),
+        }),
+    ]);
+    let outcome = h
+        .run_path(&path, optimal_input, &hop_outputs, 8_000_000)
+        .unwrap();
+    println!(
+        "V2-V3-V2 outcome: {outcome:?}  ho0={ho0} ho1={ho1} out={out} optimal={optimal_input}"
+    );
+    assert!(
+        outcome.executed(3),
+        "V2-V3-V2 payload must execute: {outcome:?}"
+    );
+}
+
+#[test]
+fn v2_v4_v2_three_pool_path_executes() {
+    let mut h = degenbot_simulation::harness::Harness::new().unwrap();
+    let (t1, t2) = (h.add_token().unwrap(), h.add_token().unwrap());
+    // pool0 V2: WETH -> T1 (balanced ~1x)
+    let p0 = h
+        .add_pool(h.weth, t1, 1_000_000_000, 1_000_000_000)
+        .unwrap();
+    // pool1 V4: T1 -> T2, priced 1.05x (captures the profit)
+    let mid = price_one() * U256::from(105u64) / U256::from(100u64);
+    let a = h
+        .add_v4_pool(
+            t1,
+            t2,
+            3000,
+            60,
+            mid,
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+    // pool2 V2: T2 -> WETH (terminal, balanced ~1x)
+    let p2 = h
+        .add_pool(t2, h.weth, 1_000_000_000, 1_000_000_000)
+        .unwrap();
+
+    let optimal_input = 100_000u128;
+    let ho0 = v2_out(reserve_of(p0, h.weth), reserve_of(p0, t1), optimal_input);
+    let ho1 = v3_amount_out(a.sqrt_price, a.liquidity, ho0, true, a.fee);
+    let out = v2_out(reserve_of(p2, t2), reserve_of(p2, h.weth), ho1);
+    let hop_outputs = [ho0, ho1, out];
+    assert!(out > optimal_input, "must be profitable (out={out})");
+
+    h.fund(h.weth, h.executor, optimal_input * 2).unwrap();
+    h.fund(t1, h.executor, ho0 * 2).unwrap();
+    h.fund(t2, h.executor, ho1 * 2).unwrap();
+    h.executor_approve_pair(p0).unwrap();
+    h.executor_approve_pair(p2).unwrap();
+
+    let path = PathInfo::new(vec![
+        HopInfo::V2(V2HopInfo {
+            pool_address: p0.pair,
+            token0_address: p0.token0,
+            token1_address: p0.token1,
+            fee: 30,
+            zfo: v2_zfo(p0, h.weth),
+        }),
+        HopInfo::V4(V4HopInfo {
+            pool_manager_address: h.pool_manager,
+            pool_id_hex: "0x0".into(),
+            currency0_address: a.currency0,
+            currency1_address: a.currency1,
+            fee: a.fee,
+            tick_spacing: a.tick_spacing,
+            hook_address: Address::ZERO,
+            zfo: true,
+        }),
+        HopInfo::V2(V2HopInfo {
+            pool_address: p2.pair,
+            token0_address: p2.token0,
+            token1_address: p2.token1,
+            fee: 30,
+            zfo: v2_zfo(p2, t2),
+        }),
+    ]);
+    let outcome = h
+        .run_path(&path, optimal_input, &hop_outputs, 8_000_000)
+        .unwrap();
+    println!(
+        "V2-V4-V2 outcome: {outcome:?}  ho0={ho0} ho1={ho1} out={out} optimal={optimal_input}"
+    );
+    assert!(
+        outcome.executed(3),
+        "V2-V4-V2 payload must execute: {outcome:?}"
+    );
+}
+
+#[test]
+fn v3_v2_v4_three_pool_path_executes() {
+    let mut h = degenbot_simulation::harness::Harness::new().unwrap();
+    let (t1, t2) = (h.add_token().unwrap(), h.add_token().unwrap());
+    // pool0 V3: WETH -> T1 (price 1)
+    let p0 = h
+        .add_v3_pool(
+            h.weth,
+            t1,
+            3000,
+            price_one(),
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+    // pool1 V2: T1 -> T2 (balanced ~1x)
+    let p1 = h.add_pool(t1, t2, 1_000_000_000, 1_000_000_000).unwrap();
+    // pool2 V4: T2 -> WETH, priced 1.05x (captures the profit)
+    let out_sqrt = price_one() * U256::from(105u64) / U256::from(100u64);
+    let a = h
+        .add_v4_pool(
+            t2,
+            h.weth,
+            3000,
+            60,
+            out_sqrt,
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+
+    let optimal_input = 100_000u128;
+    let ho0 = v3_amount_out(p0.sqrt_price, p0.liquidity, optimal_input, true, p0.fee); // WETH->T1
+    let ho1 = v2_out(reserve_of(p1, t1), reserve_of(p1, t2), ho0); // T1->T2
+    let out = v3_amount_out(a.sqrt_price, a.liquidity, ho1, true, a.fee); // T2->WETH
+    let hop_outputs = [ho0, ho1, out];
+    assert!(out > optimal_input, "must be profitable (out={out})");
+
+    h.fund(h.weth, h.executor, optimal_input * 2).unwrap();
+    h.fund(t1, h.executor, ho0 * 2).unwrap();
+    h.fund(t2, h.executor, ho1 * 2).unwrap();
+    h.executor_approve_pair(p1).unwrap();
+
+    let path = PathInfo::new(vec![
+        HopInfo::V3(V3HopInfo {
+            pool_address: p0.pool,
+            token0_address: p0.token0,
+            token1_address: p0.token1,
+            fee: p0.fee,
+            zfo: true,
+        }),
+        HopInfo::V2(V2HopInfo {
+            pool_address: p1.pair,
+            token0_address: p1.token0,
+            token1_address: p1.token1,
+            fee: 30,
+            zfo: v2_zfo(p1, t1),
+        }),
+        HopInfo::V4(V4HopInfo {
+            pool_manager_address: h.pool_manager,
+            pool_id_hex: "0x0".into(),
+            currency0_address: a.currency0,
+            currency1_address: a.currency1,
+            fee: a.fee,
+            tick_spacing: a.tick_spacing,
+            hook_address: Address::ZERO,
+            zfo: true,
+        }),
+    ]);
+    let outcome = h
+        .run_path(&path, optimal_input, &hop_outputs, 8_000_000)
+        .unwrap();
+    println!(
+        "V3-V2-V4 outcome: {outcome:?}  ho0={ho0} ho1={ho1} out={out} optimal={optimal_input}"
+    );
+    assert!(
+        outcome.executed(3),
+        "V3-V2-V4 payload must execute: {outcome:?}"
+    );
+}
+
+#[test]
+fn v3_v4_v2_three_pool_path_executes() {
+    let mut h = degenbot_simulation::harness::Harness::new().unwrap();
+    let (t1, t2) = (h.add_token().unwrap(), h.add_token().unwrap());
+    // pool0 V3: WETH -> T1 (price 1)
+    let p0 = h
+        .add_v3_pool(
+            h.weth,
+            t1,
+            3000,
+            price_one(),
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+    // pool1 V4: T1 -> T2, priced 1.05x (captures the profit)
+    let mid = price_one() * U256::from(105u64) / U256::from(100u64);
+    let a = h
+        .add_v4_pool(
+            t1,
+            t2,
+            3000,
+            60,
+            mid,
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+    // pool2 V2: T2 -> WETH (terminal, balanced ~1x)
+    let p2 = h
+        .add_pool(t2, h.weth, 1_000_000_000, 1_000_000_000)
+        .unwrap();
+
+    let optimal_input = 100_000u128;
+    let ho0 = v3_amount_out(p0.sqrt_price, p0.liquidity, optimal_input, true, p0.fee);
+    let ho1 = v3_amount_out(a.sqrt_price, a.liquidity, ho0, true, a.fee);
+    let out = v2_out(reserve_of(p2, t2), reserve_of(p2, h.weth), ho1);
+    let hop_outputs = [ho0, ho1, out];
+    assert!(out > optimal_input, "must be profitable (out={out})");
+
+    h.fund(h.weth, h.executor, optimal_input * 2).unwrap();
+    h.fund(t1, h.executor, ho0 * 2).unwrap();
+    h.fund(t2, h.executor, ho1 * 2).unwrap();
+    h.executor_approve_pair(p2).unwrap();
+
+    let path = PathInfo::new(vec![
+        HopInfo::V3(V3HopInfo {
+            pool_address: p0.pool,
+            token0_address: p0.token0,
+            token1_address: p0.token1,
+            fee: p0.fee,
+            zfo: true,
+        }),
+        HopInfo::V4(V4HopInfo {
+            pool_manager_address: h.pool_manager,
+            pool_id_hex: "0x0".into(),
+            currency0_address: a.currency0,
+            currency1_address: a.currency1,
+            fee: a.fee,
+            tick_spacing: a.tick_spacing,
+            hook_address: Address::ZERO,
+            zfo: true,
+        }),
+        HopInfo::V2(V2HopInfo {
+            pool_address: p2.pair,
+            token0_address: p2.token0,
+            token1_address: p2.token1,
+            fee: 30,
+            zfo: v2_zfo(p2, t2),
+        }),
+    ]);
+    let outcome = h
+        .run_path(&path, optimal_input, &hop_outputs, 8_000_000)
+        .unwrap();
+    println!(
+        "V3-V4-V2 outcome: {outcome:?}  ho0={ho0} ho1={ho1} out={out} optimal={optimal_input}"
+    );
+    assert!(
+        outcome.executed(3),
+        "V3-V4-V2 payload must execute: {outcome:?}"
+    );
+}
