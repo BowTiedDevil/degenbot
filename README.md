@@ -1650,6 +1650,7 @@ Additional documentation is available in the [`docs/`](docs/) directory:
 - **[Arbitrage](docs/arbitrage/)**: Multi-pool cycle testing documentation
 - **[CLI](docs/cli/)**: Detailed CLI command reference
 - **[Configuration](docs/config.md)**: Configuration options
+- **[Logging](docs/logging.md)**: Controlling `RUST_LOG` / `DEGENBOT_DEBUG` tracing, the env-gated hard/loud diagnostics, and debug-named diagnostics
 
 ### Contract Reference
 

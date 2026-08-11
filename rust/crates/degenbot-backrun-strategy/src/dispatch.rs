@@ -66,7 +66,15 @@ use crate::{
 /// the observability gap for the path-11354 V3-V2-V3 1-wei under-delivery: a
 /// slot8 that no on-chain block holds (synthetic / cached-intra-block /
 /// polluted) surfaces here even though every DB layer below the `CacheDB`
-/// forwards on-chain state. No-op unless `DEGENBOT_V2_CALC_TRACE` is set.
+/// forwards on-chain state.
+///
+/// The output is emitted at `debug` level, so it is gated behind the tracing
+/// filter (`RUST_LOG=...=debug` / `=trace`) rather than appearing on stderr by
+/// default. `DEGENBOT_V2_CALC_TRACE` (conservative default ON via
+/// `flag_default_on`) additionally gates the slot-8 read itself: set it to a
+/// falsey value to skip the read work entirely. The `debug` level is the
+/// primary noise gate — the env var only controls whether the (cheap) reads
+/// run.
 fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
     if !crate::simulator::flag_default_on("DEGENBOT_V2_CALC_TRACE") {
         return;
@@ -77,7 +85,7 @@ fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
             let word = match cache_db.storage_ref(v2.pool_address, U256::from(8u64)) {
                 Ok(w) => w,
                 Err(e) => {
-                    tracing::warn!(
+                    tracing::debug!(
                         path_id = sim_path.path_id,
                         pair = ?v2.pool_address,
                         %e,
@@ -89,7 +97,7 @@ fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
             let mask112 = (U256::from(1_u128) << U256::from(112)) - U256::from(1_u128);
             let reserve0 = (word & mask112).to::<u128>(); // low 112 = token0 reserve
             let reserve1 = ((word >> U256::from(112)) & mask112).to::<u128>(); // next 112
-            tracing::warn!(
+            tracing::debug!(
                 path_id = sim_path.path_id,
                 pair = ?v2.pool_address,
                 token0 = ?v2.token0_address,

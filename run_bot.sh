@@ -37,6 +37,31 @@ mkdir -p "$LOGDIR"
 #   DEGENBOT_SIM_EXIT_ON_FAIL=0 ./run_bot.sh
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Debug-visible instrumented runs (default ON here).
+#
+# The Rust core's granular diagnostics ([debug-v4-solve], [solver-dbg],
+# [solver-st], [v2-calc-trace], ...) are gated behind the `debug` tracing
+# level AND the Python-side DEBUG logger (see docs/logging.md). Set BOTH below
+# so those lines reach logs/bot_run.log in these instrumented runs:
+#
+#   * RUST_LOG        is the Rust `tracing` EnvFilter gate. Raising the
+#                     degenbot_* crates to `debug` makes the fine-grained
+#                     diagnostics visible while `info` keeps routine status
+#                     lines; the alloy/tungstenite targets are held at `warn`
+#                     to mirror the code's built-in default and stop their
+#                     lifecycle INFO noise from flooding the log.
+#   * DEGENBOT_DEBUG=1 is the Python `logging` gate. Without it the crate-root
+#                     Python loggers stay at INFO and drop the debug records
+#                     before they reach the log/bot_run.log tee.
+#
+# Both respect a pre-set value: set RUST_LOG / DEGENBOT_DEBUG yourself to opt
+# out (e.g. RUST_LOG=warn ./run_bot.sh) or tighten the scope.
+# --------------------------------------------------------------------------
+DEFAULT_RUST_LOG="info,degenbot_bot=debug,degenbot_backrun_strategy=debug,degenbot_simulation=debug,degenbot_solvers=debug,alloy_pubsub=warn,alloy_transport=warn,alloy_transport_ws=warn,alloy_transport_ipc=warn,alloy_transport_http=warn,alloy_provider=warn,alloy_rpc=warn,alloy_network=warn,alloy_contract=warn,tungstenite=warn"
+export RUST_LOG="${RUST_LOG:-$DEFAULT_RUST_LOG}"
+export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-1}"
+
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).
 BOT_CMD=(uv run python examples/eth_backrun_v2_v3_v4_rust.py)

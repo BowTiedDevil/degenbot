@@ -281,7 +281,7 @@ impl ArbitrageEngine {
         block_number: u64,
         _metadata: &BlockMetadata,
     ) {
-        tracing::info!(
+        tracing::debug!(
             "[solver-dbg] rebuild_and_solve_affected called block={block_number} dirty v2={} v3={} v4={}",
             v2_affected.len(),
             v3_affected.len(),
@@ -466,7 +466,7 @@ impl ArbitrageEngine {
             // captured swaps.
             .inspect(|(pid, r)| {
                 if !r.solver_pool_states.is_empty() {
-                    tracing::info!(
+                    tracing::debug!(
                         "[solver-st] path_id={pid} hops=[{}]",
                         r.solver_pool_states.join(";")
                     );
@@ -508,7 +508,7 @@ impl ArbitrageEngine {
     /// `solve_all_paths` entry).
     #[must_use]
     pub fn solve_all(&self) -> HashMap<u64, SolvePathResult> {
-        tracing::info!(
+        tracing::debug!(
             "[solver-dbg] solve_all called, resolved_paths={}",
             self.path_resolved.len()
         );
@@ -523,7 +523,7 @@ impl ArbitrageEngine {
                     // (path_id -> pool state at solve time).
                     .inspect(|r| {
                         if !r.solver_pool_states.is_empty() {
-                            tracing::info!(
+                            tracing::debug!(
                                 "[solver-st] path_id={path_id} hops=[{}]",
                                 r.solver_pool_states.join(";")
                             );
@@ -671,7 +671,7 @@ impl ArbitrageEngine {
                         } else {
                             0
                         };
-                        tracing::info!(
+                        tracing::debug!(
                             pool_manager = ?identity.pool_manager,
                             pool_id = %pid_hex,
                             zero_for_one = %pool_ref.zero_for_one,
@@ -981,6 +981,7 @@ mod staleness_gate_tests {
 
 #[cfg(test)]
 mod profit_clamp_recompute_tests {
+    #![expect(clippy::expect_used)] // tests assert recompute invariants
     use super::{ArbitrageEngine, SolvePathResult, U256};
 
     /// Path-142603 (V4-V4-V3 @25723658) regression: the solver reported a
