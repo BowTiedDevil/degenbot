@@ -30,6 +30,9 @@ degenbot-core = { path = "../degenbot-core" }
 # `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim
 # orchestration consumes — crossed from the executor leaf.
 degenbot-executor = { path = "../degenbot-executor" }
+# `sqrt_price_math` — the engine's proven V3 amount math, so the harness
+# computes V3 hop outputs byte-consistent with the `PoolV3` stub (UQOAHA).
+degenbot-cl-math = { path = "../degenbot-cl-math" }
 # `AlloyProvider` — the typed RPC provider the in-process sim's cold-miss
 # fallback (`WrapDatabaseAsync<AlloyDB>`) + the access-list / feeHistory paths
 # consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.

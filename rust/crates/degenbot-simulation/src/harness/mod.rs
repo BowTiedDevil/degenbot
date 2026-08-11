@@ -29,10 +29,12 @@
     clippy::unwrap_used,
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::cast_possible_wrap,
+    clippy::too_many_arguments
 )]
 
-use alloy::primitives::{keccak256, Address, Bytes, U256};
+use alloy::primitives::{keccak256, Address, Bytes, U256, U512};
 use revm::context::TxEnv;
 use revm::context_interface::result::Output;
 use revm::primitives::TxKind;
@@ -94,6 +96,22 @@ pub struct V2Pool {
     pub reserve1: u128,
 }
 
+/// A single synthesized V3 pool: one `PoolV3` contract + its two `Token`s
+/// (order fixed by the harness, matching `PoolV3.initialize`, which does not
+/// sort).
+#[derive(Debug, Clone, Copy)]
+pub struct V3Pool {
+    pub pool: Address,
+    pub token0: Address,
+    pub token1: Address,
+    /// Fee in hundredths of a bip (e.g. 3000 = 0.3%).
+    pub fee: u32,
+    /// Q64.96 sqrt price.
+    pub sqrt_price: U256,
+    /// Active liquidity.
+    pub liquidity: u128,
+}
+
 /// A running harness: the real executor + a set of synthesized tokens/pools in
 /// one fresh revm `CacheDB<EmptyDB>`.
 pub struct Harness {
@@ -101,8 +119,10 @@ pub struct Harness {
     pub executor: Address,
     /// The token address the executor treats as WETH (its immutable `WETH_ADDR`).
     pub weth: Address,
-    /// All deployed pools (in `add_pool` call order).
+    /// All deployed V2 pools (in `add_pool` call order).
     pub pools: Vec<V2Pool>,
+    /// All deployed V3 pools (in `add_v3_pool` call order).
+    pub v3_pools: Vec<V3Pool>,
     /// All deployed tokens (deduped across pools, `add_pool` discovery order).
     pub tokens: Vec<Address>,
 }
@@ -135,8 +155,19 @@ impl Harness {
             executor,
             weth,
             pools: Vec::new(),
+            v3_pools: Vec::new(),
             tokens: vec![weth],
         })
+    }
+
+    /// Deploy any committed stub artifact (`Token`/`Pair`/`PoolV3`/… by name)
+    /// at a fresh CREATE address and return it.
+    pub fn deploy_stub(&mut self, name: &str) -> Result<Address, String> {
+        deploy(
+            &mut self.evm,
+            Bytes::from(load_stub_creation(name)),
+            8_000_000,
+        )
     }
 
     /// Deploy a fresh `Token` (a ^0.8 minimal full-ERC20) and return its address.
@@ -202,6 +233,48 @@ impl Harness {
         };
         self.pools.push(pool);
         Ok(pool)
+    }
+
+    /// Deploy a V3 pool over `token_a`/`token_b` at `fee` (hundredths of a
+    /// bip), set its Q64.96 price + liquidity, and mint `amt_a`/`amt_b` of
+    /// each token to the pool (so it can send swap output). Token order is
+    /// fixed by the caller (matching `PoolV3.initialize`, which does not
+    /// sort) — `a` is `token0`, `b` is `token1`.
+    pub fn add_v3_pool(
+        &mut self,
+        token_a: Address,
+        token_b: Address,
+        fee: u32,
+        sqrt_price: U256,
+        liquidity: u128,
+        amt_a: u128,
+        amt_b: u128,
+    ) -> Result<V3Pool, String> {
+        let pool = deploy(
+            &mut self.evm,
+            Bytes::from(load_stub_creation("PoolV3")),
+            8_000_000,
+        )?;
+        let _ = self.call(pool, &init_v3(token_a, token_b, fee), 500_000)?;
+        let _ = self.call(pool, &set_v3_price(sqrt_price), 200_000)?;
+        let _ = self.call(pool, &set_v3_liquidity(liquidity), 200_000)?;
+        self.call(token_a, &mint_to(pool, amt_a), 200_000)?;
+        self.call(token_b, &mint_to(pool, amt_b), 200_000)?;
+        for t in [token_a, token_b] {
+            if !self.tokens.contains(&t) {
+                self.tokens.push(t);
+            }
+        }
+        let v3 = V3Pool {
+            pool,
+            token0: token_a,
+            token1: token_b,
+            fee,
+            sqrt_price,
+            liquidity,
+        };
+        self.v3_pools.push(v3);
+        Ok(v3)
     }
 
     /// Give `who` `amount` of `token` (mint — the harness's free liquidity).
@@ -277,7 +350,7 @@ impl Harness {
             },
         ) {
             Verdict::Accepted { logs, .. } => {
-                let swaps = count_swap_events(&logs, &self.pools);
+                let swaps = count_swap_events(&logs, &self.pools, &self.v3_pools);
                 Ok(ExecOutcome::Accepted { swaps })
             }
             Verdict::Reverted(r) => {
@@ -315,9 +388,7 @@ impl Harness {
         hop_outputs: &[u128],
         gas: u64,
     ) -> Result<ExecOutcome, String> {
-        use degenbot_executor::composers::{
-            encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo,
-        };
+        use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo};
         let n = pool_indices.len();
         debug_assert_eq!(n, zfo.len());
         debug_assert_eq!(n, hop_outputs.len());
@@ -335,19 +406,33 @@ impl Harness {
             hops.push(HopInfo::V2(hop));
         }
         let path = PathInfo::new(hops);
+        self.run_path(&path, optimal_input, hop_outputs, gas)
+    }
+
+    /// Encode an arbitrary (mixed-V2/V3) `&PathInfo` via the production entry
+    /// and execute it. `hop_outputs[i]` are the per-hop solver outputs;
+    /// `consumed_inputs` defaults to `[optimal_input, hop_outputs[0], …]`.
+    pub fn run_path(
+        &mut self,
+        path: &degenbot_executor::composers::PathInfo,
+        optimal_input: u128,
+        hop_outputs: &[u128],
+        gas: u64,
+    ) -> Result<ExecOutcome, String> {
+        let n = path.hops.len();
         let consumed: Vec<u128> = std::iter::once(optimal_input)
             .chain(hop_outputs.iter().copied())
             .take(n)
             .collect();
-        let cmd = encode_cmd_stream(
-            &path,
+        let cmd = degenbot_executor::composers::encode_cmd_stream(
+            path,
             optimal_input,
             hop_outputs,
             &consumed,
             self.executor,
             self.weth,
             Address::repeat_byte(0x22),
-            EncodeOptions::default(),
+            degenbot_executor::composers::EncodeOptions::default(),
         )
         .ok_or_else(|| "encode_cmd_stream returned None".to_string())?;
         self.execute_payload(&cmd, gas)
@@ -431,9 +516,90 @@ fn pad32(a: Address) -> [u8; 32] {
     w
 }
 
-fn count_swap_events(logs: &[revm::primitives::Log], pools: &[V2Pool]) -> usize {
-    let topic = keccak256(b"Swap(address,uint256,uint256,uint256,uint256,address)");
+fn init_v3(a: Address, b: Address, fee: u32) -> Vec<u8> {
+    let h = keccak256(b"initialize(address,address,uint24)");
+    let mut out = h.0[..4].to_vec();
+    out.extend_from_slice(&pad32(a));
+    out.extend_from_slice(&pad32(b));
+    out.extend_from_slice(&U256::from(fee).to_be_bytes::<32>());
+    out
+}
+fn set_v3_price(p: U256) -> Vec<u8> {
+    let h = keccak256(b"setPrice(uint160)");
+    let mut out = h.0[..4].to_vec();
+    out.extend_from_slice(&p.to_be_bytes::<32>());
+    out
+}
+fn set_v3_liquidity(l: u128) -> Vec<u8> {
+    let h = keccak256(b"setLiquidity(uint128)");
+    let mut out = h.0[..4].to_vec();
+    out.extend_from_slice(&U256::from(l).to_be_bytes::<32>());
+    out
+}
+
+// ── V3 amount math (via the engine's proven `degenbot-cl-math`) ──
+
+/// Compute the exact-input V3 output for `amount_in` at `sqrt_price`/`liquidity`
+/// with `fee` (hundredths of a bip), mirroring `PoolV3.swap` (single active
+/// tick range, target = the unbounded limit, full input consumed). Returns the
+/// output amount (token1 for `zero_for_one`, token0 otherwise).
+#[must_use]
+pub fn v3_amount_out(
+    sqrt_price: U256,
+    liquidity: u128,
+    amount_in: u128,
+    zero_for_one: bool,
+    fee: u32,
+) -> u128 {
+    use degenbot_cl_math::cl_lib::sqrt_price_math::{
+        get_amount0_delta, get_amount1_delta, get_next_sqrt_price_from_input,
+    };
+    let fee_retained = U256::from(1_000_000u64 - u64::from(fee));
+    let amount_less_fee = full_mul_div(
+        U256::from(amount_in),
+        fee_retained,
+        U256::from(1_000_000u64),
+    );
+    let next = get_next_sqrt_price_from_input(
+        sqrt_price,
+        liquidity as i128,
+        amount_less_fee,
+        zero_for_one,
+    )
+    .expect("valid v3 next price");
+    let out = if zero_for_one {
+        get_amount1_delta(next, sqrt_price, liquidity as i128, Some(false))
+    } else {
+        get_amount0_delta(next, sqrt_price, liquidity as i128, Some(false))
+    }
+    .expect("valid v3 amount delta");
+    out.to::<u128>()
+}
+
+/// `min(a*b/denom, …)` rounded down — a tiny 512-bit mulDiv. Called by
+/// `v3_amount_out` (and could live in cl-math; kept local to avoid widening).
+fn full_mul_div(a: U256, b: U256, denom: U256) -> U256 {
+    let prod = U512::from(a) * U512::from(b);
+    let q = prod / U512::from(denom);
+    q.to::<U256>()
+}
+
+fn count_swap_events(
+    logs: &[revm::primitives::Log],
+    pools: &[V2Pool],
+    v3_pools: &[V3Pool],
+) -> usize {
+    let v2_topic = keccak256(b"Swap(address,uint256,uint256,uint256,uint256,address)");
+    let v3_topic = keccak256(b"SwapV3(address,uint256,uint160,int256)");
     logs.iter()
-        .filter(|l| l.topics().first() == Some(&topic) && pools.iter().any(|p| l.address == p.pair))
+        .filter(|l| {
+            if l.topics().first() == Some(&v2_topic) {
+                pools.iter().any(|p| l.address == p.pair)
+            } else if l.topics().first() == Some(&v3_topic) {
+                v3_pools.iter().any(|p| l.address == p.pool)
+            } else {
+                false
+            }
+        })
         .count()
 }
