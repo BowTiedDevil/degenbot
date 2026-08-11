@@ -487,12 +487,24 @@ impl Harness {
         hop_outputs: &[u128],
         gas: u64,
     ) -> Result<ExecOutcome, String> {
+        let cmd = self.encode_path(path, optimal_input, hop_outputs)?;
+        self.execute_payload(&cmd, gas)
+    }
+
+    /// Encode a PathInfo through the production `encode_cmd_stream` (the raw
+    /// payload `execute_payload`/`execute_data` then drive).
+    pub fn encode_path(
+        &self,
+        path: &degenbot_executor::composers::PathInfo,
+        optimal_input: u128,
+        hop_outputs: &[u128],
+    ) -> Result<Vec<u8>, String> {
         let n = path.hops.len();
         let consumed: Vec<u128> = std::iter::once(optimal_input)
             .chain(hop_outputs.iter().copied())
             .take(n)
             .collect();
-        let cmd = degenbot_executor::composers::encode_cmd_stream(
+        degenbot_executor::composers::encode_cmd_stream(
             path,
             optimal_input,
             hop_outputs,
@@ -502,8 +514,7 @@ impl Harness {
             self.weth,
             degenbot_executor::composers::EncodeOptions::default(),
         )
-        .ok_or_else(|| "encode_cmd_stream returned None".to_string())?;
-        self.execute_payload(&cmd, gas)
+        .ok_or_else(|| "encode_cmd_stream returned None".to_string())
     }
 }
 
@@ -564,7 +575,7 @@ fn balance_of_data(account: Address) -> Vec<u8> {
     out
 }
 /// The `execute(bytes,uint256)` call: selector + (bytes, 0x0) ABI encoding.
-fn execute_data(payload: &[u8]) -> Bytes {
+pub fn execute_data(payload: &[u8]) -> Bytes {
     let mut out = Vec::with_capacity(4 + 96 + payload.len().next_multiple_of(32));
     out.extend_from_slice(selector("execute(bytes,uint256)").as_slice());
     out.extend_from_slice(&U256::from(0x20u64).to_be_bytes::<32>()); // bytes offset
