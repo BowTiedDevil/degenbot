@@ -31,6 +31,7 @@
     clippy::missing_panics_doc,
     clippy::doc_markdown,
     clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
     clippy::too_many_arguments
 )]
 
@@ -112,6 +113,20 @@ pub struct V3Pool {
     pub liquidity: u128,
 }
 
+/// A single synthesized V4 pool inside the shared `PoolManager` stub: a
+/// `(currency0, currency1, fee, tick_spacing)` pool key + its seeded price/
+/// liquidity.
+#[derive(Debug, Clone, Copy)]
+pub struct V4Pool {
+    pub currency0: Address,
+    pub currency1: Address,
+    /// Fee in hundredths of a bip (uint24).
+    pub fee: u32,
+    pub tick_spacing: i32,
+    pub sqrt_price: U256,
+    pub liquidity: u128,
+}
+
 /// A running harness: the real executor + a set of synthesized tokens/pools in
 /// one fresh revm `CacheDB<EmptyDB>`.
 pub struct Harness {
@@ -119,10 +134,14 @@ pub struct Harness {
     pub executor: Address,
     /// The token address the executor treats as WETH (its immutable `WETH_ADDR`).
     pub weth: Address,
+    /// The deployed PoolManager stub (the executor's immutable `POOL_MANAGER_ADDR`).
+    pub pool_manager: Address,
     /// All deployed V2 pools (in `add_pool` call order).
     pub pools: Vec<V2Pool>,
     /// All deployed V3 pools (in `add_v3_pool` call order).
     pub v3_pools: Vec<V3Pool>,
+    /// All registered V4 pools (in `add_v4_pool` call order).
+    pub v4_pools: Vec<V4Pool>,
     /// All deployed tokens (deduped across pools, `add_pool` discovery order).
     pub tokens: Vec<Address>,
 }
@@ -145,7 +164,14 @@ impl Harness {
             8_000_000,
         )?;
 
-        let pm = Address::repeat_byte(0x22); // PoolManager — unused for all-V2
+        // Deploy the PoolManager stub before the executor — its address is the
+        // executor's immutable POOL_MANAGER_ADDR (V4 paths route swaps/deltas
+        // through it).
+        let pm = deploy(
+            &mut evm,
+            Bytes::from(load_stub_creation("PoolManager")),
+            8_000_000,
+        )?;
         let mut init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
         init.extend_from_slice(&executor_deploy_args(weth, pm));
         let executor = deploy(&mut evm, Bytes::from(init), 30_000_000)?;
@@ -154,8 +180,10 @@ impl Harness {
             evm,
             executor,
             weth,
+            pool_manager: pm,
             pools: Vec::new(),
             v3_pools: Vec::new(),
+            v4_pools: Vec::new(),
             tokens: vec![weth],
         })
     }
@@ -277,6 +305,45 @@ impl Harness {
         Ok(v3)
     }
 
+    /// Register a V4 pool in the shared `PoolManager` stub: `initialize` the
+    /// `(c0,c1,fee,ts)` pool at `sqrt_price`/`liquidity`, then `_fund` the PM
+    /// with `fund_c0`/`fund_c1` of each currency (the PM's holdings back the
+    /// executor's `take` of positive deltas).
+    pub fn add_v4_pool(
+        &mut self,
+        c0: Address,
+        c1: Address,
+        fee: u32,
+        tick_spacing: i32,
+        sqrt_price: U256,
+        liquidity: u128,
+        fund_c0: u128,
+        fund_c1: u128,
+    ) -> Result<V4Pool, String> {
+        let _ = self.call(
+            self.pool_manager,
+            &init_v4(c0, c1, fee, tick_spacing, sqrt_price, liquidity),
+            500_000,
+        )?;
+        let _ = self.call(self.pool_manager, &fund_v4(c0, fund_c0), 200_000)?;
+        let _ = self.call(self.pool_manager, &fund_v4(c1, fund_c1), 200_000)?;
+        for t in [c0, c1] {
+            if !self.tokens.contains(&t) {
+                self.tokens.push(t);
+            }
+        }
+        let v4 = V4Pool {
+            currency0: c0,
+            currency1: c1,
+            fee,
+            tick_spacing,
+            sqrt_price,
+            liquidity,
+        };
+        self.v4_pools.push(v4);
+        Ok(v4)
+    }
+
     /// Give `who` `amount` of `token` (mint — the harness's free liquidity).
     pub fn fund(&mut self, token: Address, who: Address, amount: u128) -> Result<(), String> {
         self.call(token, &mint_to(who, amount), 200_000).map(|_| ())
@@ -350,7 +417,8 @@ impl Harness {
             },
         ) {
             Verdict::Accepted { logs, .. } => {
-                let swaps = count_swap_events(&logs, &self.pools, &self.v3_pools);
+                let swaps =
+                    count_swap_events(&logs, &self.pools, &self.v3_pools, self.pool_manager);
                 Ok(ExecOutcome::Accepted { swaps })
             }
             Verdict::Reverted(r) => {
@@ -430,8 +498,8 @@ impl Harness {
             hop_outputs,
             &consumed,
             self.executor,
+            self.pool_manager,
             self.weth,
-            Address::repeat_byte(0x22),
             degenbot_executor::composers::EncodeOptions::default(),
         )
         .ok_or_else(|| "encode_cmd_stream returned None".to_string())?;
@@ -537,6 +605,25 @@ fn set_v3_liquidity(l: u128) -> Vec<u8> {
     out
 }
 
+fn init_v4(c0: Address, c1: Address, fee: u32, ts: i32, sqrt: U256, liq: u128) -> Vec<u8> {
+    let h = keccak256(b"initialize(address,address,uint24,int24,uint160,uint128)");
+    let mut out = h.0[..4].to_vec();
+    out.extend_from_slice(&pad32(c0));
+    out.extend_from_slice(&pad32(c1));
+    out.extend_from_slice(&U256::from(fee).to_be_bytes::<32>());
+    out.extend_from_slice(&U256::from(ts as u32).to_be_bytes::<32>());
+    out.extend_from_slice(&sqrt.to_be_bytes::<32>());
+    out.extend_from_slice(&U256::from(liq).to_be_bytes::<32>());
+    out
+}
+fn fund_v4(currency: Address, amt: u128) -> Vec<u8> {
+    let h = keccak256(b"_fund(address,uint256)");
+    let mut out = h.0[..4].to_vec();
+    out.extend_from_slice(&pad32(currency));
+    out.extend_from_slice(&U256::from(amt).to_be_bytes::<32>());
+    out
+}
+
 // ── V3 amount math (via the engine's proven `degenbot-cl-math`) ──
 
 /// Compute the exact-input V3 output for `amount_in` at `sqrt_price`/`liquidity`
@@ -588,15 +675,19 @@ fn count_swap_events(
     logs: &[revm::primitives::Log],
     pools: &[V2Pool],
     v3_pools: &[V3Pool],
+    pool_manager: Address,
 ) -> usize {
     let v2_topic = keccak256(b"Swap(address,uint256,uint256,uint256,uint256,address)");
     let v3_topic = keccak256(b"SwapV3(address,uint256,uint160,int256)");
+    let v4_topic = keccak256(b"V4Swap(bytes32,address,address,uint256,uint256)");
     logs.iter()
         .filter(|l| {
             if l.topics().first() == Some(&v2_topic) {
                 pools.iter().any(|p| l.address == p.pair)
             } else if l.topics().first() == Some(&v3_topic) {
                 v3_pools.iter().any(|p| l.address == p.pool)
+            } else if l.topics().first() == Some(&v4_topic) {
+                l.address == pool_manager
             } else {
                 false
             }
