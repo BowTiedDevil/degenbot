@@ -83,3 +83,7 @@ degenbot-executor = { path = "../degenbot-executor" }
 # `DexVariant` for the `BotStateDb` tripwire tests (register a tracked V2 pool
 # so `pool_id_by_address` resolves) — dev-only, no production linkage.
 degenbot-uniswap = { path = "../degenbot-uniswap" }
+# `IntHopState` — the executor grammar harness computes byte-consistent V2
+# hop outputs from the seeded reserves (mirroring the tier-3 V2 oracle) so the
+# encoded path round-trips cleanly (UQOAHA).
+degenbot-v2-math = { path = "../degenbot-v2-math" }

@@ -24,6 +24,15 @@
 /// `degenbot-backrun-strategy` (ADR-019 D4/D7, decision R).
 pub mod sim;
 
+/// The executor grammar harness (UQOAHA): deploy the real `cmd_executor` +
+/// synthesized pools into a fresh revm `CacheDB`, run a path's
+/// [`encode_cmd_stream`](degenbot_executor::composers::encode_cmd_stream)
+/// payload through `execute()`, and report whether it executes + which pools
+/// it touched. The missing third correctness tool — byte parity can't prove
+/// runtime behavior, and live sim needs a captured mainnet path. See
+/// [`harness`](crate::harness) for the API.
+pub mod harness;
+
 /// Contract-agnostic in-process revm **fixture driver** — deploy a pinned
 /// contract artifact, run staged calls, seed storage slots, drive a call,
 /// classify the verdict (Revert vs Halt), and read back output + logs. The
