@@ -546,18 +546,60 @@ pub fn fetch_liquidity_map_v4_on_conn(
 ///
 /// # Errors
 /// [`DbError::Sqlite`] on a query failure.
+/// Map a V3-family `kind` to its per-dex liquidity table. All four share the
+/// same `(pool_id, tick_spacing, liquidity_update_block, ...)` schema; the
+/// liquidity clock of a `Tracked` pool lives in its OWN table, not a single
+/// one (task 4TWM7C follow-up — pool 0x1ac1 was a `pancakeswap_v3` and a
+/// uniswap-only lookup returned `None`, so the seed verify fell back to head
+/// and re-tripped the wrong-block bug). Returns `None` for non-V3 kinds.
+fn v3_kind_liquidity_table(kind: &str) -> Option<&'static str> {
+    match kind {
+        "uniswap_v3" => Some("uniswap_v3_pools"),
+        "pancakeswap_v3" => Some("pancakeswap_v3_pools"),
+        "sushiswap_v3" => Some("sushiswap_v3_pools"),
+        "aerodrome_v3" => Some("aerodrome_v3_pools"),
+        _ => None,
+    }
+}
+
+/// The V3 pool's `liquidity_update_block`, by address — the block its DB
+/// liquidity map is exact at (the authoritative liquidity clock of a
+/// DB-seeded `Tracked` pool; task 4TWM7C). Resolves the pool id + kind from
+/// `pools`, then reads the block from the pool's OWN per-dex V3 table
+/// (`uniswap_v3_pools` / `pancakeswap_v3_pools` / `sushiswap_v3_pools` /
+/// `aerodrome_v3_pools`).
+///
+/// Returns `None` if no such pool exists or it is not a V3-family kind
+/// (mirrors [`fetch_liquidity_map_on_conn`]'s miss semantics).
+///
+/// # Errors
+/// [`DbError::Sqlite`] on a query failure.
 pub fn fetch_liquidity_update_block_on_conn(
     conn: &Connection,
     pool_address: Address,
 ) -> Result<Option<i64>, DbError> {
-    let block: Option<i64> = match conn.query_row(
-        "SELECT v3.liquidity_update_block \
-         FROM pools p \
-         JOIN uniswap_v3_pools v3 ON v3.pool_id = p.id \
-         WHERE p.address = ?1 LIMIT 1",
-        rusqlite::params![pool_address.to_checksum(None)],
-        |r| r.get(0),
-    ) {
+    let room: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT id, kind FROM pools WHERE address = ?1 LIMIT 1",
+            rusqlite::params![pool_address.to_checksum(None)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    let Some((pool_id, kind)) = room else {
+        return Ok(None);
+    };
+    let Some(table) = v3_kind_liquidity_table(&kind) else {
+        // Not a V3-family pool (e.g. a V2 kind) → no V3 liquidity clock.
+        return Ok(None);
+    };
+    // `table` is a hardcoded constant produced by the kind match — never user
+    // input, so interpolating it into the SQL is safe.
+    let sql = format!("SELECT liquidity_update_block FROM {table} WHERE pool_id = ?1");
+    let block: Option<i64> = match conn.query_row(&sql, rusqlite::params![pool_id], |r| r.get(0)) {
         Ok(b) => b,
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(e) => return Err(e.into()),
