@@ -860,19 +860,14 @@ fn parity_v4v2_native_out_deposit() {
     inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(
         1_000_000_000_000_000_000u128,
     )));
-    let v2_cb_cmds =
-        encoders::enc_erc20_transfer(weth_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap();
+    // Pre-fund the terminal V2 pool with the WETH actually wrapped from the V4
+    // native output, then swap from it (V2_SWAP_CALC) — an exact-out
+    // `V2_SWAP_COMPACT(weth_out)` over-draws by 1 wei when the V4 output is a
+    // wei below the solver forward -> `UniswapV2: K` (path-182449 class).
     inner.extend_from_slice(
-        &encoders::enc_v2_swap_compact(
-            v2_idx,
-            true,
-            2_001_000_000_000_000_000u128,
-            SENTINEL_SELF,
-            30,
-            &v2_cb_cmds,
-        )
-        .unwrap(),
+        &encoders::enc_erc20_transfer(weth_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap(),
     );
+    inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2_idx, true, SENTINEL_SELF, 30));
     let input_idx = c0_v4_idx; // zfo → input is currency0 = USDC
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
@@ -1365,17 +1360,13 @@ fn parity_v3v2_callback_nested() {
     v3_callback.extend_from_slice(
         &encoders::enc_erc20_transfer(forward_idx, v2_idx, 2_000_000_000u128).unwrap(),
     );
-    v3_callback.extend_from_slice(
-        &encoders::enc_v2_swap_compact(
-            v2_idx,
-            true,
-            2_001_000_000_000_000_000u128,
-            SENTINEL_SELF,
-            30,
-            &[],
-        )
-        .unwrap(),
-    );
+    // Terminal V2 hop: swap from whatever USDC the V3 a-hop actually delivered
+    // to the pool (V2_SWAP_CALC), not an exact-out `V2_SWAP_COMPACT` with the
+    // raw solver hop_outputs[1]. The Möbius solver over-predicts the V3 output
+    // by 1 input wei, so an exact-out V2 swap over-draws by 1 wei and reverts
+    // `UniswapV2: K` (path-110302/182449 class; the terminal V2 is a sibling
+    // inside the V3 flash, so a pre-funded calc is a clean drop-in).
+    v3_callback.extend_from_slice(&encoders::enc_v2_swap_calc(v2_idx, true, SENTINEL_SELF, 30));
     let commands = encoders::enc_v3_swap_compact(
         v3_idx,
         true,

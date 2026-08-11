@@ -210,8 +210,7 @@ fn v2_v3(ha: &V2HopInfo, hb: &V3HopInfo, inputs: &ComposerInputs<'_>) -> Option<
 /// Adapt a V3→V2 2-hop path.
 fn v3_v2(ha: &V3HopInfo, hb: &V2HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let forward_out = *inputs.hop_outputs.first()?;
-    let weth_out = *inputs.hop_outputs.get(1)?;
-    if forward_out == 0 || weth_out == 0 {
+    if forward_out == 0 {
         return None;
     }
     let mut at = AddressTable::with_sentinels(
@@ -227,9 +226,18 @@ fn v3_v2(ha: &V3HopInfo, hb: &V2HopInfo, inputs: &ComposerInputs<'_>) -> Option<
         encoders::enc_erc20_transfer(SENTINEL_WETH, v3_idx, inputs.optimal_input).ok()?;
     v3_callback
         .extend_from_slice(&encoders::enc_erc20_transfer(forward_idx, v2_idx, forward_out).ok()?);
-    let v2_cmd =
-        encoders::enc_v2_swap_compact(v2_idx, hb.zfo, weth_out, SENTINEL_SELF, hb.fee, &[]).ok()?;
-    v3_callback.extend_from_slice(&v2_cmd);
+    // Terminal V2 hop: swap from whatever USDC the V3 a-hop actually delivered
+    // to the pool (V2_SWAP_CALC), not an exact-out `V2_SWAP_COMPACT` with the
+    // raw solver hop_outputs[1]. The Möbius solver over-predicts the V3 output
+    // by 1 input wei, so an exact-out V2 swap over-draws by 1 wei and reverts
+    // `UniswapV2: K` (path-110302/182449 class; the terminal V2 is a sibling
+    // inside the V3 flash, so a pre-funded calc is a clean drop-in).
+    v3_callback.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2_idx,
+        hb.zfo,
+        SENTINEL_SELF,
+        hb.fee,
+    ));
     let commands = encoders::enc_v3_swap_compact(
         v3_idx,
         ha.zfo,
@@ -1050,8 +1058,7 @@ fn v4_v2(hop_v4: &V4HopInfo, hop_v2: &V2HopInfo, inputs: &ComposerInputs<'_>) ->
     let weth_address = inputs.weth_address;
 
     let forward_out = *hop_outputs.first()?;
-    let weth_out = *hop_outputs.get(1)?;
-    if forward_out == 0 || weth_out == 0 {
+    if forward_out == 0 {
         return None;
     }
     if !fits_int128(optimal_input) || !fits_int128(forward_out) {
@@ -1100,17 +1107,19 @@ fn v4_v2(hop_v4: &V4HopInfo, hop_v2: &V2HopInfo, inputs: &ComposerInputs<'_>) ->
             &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, forward_out).ok()?,
         );
         inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(forward_out)));
-        let v2_cb_cmds = encoders::enc_erc20_transfer(weth_idx, v2_idx, forward_out).ok()?;
-        let v2_cmd = encoders::enc_v2_swap_compact(
+        // Pre-fund the terminal V2 pool with the WETH actually wrapped from the
+        // V4 native output, then swap from it (V2_SWAP_CALC). Mirrors the erc20
+        // sibling branch below and the v4_v4_v2 / v3_v4_v2 discipline — an
+        // exact-out `V2_SWAP_COMPACT(weth_out)` over-draws by 1 wei when the V4
+        // output is a wei below the solver forward -> `UniswapV2: K`
+        // (path-182449 class).
+        inner.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v2_idx, forward_out).ok()?);
+        inner.extend_from_slice(&encoders::enc_v2_swap_calc(
             v2_idx,
             hop_v2.zfo,
-            weth_out,
             SENTINEL_SELF,
             hop_v2.fee,
-            &v2_cb_cmds,
-        )
-        .ok()?;
-        inner.extend_from_slice(&v2_cmd);
+        ));
         let input_idx = if hop_v4.zfo { c0_v4_idx } else { c1_v4_idx };
         inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
         inner.extend_from_slice(&encoders::enc_v4_settle_all());
