@@ -159,3 +159,72 @@ fn reserve_of(pool: &V2Pool, tok: Address) -> u128 {
         pool.reserve1
     }
 }
+
+#[test]
+fn v3_v3_two_pool_path_executes() {
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    // V3 pool0: WETH -> T (token0=WETH, token1=T), price 1.
+    let p0 = h
+        .add_v3_pool(
+            h.weth,
+            t,
+            3000,
+            price_one(),
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+    // V3 pool1: T -> WETH (token0=T, token1=WETH), price ~1.02 (better WETH for T).
+    let p1_sqrt = price_one() * U256::from(101u64) / U256::from(100u64);
+    let p1 = h
+        .add_v3_pool(
+            t,
+            h.weth,
+            3000,
+            p1_sqrt,
+            10u128.pow(22),
+            1_000_000_000,
+            1_000_000_000,
+        )
+        .unwrap();
+    let optimal_input = 100_000u128; // WETH
+                                     // ho0 = V3 exact-in output (T), feeds the V3 exact-in hop 1.
+    let ho0 = v3_amount_out(p0.sqrt_price, p0.liquidity, optimal_input, true, p0.fee);
+    let v3_out = v3_amount_out(p1.sqrt_price, p1.liquidity, ho0, true, p1.fee);
+    let hop_outputs = [ho0, v3_out];
+    assert!(
+        v3_out >= optimal_input,
+        "must be profitable (got v3_out={v3_out} vs optimal={optimal_input})"
+    );
+
+    // WETH + T buffers for the executor (exact-in + rounding + custody).
+    h.fund(h.weth, h.executor, optimal_input * 2).unwrap();
+    h.fund(t, h.executor, ho0 * 2).unwrap();
+
+    let path = PathInfo::new(vec![
+        HopInfo::V3(V3HopInfo {
+            pool_address: p0.pool,
+            token0_address: p0.token0,
+            token1_address: p0.token1,
+            fee: p0.fee,
+            zfo: true, // weth(token0) -> t(token1)
+        }),
+        HopInfo::V3(V3HopInfo {
+            pool_address: p1.pool,
+            token0_address: p1.token0,
+            token1_address: p1.token1,
+            fee: p1.fee,
+            zfo: true, // t(token0) -> weth(token1)
+        }),
+    ]);
+    let outcome = h
+        .run_path(&path, optimal_input, &hop_outputs, 5_000_000)
+        .unwrap();
+    println!("V3-V3 outcome: {outcome:?}  ho0={ho0} v3_out={v3_out} optimal={optimal_input}");
+    assert!(
+        outcome.executed(2),
+        "V3-V3 payload must execute (reach both pools): {outcome:?}"
+    );
+}
