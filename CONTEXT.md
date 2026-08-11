@@ -258,6 +258,48 @@ clock are owned by ONE module — one **dispatch owner** — but delivered over 
   but falls behind is observed via `pending()` (a lag metric), never aborted;
   a dead (closed-channel) drainer still aborts immediately.
 
+## Block-pump PumpDecision seam (A — pure producer/FSM, 2026-08)
+
+Epic A (ergo `FUE5SP`, tasks A1–A5) — the ADR-008 deepening: the block pump's
+per-event *policy* lives in a **pure decision producer**, executed by a **thin
+dispatcher**. Same family as ADR-008 (BlockClock) and ADR-027 (dispatch seam):
+"deep module — pure producer + thin I/O driver". See ADR-028.
+
+- **pump FSM** (`PumpFSM`) — the pure, I/O-free decision machine for the block
+  pump: owns the cursor, per-block metadata snapshots, quiesce arm, recovery
+  anchor, ws-delivered tracker, and the `BlockClock`. No provider, no timer, no
+  `Instant`, no lock. Time enters as `now_ms` data.
+- **PumpDecision** — the enum that names every effect the FSM can produce:
+  `Drain`, `Publish`, `Finalize`, `Notify`, `SetLastSolved`, `Backfill`,
+  `Recover`, `LogSilence`, `VerifyCompleteness`, `Stop`. The driver maps each
+  onto its executor (the dispatch owner, the sink, the provider, the reorg
+  coordinator, or the process).
+- **thin dispatcher / executor** — `run_with_stream`
+  (essentially unchanged shape, now a thin driver): feeds
+  `(WsEvent + clock state + watchdog tick / now_ms)` into the FSM and executes
+  the returned `PumpDecision`s. Owns all I/O: the ADR-027 `DispatchOwner`, RPC
+  (`eth_getLogs`), the drainer task, the reorg coordinator, the WS-drop abort.
+- **tick/clock input** — the driver reads the wall clock (a monotonic `now_ms`)
+  and feeds it as data, so the FSM's watchdog rules (`on_tick`,
+  `record_header`/`record_log`) are deterministic and horology-free.
+
+The FSM owns the rules: quiesce-before-publish + solver-release gate
+(`on_settle`), recovery anchor + single-writer discard (`record_backfill` /
+`should_drop_recovered_forward`), watchdogs as ticks (`on_tick`), the
+ws-completeness verdict (`completeness_decision`), and the drain anchor
+(`drain_decision`). Cursor advancement under `drain_lock` + lock order
+(`drain_lock → engine → BotState`) stay in the coordinator/engine executor,
+not the FSM.
+
+**A6 disposition (superseded, 2026-08).** Task A6's literal "collapse
+`DrainSink` to one `drain(block, metadata)` that owns the quiesce gate" is
+**not built**: the quiesce gate now lives in the FSM's `on_settle` (A2), so
+re-owning it in the drain entry would un-build the pure-producer design. The
+pump's per-block surface is already single: FSM decision → `DispatchOwner` →
+`DrainWork` (ADR-027). The wide `DrainSink`/`Engine` surfaces are executor
+fan-out detail behind that seam. Recorded in ADR-028's "Not decided here";
+not re-litigated without a forcing function.
+
 ### Simulation engine vs. searcher strategy (DECIDED, 2026-07-20 — architecture review)
 
 **The seam.** degenbot is a library consumed by many searchers with different on-chain strategies (backrun, sandwich, JIT-L, liquidation, …). The Rust core therefore owns only the **in-process representation of pool/token state** + the **solver methods** (the value-only swap math the operator constrains) + a **thin, general simulation executor**. The **transaction encoding** for a searcher's bot, the **profit-detection strategy** (e.g. the backrun example's 3-pre-balance → `execute()` → 3-post-balance WETH9/ERC6909/Multicall3 bundle, `decode_balance`, gross/net + priority-fee sizing), and the **operator policy** (thin-margin filtering, path suppression, sort order) are **out of scope for the core** — they are the searcher's code, assembled at runtime from the tools the core exposes. The backrun bot (`examples/eth_backrun_v2_v3_v4_rust.py` + its Rust strategy leaves) is ONE example strategy, not the simulation surface.
