@@ -868,7 +868,7 @@ class PyBot:
         tick_spacing: int | None = None,
         hook_address: str | None = None,
         state_view_address: str | None = None,
-    ) -> tuple[str, str, int, int, int, str, int | None]: ...
+    ) -> tuple[str, str, int, int, int, str]: ...
     def build_v4_pool(
         self,
         pool_manager: str,

@@ -1293,9 +1293,12 @@ pub struct V4PoolBuildOverrides {
 
 /// Resolve the V4 identity **core-side** (TF7RZB-S3): the DB two-step
 /// (manager → V4 row → per-FK token rows) first, else the caller-supplied
-/// [`V4PoolBuildOverrides`]. Returns the resolved [`V4PoolBuildIdentity`] plus
-/// the V4 row's `liquidity_update_block` (the DB liquidity-snapshot clock seed
-/// for the two-stamp OB7UNY split; `None` on the override path).
+/// [`V4PoolBuildOverrides`]. Returns the resolved [`V4PoolBuildIdentity`].
+///
+/// (The DB `liquidity_update_block` plumbing was removed in task 4TWM7C's
+/// cleanup — the Rust `build_v4` now reads it itself via
+/// `TickMapDb::fetch_liquidity_update_block_v4` to stamp the liquidity clock;
+/// the driver no longer needs it.)
 ///
 /// DB errors and partial rows are treated as "no DB identity" (matching the
 /// retired Python driver's `contextlib.suppress(Exception)`), falling through
@@ -1319,11 +1322,11 @@ pub async fn resolve_v4_identity(
     pool_id: [u8; 32],
     overrides: &V4PoolBuildOverrides,
     io: &ConstructionIo,
-) -> Result<(V4PoolBuildIdentity, Option<u64>), PoolBuilderError> {
+) -> Result<V4PoolBuildIdentity, PoolBuilderError> {
     // DB two-step: manager → V4 row → per-FK token rows. Any error or partial
     // row is a skip (fall through to the override path), never a hard failure.
     let pool_hash_hex = format!("0x{}", alloy::hex::encode(pool_id));
-    let db_identity: Option<(V4PoolBuildIdentity, Option<u64>)> = (async {
+    let db_identity: Option<V4PoolBuildIdentity> = (async {
         let manager_row = io
             .fetch_pool_manager(i64::try_from(chain_id).unwrap_or(0), pool_manager)
             .await
@@ -1332,21 +1335,16 @@ pub async fn resolve_v4_identity(
         let token0 = io.fetch_token_by_id(v4_row.currency0_id).await.ok()??;
         let token1 = io.fetch_token_by_id(v4_row.currency1_id).await.ok()??;
         let state_view = manager_row.state_view.or(overrides.state_view);
-        Some((
-            V4PoolBuildIdentity {
-                pool_manager,
-                state_view: state_view?,
-                pool_id,
-                currency0: token0.address,
-                currency1: token1.address,
-                fee: u32::try_from(v4_row.fee_currency0).ok()?,
-                tick_spacing: i32::try_from(v4_row.tick_spacing).ok()?,
-                hook_flags: derive_hook_flags(v4_row.hooks),
-            },
-            v4_row
-                .liquidity_update_block
-                .and_then(|b| u64::try_from(b).ok()),
-        ))
+        Some(V4PoolBuildIdentity {
+            pool_manager,
+            state_view: state_view?,
+            pool_id,
+            currency0: token0.address,
+            currency1: token1.address,
+            fee: u32::try_from(v4_row.fee_currency0).ok()?,
+            tick_spacing: i32::try_from(v4_row.tick_spacing).ok()?,
+            hook_flags: derive_hook_flags(v4_row.hooks),
+        })
     })
     .await;
 
@@ -1378,19 +1376,16 @@ pub async fn resolve_v4_identity(
         overrides.currency0.expect("checked present"),
         overrides.currency1.expect("checked present"),
     );
-    Ok((
-        V4PoolBuildIdentity {
-            pool_manager,
-            state_view: overrides.state_view.expect("checked present"),
-            pool_id,
-            currency0,
-            currency1,
-            fee: overrides.fee.expect("checked present"),
-            tick_spacing: overrides.tick_spacing.expect("checked present"),
-            hook_flags: derive_hook_flags(overrides.hook_address.unwrap_or_default()),
-        },
-        None,
-    ))
+    Ok(V4PoolBuildIdentity {
+        pool_manager,
+        state_view: overrides.state_view.expect("checked present"),
+        pool_id,
+        currency0,
+        currency1,
+        fee: overrides.fee.expect("checked present"),
+        tick_spacing: overrides.tick_spacing.expect("checked present"),
+        hook_flags: derive_hook_flags(overrides.hook_address.unwrap_or_default()),
+    })
 }
 
 /// Derive the V4 `hook_flags` bitmask from a hook contract address. The

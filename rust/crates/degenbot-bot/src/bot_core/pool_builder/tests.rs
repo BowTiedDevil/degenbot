@@ -1797,8 +1797,8 @@ async fn fetch_erc20_uint_and_string_field() {
 async fn resolve_v4_identity_orders_currencies_and_derives_hook_flags() {
     // TF7RZB-S3: the override (kwargs) path of the core identity resolver —
     // over a NoDb io it must order currency0/1 by ascending address, carry
-    // fee/tick_spacing, derive hook_flags from the hook address (low 16 bits),
-    // and report no DB liquidity-update block.
+    // fee/tick_spacing, and derive hook_flags from the hook address (low 16
+    // bits).
     let first = alloy::primitives::address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     let second = alloy::primitives::address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     let io = io_with(FakeRpc::new());
@@ -1811,7 +1811,7 @@ async fn resolve_v4_identity_orders_currencies_and_derives_hook_flags() {
         hook_address: Some(SV),
         state_view: Some(SV),
     };
-    let (id, db_block) = builder::resolve_v4_identity(1, TO, POOL_ID, &overrides, &io)
+    let id = builder::resolve_v4_identity(1, TO, POOL_ID, &overrides, &io)
         .await
         .unwrap();
     assert_eq!(id.currency0, first);
@@ -1820,7 +1820,6 @@ async fn resolve_v4_identity_orders_currencies_and_derives_hook_flags() {
     assert_eq!(id.tick_spacing, 60);
     assert_eq!(id.hook_flags, u16::from_be_bytes([SV[18], SV[19]]));
     assert_eq!(id.state_view, SV);
-    assert_eq!(db_block, None);
 }
 
 #[tokio::test]

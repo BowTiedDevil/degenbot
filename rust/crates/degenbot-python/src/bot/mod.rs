@@ -812,7 +812,6 @@ impl PyBot {
     /// [`map_register_v4_err`]).
     #[pyo3(signature = (chain_id, pool_manager, pool_id_hex, currency0=None, currency1=None, fee=None, tick_spacing=None, hook_address=None, state_view_address=None))]
     #[expect(clippy::too_many_arguments)]
-    #[expect(clippy::type_complexity)]
     fn resolve_v4_identity(
         &self,
         py: Python<'_>,
@@ -825,7 +824,7 @@ impl PyBot {
         tick_spacing: Option<i32>,
         hook_address: Option<&str>,
         state_view_address: Option<&str>,
-    ) -> PyResult<(String, String, u32, i32, u16, String, Option<u64>)> {
+    ) -> PyResult<(String, String, u32, i32, u16, String)> {
         use degenbot_bot::bot_core::pool_builder::builder;
         use degenbot_core::runtime::get_runtime;
         let pm = parse_address(pool_manager).map_err(|e| {
@@ -862,7 +861,7 @@ impl PyBot {
                 "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)",
             )
         })?;
-        let (id, db_liquidity_update_block) = py
+        let id = py
             .detach(|| {
                 get_runtime().block_on(builder::resolve_v4_identity(
                     chain_id, pm, pool_id, &overrides, &io,
@@ -876,7 +875,6 @@ impl PyBot {
             id.tick_spacing,
             id.hook_flags,
             id.state_view.to_checksum(None),
-            db_liquidity_update_block,
         ))
     }
 

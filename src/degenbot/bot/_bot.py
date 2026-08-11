@@ -971,8 +971,8 @@ class Bot:
         # `resolve_v4_identity` performs the DB two-step (manager → v4 row →
         # per-FK tokens) first, else the caller-supplied overrides, and returns
         # the resolved identity (currency0/1, fee, tick_spacing, hook_flags,
-        # state_view) plus the DB liquidity-update-block. The driver no longer
-        # reads the DB nor assembles the kwargs identity itself.
+        # state_view). The driver no longer reads the DB nor assembles the
+        # kwargs identity itself.
         over_tokens = request.tokens
         over_currency0 = over_tokens[0] if over_tokens else None
         over_currency1 = over_tokens[1] if over_tokens else None
@@ -984,7 +984,6 @@ class Bot:
                 tick_spacing_for_pool,
                 hook_flags,
                 state_view_hex,
-                _db_liquidity_update_block,
             ) = self._py_bot.resolve_v4_identity(
                 chain_id=int(chain_id),
                 pool_manager=pool_manager_address,
