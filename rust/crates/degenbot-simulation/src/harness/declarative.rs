@@ -220,6 +220,87 @@ impl Harness {
             actual_weth_delta,
         })
     }
+
+    /// Build the production `PathInfo`, forward-traversed `hop_outputs`, and
+    /// `consumed_inputs = [optimal_input, hop_outputs[0], …]` for a hop chain —
+    /// everything the derivations/composers need, exposed publicly for the
+    /// ShapeClass derivation spike (6YUNQN) to drive raw payloads. Uses the same
+    /// amount math as [`Self::run_chain`].
+    pub fn path_and_amounts(
+        &mut self,
+        hops: &[Hop],
+        optimal_input: u128,
+    ) -> (PathInfo, Vec<u128>, Vec<u128>) {
+        let n = hops.len();
+        let mut hop_outputs = Vec::with_capacity(n);
+        let mut consumed = optimal_input;
+        for hop in hops {
+            let out = hop.pool.amount_out(hop.src, hop.dst, consumed);
+            hop_outputs.push(out);
+            consumed = out;
+        }
+        let path_hops: Vec<HopInfo> = hops
+            .iter()
+            .map(|hop| hop.pool.to_hop_info(self.pool_manager, hop.src))
+            .collect();
+        let consumed_inputs: Vec<u128> = std::iter::once(optimal_input)
+            .chain(hop_outputs.iter().copied())
+            .take(n)
+            .collect();
+        (PathInfo::new(path_hops), hop_outputs, consumed_inputs)
+    }
+
+    /// Like [`Self::run_chain`] but drives an **explicit** payload instead of
+    /// re-encoding via the production composer. Used by the ShapeClass
+    /// derivation spike (6YUNQN) to inject rule-driven bytes into the runtime
+    /// matrix. Applies the same universal funding + approval + measurement as
+    /// [`Self::run_chain`]; `payload` is the raw `execute()` command stream.
+    pub fn run_raw_payload(
+        &mut self,
+        hops: &[Hop],
+        payload: &[u8],
+        optimal_input: u128,
+        gas: u64,
+    ) -> Result<ChainResult, String> {
+        let n = hops.len();
+        assert!(n >= 1, "run_raw_payload needs >=1 hops");
+
+        let mut hop_outputs = Vec::with_capacity(n);
+        let mut consumed = optimal_input;
+        for hop in hops {
+            let out = hop.pool.amount_out(hop.src, hop.dst, consumed);
+            hop_outputs.push(out);
+            consumed = out;
+        }
+        let out_terminal = consumed;
+        let predicted_profit = out_terminal as i128 - optimal_input as i128;
+
+        self.fund(self.weth, self.executor, optimal_input * 2)?;
+        let mut funded = vec![self.weth];
+        for (i, hop) in hops.iter().enumerate().skip(1) {
+            if hop.src != self.weth && !funded.contains(&hop.src) {
+                self.fund(hop.src, self.executor, hop_outputs[i - 1] * 2)?;
+                funded.push(hop.src);
+            }
+        }
+        for hop in hops {
+            if let HopPool::V2(p) = &hop.pool {
+                self.executor_approve_pair(*p)?;
+            }
+        }
+
+        let before = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let outcome = self.execute_payload(payload, gas)?;
+        let after = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let actual_weth_delta = after as i128 - before as i128;
+
+        Ok(ChainResult {
+            outcome,
+            hop_outputs,
+            predicted_profit,
+            actual_weth_delta,
+        })
+    }
 }
 
 /// Assert a [`ChainResult`] is a genuine profitable execution: it reached every

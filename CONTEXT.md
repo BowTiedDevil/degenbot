@@ -134,7 +134,11 @@ The seven `PoolEntry` variants fall into **three structural families**, grouped 
 - *Snapshot role (= selectivity).* It captures pool state at resolve time so the solve can run lock-free under rayon `par_iter` on a `Clone`+`Send` value. For CL specifically it is a *selective projection* — `build_int_v3_sequence` walks `tick_data` once in the swap direction, caps at ≤15 tick ranges, pre-accumulates `liquidity_net`, replaces map lookups with `TickMath` constants — NOT a clone of the pool (which is thousands of `TickInfo`). The balance-vector family pre-computes the invariant `D` (one Newton run, not ~25× during the golden-section) and BPT-skips. Live-read over the pool re-pays the projection ~25× or relocates it as cache-on-state with invalidation spread across every `apply_*`.
 - *Classifier role.* The `ResolvedHop` enum variants let `solve_path` pattern-match on path composition to pick the algorithm (closed-form Möbius for all-V2/all-CL; golden-section for paths involving non-Möbius leaves). A `dyn PathHopSnapshot` trait variant would re-invent this as a capability query (a thinner hop behind a trait).
 
-**Solver intake contract.** The hop-state types are `degenbot-solvers`’s intake protocol — `degenbot-bot`’s `resolve_path` projects `BotState` into them under `core.read()`, then the guard drops, then `degenbot_solvers::solve_path` runs lock-free. The lock-drop discipline (ADR-005 slice 15b-1: “the guard drops before `solve_path` runs”) is load-bearing and survives the relocation unchanged.
+**Solver intake contract.** The hop-state types are `degenbot-solvers`'s intake protocol — `degenbot-bot`'s `resolve_path` projects `BotState` into them under `core.read()`, then the guard drops, then `degenbot_solvers::solve_path` runs lock-free.
+
+**Per-family projection module (`bot_core/resolve/`, 2026-08, DECIDED).** `ArbitrageEngine::resolve_path`'s internals deepen into a pure `bot_core/resolve/` module — one file per family, free `project_<family>(&BotState, &MixedPoolRef) -> Result<(ResolvedHop, u64), MissingHopReason>` (u64 = state nonce), and the engine method shrinks to a thin dispatcher that accumulates the cross-family `max_update_block` + `state_nonces`, marking the path invalid on any per-family `Err`. The projection needs no engine `&self` (it reads only `&BotState`) and is internal to `degenbot-bot` (never reached by PyO3), so the split is a free restructure. ADR-015's placement (the projection stays in degenbot-bot) is unchanged. Per-family unit tests (missing state/identity, missing token pair, `<2` tokens, unknown variant, out-of-range) live in the new modules (Red→Green), ported from `arb_engine/tests.rs` (e.g. the existing Solidly Aerodrome/Camelot unit tests at `resolve_path_*solidly*`). The dispatcher surfaces the reason via `tracing::debug!` (path_id/hop/reason) at the invalidation point — the existing `tracing` machinery gives a runtime-configurable level, so it is invisible in normal runs but answers "why was this path rejected" on demand. Test split: the per-family projection unit tests are KEPT (ported permanently); the ad-hoc path fixtures (`path142603_*` and similar live-run solver-divergence fixtures) are treated as a WEAK parity cross-check during implementation, then DELETED once the full revm harness covers them (they were one-off debugging harnesses for failing live paths).
+
+**CL-projection guardrail — V3/V4 are related but NOT swappable (2026-08).** `resolve/cl.rs` holds `project_v3` and `project_v4` as two **self-contained** entry functions; they share only the file + the thin `ResolvedHop::V3/V4` wrap + nonce push. There is deliberately **no** shared constructor that reinterprets sequence/sign/fee semantics, because the two `build_int_v*_sequence` families (which stay in `degenbot-pools`, untouched) differ in three load-bearing ways: (1) **fee convention** — V3 `gamma = 1_000_000 − lp_fee` vs V4 combined `swapFee = calculate_swap_fee(protocol_fee_dir, lp_fee)` when `protocolFee > 0`; (2) **current-tick drain framing** — V3 pushes a dedicated leading hop `[current, sqrt(currentTick)]` at stored liquidity, V4 folds the drain into each range's `base_liquidity`; (3) **net sign direction** — V4 applies per-prior-range `if zero_for_one { l -= net } else { l += net }`. Any attempt to "swap" V3/V4 behind one code path clobbers these; they are two adapters behind the shared `ConcentratedLiquidityPool` *interface* (ADR-014 family) with genuinely distinct swap/step internals. The lock-drop discipline (ADR-005 slice 15b-1: "the guard drops before `solve_path` runs") is load-bearing and survives the relocation unchanged.
 
 **Closed — the hop-shape deepening (2026-07-19).** Resolved as a negative: the hop stays as `enum ResolvedHop` + match-based classifier. (1) Digest-cost motivation retired empirically — Balancer `D` / Curve `xp` are 0.04–4% of the per-path budget (spike 77LOQT, `rust/crates/degenbot-solvers/benches/digest.rs`); cross-path digest memoization rejected (CL caches justifiably, the light families don't amortize, stale-digest reorg risk > ~1% wall-time ceiling). (2) Composition-classifier motivation settled negative — `dyn PathHopSnapshot` removes the enum but not the work: the 9-way `solve_path` classifier survives as capability-query chains over trait objects with the same 9 branches (the per-composition search algorithms are path-level strategies, not per-hop plug-ins; a hop-level trait can't replace them). (3) Extensibility motivation negative — adding a DEX family under the enum is three local edits, under the trait it's more touch points (capability surface grows alongside the struct). Net: `dyn PathHopSnapshot` is wash-to-loss on depth and clear loss on runtime (heap-alloc `Box<dyn>` per hop at resolve vs inline enum payload, vtable indirection on the 25-iter simulate loop). The frozen per-solve snapshot survives on constraint #5 alone (lock-free solve: guard drops before `solve_path`). See ADR-015 CLOSURE section.
 
@@ -456,3 +460,77 @@ violation, no behaviour change.
 ### Clean single-home submodules (reroute only)
 
 `balancer_math` → `degenbot.balancer.math` · `cl_math` → `degenbot.uniswap.math` · `curve_math` → `degenbot.curve.math` · `solidly_math` → `degenbot.aerodrome.math` · `solady` → `degenbot.utils.solady` (existing subpackage `utils/solady/libzip.py` is the only consumer; mirrors 1:1) · `dex_identity` → `degenbot.uniswap.dex_identity` · `provider` → `degenbot.provider` (already a package) · `simulation` → `degenbot.dispatch` · `submission` → `degenbot.dispatch` (both under `dispatch/`) · `cancel` → `degenbot.updater` · `pool` → CLI-only consumer (`cli/pool.py`); `degenbot.pool` mirror home created when a non-CLI consumer appears, or `cli/pool.py` is the home itself if the CLI stays the sole consumer (verify during cutover).
+
+## Executor command layer (degenbot-executor)
+
+The layer that turns a solver result into the `bytes` passed to the on-chain
+`cmd_executor.execute(bytes, config)`. Two first-class axes the grammar must
+express — where the stream's entry capital comes from, and where its terminal
+profit goes — are the load-bearing vocabulary for the axes refactor (epic
+`463V2C`).
+
+**Command stream** — the `bytes` payload `execute()` runs; the atomic unit the
+command grammar emits. A stream is a sequence of compact opcodes against an
+address table.
+_Avoid_: "payload" (reserved for the solve-result → strategy seam, ADR-025).
+
+**Command grammar** — the rules + per-shape-class description (protocol
+sequence × funding source × profit capture × builder bribe) that derive a valid
+command stream, including the ordering the stream must satisfy. Distinct from
+the "command stream" it emits, and from the "composer" (the concrete encoder
+that executes the grammar).
+_Avoid_: "composer" for the model; "encoder" (the byte-layout details live in
+the encoder methods the matrix calls).
+
+**Funding source** — the declared origin of a command stream's **entry (seed)
+capital**: chosen **at runtime per path by the strategy/operator** (an economic
+knob — self-fund is cheaper gas for small opportunities, flash is needed to
+access outside capital for large ones), not a fixed config. Exactly one per
+stream. Values: **self-funded** (asset held by the executor), **pool
+flash-loan** (a **flash source pool** — see below, in-path or off-path), a
+**PoolManager free take** (a positive delta owed to the executor), an
+external-lender flash (**Aave**), or **ERC-6909 burn-to-settle** (burn a held
+claim to fund settlement). Inter-hop inputs and their sizing are an
+implementation detail, not a funding decision.
+_Avoid_: "capital source", "flash source".
+
+**Profit capture** — the declared destination of a command stream's **terminal
+profit** (the excess over the entry capital the stream refunds); one value per
+stream. Values: **custody** (retained by the executor), **owner** (sent to the
+immutable `OWNER_ADDR`), **native** (ETH), **ERC-6909 mint**, and (with the
+Balancer integration) **Balancer Vault**. Modeled as a declared value even
+where the current executor cannot yet express it.
+_Avoid_: "profit taking", "settlement".
+
+**Builder bribe** — a separately-declared payment (recipient + amount) a
+command stream pays a block builder, **orthogonal to profit capture**: it is a
+distinct output axis, not part of where the profit excess goes. Carried via the
+`execute` `config` parameter / dedicated commands.
+_Avoid_: "tip", "fee".
+
+**Ledger** — the accounting target an operation reads from or writes to: the
+executor's ERC-20 balance, the PoolManager delta, an ERC-6909 held balance, a
+direct pool-to-pool handoff, or (with Balancer/Aave) an external Vault/lender.
+The ordering invariant the grammar enforces is **credit-before-debit within a
+ledger**.
+_Avoid_: "realm", "book", "track".
+
+**Hop coupling** — how one hop's output passes to the next: directly
+pool-to-pool, via the executor balance, or via a ledger delta. Distinct from
+"funding source" (the seed) — this is the inter-hop handoff, including the
+**repayment pivot** by which a borrowed ledger is settled.
+_Avoid_: "handover".
+
+**Flash source pool** — the pool whose own swap-callback lends the stream's
+entry capital (the "no-prefund" Uniswap-family flash borrow). Distinct from an
+external lender (Aave) and from a non-flash funding source. A flash source pool
+may be **in-path** (also a hop — the unified borrow-and-swap callback, repaid
+by the path itself, last) or **off-path** (an independent borrowing point whose
+capital is not part of the trade; e.g. a V2 pool that delivers the profit token
+to the executor so we retain the excess).
+_Avoid_: conflating with "funding source" (the axis) or "pool flash-loan" alone.
+
+**Repayment pivot** — the derived hop or mechanism that settles a borrowed
+ledger; chosen by token roles + hop coupling, never hand-picked. Part of the
+derived enclosure, not a user axis.
+_Avoid_: "repay hop" (implies a hop; a pivot may be a settle, not a swap).
