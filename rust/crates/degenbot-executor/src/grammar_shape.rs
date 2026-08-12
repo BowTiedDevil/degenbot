@@ -454,6 +454,63 @@ pub enum PlanStep {
         weth_addr: Address,
         amount: u128,
     },
+    /// `V4_BATCH` — a bundled PM extcall of up to 8 swaps
+    /// (`encoders::enc_v4_batch`). Ledger-equivalent to the constituent
+    /// `V4Swap`s: each entry applies the same `PM[in]` debt / `PM[out]`
+    /// credit. **Asymmetry vs a plain `V4Swap` sequence:** the contract
+    /// auto-settles any positive native ETH and WETH delta at the batch's end
+    /// (an implicit `V4_TAKE_DELTA(→SELF)` for those two currencies). For the
+    /// WETH-only slice (the executor's proven path) the derive therefore omits
+    /// the terminal `V4TakeDelta` when `use_v4_batch` is set — the batch already
+    /// captured the WETH profit. The Plan mirrors this: the per-entry ledger
+    /// deltas leave a positive `PM[weth]` that the trailing `V4SettleAll`
+    /// zeroes (the gate's master invariant fires at `V4UnlockEnd` — the profit
+    /// capture is modelled by the contract, not by a `Take` op here).
+    V4Batch { entries: Vec<V4BatchSwap> },
+    /// `V4_MINT_COMPACT(cur→rcp, amount)` — convert a positive `PM[cur]`
+    /// delta into an ERC6909 claim for `rcp` (BP7KIR `erc6909_profit` opt).
+    /// Ledger-equivalent to [`PlanStep::V4TakeDelta`]: debits `PM[cur]` by
+    /// `amount` (requires credit-before-debit, `D0`). The asset stays inside
+    /// the PM as a claim rather than a physical transfer — distinct from
+    /// `V4TakeDelta` on-chain, identical for the gate's safety invariants.
+    V4Mint {
+        currency_idx: u8,
+        currency_addr: Address,
+        recipient_idx: u8,
+        amount: u128,
+    },
+}
+
+/// One entry of a [`PlanStep::V4Batch`] — the codec fields (consumed by
+/// `encoders::enc_v4_batch` via [`V4BatchEntry`][encoders::V4BatchEntry])
+/// together with the resolved currency/amount legs (consumed by a per-entry
+/// `LedgerOp::V4Swap` projection). Carrying both keeps byte and ledger
+/// projection derivable from the one Plan tree (ADR-029 D4 (iii)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V4BatchSwap {
+    /// Currency-0 table index.
+    pub c0_idx: u8,
+    /// Currency-1 table index.
+    pub c1_idx: u8,
+    /// Pool fee (`uint16` view of the `uint24` on-chain key).
+    pub fee: u16,
+    /// Tick spacing (`int16` view).
+    pub tick_spacing: i16,
+    /// Hooks address index (`0xFF` = no hooks).
+    pub hooks_idx: u8,
+    /// `zero_for_one` direction flag.
+    pub zfo: bool,
+    /// Positive `uint96` exact-input amount.
+    pub amount: u128,
+    /// Resolved input currency (for the ledger projection).
+    pub in_currency: Address,
+    /// Resolved input amount (matches `amount` for the standard exact-input
+    /// entry; carried separately so the ledger projection is exact).
+    pub in_amount: u128,
+    /// Resolved output currency.
+    pub out_currency: Address,
+    /// Resolved output amount.
+    pub out_amount: u128,
 }
 
 /// A Plan = an ordered list of steps. Depth-first walk = execution order.
@@ -664,6 +721,32 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         amount: *amount,
                     });
                 }
+                PlanStep::V4Batch { entries } => {
+                    // Each batch entry applies the same `PM[in]` debt / `PM[out]`
+                    // credit as a standalone `V4Swap`. The batch's on-chain
+                    // auto-settle of native+WETH positive deltas is modelled
+                    // downstream (the derive emits no `V4TakeDelta` for the
+                    // WETH slice; the trailing `V4SettleAll` zeroes the
+                    // residual `PM[weth]` — the gate's master invariant).
+                    for e in entries {
+                        ops.push(LedgerOp::V4Swap {
+                            in_currency: e.in_currency,
+                            in_amount: e.in_amount,
+                            out_currency: e.out_currency,
+                            out_amount: e.out_amount,
+                        });
+                    }
+                }
+                PlanStep::V4Mint {
+                    currency_addr,
+                    amount,
+                    ..
+                } => {
+                    ops.push(LedgerOp::Mint {
+                        currency: *currency_addr,
+                        amount: *amount,
+                    });
+                }
             }
         }
     }
@@ -806,6 +889,33 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                 PlanStep::WethDeposit { amount, .. } => {
                     out.extend_from_slice(&encoders::enc_weth_deposit(U256::from(*amount)));
                 }
+                PlanStep::V4Batch { entries } => {
+                    let batch: Vec<encoders::V4BatchEntry> = entries
+                        .iter()
+                        .map(|e| encoders::V4BatchEntry {
+                            c0_idx: e.c0_idx,
+                            c1_idx: e.c1_idx,
+                            fee: e.fee,
+                            tick_spacing: e.tick_spacing,
+                            hooks_idx: e.hooks_idx,
+                            zfo: e.zfo,
+                            amount_u96: e.amount,
+                        })
+                        .collect();
+                    out.extend_from_slice(
+                        &encoders::enc_v4_batch(&batch)
+                            .expect("V4 batch <= 8 entries + uint96 amounts"),
+                    );
+                }
+                PlanStep::V4Mint {
+                    currency_idx,
+                    recipient_idx,
+                    amount,
+                    ..
+                } => out.extend_from_slice(
+                    &encoders::enc_v4_mint_compact(*currency_idx, *recipient_idx, *amount)
+                        .expect("V4 mint compact uint96 amount in range"),
+                ),
             }
         }
     }
@@ -1157,10 +1267,11 @@ pub fn build_v4v4_plan(
     let (HopInfo::V4(a), HopInfo::V4(b)) = (&path.hops[0], &path.hops[1]) else {
         return None;
     };
-    // Default-opts, WETH-only, no native gap (the spike's proven slice).
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
+    // WETH-only, no native gap (the spike's proven slice). The
+    // `use_v4_batch` and `erc6909_profit` opts are handled *within* this slice
+    // — `V4Batch` (bundled swaps; the contract auto-captures the WETH profit
+    // so no `V4TakeDelta` is emitted) and `V4Mint` (ERC6909 claim instead of a
+    // physical take). Both match `derive_2hop_v4v4` byte-for-byte.
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -1222,40 +1333,103 @@ pub fn build_v4v4_plan(
     let fee_b = u16::try_from(b.fee).ok()?;
     let ts_b = i16::try_from(b.tick_spacing).ok()?;
 
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: a.zfo,
-            amount: optimal_input,
-            in_currency: weth,
-            in_amount: optimal_input,
-            out_currency: out_currency_a,
-            out_amount: forward_out,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: b.zfo,
-            amount: b_swap_in,
-            in_currency: out_currency_a,
-            in_amount: b_swap_in,
-            out_currency: weth,
-            out_amount: weth_out,
-        },
-        PlanStep::V4TakeDelta {
-            currency_idx: weth_idx,
-            currency_addr: weth,
-            recipient_idx: SENTINEL_SELF,
-        },
-        PlanStep::V4SettleAll,
-    ];
+    let inner: Plan = {
+        // The two swaps: one `V4Batch` (2 entries) when `use_v4_batch`, else
+        // two `V4Swap`s.
+        let swaps: Vec<PlanStep> = if inputs.opts.use_v4_batch {
+            vec![PlanStep::V4Batch {
+                entries: vec![
+                    V4BatchSwap {
+                        c0_idx: c0_a,
+                        c1_idx: c1_a,
+                        fee: fee_a,
+                        tick_spacing: ts_a,
+                        hooks_idx: SENTINEL_NATIVE,
+                        zfo: a.zfo,
+                        amount: optimal_input,
+                        in_currency: weth,
+                        in_amount: optimal_input,
+                        out_currency: out_currency_a,
+                        out_amount: forward_out,
+                    },
+                    V4BatchSwap {
+                        c0_idx: c0_b,
+                        c1_idx: c1_b,
+                        fee: fee_b,
+                        tick_spacing: ts_b,
+                        hooks_idx: SENTINEL_NATIVE,
+                        zfo: b.zfo,
+                        amount: b_swap_in,
+                        in_currency: out_currency_a,
+                        in_amount: b_swap_in,
+                        out_currency: weth,
+                        out_amount: weth_out,
+                    },
+                ],
+            }]
+        } else {
+            vec![
+                PlanStep::V4Swap {
+                    c0_idx: c0_a,
+                    c1_idx: c1_a,
+                    fee: fee_a,
+                    tick_spacing: ts_a,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: a.zfo,
+                    amount: optimal_input,
+                    in_currency: weth,
+                    in_amount: optimal_input,
+                    out_currency: out_currency_a,
+                    out_amount: forward_out,
+                },
+                PlanStep::V4Swap {
+                    c0_idx: c0_b,
+                    c1_idx: c1_b,
+                    fee: fee_b,
+                    tick_spacing: ts_b,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: b.zfo,
+                    amount: b_swap_in,
+                    in_currency: out_currency_a,
+                    in_amount: b_swap_in,
+                    out_currency: weth,
+                    out_amount: weth_out,
+                },
+            ]
+        };
+        // Profit capture:
+        //  * `erc6909_profit` → `V4Mint` of the WETH profit (an ERC6909 claim).
+        //  * `use_v4_batch` (without erc6909) → **nothing** — the batch
+        //    auto-captures the positive WETH delta to the executor (derive
+        //    emits no `V4TakeDelta`).
+        //  * default → explicit `V4TakeDelta` of the WETH profit.
+        let capture: Vec<PlanStep> = if inputs.opts.erc6909_profit {
+            let profit = weth_out.saturating_sub(optimal_input);
+            if profit > 0 {
+                vec![PlanStep::V4Mint {
+                    currency_idx: weth_idx,
+                    currency_addr: weth,
+                    recipient_idx: SENTINEL_SELF,
+                    amount: profit,
+                }]
+            } else {
+                vec![]
+            }
+        } else if !inputs.opts.use_v4_batch {
+            vec![PlanStep::V4TakeDelta {
+                currency_idx: weth_idx,
+                currency_addr: weth,
+                recipient_idx: SENTINEL_SELF,
+            }]
+        } else {
+            vec![]
+        };
+        swaps
+            .into_iter()
+            .chain(capture)
+            .chain(std::iter::once(PlanStep::V4SettleAll))
+            .collect()
+    };
     let plan: Plan = vec![PlanStep::V4Unlock {
         inner,
         pool_manager_idx: pm_idx,
@@ -5569,6 +5743,152 @@ mod tests {
                 Err(crate::grammar_ledger::ValidationError::PmDeltaNonzero { .. })
             ),
             "v4_v4 Plan missing its settle must be rejected: nonzero PM delta at unlock end"
+        );
+        let _ = U256::ZERO;
+    }
+
+    // ── BP7KIR opts: `use_v4_batch` + `erc6909_profit` (within the WETH-only
+    //    slice) — byte-parity with `derive_2hop_v4v4` AND gate validation. ──
+
+    fn v4_v4_opts_inputs(
+        opts: crate::composers::EncodeOptions,
+    ) -> (PathInfo, ComposerInputs<'static>) {
+        let (mut path, mut inputs) = v4_v4_path_inputs();
+        // SAFETY of the `static` borrow: `EncodeOptions` is `Copy` and the
+        // fixture's `hop_outputs`/`consumed_inputs` are `static`s, so we only
+        // overwrite the `opts` field — the slice borrows remain valid.
+        // Re-build `ComposerInputs` with the requested opts.
+        let ComposerInputs {
+            executor_address,
+            pool_manager_address,
+            weth_address,
+            optimal_input,
+            hop_outputs,
+            consumed_inputs,
+            opts: _,
+        } = inputs;
+        inputs = ComposerInputs {
+            executor_address,
+            pool_manager_address,
+            weth_address,
+            optimal_input,
+            hop_outputs,
+            consumed_inputs,
+            opts,
+        };
+        // Suppress unused-mut on `path` (the fixture path is reused as-is).
+        let _ = &mut path;
+        (path, inputs)
+    }
+
+    #[test]
+    fn v4_v4_plan_batch_byte_parity_and_validates() {
+        // `use_v4_batch=true`: one `V4Batch` replaces the two `V4Swap`s, and
+        // NO `V4TakeDelta` is emitted (the batch auto-captures the WETH
+        // profit). Byte-parity with `derive_2hop_v4v4`'s batch arm.
+        let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
+            erc6909_profit: false,
+            use_v4_batch: true,
+        });
+        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 batch");
+        // Spot-check the Plan shape: outer `V4Unlock { inner: [V4Batch, V4SettleAll] }`.
+        let (_preamble, plan, _at) =
+            build_v4v4_plan(&path, &inputs).expect("v4_v4 batch build None");
+        let outer = &plan[0];
+        let PlanStep::V4Unlock { inner, .. } = outer else {
+            panic!("expected outer V4Unlock");
+        };
+        assert_eq!(inner.len(), 2, "batch inner = [V4Batch, V4SettleAll]");
+        assert!(
+            matches!(inner[0], PlanStep::V4Batch { .. }),
+            "first step is V4Batch"
+        );
+        assert!(
+            matches!(inner[1], PlanStep::V4SettleAll),
+            "trailing SettleAll"
+        );
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_v4_plan_erc6909_byte_parity_and_validates() {
+        // `erc6909_profit=true`: `V4Mint` of the WETH profit (ERC6909 claim)
+        // replaces the `V4TakeDelta`.
+        let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
+            erc6909_profit: true,
+            use_v4_batch: false,
+        });
+        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 erc6909");
+        let (_preamble, plan, _at) =
+            build_v4v4_plan(&path, &inputs).expect("v4_v4 erc6909 build None");
+        let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
+            panic!("expected outer V4Unlock");
+        };
+        assert_eq!(
+            inner.len(),
+            4,
+            "erc6909 inner = [V4Swap, V4Swap, V4Mint, V4SettleAll]"
+        );
+        assert!(
+            matches!(inner[2], PlanStep::V4Mint { .. }),
+            "profit step is V4Mint"
+        );
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_v4_plan_batch_erc6909_byte_parity_and_validates() {
+        // Both opts: `V4Batch` + `V4Mint` of the profit (still auto-settles via
+        // `V4SettleAll`; the mint captures the WETH delta as an ERC6909 claim
+        // before the trailing settle).
+        let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
+            erc6909_profit: true,
+            use_v4_batch: true,
+        });
+        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 batch+erc6909");
+        let (_preamble, plan, _at) =
+            build_v4v4_plan(&path, &inputs).expect("v4_v4 batch+erc6909 build None");
+        let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
+            panic!("expected outer V4Unlock");
+        };
+        assert_eq!(
+            inner.len(),
+            3,
+            "batch+erc6909 inner = [V4Batch, V4Mint, V4SettleAll]"
+        );
+        assert!(matches!(inner[0], PlanStep::V4Batch { .. }));
+        assert!(matches!(inner[1], PlanStep::V4Mint { .. }));
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_v4_plan_mint_before_swap_rejected() {
+        // `V4Mint` honors the same D0 credit-before-debit rule as `V4TakeDelta`:
+        // a `V4Mint` positioned before the swaps that create `PM[weth]` credit
+        // must be rejected (the `Mint` gate op fails with `TakeBeforeCredit`).
+        let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
+            erc6909_profit: true,
+            use_v4_batch: false,
+        });
+        let (_preamble, mut plan, _at) =
+            build_v4v4_plan(&path, &inputs).expect("v4_v4 erc6909 build None");
+        // The V4Unlock's inner is [Swap a, Swap b, V4Mint, SettleAll].
+        // Move V4Mint to the front (before both swaps) → TakeBeforeCredit.
+        let outer = plan.get_mut(0).unwrap();
+        if let PlanStep::V4Unlock { inner, .. } = outer {
+            let mint = inner.remove(2);
+            inner.insert(0, mint);
+        } else {
+            panic!("expected outer V4Unlock");
+        }
+        let ops = plan_to_ledger_ops(&plan);
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            matches!(
+                v.validate_full(&ops),
+                Err(crate::grammar_ledger::ValidationError::TakeBeforeCredit { .. })
+            ),
+            "misordered v4_v4 erc6909 Plan: V4Mint before the swap credits PM must be rejected"
         );
         let _ = U256::ZERO;
     }
