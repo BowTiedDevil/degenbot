@@ -4169,10 +4169,9 @@ fn derive_3hop_v4v2v2(
     } else {
         a.currency0_address
     };
-    if forward_a_cur == NATIVE_CURRENCY_ADDRESS || forward_a_cur == inputs.weth_address {
-        return None; // terminal-V2 chain needs an ERC-20 forward out of V4
-    }
-
+    // No forward-shape guard: the V4 a-hop's forward currency (WETH / ERC-20 /
+    // native) is taken from the PM as-is via `at.add` resolving to the matching
+    // sentinel. Mirrors the proven adapter (which had no guard here).
     let mut at = AddressTable::with_sentinels(
         Some(inputs.weth_address),
         Some(inputs.executor_address),
@@ -4231,10 +4230,10 @@ fn derive_3hop_v2v2v4(
     } else {
         b.token0_address
     };
-    if forward_b_addr == NATIVE_CURRENCY_ADDRESS || forward_b_addr == inputs.weth_address {
-        return None; // needs an ERC-20 forward into the PM
-    }
-
+    // No forward-shape guard: the V2 b-hop's forward (WETH / ERC-20 / native)
+    // is synced into the PM as-is via `at.add` resolving to the matching
+    // sentinel (WETH→SENTINEL_WETH, native→SENTINEL_NATIVE, else a fresh
+    // table entry). Mirrors the proven adapter (which had no guard here).
     let mut at = AddressTable::with_sentinels(
         Some(inputs.weth_address),
         Some(inputs.executor_address),
@@ -4934,10 +4933,9 @@ fn derive_3hop_v4v4v2(
     } else {
         b.currency0_address
     };
-    if forward_b_cur == NATIVE_CURRENCY_ADDRESS || forward_b_cur == inputs.weth_address {
-        return None;
-    }
-
+    // No forward-shape guard: the V4 b-hop's forward currency (WETH / ERC-20 /
+    // native) is taken from the PM as-is via `at.add` resolving to the matching
+    // sentinel. Mirrors the proven adapter (which had no guard here).
     let mut at = AddressTable::with_sentinels(
         Some(inputs.weth_address),
         Some(inputs.executor_address),

@@ -584,3 +584,136 @@ fn v4_leading_parity() {
         100_000,
     );
 }
+
+// ── WAYDTL: no-backstop regression lock ───────────────────────────────────
+// After retiring the `cutover` backstop (WAYDTL), `encode_grammar` is a pure
+// delegate to `derive_shape` for every non-all-V2 family (the all-V2 3-hop
+// path is the deliberate `v2_v2_v2` routing split). This locks that invariant:
+// for every family, `encode_grammar(path, inputs) == derive_shape(path, inputs)`
+// byte-for-byte across every EncodeOptions mode. Before the retire, three
+// families (v2_v2_v4, v4_v4_v2, v4_v2_v2) had an over-restrictive WETH-forward
+// guard that made `derive_shape` return None while the hand-written adapter
+// (the backstop) returned Some — so this equality failed for them. A future
+// re-introduction of a backstop, or a new derive_shape None-gap, trips this.
+
+fn assert_no_backstop(hops: Vec<HopInfo>, exact_in: u128) {
+    let path = PathInfo::new(hops);
+    let n = path.hops.len();
+    let hop_outputs: Vec<u128> = (0..n)
+        .map(|i| exact_in * (10u128.pow(i as u32) + 1))
+        .collect();
+    let consumed: Vec<u128> = std::iter::once(exact_in)
+        .chain(hop_outputs.iter().copied())
+        .take(n)
+        .collect();
+    let modes = [
+        EncodeOptions::default(),
+        EncodeOptions {
+            erc6909_profit: false,
+            use_v4_batch: true,
+        },
+        EncodeOptions {
+            erc6909_profit: true,
+            use_v4_batch: false,
+        },
+        EncodeOptions {
+            erc6909_profit: true,
+            use_v4_batch: true,
+        },
+    ];
+    for opts in modes {
+        let inputs = ComposerInputs {
+            executor_address: executor(),
+            pool_manager_address: pm(),
+            weth_address: weth(),
+            optimal_input: exact_in,
+            hop_outputs: &hop_outputs,
+            consumed_inputs: &consumed,
+            opts,
+        };
+        assert_eq!(
+            degenbot_executor::grammar::encode_grammar(&path, &inputs),
+            derive_shape(&path, &inputs),
+            "encode_grammar must be a pure delegate to derive_shape (no backstop); opts {opts:?}"
+        );
+    }
+}
+
+#[test]
+fn no_backstop_weth_forward_families_previously_masked() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9");
+    // v2_v2_v4: V2 b-hop forward = WETH (the masked-gap config).
+    assert_no_backstop(
+        vec![
+            v2_pair(weth(), t, true, 30),
+            v2_pair(t, weth(), true, 30),
+            v4_pair(weth(), t, true),
+        ],
+        100_000,
+    );
+    // v4_v4_v2: V4 b-hop forward = WETH (the masked-gap config).
+    assert_no_backstop(
+        vec![
+            v4_pair(t, u, true),
+            v4_pair(u, weth(), true),
+            v2_pair(weth(), t, true, 30),
+        ],
+        100_000,
+    );
+    // v4_v2_v2: V4 a-hop forward = WETH (the masked-gap config).
+    assert_no_backstop(
+        vec![
+            v4_pair(t, weth(), true),
+            v2_pair(weth(), t, true, 30),
+            v2_pair(t, weth(), true, 30),
+        ],
+        100_000,
+    );
+}
+
+#[test]
+fn no_backstop_broad_family_sweep_across_modes() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9");
+    // 2-hop V4-involving families.
+    for (a, b) in [
+        (v4_pair(weth(), t, true), v3_pool(t, weth(), true)),
+        (v3_pool(weth(), t, true), v4_pair(t, weth(), true)),
+        (v4_pair(weth(), t, true), v2_pair(t, weth(), true, 30)),
+        (v2_pair(weth(), t, true, 30), v4_pair(t, weth(), true)),
+        (v4_pair(weth(), t, true), v4_pair(t, weth(), true)),
+    ] {
+        assert_no_backstop(vec![a, b], 100_000);
+    }
+    // 3-hop V4-involving families (a representative slice incl. WETH forwards).
+    for hops in [
+        vec![
+            v4_pair(weth(), t, true),
+            v2_pair(t, weth(), true, 30),
+            v2_pair(weth(), t, true, 30),
+        ],
+        vec![
+            v2_pair(weth(), t, true, 30),
+            v2_pair(t, weth(), true, 30),
+            v4_pair(weth(), t, true),
+        ],
+        vec![
+            v4_pair(t, u, true),
+            v4_pair(u, weth(), true),
+            v2_pair(weth(), t, true, 30),
+        ],
+        vec![
+            v3_pool(weth(), t, true),
+            v4_pair(t, weth(), true),
+            v2_pair(weth(), t, true, 30),
+        ],
+        vec![
+            v4_pair(weth(), t, true),
+            v4_pair(t, u, true),
+            v4_pair(u, weth(), true),
+        ],
+    ] {
+        assert_no_backstop(hops, 100_000);
+    }
+}
