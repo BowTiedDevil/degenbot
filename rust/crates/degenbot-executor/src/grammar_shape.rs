@@ -1319,24 +1319,43 @@ pub fn build_v4v3_plan(
     } else {
         a.currency1_address
     };
-    // Scoped slice: reject native V4 OUTPUT (the wrap-then-V3 case needs
-    // WethDeposit — a follow-on sub-increment). Native V4 INPUT is handled
-    // here (the WethWithdraw + NativeTransfer + SettleDelta(native) path).
-    if out_currency_a == NATIVE_CURRENCY_ADDRESS {
-        return None;
-    }
-    // The V4 input must be WETH or native (the two supported settle paths).
-    if in_currency_a != weth && in_currency_a != NATIVE_CURRENCY_ADDRESS {
-        return None;
-    }
-    // The terminal V3 output must be WETH (the captured profit).
+    let v4_out_native = out_currency_a == NATIVE_CURRENCY_ADDRESS;
+    // The terminal V3 output currency.
     let out_currency_b = if b.zfo {
         b.token1_address
     } else {
         b.token0_address
     };
-    if out_currency_b != weth {
-        return None;
+    if v4_out_native {
+        // Native V4 OUTPUT: the forward (native) is taken out of the PM and
+        // wrapped to WETH (WethDeposit) before the terminal V3 swap consumes
+        // it as its WETH input. The V4 input debt settles via SettleDelta on
+        // the V4's ERC-20 input leg, funded by the V3's output (the cycle: V3
+        // output == V4 input token — the terminal profit is NOT WETH here).
+        let in_currency_b = if b.zfo {
+            b.token0_address
+        } else {
+            b.token1_address
+        };
+        if in_currency_b != weth {
+            return None; // the wrapped native forward must feed the V3 as WETH
+        }
+        // A 2-token V4 pool with one native leg has an ERC-20 other leg; both
+        // legs native is impossible, so the V4 input here is that ERC-20 (any
+        // non-WETH, non-native token — the V3's matching output funds it).
+        if in_currency_a == NATIVE_CURRENCY_ADDRESS || in_currency_a == weth {
+            return None;
+        }
+    } else {
+        // ERC-20 V4 output: the V4 input must be WETH or native (the two
+        // supported settle paths — settled from the V3's WETH output), and the
+        // captured profit (V3 output) must be WETH.
+        if in_currency_a != weth && in_currency_a != NATIVE_CURRENCY_ADDRESS {
+            return None;
+        }
+        if out_currency_b != weth {
+            return None;
+        }
     }
 
     let mut at = AddressTable::with_sentinels(
@@ -1356,85 +1375,124 @@ pub fn build_v4v3_plan(
     let v4_in_native = in_currency_a == NATIVE_CURRENCY_ADDRESS;
     let input_idx = if a.zfo { c0_a } else { c1_a };
 
-    let mut inner: Plan = vec![
-        // 1. V4 swap a: PM[in] −= optimal_input (debt), PM[t1] += forward_out.
-        //    `in` is WETH (the WETH-input sub-case) or native (the native-input
-        //    sub-case, settled below with WethWithdraw + NativeTransfer).
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: a.zfo,
-            amount: optimal_input,
-            in_currency: in_currency_a,
-            in_amount: optimal_input,
-            out_currency: out_currency_a,
-            out_amount: forward_out,
-        },
-        // 2. Boundary take: PM[t1] −= forward_out; the token arrives at the
-        //    executor (Erc20[t1] += forward_out), funding the V3 auto-repay.
-        PlanStep::V4TakeCompact {
-            currency_idx: forward_idx,
-            currency_addr: out_currency_a,
-            recipient_idx: SENTINEL_SELF,
-            amount: forward_out,
-            seeds_pool: None,
-        },
-        // 3. Terminal V3 flash: credits WETH (the profit), owes t1 — auto-repaid
-        //    at callback-end from the Erc20[t1] credit the boundary take created.
-        PlanStep::FlashSwap {
-            pool_idx: v3_idx,
-            pool_addr: b.pool_address,
-            protocol: Prot::V3,
-            zfo: b.zfo,
-            fee: u16::try_from(b.fee).ok()?,
-            out_currency: weth,
-            out_amount: weth_out,
-            in_currency: out_currency_a,
-            in_amount: b_swap_in,
-            recipient_idx: SENTINEL_SELF,
-            auto_repay: true,
-            callback: vec![],
-        },
-        // 4. Settle the V4 input debt. WETH input: PM[WETH]→0 directly. Native
-        //    input: unwrap WETH (credited by the V3 output) to native, pay it
-        //    into the PM (NativeTransfer), then SettleDelta(native) zeroes PM.
-        //    The NativeTransfer is the executor-debit half; SettleDelta is the
-        //    PM-credit half — kept separate so a missing half is net-zero
-        //    caught, not silently absorbed.
-        PlanStep::V4SettleDelta {
-            currency_idx: weth_idx,
-            currency_addr: weth,
-        },
-        // 5. Settle any residual PM deltas, then the V4UnlockEnd net-zero fires.
-        PlanStep::V4SettleAll,
-    ];
-    // 4 (native input). When the V4 input is native, splice the native settle
-    //    sequence: unwrap WETH (credited by the V3 output) to native, pay it
-    //    into the PM (NativeTransfer), then SettleDelta zeroes PM[native].
-    //    (The WETH SettleDelta above is the WETH-input path; replaced here.)
-    if v4_in_native {
-        let settle_all = inner.pop().unwrap(); // SettleAll (tail)
-        inner.pop(); // drop the WETH SettleDelta placeholder
+    // 1. V4 swap a: PM[in] −= optimal_input (debt), PM[out] += forward_out.
+    let mut inner: Plan = vec![PlanStep::V4Swap {
+        c0_idx: c0_a,
+        c1_idx: c1_a,
+        fee: fee_a,
+        tick_spacing: ts_a,
+        hooks_idx: SENTINEL_NATIVE,
+        zfo: a.zfo,
+        amount: optimal_input,
+        in_currency: in_currency_a,
+        in_amount: optimal_input,
+        out_currency: out_currency_a,
+        out_amount: forward_out,
+    }];
+    if v4_out_native {
+        // Native V4 OUTPUT: take native to SELF (NativeCredit), wrap to WETH
+        // (WethDeposit), then the terminal V3 flash consumes that WETH as its
+        // input (auto-repaid from the just-created Erc20[WETH] credit). The
+        // V3 outputs `out_currency_b` (≠ WETH — the terminal profit), which
+        // funds the V4's ERC-20 input settle (the in_a/out_b currency cycle).
         inner.extend([
-            PlanStep::WethWithdraw {
-                weth_idx,
-                weth_addr: weth,
-                amount: optimal_input,
-            },
-            PlanStep::NativeTransfer {
-                amount: optimal_input,
-            },
-            PlanStep::V4SettleDelta {
+            PlanStep::V4TakeCompact {
                 currency_idx: SENTINEL_NATIVE,
                 currency_addr: NATIVE_CURRENCY_ADDRESS,
+                recipient_idx: SENTINEL_SELF,
+                amount: forward_out,
+                seeds_pool: None,
             },
-            settle_all,
+            PlanStep::WethDeposit {
+                weth_idx,
+                weth_addr: weth,
+                amount: forward_out,
+            },
+            PlanStep::FlashSwap {
+                pool_idx: v3_idx,
+                pool_addr: b.pool_address,
+                protocol: Prot::V3,
+                zfo: b.zfo,
+                fee: u16::try_from(b.fee).ok()?,
+                out_currency: out_currency_b,
+                out_amount: weth_out,
+                in_currency: weth,
+                in_amount: b_swap_in,
+                recipient_idx: SENTINEL_SELF,
+                auto_repay: true,
+                callback: vec![],
+            },
+            // Settle the V4's ERC-20 input debt: the V3 flash credited
+            // `out_currency_b` (== in_currency_a in a valid chain), funding
+            // this pay-in. SettleDelta zeroes PM[in_currency_a].
+            PlanStep::V4SettleDelta {
+                currency_idx: input_idx,
+                currency_addr: in_currency_a,
+            },
+            PlanStep::V4SettleAll,
         ]);
+    } else {
+        // ERC-20 V4 OUTPUT: take t1 to SELF (Erc20Credit), terminal V3 flash
+        // auto-repaid from that credit; V3 outputs WETH (the captured profit).
+        inner.extend([
+            PlanStep::V4TakeCompact {
+                currency_idx: forward_idx,
+                currency_addr: out_currency_a,
+                recipient_idx: SENTINEL_SELF,
+                amount: forward_out,
+                seeds_pool: None,
+            },
+            PlanStep::FlashSwap {
+                pool_idx: v3_idx,
+                pool_addr: b.pool_address,
+                protocol: Prot::V3,
+                zfo: b.zfo,
+                fee: u16::try_from(b.fee).ok()?,
+                out_currency: weth,
+                out_amount: weth_out,
+                in_currency: out_currency_a,
+                in_amount: b_swap_in,
+                recipient_idx: SENTINEL_SELF,
+                auto_repay: true,
+                callback: vec![],
+            },
+            // Settle the V4 input debt. WETH input: PM[WETH]→0 directly. Native
+            //    input: unwrap WETH (credited by the V3 output) to native, pay it
+            //    into the PM (NativeTransfer), then SettleDelta(native) zeroes PM.
+            //    The NativeTransfer is the executor-debit half; SettleDelta is the
+            //    PM-credit half — kept separate so a missing half is net-zero
+            //    caught, not silently absorbed.
+            PlanStep::V4SettleDelta {
+                currency_idx: weth_idx,
+                currency_addr: weth,
+            },
+            PlanStep::V4SettleAll,
+        ]);
+        // Native V4 INPUT (ERC-20 output branch only): splice the native settle
+        // sequence — unwrap WETH (credited by the V3 output) to native, pay it
+        // into the PM (NativeTransfer), then SettleDelta zeroes PM[native].
+        // (The WETH SettleDelta above is the WETH-input path; replaced here.)
+        if v4_in_native {
+            let settle_all = inner.pop().unwrap(); // SettleAll (tail)
+            inner.pop(); // drop the WETH SettleDelta placeholder
+            inner.extend([
+                PlanStep::WethWithdraw {
+                    weth_idx,
+                    weth_addr: weth,
+                    amount: optimal_input,
+                },
+                PlanStep::NativeTransfer {
+                    amount: optimal_input,
+                },
+                PlanStep::V4SettleDelta {
+                    currency_idx: SENTINEL_NATIVE,
+                    currency_addr: NATIVE_CURRENCY_ADDRESS,
+                },
+                settle_all,
+            ]);
+        }
+        let _ = input_idx; // unused on the ERC-20 output path
     }
-    let _ = input_idx;
     let plan: Plan = vec![PlanStep::V4Unlock {
         inner,
         pool_manager_idx: pm_idx,

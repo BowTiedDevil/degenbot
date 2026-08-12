@@ -708,6 +708,95 @@ fn v4v3_native_input_plan_byte_parity_validates_and_executes() {
     );
 }
 
+/// BP7KIR Increment 3c (native-OUTPUT): the `v4_v3` **native-V4-output**
+/// sub-case — the V4's *output* is native (taken out of the PM → wrapped to
+/// WETH via `WethDeposit` → feeds the terminal V3 as its WETH input). The
+/// terminal V3 outputs `tok` (≠ WETH — the profit), which funds the V4's
+/// ERC-20 input settle (the in_a/out_b currency cycle). Build Plan →
+/// byte-parity + gate + runtime exact terminal `tok` delta.
+///
+/// Note: `assert_profitable` measures the executor's *WETH* delta, but here
+/// the profit is denominated in `tok` (the V3 output), so the terminal `tok`
+/// delta is asserted manually (mirroring v3_v4 native-input's manual approach).
+#[test]
+fn v4v3_native_output_plan_byte_parity_validates_and_executes() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{build_v4v3_plan, plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let tok = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let weth = h.weth;
+
+    // Pool A (V4): tok→native (ERC-20 input, native OUTPUT). Pool B (V3):
+    // WETH→tok (the wrapped native forward feeds the V3 as WETH input; the V3
+    // outputs `tok` = the V4 input — the currency cycle).
+    let r: u128 = 1_000_000_000_000;
+    let p_a = HopPool::V4(
+        h.add_v4_pool(tok, native, 3000, 60, sqrt_x(3), liq(), r, r)
+            .unwrap(),
+    );
+    let p_b = HopPool::V3(
+        h.add_v3_pool(weth, tok, 3000, sqrt_x(3), liq(), r, r)
+            .unwrap(),
+    );
+    let hops = vec![
+        Hop {
+            src: tok,
+            dst: native,
+            pool: p_a,
+        },
+        Hop {
+            src: weth,
+            dst: tok,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let terminal = *hop_outputs.last().unwrap();
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let (preamble, plan, at) = build_v4v3_plan(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v4_v3 native-output] build None"));
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v4_v3 native-output] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[v4_v3 native-output] Plan bytes != proven emitter"
+    );
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .unwrap_or_else(|e| panic!("[v4_v3 native-output] Plan must validate clean: {e:?}"));
+    // The terminal profit is `tok` (the V3 output) minus the V4 input settle
+    // (optimal_input) — the currency cycle: the V3 credits `tok`, the V4 settle
+    // debits it. No entry capital (the cycle is self-funding; the native take
+    // wraps to WETH which funds the V3 auto-repay).
+    let tok_before = h.balance_of(tok, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&plan_bytes, 8_000_000).unwrap();
+    assert!(
+        outcome.executed(2),
+        "[v4_v3 native-output] must execute through both pools: {outcome:?}"
+    );
+    let tok_after = h.balance_of(tok, h.executor).unwrap().to::<u128>() as i128;
+    let actual_delta = tok_after - tok_before;
+    let predicted_profit = terminal as i128 - optimal_input as i128;
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!((actual_delta - predicted_profit).abs() <= tol,
+        "[v4_v3 native-output] terminal `tok` delta {actual_delta} diverges from predicted profit {predicted_profit} (tol {tol})");
+    println!("── v4_v3 native-output (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
+}
+
 #[test]
 fn derived_v3v2_executes_with_exact_delta() {
     run_spike(Prot::V3, Prot::V2, "v3_v2");
