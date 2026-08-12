@@ -3236,3 +3236,209 @@ fn v4v4_native_capture_executes_with_exact_native_delta() {
         "── v4_v4 native-capture (runtime): executed, native_delta={native_delta}, weth_delta={weth_delta}, predicted={predicted_profit}"
     );
 }
+
+/// WE45KC inc.2 runtime proof (3-hop): `ProfitCapture::Native` on a
+/// WETH-terminal v4_v4_v4 path. Same shape as the 2-hop proof — the WETH profit
+/// is withdrawn to native; native delta = predicted profit, WETH delta ~ 0.
+/// Consolidates Native capture across the pure-V4 family (2-hop + 3-hop).
+#[test]
+fn v4v4v4_native_capture_executes_with_exact_native_delta() {
+    use degenbot_executor::grammar_ledger::ProfitCapture;
+
+    let mut h = Harness::new().unwrap();
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let weth = h.weth;
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    weth,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t1,
+                    t2,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t2,
+            dst: weth,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t2,
+                    weth,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let gas = 40_000_000;
+
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(predicted_profit > 0, "v4_v4_v4 path should be profitable");
+
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions {
+            capture: ProfitCapture::Native,
+            ..Default::default()
+        },
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .expect("v4_v4_v4 native-capture must derive");
+
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+    let weth_before = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let native_before = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&derived, gas).unwrap();
+    assert!(
+        outcome.executed(3),
+        "v4_v4_v4 native-capture must execute through all three V4 pools: {:?}",
+        outcome
+    );
+    let weth_after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let native_after = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let weth_delta = weth_after - weth_before;
+    let native_delta = native_after - native_before;
+
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!(
+        native_delta > 0,
+        "v4_v4_v4 native-capture should gain native, got delta {native_delta}"
+    );
+    assert!(
+        (native_delta - predicted_profit).abs() <= tol,
+        "v4_v4_v4 native-capture native delta {native_delta} diverges from predicted {predicted_profit} (tol {tol})"
+    );
+    assert!(
+        weth_delta.abs() <= tol,
+        "v4_v4_v4 native-capture WETH delta should be ~0 (profit withdrawn), got {weth_delta}"
+    );
+    println!(
+        "── v4_v4_v4 native-capture (runtime): executed, native_delta={native_delta}, weth_delta={weth_delta}, predicted={predicted_profit}"
+    );
+}
+
+/// WE45KC inc.2: a non-WETH/non-native tok terminal + `ProfitCapture::Native`
+/// is declined (derive_shape returns None) — the executor cannot convert an
+/// arbitrary ERC-20 to native (ADR-029 D1: declared but not executable). The
+/// 3-hop companion to `v4_v4_native_capture_tok_terminal_declines`.
+#[test]
+fn v4v4v4_native_capture_tok_terminal_declines() {
+    use degenbot_executor::grammar_ledger::ProfitCapture;
+
+    let mut h = Harness::new().unwrap();
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let t3 = h.add_token().unwrap();
+    let weth = h.weth;
+    // Terminal output = t3 (a tok, neither WETH nor native).
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    weth,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t1,
+                    t2,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t2,
+            dst: t3,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t2,
+                    t3,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions {
+            capture: ProfitCapture::Native,
+            ..Default::default()
+        },
+    };
+    assert!(
+        degenbot_executor::grammar_shape::derive_shape(&path, &inputs).is_none(),
+        "v4_v4_v4 native-capture on a tok terminal must decline"
+    );
+}

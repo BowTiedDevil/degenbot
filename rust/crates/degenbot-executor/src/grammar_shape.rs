@@ -4058,6 +4058,16 @@ fn derive_3hop_v4v4v4(
     } else {
         c.currency0_address
     };
+    // WE45KC inc.2: capture axis load-bearing (mirrors `derive_2hop_v4v4`).
+    let capture = crate::composers::resolve_axes(inputs.opts).1;
+    // ProfitCapture::Native on a non-WETH/non-native tok terminal is not
+    // expressible (decline; ADR-029 D1).
+    if capture == ProfitCapture::Native
+        && output_c != inputs.weth_address
+        && output_c != NATIVE_CURRENCY_ADDRESS
+    {
+        return None;
+    }
     let bridge_ab = CurrencyBridge::at_boundary(mid_a_out, mid_b_in);
     let bridge_bc = CurrencyBridge::at_boundary(mid_b_out, mid_c_in);
 
@@ -4160,7 +4170,7 @@ fn derive_3hop_v4v4v4(
     };
     // Capture the terminal profit. Default/`any_gap`: physical take to the
     // executor. `erc6909_profit` (WETH output): mint an ERC6909 claim.
-    if inputs.opts.erc6909_profit && output_c == inputs.weth_address {
+    if capture == ProfitCapture::Erc6909 && output_c == inputs.weth_address {
         let profit_amount = out_c.saturating_sub(optimal_input);
         if profit_amount > 0 {
             inner.extend_from_slice(
@@ -4176,6 +4186,13 @@ fn derive_3hop_v4v4v4(
             let profit_idx = at.add(output_c).ok()?;
             inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, SENTINEL_SELF));
         }
+    }
+    // WE45KC inc.2: ProfitCapture::Native on a WETH terminal — convert the
+    // custodied WETH profit to native via WETH_WITHDRAW.
+    if capture == ProfitCapture::Native && output_c == inputs.weth_address {
+        inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(
+            out_c.saturating_sub(optimal_input),
+        )));
     }
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
