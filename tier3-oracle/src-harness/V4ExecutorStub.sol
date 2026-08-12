@@ -202,7 +202,7 @@ contract PoolManager {
         if (currency == NATIVE) {
             tokenBalance[currency] += amt; // nb: native funding via balanceOf is not real; value funded by caller
         } else {
-            Token(currency).mint(address(this), amt);
+            Token(payable(currency)).mint(address(this), amt);
             tokenBalance[currency] += amt;
         }
     }
@@ -241,7 +241,11 @@ contract PoolManager {
 
     function settle() external payable {
         if (msg.value > 0) {
-            _accountDelta(msg.sender, NATIVE, -int256(uint256(msg.value)));
+            // Native settle: the caller has physically transferred `msg.value`
+            // into the PM; CREDIT the caller's native delta by +value (reducing
+            // a negative debt to zero). Matches v4-core `_settle` / the
+            // executor's proven fake PM (`_account_delta(account, NATIVE, +paid)`).
+            _accountDelta(msg.sender, NATIVE, int256(uint256(msg.value)));
         } else {
             address c = _pendingSettle;
             bytes32 s = _slot(msg.sender, c);
@@ -262,7 +266,7 @@ contract PoolManager {
             (bool ok, ) = recipient.call{value: takeAmt}("");
             require(ok, "PM:ETH");
         } else {
-            Token(currency).transfer(recipient, takeAmt);
+            Token(payable(currency)).transfer(recipient, takeAmt);
         }
         if (takeAmt == uint256(cur)) { assembly { tstore(s, 0) } }
         else {

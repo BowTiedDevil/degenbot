@@ -372,14 +372,9 @@ fn native_wrap_v4_v2_executes_with_terminal_delta() {
 /// V4 output (an ERC-20 `u`) is the terminal profit. Asserts the payload
 /// executes through both pools and the executor's terminal `u` delta equals
 /// the predicted terminal output.
-/// KNOWN-OPEN (ergo WAYDTL (2)): WETH_WITHDRAW-to-executor in a full
-/// native V4 path still reverts empty in the harness (~250k gas, no reason).
-/// __default__ exists (verified) + the WETH contract is deposit-backed (mint
-/// now credits native), so the executor gains the unwrapped native, but a
-/// downstream native-settle op in the executor reverts empty. Pinpointing needs
-/// revm `inspect_commit` tracing (the `transact` path bypasses the baked
-/// inspector). Left #[ignore] so the tree stays green while this is root-caused.
-#[ignore]
+/// UNWRAP runtime proof (WETH_WITHDRAW), V3->V4 native-input variant: the
+/// V3 output WETH is unwrapped (WETH_WITHDRAW) to seed the V4 native input; the
+/// V4 output `u` is the terminal profit.
 #[test]
 fn native_unwrap_v3_v4_executes_with_terminal_delta() {
     let mut h = Harness::new().unwrap();
@@ -462,5 +457,88 @@ fn native_unwrap_v3_v4_executes_with_terminal_delta() {
     assert!(
         u_delta > 0 && (u_delta - terminal as i128).abs() <= tol,
         "unwrap v3_v4 terminal u delta {u_delta} != predicted {terminal} (tol {tol})"
+    );
+}
+
+/// UNWRAP runtime proof (WETH_WITHDRAW), pure-V4 unwrap-bridge variant: hop A
+/// outputs WETH in the PM, the bridge takes it out + WETH_WITHDRAW -> native,
+/// hop B (a native pool) consumes it; the `u` output is the terminal profit.
+/// This was the case that root-caused the native `settle(value)` sign bug in
+/// the harness PoolManager stub (it was crediting -value, never resolving the
+/// native debt); it now executes with exact terminal delta.
+#[test]
+fn native_v4v4_unwrap_bridge_executes_with_terminal_delta() {
+    let mut h = Harness::new().unwrap();
+    let t0 = h.add_token().unwrap();
+    let u = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let p_a = HopPool::V4(
+        h.add_v4_pool(
+            t0,
+            h.weth,
+            3000,
+            60,
+            sqrt_x(1),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let p_b = HopPool::V4(
+        h.add_v4_pool(
+            native,
+            u,
+            3000,
+            60,
+            sqrt_x(3),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let hops = vec![
+        Hop {
+            src: t0,
+            dst: h.weth,
+            pool: p_a,
+        },
+        Hop {
+            src: native,
+            dst: u,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let gas = 8_000_000;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let terminal = *hop_outputs.last().unwrap();
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive_shape returned None for unwrap bridge"));
+    h.fund(t0, h.executor, optimal_input * 2).unwrap();
+    h.fund(h.weth, h.executor, optimal_input * 2).unwrap();
+    let u_before = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&derived, gas).unwrap();
+    assert!(
+        outcome.executed(2),
+        "unwrap-bridge v4_v4 must execute through both pools: {:?}",
+        outcome
+    );
+    let u_after = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
+    let u_delta = u_after - u_before;
+    let tol = (terminal / 1000) as i128;
+    assert!(
+        u_delta > 0 && (u_delta - terminal as i128).abs() <= tol,
+        "unwrap-bridge terminal u delta {u_delta} != predicted {terminal} (tol {tol})"
     );
 }
