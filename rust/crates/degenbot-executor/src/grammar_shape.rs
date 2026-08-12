@@ -1274,8 +1274,8 @@ pub fn build_v4v4_plan(
     // physical take). Both match `derive_2hop_v4v4` byte-for-byte.
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
-    let weth_out = *inputs.hop_outputs.get(1)?;
-    if forward_out == 0 || weth_out == 0 {
+    let b_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || b_out == 0 {
         return None;
     }
     if !fits_int128(optimal_input) || !fits_int128(forward_out) {
@@ -1311,10 +1311,10 @@ pub fn build_v4v4_plan(
     } else {
         b.currency0_address
     };
-    // Terminal output must be WETH (the spike's WETH-only slice).
-    if out_currency_b != weth {
-        return None;
-    }
+    // Terminal output may be WETH (profit capture), a tok (explicit take), or
+    // native (batch auto-settles; non-batch takes). The `use_v4_batch` /
+    // `erc6909_profit` opts interact with the terminal currency exactly as
+    // `derive_2hop_v4v4` — the capture block below mirrors it.
 
     let mut at = AddressTable::with_sentinels(
         Some(weth),
@@ -1362,8 +1362,8 @@ pub fn build_v4v4_plan(
                         amount: b_swap_in,
                         in_currency: out_currency_a,
                         in_amount: b_swap_in,
-                        out_currency: weth,
-                        out_amount: weth_out,
+                        out_currency: out_currency_b,
+                        out_amount: b_out,
                     },
                 ],
             }]
@@ -1392,19 +1392,24 @@ pub fn build_v4v4_plan(
                     amount: b_swap_in,
                     in_currency: out_currency_a,
                     in_amount: b_swap_in,
-                    out_currency: weth,
-                    out_amount: weth_out,
+                    out_currency: out_currency_b,
+                    out_amount: b_out,
                 },
             ]
         };
-        // Profit capture:
-        //  * `erc6909_profit` → `V4Mint` of the WETH profit (an ERC6909 claim).
-        //  * `use_v4_batch` (without erc6909) → **nothing** — the batch
-        //    auto-captures the positive WETH delta to the executor (derive
-        //    emits no `V4TakeDelta`).
-        //  * default → explicit `V4TakeDelta` of the WETH profit.
-        let capture: Vec<PlanStep> = if inputs.opts.erc6909_profit {
-            let profit = weth_out.saturating_sub(optimal_input);
+        // Profit capture — mirrors `derive_2hop_v4v4`'s terminal-capture branches:
+        //  * `erc6909_profit` + WETH terminal → `V4Mint` of the WETH profit
+        //    (an ERC6909 claim; `erc6909` is inoperative for tok/native terminal).
+        //  * tok terminal (any opts)                    → explicit `V4TakeDelta(tok)`.
+        //  * non-batch + (WETH or native) terminal      → explicit `V4TakeDelta`.
+        //  * batch + (WETH or native) terminal          → **nothing** — the
+        //    contract's `V4_BATCH` auto-settles the positive native/WETH PM
+        //    delta to the executor (an implicit `V4_TAKE_DELTA(→SELF)`), so the
+        //    derive emits no `V4TakeDelta` and neither does the Plan; the
+        //    trailing `V4SettleAll` zeroes the residual `PM` for the gate.
+        let out_idx = if b.zfo { c1_b } else { c0_b };
+        let capture: Vec<PlanStep> = if inputs.opts.erc6909_profit && out_currency_b == weth {
+            let profit = b_out.saturating_sub(optimal_input);
             if profit > 0 {
                 vec![PlanStep::V4Mint {
                     currency_idx: weth_idx,
@@ -1415,10 +1420,12 @@ pub fn build_v4v4_plan(
             } else {
                 vec![]
             }
-        } else if !inputs.opts.use_v4_batch {
+        } else if !inputs.opts.use_v4_batch
+            || (out_currency_b != NATIVE_CURRENCY_ADDRESS && out_currency_b != weth)
+        {
             vec![PlanStep::V4TakeDelta {
-                currency_idx: weth_idx,
-                currency_addr: weth,
+                currency_idx: out_idx,
+                currency_addr: out_currency_b,
                 recipient_idx: SENTINEL_SELF,
             }]
         } else {
@@ -3078,14 +3085,14 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
                 },
             ];
             inner.extend_from_slice(&encoders::enc_v4_batch(&batch).ok()?);
-            if output_currency_b != NATIVE_CURRENCY_ADDRESS
-                && output_currency_b != inputs.weth_address
-            {
-                inner.extend_from_slice(&encoders::enc_v4_take_delta(
-                    if b.zfo { c1_b } else { c0_b },
-                    SENTINEL_SELF,
-                ));
-            }
+            // NOTE: the terminal profit take for a tok output is emitted by the
+            // unified capture block below (not here) — emitting it here too
+            // produced a redundant double `V4_TAKE_DELTA(tok)`: the second was
+            // a no-op `take(0)` (V4 accepts a zero take, so no revert, but it
+            // was a wasteful extra command and broke Plan↔derive byte-parity
+            // since the Plan's gate flags a take on an already-zeroed PM slot).
+            // The batch auto-settles native/WETH; a tok terminal needs an
+            // explicit take, handled below.
         } else {
             inner.extend_from_slice(
                 &encoders::enc_v4_swap_compact(
@@ -5304,6 +5311,94 @@ mod tests {
     use super::*;
     use alloy::primitives::{address, U256};
 
+    /// The three v4_v4 terminal-output currencies the broadened slice covers
+    /// (WETH / a tok / native) — the `use_v4_batch` + `erc6909_profit` opts
+    /// interact with each differently (`derive_2hop_v4v4` exact parity).
+    #[derive(Clone, Copy)]
+    enum Terminal {
+        Weth,
+        Tok,
+        Native,
+    }
+
+    fn v4_v4_inputs(
+        terminal: Terminal,
+        opts: crate::composers::EncodeOptions,
+    ) -> (PathInfo, ComposerInputs<'static>) {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let t1 = address!("0000000000000000000000000000000000000db1");
+        let t2 = address!("0000000000000000000000000000000000000db2");
+        let pm = address!("00000000000000000000000000000000000000ff");
+        let v4a_id = "0x0".to_string();
+        let v4b_id = "0x1".to_string();
+        // hop a: weth → t1 (currency0=weth, currency1=t1, zfo=true).
+        let hop_a = HopInfo::V4(V4HopInfo {
+            pool_manager_address: pm,
+            pool_id_hex: v4a_id,
+            currency0_address: weth,
+            currency1_address: t1,
+            fee: 3000,
+            tick_spacing: 60,
+            hook_address: Address::ZERO,
+            zfo: true,
+        });
+        // hop b: t1 → <terminal>. V4 sorts currency0 < currency1; native
+        // (address 0) is always currency0, so the zfo + currency layout
+        // depends on the terminal.
+        let hop_b = match terminal {
+            // t1 → weth: currency0=t1, currency1=weth, zfo=true.
+            Terminal::Weth => HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4b_id,
+                currency0_address: t1,
+                currency1_address: weth,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: true,
+            }),
+            // t1 → t2: currency0=t1, currency1=t2, zfo=true.
+            Terminal::Tok => HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4b_id,
+                currency0_address: t1,
+                currency1_address: t2,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: true,
+            }),
+            // t1 → native: native is currency0, t1 is currency1, so zfo=false
+            // (currency1→currency0). out = currency0 = native.
+            Terminal::Native => HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4b_id,
+                currency0_address: NATIVE_CURRENCY_ADDRESS,
+                currency1_address: t1,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: false,
+            }),
+        };
+        let path = PathInfo::new(vec![hop_a, hop_b]);
+        static OPTIMAL: u128 = 1_000_000;
+        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
+        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
+        (
+            path,
+            ComposerInputs {
+                executor_address: address!("00000000000000000000000000000000000000ee"),
+                pool_manager_address: pm,
+                weth_address: weth,
+                optimal_input: OPTIMAL,
+                hop_outputs: &OUTS,
+                consumed_inputs: &CONSUMED,
+                opts,
+            },
+        )
+    }
+
     #[test]
     fn funding_source_is_derived_from_leading_hop() {
         // V2-leading → in-path flash; V3-leading → self-fund (D0-forced).
@@ -5641,47 +5736,8 @@ mod tests {
     // BP7KIR Increment 3: the V4 container (`v4_v4`) on the Plan — the
     // PM-net-zero master invariant + D0 take-before-credit on the PM ledger.
     fn v4_v4_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
-        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-        let t1 = address!("0000000000000000000000000000000000000db1");
-        let pm = address!("00000000000000000000000000000000000000ff");
-        let v4a_id = "0x0".to_string();
-        let path = PathInfo::new(vec![
-            HopInfo::V4(V4HopInfo {
-                pool_manager_address: pm,
-                pool_id_hex: v4a_id.clone(),
-                currency0_address: weth,
-                currency1_address: t1,
-                fee: 3000,
-                tick_spacing: 60,
-                hook_address: Address::ZERO,
-                zfo: true, // WETH → t1: in=WETH, out=t1
-            }),
-            HopInfo::V4(V4HopInfo {
-                pool_manager_address: pm,
-                pool_id_hex: v4a_id,
-                currency0_address: t1,
-                currency1_address: weth,
-                fee: 3000,
-                tick_spacing: 60,
-                hook_address: Address::ZERO,
-                zfo: true, // t1 → WETH: in=t1, out=WETH
-            }),
-        ]);
-        static OPTIMAL: u128 = 1_000_000;
-        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
-        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
-        (
-            path,
-            ComposerInputs {
-                executor_address: address!("00000000000000000000000000000000000000ee"),
-                pool_manager_address: pm,
-                weth_address: weth,
-                optimal_input: OPTIMAL,
-                hop_outputs: &OUTS,
-                consumed_inputs: &CONSUMED,
-                opts: crate::composers::EncodeOptions::default(),
-            },
-        )
+        // WETH terminal (the spike's proven slice): weth→t1→weth.
+        v4_v4_inputs(Terminal::Weth, crate::composers::EncodeOptions::default())
     }
 
     #[test]
@@ -5890,6 +5946,79 @@ mod tests {
             ),
             "misordered v4_v4 erc6909 Plan: V4Mint before the swap credits PM must be rejected"
         );
+        let _ = U256::ZERO;
+    }
+
+    // ── BP7KIR slice-broaden: the v4_v4 Plan across all 3 terminal currencies
+    //    (WETH / tok / native) × all 4 opt modes. Byte-parity with the proven
+    //    `derive_2hop_v4v4` emitter AND gate validation in every cell. ──
+    #[test]
+    fn v4_v4_terminal_opt_matrix_byte_parity_and_validates() {
+        use crate::composers::EncodeOptions;
+        let modes = [
+            ("default", EncodeOptions::default()),
+            (
+                "batch",
+                EncodeOptions {
+                    erc6909_profit: false,
+                    use_v4_batch: true,
+                },
+            ),
+            (
+                "erc6909",
+                EncodeOptions {
+                    erc6909_profit: true,
+                    use_v4_batch: false,
+                },
+            ),
+            (
+                "batch+erc6909",
+                EncodeOptions {
+                    erc6909_profit: true,
+                    use_v4_batch: true,
+                },
+            ),
+        ];
+        let terminals = [
+            ("weth", Terminal::Weth),
+            ("tok", Terminal::Tok),
+            ("native", Terminal::Native),
+        ];
+        for (t_name, terminal) in terminals {
+            for (m_name, opts) in modes {
+                let label = format!("v4_v4 {t_name}+{m_name}");
+                let (path, inputs) = v4_v4_inputs(terminal, opts);
+                plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, &label);
+            }
+        }
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_v4_plan_batch_native_terminal_emits_no_take() {
+        // The batch asymmetry for a NATIVE terminal: `V4_BATCH` auto-settles the
+        // positive native PM delta, so the derive emits NO `V4TakeDelta` and
+        // neither does the Plan — the trailing `V4SettleAll` zeroes the
+        // residual `PM[native]` (gate's master invariant at `V4UnlockEnd`).
+        let (path, inputs) = v4_v4_inputs(
+            Terminal::Native,
+            crate::composers::EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: true,
+            },
+        );
+        let (_preamble, plan, _at) =
+            build_v4v4_plan(&path, &inputs).expect("v4_v4 native+batch build None");
+        let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
+            panic!("expected outer V4Unlock");
+        };
+        assert_eq!(
+            inner.len(),
+            2,
+            "native+batch inner = [V4Batch, V4SettleAll] (no take)"
+        );
+        assert!(matches!(inner[0], PlanStep::V4Batch { .. }));
+        assert!(matches!(inner[1], PlanStep::V4SettleAll));
         let _ = U256::ZERO;
     }
 }

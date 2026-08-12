@@ -2803,6 +2803,59 @@ fn build_v4v4_weth(h: &mut Harness) -> (Vec<Hop>, u128, u64) {
     (hops, 100_000u128, 8_000_000)
 }
 
+/// Build a WETH→t1→t2 2-hop V4 path (a **tok-terminal** path: the profit is in
+/// t2, captured by an explicit `V4_TAKE_DELTA(t2→SELF)`). The `use_v4_batch`
+/// opt for this topology previously emitted a **double** `V4_TAKE_DELTA(t2)`:
+/// the batch block emitted one, then the unified capture block emitted
+/// another. The second was a redundant no-op (`take(0)` — V4 accepts a zero
+/// take, so it did NOT revert, but it was a wasteful extra command and it
+/// broke Plan↔derive byte-parity since the Plan's gate correctly flags a take
+/// on an already-zeroed PM slot as `TakeBeforeCredit`). The fix moved the
+/// tok-terminal take to the unified capture block alone. This builder is the
+/// runtime fixture for `v4v4_tok_batch_executes_and_captures_tok_profit`.
+fn build_v4v4_tok(h: &mut Harness) -> (Vec<Hop>, u128, u64) {
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t1,
+                    t2,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    // Larger gas budget: two V4 swaps + the take + settle, all in one unlock.
+    (hops, 100_000u128, 8_000_000)
+}
+
 /// Build a WETH→t1→t2→WETH 3-hop V4 path (pools A/B at 1x, pool C at 3x).
 fn build_v4v4v4_weth(h: &mut Harness) -> (Vec<Hop>, u128, u64) {
     let t1 = h.add_token().unwrap();
@@ -2889,6 +2942,53 @@ fn v4v4_batch_executes_with_exact_delta() {
         .run_raw_payload(&hops, &derived, optimal_input, gas)
         .unwrap_or_else(|e| panic!("run v4_v4 batch: {e}"));
     assert_profitable(&result, 2, "v4_v4 batch");
+}
+
+/// v4_v4 **tok-terminal** with `use_v4_batch=true`: runtime coverage for a
+/// path the spike suite previously tested only for the WETH-terminal case.
+/// The derive previously emitted a redundant double `V4_TAKE_DELTA(t2)`
+/// here (the batch block + the capture block each emitted one); the second
+/// was a no-op `take(0)` (V4 accepts it, so no revert, but it was wasteful and
+/// broke Plan↔derive byte-parity). The unified capture-block fix removed the
+/// duplicate; this test proves the tok-terminal batch path executes and
+/// captures the t2 profit.
+#[test]
+fn v4v4_tok_batch_executes_and_captures_tok_profit() {
+    let mut h = Harness::new().unwrap();
+    let (hops, optimal_input, gas) = build_v4v4_tok(&mut h);
+    let t2 = hops[1].dst; // the tok-terminal profit currency
+    let opts = EncodeOptions {
+        erc6909_profit: false,
+        use_v4_batch: true,
+    };
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts,
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive v4_v4 tok-batch None"));
+    let result = h
+        .run_raw_payload(&hops, &derived, optimal_input, gas)
+        .unwrap_or_else(|e| panic!("run v4_v4 tok-batch: {e}"));
+    assert!(
+        result.outcome.executed(2),
+        "v4_v4 tok-batch must execute 2 pools: {:?}",
+        result.outcome
+    );
+    // The tok-terminal profit is in t2 (not WETH), so `actual_weth_delta` is
+    // negative (the executor funds WETH for the V4 input debt). Sanity-check the
+    // t2 profit was captured by reading the executor's t2 balance directly.
+    let t2_balance = h.balance_of(t2, h.executor).unwrap().to::<u128>();
+    assert!(
+        t2_balance > 0,
+        "v4_v4 tok-batch must capture t2 profit, got {t2_balance}"
+    );
 }
 
 /// v4_v4_v4 with `use_v4_batch=true`: 3-hop batch executes with exact delta.

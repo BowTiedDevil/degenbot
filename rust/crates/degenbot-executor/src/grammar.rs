@@ -834,10 +834,14 @@ fn v4_v4(ha: &V4HopInfo, hb: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<
                 },
             ];
             inner.extend_from_slice(&encoders::enc_v4_batch(&batch).ok()?);
-            if output_currency_b != NATIVE_CURRENCY_ADDRESS && output_currency_b != weth_address {
-                let profit_idx = if hb.zfo { c1_b_idx } else { c0_b_idx };
-                inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, SENTINEL_SELF));
-            }
+            // NOTE: the terminal profit take for a tok output is emitted by the
+            // unified capture block below (not here) — emitting it here too
+            // produced a redundant double `V4_TAKE_DELTA(tok)`: the second was
+            // a no-op `take(0)` (V4 accepts a zero take, so no revert, but it
+            // was a wasteful extra command and broke Plan↔derive byte-parity
+            // since the Plan's gate flags a take on an already-zeroed PM slot).
+            // The batch auto-settles native/WETH; a tok terminal needs an
+            // explicit take, handled below.
         } else {
             inner.extend_from_slice(
                 &encoders::enc_v4_swap_compact(
