@@ -360,6 +360,36 @@ pub enum PlanStep {
     /// a stream precondition the validator credits so SelfFund families' flash
     /// repayments validate. The encoder emits nothing for it.
     SelfFund { currency: Address, amount: u128 },
+    // ── V4 (BP7KIR Increment 3): the PoolManager container + delta ops. ──
+    /// A `V4_UNLOCK(inner)` — the PM callback scope. `inner` runs inside the
+    /// unlock; at its end the master V4 invariant fires: every touched PM delta
+    /// must net to zero (`V4UnlockEnd`).
+    V4Unlock { inner: Plan, pool_manager_idx: u8 },
+    /// A `V4_SWAP_COMPACT(c0, c1, fee, ts, hooks, zfo, amount)` — creates
+    /// `PM[in]` debt and `PM[out]` credit (both legs modeled so net-zero is
+    /// checkable).
+    V4Swap {
+        c0_idx: u8,
+        c1_idx: u8,
+        fee: u16,
+        tick_spacing: i16,
+        hooks_idx: u8,
+        zfo: bool,
+        amount: u128,
+        in_currency: Address,
+        in_amount: u128,
+        out_currency: Address,
+        out_amount: u128,
+    },
+    /// `V4_TAKE_DELTA(cur→rcp)` — takes the entire positive `PM[cur]` delta to
+    /// `rcp` (the profit capture; debits PM credit).
+    V4TakeDelta {
+        currency_idx: u8,
+        currency_addr: Address,
+        recipient_idx: u8,
+    },
+    /// `V4_SETTLE_ALL` — auto-settle every touched PM currency to 0.
+    V4SettleAll,
 }
 
 /// A Plan = an ordered list of steps. Depth-first walk = execution order.
@@ -460,6 +490,39 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         amount: *amount,
                     });
                 }
+                // V4 container: recurse the unlock's inner Plan, then emit
+                // `V4UnlockEnd` (the net-zero check fires there).
+                PlanStep::V4Unlock { inner, .. } => {
+                    walk(inner, ops);
+                    ops.push(LedgerOp::V4UnlockEnd);
+                }
+                PlanStep::V4Swap {
+                    in_currency,
+                    in_amount,
+                    out_currency,
+                    out_amount,
+                    ..
+                } => {
+                    ops.push(LedgerOp::V4Swap {
+                        in_currency: *in_currency,
+                        in_amount: *in_amount,
+                        out_currency: *out_currency,
+                        out_amount: *out_amount,
+                    });
+                }
+                PlanStep::V4TakeDelta {
+                    currency_addr,
+                    recipient_idx,
+                    ..
+                } => {
+                    ops.push(LedgerOp::V4TakeDelta {
+                        currency: *currency_addr,
+                        recipient_idx: *recipient_idx,
+                    });
+                }
+                PlanStep::V4SettleAll => {
+                    ops.push(LedgerOp::V4SettleAll);
+                }
             }
         }
     }
@@ -537,6 +600,45 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                 )),
                 // Self-fund is a stream precondition, not a command.
                 PlanStep::SelfFund { .. } => {}
+                // V4 container: encode inner, wrap in V4_UNLOCK.
+                PlanStep::V4Unlock {
+                    inner,
+                    pool_manager_idx: _,
+                } => {
+                    let inner_bytes = plan_to_bytes(inner, at);
+                    out.extend_from_slice(
+                        &encoders::enc_v4_unlock(&inner_bytes)
+                            .expect("V4 unlock forward_data in range"),
+                    );
+                }
+                PlanStep::V4Swap {
+                    c0_idx,
+                    c1_idx,
+                    fee,
+                    tick_spacing,
+                    hooks_idx,
+                    zfo,
+                    amount,
+                    ..
+                } => out.extend_from_slice(
+                    &encoders::enc_v4_swap_compact(
+                        *c0_idx,
+                        *c1_idx,
+                        *fee,
+                        *tick_spacing,
+                        *hooks_idx,
+                        *zfo,
+                        *amount,
+                    )
+                    .expect("V4 swap compact args in range"),
+                ),
+                PlanStep::V4TakeDelta {
+                    currency_idx,
+                    recipient_idx,
+                    ..
+                } => out
+                    .extend_from_slice(&encoders::enc_v4_take_delta(*currency_idx, *recipient_idx)),
+                PlanStep::V4SettleAll => out.extend_from_slice(&encoders::enc_v4_settle_all()),
             }
         }
     }
@@ -862,6 +964,134 @@ pub fn build_v2v2_plan(
                 repays_flash: Some(a.pool_address),
             },
         ],
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v4_v4` (pure-V4 container) Plan — default opts only (no
+/// `use_v4_batch`, no `erc6909_profit`, no native currency gap). The whole
+/// stream is one `V4_UNLOCK` over internal PM ledger movement: two
+/// `V4_SWAP`s, a terminal `V4_TAKE_DELTA` (profit capture), and a trailing
+/// `V4_SETTLE_ALL`. The master V4 invariant — every touched `PM[currency]`
+/// nets to zero by callback end — is enforced at `V4UnlockEnd`.
+///
+/// Returns `None` for the batch / erc6909 / currency-gap variants (later
+/// sub-increments of BP7KIR Increment 3).
+#[must_use]
+pub fn build_v4v4_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V4(a), HopInfo::V4(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    // Default-opts, WETH-only, no native gap (the spike's proven slice).
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    let weth_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) || !fits_int128(forward_out) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
+    let weth = inputs.weth_address;
+
+    // No native currency gap (WETH-only slice).
+    let mid_currency_a = if a.zfo {
+        a.currency1_address
+    } else {
+        a.currency0_address
+    };
+    let mid_currency_b = if b.zfo {
+        b.currency0_address
+    } else {
+        b.currency1_address
+    };
+    if mid_currency_a == NATIVE_CURRENCY_ADDRESS
+        || mid_currency_b == NATIVE_CURRENCY_ADDRESS
+        || crate::composers::CurrencyBridge::at_boundary(mid_currency_a, mid_currency_b)
+            .needs_bridge()
+    {
+        return None;
+    }
+    let out_currency_a = mid_currency_a;
+    let out_currency_b = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+    // Terminal output must be WETH (the spike's WETH-only slice).
+    if out_currency_b != weth {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+
+    let inner: Plan = vec![
+        PlanStep::V4Swap {
+            c0_idx: c0_a,
+            c1_idx: c1_a,
+            fee: fee_a,
+            tick_spacing: ts_a,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: a.zfo,
+            amount: optimal_input,
+            in_currency: weth,
+            in_amount: optimal_input,
+            out_currency: out_currency_a,
+            out_amount: forward_out,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0_b,
+            c1_idx: c1_b,
+            fee: fee_b,
+            tick_spacing: ts_b,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: b.zfo,
+            amount: b_swap_in,
+            in_currency: out_currency_a,
+            in_amount: b_swap_in,
+            out_currency: weth,
+            out_amount: weth_out,
+        },
+        PlanStep::V4TakeDelta {
+            currency_idx: weth_idx,
+            currency_addr: weth,
+            recipient_idx: SENTINEL_SELF,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    let plan: Plan = vec![PlanStep::V4Unlock {
+        inner,
+        pool_manager_idx: pm_idx,
     }];
     let preamble = encoders::enc_preamble(&at);
     Some((preamble, plan, at))
@@ -3673,6 +3903,115 @@ mod tests {
                 Err(crate::grammar_ledger::ValidationError::SwapCalcBeforeCredit { .. })
             ),
             "misordered Plan: V2SwapCalc before its pair seed must be rejected"
+        );
+        let _ = U256::ZERO;
+    }
+
+    // BP7KIR Increment 3: the V4 container (`v4_v4`) on the Plan — the
+    // PM-net-zero master invariant + D0 take-before-credit on the PM ledger.
+    fn v4_v4_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let t1 = address!("0000000000000000000000000000000000000db1");
+        let pm = address!("00000000000000000000000000000000000000ff");
+        let v4a_id = "0x0".to_string();
+        let path = PathInfo::new(vec![
+            HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4a_id.clone(),
+                currency0_address: weth,
+                currency1_address: t1,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: true, // WETH → t1: in=WETH, out=t1
+            }),
+            HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4a_id,
+                currency0_address: t1,
+                currency1_address: weth,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: true, // t1 → WETH: in=t1, out=WETH
+            }),
+        ]);
+        static OPTIMAL: u128 = 1_000_000;
+        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
+        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
+        (
+            path,
+            ComposerInputs {
+                executor_address: address!("00000000000000000000000000000000000000ee"),
+                pool_manager_address: pm,
+                weth_address: weth,
+                optimal_input: OPTIMAL,
+                hop_outputs: &OUTS,
+                consumed_inputs: &CONSUMED,
+                opts: crate::composers::EncodeOptions::default(),
+            },
+        )
+    }
+
+    #[test]
+    fn v4_v4_plan_byte_parity_and_validates() {
+        let (path, inputs) = v4_v4_path_inputs();
+        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4");
+    }
+
+    #[test]
+    fn v4_v4_plan_take_before_swap_rejected() {
+        // D0 on the PM ledger: a `V4TakeDelta` before any swap created PM
+        // credit must be rejected (the `v2_v2_v4` bug class on the PM ledger).
+        let (path, inputs) = v4_v4_path_inputs();
+        let (_preamble, mut plan, _at) = build_v4v4_plan(&path, &inputs).expect("v4_v4 build None");
+        // The V4Unlock's inner is [Swap a, Swap b, TakeDelta, SettleAll].
+        // Move TakeDelta to the front (before both swaps) → TakeBeforeCredit.
+        let outer = plan.get_mut(0).unwrap();
+        if let PlanStep::V4Unlock { inner, .. } = outer {
+            let take = inner.remove(2);
+            inner.insert(0, take);
+        } else {
+            panic!("expected outer V4Unlock");
+        }
+        let ops = plan_to_ledger_ops(&plan);
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            matches!(
+                v.validate_full(&ops),
+                Err(crate::grammar_ledger::ValidationError::TakeBeforeCredit { .. })
+            ),
+            "misordered v4_v4 Plan: TakeDelta before the swap credits PM must be rejected"
+        );
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_v4_plan_unsettled_delta_rejected() {
+        // The master V4 invariant: a `V4Unlock` that closes with a nonzero
+        // `PM[currency]` delta (here: removing the trailing `V4SettleAll` leaves
+        // a residual t1 delta when forward_out ≠ b_swap_in) must be rejected.
+        let (path, mut inputs) = v4_v4_path_inputs();
+        // Force a nonzero t1 delta: forward_out (1_100_000) ≠ b_swap_in.
+        static CLAMPED: [u128; 2] = [1_000_000, 1_050_000];
+        inputs.consumed_inputs = &CLAMPED;
+        let (_preamble, mut plan, _at) = build_v4v4_plan(&path, &inputs).expect("v4_v4 build None");
+        let outer = plan.get_mut(0).unwrap();
+        if let PlanStep::V4Unlock { inner, .. } = outer {
+            // Remove the trailing SettleAll — the t1 delta (forward_out −
+            // b_swap_in = 50_000) is left nonzero → PmDeltaNonzero at V4UnlockEnd.
+            inner.pop();
+        } else {
+            panic!("expected outer V4Unlock");
+        }
+        let ops = plan_to_ledger_ops(&plan);
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            matches!(
+                v.validate_full(&ops),
+                Err(crate::grammar_ledger::ValidationError::PmDeltaNonzero { .. })
+            ),
+            "v4_v4 Plan missing its settle must be rejected: nonzero PM delta at unlock end"
         );
         let _ = U256::ZERO;
     }

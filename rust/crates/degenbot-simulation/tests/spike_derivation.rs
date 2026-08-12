@@ -283,6 +283,20 @@ fn v2v2_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Increment 3: the `v4_v4` pure-V4 container on the Plan tree — the
+/// PM-net-zero master invariant. Build Plan → byte-parity with the proven
+/// emitter + gate (every touched PM delta nets to zero by `V4UnlockEnd`) +
+/// runtime exact delta.
+#[test]
+fn v4v4_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V4,
+        Prot::V4,
+        "v4_v4",
+        degenbot_executor::grammar_shape::build_v4v4_plan,
+    );
+}
+
 #[test]
 fn derived_v3v2_executes_with_exact_delta() {
     run_spike(Prot::V3, Prot::V2, "v3_v2");

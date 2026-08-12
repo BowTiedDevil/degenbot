@@ -128,13 +128,42 @@ pub enum Ledger {
 /// not a specific encoding; the wire form is an encoder concern, ADR-029 D5).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LedgerOp {
-    /// A `V4_SWAP_*`: creates `PM[out]` credit and `PM[in]` debt. The concrete
-    /// output currency is what the downstream take/mint consumes.
-    V4Swap { output: Address, amount_out: u128 },
+    /// A `V4_SWAP_*`: creates `PM[out]` credit AND `PM[in]` debt (both legs
+    /// modeled so the net-zero-at-unlock-close invariant is checkable). The
+    /// concrete output currency is what the downstream take/mint consumes.
+    V4Swap {
+        in_currency: Address,
+        in_amount: u128,
+        out_currency: Address,
+        out_amount: u128,
+    },
     /// `V4_TAKE(cur→rcp, amount)` — debits `PM[cur]` credit (D0).
     Take { currency: Address, amount: u128 },
     /// `V4_MINT(cur, amount)` — converts `PM[cur]` credit to `F[cur]` (D0).
     Mint { currency: Address, amount: u128 },
+    /// `V4_SETTLE(cur, amount)` — the executor pays `amount` of `cur` into the
+    /// PM, cancelling debt: `PM[cur] += amount` (nets a negative delta toward
+    /// zero). The net-zero-at-unlock-close invariant is the V4 master rule
+    /// (`executor-v4-ledger-rules.md`).
+    V4Settle { currency: Address, amount: u128 },
+    /// `V4_SETTLE_DELTA(cur)` — auto-settle one currency: nets `PM[cur]` to 0
+    /// (if negative, executor pays; if positive, take to executor).
+    V4SettleDelta { currency: Address },
+    /// `V4_SETTLE_ALL` — auto-settle every touched PM currency to 0.
+    V4SettleAll,
+    /// `V4_TAKE_DELTA(cur→rcp)` — take the ENTIRE positive `PM[cur]` delta to
+    /// `rcp` (the profit capture). Debits whatever credit `PM[cur]` holds
+    /// (amount is runtime state — the current balance). Requires `PM[cur] > 0`
+    /// immediately before (the D0 credit-before-debit rule on the PM ledger).
+    V4TakeDelta {
+        currency: Address,
+        recipient_idx: u8,
+    },
+    /// `V4_UNLOCK` callback end — the master V4 invariant: every touched
+    /// `PM[currency]` must net to zero by callback end
+    /// (`executor-v4-ledger-rules.md`). The validator rejects if any PM delta
+    /// is nonzero. Emitted by the Plan's `V4Unlock` node after its inner Plan.
+    V4UnlockEnd,
     /// Seed a V2 pair's excess (credit `H[pool]`) — a transfer/take *to the
     /// pair* that a later `SwapCalc` consumes.
     SeedPair { pool: Address, amount: u128 },
@@ -204,12 +233,15 @@ impl LedgerOp {
     /// `V2Flash`/`V3Flash`/`Erc20Transfer` are handled directly in [`LedgerValidator::push`]` ([`LedgerEffect`] covers only the PM/pair ledgers).
     fn effect(&self) -> Option<LedgerEffect> {
         match *self {
-            LedgerOp::V4Swap { output, amount_out } => {
-                Some(LedgerEffect::PmCredit(output, amount_out))
-            }
             LedgerOp::SeedPair { pool, amount } => Some(LedgerEffect::PairCredit(pool, amount)),
-            LedgerOp::Take { .. }
+            LedgerOp::V4Swap { .. }
+            | LedgerOp::Take { .. }
             | LedgerOp::Mint { .. }
+            | LedgerOp::V4Settle { .. }
+            | LedgerOp::V4SettleDelta { .. }
+            | LedgerOp::V4SettleAll
+            | LedgerOp::V4TakeDelta { .. }
+            | LedgerOp::V4UnlockEnd
             | LedgerOp::SwapCalc { .. }
             | LedgerOp::V2Flash { .. }
             | LedgerOp::V3Flash { .. }
@@ -269,6 +301,10 @@ pub enum ValidationError {
     /// A flash debt was left unpaid at `finish()` — the V2/V3 analogue of the
     /// V4 "every delta nets to zero by callback end" invariant.
     FlashDebtUnpaid { currency: Address, amount: u128 },
+    /// A `V4_UNLOCK` closed with a nonzero `PM[currency]` delta — the V4 master
+    /// invariant violation (a touched currency was not settled to zero by
+    /// callback end).
+    PmDeltaNonzero { currency: Address, delta: i128 },
 }
 
 impl LedgerValidator {
@@ -294,7 +330,68 @@ impl LedgerValidator {
             return Ok(());
         }
         match op {
-            LedgerOp::V4Swap { .. } | LedgerOp::SeedPair { .. } => Ok(()), // handled above
+            LedgerOp::SeedPair { .. } => Ok(()), // handled above
+            // V4 swap: PM[in] −= in_amount (debt), PM[out] += out_amount
+            // (credit). Both legs so the net-zero-at-unlock-close invariant is
+            // checkable (option B full modeling on the PM ledger).
+            LedgerOp::V4Swap {
+                in_currency,
+                in_amount,
+                out_currency,
+                out_amount,
+            } => {
+                *self.pm.entry(in_currency).or_default() -= in_amount as i128;
+                *self.pm.entry(out_currency).or_default() += out_amount as i128;
+                Ok(())
+            }
+            // V4 settle: executor pays `amount` of `currency` into the PM,
+            // cancelling debt (PM[currency] += amount). Models the executor
+            // holding the token; the net-zero check fires at `V4UnlockEnd`.
+            LedgerOp::V4Settle { currency, amount } => {
+                *self.pm.entry(currency).or_default() += amount as i128;
+                Ok(())
+            }
+            // V4_SETTLE_DELTA: auto-net one currency's PM delta to 0.
+            LedgerOp::V4SettleDelta { currency } => {
+                self.pm.insert(currency, 0);
+                Ok(())
+            }
+            // V4_SETTLE_ALL: auto-net every touched PM currency to 0.
+            LedgerOp::V4SettleAll => {
+                for v in self.pm.values_mut() {
+                    *v = 0;
+                }
+                Ok(())
+            }
+            // V4_TAKE_DELTA: take the entire positive PM[currency] delta to rcp.
+            // Requires PM[currency] > 0 immediately before (credit-before-debit).
+            LedgerOp::V4TakeDelta { currency, .. } => {
+                let have = *self.pm.get(&currency).unwrap_or(&0);
+                if have <= 0 {
+                    return Err(ValidationError::TakeBeforeCredit {
+                        currency,
+                        wanted: 1,
+                        have,
+                    });
+                }
+                self.pm.insert(currency, 0);
+                Ok(())
+            }
+            // V4_UNLOCK callback end: the master invariant — every touched
+            // PM currency must net to zero by callback end. (A prior
+            // `V4SettleAll` would have zeroed them; this catches any stream
+            // that forgot to settle.)
+            LedgerOp::V4UnlockEnd => {
+                for (currency, delta) in &self.pm {
+                    if *delta != 0 {
+                        return Err(ValidationError::PmDeltaNonzero {
+                            currency: *currency,
+                            delta: *delta,
+                        });
+                    }
+                }
+                Ok(())
+            }
             LedgerOp::Take { currency, amount } => {
                 let have = *self.pm.get(&currency).unwrap_or(&0);
                 if have < amount as i128 {
@@ -463,8 +560,10 @@ mod tests {
     fn take_after_credit_is_accepted() {
         let mut v = LedgerValidator::default();
         v.push(LedgerOp::V4Swap {
-            output: weth(),
-            amount_out: 2_000_000,
+            in_currency: usdc(),
+            in_amount: 1_000_000,
+            out_currency: weth(),
+            out_amount: 2_000_000,
         })
         .unwrap();
         assert!(v
@@ -487,8 +586,10 @@ mod tests {
                 amount: 100_000,
             },
             LedgerOp::V4Swap {
-                output: weth(),
-                amount_out: 300_000,
+                in_currency: usdc(),
+                in_amount: 300_000,
+                out_currency: weth(),
+                out_amount: 300_000,
             },
         ];
         assert_eq!(
@@ -543,12 +644,16 @@ mod tests {
         let mut v = LedgerValidator::default();
         let stream = [
             LedgerOp::V4Swap {
-                output: usdc(),
-                amount_out: 200_000,
+                in_currency: weth(),
+                in_amount: 200_000,
+                out_currency: usdc(),
+                out_amount: 200_000,
             },
             LedgerOp::V4Swap {
-                output: weth(),
-                amount_out: 300_000,
+                in_currency: usdc(),
+                in_amount: 300_000,
+                out_currency: weth(),
+                out_amount: 300_000,
             },
             LedgerOp::Take {
                 currency: weth(),
