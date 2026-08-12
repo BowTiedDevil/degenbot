@@ -19,14 +19,14 @@ use crate::encoders::MAX_INDEXED_ADDRESSES;
 /// Max bribe in basis points (100% = 10000 bips).
 pub const MAX_BRIBE_BIPS: u32 = 10_000;
 
-/// Max `check_mode` selector (0=skip, 1=WETH+ETH, 2=ERC6909 WETH).
-pub const MAX_CHECK_MODE: u8 = 2;
+/// Max `check_mode` selector (0=skip, 1=WETH+ETH, 2=ERC6909 WETH, 3=SWEEP).
+pub const MAX_CHECK_MODE: u8 = 3;
 
 /// Error raised by an out-of-range config field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
-    /// `check_mode` not in `0..=2`.
-    #[error("check_mode must be 0–2, got {0}")]
+    /// `check_mode` not in `0..=3`.
+    #[error("check_mode must be 0–3, got {0}")]
     CheckModeOutOfRange(u8),
     /// `bribe_bips` not in `0..=10000`.
     #[error("bribe_bips must be 0–10000, got {0}")]
@@ -45,7 +45,7 @@ pub enum ConfigError {
 ///
 /// # Errors
 ///
-/// Returns [`Err`] for any out-of-range field (`check_mode > 2`,
+/// Returns [`Err`] for any out-of-range field (`check_mode > 3`,
 /// `bribe_bips > 10000`, `bribe_recipient_idx ≥ MAX_INDEXED_ADDRESSES (32)`).
 pub fn pack_config(
     check_mode: u8,
@@ -80,7 +80,7 @@ pub fn pack_config(
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::CheckModeOutOfRange`] if `check_mode > 2`.
+/// Returns [`ConfigError::CheckModeOutOfRange`] if `check_mode > 3`.
 pub fn pack_expected_balance(check_mode: u8, expected_value: U256) -> Result<U256, ConfigError> {
     pack_config(check_mode, expected_value, 0, 0)
 }
@@ -153,9 +153,10 @@ mod tests {
 
     #[test]
     fn reject_check_mode_out_of_range() {
+        assert_eq!(pack_config(3, U256::ZERO, 0, 0), Ok(U256::from(3u64)));
         assert_eq!(
-            pack_config(3, U256::ZERO, 0, 0),
-            Err(ConfigError::CheckModeOutOfRange(3))
+            pack_config(4, U256::ZERO, 0, 0),
+            Err(ConfigError::CheckModeOutOfRange(4))
         );
     }
 

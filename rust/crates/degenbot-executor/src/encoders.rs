@@ -150,7 +150,7 @@ pub enum EncoderError {
     AddressTableFull,
     /// A `V4_BATCH` exceeded the contract's 8-swap cap.
     TooManyV4BatchSwaps(usize),
-    /// `pack_config` `check_mode` outside `0..=2`.
+    /// `pack_config` `check_mode` outside `0..=3`.
     InvalidCheckMode(u8),
     /// `pack_config` `bribe_bips` outside `0..=10_000`.
     InvalidBribeBips(u16),
@@ -172,7 +172,7 @@ impl std::fmt::Display for EncoderError {
             Self::TooManyV4BatchSwaps(n) => {
                 write!(f, "V4_BATCH max 8 swaps, got {n}")
             }
-            Self::InvalidCheckMode(v) => write!(f, "check_mode must be 0–2, got {v}"),
+            Self::InvalidCheckMode(v) => write!(f, "check_mode must be 0–3, got {v}"),
             Self::InvalidBribeBips(v) => write!(f, "bribe_bips must be 0–10000, got {v}"),
             Self::InvalidBribeRecipientIdx(v) => {
                 write!(f, "bribe_recipient_idx must be 0–31, got {v}")
@@ -246,7 +246,7 @@ fn push_forward_data(out: &mut Vec<u8>, data: &[u8]) -> Result<(), EncoderError>
 ///
 /// # Errors
 ///
-/// Returns [`EncoderError::InvalidCheckMode`] if `check_mode` is not `0..=2`,
+/// Returns [`EncoderError::InvalidCheckMode`] if `check_mode` is not `0..=3`,
 /// [`EncoderError::InvalidBribeBips`] if `bribe_bips` is not `0..=10_000`, or
 /// [`EncoderError::InvalidBribeRecipientIdx`] if `bribe_recipient_idx` is not
 /// `0..MAX_INDEXED_ADDRESSES`.
@@ -256,7 +256,7 @@ pub fn pack_config(
     bribe_bips: u16,
     bribe_recipient_idx: u8,
 ) -> Result<U256, EncoderError> {
-    if check_mode > 2 {
+    if check_mode > 3 {
         return Err(EncoderError::InvalidCheckMode(check_mode));
     }
     if bribe_bips > 10_000 {
@@ -277,7 +277,7 @@ pub fn pack_config(
 ///
 /// # Errors
 ///
-/// Returns [`EncoderError::InvalidCheckMode`] if `check_mode` is not `0..=2`.
+/// Returns [`EncoderError::InvalidCheckMode`] if `check_mode` is not `0..=3`.
 pub fn pack_expected_balance(check_mode: u8, expected_value: U256) -> Result<U256, EncoderError> {
     pack_config(check_mode, expected_value, 0, 0)
 }
@@ -988,10 +988,10 @@ mod tests {
 
     #[test]
     fn pack_config_rejects_out_of_range() {
-        // check_mode must be 0–2.
+        // check_mode must be 0–3 (3=SWEEP). 4 is rejected.
         assert_eq!(
-            pack_config(3, U256::ZERO, 0, 0).unwrap_err(),
-            EncoderError::InvalidCheckMode(3)
+            pack_config(4, U256::ZERO, 0, 0).unwrap_err(),
+            EncoderError::InvalidCheckMode(4)
         );
         // bribe_bips must be 0–10000.
         assert_eq!(

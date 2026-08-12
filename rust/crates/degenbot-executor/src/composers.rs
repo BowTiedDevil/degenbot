@@ -447,6 +447,7 @@ pub fn config_for_options(opts: EncodeOptions, expected_value: U256) -> U256 {
     // silently skipped the profit check.
     let check_mode = match capture {
         crate::grammar_ledger::ProfitCapture::Erc6909 => 2u8,
+        crate::grammar_ledger::ProfitCapture::SweepToAddress => 3u8,
         _ => 1u8,
     };
     let (bribe_bips, bribe_recipient_idx) = match bribe {
@@ -1045,4 +1046,20 @@ fn config_for_options_combines_all_axes() {
     assert_eq!((cfg >> 8) & U256::from(65535u64), U256::from(500u64)); // bips
     assert_eq!((cfg >> 24) & U256::from(255u64), U256::ZERO); // recipient=0 (coinbase)
     assert_eq!(cfg >> 32, U256::ZERO); // expected_value ignored (U3WVLL)
+}
+
+#[test]
+fn config_for_options_capture_sweep_to_address_sets_check_mode_3() {
+    // U3WVLL follow-up (767TN5): ProfitCapture::SweepToAddress routes to
+    // check_mode=3 (SWEEP) — the only way to defeat the profit assert.
+    let opts = EncodeOptions {
+        capture: crate::grammar_ledger::ProfitCapture::SweepToAddress,
+        ..Default::default()
+    };
+    let cfg = config_for_options(opts, U256::ZERO);
+    assert_eq!(
+        cfg & U256::from(255u64),
+        U256::from(3u64),
+        "SweepToAddress → check_mode=3 (SWEEP)"
+    );
 }

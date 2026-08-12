@@ -3944,3 +3944,88 @@ fn u3wvll_bribe_on_self_fund_computes_on_true_profit_not_balance() {
     );
     println!("── u3wvll self-fund bribe: delta={weth_delta}, true_profit={true_profit}, bribe={bribe} (not over-bribed)");
 }
+
+/// U3WVLL follow-up (767TN5): the sweep opt-in (`check_mode=3`) defeats the
+/// profit assert for the rare "send accumulated profit to another address"
+/// case. The executor holds accumulated WETH (combined_before > 0); a sweep
+/// command stream sends it away (combined_after < combined_before) — which
+/// would revert under the default assert, but check_mode=3 skips it. This is
+/// the ONLY way to defeat the assert (not `expected_value=0`, the old footgun).
+#[test]
+fn u3wvll_sweep_mode_defeats_profit_assert() {
+    use degenbot_executor::composers::config_for_options;
+    use degenbot_executor::grammar_ledger::ProfitCapture;
+
+    let mut h = Harness::new().unwrap();
+    let weth = h.weth;
+    let r: u128 = 1_000_000_000_000;
+    // A pointless-but-sweeping command stream: pre-fund the executor with WETH,
+    // then a no-op (empty payload that just reads the balance + would assert).
+    // The sweep itself is modeled as: the executor holds WETH, and
+    // check_mode=3 lets a stream that SENDS it away succeed.
+    // We construct a minimal "drain" via a 2-hop all-V2 swap that returns LESS
+    // than the entry (symmetric reserves → loss) — under check_mode=1 this
+    // reverts (proven by u3wvll_money_losing_self_fund_path_reverts...); under
+    // check_mode=3 it must NOT revert (the assert is defeated).
+    let t = h.add_token().unwrap();
+    let p_a = HopPool::V2(h.add_pool(weth, t, r, r).unwrap()); // symmetric → loss
+    let p_b = HopPool::V2(h.add_pool(t, weth, r, r).unwrap());
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
+    assert!(
+        (*hop_outputs.last().unwrap() as i128 - optimal_input as i128) < 0,
+        "symmetric path must be money-losing"
+    );
+
+    let payload = h
+        .encode_path_with_opts(
+            &path,
+            optimal_input,
+            &hop_outputs,
+            EncodeOptions {
+                funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("self-fund v2_v2 must encode");
+
+    // SWEEP config (check_mode=3): the profit assert is defeated.
+    let sweep_cfg = config_for_options(
+        EncodeOptions {
+            funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+            capture: ProfitCapture::SweepToAddress,
+            ..Default::default()
+        },
+        U256::ZERO,
+    );
+    assert_eq!(
+        sweep_cfg & U256::from(255u64),
+        U256::from(3u64),
+        "check_mode=3 (SWEEP)"
+    );
+
+    // Self-fund precondition + WETH backed for any withdraw.
+    h.set_native_balance(weth, U256::from(1_000_000_000_000_000_000u128));
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+
+    let outcome = h
+        .execute_payload_config(&payload, 8_000_000, sweep_cfg)
+        .unwrap();
+    assert!(
+        outcome.executed(2),
+        "SWEEP mode must NOT revert a money-losing self-fund path (assert defeated): {outcome:?}"
+    );
+    println!("── u3wvll sweep mode: money-losing self-fund path executed (assert defeated)");
+}

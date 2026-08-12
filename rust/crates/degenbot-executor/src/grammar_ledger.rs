@@ -74,6 +74,14 @@ pub enum ProfitCapture {
     /// (Balancer) captured into the external Vault ledger — modeled, not yet
     /// executable by the current executor.
     BalancerVault,
+    /// U3WVLL follow-up (767TN5): the rare 'send accumulated profit to
+    /// another address' case. Defeats the profit assert (the sweep sends the
+    /// balance away, so combined_after < combined_before is expected). Routes
+    /// to the contract's `check_mode=3` (SWEEP) — the ONLY way to defeat the
+    /// U3WVLL assert. The recipient is an address-table entry the operator
+    /// populates (`SET_ADDRESS`) and passes as `bribe_recipient_idx` with
+    /// `bribe_bips=10000` for a full sweep.
+    SweepToAddress,
 }
 
 /// Whether and how the stream pays a **builder bribe** (ADR-029 Q3 — a **live**
