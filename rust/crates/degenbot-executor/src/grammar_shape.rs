@@ -27,14 +27,17 @@
 
 use alloy::primitives::Address;
 
-use crate::composers::{fits_int128, ComposerInputs, HopInfo, PathInfo, V2HopInfo, V3HopInfo};
-use crate::encoders::{self, AddressTable, SENTINEL_SELF, SENTINEL_WETH};
+use crate::composers::{
+    fits_int128, ComposerInputs, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
+};
+use crate::encoders::{self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 
 /// A hop-protocol family member.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Prot {
     V2,
     V3,
+    V4,
 }
 
 /// How the stream's entry (seed) capital is supplied (ADR-029 D1).
@@ -264,6 +267,18 @@ fn derive_2hop(
 /// invariant forces). Returns the raw `execute()` payload bytes.
 #[must_use]
 pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    // V4-involving families: a pure-V4 2-hop path is the *container* case — the
+    // whole stream is one V4_UNLOCK over internal ledger movement, so no funding
+    // choice is needed (the PM carries the entry credit). Handle it before the
+    // V2/V3 funding dispatch.
+    match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
+        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v4v4(a, b, inputs),
+        _ => derive_2hop_v2v3(path, inputs),
+    }
+}
+
+/// V2/V3 2-hop / 3-hop-(V2/V3) entry (the previous funding-based dispatch).
+fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let funding = match path.hops.first()? {
         HopInfo::V2(_) => FundingSource::InPathFlash,
         HopInfo::V3(_) => FundingSource::SelfFund,
@@ -275,11 +290,107 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         .map(|h| match h {
             HopInfo::V2(_) => Prot::V2,
             HopInfo::V3(_) => Prot::V3,
-            _ => unreachable!("V4 outside spike"),
+            _ => unreachable!("V4 outside the V2/V3 branch"),
         })
         .collect();
     let class = ShapeClass { protocols, funding };
     derive_2hop(path, inputs, &class)
+}
+
+/// Pure V4→V4 2-hop container derivation (WAYDTL step 2, **WETH-only slice**).
+///
+/// Per the v4 ledger rules / boundary model (`docs/plans/executor-v4-ledger-rules.md`):
+/// the whole stream is one `V4_UNLOCK`; V4→V4 is internal ledger movement (no
+/// `TAKE`, no ERC-20 transfer); the WETH output is captured by `TAKE_DELTA(WETH→SELF)`;
+/// a trailing `V4_SETTLE_ALL` flushes any residual so every delta nets to zero by
+/// callback end (the one master V4 invariant).
+///
+/// Scoped to the WETH-only, no-native-bridge, WETH-output case (the harness `v4_v4`
+/// family) — `default` opts (no `V4_BATCH`, no `erc6909_profit`). Other V4 shapes
+/// (native bridges, non-WETH output, batch/mint) return `None` for now (later steps).
+fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    let weth_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) || !fits_int128(forward_out) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
+
+    // Input A is the seed currency, output B is the profit currency.
+    let input_currency_a = if a.zfo {
+        a.currency0_address
+    } else {
+        a.currency1_address
+    };
+    let output_currency_b = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+    let mid_currency_a = if a.zfo {
+        a.currency1_address
+    } else {
+        a.currency0_address
+    };
+    let mid_currency_b = if b.zfo {
+        b.currency0_address
+    } else {
+        b.currency1_address
+    };
+    if mid_currency_a != mid_currency_b {
+        return None; // a non-mid connecting currency is outside this slice
+    }
+    // WETH-only slice: seed and profit are both WETH, no native anywhere.
+    if input_currency_a != inputs.weth_address || output_currency_b != inputs.weth_address {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+
+    // Whole stream lives in one unlock; V4→V4 is internal ledger movement.
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a,
+        c1_a,
+        fee_a,
+        ts_a,
+        SENTINEL_NATIVE,
+        a.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, SENTINEL_NATIVE, b.zfo, b_swap_in)
+            .ok()?,
+    );
+    // Capture: take the WETH profit out of the PM to the executor (physical).
+    inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_WETH, SENTINEL_SELF));
+    // Resolve any residual deltas so every currency nets to zero.
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
 }
 
 #[cfg(test)]

@@ -22,11 +22,12 @@ use alloy::primitives::{Address, U256};
 use degenbot_executor::composers::{ComposerInputs, EncodeOptions};
 use degenbot_simulation::harness::{assert_profitable, Harness, Hop, HopPool};
 
-/// A protocol we derive (V2/V3 only — V4 is the residual for WAYDTL).
+/// A protocol we derive.
 #[derive(Clone, Copy, PartialEq)]
 enum Prot {
     V2,
     V3,
+    V4,
 }
 
 fn q96_one() -> U256 {
@@ -55,6 +56,19 @@ fn pool_for(h: &mut Harness, p: Prot, src: Address, dst: Address, mult: u64) -> 
                 src,
                 dst,
                 3000,
+                sqrt_x(mult),
+                liq(),
+                1_000_000_000_000,
+                1_000_000_000_000,
+            )
+            .unwrap(),
+        ),
+        Prot::V4 => HopPool::V4(
+            h.add_v4_pool(
+                src,
+                dst,
+                3000,
+                60,
                 sqrt_x(mult),
                 liq(),
                 1_000_000_000_000,
@@ -138,4 +152,9 @@ fn derived_v3v3_executes_with_exact_delta() {
 #[test]
 fn derived_v2v2_executes_with_exact_delta() {
     run_spike(Prot::V2, Prot::V2, "v2_v2");
+}
+
+#[test]
+fn derived_v4v4_executes_with_exact_delta() {
+    run_spike(Prot::V4, Prot::V4, "v4_v4");
 }
