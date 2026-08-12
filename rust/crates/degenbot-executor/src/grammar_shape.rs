@@ -547,9 +547,20 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         currency: *currency_addr,
                         amount: *amount,
                     });
-                    // The take's recipient (SELF/V2 pool/V3 pool) is tracked
-                    // by the byte encoder; the validator only models PM debit.
-                    let _ = recipient_idx;
+                    // Cross-ledger move: when the take's recipient is the
+                    // executor (SELF), the token physically arrives at the
+                    // executor's Erc20 balance — credit it so a downstream
+                    // V2/V3 flash that consumes `cur` (e.g. the V3 auto-repay
+                    // in `v4_v3`) validates. Other recipient roles (a V2 pool
+                    // directly seeded by the take — the `v4_v2` boundary case)
+                    // credit the pair-handoff ledger instead, and land in a
+                    // later sub-increment.
+                    if *recipient_idx == SENTINEL_SELF {
+                        ops.push(LedgerOp::Erc20Credit {
+                            currency: *currency_addr,
+                            amount: *amount,
+                        });
+                    }
                 }
                 PlanStep::V4SettleDelta { currency_addr, .. } => {
                     ops.push(LedgerOp::V4SettleDelta {
@@ -1132,6 +1143,150 @@ pub fn build_v4v4_plan(
             currency_addr: weth,
             recipient_idx: SENTINEL_SELF,
         },
+        PlanStep::V4SettleAll,
+    ];
+    let plan: Plan = vec![PlanStep::V4Unlock {
+        inner,
+        pool_manager_idx: pm_idx,
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v4_v3` Plan (BP7KIR Increment 3b) — the **boundary-take**
+/// family: a V4 lead swap whose forward output is ***taken out of the PM***
+/// to feed a terminal V3 flash swap.
+///
+/// This is the first cross-ledger family — `V4TakeCompact(cur→SELF)` is a
+/// **cross-ledger move**: it debits `PM[cur]` (the V4 take) AND credits the
+/// executor's `Erc20[cur]` (the token physically arrives at the executor),
+/// which the V3 flash's auto-repay then debits. The plan tree's projection
+/// emits both halves so the gate enforces that the V3 repayment can only
+/// follow the V4 take that funds it (the D0 analogue across the PM/Erc20
+/// boundary — the structural defect byte-parity cannot see).
+///
+/// Scoped slice (this sub-increment): ERC-20 V4 output + WETH V4 input (the
+/// non-native case, matching the v4_v4 WETH-only slice). The native-output
+/// (wrap-then-V3) and native-input (unwrap-then-settle) cases need
+/// `WethDeposit`/`WethWithdraw` PlanSteps and return `None` here.
+#[must_use]
+pub fn build_v4v3_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V4(a), HopInfo::V3(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    let weth_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) || !fits_int128(forward_out) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
+    let weth = inputs.weth_address;
+
+    // The V4 output currency (a's non-WETH leg) is the forward token taken to
+    // SELF, then consumed by the V3 flash. The V4 input is WETH (a's other leg).
+    let out_currency_a = if a.zfo {
+        a.currency1_address
+    } else {
+        a.currency0_address
+    };
+    let in_currency_a = if a.zfo {
+        a.currency0_address
+    } else {
+        a.currency1_address
+    };
+    // Scoped slice: reject native on either V4 leg (the wrap/unwrap cases land
+    // in a later sub-increment with WethDeposit/Withdraw steps).
+    if out_currency_a == NATIVE_CURRENCY_ADDRESS || in_currency_a == NATIVE_CURRENCY_ADDRESS {
+        return None;
+    }
+    // The V4 input must be WETH for this slice (the settle-delta(WETH) path).
+    if in_currency_a != weth {
+        return None;
+    }
+    // The terminal V3 output must be WETH (the captured profit).
+    let out_currency_b = if b.zfo {
+        b.token1_address
+    } else {
+        b.token0_address
+    };
+    if out_currency_b != weth {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let v3_idx = at.add(b.pool_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = if a.zfo { c1_a } else { c0_a };
+
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+
+    let inner: Plan = vec![
+        // 1. V4 swap a: PM[WETH] −= optimal_input (debt), PM[t1] += forward_out.
+        PlanStep::V4Swap {
+            c0_idx: c0_a,
+            c1_idx: c1_a,
+            fee: fee_a,
+            tick_spacing: ts_a,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: a.zfo,
+            amount: optimal_input,
+            in_currency: weth,
+            in_amount: optimal_input,
+            out_currency: out_currency_a,
+            out_amount: forward_out,
+        },
+        // 2. Boundary take: PM[t1] −= forward_out; the token arrives at the
+        //    executor (Erc20[t1] += forward_out), funding the V3 auto-repay.
+        PlanStep::V4TakeCompact {
+            currency_idx: forward_idx,
+            currency_addr: out_currency_a,
+            recipient_idx: SENTINEL_SELF,
+            amount: forward_out,
+        },
+        // 3. Terminal V3 flash: credits WETH (the profit), owes t1 — auto-repaid
+        //    at callback-end from the Erc20[t1] credit the boundary take created.
+        PlanStep::FlashSwap {
+            pool_idx: v3_idx,
+            pool_addr: b.pool_address,
+            protocol: Prot::V3,
+            zfo: b.zfo,
+            fee: u16::try_from(b.fee).ok()?,
+            out_currency: weth,
+            out_amount: weth_out,
+            in_currency: out_currency_a,
+            in_amount: b_swap_in,
+            recipient_idx: SENTINEL_SELF,
+            auto_repay: true,
+            callback: vec![],
+        },
+        // 4. Settle the V4 input debt: PM[WETH] → 0.
+        PlanStep::V4SettleDelta {
+            currency_idx: weth_idx,
+            currency_addr: weth,
+        },
+        // 5. Settle any residual PM deltas, then the V4UnlockEnd net-zero fires.
         PlanStep::V4SettleAll,
     ];
     let plan: Plan = vec![PlanStep::V4Unlock {

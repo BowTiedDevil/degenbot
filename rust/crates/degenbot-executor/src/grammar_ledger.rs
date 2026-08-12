@@ -213,6 +213,14 @@ pub enum LedgerOp {
     /// executor's own balance rather than a flash). Not a command; a stream
     /// precondition modeled so the SelfFund families' repayments validate.
     SelfFund { currency: Address, amount: u128 },
+    /// The executor-side credit half of a **cross-ledger move** — a V4
+    /// `V4_TAKE_COMPACT(cur→SELF)` physically transfers `cur` from the PM to the
+    /// executor's balance, so alongside the PM debit (`Take`) the executor's
+    /// `Erc20[cur]` is credited by `amount`. Without this, a downstream V2/V3
+    /// flash that consumes `cur` (e.g. the V3 auto-repay in `v4_v3`) would see
+    /// `Erc20[cur] == 0` and be rejected — the cross-ledger analogue of D0
+    /// (the boundary take must precede the outside-ledger consume).
+    Erc20Credit { currency: Address, amount: u128 },
 }
 
 /// A `V4_SWAP` term op returned by the proto-trace builder — kept separate from
@@ -246,7 +254,8 @@ impl LedgerOp {
             | LedgerOp::V2Flash { .. }
             | LedgerOp::V3Flash { .. }
             | LedgerOp::Erc20Transfer { .. }
-            | LedgerOp::SelfFund { .. } => None,
+            | LedgerOp::SelfFund { .. }
+            | LedgerOp::Erc20Credit { .. } => None,
         }
     }
 }
@@ -454,10 +463,13 @@ impl LedgerValidator {
                 *self.flash_debt.entry(in_currency).or_default() += in_amount;
                 Ok(())
             }
-            // Self-fund seed: the executor holds `amount` of `currency` as entry
-            // capital. Credits the executor `Erc20` ledger (same ledger flashes
-            // extend; here sourced from the executor's own balance). No debt.
-            LedgerOp::SelfFund { currency, amount } => {
+            // Self-fund seed OR cross-ledger credit (`V4_TAKE_COMPACT(cur→SELF)`):
+            // both credit the executor's `Erc20` balance (SelfFund sources it
+            // from the executor's own held entry capital; Erc20Credit from a V4
+            // take that physically moved the token PM→executor). No debt, no
+            // D0 check — both are pure credits a later debit consumes.
+            LedgerOp::SelfFund { currency, amount }
+            | LedgerOp::Erc20Credit { currency, amount } => {
                 *self.erc20.entry(currency).or_default() += amount as i128;
                 Ok(())
             }
@@ -773,5 +785,104 @@ mod tests {
                 currency, amount
             }) if currency == weth() && amount == 900_000
         ));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // BP7KIR Increment 3b: the `v4_v3` cross-ledger boundary take. The V4
+    // swap credits PM[t1]; `V4TakeCompact(t1→SELF)` debits PM[t1] AND credits
+    // the executor `Erc20[t1]` (the token physically arrives); the V3 flash's
+    // auto-repay then debits that `Erc20[t1]`. The gate enforces the boundary
+    // ordering — the structural defect byte-parity cannot see.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// The canonical `v4_v3` ledger trace in stream order validates clean: the
+    /// boundary take credits `Erc20[t1]` before the V3 auto-repay debits it, PM
+    /// nets to zero (`V4UnlockEnd`), and the V3 flash debt is repaid.
+    #[test]
+    fn v4_v3_boundary_take_chain_accepted() {
+        let mut v = LedgerValidator::default();
+        // V4 swap a: PM[WETH] −= optimal_input, PM[t1] += forward_out.
+        v.push(LedgerOp::V4Swap {
+            in_currency: weth(),
+            in_amount: 100_000,
+            out_currency: usdc(),
+            out_amount: 110_000,
+        })
+        .unwrap();
+        // Boundary take (→SELF): PM[t1] −= forward_out; Erc20[t1] += forward_out.
+        v.push(LedgerOp::Take {
+            currency: usdc(),
+            amount: 110_000,
+        })
+        .unwrap();
+        v.push(LedgerOp::Erc20Credit {
+            currency: usdc(),
+            amount: 110_000,
+        })
+        .unwrap();
+        // Terminal V3 flash: credits WETH (profit), owes t1 — auto-repaid from
+        // the Erc20[t1] credit the boundary take created.
+        v.push(LedgerOp::V3Flash {
+            out_currency: weth(),
+            out_amount: 120_000,
+            in_currency: usdc(),
+            in_amount: 110_000,
+        })
+        .unwrap();
+        // Auto-repay (empty callback): debits min(110_000, 110_000) of t1.
+        v.push(LedgerOp::Erc20Transfer {
+            currency: usdc(),
+            amount: 110_000,
+            repays_flash: Some(pool()),
+        })
+        .unwrap();
+        // Settle the V4 input debt + residual, then the net-zero assertion.
+        v.push(LedgerOp::V4SettleDelta { currency: weth() })
+            .unwrap();
+        v.push(LedgerOp::V4SettleAll).unwrap();
+        v.push(LedgerOp::V4UnlockEnd).unwrap();
+        assert!(
+            v.finish().is_ok(),
+            "v4_v3 boundary-take chain must validate"
+        );
+    }
+
+    /// The structural defect: the boundary `Erc20Credit` (the V4 take's
+    /// recipient-side) is omitted, so the V3 auto-repay fires against
+    /// `Erc20[t1] == 0` → rejected. This is the cross-ledger analogue of D0 —
+    /// the outside-ledger consume must follow the V4 take that funds it. A
+    /// byte-parity check cannot see this (the bytes would revert on-chain with
+    /// an opaque transfer-revert); the gate names the invariant.
+    #[test]
+    fn v4_v3_boundary_take_omitted_rejected() {
+        let mut v = LedgerValidator::default();
+        v.push(LedgerOp::V4Swap {
+            in_currency: weth(),
+            in_amount: 100_000,
+            out_currency: usdc(),
+            out_amount: 110_000,
+        })
+        .unwrap();
+        // BUG: the `V4TakeCompact`'s Erc20Credit half is missing — the take
+        // debited PM[t1] but never credited the executor's Erc20[t1].
+        v.push(LedgerOp::V3Flash {
+            out_currency: weth(),
+            out_amount: 120_000,
+            in_currency: usdc(),
+            in_amount: 110_000,
+        })
+        .unwrap();
+        assert_eq!(
+            v.push(LedgerOp::Erc20Transfer {
+                currency: usdc(),
+                amount: 110_000,
+                repays_flash: Some(pool()),
+            }),
+            Err(ValidationError::Erc20TransferBeforeCredit {
+                currency: usdc(),
+                wanted: 110_000,
+                have: 0,
+            })
+        );
     }
 }

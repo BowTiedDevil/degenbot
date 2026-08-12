@@ -297,6 +297,22 @@ fn v4v4_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Increment 3b: the `v4_v3` boundary-take family on the Plan tree —
+/// the first cross-ledger family. `V4TakeCompact(cur→SELF)` is a cross-ledger
+/// move: it debits `PM[cur]` (the V4 take) AND credits the executor's
+/// `Erc20[cur]` (the token arrives), which the V3 flash's auto-repay then
+/// debits. Build Plan → byte-parity + gate (the V3 repayment can only follow
+/// the V4 take that funds it) + runtime exact delta.
+#[test]
+fn v4v3_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V4,
+        Prot::V3,
+        "v4_v3",
+        degenbot_executor::grammar_shape::build_v4v3_plan,
+    );
+}
+
 #[test]
 fn derived_v3v2_executes_with_exact_delta() {
     run_spike(Prot::V3, Prot::V2, "v3_v2");
