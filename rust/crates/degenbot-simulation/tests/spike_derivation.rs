@@ -313,6 +313,74 @@ fn v4v2_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Increment 3c: the `v4_v2` **native-input** sub-case — the V4
+/// input is NATIVE, settled by `WethWithdraw` + `NativeTransfer` +
+/// `V4SettleDelta(native)` (funded by the V2 swap's WETH output). Build Plan
+/// → byte-parity + gate + runtime exact WETH delta.
+#[test]
+fn v4v2_native_input_plan_byte_parity_validates_and_executes() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{build_v4v2_plan, plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let weth = h.weth;
+
+    // Pool A (V4): NATIVE→t1 (native input). Pool B (V2): t1→WETH.
+    let r: u128 = 1_000_000_000_000;
+    let p_a = HopPool::V4(
+        h.add_v4_pool(native, t, 3000, 60, sqrt_x(1), liq(), r, r)
+            .unwrap(),
+    );
+    let p_b = HopPool::V2(h.add_pool(t, weth, r, r * 3).unwrap());
+    let hops = vec![
+        Hop {
+            src: native,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let (preamble, plan, at) = build_v4v2_plan(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v4_v2 native-input] build None"));
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v4_v2 native-input] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[v4_v2 native-input] Plan bytes != proven emitter"
+    );
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .unwrap_or_else(|e| panic!("[v4_v2 native-input] Plan must validate clean: {e:?}"));
+    let result = h
+        .run_raw_payload(&hops, &plan_bytes, optimal_input, 8_000_000)
+        .unwrap_or_else(|e| panic!("[v4_v2 native-input] run_raw_payload: {e}"));
+    assert_profitable(&result, 2, "v4_v2 native-input");
+    println!(
+        "── v4_v2 native-input (Plan): byte-parity held, trace validated, actual_delta={}",
+        result.actual_weth_delta
+    );
+}
+
 /// BP7KIR Increment 3b: the `v2_v4` outside->V4 seed family (V2-flash
 /// variant) on the Plan tree — same 2-level nesting as v3_v4 but a V2
 /// exact-out flash wraps the V4Unlock. Build Plan -> byte-parity + gate +
