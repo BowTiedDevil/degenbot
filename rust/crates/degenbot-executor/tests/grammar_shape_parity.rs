@@ -136,3 +136,39 @@ fn v3_v3_fold_is_live_and_stable_across_zfo_and_amounts() {
         }
     }
 }
+
+// ── V4: native + wrap/unwrap bridge parity (WAYDTL step 2, (A) widen) ─────
+
+const NATIVE: Address = Address::ZERO;
+
+fn v4_pair(c0: Address, c1: Address, zfo: bool) -> HopInfo {
+    HopInfo::V4(degenbot_executor::composers::V4HopInfo {
+        pool_manager_address: pm(),
+        pool_id_hex: "0x0".into(),
+        currency0_address: c0,
+        currency1_address: c1,
+        fee: 3000,
+        tick_spacing: 60,
+        hook_address: Address::ZERO,
+        zfo,
+    })
+}
+
+/// The V4/v4 derivation must match the hand-written v4_v4 across native +
+/// wrap/unwrap-bridge currency configurations (byte parity).
+#[test]
+fn v4_v4_native_and_bridge_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    // Explicit configs to keep readability (currency addresses set inline):
+    for (a0, a1, az, b0, b1, bz) in [
+        (weth(), t, true, t, weth(), true),           // WETH->t->WETH
+        (NATIVE, t, true, t, NATIVE, true),           // NATIVE->t->NATIVE (native capture)
+        (weth(), NATIVE, true, NATIVE, weth(), true), // WETH->native->WETH (non-gap, mid native)
+        (t, NATIVE, false, weth(), t, true),          // Wrap bridge (a out native, b in WETH)
+        (weth(), t, true, NATIVE, t, true),           // Unwrap bridge (a out t, b in native)
+        (NATIVE, t, false, t, weth(), false),         // mixed zfo
+        (weth(), t, false, t, NATIVE, false),         // mixed zfo + native end
+    ] {
+        run_family(vec![v4_pair(a0, a1, az), v4_pair(b0, b1, bz)], 100_000);
+    }
+}

@@ -29,6 +29,7 @@ use alloy::primitives::Address;
 
 use crate::composers::{
     fits_int128, ComposerInputs, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
+    NATIVE_CURRENCY_ADDRESS,
 };
 use crate::encoders::{self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 
@@ -309,6 +310,8 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 /// family) — `default` opts (no `V4_BATCH`, no `erc6909_profit`). Other V4 shapes
 /// (native bridges, non-WETH output, batch/mint) return `None` for now (later steps).
 fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    use crate::composers::{emit_currency_bridge, CurrencyBridge};
+
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -323,12 +326,6 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
         return None;
     }
 
-    // Input A is the seed currency, output B is the profit currency.
-    let input_currency_a = if a.zfo {
-        a.currency0_address
-    } else {
-        a.currency1_address
-    };
     let output_currency_b = if b.zfo {
         b.currency1_address
     } else {
@@ -344,13 +341,9 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     } else {
         b.currency1_address
     };
-    if mid_currency_a != mid_currency_b {
-        return None; // a non-mid connecting currency is outside this slice
-    }
-    // WETH-only slice: seed and profit are both WETH, no native anywhere.
-    if input_currency_a != inputs.weth_address || output_currency_b != inputs.weth_address {
-        return None;
-    }
+    let b_needs_native = mid_currency_b == NATIVE_CURRENCY_ADDRESS;
+    let bridge = CurrencyBridge::at_boundary(mid_currency_a, mid_currency_b);
+    let currency_gap = bridge.needs_bridge();
 
     let mut at = AddressTable::with_sentinels(
         Some(inputs.weth_address),
@@ -361,13 +354,17 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     let c1_a = at.add(a.currency1_address).ok()?;
     let c0_b = at.add(b.currency0_address).ok()?;
     let c1_b = at.add(b.currency1_address).ok()?;
+    // Native is address(0) — a sentinel in the table; registering it is a no-op.
+    let weth_idx = SENTINEL_WETH;
+    let native_idx = SENTINEL_NATIVE;
 
     let fee_a = u16::try_from(a.fee).ok()?;
     let ts_a = i16::try_from(a.tick_spacing).ok()?;
     let fee_b = u16::try_from(b.fee).ok()?;
     let ts_b = i16::try_from(b.tick_spacing).ok()?;
 
-    // Whole stream lives in one unlock; V4→V4 is internal ledger movement.
+    // One unlock: both swaps, the native<->WETH boundary bridge when present,
+    // profit capture, and a trailing settle to net every currency to zero.
     let mut inner = encoders::enc_v4_swap_compact(
         c0_a,
         c1_a,
@@ -378,12 +375,36 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
         optimal_input,
     )
     .ok()?;
+    if currency_gap {
+        let bridge_idx = match bridge {
+            CurrencyBridge::Wrap => native_idx,
+            CurrencyBridge::Unwrap => weth_idx,
+            CurrencyBridge::None => unreachable!("currency_gap implies a bridge"),
+        };
+        emit_currency_bridge(&mut inner, bridge, bridge_idx, forward_out)?;
+    }
     inner.extend_from_slice(
         &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, SENTINEL_NATIVE, b.zfo, b_swap_in)
             .ok()?,
     );
-    // Capture: take the WETH profit out of the PM to the executor (physical).
-    inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_WETH, SENTINEL_SELF));
+    if currency_gap {
+        inner.extend_from_slice(&encoders::enc_v4_settle_delta(if b_needs_native {
+            native_idx
+        } else {
+            weth_idx
+        }));
+    }
+    // Capture the terminal profit out of the PM to the executor (physical).
+    if output_currency_b == NATIVE_CURRENCY_ADDRESS {
+        inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, SENTINEL_SELF));
+    } else if output_currency_b == inputs.weth_address {
+        inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
+    } else {
+        inner.extend_from_slice(&encoders::enc_v4_take_delta(
+            if b.zfo { c1_b } else { c0_b },
+            SENTINEL_SELF,
+        ));
+    }
     // Resolve any residual deltas so every currency nets to zero.
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
