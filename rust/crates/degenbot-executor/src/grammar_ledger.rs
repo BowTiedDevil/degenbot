@@ -21,6 +21,9 @@ use std::collections::HashMap;
 
 use alloy::primitives::Address;
 
+use crate::composers::NATIVE_CURRENCY_ADDRESS;
+use crate::encoders::SENTINEL_SELF;
+
 // ═══════════════════════════════════════════════════════════════════════
 // Axis types (ADR-029 D1)
 // ═══════════════════════════════════════════════════════════════════════
@@ -461,7 +464,7 @@ impl PmLedger {
 
     /// `V4_TAKE_DELTA` — take the ENTIRE positive `PM[key]` delta to the
     /// recipient. Requires `PM[key] > 0` immediately before (D0). Zeros it.
-    fn take_delta(&mut self, key: Address) -> Result<(), ValidationError> {
+    fn take_delta(&mut self, key: Address) -> Result<u128, ValidationError> {
         let have = *self.deltas.get(&key).unwrap_or(&0);
         if have <= 0 {
             return Err(ValidationError::TakeBeforeCredit {
@@ -471,7 +474,7 @@ impl PmLedger {
             });
         }
         self.deltas.insert(key, 0);
-        Ok(())
+        Ok(have as u128)
     }
 
     /// `V4_SETTLE_DELTA(cur)` — zero one currency's PM delta.
@@ -648,7 +651,24 @@ impl LedgerValidator {
             }
             // V4_TAKE_DELTA: take the entire positive PM[currency] delta to rcp.
             // Requires PM[currency] > 0 immediately before (credit-before-debit).
-            LedgerOp::V4TakeDelta { currency, .. } => self.pm.take_delta(currency),
+            // WE45KC inc.2: when the recipient is SELF, the take physically delivers
+            // the asset to executor custody — model the receipt so a downstream
+            // `WethWithdraw` (ProfitCapture::Native) can debit it. (Native currency
+            // credits the Native ledger; ERC-20/WETH credits Erc20.)
+            LedgerOp::V4TakeDelta {
+                currency,
+                recipient_idx,
+            } => {
+                let amount = self.pm.take_delta(currency)?;
+                if recipient_idx == SENTINEL_SELF {
+                    if currency == NATIVE_CURRENCY_ADDRESS {
+                        self.native += amount as i128;
+                    } else {
+                        self.erc20.credit(currency, amount);
+                    }
+                }
+                Ok(())
+            }
             // V4_UNLOCK callback end: the master invariant — every touched
             // PM currency must net to zero by callback end. (A prior
             // `V4SettleAll` would have zeroed them; this catches any stream

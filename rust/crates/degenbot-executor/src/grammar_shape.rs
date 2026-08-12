@@ -1295,10 +1295,20 @@ pub fn build_v4v4_plan(
     } else {
         b.currency0_address
     };
+    // WE45KC inc.2: capture axis load-bearing (mirrors `derive_2hop_v4v4`).
+    let capture = crate::composers::resolve_axes(inputs.opts).1;
+    // ProfitCapture::Native on a non-WETH/non-native tok terminal is not
+    // expressible (decline; ADR-029 D1).
+    if capture == ProfitCapture::Native
+        && out_currency_b != weth
+        && out_currency_b != NATIVE_CURRENCY_ADDRESS
+    {
+        return None;
+    }
     // Terminal output may be WETH (profit capture), a tok (explicit take), or
-    // native. The `use_v4_batch` /
-    // `erc6909_profit` opts interact with the terminal currency exactly as
-    // `derive_2hop_v4v4` — the capture block below mirrors it.
+    // native. The `use_v4_batch` / `erc6909_profit` opts interact with the
+    // terminal currency exactly as `derive_2hop_v4v4` — the capture block
+    // below mirrors it.
 
     let mut at = AddressTable::with_sentinels(
         Some(weth),
@@ -1483,32 +1493,47 @@ pub fn build_v4v4_plan(
         //    derive emits no `V4TakeDelta` and neither does the Plan; the
         //    trailing `V4SettleAll` zeroes the residual `PM` for the gate.
         let out_idx = if b.zfo { c1_b } else { c0_b };
-        let capture: Vec<PlanStep> = if inputs.opts.erc6909_profit && out_currency_b == weth {
-            let profit = b_out.saturating_sub(optimal_input);
-            if profit > 0 {
-                vec![PlanStep::V4Mint {
-                    currency_idx: weth_idx,
-                    currency_addr: weth,
+        let capture_steps: Vec<PlanStep> =
+            if capture == ProfitCapture::Erc6909 && out_currency_b == weth {
+                let profit = b_out.saturating_sub(optimal_input);
+                if profit > 0 {
+                    vec![PlanStep::V4Mint {
+                        currency_idx: weth_idx,
+                        currency_addr: weth,
+                        recipient_idx: SENTINEL_SELF,
+                        amount: profit,
+                    }]
+                } else {
+                    vec![]
+                }
+            } else if !inputs.opts.use_v4_batch
+                || (out_currency_b != NATIVE_CURRENCY_ADDRESS && out_currency_b != weth)
+            {
+                vec![PlanStep::V4TakeDelta {
+                    currency_idx: out_idx,
+                    currency_addr: out_currency_b,
                     recipient_idx: SENTINEL_SELF,
-                    amount: profit,
                 }]
             } else {
                 vec![]
-            }
-        } else if !inputs.opts.use_v4_batch
-            || (out_currency_b != NATIVE_CURRENCY_ADDRESS && out_currency_b != weth)
-        {
-            vec![PlanStep::V4TakeDelta {
-                currency_idx: out_idx,
-                currency_addr: out_currency_b,
-                recipient_idx: SENTINEL_SELF,
-            }]
-        } else {
-            vec![]
-        };
+            };
+        // WE45KC inc.2: ProfitCapture::Native on a WETH terminal — convert the
+        // custodied WETH profit to native via WethWithdraw (gated by the
+        // validator; mirrors the byte emitter's WETH_WITHDRAW).
+        let native_withdraw: Vec<PlanStep> =
+            if capture == ProfitCapture::Native && out_currency_b == weth {
+                vec![PlanStep::WethWithdraw {
+                    weth_idx,
+                    weth_addr: weth,
+                    amount: b_out.saturating_sub(optimal_input),
+                }]
+            } else {
+                vec![]
+            };
         swaps
             .into_iter()
-            .chain(capture)
+            .chain(capture_steps)
+            .chain(native_withdraw)
             .chain(std::iter::once(PlanStep::V4SettleAll))
             .collect()
     };
@@ -3055,6 +3080,19 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     } else {
         b.currency0_address
     };
+    // WE45KC inc.2: the capture axis is now load-bearing. Resolve it once
+    // (resolve_axes collapses the legacy erc6909_profit bool into capture).
+    let capture = crate::composers::resolve_axes(inputs.opts).1;
+    // ProfitCapture::Native is only expressible when the terminal profit is
+    // WETH (withdraw to native) or already native; a non-WETH tok terminal
+    // cannot be converted to native by the current executor. Decline (ADR-029
+    // D1: declared but not executable).
+    if capture == ProfitCapture::Native
+        && output_currency_b != inputs.weth_address
+        && output_currency_b != NATIVE_CURRENCY_ADDRESS
+    {
+        return None;
+    }
     let mid_currency_a = if a.zfo {
         a.currency1_address
     } else {
@@ -3142,6 +3180,13 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
                 SENTINEL_SELF,
             ));
         }
+        // WE45KC inc.2: ProfitCapture::Native on a WETH terminal — convert the
+        // custodied WETH profit to native via WETH_WITHDRAW.
+        if capture == ProfitCapture::Native && output_currency_b == inputs.weth_address {
+            inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(
+                weth_out.saturating_sub(optimal_input),
+            )));
+        }
         inner.extend_from_slice(&encoders::enc_v4_settle_all());
     } else {
         if inputs.opts.use_v4_batch {
@@ -3188,7 +3233,7 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
                 .ok()?,
             );
         }
-        if inputs.opts.erc6909_profit && output_currency_b == inputs.weth_address {
+        if capture == ProfitCapture::Erc6909 && output_currency_b == inputs.weth_address {
             let profit_amount = weth_out.saturating_sub(optimal_input);
             if profit_amount > 0 {
                 inner.extend_from_slice(
@@ -3209,6 +3254,14 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
                     SENTINEL_SELF,
                 ));
             }
+        }
+        // WE45KC inc.2: ProfitCapture::Native on a WETH terminal — convert the
+        // custodied WETH profit to native via WETH_WITHDRAW. (A native terminal
+        // is already native custody; a tok terminal was declined above.)
+        if capture == ProfitCapture::Native && output_currency_b == inputs.weth_address {
+            inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(
+                weth_out.saturating_sub(optimal_input),
+            )));
         }
         inner.extend_from_slice(&encoders::enc_v4_settle_all());
     }
@@ -6298,5 +6351,116 @@ mod tests {
         );
         assert!(matches!(inner[6], PlanStep::V4SettleAll), "6: settle all");
         let _ = U256::ZERO;
+    }
+    // ── WE45KC inc.2: ProfitCapture::Native on v4_v4 (ADR-029 D1) ──────────
+    // The capture axis is now load-bearing in the encoder: a WETH-terminal
+    // v4_v4 path with capture=Native appends a WETH_WITHDRAW (0x13) converting
+    // the profit to native ETH after the V4_TAKE_DELTA custody take. A
+    // non-WETH/non-native tok terminal + Native is declined (the executor
+    // cannot convert an arbitrary ERC-20 to native). A native terminal +
+    // Native is a no-op (already native custody).
+
+    /// Collect every `WETH_WITHDRAW` (0x13) command's 32-byte amount payload
+    /// in `bytes` (scans all windows; `0x13` may appear in address bytes, so
+    /// the caller asserts the expected profit is among the payloads).
+    fn weth_withdraw_amounts(bytes: &[u8]) -> Vec<u128> {
+        bytes
+            .windows(33)
+            .filter(|w| w[0] == 0x13)
+            .map(|w| {
+                let mut a = [0u8; 16];
+                a.copy_from_slice(&w[17..33]);
+                u128::from_be_bytes(a)
+            })
+            .collect()
+    }
+
+    /// Count `V4_TAKE_DELTA` (0x50) commands in `bytes`.
+    fn count_v4_take_delta(bytes: &[u8]) -> usize {
+        bytes.iter().filter(|&&b| b == 0x50).count()
+    }
+
+    #[test]
+    fn v4_v4_native_capture_weth_terminal_appends_weth_withdraw() {
+        // capture=Native: WETH-terminal path takes WETH to custody, then
+        // WETH_WITHDRAW(profit) converts it to native. profit = weth_out -
+        // optimal_input = 1_200_000 - 1_000_000 = 200_000.
+        let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
+            capture: crate::grammar_ledger::ProfitCapture::Native,
+            ..Default::default()
+        });
+        let bytes =
+            derive_shape(&path, &inputs).expect("v4_v4 native-capture WETH terminal must derive");
+        assert!(
+            weth_withdraw_amounts(&bytes).contains(&200_000),
+            "Native capture must append WETH_WITHDRAW of the profit; got {:?}",
+            weth_withdraw_amounts(&bytes)
+        );
+        // The custody take is still emitted (WETH taken to executor first).
+        assert!(
+            count_v4_take_delta(&bytes) >= 1,
+            "V4_TAKE_DELTA custody take must precede the withdraw"
+        );
+    }
+
+    #[test]
+    fn v4_v4_custody_capture_emits_no_weth_withdraw() {
+        // Default (Custody): no WETH_WITHDRAW — profit held as WETH.
+        let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions::default());
+        let bytes = derive_shape(&path, &inputs).expect("v4_v4 custody WETH terminal must derive");
+        assert!(
+            !weth_withdraw_amounts(&bytes).contains(&200_000),
+            "Custody capture must NOT append a WETH_WITHDRAW of the profit"
+        );
+    }
+
+    #[test]
+    fn v4_v4_native_capture_tok_terminal_declines() {
+        // capture=Native, tok terminal: the executor cannot convert an
+        // arbitrary ERC-20 to native → derive declines (ADR-029 D1: declared
+        // but not executable).
+        let (path, inputs) = v4_v4_inputs(
+            Terminal::Tok,
+            crate::composers::EncodeOptions {
+                capture: crate::grammar_ledger::ProfitCapture::Native,
+                ..Default::default()
+            },
+        );
+        assert!(
+            derive_shape(&path, &inputs).is_none(),
+            "Native capture on a non-WETH/non-native tok terminal must decline"
+        );
+    }
+
+    #[test]
+    fn v4_v4_native_capture_native_terminal_is_noop() {
+        // capture=Native, native terminal: profit is already native custody
+        // (V4_TAKE_DELTA(native_idx, SELF)); no WETH_WITHDRAW needed. Derives.
+        let (path, inputs) = v4_v4_inputs(
+            Terminal::Native,
+            crate::composers::EncodeOptions {
+                capture: crate::grammar_ledger::ProfitCapture::Native,
+                ..Default::default()
+            },
+        );
+        let bytes = derive_shape(&path, &inputs)
+            .expect("v4_v4 native-capture native terminal must derive (no-op)");
+        assert!(
+            !weth_withdraw_amounts(&bytes).iter().any(|&a| a > 0),
+            "Native terminal + Native capture is already native; no withdraw"
+        );
+    }
+    #[test]
+    fn v4_v4_native_capture_plan_byte_parity_and_validates() {
+        // WE45KC inc.2: the Native-capture Plan (WETH terminal → V4TakeDelta
+        // custody + WethWithdraw) stays byte-identical to derive_2hop_v4v4 AND
+        // validates clean through the ledger gate (D5). The custody credit on
+        // V4TakeDelta(→SELF) now models the executor's receipt, so the
+        // withdraw debits a real Erc20[WETH] balance.
+        let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
+            capture: ProfitCapture::Native,
+            ..Default::default()
+        });
+        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 native-capture");
     }
 }
