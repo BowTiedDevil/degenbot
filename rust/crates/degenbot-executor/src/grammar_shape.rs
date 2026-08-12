@@ -1499,6 +1499,325 @@ pub fn build_v4v2_plan(
     Some((preamble, plan, at))
 }
 
+/// Build the `v3_v4` Plan (BP7KIR Increment 3b) — the **outside→V4 seed**
+/// family (2-level nesting): a V3 flash wraps a `V4Unlock` in its callback.
+/// The V3 forward output **enters the PM** (boundary-seed: `V4Sync` +
+/// `Erc20Transfer(forward→PM)` + `V4Settle`) to seed the V4 input, the V4 swap
+/// runs + `V4TakeCompact(WETH→SELF)` captures the WETH output, and the V3 flash
+/// is explicitly repaid `Erc20Transfer(WETH→v3, optimal_input)` from that
+/// capture. This is the deepest nesting — a `FlashSwap` whose `callback`
+/// contains a full `V4Unlock` container.
+///
+/// Scoped slice: ERC-20 V4 input + WETH V3 input + WETH V4 output (the
+/// non-native case). The native V4-input case (unwrap-WETH-to-seed-native)
+/// needs `WethWithdraw` and returns `None` here.
+#[must_use]
+pub fn build_v3v4_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V3(a), HopInfo::V4(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    let weth_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    if !fits_int128(forward_out) || !fits_int128(weth_out) {
+        return None;
+    }
+    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(v4_swap_in) {
+        return None;
+    }
+    let weth = inputs.weth_address;
+
+    // The V3 output (forward token) = a's non-WETH leg; the V3 input is WETH.
+    let forward_addr = if a.zfo {
+        a.token1_address
+    } else {
+        a.token0_address
+    };
+    let v3_in_currency = if a.zfo {
+        a.token0_address
+    } else {
+        a.token1_address
+    };
+    // Scoped slice: V3 input is WETH, forward is non-native ERC-20.
+    if v3_in_currency != weth || forward_addr == NATIVE_CURRENCY_ADDRESS {
+        return None;
+    }
+    // The V4 input is the forward token (b's matching leg); must be non-native.
+    // The V4 output is WETH (b's other leg — the captured profit).
+    let v4_in_currency = if b.zfo {
+        b.currency0_address
+    } else {
+        b.currency1_address
+    };
+    let v4_out_currency = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+    if v4_in_currency != forward_addr
+        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
+        || v4_out_currency != weth
+    {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let v3_idx = at.add(a.pool_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let forward_idx = at.add(forward_addr).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let output_idx = if b.zfo { c1_b } else { c0_b };
+
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+
+    // The V4Unlock inner: boundary-seed the V4 input, swap, capture WETH.
+    let v4_inner: Plan = vec![
+        PlanStep::V4Sync {
+            currency_idx: forward_idx,
+            currency_addr: forward_addr,
+        },
+        // Forward token enters the PM from the executor (credited by the V3
+        // flash outer) — debits Erc20[forward] (D0 ok: V3Flash credited it).
+        PlanStep::Erc20Transfer {
+            token_idx: forward_idx,
+            token_addr: forward_addr,
+            recipient_idx: pm_idx,
+            amount: forward_out,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V4Settle {
+            currency_addr: forward_addr,
+            amount: forward_out,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0_b,
+            c1_idx: c1_b,
+            fee: fee_b,
+            tick_spacing: ts_b,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: b.zfo,
+            amount: v4_swap_in,
+            in_currency: forward_addr,
+            in_amount: v4_swap_in,
+            out_currency: weth,
+            out_amount: weth_out,
+        },
+        // Capture the WETH output → executor (credits Erc20[WETH], funding the
+        // V3 flash repayment below; the difference is the profit).
+        PlanStep::V4TakeCompact {
+            currency_idx: output_idx,
+            currency_addr: weth,
+            recipient_idx: SENTINEL_SELF,
+            amount: weth_out,
+            seeds_pool: None,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    // The V3 flash callback: the V4 container, then the explicit repayment
+    // (the V3 is NOT auto-repaid — `auto_repay: false`, callback carries it).
+    let callback: Plan = vec![
+        PlanStep::V4Unlock {
+            inner: v4_inner,
+            pool_manager_idx: pm_idx,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: weth_idx,
+            token_addr: weth,
+            recipient_idx: v3_idx,
+            amount: optimal_input,
+            seeds_pool: None,
+            repays_flash: Some(a.pool_address),
+        },
+    ];
+    let plan: Plan = vec![PlanStep::FlashSwap {
+        pool_idx: v3_idx,
+        pool_addr: a.pool_address,
+        protocol: Prot::V3,
+        zfo: a.zfo,
+        fee: u16::try_from(a.fee).ok()?,
+        out_currency: forward_addr,
+        out_amount: forward_out,
+        in_currency: weth,
+        in_amount: optimal_input,
+        recipient_idx: SENTINEL_SELF,
+        auto_repay: false,
+        callback,
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v2_v4` Plan (BP7KIR Increment 3b) — the V2-flash variant of the
+/// outside→V4 seed family (2-level nesting, same shape as `v3_v4` but a V2
+/// exact-out flash wraps the `V4Unlock`). The V2 forward output enters the PM
+/// (`V4Sync` + `Erc20Transfer(forward→PM)` + `V4Settle` boundary-seed), the
+/// V4 swap runs + `V4TakeCompact(WETH→SELF)` captures, and the V2 flash is
+/// explicitly repaid `Erc20Transfer(WETH→v2, optimal_input)`.
+///
+/// Scoped slice: ERC-20 V4 input + WETH V2 input + WETH V4 output (non-native).
+#[must_use]
+pub fn build_v2v4_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V2(a), HopInfo::V4(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    let weth_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    if !fits_int128(forward_out) || !fits_int128(weth_out) {
+        return None;
+    }
+    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(v4_swap_in) {
+        return None;
+    }
+    let weth = inputs.weth_address;
+
+    let forward_addr = if a.zfo {
+        a.token1_address
+    } else {
+        a.token0_address
+    };
+    let v2_in_currency = if a.zfo {
+        a.token0_address
+    } else {
+        a.token1_address
+    };
+    if v2_in_currency != weth || forward_addr == NATIVE_CURRENCY_ADDRESS {
+        return None;
+    }
+    let v4_in_currency = if b.zfo {
+        b.currency0_address
+    } else {
+        b.currency1_address
+    };
+    let v4_out_currency = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+    if v4_in_currency != forward_addr
+        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
+        || v4_out_currency != weth
+    {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let v2_idx = at.add(a.pool_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let forward_idx = at.add(forward_addr).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let output_idx = if b.zfo { c1_b } else { c0_b };
+
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+
+    let v4_inner: Plan = vec![
+        PlanStep::V4Sync {
+            currency_idx: forward_idx,
+            currency_addr: forward_addr,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: forward_idx,
+            token_addr: forward_addr,
+            recipient_idx: pm_idx,
+            amount: forward_out,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V4Settle {
+            currency_addr: forward_addr,
+            amount: forward_out,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0_b,
+            c1_idx: c1_b,
+            fee: fee_b,
+            tick_spacing: ts_b,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: b.zfo,
+            amount: v4_swap_in,
+            in_currency: forward_addr,
+            in_amount: v4_swap_in,
+            out_currency: weth,
+            out_amount: weth_out,
+        },
+        PlanStep::V4TakeCompact {
+            currency_idx: output_idx,
+            currency_addr: weth,
+            recipient_idx: SENTINEL_SELF,
+            amount: weth_out,
+            seeds_pool: None,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    let callback: Plan = vec![
+        PlanStep::V4Unlock {
+            inner: v4_inner,
+            pool_manager_idx: pm_idx,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: weth_idx,
+            token_addr: weth,
+            recipient_idx: v2_idx,
+            amount: optimal_input,
+            seeds_pool: None,
+            repays_flash: Some(a.pool_address),
+        },
+    ];
+    let plan: Plan = vec![PlanStep::FlashSwap {
+        pool_idx: v2_idx,
+        pool_addr: a.pool_address,
+        protocol: Prot::V2,
+        zfo: a.zfo,
+        fee: a.fee,
+        out_currency: forward_addr,
+        out_amount: forward_out,
+        in_currency: weth,
+        in_amount: optimal_input,
+        recipient_idx: SENTINEL_SELF,
+        auto_repay: false,
+        callback,
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
 /// Public spike entry: derive a family's command stream from its
 /// [`ShapeClass`] (funding chosen by the leading protocol, as the D0
 /// invariant forces). Returns the raw `execute()` payload bytes.

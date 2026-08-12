@@ -313,6 +313,36 @@ fn v4v2_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Increment 3b: the `v2_v4` outside->V4 seed family (V2-flash
+/// variant) on the Plan tree — same 2-level nesting as v3_v4 but a V2
+/// exact-out flash wraps the V4Unlock. Build Plan -> byte-parity + gate +
+/// runtime exact delta.
+#[test]
+fn v2v4_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V2,
+        Prot::V4,
+        "v2_v4",
+        degenbot_executor::grammar_shape::build_v2v4_plan,
+    );
+}
+
+/// BP7KIR Increment 3b: the `v3_v4` outside->V4 seed family on the Plan
+/// tree — the deepest nesting (a V3 FlashSwap wraps a V4Unlock in its
+/// callback). The V3 forward output enters the PM (V4Sync + Erc20Transfer +
+/// V4Settle boundary-seed), the V4 swap runs, V4TakeCompact(WETH->SELF)
+/// captures, and the V3 flash is explicitly repaid from that capture. Build
+/// Plan -> byte-parity + gate + runtime exact delta.
+#[test]
+fn v3v4_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V3,
+        Prot::V4,
+        "v3_v4",
+        degenbot_executor::grammar_shape::build_v3v4_plan,
+    );
+}
+
 /// BP7KIR Increment 3b: the `v4_v3` boundary-take family on the Plan tree —
 /// the first cross-ledger family. `V4TakeCompact(cur→SELF)` is a cross-ledger
 /// move: it debits `PM[cur]` (the V4 take) AND credits the executor's
