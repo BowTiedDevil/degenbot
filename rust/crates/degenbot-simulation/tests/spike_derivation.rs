@@ -395,21 +395,20 @@ fn v2v4_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
-/// BP7KIR Increment 3c: the `v2_v4` **native-V4-input** sub-case (V2-flash
-/// variant of the unwrap-then-native-seed topology). Same correct model as
-/// v3_v4 native-input (SelfFund(tok) entry capital, WethWithdraw → native
-/// seed, V2 flash repaid in `tok`).
+/// BP7KIR Increment 3c → RFPI6H fix: the `v2_v4` **native-V4-input**
+/// sub-case — the V2-flash variant of the unwrap-then-native-seed topology.
+/// Same correct model as v3_v4 native-input (SelfFund(tok) entry capital,
+/// WethWithdraw → native seed, V2 flash repaid in `tok`). Build Plan →
+/// byte-parity + gate + runtime exact terminal `u` delta.
 ///
-/// NOTE: the byte-parity assertion is intentionally SKIPPED here — `derive_shape`'s
-/// v2_v4 native-V4-input branch repays the V2 flash with the wrong currency
-/// (`forward_idx` = WETH, not the owed `tok`) and its bytes revert on-chain with
-/// "T:ETH" (verified via probe). The Plan encodes the *correct* model (match
-/// v3_v4), so byte-parity against the broken emitter is the wrong target; this
-/// test gates the Plan's ledger trace + runs the Plan's own bytes for exact
-/// terminal delta. (The `derive_shape` bug is filed for a separate fix.)
+/// History: `derive_shape`'s v2_v4 native-V4-input branch repaid the V2 flash
+/// with the wrong currency (`forward_idx` = WETH, not the owed `tok`) and its
+/// bytes reverted on-chain with "T:ETH" (verified via probe). RFPI6H restored
+/// repayment with the V2 input currency (mirroring `derive_2hop_v3v4`), so
+/// byte-parity with the proven emitter holds once more and the runtime path
+/// executes cleanly through both pools.
 #[test]
-#[allow(unused_variables)]
-fn v2v4_native_input_plan_validates_and_executes() {
+fn v2v4_native_input_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
     use degenbot_executor::grammar_shape::{build_v2v4_plan, plan_to_bytes, plan_to_ledger_ops};
 
@@ -418,6 +417,9 @@ fn v2v4_native_input_plan_validates_and_executes() {
     let u = h.add_token().unwrap();
     let native = Address::ZERO;
     let weth = h.weth;
+
+    // Pool A (V2): tok→WETH (outputs WETH to unwrap). Pool B (V4): u↔native,
+    // src=native (native input, u output — the terminal profit).
     let r: u128 = 1_000_000_000_000;
     let p_a = HopPool::V2(h.add_pool(tok, weth, r, r * 3).unwrap());
     let p_b = HopPool::V4(
@@ -450,24 +452,39 @@ fn v2v4_native_input_plan_validates_and_executes() {
     };
     let (preamble, plan, at) = build_v2v4_plan(&path, &inputs)
         .unwrap_or_else(|| panic!("[v2_v4 native-input] build None"));
-    // Gate (the plan encodes the *correct* model — match v3_v4 — not the
-    // broken derive_shape emission).
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v2_v4 native-input] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[v2_v4 native-input] Plan bytes != proven emitter"
+    );
     let ops = plan_to_ledger_ops(&plan);
     let mut v = LedgerValidator::default();
     v.validate_full(&ops)
         .unwrap_or_else(|e| panic!("[v2_v4 native-input] Plan must validate clean: {e:?}"));
-    // Runtime: the harness's V2-flash + native-V4-input combo reverts with
-    // "T:ETH" (a pre-existing harness limitation — the proven emitter reverts
-    // identically, verified via probe; no existing test exercises this combo).
-    // The gate is the load-bearing assertion here; runtime parity is blocked on
-    // a harness V2-flash+native fix and is not asserted. The Plan's bytes are
-    // assembled for byte-level inspection.
-    let mut plan_bytes = preamble;
-    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
-    println!(
-        "── v2_v4 native-input (Plan): trace validated (gate green); runtime blocked on harness V2-flash+native fix ({} bytes)",
-        plan_bytes.len()
+    // Provision: the executor holds `tok` (SelfFund entry capital) + WETH
+    // backing (the V2 flash credits WETH to the executor during the callback,
+    // but WETH9.withdraw needs the contract to hold matching native to pay out —
+    // unlike v3_v4 whose ~1:1 reserves keep forward_out under 2×optimal_input,
+    // this V2 path's 1:3 reserve ratio pushes forward_out well above that, so
+    // back by the actual forward amount, not a fixed multiple).
+    let forward_out_amt = *hop_outputs.first().unwrap();
+    h.fund(tok, h.executor, optimal_input * 2).unwrap();
+    h.fund(weth, h.executor, forward_out_amt * 2).unwrap();
+    let u_before = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&plan_bytes, 8_000_000).unwrap();
+    assert!(
+        outcome.executed(2),
+        "[v2_v4 native-input] must execute through both pools: {outcome:?}"
     );
+    let u_after = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
+    let actual_delta = u_after - u_before;
+    let tol = (terminal as i128 / 1000).max(1);
+    assert!((actual_delta - terminal as i128).abs() <= tol,
+        "[v2_v4 native-input] terminal `u` delta {actual_delta} diverges from predicted {terminal} (tol {tol})");
+    println!("── v2_v4 native-input (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
 }
 
 /// BP7KIR Increment 3b: the `v3_v4` outside->V4 seed family on the Plan

@@ -1111,8 +1111,17 @@ fn parity_v2v4_v4_in_native() {
         &PathInfo::new(vec![
             HopInfo::V2(V2HopInfo {
                 pool_address: address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-                token0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                token1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                // token0 = USDC (the V2 INPUT — repays the flash), token1 = WETH
+                // (the V2 OUTPUT / forward — unwrapped to seed the native V4
+                // input). A real chaining topology (RFPI6H): the prior arrangement
+                // (token0=WETH, token1=USDC) made the V2 input WETH, which is the
+                // malformed guard-rejected case (forward=USDC ≠ the unwrapped
+                // WETH); swapping the legs keeps the encoding byte-identical
+                // (enc_v2_swap_compact carries no token addresses, and USDC stays
+                // slot 1) while making input≠WETH so the corrected repayment
+                // (V2 input currency) resolves cleanly.
+                token0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                token1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
                 fee: 30u16,
                 zfo: true,
             }),
@@ -1148,7 +1157,8 @@ fn parity_v2v4_v4_in_native() {
     let c0_v4_idx = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
     let c1_v4_idx = at.add(USDC).unwrap(); // 1
     let native_idx_in = at.add(Address::ZERO).unwrap(); // SENTINEL_NATIVE
-    let forward_idx = c1_v4_idx; // V2 forward token = USDC
+    let input_v2_idx = c1_v4_idx; // V2 input token = USDC (repays the flash; the
+                                  // forward/output is WETH = sentinel, unwrapped)
     let mut v4_inner = Vec::new();
     v4_inner.extend_from_slice(
         &encoders::enc_v4_swap_compact(
@@ -1172,7 +1182,7 @@ fn parity_v2v4_v4_in_native() {
     let mut callback = encoders::enc_weth_withdraw(U256::from(2_000_000_000u128));
     callback.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).unwrap());
     callback.extend_from_slice(
-        &encoders::enc_erc20_transfer(forward_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap(),
+        &encoders::enc_erc20_transfer(input_v2_idx, v2_idx, 1_000_000_000_000_000_000u128).unwrap(),
     );
     let commands = encoders::enc_v2_swap_compact(
         v2_idx,

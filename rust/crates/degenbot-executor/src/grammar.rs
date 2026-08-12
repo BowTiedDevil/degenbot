@@ -1274,8 +1274,21 @@ fn v2_v4(hop_v2: &V2HopInfo, hop_v4: &V4HopInfo, inputs: &ComposerInputs<'_>) ->
 
         let mut cb = encoders::enc_weth_withdraw(U256::from(forward_out));
         cb.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
+        // Repay the V2 flash with its INPUT currency `tok` (the V4 output
+        // token), not `forward_idx` (the V2 output = WETH). Mirrors
+        // derive_2hop_v3v4 / derive_2hop_v2v4. See RFPI6H: the prior code repaid
+        // with `forward_idx` (= WETH) and reverted on-chain with "T:ETH".
+        let input_currency_v2 = if hop_v2.zfo {
+            hop_v2.token0_address
+        } else {
+            hop_v2.token1_address
+        };
+        if input_currency_v2 == weth_address || input_currency_v2 == NATIVE_CURRENCY_ADDRESS {
+            return None;
+        }
+        let input_v2_idx = at.add(input_currency_v2).ok()?;
         cb.extend_from_slice(
-            &encoders::enc_erc20_transfer(forward_idx, v2_idx, optimal_input).ok()?,
+            &encoders::enc_erc20_transfer(input_v2_idx, v2_idx, optimal_input).ok()?,
         );
         callback_cmds = cb;
     } else {
