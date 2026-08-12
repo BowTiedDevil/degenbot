@@ -3126,3 +3126,113 @@ fn v4v4v4_erc6909_executes_with_exact_profit() {
         "v4_v4_v4 erc6909 profit {actual_profit} diverges from predicted {predicted_profit} (tol {tol})"
     );
 }
+
+/// WE45KC inc.2 runtime proof: `ProfitCapture::Native` on a WETH-terminal v4_v4
+/// path. The WETH profit is taken to custody then `WETH_WITHDRAW`n to native —
+/// the executor's native delta equals the predicted profit (and WETH delta ≈ 0,
+/// since the profit left WETH). check_mode=0 (default) skips profit
+/// verification, so native-capture executes clean without a check_mode change.
+#[test]
+fn v4v4_native_capture_executes_with_exact_native_delta() {
+    use degenbot_executor::grammar_ledger::ProfitCapture;
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let weth = h.weth;
+
+    // Pool A: WETH→t; Pool B: t→WETH (the standard v4_v4 WETH-terminal cycle).
+    let p_a = HopPool::V4(
+        h.add_v4_pool(
+            weth,
+            t,
+            3000,
+            60,
+            sqrt_x(1),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let p_b = HopPool::V4(
+        h.add_v4_pool(
+            t,
+            weth,
+            3000,
+            60,
+            sqrt_x(3),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let gas = 8_000_000;
+
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(predicted_profit > 0, "v4_v4 path should be profitable");
+
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions {
+            capture: ProfitCapture::Native,
+            ..Default::default()
+        },
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .expect("v4_v4 native-capture must derive");
+
+    // Fund the executor with the WETH seed (the input the PM consumes).
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+    let weth_before = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let native_before = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&derived, gas).unwrap();
+    assert!(
+        outcome.executed(2),
+        "v4_v4 native-capture must execute through both V4 pools: {:?}",
+        outcome
+    );
+    let weth_after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let native_after = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let weth_delta = weth_after - weth_before;
+    let native_delta = native_after - native_before;
+
+    // Native capture: the profit landed as native ETH.
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!(
+        native_delta > 0,
+        "v4_v4 native-capture should gain native, got delta {native_delta}"
+    );
+    assert!(
+        (native_delta - predicted_profit).abs() <= tol,
+        "v4_v4 native-capture native delta {native_delta} diverges from predicted {predicted_profit} (tol {tol})"
+    );
+    // The WETH profit was withdrawn — WETH delta should be ~0 (the seed returned,
+    // the profit left WETH). Allow a small tolerance for 1-wei rounding.
+    assert!(
+        weth_delta.abs() <= tol,
+        "v4_v4 native-capture WETH delta should be ~0 (profit withdrawn), got {weth_delta}"
+    );
+    println!(
+        "── v4_v4 native-capture (runtime): executed, native_delta={native_delta}, weth_delta={weth_delta}, predicted={predicted_profit}"
+    );
+}
