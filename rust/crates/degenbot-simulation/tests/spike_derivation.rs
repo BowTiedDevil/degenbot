@@ -49,7 +49,7 @@ fn pool_for(h: &mut Harness, p: Prot, src: Address, dst: Address, mult: u64) -> 
     match p {
         Prot::V2 => {
             let r: u128 = 1_000_000_000_000;
-            HopPool::V2(h.add_pool(src, dst, r, r * mult as u128).unwrap())
+            HopPool::V2(h.add_pool(src, dst, r, r * u128::from(mult)).unwrap())
         }
         Prot::V3 => HopPool::V3(
             h.add_v3_pool(
@@ -1170,8 +1170,7 @@ fn native_v4v4_derived_executes_with_exact_native_delta() {
     let outcome = h.execute_payload(&derived, gas).unwrap();
     assert!(
         outcome.executed(2),
-        "native v4_v4 must execute through both V4 pools: {:?}",
-        outcome
+        "native v4_v4 must execute through both V4 pools: {outcome:?}"
     );
     let after = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
     let actual_delta = after - before;
@@ -1257,8 +1256,7 @@ fn native_wrap_v4_v2_executes_with_terminal_delta() {
     let outcome = h.execute_payload(&derived, gas).unwrap();
     assert!(
         outcome.executed(2),
-        "wrap v4_v2 must execute through both pools: {:?}",
-        outcome
+        "wrap v4_v2 must execute through both pools: {outcome:?}"
     );
     let t_after = h.balance_of(t, h.executor).unwrap().to::<u128>() as i128;
     let t_delta = t_after - t_before;
@@ -1351,8 +1349,7 @@ fn native_unwrap_v3_v4_executes_with_terminal_delta() {
     let outcome = h.execute_payload(&derived, gas).unwrap();
     assert!(
         outcome.executed(2),
-        "unwrap v3_v4 must execute through both pools: {:?}",
-        outcome
+        "unwrap v3_v4 must execute through both pools: {outcome:?}"
     );
     let u_after = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
     let u_delta = u_after - u_before;
@@ -1434,8 +1431,7 @@ fn native_v4v4_unwrap_bridge_executes_with_terminal_delta() {
     let outcome = h.execute_payload(&derived, gas).unwrap();
     assert!(
         outcome.executed(2),
-        "unwrap-bridge v4_v4 must execute through both pools: {:?}",
-        outcome
+        "unwrap-bridge v4_v4 must execute through both pools: {outcome:?}"
     );
     let u_after = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
     let u_delta = u_after - u_before;
@@ -3062,8 +3058,7 @@ fn v4v4_erc6909_executes_with_exact_profit() {
         .unwrap_or_else(|e| panic!("run v4_v4 erc6909: {e}"));
     assert!(
         outcome.executed(2),
-        "v4_v4 erc6909 must execute: {:?}",
-        outcome
+        "v4_v4 erc6909 must execute: {outcome:?}"
     );
     let after = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
     let actual_profit = after - before;
@@ -3111,8 +3106,7 @@ fn v4v4v4_erc6909_executes_with_exact_profit() {
         .unwrap_or_else(|e| panic!("run v4_v4_v4 erc6909: {e}"));
     assert!(
         outcome.executed(3),
-        "v4_v4_v4 erc6909 must execute: {:?}",
-        outcome
+        "v4_v4_v4 erc6909 must execute: {outcome:?}"
     );
     let after = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
     let actual_profit = after - before;
@@ -3208,8 +3202,7 @@ fn v4v4_native_capture_executes_with_exact_native_delta() {
     let outcome = h.execute_payload(&derived, gas).unwrap();
     assert!(
         outcome.executed(2),
-        "v4_v4 native-capture must execute through both V4 pools: {:?}",
-        outcome
+        "v4_v4 native-capture must execute through both V4 pools: {outcome:?}"
     );
     let weth_after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
     let native_after = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
@@ -3330,8 +3323,7 @@ fn v4v4v4_native_capture_executes_with_exact_native_delta() {
     let outcome = h.execute_payload(&derived, gas).unwrap();
     assert!(
         outcome.executed(3),
-        "v4_v4_v4 native-capture must execute through all three V4 pools: {:?}",
-        outcome
+        "v4_v4_v4 native-capture must execute through all three V4 pools: {outcome:?}"
     );
     let weth_after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
     let native_after = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
@@ -3440,5 +3432,217 @@ fn v4v4v4_native_capture_tok_terminal_declines() {
     assert!(
         degenbot_executor::grammar_shape::derive_shape(&path, &inputs).is_none(),
         "v4_v4_v4 native-capture on a tok terminal must decline"
+    );
+}
+
+/// WE45KC runtime (funding): `FundingSource::SelfFund` on an all-V2 2-hop path.
+/// The economic knob is now load-bearing: self-fund PRE-FUNDS the leading V2
+/// pair with the entry WETH and uses `V2_SWAP_CALC` for every hop (no flash
+/// callback, no flash-repay) — gas-cheaper than the default in-path-flash
+/// (V2_SWAP_COMPACT + callback repay). The bytes DIFFER from InPathFlash.
+///
+/// Executor WETH delta = -optimal_input (pre-fund) + weth_out (terminal) =
+/// weth_out - optimal_input = profit (same net as flash, but no callback
+/// overhead — the gas saving is the economic point of ADR-029 D1).
+#[test]
+fn all_v2_self_fund_executes_with_exact_delta_and_differs_from_flash() {
+    use degenbot_executor::grammar_ledger::FundingSource;
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let weth = h.weth;
+
+    let r: u128 = 1_000_000_000_000;
+    let p_a = HopPool::V2(h.add_pool(weth, t, r, r * 3).unwrap());
+    let p_b = HopPool::V2(h.add_pool(t, weth, r, r * 3).unwrap());
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(predicted_profit > 0, "v2_v2 path should be profitable");
+
+    // Self-fund bytes must differ from the default (in-path-flash).
+    let self_fund = h
+        .encode_path_with_opts(
+            &path,
+            optimal_input,
+            &hop_outputs,
+            EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("self-fund all-V2 must encode");
+    let flash = h
+        .encode_path_with_opts(&path, optimal_input, &hop_outputs, EncodeOptions::default())
+        .expect("flash all-V2 must encode");
+    assert_ne!(
+        self_fund, flash,
+        "SelfFund and InPathFlash must produce DIFFERENT bytes (the knob is load-bearing)"
+    );
+
+    // Fund the executor with the entry WETH (self-fund precondition).
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+    let before = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&self_fund, 8_000_000).unwrap();
+    assert!(
+        outcome.executed(2),
+        "self-fund v2_v2 must execute through both pools: {outcome:?}"
+    );
+    let after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let delta = after - before;
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!(
+        (delta - predicted_profit).abs() <= tol,
+        "self-fund v2_v2 delta {delta} diverges from predicted {predicted_profit} (tol {tol})"
+    );
+    println!(
+        "── all_v2 self-fund (runtime): executed, delta={delta}, predicted={predicted_profit}"
+    );
+}
+
+/// WE45KC: builder bribe via `config` (ADR-029 D1 / Q3). The first bribe matrix
+/// row — closes the "no bribe tests exist" gap. An in-path-flash all-V2 path
+/// ends with `profit` WETH at the executor. With `check_mode=0` (no on-chain
+/// profit check) + `bribe_bips=500` (5%) + `recipient_idx=0` (block.coinbase),
+/// the executor's slow path computes `profit = combined_after - expected_value`
+/// (= profit, since expected_value=0 and the flash path starts at ~0) and pays
+/// `profit/20` to the builder, withdrawing WETH to cover. So the executor's
+/// WETH delta = `profit - bribe = 19*profit/20` — vs `profit` with no bribe.
+#[test]
+fn all_v2_in_path_flash_pays_builder_bribe_from_profit() {
+    use degenbot_executor::encoders::pack_config;
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let weth = h.weth;
+
+    let r: u128 = 1_000_000_000_000;
+    let p_a = HopPool::V2(h.add_pool(weth, t, r, r * 3).unwrap());
+    let p_b = HopPool::V2(h.add_pool(t, weth, r, r * 3).unwrap());
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(predicted_profit > 0, "path should be profitable");
+
+    // Encode the in-path-flash (default) stream.
+    let payload = h
+        .encode_path_with_opts(&path, optimal_input, &hop_outputs, EncodeOptions::default())
+        .expect("flash all-V2 must encode");
+
+    // --- No-bribe baseline: WETH delta = profit. ---
+    // Fund nothing (flash path starts at ~0); record WETH before/after.
+    let weth_before_nobribe = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let outcome_nobribe = h.execute_payload(&payload, 8_000_000).unwrap();
+    assert!(
+        outcome_nobribe.executed(2),
+        "no-bribe baseline must execute: {outcome_nobribe:?}"
+    );
+    let weth_after_nobribe = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let delta_nobribe = weth_after_nobribe - weth_before_nobribe;
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!(
+        (delta_nobribe - predicted_profit).abs() <= tol,
+        "no-bribe WETH delta {delta_nobribe} != predicted {predicted_profit} (tol {tol})"
+    );
+
+    // --- 5% bribe: WETH delta = profit - bribe = 19*profit/20. ---
+    // Re Fund/Re-run: rebuild the same harness state by re-funding pools is not
+    // needed — revm state persists across calls, but the flash path leaves the
+    // executor holding `profit` WETH. To re-measure cleanly, deploy a fresh
+    // harness with the SAME pool reserves so predicted_profit holds.
+    let mut h2 = Harness::new().unwrap();
+    let t2 = h2.add_token().unwrap();
+    let weth2 = h2.weth;
+    let p_a2 = HopPool::V2(h2.add_pool(weth2, t2, r, r * 3).unwrap());
+    let p_b2 = HopPool::V2(h2.add_pool(t2, weth2, r, r * 3).unwrap());
+    let hops2 = vec![
+        Hop {
+            src: weth2,
+            dst: t2,
+            pool: p_a2,
+        },
+        Hop {
+            src: t2,
+            dst: weth2,
+            pool: p_b2,
+        },
+    ];
+    let (path2, hop_outputs2, _consumed2) = h2.path_and_amounts(&hops2, optimal_input);
+    let payload2 = h2
+        .encode_path_with_opts(
+            &path2,
+            optimal_input,
+            &hop_outputs2,
+            EncodeOptions::default(),
+        )
+        .expect("flash all-V2 must encode");
+
+    // Sanity: config IS reaching the contract — bribe_recipient_idx=200
+    // (out of range, < 32 asserted) must revert. Construct directly.
+    let bad = (U256::from(500u64) << 8) | (U256::from(200u64) << 24);
+    let bad_outcome = h2
+        .execute_payload_config(&payload2, 8_000_000, bad)
+        .unwrap();
+    assert!(
+        !bad_outcome.executed(2),
+        "recipient_idx=200 must revert (proves config passes): {bad_outcome:?}"
+    );
+
+    // check_mode=0, expected_value=0, bribe_bips=500 (5%), recipient=0 (coinbase).
+    // Fund WETH with ETH so the executor's `WETH.withdraw` (inside the bribe
+    // path) can convert profit WETH to the ETH needed for the coinbase payment.
+    // In production WETH9 is heavily backed by deposits; the fixture starts empty.
+    h2.set_native_balance(weth2, U256::from(1_000_000_000_000_000_000u128));
+    let config = pack_config(0, U256::ZERO, 500, 0).expect("pack_config bribe");
+    let weth_before_bribe = h2.balance_of(weth2, h2.executor).unwrap().to::<u128>() as i128;
+    let _eth_before = h2.native_balance_of(h2.executor).unwrap().to::<u128>() as i128;
+    let outcome_bribe = h2
+        .execute_payload_config(&payload2, 8_000_000, config)
+        .unwrap();
+    let weth_after_bribe = h2.balance_of(weth2, h2.executor).unwrap().to::<u128>() as i128;
+    assert!(
+        outcome_bribe.executed(2),
+        "bribe path must execute: {outcome_bribe:?}"
+    );
+    let delta_bribe = weth_after_bribe - weth_before_bribe;
+
+    // The bribe is bips * profit / 10000 = 500*profit/10000 = profit/20.
+    let bribe = predicted_profit / 20;
+    let expected_after_bribe = predicted_profit - bribe;
+    assert!(
+        (delta_bribe - expected_after_bribe).abs() <= tol,
+        "bribe WETH delta {delta_bribe} != profit-bribe {expected_after_bribe} (predicted={predicted_profit}, bribe={bribe}, tol {tol})"
+    );
+    // And strictly less than the no-bribe delta (the bribe was actually paid).
+    assert!(
+        delta_bribe < delta_nobribe,
+        "bribe path must leave less WETH than no-bribe ({delta_bribe} < {delta_nobribe})"
+    );
+    println!(
+        "── all_v2 bribe (runtime): no-bribe delta={delta_nobribe}, bribe delta={delta_bribe}, bribe paid~= {bribe}"
     );
 }

@@ -855,7 +855,7 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                         .expect("V4 take compact amount in range"),
                 ),
                 PlanStep::V4SettleDelta { currency_idx, .. } => {
-                    out.extend_from_slice(&encoders::enc_v4_settle_delta(*currency_idx))
+                    out.extend_from_slice(&encoders::enc_v4_settle_delta(*currency_idx));
                 }
                 PlanStep::V4Sync { currency_idx, .. } => {
                     out.extend_from_slice(&encoders::enc_v4_sync(*currency_idx));
@@ -2106,7 +2106,7 @@ pub fn build_v3v4_plan(
 
 /// `v3_v4` ERC-20 V4 input — the forward-seed topology (3b). V3 outputs an
 /// ERC-20 `forward` that enters the PM; V3 input is WETH.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn build_v3v4_erc20_input_plan(
     a: &V3HopInfo,
     b: &V4HopInfo,
@@ -2231,7 +2231,7 @@ fn build_v3v4_erc20_input_plan(
 /// forward (an ERC-20) seeds the V4 input. Profit = native captured − WETH
 /// spent. SelfFund is byte-neutral, so byte-parity with the proven emitter
 /// (which has no self-fund byte — the executor just holds the balance) holds.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn build_v3v4_native_output_plan(
     a: &V3HopInfo,
     b: &V4HopInfo,
@@ -2363,7 +2363,7 @@ fn build_v3v4_native_output_plan(
 /// outputs WETH (forward = weth, unwrapped to native to seed the V4 input);
 /// V3 input is an ERC-20 `tok` (entry capital, SelfFund). This is the
 /// SelfFund funding source surfacing in a V4-involving path.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn build_v3v4_native_input_plan(
     a: &V3HopInfo,
     b: &V4HopInfo,
@@ -2688,7 +2688,7 @@ fn build_v2v4_erc20_input_plan(
 /// repaid from that WETH — the profit remains in WETH (weth_out − optimal_input),
 /// no SelfFund. (v3_v4 leaves profit as native + SelfFunds WETH; v2_v4 wraps.)
 /// Byte-parity with the proven emitter (which emits the WethDeposit).
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn build_v2v4_native_output_plan(
     a: &V2HopInfo,
     b: &V4HopInfo,
@@ -2816,7 +2816,7 @@ fn build_v2v4_native_output_plan(
 /// `v2_v4` native V4 input (3c) — the unwrap-then-native-seed topology (V2
 /// flash variant). V2 outputs WETH (unwrapped → native); V2 input is `tok`
 /// (SelfFund entry capital); the native seeds the V4 input.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn build_v2v4_native_input_plan(
     a: &V2HopInfo,
     b: &V4HopInfo,
@@ -4017,7 +4017,7 @@ fn derive_3hop_v4v4v4(
     use crate::composers::{emit_currency_bridge, CurrencyBridge};
 
     let optimal_input = inputs.optimal_input;
-    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_a = *inputs.hop_outputs.first()?;
     let out_b = *inputs.hop_outputs.get(1)?;
     let out_c = *inputs.hop_outputs.get(2)?;
     if out_a == 0 || out_b == 0 || out_c == 0 {
@@ -4335,7 +4335,7 @@ fn derive_3hop_v2v3v4(
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
-    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_a = *inputs.hop_outputs.first()?;
     let out_c = *inputs.hop_outputs.get(2)?;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -5113,7 +5113,7 @@ fn derive_3hop_v4v2v3(
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
-    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_a = *inputs.hop_outputs.first()?;
     if inputs.hop_outputs.contains(&0) {
         return None;
     }
@@ -5184,7 +5184,7 @@ fn derive_3hop_v4v2v4(
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
-    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_a = *inputs.hop_outputs.first()?;
     if inputs.hop_outputs.contains(&0) {
         return None;
     }
@@ -5258,7 +5258,7 @@ fn derive_3hop_v4v3v2(
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
-    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_a = *inputs.hop_outputs.first()?;
     if inputs.hop_outputs.contains(&0) {
         return None;
     }
@@ -5330,7 +5330,7 @@ fn derive_3hop_v4v3v3(
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
-    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_a = *inputs.hop_outputs.first()?;
     if inputs.hop_outputs.contains(&0) {
         return None;
     }
@@ -5392,7 +5392,7 @@ fn derive_3hop_v4v3v4(
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
-    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_a = *inputs.hop_outputs.first()?;
     if inputs.hop_outputs.contains(&0) {
         return None;
     }

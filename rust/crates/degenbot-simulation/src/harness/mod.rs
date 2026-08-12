@@ -43,7 +43,7 @@ use revm::{ExecuteCommitEvm, ExecuteEvm};
 use std::path::PathBuf;
 
 use crate::oracle::{
-    call_bytes, decode_error_string, deploy, native_balance_of, new_fixture_evm, selector,
+    call_bytes, decode_error_string, deploy, native_balance_of, new_fixture_evm,
     set_code_size_limits, set_disable_nonce_check, set_native_balance, set_tx_gas_limit_cap,
     transact, FixtureEvm, TxSpec, Verdict,
 };
@@ -568,6 +568,23 @@ impl Harness {
         optimal_input: u128,
         hop_outputs: &[u128],
     ) -> Result<Vec<u8>, String> {
+        self.encode_path_with_opts(
+            path,
+            optimal_input,
+            hop_outputs,
+            degenbot_executor::composers::EncodeOptions::default(),
+        )
+    }
+
+    /// Encode a path with explicit [`EncodeOptions`] (WE45KC runtime axis proof
+    /// — funding source / profit capture / bribe).
+    pub fn encode_path_with_opts(
+        &self,
+        path: &degenbot_executor::composers::PathInfo,
+        optimal_input: u128,
+        hop_outputs: &[u128],
+        opts: degenbot_executor::composers::EncodeOptions,
+    ) -> Result<Vec<u8>, String> {
         let n = path.hops.len();
         let consumed: Vec<u128> = std::iter::once(optimal_input)
             .chain(hop_outputs.iter().copied())
@@ -581,7 +598,7 @@ impl Harness {
             self.executor,
             self.pool_manager,
             self.weth,
-            degenbot_executor::composers::EncodeOptions::default(),
+            opts,
         )
         .ok_or_else(|| "encode_cmd_stream returned None".to_string())
     }
@@ -653,23 +670,37 @@ fn pm_balance_of_data(account: Address, currency: Address) -> Vec<u8> {
     out
 }
 /// The `execute(bytes,uint256)` call: selector + (bytes, config=0) ABI encoding.
+#[must_use]
 pub fn execute_data(payload: &[u8]) -> Bytes {
     execute_data_config(payload, U256::ZERO)
 }
 /// The `execute(bytes,uint256)` call: selector + (bytes, config) ABI encoding,
 /// where `config` is the packed execute config (check_mode/bribe/expected_value).
+///
+/// Delegates to the production [`degenbot_executor::composers::encode_execute_call`]
+/// (the §YQORTM leaf, uses the proper `encode_rust` ABI encoder) so the config
+/// lands in head\[1\] — NOT hand-rolled. The prior hand-rolled encoding wrote
+/// `config` at the END of the calldata (after the bytes tail), so the contract
+/// read `config = payload.len()` (a silent no-op config); the bug was latent
+/// because the erc6909 capture mint is in the command stream (not config-gated)
+/// and `check_mode=2`'s verification is skipped when `expected_value=0`. The
+/// first test requiring the config to reach the contract (WE45KC bribe) exposed
+/// it.
+#[must_use]
 pub fn execute_data_config(payload: &[u8], config: U256) -> Bytes {
-    let mut out = Vec::with_capacity(4 + 96 + payload.len().next_multiple_of(32));
-    out.extend_from_slice(selector("execute(bytes,uint256)").as_slice());
-    out.extend_from_slice(&U256::from(0x20u64).to_be_bytes::<32>()); // bytes offset
-    out.extend_from_slice(&U256::from(payload.len()).to_be_bytes::<32>()); // length
-    out.extend_from_slice(payload);
-    let rem = payload.len() % 32;
-    if rem != 0 {
-        out.extend(std::iter::repeat_n(0u8, 32 - rem));
+    // encode_execute_call returns EncodedCall { to, data, value }; the calldata
+    // is `data` (selector + ABI-encoded (bytes, uint256)). `to`/`value` are the
+    // caller's concern (execute_payload_config transacts to self.executor).
+    let executor = Address::ZERO; // unused (data only); the caller sets the target.
+    match degenbot_executor::composers::encode_execute_call(executor, payload, config) {
+        Ok(call) => Bytes::from(call.data),
+        Err(e) => {
+            // Should not happen with valid inputs; fall back to an empty payload
+            // so the transact surfaces a clear contract revert rather than a panic.
+            let _ = e;
+            Bytes::new()
+        }
     }
-    out.extend_from_slice(&config.to_be_bytes::<32>()); // config
-    Bytes::from(out)
 }
 
 fn pad32(a: Address) -> [u8; 32] {

@@ -74,7 +74,7 @@ fn pool_for(
     match p {
         Prot::V2 => {
             let r: u128 = 1_000_000_000_000;
-            HopPool::V2(h.add_pool(src, dst, r, r * mult as u128).unwrap())
+            HopPool::V2(h.add_pool(src, dst, r, r * u128::from(mult)).unwrap())
         }
         Prot::V3 => HopPool::V3(
             h.add_v3_pool(
@@ -224,8 +224,8 @@ fn matrix_covers_full_reachable_grammar() {
 
     let unexpected: Vec<String> = covered
         .iter()
-        .map(|s| s.to_string())
-        .filter(|n| !reachable.contains(n))
+        .filter(|&n| !reachable.contains(n))
+        .cloned()
         .collect();
     assert!(
         unexpected.is_empty(),
@@ -267,8 +267,7 @@ fn unprofitable_chain_is_rejected() {
     assert!(result.outcome.executed(2), "still touches both pools");
     assert!(
         result.actual_weth_delta < 0,
-        "must actually lose: {:?}",
-        result
+        "must actually lose: {result:?}"
     );
     assert_profitable(&result, 2, "unprofitable");
 }

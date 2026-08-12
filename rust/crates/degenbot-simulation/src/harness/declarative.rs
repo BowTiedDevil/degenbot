@@ -317,8 +317,7 @@ pub fn assert_profitable(result: &ChainResult, expected_swaps: usize, label: &st
     );
     assert!(
         result.actual_weth_delta > 0,
-        "[{label}] expected a profitable (positive) WETH delta, got {:?}",
-        result
+        "[{label}] expected a profitable (positive) WETH delta, got {result:?}"
     );
     // Tolerance: 0.1% of the predicted magnitude, floored at 64 wei — plenty to
     // absorb ±1-wei-per-hop rounding without masking a real mis-encoding.

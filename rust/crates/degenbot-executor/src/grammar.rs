@@ -81,6 +81,33 @@ fn all_v2_walk(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> 
     };
     let weth_idx = at.add(weth_addr).ok()?;
 
+    // WE45KC: FundingSource::SelfFund — the executor HOLDS the entry WETH and
+    // pre-funds the leading V2 pair, then every hop is a no-callback
+    // `V2_SWAP_CALC` (gas-cheaper: no flash-callback overhead, no flash-repay
+    // transfer — the economic point of ADR-029 D1). Bytes DIFFER from the
+    // default in-path-flash (`V2_SWAP_COMPACT` + callback repay).
+    if inputs.opts.funding == crate::grammar_ledger::FundingSource::SelfFund {
+        let mut commands =
+            encoders::enc_erc20_transfer(weth_idx, pool_indices[0], inputs.optimal_input).ok()?;
+        for i in 0..num_hops {
+            let hop = v2_hops[i];
+            let recipient_idx = if i < num_hops - 1 {
+                pool_indices[i + 1]
+            } else {
+                SENTINEL_SELF
+            };
+            commands.extend_from_slice(&encoders::enc_v2_swap_calc(
+                pool_indices[i],
+                hop.zfo,
+                recipient_idx,
+                hop.fee,
+            ));
+        }
+        let mut out = encoders::enc_preamble(&at);
+        out.extend_from_slice(&commands);
+        return Some(out);
+    }
+
     let mut callback =
         encoders::enc_erc20_transfer(forward_idx, pool_indices[1], inputs.hop_outputs[0]).ok()?;
     for i in 1..num_hops {

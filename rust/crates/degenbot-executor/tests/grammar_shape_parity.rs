@@ -723,3 +723,54 @@ fn no_backstop_broad_family_sweep_across_modes() {
         assert_no_backstop(hops, 100_000);
     }
 }
+
+// ── WE45KC: FundingSource::SelfFund on all-V2 (ADR-029 D1) ───────────────
+// The funding axis is load-bearing for all-V2: SelfFund pre-funds the leading
+// V2 pair + uses V2_SWAP_CALC for every hop (no V2_SWAP_COMPACT flash
+// callback). Locks the byte-structure invariant.
+
+#[test]
+fn all_v2_self_fund_has_no_flash_compact_and_pre_funds_v2a() {
+    use degenbot_executor::composers::config_for_options;
+    use degenbot_executor::grammar::encode_all_v2;
+    use degenbot_executor::grammar_ledger::FundingSource;
+
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let path = PathInfo::new(vec![
+        v2_pair(weth(), t, true, 30),
+        v2_pair(t, weth(), true, 30),
+    ]);
+    let outs: Vec<u128> = vec![1_100_000, 1_200_000];
+    let consumed: Vec<u128> = vec![1_000_000, 1_100_000];
+    let inputs = ComposerInputs {
+        executor_address: executor(),
+        pool_manager_address: pm(),
+        weth_address: weth(),
+        optimal_input: 1_000_000,
+        hop_outputs: &outs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions {
+            funding: FundingSource::SelfFund,
+            ..Default::default()
+        },
+    };
+    let bytes = encode_all_v2(&path, &inputs).expect("self-fund all-V2 must encode");
+
+    // No V2_SWAP_COMPACT (0x20) — the flash-callback opcode is absent.
+    assert!(
+        !bytes.contains(&0x20),
+        "SelfFund must not emit V2_SWAP_COMPACT (flash callback); got {bytes:?}"
+    );
+    // The default (InPathFlash) DOES emit V2_SWAP_COMPACT.
+    let flash_inputs = ComposerInputs {
+        opts: EncodeOptions::default(),
+        ..inputs
+    };
+    let flash = encode_all_v2(&path, &flash_inputs).expect("flash all-V2 must encode");
+    assert!(
+        flash.contains(&0x20),
+        "InPathFlash must emit V2_SWAP_COMPACT"
+    );
+    assert_ne!(bytes, flash, "SelfFund and InPathFlash bytes must differ");
+    let _ = config_for_options; // suppress unused import
+}
