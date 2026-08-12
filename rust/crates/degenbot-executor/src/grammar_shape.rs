@@ -390,6 +390,20 @@ pub enum PlanStep {
     },
     /// `V4_SETTLE_ALL` — auto-settle every touched PM currency to 0.
     V4SettleAll,
+    /// `V4_TAKE_COMPACT(cur→rcp, amount)` — take a specific `amount` of `cur`'s
+    /// PM credit to `rcp` (the boundary-take: V4 output leaves the PM to feed
+    /// a V2/V3 hop or to capture profit). Debits PM (D0 credit-before-debit).
+    V4TakeCompact {
+        currency_idx: u8,
+        currency_addr: Address,
+        recipient_idx: u8,
+        amount: u128,
+    },
+    /// `V4_SETTLE_DELTA(cur)` — auto-settle one currency's PM delta to 0.
+    V4SettleDelta {
+        currency_idx: u8,
+        currency_addr: Address,
+    },
 }
 
 /// A Plan = an ordered list of steps. Depth-first walk = execution order.
@@ -523,6 +537,25 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                 PlanStep::V4SettleAll => {
                     ops.push(LedgerOp::V4SettleAll);
                 }
+                PlanStep::V4TakeCompact {
+                    currency_addr,
+                    amount,
+                    recipient_idx,
+                    ..
+                } => {
+                    ops.push(LedgerOp::Take {
+                        currency: *currency_addr,
+                        amount: *amount,
+                    });
+                    // The take's recipient (SELF/V2 pool/V3 pool) is tracked
+                    // by the byte encoder; the validator only models PM debit.
+                    let _ = recipient_idx;
+                }
+                PlanStep::V4SettleDelta { currency_addr, .. } => {
+                    ops.push(LedgerOp::V4SettleDelta {
+                        currency: *currency_addr,
+                    });
+                }
             }
         }
     }
@@ -639,6 +672,18 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                 } => out
                     .extend_from_slice(&encoders::enc_v4_take_delta(*currency_idx, *recipient_idx)),
                 PlanStep::V4SettleAll => out.extend_from_slice(&encoders::enc_v4_settle_all()),
+                PlanStep::V4TakeCompact {
+                    currency_idx,
+                    recipient_idx,
+                    amount,
+                    ..
+                } => out.extend_from_slice(
+                    &encoders::enc_v4_take_compact(*currency_idx, *recipient_idx, *amount)
+                        .expect("V4 take compact amount in range"),
+                ),
+                PlanStep::V4SettleDelta { currency_idx, .. } => {
+                    out.extend_from_slice(&encoders::enc_v4_settle_delta(*currency_idx))
+                }
             }
         }
     }
