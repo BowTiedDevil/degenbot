@@ -394,3 +394,18 @@ fn v4_middle_v2_parity() {
         100_000,
     );
 }
+
+/// V4-middle with V3 tail: v2_v4_v3.
+#[test]
+fn v4_middle_v2_v3_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    run_family(
+        vec![
+            v2_pair(weth(), t, true, 30),
+            v4_pair(t, u, true),
+            v3_pool(u, weth(), true),
+        ],
+        100_000,
+    );
+}
