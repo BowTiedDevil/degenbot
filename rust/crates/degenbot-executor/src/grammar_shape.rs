@@ -279,6 +279,259 @@ fn derive_2hop(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Plan tree — the primary grammar artifact (ADR-029 D4, mechanism (iii), `BP7KIR`).
+// A family's ledger decisions authored as an execution-ordered, callback-nested
+// tree. Two consumers derive from the SAME Plan: the encoder (`Plan→Vec<u8>`)
+// and the validator (`Plan→LedgerOp`, depth-first = execution order). One
+// representation, no drift, no reordering, no per-family trace duplication.
+//
+// Checkpoint 1 (`BP7KIR`): Step set scoped to the `v2_v3` (InPathFlash) family
+// — `FlashSwap` (V2/V3, carries its callback subtree) + `Erc20Transfer`. The
+// remaining Step variants (V4Unlock, V4Swap, V4Take, V4Sync/Settle, V2SwapCalc,
+// WethDeposit/Withdraw, V4Batch/Mint, …) land incrementally as families fold.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A single node of the execution-ordered, callback-nested command Plan. The
+/// nesting IS execution order: a `FlashSwap`'s `callback` fires when the swap
+/// runs (depth-first); a `V4Unlock`'s `inner` runs in the unlock callback.
+///
+/// Each leaf carries BOTH the resolved address-table index (for the byte
+/// encoder) and the currency/pool address (for the `LedgerOp` projection) —
+/// Checkpoint 1 keeps this minimal; a later refactor may separate
+/// address-collection from emission if it clarifies (see `BP7KIR` body).
+#[derive(Clone, Debug)]
+pub enum PlanStep {
+    /// A V2 or V3 `*_SWAP_COMPACT` flash — the pool credits `out_currency` to
+    /// the executor and is owed `in_currency` within `callback` (the bytes the
+    /// flash's callback payload carries, fired when the swap runs).
+    FlashSwap {
+        pool_idx: u8,
+        pool_addr: Address,
+        protocol: Prot,
+        zfo: bool,
+        fee: u16,
+        out_currency: Address,
+        out_amount: u128,
+        in_currency: Address,
+        in_amount: u128,
+        recipient_idx: u8,
+        callback: Plan,
+    },
+    /// An `ERC20_TRANSFER(token→recipient, amount)` from the executor. Doubles
+    /// as flash-repayment and pair-seed by recipient role (DS4OQD finding 5).
+    Erc20Transfer {
+        token_idx: u8,
+        token_addr: Address,
+        recipient_idx: u8,
+        amount: u128,
+    },
+}
+
+/// A Plan = an ordered list of steps. Depth-first walk = execution order.
+pub type Plan = Vec<PlanStep>;
+
+/// Project a `Plan` to its `LedgerOp` trace (depth-first; a `FlashSwap`
+/// emits its flash credit/debt term, then recurses into its callback). This is
+/// the validator's input — decoupled from byte layout (ADR-029 D5).
+#[must_use]
+pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
+    let mut ops = Vec::new();
+    fn walk(plan: &Plan, ops: &mut Vec<LedgerOp>) {
+        for step in plan {
+            match step {
+                PlanStep::FlashSwap {
+                    protocol,
+                    out_currency,
+                    out_amount,
+                    in_currency,
+                    in_amount,
+                    callback,
+                    ..
+                } => {
+                    let flash = match protocol {
+                        Prot::V2 => LedgerOp::V2Flash {
+                            out_currency: *out_currency,
+                            out_amount: *out_amount,
+                            in_currency: *in_currency,
+                            in_amount: *in_amount,
+                        },
+                        Prot::V3 => LedgerOp::V3Flash {
+                            out_currency: *out_currency,
+                            out_amount: *out_amount,
+                            in_currency: *in_currency,
+                            in_amount: *in_amount,
+                        },
+                        Prot::V4 => unreachable!("V4 flash is not a FlashSwap (V4 has no flash); V4Unlock lands in a later increment"),
+                    };
+                    ops.push(flash);
+                    walk(callback, ops);
+                }
+                PlanStep::Erc20Transfer {
+                    token_addr, amount, ..
+                } => {
+                    ops.push(LedgerOp::Erc20Transfer {
+                        currency: *token_addr,
+                        amount: *amount,
+                    });
+                }
+            }
+        }
+    }
+    walk(plan, &mut ops);
+    ops
+}
+
+/// Encode a `Plan` to the `execute()` byte stream (depth-first; a `FlashSwap`
+/// wraps its callback's bytes as the swap's callback payload). Mirrors the
+/// proven hand-written emitter's `enc_*` calls — byte-parity with it is the
+/// guard that this Plan-derived encoder reproduces the exact proven bytes.
+#[must_use]
+pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
+    let mut out = Vec::new();
+    fn walk(plan: &Plan, at: &AddressTable, out: &mut Vec<u8>) {
+        for step in plan {
+            match step {
+                PlanStep::FlashSwap {
+                    pool_idx,
+                    protocol,
+                    zfo,
+                    fee,
+                    out_amount,
+                    in_amount,
+                    recipient_idx,
+                    callback,
+                    ..
+                } => {
+                    let cb = plan_to_bytes(callback, at);
+                    match protocol {
+                        Prot::V2 => out.extend_from_slice(
+                            &encoders::enc_v2_swap_compact(
+                                *pool_idx,
+                                *zfo,
+                                *out_amount,
+                                *recipient_idx,
+                                *fee,
+                                &cb,
+                            )
+                            .expect("V2 swap compact args in range"),
+                        ),
+                        Prot::V3 => out.extend_from_slice(
+                            &encoders::enc_v3_swap_compact(
+                                *pool_idx,
+                                *zfo,
+                                *in_amount,
+                                *recipient_idx,
+                                &cb,
+                            )
+                            .expect("V3 swap compact args in range"),
+                        ),
+                        Prot::V4 => unreachable!("V4 flash is not a FlashSwap"),
+                    }
+                }
+                PlanStep::Erc20Transfer {
+                    token_idx,
+                    recipient_idx,
+                    amount,
+                    ..
+                } => out.extend_from_slice(
+                    &encoders::enc_erc20_transfer(*token_idx, *recipient_idx, *amount)
+                        .expect("ERC20 transfer amount in range"),
+                ),
+            }
+        }
+    }
+    walk(plan, at, &mut out);
+    out
+}
+
+/// Build the `v2_v3` (InPathFlash) Plan — the family's ledger decisions in
+/// execution order, callback-nested exactly as the proven `derive_2hop` v2_v3
+/// arm emits. This is the Checkpoint-1 re-baseline: the Plan is the primary
+/// artifact; `plan_to_bytes` derives the byte stream; `plan_to_ledger_ops`
+/// derives the validator's input.
+///
+/// Returns `(preamble_bytes, plan, address_table)` so callers can assemble
+/// the full payload (`preamble + plan_to_bytes(&plan, &at)`).
+#[must_use]
+pub fn build_v2v3_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V2(a), HopInfo::V3(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    if forward_out == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v2_idx = at.add(a.pool_address).ok()?;
+    let v3_idx = at.add(b.pool_address).ok()?;
+    let forward_idx = at.add(v2_forward(a)).ok()?;
+    let fwd_a = v2_forward(a);
+    let weth = inputs.weth_address;
+
+    let plan: Plan = vec![PlanStep::FlashSwap {
+        pool_idx: v2_idx,
+        pool_addr: a.pool_address,
+        protocol: Prot::V2,
+        zfo: a.zfo,
+        fee: a.fee,
+        out_currency: fwd_a,
+        out_amount: forward_out,
+        in_currency: weth,
+        in_amount: optimal_input,
+        recipient_idx: SENTINEL_SELF,
+        callback: vec![
+            PlanStep::FlashSwap {
+                pool_idx: v3_idx,
+                pool_addr: b.pool_address,
+                protocol: Prot::V3,
+                zfo: b.zfo,
+                fee: u16::try_from(b.fee).ok()?,
+                out_currency: weth,
+                out_amount: *inputs.hop_outputs.get(1)?,
+                in_currency: fwd_a,
+                in_amount: b_swap_in,
+                recipient_idx: SENTINEL_SELF,
+                callback: vec![PlanStep::Erc20Transfer {
+                    token_idx: forward_idx,
+                    token_addr: fwd_a,
+                    recipient_idx: v3_idx,
+                    amount: b_swap_in,
+                }],
+            },
+            PlanStep::Erc20Transfer {
+                token_idx: SENTINEL_WETH,
+                token_addr: weth,
+                recipient_idx: v2_idx,
+                amount: optimal_input,
+            },
+        ],
+    }];
+
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
 /// POC (6SRC23): emit the [`LedgerOp`] trace for the `v2_v3` (InPathFlash)
 /// family — the same stream [`derive_2hop`] produces as bytes, expressed as
 /// the declarative ledger facts the [`LedgerValidator`] reasons over. This is
@@ -2954,6 +3207,70 @@ mod tests {
                 Err(crate::grammar_ledger::ValidationError::Erc20TransferBeforeCredit { .. })
             ),
             "misordered WETH repayment must be rejected before credit"
+        );
+        let _ = U256::ZERO;
+    }
+
+    // BP7KIR Checkpoint 1: the Plan tree is the primary artifact for v2_v3.
+    #[test]
+    fn v2_v3_plan_byte_parity_with_proven_emitter() {
+        let (path, inputs) = v2_v3_path_inputs();
+        // The proven hand-written-emitter-derived bytes (today's production path).
+        let reference = derive_shape(&path, &inputs).expect("v2_v3 derive_shape returned None");
+        // The Plan-derived bytes: build the Plan, encode it, prepend preamble.
+        let (preamble, plan, at) =
+            build_v2v3_plan(&path, &inputs).expect("v2_v3 must build a Plan");
+        let mut plan_bytes = preamble;
+        plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+        assert_eq!(
+            plan_bytes, reference,
+            "Plan-derived bytes must be byte-identical to the proven emitter"
+        );
+    }
+
+    #[test]
+    fn v2_v3_plan_projects_a_validating_trace() {
+        let (path, inputs) = v2_v3_path_inputs();
+        let (_preamble, plan, _at) =
+            build_v2v3_plan(&path, &inputs).expect("v2_v3 must build a Plan");
+        let ops = plan_to_ledger_ops(&plan);
+        assert_eq!(ops.len(), 4, "v2_v3 Plan projects to 4 LedgerOps");
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            v.validate_full(&ops).is_ok(),
+            "canonical v2_v3 Plan must project a validating trace"
+        );
+    }
+
+    #[test]
+    fn v2_v3_plan_misordered_callback_rejects() {
+        let (path, inputs) = v2_v3_path_inputs();
+        let (_preamble, mut plan, _at) =
+            build_v2v3_plan(&path, &inputs).expect("v2_v3 must build a Plan");
+        // Corrupt the Plan: make the outer WETH repayment (sibling #1 of the
+        // V2 flash's callback) fire BEFORE the V3 flash (sibling #0) that
+        // credits WETH. Depth-first walk: V2 flash (credits t1) → WETH repay
+        // (executor WETH still 0 → the V2 flash's WETH credit is owed, not
+        // held) → REJECT. The runtime matrix cannot name this; byte-parity
+        // would confirm the misordered bytes that revert on-chain.
+        let outer = plan.get_mut(0).unwrap();
+        if let PlanStep::FlashSwap { callback, .. } = outer {
+            // callback = [V3 FlashSwap, WETH Erc20Transfer]; swap to
+            // [WETH Erc20Transfer, V3 FlashSwap].
+            callback.swap(0, 1);
+        } else {
+            panic!("expected outer V2 FlashSwap");
+        }
+        let ops = plan_to_ledger_ops(&plan);
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            matches!(
+                v.validate_full(&ops),
+                Err(crate::grammar_ledger::ValidationError::Erc20TransferBeforeCredit {
+                    currency, wanted, have
+                }) if currency == inputs.weth_address && wanted == 1_000_000 && have == 0
+            ),
+            "misordered Plan must be rejected: WETH repay before V3 flash credits WETH"
         );
         let _ = U256::ZERO;
     }

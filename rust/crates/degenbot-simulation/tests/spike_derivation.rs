@@ -187,6 +187,63 @@ fn v2v3_trace_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Checkpoint 1: the `v2_v3` (InPathFlash) family driven through the
+/// **Plan tree** end-to-end — build Plan → encode to bytes → execute through the
+/// real cmd_executor with exact WETH delta; build Plan → project to LedgerOps →
+/// validate via the gate. Proves the Plan is the single source for both the byte
+/// stream and the validator's input (ADR-029 D4), and that byte-parity with the
+/// proven emitter holds while the gate catches misorderings the runtime cannot
+/// name.
+#[test]
+fn v2v3_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{build_v2v3_plan, plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let hops = build_two_hop(&mut h, Prot::V2, Prot::V3, 3);
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+
+    // 1. Build the Plan.
+    let (preamble, plan, at) = build_v2v3_plan(&path, &inputs).expect("v2_v3 must build a Plan");
+
+    // 2. Plan-derived bytes are byte-identical to the proven emitter.
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .expect("v2_v3 derive_shape returned None");
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "Plan-derived bytes must be byte-identical to the proven emitter"
+    );
+
+    // 3. The Plan projects a trace that validates clean through the gate.
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .expect("canonical v2_v3 Plan must project a validating trace");
+
+    // 4. The Plan-derived bytes execute with exact predicted WETH delta
+    //    (alignment with runtime reality — what makes the gate trustworthy).
+    let result = h
+        .run_raw_payload(&hops, &plan_bytes, optimal_input, 8_000_000)
+        .expect("run_raw_payload failed");
+    assert_profitable(&result, 2, "v2_v3 Plan gate+runtime");
+    println!(
+        "── v2_v3 (Plan): byte-parity held, trace validated, bytes executed, actual_delta={}",
+        result.actual_weth_delta
+    );
+}
+
 #[test]
 fn derived_v3v2_executes_with_exact_delta() {
     run_spike(Prot::V3, Prot::V2, "v3_v2");
