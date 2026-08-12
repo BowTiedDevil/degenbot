@@ -158,3 +158,13 @@ fn derived_v2v2_executes_with_exact_delta() {
 fn derived_v4v4_executes_with_exact_delta() {
     run_spike(Prot::V4, Prot::V4, "v4_v4");
 }
+
+#[test]
+fn derived_v4v3_executes_with_exact_delta() {
+    run_spike(Prot::V4, Prot::V3, "v4_v3");
+}
+
+#[test]
+fn derived_v3v4_executes_with_exact_delta() {
+    run_spike(Prot::V3, Prot::V4, "v3_v4");
+}

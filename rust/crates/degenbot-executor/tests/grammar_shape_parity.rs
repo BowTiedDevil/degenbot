@@ -172,3 +172,34 @@ fn v4_v4_native_and_bridge_parity() {
         run_family(vec![v4_pair(a0, a1, az), v4_pair(b0, b1, bz)], 100_000);
     }
 }
+
+// ── V4 boundary-crossing: v4_v3 and v3_v4 (WAYDTL step 2 / (A)) ───────────
+
+/// V4→V3: V4's ERC-20 output leaves the PM (TAKE→SELF) to fund the V3 swap.
+/// Must match the hand-written v4_v3 byte-for-byte.
+#[test]
+fn v4_v3_boundary_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let t2 = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    run_family(
+        vec![v4_pair(weth(), t, true), v3_pool(t, weth(), true)],
+        100_000,
+    );
+    run_family(
+        vec![v4_pair(t2, t, false), v3_pool(t2, weth(), true)],
+        100_000,
+    );
+}
+
+/// V3→V4: the V3 flash's ERC-20 output enters the PM (sync+transfer+settle) to
+/// seed the V4 input; V3 repaid with WETH. Must match v3_v4 byte-for-byte.
+#[test]
+fn v3_v4_boundary_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let t2 = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    run_family(
+        vec![v3_pool(weth(), t, true), v4_pair(t, weth(), true)],
+        100_000,
+    );
+    run_family(vec![v3_pool(t2, t, false), v4_pair(t, t2, false)], 100_000);
+}
