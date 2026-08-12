@@ -316,16 +316,50 @@ pub enum PlanStep {
         in_currency: Address,
         in_amount: u128,
         recipient_idx: u8,
+        /// Whether the cmd_executor auto-pays `in_currency` from the executor's
+        /// `E[]` balance at callback-end (V2/V3 `*_SWAP_COMPACT` with an empty /
+        /// no-repay callback). When true, the projection emits a trailing
+        /// flash-repayment `Erc20Transfer` after the callback (the auto-pay).
+        auto_repay: bool,
         callback: Plan,
     },
     /// An `ERC20_TRANSFER(token→recipient, amount)` from the executor. Doubles
-    /// as flash-repayment and pair-seed by recipient role (DS4OQD finding 5).
+    /// as flash-repayment and pair-seed by recipient role (DS4OQD finding 5):
+    /// when the recipient is a V2 pair being pre-funded, `seeds_pool` carries
+    /// that pair's address so the projection also credits the pair-handoff
+    /// ledger (a following `V2SwapCalc` consumes it).
     Erc20Transfer {
         token_idx: u8,
         token_addr: Address,
         recipient_idx: u8,
         amount: u128,
+        seeds_pool: Option<Address>,
+        /// When `Some(pool)`, this transfer repays that flash pool (debited
+        /// `min(amount, owed)` so explicit + auto-pay compose without
+        /// over-debiting).
+        repays_flash: Option<Address>,
     },
+    /// A `V2_SWAP_CALC(pool, zfo, recipient, fee)` — the terminal-V2 pre-fund
+    /// rule (`2PT5HH`): swap from whatever the feeder delivered to the pair,
+    /// never an exact-out `V2_SWAP_COMPACT` (over-drains 1 wei → `UniswapV2: K`).
+    /// Consumes the pair-handoff credit seeded by a prior `Erc20Transfer`.
+    V2SwapCalc {
+        pool_idx: u8,
+        pool_addr: Address,
+        zfo: bool,
+        recipient_idx: u8,
+        fee: u16,
+        /// The swap's output currency + amount credited to the executor (the
+        /// profit / downstream repayment source). Option (B): swaps credit
+        /// their output so the executor ledger fully accounts.
+        out_currency: Address,
+        out_amount: u128,
+    },
+    /// A self-fund seed (ADR-029 FundingSource::SelfFund) — the executor holds
+    /// `amount` of `currency` as entry capital before the stream. Not a command;
+    /// a stream precondition the validator credits so SelfFund families' flash
+    /// repayments validate. The encoder emits nothing for it.
+    SelfFund { currency: Address, amount: u128 },
 }
 
 /// A Plan = an ordered list of steps. Depth-first walk = execution order.
@@ -341,14 +375,18 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
         for step in plan {
             match step {
                 PlanStep::FlashSwap {
+                    pool_addr,
                     protocol,
                     out_currency,
                     out_amount,
                     in_currency,
                     in_amount,
+                    auto_repay,
                     callback,
                     ..
                 } => {
+                    // The swap credits `out_currency` to the executor and incurs
+                    // an `in_currency` flash debt repayable within the callback.
                     let flash = match protocol {
                         Prot::V2 => LedgerOp::V2Flash {
                             out_currency: *out_currency,
@@ -366,12 +404,59 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     };
                     ops.push(flash);
                     walk(callback, ops);
+                    // Auto-pay (empty/no-repay callback): the cmd_executor debits
+                    // `in_currency` from the executor at callback-end. Modeled as
+                    // a flash-repayment transfer (min(amount, owed) so it composes
+                    // with any partial explicit repayment in the callback).
+                    if *auto_repay {
+                        ops.push(LedgerOp::Erc20Transfer {
+                            currency: *in_currency,
+                            amount: *in_amount,
+                            repays_flash: Some(*pool_addr),
+                        });
+                    }
                 }
                 PlanStep::Erc20Transfer {
-                    token_addr, amount, ..
+                    token_addr,
+                    amount,
+                    seeds_pool,
+                    repays_flash,
+                    ..
                 } => {
                     ops.push(LedgerOp::Erc20Transfer {
                         currency: *token_addr,
+                        amount: *amount,
+                        repays_flash: *repays_flash,
+                    });
+                    // DS4OQD finding 5: a transfer TO a V2 pair pre-funds it —
+                    // credit the pair-handoff ledger so a following `V2SwapCalc`
+                    // sees its seed (the terminal-V2 credit-before-debit rule).
+                    if let Some(pool) = seeds_pool {
+                        ops.push(LedgerOp::SeedPair {
+                            pool: *pool,
+                            amount: *amount,
+                        });
+                    }
+                }
+                PlanStep::V2SwapCalc {
+                    pool_addr,
+                    out_currency,
+                    out_amount,
+                    ..
+                } => {
+                    // `V2_SWAP_CALC` consumes the seeded pair-handoff credit AND
+                    // credits `out_currency` to the executor (the swap's computed
+                    // output — the profit / downstream repayment source).
+                    ops.push(LedgerOp::SwapCalc {
+                        pool: *pool_addr,
+                        amount_in: 0,
+                        out_currency: *out_currency,
+                        out_amount: *out_amount,
+                    });
+                }
+                PlanStep::SelfFund { currency, amount } => {
+                    ops.push(LedgerOp::SelfFund {
+                        currency: *currency,
                         amount: *amount,
                     });
                 }
@@ -438,6 +523,20 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     &encoders::enc_erc20_transfer(*token_idx, *recipient_idx, *amount)
                         .expect("ERC20 transfer amount in range"),
                 ),
+                PlanStep::V2SwapCalc {
+                    pool_idx,
+                    zfo,
+                    recipient_idx,
+                    fee,
+                    ..
+                } => out.extend_from_slice(&encoders::enc_v2_swap_calc(
+                    *pool_idx,
+                    *zfo,
+                    *recipient_idx,
+                    *fee,
+                )),
+                // Self-fund is a stream precondition, not a command.
+                PlanStep::SelfFund { .. } => {}
             }
         }
     }
@@ -500,6 +599,7 @@ pub fn build_v2v3_plan(
         in_currency: weth,
         in_amount: optimal_input,
         recipient_idx: SENTINEL_SELF,
+        auto_repay: false,
         callback: vec![
             PlanStep::FlashSwap {
                 pool_idx: v3_idx,
@@ -512,11 +612,14 @@ pub fn build_v2v3_plan(
                 in_currency: fwd_a,
                 in_amount: b_swap_in,
                 recipient_idx: SENTINEL_SELF,
+                auto_repay: false,
                 callback: vec![PlanStep::Erc20Transfer {
                     token_idx: forward_idx,
                     token_addr: fwd_a,
                     recipient_idx: v3_idx,
                     amount: b_swap_in,
+                    seeds_pool: None,
+                    repays_flash: Some(b.pool_address),
                 }],
             },
             PlanStep::Erc20Transfer {
@@ -524,6 +627,8 @@ pub fn build_v2v3_plan(
                 token_addr: weth,
                 recipient_idx: v2_idx,
                 amount: optimal_input,
+                seeds_pool: None,
+                repays_flash: Some(a.pool_address),
             },
         ],
     }];
@@ -532,34 +637,98 @@ pub fn build_v2v3_plan(
     Some((preamble, plan, at))
 }
 
-/// POC (6SRC23): emit the [`LedgerOp`] trace for the `v2_v3` (InPathFlash)
-/// family — the same stream [`derive_2hop`] produces as bytes, expressed as
-/// the declarative ledger facts the [`LedgerValidator`] reasons over. This is
-/// the conservative single-family proof of the emitter→validator seam
-/// (ADR-029 D4/D5): a co-located trace that mirrors the byte emitter, NOT a
-/// wide instrumentation of every `enc_*` primitive. If the pattern generalizes
-/// (larger effort), each `derive_*` gains a sibling `*_trace`.
-///
-/// Stream order = byte order = the validator's walk order:
-/// 1. `V2Flash` — `V2_SWAP_COMPACT(v2a)` credits the forward token (t1) and owes
-///    WETH repayable in the callback.
-/// 2. `V3Flash` — `V3_SWAP_COMPACT(v3b)` credits WETH and owes t1.
-/// 3. `Erc20Transfer(t1)` — repay the V3 flash (credit extended by op 1).
-/// 4. `Erc20Transfer(WETH)` — repay the V2 flash (credit extended by op 2).
-///
-/// The gate enforces credit-before-debit on the executor ledger (op 3 sees
-/// t1 credit; op 4 sees WETH credit) and that every flash debt is repaid at
-/// `finish()`.
+/// Build the `v3_v2` (SelfFund) Plan — V3 self-fund flash, terminal V2
+/// pre-funded + `V2_SWAP_CALC` (the `2PT5HH` rule). Mirror of `derive_2hop`'s
+/// v3_v2 arm as a callback-nested tree. The leading `SelfFund` credits the
+/// executor's entry WETH so the V3 flash's WETH repayment validates.
 #[must_use]
-pub fn derive_2hop_v2v3_trace(
+pub fn build_v3v2_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
-) -> Option<Vec<LedgerOp>> {
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let n = path.hops.len();
     if n != 2 {
         return None;
     }
-    let (HopInfo::V2(a), HopInfo::V3(_b)) = (&path.hops[0], &path.hops[1]) else {
+    let (HopInfo::V3(a), HopInfo::V2(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    if forward_out == 0 {
+        return None;
+    }
+    let weth = inputs.weth_address;
+    let fwd_a = v3_forward(a);
+
+    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+    let v3_idx = at.add(a.pool_address).ok()?;
+    let v2_idx = at.add(b.pool_address).ok()?;
+    let forward_idx = at.add(fwd_a).ok()?;
+
+    let plan: Plan = vec![
+        PlanStep::SelfFund {
+            currency: weth,
+            amount: optimal_input,
+        },
+        PlanStep::FlashSwap {
+            pool_idx: v3_idx,
+            pool_addr: a.pool_address,
+            protocol: Prot::V3,
+            zfo: a.zfo,
+            fee: u16::try_from(a.fee).ok()?,
+            out_currency: fwd_a,
+            out_amount: forward_out,
+            in_currency: weth,
+            in_amount: optimal_input,
+            recipient_idx: SENTINEL_SELF,
+            auto_repay: false,
+            callback: vec![
+                PlanStep::Erc20Transfer {
+                    token_idx: SENTINEL_WETH,
+                    token_addr: weth,
+                    recipient_idx: v3_idx,
+                    amount: optimal_input,
+                    seeds_pool: None,
+                    repays_flash: Some(a.pool_address),
+                },
+                PlanStep::Erc20Transfer {
+                    token_idx: forward_idx,
+                    token_addr: fwd_a,
+                    recipient_idx: v2_idx,
+                    amount: forward_out,
+                    seeds_pool: Some(b.pool_address),
+                    repays_flash: None,
+                },
+                PlanStep::V2SwapCalc {
+                    pool_idx: v2_idx,
+                    pool_addr: b.pool_address,
+                    zfo: b.zfo,
+                    recipient_idx: SENTINEL_SELF,
+                    fee: b.fee,
+                    out_currency: weth,
+                    out_amount: *inputs.hop_outputs.get(1)?,
+                },
+            ],
+        },
+    ];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v3_v3` (SelfFund) Plan — V3 self-fund flash feeds a terminal
+/// V3 flash (both flash-coupled via the executor). Mirror of `derive_2hop`'s
+/// v3_v3 arm as a callback-nested tree.
+#[must_use]
+pub fn build_v3v3_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V3(a), HopInfo::V3(b)) = (&path.hops[0], &path.hops[1]) else {
         return None;
     };
     let optimal_input = inputs.optimal_input;
@@ -568,37 +737,134 @@ pub fn derive_2hop_v2v3_trace(
         return None;
     }
     let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let weth = inputs.weth_address;
-    let fwd_a = v2_forward(a);
-    // The V3's forward output is the terminal WETH (the path ends in WETH).
     let terminal_out = *inputs.hop_outputs.get(1)?;
+    let weth = inputs.weth_address;
+    let fwd_a = v3_forward(a);
 
-    Some(vec![
-        // 1. V2 flash: credit t1 (forward), owe WETH (optimal_input).
-        LedgerOp::V2Flash {
+    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+    let v3_a = at.add(a.pool_address).ok()?;
+    let v3_b = at.add(b.pool_address).ok()?;
+
+    let plan: Plan = vec![
+        PlanStep::SelfFund {
+            currency: weth,
+            amount: optimal_input,
+        },
+        PlanStep::FlashSwap {
+            pool_idx: v3_a,
+            pool_addr: a.pool_address,
+            protocol: Prot::V3,
+            zfo: a.zfo,
+            fee: u16::try_from(a.fee).ok()?,
             out_currency: fwd_a,
             out_amount: forward_out,
             in_currency: weth,
             in_amount: optimal_input,
+            recipient_idx: SENTINEL_SELF,
+            auto_repay: false,
+            callback: vec![
+                PlanStep::Erc20Transfer {
+                    token_idx: SENTINEL_WETH,
+                    token_addr: weth,
+                    recipient_idx: v3_a,
+                    amount: optimal_input,
+                    seeds_pool: None,
+                    repays_flash: Some(a.pool_address),
+                },
+                // V3b flash with an EMPTY callback → auto-pay: the cmd_executor
+                // debits `in_currency` (t1) from the executor at callback-end
+                // (the t1 the V3a flash credited). Model that as auto_repay=true.
+                PlanStep::FlashSwap {
+                    pool_idx: v3_b,
+                    pool_addr: b.pool_address,
+                    protocol: Prot::V3,
+                    zfo: b.zfo,
+                    fee: u16::try_from(b.fee).ok()?,
+                    out_currency: weth,
+                    out_amount: terminal_out,
+                    in_currency: fwd_a,
+                    in_amount: b_swap_in,
+                    recipient_idx: SENTINEL_SELF,
+                    auto_repay: true,
+                    callback: vec![],
+                },
+            ],
         },
-        // 2. V3 flash: credit WETH (terminal), owe t1 (b_swap_in).
-        LedgerOp::V3Flash {
-            out_currency: weth,
-            out_amount: terminal_out,
-            in_currency: fwd_a,
-            in_amount: b_swap_in,
-        },
-        // 3. Repay the V3 flash — t1 credit extended by op 1.
-        LedgerOp::Erc20Transfer {
-            currency: fwd_a,
-            amount: b_swap_in,
-        },
-        // 4. Repay the V2 flash — WETH credit extended by op 2.
-        LedgerOp::Erc20Transfer {
-            currency: weth,
-            amount: optimal_input,
-        },
-    ])
+    ];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v2_v2` (InPathFlash) Plan — V2 in-path flash, pool-to-pool via
+/// `V2_SWAP_CALC` (the terminal V2 is pre-funded by the leading hop's forward
+/// output, then swapped). Mirror of `derive_2hop`'s v2_v2 arm.
+#[must_use]
+pub fn build_v2v2_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V2(a), HopInfo::V2(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    if forward_out == 0 {
+        return None;
+    }
+    let weth = inputs.weth_address;
+    let fwd_a = v2_forward(a);
+
+    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+    let v2_a = at.add(a.pool_address).ok()?;
+    let v2_b = at.add(b.pool_address).ok()?;
+    let forward_idx = at.add(fwd_a).ok()?;
+
+    let plan: Plan = vec![PlanStep::FlashSwap {
+        pool_idx: v2_a,
+        pool_addr: a.pool_address,
+        protocol: Prot::V2,
+        zfo: a.zfo,
+        fee: a.fee,
+        out_currency: fwd_a,
+        out_amount: forward_out,
+        in_currency: weth,
+        in_amount: optimal_input,
+        recipient_idx: SENTINEL_SELF,
+        auto_repay: false,
+        callback: vec![
+            PlanStep::Erc20Transfer {
+                token_idx: forward_idx,
+                token_addr: fwd_a,
+                recipient_idx: v2_b,
+                amount: forward_out,
+                seeds_pool: Some(b.pool_address),
+                repays_flash: None,
+            },
+            PlanStep::V2SwapCalc {
+                pool_idx: v2_b,
+                pool_addr: b.pool_address,
+                zfo: b.zfo,
+                recipient_idx: SENTINEL_SELF,
+                fee: b.fee,
+                out_currency: weth,
+                out_amount: *inputs.hop_outputs.get(1)?,
+            },
+            PlanStep::Erc20Transfer {
+                token_idx: SENTINEL_WETH,
+                token_addr: weth,
+                recipient_idx: v2_a,
+                amount: optimal_input,
+                seeds_pool: None,
+                repays_flash: Some(a.pool_address),
+            },
+        ],
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
 }
 
 /// Public spike entry: derive a family's command stream from its
@@ -3164,53 +3430,6 @@ mod tests {
         (path, inputs)
     }
 
-    #[test]
-    fn v2_v3_trace_validates_clean_and_aligns_with_bytes() {
-        let (path, inputs) = v2_v3_path_inputs();
-        // The byte emitter still produces a stream (alignment sanity).
-        let bytes = derive_shape(&path, &inputs).expect("v2_v3 must derive bytes");
-        assert!(!bytes.is_empty());
-        // The trace mirrors the bytes.
-        let trace = derive_2hop_v2v3_trace(&path, &inputs).expect("v2_v3 must derive a trace");
-        assert_eq!(trace.len(), 4, "v2_v3 trace has exactly 4 ops");
-        // credit-before-debit + flash-debt-net-zero must hold.
-        let mut v = crate::grammar_ledger::LedgerValidator::default();
-        assert!(
-            v.validate_full(&trace).is_ok(),
-            "canonical v2_v3 trace validates"
-        );
-        // Sanity: the forward currency is USDC, the terminal credit is WETH.
-        use crate::grammar_ledger::LedgerOp::*;
-        assert!(matches!(trace[0], V2Flash { out_currency, in_currency, .. }
-            if out_currency == address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48")
-            && in_currency == inputs.weth_address));
-        assert!(matches!(trace[1], V3Flash { out_currency, .. }
-            if out_currency == inputs.weth_address));
-        let _ = U256::ZERO;
-    }
-
-    #[test]
-    fn v2_v3_trace_misordered_repay_before_credit_rejects() {
-        let (path, inputs) = v2_v3_path_inputs();
-        let mut trace = derive_2hop_v2v3_trace(&path, &inputs).expect("v2_v3 must derive a trace");
-        // Hoist the WETH repayment (op 4, index 3) BEFORE the V3 flash (op 2,
-        // index 1) extends WETH credit. Executor WETH balance is 0 at that
-        // point → the gate rejects with the structural reason the runtime
-        // matrix cannot see (the misordered bytes would revert on-chain with
-        // an opaque transfer failure).
-        let weth_repay = trace.remove(3);
-        trace.insert(1, weth_repay);
-        let mut v = crate::grammar_ledger::LedgerValidator::default();
-        assert!(
-            matches!(
-                v.validate_full(&trace),
-                Err(crate::grammar_ledger::ValidationError::Erc20TransferBeforeCredit { .. })
-            ),
-            "misordered WETH repayment must be rejected before credit"
-        );
-        let _ = U256::ZERO;
-    }
-
     // BP7KIR Checkpoint 1: the Plan tree is the primary artifact for v2_v3.
     #[test]
     fn v2_v3_plan_byte_parity_with_proven_emitter() {
@@ -3271,6 +3490,189 @@ mod tests {
                 }) if currency == inputs.weth_address && wanted == 1_000_000 && have == 0
             ),
             "misordered Plan must be rejected: WETH repay before V3 flash credits WETH"
+        );
+        let _ = U256::ZERO;
+    }
+
+    // Increment 2 (BP7KIR): the remaining V2/V3 2-hop families on the Plan.
+    // Each: byte-parity with the proven emitter + the Plan projects a
+    // validating trace. A shared helper drives both assertions per family.
+    fn v3_v2_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+        let v3a = address!("00000000000000000000000000000000000000a1");
+        let v2b = address!("00000000000000000000000000000000000000b2");
+        let path = PathInfo::new(vec![
+            HopInfo::V3(V3HopInfo {
+                pool_address: v3a,
+                token0_address: weth,
+                token1_address: usdc,
+                fee: 3000,
+                zfo: true,
+            }),
+            HopInfo::V2(V2HopInfo {
+                pool_address: v2b,
+                token0_address: usdc,
+                token1_address: weth,
+                fee: 30,
+                zfo: true,
+            }),
+        ]);
+        static OPTIMAL: u128 = 1_000_000;
+        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
+        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
+        (
+            path,
+            ComposerInputs {
+                executor_address: address!("00000000000000000000000000000000000000ee"),
+                pool_manager_address: address!("00000000000000000000000000000000000000ff"),
+                weth_address: weth,
+                optimal_input: OPTIMAL,
+                hop_outputs: &OUTS,
+                consumed_inputs: &CONSUMED,
+                opts: crate::composers::EncodeOptions::default(),
+            },
+        )
+    }
+    fn v3_v3_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+        let v3a = address!("00000000000000000000000000000000000000a3");
+        let v3b = address!("00000000000000000000000000000000000000b3");
+        let path = PathInfo::new(vec![
+            HopInfo::V3(V3HopInfo {
+                pool_address: v3a,
+                token0_address: weth,
+                token1_address: usdc,
+                fee: 3000,
+                zfo: true,
+            }),
+            HopInfo::V3(V3HopInfo {
+                pool_address: v3b,
+                token0_address: usdc,
+                token1_address: weth,
+                fee: 3000,
+                zfo: true,
+            }),
+        ]);
+        static OPTIMAL: u128 = 1_000_000;
+        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
+        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
+        (
+            path,
+            ComposerInputs {
+                executor_address: address!("00000000000000000000000000000000000000ee"),
+                pool_manager_address: address!("00000000000000000000000000000000000000ff"),
+                weth_address: weth,
+                optimal_input: OPTIMAL,
+                hop_outputs: &OUTS,
+                consumed_inputs: &CONSUMED,
+                opts: crate::composers::EncodeOptions::default(),
+            },
+        )
+    }
+    fn v2_v2_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+        let v2a = address!("00000000000000000000000000000000000000a4");
+        let v2b = address!("00000000000000000000000000000000000000b4");
+        let path = PathInfo::new(vec![
+            HopInfo::V2(V2HopInfo {
+                pool_address: v2a,
+                token0_address: weth,
+                token1_address: usdc,
+                fee: 30,
+                zfo: true,
+            }),
+            HopInfo::V2(V2HopInfo {
+                pool_address: v2b,
+                token0_address: usdc,
+                token1_address: weth,
+                fee: 30,
+                zfo: true,
+            }),
+        ]);
+        static OPTIMAL: u128 = 1_000_000;
+        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
+        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
+        (
+            path,
+            ComposerInputs {
+                executor_address: address!("00000000000000000000000000000000000000ee"),
+                pool_manager_address: address!("00000000000000000000000000000000000000ff"),
+                weth_address: weth,
+                optimal_input: OPTIMAL,
+                hop_outputs: &OUTS,
+                consumed_inputs: &CONSUMED,
+                opts: crate::composers::EncodeOptions::default(),
+            },
+        )
+    }
+
+    fn plan_byte_parity_and_validate(
+        build: fn(&PathInfo, &ComposerInputs) -> Option<(Vec<u8>, Plan, AddressTable)>,
+        path: &PathInfo,
+        inputs: &ComposerInputs,
+        name: &str,
+    ) {
+        let reference =
+            derive_shape(path, inputs).unwrap_or_else(|| panic!("[{name}] derive_shape None"));
+        let (preamble, plan, at) =
+            build(path, inputs).unwrap_or_else(|| panic!("[{name}] build None"));
+        let mut plan_bytes = preamble;
+        plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+        assert_eq!(
+            plan_bytes, reference,
+            "[{name}] Plan bytes != proven emitter"
+        );
+        let ops = plan_to_ledger_ops(&plan);
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            v.validate_full(&ops).is_ok(),
+            "[{name}] Plan must validate clean"
+        );
+    }
+
+    #[test]
+    fn v3_v2_plan_byte_parity_and_validates() {
+        let (path, inputs) = v3_v2_path_inputs();
+        plan_byte_parity_and_validate(build_v3v2_plan, &path, &inputs, "v3_v2");
+    }
+    #[test]
+    fn v3_v3_plan_byte_parity_and_validates() {
+        let (path, inputs) = v3_v3_path_inputs();
+        plan_byte_parity_and_validate(build_v3v3_plan, &path, &inputs, "v3_v3");
+    }
+    #[test]
+    fn v2_v2_plan_byte_parity_and_validates() {
+        let (path, inputs) = v2_v2_path_inputs();
+        plan_byte_parity_and_validate(build_v2v2_plan, &path, &inputs, "v2_v2");
+    }
+
+    #[test]
+    fn v3_v2_plan_terminal_v2_before_seed_rejected() {
+        // The terminal-V2 pre-fund rule (`2PT5HH`): a `V2SwapCalc` before its
+        // `Erc20Transfer` pair-seed must be rejected (the über-draw class).
+        let (path, inputs) = v3_v2_path_inputs();
+        let (_preamble, mut plan, _at) = build_v3v2_plan(&path, &inputs).expect("v3_v2 build None");
+        // The V3 flash's callback is [WETH repay, forward seed, V2SwapCalc].
+        // Move V2SwapCalc to the front (before the seed) → SwapCalcBeforeCredit.
+        let outer = plan.last_mut().unwrap();
+        if let PlanStep::FlashSwap { callback, .. } = outer {
+            // [WETH transfer, seed transfer, V2SwapCalc] → [V2SwapCalc, WETH transfer, seed transfer]
+            let swapcalc = callback.remove(2);
+            callback.insert(0, swapcalc);
+        } else {
+            panic!("expected outer V3 FlashSwap");
+        }
+        let ops = plan_to_ledger_ops(&plan);
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            matches!(
+                v.validate_full(&ops),
+                Err(crate::grammar_ledger::ValidationError::SwapCalcBeforeCredit { .. })
+            ),
+            "misordered Plan: V2SwapCalc before its pair seed must be rejected"
         );
         let _ = U256::ZERO;
     }

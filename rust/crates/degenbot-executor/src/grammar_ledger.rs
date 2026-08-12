@@ -138,8 +138,16 @@ pub enum LedgerOp {
     /// Seed a V2 pair's excess (credit `H[pool]`) — a transfer/take *to the
     /// pair* that a later `SwapCalc` consumes.
     SeedPair { pool: Address, amount: u128 },
-    /// `V2_SWAP_CALC(pool)` — consumes `H[pool]` credit (terminal-V2 rule).
-    SwapCalc { pool: Address, amount_in: u128 },
+    /// `V2_SWAP_CALC(pool)` — consumes `H[pool]` credit (terminal-V2 rule) AND
+    /// credits `out_currency` to the executor (the swap's computed output, the
+    /// profit / downstream repayment source). Option (B): swaps credit their
+    /// output so the executor ledger fully accounts (ADR-029 D5).
+    SwapCalc {
+        pool: Address,
+        amount_in: u128,
+        out_currency: Address,
+        out_amount: u128,
+    },
     // ── POC (6SRC23): V2/V3 flash-credit chain for `v2_v3` (ADR-029 D4/D5). ──
     /// A `V2_SWAP_COMPACT` flash: the pool extends `out_currency` credit to the
     /// executor (the swap output, before repayment), and incurs an `in_currency`
@@ -160,9 +168,22 @@ pub enum LedgerOp {
         in_amount: u128,
     },
     /// An `ERC20_TRANSFER(cur→rcp, amount)` debiting the executor's `Erc20[cur]`
-    /// balance (the flash-repayment / pair-seed move). Requires credit ≥ amount
-    /// immediately before (the V2/V3 analogue of the `PM` take-before-credit rule).
-    Erc20Transfer { currency: Address, amount: u128 },
+    /// balance. When `repays_flash` is `Some(pool)`, the transfer is a flash
+    /// repayment: it debits `min(amount, flash_debt[cur])` (saturating against
+    /// the owed debt) so the auto-pay-at-callback-end case (empty-callback V2/V3
+    /// flash) zeroes the debt without over-debiting. Requires the executor held
+    /// credit ≥ the debited amount immediately before (credit-before-debit).
+    Erc20Transfer {
+        currency: Address,
+        amount: u128,
+        repays_flash: Option<Address>,
+    },
+    /// A self-fund seed — the executor **holds** `amount` of `currency` as entry
+    /// capital before the stream starts (ADR-029 FundingSource::SelfFund). Credits
+    /// `Erc20[currency]` (the same ledger flashes extend, just sourced from the
+    /// executor's own balance rather than a flash). Not a command; a stream
+    /// precondition modeled so the SelfFund families' repayments validate.
+    SelfFund { currency: Address, amount: u128 },
 }
 
 /// A `V4_SWAP` term op returned by the proto-trace builder — kept separate from
@@ -192,7 +213,8 @@ impl LedgerOp {
             | LedgerOp::SwapCalc { .. }
             | LedgerOp::V2Flash { .. }
             | LedgerOp::V3Flash { .. }
-            | LedgerOp::Erc20Transfer { .. } => None,
+            | LedgerOp::Erc20Transfer { .. }
+            | LedgerOp::SelfFund { .. } => None,
         }
     }
 }
@@ -298,13 +320,21 @@ impl LedgerValidator {
                 self.pm.insert(currency, have - amount as i128);
                 Ok(())
             }
-            LedgerOp::SwapCalc { pool, .. } => {
+            LedgerOp::SwapCalc {
+                pool,
+                out_currency,
+                out_amount,
+                ..
+            } => {
                 let have = *self.pair.get(&pool).unwrap_or(&0);
                 if have == 0 {
                     return Err(ValidationError::SwapCalcBeforeCredit { pool });
                 }
-                // The pool's seeded excess is consumed by the swap.
+                // The pool's seeded excess is consumed by the swap, and the
+                // swap's computed output is credited to the executor (option B:
+                // swaps credit their output so the executor ledger fully accounts).
                 self.pair.insert(pool, have - 1);
+                *self.erc20.entry(out_currency).or_default() += out_amount as i128;
                 Ok(())
             }
             // POC (6SRC23): V2/V3 flash swaps — term ops extending executor
@@ -327,20 +357,43 @@ impl LedgerValidator {
                 *self.flash_debt.entry(in_currency).or_default() += in_amount;
                 Ok(())
             }
-            LedgerOp::Erc20Transfer { currency, amount } => {
+            // Self-fund seed: the executor holds `amount` of `currency` as entry
+            // capital. Credits the executor `Erc20` ledger (same ledger flashes
+            // extend; here sourced from the executor's own balance). No debt.
+            LedgerOp::SelfFund { currency, amount } => {
+                *self.erc20.entry(currency).or_default() += amount as i128;
+                Ok(())
+            }
+            LedgerOp::Erc20Transfer {
+                currency,
+                amount,
+                repays_flash,
+            } => {
+                // A flash repayment only debits what is actually still owed
+                // (`min(amount, debt)`) so the auto-pay-at-callback-end case
+                // (empty-callback V2/V3 flash, which fires a full `in_amount`
+                // repayment) zeroes the debt without over-debiting when the
+                // callback already repaid part. A plain transfer (seed/bridge)
+                // debits the full amount.
+                let debit = if repays_flash.is_some() {
+                    let owed = *self.flash_debt.get(&currency).unwrap_or(&0);
+                    amount.min(owed)
+                } else {
+                    amount
+                };
                 let have = *self.erc20.get(&currency).unwrap_or(&0);
-                if have < amount as i128 {
+                if have < debit as i128 {
                     return Err(ValidationError::Erc20TransferBeforeCredit {
                         currency,
-                        wanted: amount,
+                        wanted: debit,
                         have,
                     });
                 }
-                // The executor's credit is consumed by the transfer; if this
-                // transfer repays a flash, the debt is retired below.
-                self.erc20.insert(currency, have - amount as i128);
-                let owed = self.flash_debt.entry(currency).or_default();
-                *owed = owed.saturating_sub(amount);
+                self.erc20.insert(currency, have - debit as i128);
+                if repays_flash.is_some() {
+                    let owed = self.flash_debt.entry(currency).or_default();
+                    *owed = owed.saturating_sub(debit);
+                }
                 Ok(())
             }
         }
@@ -457,6 +510,8 @@ mod tests {
             v.push(LedgerOp::SwapCalc {
                 pool: pool(),
                 amount_in: 10_000,
+                out_currency: weth(),
+                out_amount: 0,
             }),
             Err(ValidationError::SwapCalcBeforeCredit { pool: pool() })
         );
@@ -475,6 +530,8 @@ mod tests {
             .push(LedgerOp::SwapCalc {
                 pool: pool(),
                 amount_in: 10_000,
+                out_currency: weth(),
+                out_amount: 0,
             })
             .is_ok());
     }
@@ -536,12 +593,14 @@ mod tests {
         v.push(LedgerOp::Erc20Transfer {
             currency: usdc(),
             amount: 1_000_000,
+            repays_flash: Some(pool()),
         })
         .unwrap();
         // 4. Repay the V2 flash (WETH) — credit extended by op 2.
         v.push(LedgerOp::Erc20Transfer {
             currency: weth(),
             amount: 900_000,
+            repays_flash: Some(pool()),
         })
         .unwrap();
         assert!(v.finish().is_ok(), "fully-repaid flash chain must validate");
@@ -567,6 +626,7 @@ mod tests {
             v.push(LedgerOp::Erc20Transfer {
                 currency: weth(),
                 amount: 900_000,
+                repays_flash: Some(pool()),
             }),
             Err(ValidationError::Erc20TransferBeforeCredit {
                 currency: weth(),
@@ -599,6 +659,7 @@ mod tests {
         v.push(LedgerOp::Erc20Transfer {
             currency: usdc(),
             amount: 1_000_000,
+            repays_flash: Some(pool()),
         })
         .unwrap();
         assert!(matches!(

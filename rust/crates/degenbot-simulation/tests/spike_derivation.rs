@@ -139,54 +139,6 @@ fn derived_v2v3_executes_with_exact_delta() {
     run_spike(Prot::V2, Prot::V3, "v2_v3");
 }
 
-/// POC (6SRC23): the `v2_v3` (InPathFlash) flash-credit chain through the
-/// emitter→validator gate AND the runtime matrix in one vertical slice. Proves
-/// the gate (credit-before-debit on the executor ledger; every flash debt
-/// repaid) agrees with runtime reality (the derived bytes execute with exact
-/// delta) — the alignment that makes `LedgerValidator` a trustworthy
-/// structural check (ADR-029 D4/D5), catching the misorderings byte-parity and
-/// the runtime matrix alone cannot name.
-#[test]
-fn v2v3_trace_validates_and_executes_with_exact_delta() {
-    use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::derive_2hop_v2v3_trace;
-
-    let mut h = Harness::new().unwrap();
-    let hops = build_two_hop(&mut h, Prot::V2, Prot::V3, 3);
-    let optimal_input = 100_000u128;
-    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
-    // Pad the last hop output to a profitable terminal WETH return so the
-    // run is profitable. Mirrors `run_spike`'s `build_two_hop` ~3× return.
-    let inputs = ComposerInputs {
-        executor_address: h.executor,
-        pool_manager_address: h.pool_manager,
-        weth_address: h.weth,
-        optimal_input,
-        hop_outputs: &hop_outputs,
-        consumed_inputs: &consumed,
-        opts: EncodeOptions::default(),
-    };
-
-    // 1. The trace validates: credit-before-debit + flash-debt-net-zero hold.
-    let trace = derive_2hop_v2v3_trace(&path, &inputs).expect("v2_v3 must derive a trace");
-    let mut v = LedgerValidator::default();
-    v.validate_full(&trace)
-        .expect("canonical v2_v3 trace must validate clean through the gate");
-
-    // 2. The bytes execute with the exact predicted WETH delta (alignment
-    //    with runtime reality — what makes the gate trustworthy).
-    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
-        .expect("v2_v3 derive_shape returned None");
-    let result = h
-        .run_raw_payload(&hops, &derived, optimal_input, 8_000_000)
-        .expect("run_raw_payload failed");
-    assert_profitable(&result, 2, "v2_v3 gate+runtime");
-    println!(
-        "── v2_v3 (gate): trace validated, derived bytes executed, actual_delta={}",
-        result.actual_weth_delta
-    );
-}
-
 /// BP7KIR Checkpoint 1: the `v2_v3` (InPathFlash) family driven through the
 /// **Plan tree** end-to-end — build Plan → encode to bytes → execute through the
 /// real cmd_executor with exact WETH delta; build Plan → project to LedgerOps →
@@ -241,6 +193,93 @@ fn v2v3_plan_byte_parity_validates_and_executes_with_exact_delta() {
     println!(
         "── v2_v3 (Plan): byte-parity held, trace validated, bytes executed, actual_delta={}",
         result.actual_weth_delta
+    );
+}
+
+/// BP7KIR Increment 2: the remaining V2/V3 2-hop families on the Plan tree —
+/// byte-parity + gate + runtime in one slice each. `build_fn` selects the
+/// family's Plan builder.
+fn run_plan_family(
+    a: Prot,
+    b: Prot,
+    name: &str,
+    build_fn: fn(
+        &degenbot_executor::composers::PathInfo,
+        &ComposerInputs,
+    ) -> Option<(
+        Vec<u8>,
+        degenbot_executor::grammar_shape::Plan,
+        degenbot_executor::encoders::AddressTable,
+    )>,
+) {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let hops = build_two_hop(&mut h, a, b, 3);
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let (preamble, plan, at) =
+        build_fn(&path, &inputs).unwrap_or_else(|| panic!("[{name}] build None"));
+    // Byte-parity with the proven emitter.
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[{name}] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[{name}] Plan bytes != proven emitter"
+    );
+    // The gate validates the projected trace.
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .unwrap_or_else(|e| panic!("[{name}] Plan must validate clean: {e:?}"));
+    // The Plan-derived bytes execute with exact delta.
+    let result = h
+        .run_raw_payload(&hops, &plan_bytes, optimal_input, 8_000_000)
+        .unwrap_or_else(|e| panic!("[{name}] run_raw_payload: {e}"));
+    assert_profitable(&result, 2, name);
+    println!(
+        "── {name} (Plan): byte-parity held, trace validated, actual_delta={}",
+        result.actual_weth_delta
+    );
+}
+
+#[test]
+fn v3v2_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V3,
+        Prot::V2,
+        "v3_v2",
+        degenbot_executor::grammar_shape::build_v3v2_plan,
+    );
+}
+#[test]
+fn v3v3_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V3,
+        Prot::V3,
+        "v3_v3",
+        degenbot_executor::grammar_shape::build_v3v3_plan,
+    );
+}
+#[test]
+fn v2v2_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V2,
+        Prot::V2,
+        "v2_v2",
+        degenbot_executor::grammar_shape::build_v2v2_plan,
     );
 }
 
