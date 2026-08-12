@@ -411,6 +411,106 @@ fn v3v4_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Increment 3c: the `v3_v4` **native-V4-input** sub-case — the
+/// unwrap-then-native-seed topology. The V3 outputs WETH (unwrapped → native
+/// via `WethWithdraw`), the native seeds the V4 input via the `NativeTransfer` +
+/// `SettleDelta(native)` settle, and the V3 flash is repaid from entry capital
+/// (`SelfFund(tok)` — this is the SelfFund funding source in a V4 path). Build
+/// Plan → byte-parity + gate + runtime exact terminal `u` delta.
+#[test]
+fn v3v4_native_input_plan_byte_parity_validates_and_executes() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{build_v3v4_plan, plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let tok = h.add_token().unwrap();
+    let u = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let weth = h.weth;
+
+    // Pool A (V3): tok→WETH (outputs WETH to unwrap). Pool B (V4): u↔native,
+    // src=native (native input, u output — the terminal profit).
+    let p_a = HopPool::V3(
+        h.add_v3_pool(
+            tok,
+            weth,
+            3000,
+            sqrt_x(1),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let p_b = HopPool::V4(
+        h.add_v4_pool(
+            u,
+            native,
+            3000,
+            60,
+            sqrt_x(3),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let hops = vec![
+        Hop {
+            src: tok,
+            dst: weth,
+            pool: p_a,
+        },
+        Hop {
+            src: native,
+            dst: u,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let terminal = *hop_outputs.last().unwrap();
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let (preamble, plan, at) = build_v3v4_plan(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v3_v4 native-input] build None"));
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v3_v4 native-input] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[v3_v4 native-input] Plan bytes != proven emitter"
+    );
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .unwrap_or_else(|e| panic!("[v3_v4 native-input] Plan must validate clean: {e:?}"));
+    // Provision: the executor holds `tok` (SelfFund entry capital) + WETH (the
+    // V3 flash credits WETH, but the WETH9.withdraw needs the balance present).
+    h.fund(tok, h.executor, optimal_input * 2).unwrap();
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+    let u_before = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&plan_bytes, 8_000_000).unwrap();
+    assert!(
+        outcome.executed(2),
+        "[v3_v4 native-input] must execute through both pools: {outcome:?}"
+    );
+    let u_after = h.balance_of(u, h.executor).unwrap().to::<u128>() as i128;
+    let actual_delta = u_after - u_before;
+    let tol = (terminal as i128 / 1000).max(1);
+    assert!((actual_delta - terminal as i128).abs() <= tol,
+        "[v3_v4 native-input] terminal `u` delta {actual_delta} diverges from predicted {terminal} (tol {tol})");
+    println!("── v3_v4 native-input (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
+}
+
 /// BP7KIR Increment 3b: the `v4_v3` boundary-take family on the Plan tree —
 /// the first cross-ledger family. `V4TakeCompact(cur→SELF)` is a cross-ledger
 /// move: it debits `PM[cur]` (the V4 take) AND credits the executor's
