@@ -433,6 +433,27 @@ pub enum PlanStep {
         currency_addr: Address,
         amount: u128,
     },
+    /// `NATIVE_TRANSFER(amount)` — the executor→PM native pay-in leg of a
+    /// native settle (BP7KIR 3c). Ledger-only (encodes to nothing, like
+    /// `SelfFund`): on-chain the native flows as `msg.value` on the
+    /// `V4_SETTLE*` call, so there is no separate byte instruction. Modeled
+    /// explicitly so the executor's native debit is a separate observable op
+    /// (a missing settle half is caught by PM-net-zero, not absorbed).
+    NativeTransfer { amount: u128 },
+    /// `WETH_WITHDRAW(amount)` — unwrap WETH to native (the source of native
+    /// for a `NativeTransfer` PM pay-in, or to seed a native V4 input).
+    WethWithdraw {
+        weth_idx: u8,
+        weth_addr: Address,
+        amount: u128,
+    },
+    /// `WETH_DEPOSIT(amount)` — wrap native to WETH (the native came from a
+    /// `V4TakeCompact(native→SELF)`).
+    WethDeposit {
+        weth_idx: u8,
+        weth_addr: Address,
+        amount: u128,
+    },
 }
 
 /// A Plan = an ordered list of steps. Depth-first walk = execution order.
@@ -586,10 +607,18 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     // `PairHandoff[pool]` so a following `V2SwapCalc` sees its
                     // seed (the 2PT5HH terminal-V2 rule across the PM boundary).
                     if *recipient_idx == SENTINEL_SELF {
-                        ops.push(LedgerOp::Erc20Credit {
-                            currency: *currency_addr,
-                            amount: *amount,
-                        });
+                        // The token physically arrives at the executor's balance.
+                        // Which ledger depends on the currency: native credits
+                        // `Native` (a later `WethDeposit`/`NativeTransfer`
+                        // consumes it); an ERC-20 credits `Erc20[cur]`.
+                        if *currency_addr == NATIVE_CURRENCY_ADDRESS {
+                            ops.push(LedgerOp::NativeCredit { amount: *amount });
+                        } else {
+                            ops.push(LedgerOp::Erc20Credit {
+                                currency: *currency_addr,
+                                amount: *amount,
+                            });
+                        }
                     }
                     if let Some(pool) = seeds_pool {
                         ops.push(LedgerOp::SeedPair {
@@ -614,6 +643,25 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                 PlanStep::V4SettleDelta { currency_addr, .. } => {
                     ops.push(LedgerOp::V4SettleDelta {
                         currency: *currency_addr,
+                    });
+                }
+                PlanStep::NativeTransfer { amount } => {
+                    ops.push(LedgerOp::NativeTransfer { amount: *amount });
+                }
+                PlanStep::WethWithdraw {
+                    weth_addr, amount, ..
+                } => {
+                    ops.push(LedgerOp::WethWithdraw {
+                        weth: *weth_addr,
+                        amount: *amount,
+                    });
+                }
+                PlanStep::WethDeposit {
+                    weth_addr, amount, ..
+                } => {
+                    ops.push(LedgerOp::WethDeposit {
+                        weth: *weth_addr,
+                        amount: *amount,
                     });
                 }
             }
@@ -749,6 +797,14 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                 }
                 PlanStep::V4Settle { .. } => {
                     out.extend_from_slice(&encoders::enc_v4_settle());
+                }
+                // Ledger-only (native flows as msg.value on the settle) — no byte.
+                PlanStep::NativeTransfer { .. } => {}
+                PlanStep::WethWithdraw { amount, .. } => {
+                    out.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(*amount)));
+                }
+                PlanStep::WethDeposit { amount, .. } => {
+                    out.extend_from_slice(&encoders::enc_weth_deposit(U256::from(*amount)));
                 }
             }
         }
@@ -1251,8 +1307,8 @@ pub fn build_v4v3_plan(
     }
     let weth = inputs.weth_address;
 
-    // The V4 output currency (a's non-WETH leg) is the forward token taken to
-    // SELF, then consumed by the V3 flash. The V4 input is WETH (a's other leg).
+    // The V4 output currency (forward token taken to SELF) is a's non-WETH,
+    // non-native leg. The V4 input is a's other leg (WETH or native).
     let out_currency_a = if a.zfo {
         a.currency1_address
     } else {
@@ -1263,13 +1319,14 @@ pub fn build_v4v3_plan(
     } else {
         a.currency1_address
     };
-    // Scoped slice: reject native on either V4 leg (the wrap/unwrap cases land
-    // in a later sub-increment with WethDeposit/Withdraw steps).
-    if out_currency_a == NATIVE_CURRENCY_ADDRESS || in_currency_a == NATIVE_CURRENCY_ADDRESS {
+    // Scoped slice: reject native V4 OUTPUT (the wrap-then-V3 case needs
+    // WethDeposit — a follow-on sub-increment). Native V4 INPUT is handled
+    // here (the WethWithdraw + NativeTransfer + SettleDelta(native) path).
+    if out_currency_a == NATIVE_CURRENCY_ADDRESS {
         return None;
     }
-    // The V4 input must be WETH for this slice (the settle-delta(WETH) path).
-    if in_currency_a != weth {
+    // The V4 input must be WETH or native (the two supported settle paths).
+    if in_currency_a != weth && in_currency_a != NATIVE_CURRENCY_ADDRESS {
         return None;
     }
     // The terminal V3 output must be WETH (the captured profit).
@@ -1296,9 +1353,13 @@ pub fn build_v4v3_plan(
 
     let fee_a = u16::try_from(a.fee).ok()?;
     let ts_a = i16::try_from(a.tick_spacing).ok()?;
+    let v4_in_native = in_currency_a == NATIVE_CURRENCY_ADDRESS;
+    let input_idx = if a.zfo { c0_a } else { c1_a };
 
-    let inner: Plan = vec![
-        // 1. V4 swap a: PM[WETH] −= optimal_input (debt), PM[t1] += forward_out.
+    let mut inner: Plan = vec![
+        // 1. V4 swap a: PM[in] −= optimal_input (debt), PM[t1] += forward_out.
+        //    `in` is WETH (the WETH-input sub-case) or native (the native-input
+        //    sub-case, settled below with WethWithdraw + NativeTransfer).
         PlanStep::V4Swap {
             c0_idx: c0_a,
             c1_idx: c1_a,
@@ -1307,7 +1368,7 @@ pub fn build_v4v3_plan(
             hooks_idx: SENTINEL_NATIVE,
             zfo: a.zfo,
             amount: optimal_input,
-            in_currency: weth,
+            in_currency: in_currency_a,
             in_amount: optimal_input,
             out_currency: out_currency_a,
             out_amount: forward_out,
@@ -1337,7 +1398,12 @@ pub fn build_v4v3_plan(
             auto_repay: true,
             callback: vec![],
         },
-        // 4. Settle the V4 input debt: PM[WETH] → 0.
+        // 4. Settle the V4 input debt. WETH input: PM[WETH]→0 directly. Native
+        //    input: unwrap WETH (credited by the V3 output) to native, pay it
+        //    into the PM (NativeTransfer), then SettleDelta(native) zeroes PM.
+        //    The NativeTransfer is the executor-debit half; SettleDelta is the
+        //    PM-credit half — kept separate so a missing half is net-zero
+        //    caught, not silently absorbed.
         PlanStep::V4SettleDelta {
             currency_idx: weth_idx,
             currency_addr: weth,
@@ -1345,6 +1411,30 @@ pub fn build_v4v3_plan(
         // 5. Settle any residual PM deltas, then the V4UnlockEnd net-zero fires.
         PlanStep::V4SettleAll,
     ];
+    // 4 (native input). When the V4 input is native, splice the native settle
+    //    sequence: unwrap WETH (credited by the V3 output) to native, pay it
+    //    into the PM (NativeTransfer), then SettleDelta zeroes PM[native].
+    //    (The WETH SettleDelta above is the WETH-input path; replaced here.)
+    if v4_in_native {
+        let settle_all = inner.pop().unwrap(); // SettleAll (tail)
+        inner.pop(); // drop the WETH SettleDelta placeholder
+        inner.extend([
+            PlanStep::WethWithdraw {
+                weth_idx,
+                weth_addr: weth,
+                amount: optimal_input,
+            },
+            PlanStep::NativeTransfer {
+                amount: optimal_input,
+            },
+            PlanStep::V4SettleDelta {
+                currency_idx: SENTINEL_NATIVE,
+                currency_addr: NATIVE_CURRENCY_ADDRESS,
+            },
+            settle_all,
+        ]);
+    }
+    let _ = input_idx;
     let plan: Plan = vec![PlanStep::V4Unlock {
         inner,
         pool_manager_idx: pm_idx,

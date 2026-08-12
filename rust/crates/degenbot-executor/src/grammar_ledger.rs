@@ -221,6 +221,30 @@ pub enum LedgerOp {
     /// `Erc20[cur] == 0` and be rejected — the cross-ledger analogue of D0
     /// (the boundary take must precede the outside-ledger consume).
     Erc20Credit { currency: Address, amount: u128 },
+    /// The executor→PM native pay-in leg of a **native settle** (BP7KIR 3c).
+    /// On-chain, native flows to the PM as `msg.value` on the `V4_SETTLE`
+    /// call (no separate transfer instruction); this op models the executor's
+    /// native balance debit explicitly (the settle credits PM via
+    /// `V4SettleDelta`/`V4Settle`). Keeping the debit separate from the settle
+    /// credit means a missing settle half is caught by PM-net-zero rather than
+    /// silently absorbed — the gate's core value. Requires `Native ≥ amount`
+    /// immediately before (credit-before-debit; a `WethWithdraw` or native V4
+    /// take must have produced the native first).
+    NativeTransfer { amount: u128 },
+    /// The native credit half of a `V4TakeCompact(native→SELF)` — the native
+    /// output physically arrives at the executor's native balance (the mirror
+    /// of `Erc20Credit` for the native ledger). Pure credit; a later
+    /// `NativeTransfer` or `WethDeposit` consumes it.
+    NativeCredit { amount: u128 },
+    /// `WETH_WITHDRAW(amount)` — unwrap WETH to native: debits `Erc20[WETH]`
+    /// and credits `Native` (the source of the native that a `NativeTransfer`
+    /// then pays into the PM). Carries `weth` so the validator debits the right
+    /// Erc20 entry.
+    WethWithdraw { weth: Address, amount: u128 },
+    /// `WETH_DEPOSIT(amount)` — wrap native to WETH: debits `Native` and
+    /// credits `Erc20[WETH]` (the native came from a V4 `V4TakeCompact(native→
+    /// SELF)`).
+    WethDeposit { weth: Address, amount: u128 },
 }
 
 /// A `V4_SWAP` term op returned by the proto-trace builder — kept separate from
@@ -255,7 +279,11 @@ impl LedgerOp {
             | LedgerOp::V3Flash { .. }
             | LedgerOp::Erc20Transfer { .. }
             | LedgerOp::SelfFund { .. }
-            | LedgerOp::Erc20Credit { .. } => None,
+            | LedgerOp::Erc20Credit { .. }
+            | LedgerOp::NativeTransfer { .. }
+            | LedgerOp::NativeCredit { .. }
+            | LedgerOp::WethWithdraw { .. }
+            | LedgerOp::WethDeposit { .. } => None,
         }
     }
 }
@@ -281,6 +309,11 @@ pub struct LedgerValidator {
     /// `Erc20[currency]` — the executor's own balance per currency (extended
     /// by flash swaps, consumed by `Erc20Transfer`).
     erc20: HashMap<Address, i128>,
+    /// `Native` — the executor's native ETH balance. Extended by V4 native
+    /// takes (`V4TakeCompact(native→SELF)`) and `WethWithdraw`; consumed by
+    /// `NativeTransfer` (the pay-into-PM leg of a native settle) and
+    /// `WethDeposit` (wrap). Same credit-before-debit rule.
+    native: i128,
     /// Outstanding flash debt per currency (owed by the executor, awaiting
     /// repayment within a callback). Checked zero at `finish()`.
     flash_debt: HashMap<Address, u128>,
@@ -314,6 +347,12 @@ pub enum ValidationError {
     /// invariant violation (a touched currency was not settled to zero by
     /// callback end).
     PmDeltaNonzero { currency: Address, delta: i128 },
+    /// A `NativeTransfer` (the executor→PM native pay-in leg of a native
+    /// settle) debited the executor's native balance before it held credit (the
+    /// native analogue of `Erc20TransferBeforeCredit`). Surfaced by the
+    /// BP7KIR 3c native-gap work — a `WethWithdraw` (or native V4 take) must
+    /// precede the native pay-in.
+    NativeTransferBeforeCredit { wanted: u128, have: i128 },
 }
 
 impl LedgerValidator {
@@ -473,6 +512,50 @@ impl LedgerValidator {
                 *self.erc20.entry(currency).or_default() += amount as i128;
                 Ok(())
             }
+            // Native pay-in (executor→PM, native settle leg): debit the
+            // executor's native balance. Requires Native ≥ amount immediately
+            // before — a `WethWithdraw` or native V4 take must have produced it.
+            LedgerOp::NativeTransfer { amount } => {
+                if self.native < amount as i128 {
+                    return Err(ValidationError::NativeTransferBeforeCredit {
+                        wanted: amount,
+                        have: self.native,
+                    });
+                }
+                self.native -= amount as i128;
+                Ok(())
+            }
+            // Unwrap WETH → native: debit Erc20[WETH], credit Native.
+            LedgerOp::WethWithdraw { weth, amount } => {
+                let have = *self.erc20.get(&weth).unwrap_or(&0);
+                if have < amount as i128 {
+                    return Err(ValidationError::Erc20TransferBeforeCredit {
+                        currency: weth,
+                        wanted: amount,
+                        have,
+                    });
+                }
+                self.erc20.insert(weth, have - amount as i128);
+                self.native += amount as i128;
+                Ok(())
+            }
+            // Wrap native → WETH: debit Native, credit Erc20[WETH].
+            LedgerOp::WethDeposit { weth, amount } => {
+                if self.native < amount as i128 {
+                    return Err(ValidationError::NativeTransferBeforeCredit {
+                        wanted: amount,
+                        have: self.native,
+                    });
+                }
+                self.native -= amount as i128;
+                *self.erc20.entry(weth).or_default() += amount as i128;
+                Ok(())
+            }
+            // Native credit half of V4TakeCompact(native→SELF).
+            LedgerOp::NativeCredit { amount } => {
+                self.native += amount as i128;
+                Ok(())
+            }
             LedgerOp::Erc20Transfer {
                 currency,
                 amount,
@@ -554,6 +637,9 @@ mod tests {
     }
     fn pool() -> Address {
         address!("00000000000000000000000000000000000000bb")
+    }
+    fn native() -> Address {
+        Address::ZERO
     }
 
     /// D0 — take-before-credit is rejected (the pre-fix `v2_v2_v4` bug).
@@ -1009,6 +1095,80 @@ mod tests {
             }),
             Err(ValidationError::Erc20TransferBeforeCredit {
                 currency: weth(),
+                wanted: 100_000,
+                have: 0,
+            })
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // BP7KIR Increment 3c: native settle. The V4 native-input debt (PM[native])
+    // is settled by `WethWithdraw` (credit Native) + `NativeTransfer` (debit
+    // Native → PM) + `V4SettleDelta(native)` (zero PM[native]). The
+    // `NativeTransfer` is the executor-debit half, separate from the
+    // `SettleDelta` PM-credit half — the gate's core value.
+    // ══════════════════════════════════════════════════════════════════
+
+    /// The native settle chain validates clean: the WethWithdraw credits
+    /// Native before the NativeTransfer debits it, and PM[native] nets to zero.
+    #[test]
+    fn native_settle_chain_accepted() {
+        let mut v = LedgerValidator::default();
+        // V4 swap with native input: PM[native] −= debt, PM[t1] += forward_out.
+        v.push(LedgerOp::V4Swap {
+            in_currency: native(),
+            in_amount: 100_000,
+            out_currency: usdc(),
+            out_amount: 110_000,
+        })
+        .unwrap();
+        // (forward output handling elided — focus on the native settle.)
+        // Seed the executor's WETH (the source of the unwrapped native).
+        v.push(LedgerOp::Erc20Credit {
+            currency: weth(),
+            amount: 100_000,
+        })
+        .unwrap();
+        // Unwrap WETH → native (credits Native).
+        v.push(LedgerOp::WethWithdraw {
+            weth: weth(),
+            amount: 100_000,
+        })
+        .unwrap();
+        // Native pay-in (debit Native) + settle (zero PM[native]).
+        v.push(LedgerOp::NativeTransfer { amount: 100_000 })
+            .unwrap();
+        v.push(LedgerOp::V4SettleDelta { currency: native() })
+            .unwrap();
+        v.push(LedgerOp::V4SettleAll).unwrap();
+        v.push(LedgerOp::V4UnlockEnd).unwrap();
+        assert!(v.finish().is_ok(), "native settle chain must validate");
+    }
+
+    /// The structural defect: the `NativeTransfer` (native pay-in) fires BEFORE
+    /// the `WethWithdraw` that produces the native — the executor's Native
+    /// balance is 0 → rejected (the native analogue of D0). Byte-parity cannot
+    /// see this ordering (the bytes would revert on-chain with an opaque
+    /// native-settle revert); the gate names the invariant.
+    #[test]
+    fn native_transfer_before_credit_rejected() {
+        let mut v = LedgerValidator::default();
+        v.push(LedgerOp::V4Swap {
+            in_currency: native(),
+            in_amount: 100_000,
+            out_currency: usdc(),
+            out_amount: 110_000,
+        })
+        .unwrap();
+        v.push(LedgerOp::Erc20Credit {
+            currency: weth(),
+            amount: 100_000,
+        })
+        .unwrap();
+        // BUG: native pay-in BEFORE the WethWithdraw credits Native.
+        assert_eq!(
+            v.push(LedgerOp::NativeTransfer { amount: 100_000 }),
+            Err(ValidationError::NativeTransferBeforeCredit {
                 wanted: 100_000,
                 have: 0,
             })

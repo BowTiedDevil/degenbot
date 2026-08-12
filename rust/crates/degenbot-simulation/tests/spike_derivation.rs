@@ -359,6 +359,95 @@ fn v4v3_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Increment 3c: the `v4_v3` **native-input** sub-case on the Plan
+/// tree — the V4 input is NATIVE (PM[native] debt), settled by the native
+/// pay-in pattern `WethWithdraw` + `NativeTransfer` + `V4SettleDelta(native)`.
+/// The `NativeTransfer` is the executor-debit half, separate from the PM-credit
+/// `SettleDelta` so a missing half is net-zero caught (the gate's core value).
+/// Build Plan → byte-parity + gate + runtime exact WETH delta.
+#[test]
+fn v4v3_native_input_plan_byte_parity_validates_and_executes() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{build_v4v3_plan, plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let weth = h.weth;
+
+    // Pool A (V4): NATIVE→t1 (native input, ERC-20 output). Pool B (V3): t1→WETH.
+    let p_a = HopPool::V4(
+        h.add_v4_pool(
+            native,
+            t,
+            3000,
+            60,
+            sqrt_x(1),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let p_b = HopPool::V3(
+        h.add_v3_pool(
+            t,
+            weth,
+            3000,
+            sqrt_x(3),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap(),
+    );
+    let hops = vec![
+        Hop {
+            src: native,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let (preamble, plan, at) = build_v4v3_plan(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v4_v3 native-input] build None"));
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v4_v3 native-input] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[v4_v3 native-input] Plan bytes != proven emitter"
+    );
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .unwrap_or_else(|e| panic!("[v4_v3 native-input] Plan must validate clean: {e:?}"));
+    let result = h
+        .run_raw_payload(&hops, &plan_bytes, optimal_input, 8_000_000)
+        .unwrap_or_else(|e| panic!("[v4_v3 native-input] run_raw_payload: {e}"));
+    assert_profitable(&result, 2, "v4_v3 native-input");
+    println!(
+        "── v4_v3 native-input (Plan): byte-parity held, trace validated, actual_delta={}",
+        result.actual_weth_delta
+    );
+}
+
 #[test]
 fn derived_v3v2_executes_with_exact_delta() {
     run_spike(Prot::V3, Prot::V2, "v3_v2");
