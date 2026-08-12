@@ -297,6 +297,22 @@ fn v4v4_plan_byte_parity_validates_and_executes_with_exact_delta() {
     );
 }
 
+/// BP7KIR Increment 3b: the `v4_v2` boundary-seed family on the Plan tree
+/// — the V4 forward output is taken directly to the V2 pair (PM→pool,
+/// `SeedPair`), consumed by a terminal `V2SwapCalc` (the 2PT5HH rule across
+/// the PM boundary), and the V4 WETH-input debt is settled by the
+/// `V4Sync`+`Erc20Transfer(WETH→PM)`+`V4Settle` boundary-seed funded by the
+/// V2 output. Build Plan → byte-parity + gate + runtime exact delta.
+#[test]
+fn v4v2_plan_byte_parity_validates_and_executes_with_exact_delta() {
+    run_plan_family(
+        Prot::V4,
+        Prot::V2,
+        "v4_v2",
+        degenbot_executor::grammar_shape::build_v4v2_plan,
+    );
+}
+
 /// BP7KIR Increment 3b: the `v4_v3` boundary-take family on the Plan tree —
 /// the first cross-ledger family. `V4TakeCompact(cur→SELF)` is a cross-ledger
 /// move: it debits `PM[cur]` (the V4 take) AND credits the executor's

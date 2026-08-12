@@ -393,16 +393,45 @@ pub enum PlanStep {
     /// `V4_TAKE_COMPACT(cur→rcp, amount)` — take a specific `amount` of `cur`'s
     /// PM credit to `rcp` (the boundary-take: V4 output leaves the PM to feed
     /// a V2/V3 hop or to capture profit). Debits PM (D0 credit-before-debit).
+    /// The recipient role determines the **second** ledger effect (the
+    /// cross-ledger move, mirroring `Erc20Transfer`'s seeds_pool/repays_flash):
+    /// `recipient_idx == SENTINEL_SELF` credits the executor `Erc20[cur]`
+    /// (the token arrives at the executor); `seeds_pool = Some(pool)` credits
+    /// `PairHandoff[pool]` (the token seeds a V2 pair directly, PM→pool, never
+    /// touching executor Erc20).
     V4TakeCompact {
         currency_idx: u8,
         currency_addr: Address,
         recipient_idx: u8,
         amount: u128,
+        /// When `Some(pool)`, the take's recipient is a V2 pair being
+        /// pre-funded directly (PM→pool) — credit `PairHandoff[pool]` so a
+        /// following `V2SwapCalc` sees its seed. `None` for a →SELF take.
+        seeds_pool: Option<Address>,
     },
     /// `V4_SETTLE_DELTA(cur)` — auto-settle one currency's PM delta to 0.
     V4SettleDelta {
         currency_idx: u8,
         currency_addr: Address,
+    },
+    /// `V4_SYNC(cur)` — sync the PM's internal balance for `cur` (a balance-sync
+    /// primitive, **delta-neutral**: it carries no PM-delta effect; the actual
+    /// delta application comes from a following `V4Settle`). Used in the
+    /// boundary-seed pattern (executor pays `cur` into the PM via an
+    /// `Erc20Transfer(cur→PM)` then `V4Settle`) to settle a V4 input debt.
+    V4Sync {
+        currency_idx: u8,
+        currency_addr: Address,
+    },
+    /// `V4_SETTLE` — the executor pays `amount` of `currency` into the PM,
+    /// cancelling debt (`PM[currency] += amount`; the executor's `Erc20`
+    /// debit happens at the preceding `Erc20Transfer(cur→PM)`). Used after a
+    /// `V4Sync` + `Erc20Transfer` boundary-seed. The byte form is the no-arg
+    /// `V4_SETTLE`; the IR carries `currency`/`amount` explicitly so the
+    /// validator knows which delta to apply.
+    V4Settle {
+        currency_addr: Address,
+        amount: u128,
     },
 }
 
@@ -541,6 +570,7 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     currency_addr,
                     amount,
                     recipient_idx,
+                    seeds_pool,
                     ..
                 } => {
                     ops.push(LedgerOp::Take {
@@ -551,16 +581,35 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     // executor (SELF), the token physically arrives at the
                     // executor's Erc20 balance — credit it so a downstream
                     // V2/V3 flash that consumes `cur` (e.g. the V3 auto-repay
-                    // in `v4_v3`) validates. Other recipient roles (a V2 pool
-                    // directly seeded by the take — the `v4_v2` boundary case)
-                    // credit the pair-handoff ledger instead, and land in a
-                    // later sub-increment.
+                    // in `v4_v3`) validates. When the recipient is a V2 pair,
+                    // the token seeds the pair directly (PM→pool) — credit
+                    // `PairHandoff[pool]` so a following `V2SwapCalc` sees its
+                    // seed (the 2PT5HH terminal-V2 rule across the PM boundary).
                     if *recipient_idx == SENTINEL_SELF {
                         ops.push(LedgerOp::Erc20Credit {
                             currency: *currency_addr,
                             amount: *amount,
                         });
                     }
+                    if let Some(pool) = seeds_pool {
+                        ops.push(LedgerOp::SeedPair {
+                            pool: *pool,
+                            amount: *amount,
+                        });
+                    }
+                }
+                // V4_SYNC is a balance-sync primitive — delta-neutral, no
+                // ledger effect (the delta application comes from the
+                // following V4Settle). Emitted for byte-parity only.
+                PlanStep::V4Sync { .. } => {}
+                PlanStep::V4Settle {
+                    currency_addr,
+                    amount,
+                } => {
+                    ops.push(LedgerOp::V4Settle {
+                        currency: *currency_addr,
+                        amount: *amount,
+                    });
                 }
                 PlanStep::V4SettleDelta { currency_addr, .. } => {
                     ops.push(LedgerOp::V4SettleDelta {
@@ -694,6 +743,12 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                 ),
                 PlanStep::V4SettleDelta { currency_idx, .. } => {
                     out.extend_from_slice(&encoders::enc_v4_settle_delta(*currency_idx))
+                }
+                PlanStep::V4Sync { currency_idx, .. } => {
+                    out.extend_from_slice(&encoders::enc_v4_sync(*currency_idx));
+                }
+                PlanStep::V4Settle { .. } => {
+                    out.extend_from_slice(&encoders::enc_v4_settle());
                 }
             }
         }
@@ -1264,6 +1319,7 @@ pub fn build_v4v3_plan(
             currency_addr: out_currency_a,
             recipient_idx: SENTINEL_SELF,
             amount: forward_out,
+            seeds_pool: None,
         },
         // 3. Terminal V3 flash: credits WETH (the profit), owes t1 — auto-repaid
         //    at callback-end from the Erc20[t1] credit the boundary take created.
@@ -1287,6 +1343,152 @@ pub fn build_v4v3_plan(
             currency_addr: weth,
         },
         // 5. Settle any residual PM deltas, then the V4UnlockEnd net-zero fires.
+        PlanStep::V4SettleAll,
+    ];
+    let plan: Plan = vec![PlanStep::V4Unlock {
+        inner,
+        pool_manager_idx: pm_idx,
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v4_v2` Plan (BP7KIR Increment 3b) — the **boundary-seed**
+/// family: a V4 lead swap whose forward output is taken ***directly to a V2
+/// pair*** (PM→pool, never touching the executor's Erc20), and a terminal
+/// `V2SwapCalc` consumes that seed (the 2PT5HH terminal-V2 rule across the PM
+/// boundary). The V4 WETH-input debt is settled by the boundary-seed pattern —
+/// `V4Sync` + `Erc20Transfer(WETH→PM)` + `V4Settle` — funding the PM pay-in
+/// from the V2 swap's WETH output (the outside→PM direction in miniature).
+///
+/// Scoped slice: ERC-20 V4 output + WETH V4 input (non-native, matching the
+/// v4_v3/v4_v4 WETH-only slice). The native cases (take-native+wrap, or
+/// unwrap-WETH-to-seed-native-input) need `WethDeposit`/`WethWithdraw` and
+/// return `None` here.
+#[must_use]
+pub fn build_v4v2_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V4(a), HopInfo::V2(b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    let weth_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) || !fits_int128(forward_out) {
+        return None;
+    }
+    let weth = inputs.weth_address;
+
+    // The V4 output (forward token, taken to the V2 pair) = a's non-WETH leg;
+    // the V4 input is WETH (a's other leg).
+    let out_currency_a = if a.zfo {
+        a.currency1_address
+    } else {
+        a.currency0_address
+    };
+    let in_currency_a = if a.zfo {
+        a.currency0_address
+    } else {
+        a.currency1_address
+    };
+    // Scoped slice: reject native on either V4 leg + require WETH input.
+    if out_currency_a == NATIVE_CURRENCY_ADDRESS || in_currency_a == NATIVE_CURRENCY_ADDRESS {
+        return None;
+    }
+    if in_currency_a != weth {
+        return None;
+    }
+    // The V2 terminal output must be WETH (the captured profit + the source of
+    // the PM pay-in funds).
+    let out_currency_b = if b.zfo {
+        b.token1_address
+    } else {
+        b.token0_address
+    };
+    if out_currency_b != weth {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let v2_idx = at.add(b.pool_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let forward_idx = if a.zfo { c1_a } else { c0_a };
+
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+
+    let inner: Plan = vec![
+        // 1. V4 swap a: PM[WETH] −= optimal_input (debt), PM[t1] += forward_out.
+        PlanStep::V4Swap {
+            c0_idx: c0_a,
+            c1_idx: c1_a,
+            fee: fee_a,
+            tick_spacing: ts_a,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: a.zfo,
+            amount: optimal_input,
+            in_currency: weth,
+            in_amount: optimal_input,
+            out_currency: out_currency_a,
+            out_amount: forward_out,
+        },
+        // 2. Boundary take directly to the V2 pair (PM→pool, never via executor
+        //    Erc20): PM[t1] −= forward_out; SeedPair(v2, forward_out) so the
+        //    following V2SwapCalc sees its seed.
+        PlanStep::V4TakeCompact {
+            currency_idx: forward_idx,
+            currency_addr: out_currency_a,
+            recipient_idx: v2_idx,
+            amount: forward_out,
+            seeds_pool: Some(b.pool_address),
+        },
+        // 3. Terminal V2 SwapCalc: consumes the seeded pair, credits the
+        //    executor Erc20[WETH] += weth_out (the swap output — the profit +
+        //    the PM pay-in source).
+        PlanStep::V2SwapCalc {
+            pool_idx: v2_idx,
+            pool_addr: b.pool_address,
+            zfo: b.zfo,
+            recipient_idx: SENTINEL_SELF,
+            fee: b.fee,
+            out_currency: weth,
+            out_amount: weth_out,
+        },
+        // 4-6. Boundary-seed: sync WETH, pay it into the PM from the V2 output,
+        //      settle the V4 input debt (PM[WETH] += optimal_input → 0).
+        PlanStep::V4Sync {
+            currency_idx: weth_idx,
+            currency_addr: weth,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: weth_idx,
+            token_addr: weth,
+            recipient_idx: pm_idx,
+            amount: optimal_input,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V4Settle {
+            currency_addr: weth,
+            amount: optimal_input,
+        },
+        // 7. Settle residual + the V4UnlockEnd net-zero assertion.
         PlanStep::V4SettleAll,
     ];
     let plan: Plan = vec![PlanStep::V4Unlock {

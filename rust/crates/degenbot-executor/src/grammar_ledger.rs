@@ -885,4 +885,133 @@ mod tests {
             })
         );
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // BP7KIR Increment 3b: the `v4_v2` boundary-seed family. The V4 forward
+    // output is taken DIRECTLY to the V2 pair (PM→pool via `SeedPair`),
+    // consumed by a `V2SwapCalc` (2PT5HH across the PM boundary); the V4
+    // WETH-input debt is settled by `Erc20Transfer(WETH→PM)` + `V4Settle`,
+    // funded by the V2 swap's WETH output credit.
+    // ══════════════════════════════════════════════════════════════════
+
+    /// The canonical `v4_v2` ledger trace validates clean: the boundary take
+    /// seeds the pair before the `V2SwapCalc` consumes it, and the V2 WETH
+    /// output credit precedes the PM pay-in (`Erc20Transfer→PM`). PM nets to
+    /// zero (`V4UnlockEnd`) and the profit remains in `Erc20[WETH]`.
+    #[test]
+    fn v4_v2_boundary_seed_chain_accepted() {
+        let mut v = LedgerValidator::default();
+        // V4 swap a: PM[WETH] −= optimal_input, PM[t1] += forward_out.
+        v.push(LedgerOp::V4Swap {
+            in_currency: weth(),
+            in_amount: 100_000,
+            out_currency: usdc(),
+            out_amount: 110_000,
+        })
+        .unwrap();
+        // Boundary take → V2 pair: PM[t1] −= forward_out; SeedPair(v2, forward_out).
+        v.push(LedgerOp::Take {
+            currency: usdc(),
+            amount: 110_000,
+        })
+        .unwrap();
+        v.push(LedgerOp::SeedPair {
+            pool: pool(),
+            amount: 110_000,
+        })
+        .unwrap();
+        // Terminal V2 SwapCalc: consumes the seeded pair, credits Erc20[WETH].
+        v.push(LedgerOp::SwapCalc {
+            pool: pool(),
+            amount_in: 0,
+            out_currency: weth(),
+            out_amount: 120_000,
+        })
+        .unwrap();
+        // Boundary-seed: pay WETH into the PM from the V2 output, settle the
+        // V4 input debt (V4Sync is delta-neutral — modeled here by the
+        // Erc20Transfer debit + V4Settle credit pair).
+        v.push(LedgerOp::Erc20Transfer {
+            currency: weth(),
+            amount: 100_000,
+            repays_flash: None,
+        })
+        .unwrap();
+        v.push(LedgerOp::V4Settle {
+            currency: weth(),
+            amount: 100_000,
+        })
+        .unwrap();
+        v.push(LedgerOp::V4SettleAll).unwrap();
+        v.push(LedgerOp::V4UnlockEnd).unwrap();
+        assert!(
+            v.finish().is_ok(),
+            "v4_v2 boundary-seed chain must validate"
+        );
+    }
+
+    /// The structural defect: the boundary take+seed is omitted, so the
+    /// `V2SwapCalc` fires against `pair[v2] == 0` → rejected (the 2PT5HH
+    // terminal-V2 rule across the PM boundary).
+    #[test]
+    fn v4_v2_pair_seed_omitted_rejected() {
+        let mut v = LedgerValidator::default();
+        v.push(LedgerOp::V4Swap {
+            in_currency: weth(),
+            in_amount: 100_000,
+            out_currency: usdc(),
+            out_amount: 110_000,
+        })
+        .unwrap();
+        // BUG: the V4TakeCompact(→v2 pair, SeedPair) is missing — the pair is
+        // never seeded.
+        assert_eq!(
+            v.push(LedgerOp::SwapCalc {
+                pool: pool(),
+                amount_in: 0,
+                out_currency: weth(),
+                out_amount: 120_000,
+            }),
+            Err(ValidationError::SwapCalcBeforeCredit { pool: pool() })
+        );
+    }
+
+    /// The cross-ledger defect: the PM pay-in (`Erc20Transfer(WETH→PM)`) is
+    /// hoisted before the `V2SwapCalc` that credits `Erc20[WETH]`. The
+    /// executor's WETH balance is still 0 → rejected (the outside→PM settle
+    /// must follow the V2 output that funds it).
+    #[test]
+    fn v4_v2_pm_payin_before_v2_output_rejected() {
+        let mut v = LedgerValidator::default();
+        v.push(LedgerOp::V4Swap {
+            in_currency: weth(),
+            in_amount: 100_000,
+            out_currency: usdc(),
+            out_amount: 110_000,
+        })
+        .unwrap();
+        v.push(LedgerOp::Take {
+            currency: usdc(),
+            amount: 110_000,
+        })
+        .unwrap();
+        v.push(LedgerOp::SeedPair {
+            pool: pool(),
+            amount: 110_000,
+        })
+        .unwrap();
+        // BUG: pay WETH into the PM BEFORE the V2SwapCalc credits Erc20[WETH].
+        assert_eq!(
+            v.push(LedgerOp::Erc20Transfer {
+                currency: weth(),
+                amount: 100_000,
+                repays_flash: None,
+            }),
+            Err(ValidationError::Erc20TransferBeforeCredit {
+                currency: weth(),
+                wanted: 100_000,
+                have: 0,
+            })
+        );
+    }
 }
