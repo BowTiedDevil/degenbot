@@ -1969,6 +1969,7 @@ mod tests {
             opts: EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: false,
+                ..Default::default()
             },
             state_nonces: vec![],
         }
@@ -2629,6 +2630,7 @@ mod tests {
             opts: EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: false,
+                ..Default::default()
             },
         };
 

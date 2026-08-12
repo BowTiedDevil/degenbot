@@ -126,6 +126,7 @@ impl PyDispatchCandidate {
         let opts = EncodeOptions {
             erc6909_profit,
             use_v4_batch,
+            ..Default::default()
         };
         Ok(Self {
             inner: DispatchCandidate {

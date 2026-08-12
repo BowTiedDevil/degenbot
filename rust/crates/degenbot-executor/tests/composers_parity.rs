@@ -302,6 +302,7 @@ fn parity_v4v4_same_currency_batch() {
         EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: true,
+            ..Default::default()
         },
     );
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
@@ -371,6 +372,7 @@ fn parity_v4v4_same_currency_erc6909() {
         EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: false,
+            ..Default::default()
         },
     );
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
@@ -450,6 +452,7 @@ fn parity_v4v4_weth_to_native_unwrap_batch() {
         EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: true,
+            ..Default::default()
         },
     );
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));

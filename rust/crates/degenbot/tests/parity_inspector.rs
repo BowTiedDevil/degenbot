@@ -172,6 +172,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
         opts: EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: false,
+            ..Default::default()
         },
         state_nonces: vec![],
     }

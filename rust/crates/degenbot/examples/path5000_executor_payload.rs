@@ -240,6 +240,7 @@ fn build_path(fx: &Fixture, path_id: u64) -> SimulatePath {
         opts: EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: false,
+            ..Default::default()
         },
         state_nonces: vec![],
     }
@@ -275,6 +276,7 @@ fn run_executor_call_trace(fx: &Fixture, runtime: &[u8]) {
         EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: false,
+            ..Default::default()
         },
     )
     .expect("encode_cmd_stream Some");

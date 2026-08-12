@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>degenbot — Architecture Review</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'base', themeVariables: { primaryColor: '#eef2ff', primaryTextColor: '#1e1b4b', primaryBorderColor: '#a5b4fc', lineColor: '#94a3b8', fontSize: '13px' } });</script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  .card { transition: transform .15s ease, box-shadow .15s ease; }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -12px rgba(30,27,75,.25); }
+  h2 { scroll-margin-top: 90px; }
+  .pill { font-size: 11px; letter-spacing: .03em; }
+  code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-size:.85em; color:#4338ca; }
+  .box { border:1.5px solid #c7d2fe; border-radius:10px; padding:8px 10px; background:#fbfcff; font-size:12.5px; line-height:1.35; }
+  .box.deep { border-color:#34d399; background:#ecfdf5; }
+  .box.tall { border-color:#f87171; background:#fef2f2; }
+  .box.shallow { border-color:#fb923c; background:#fff7ed; }
+  .box small { color:#64748b; display:block; }
+  .concern { font-size:11px; color:#475569; margin-top:2px; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<div class="max-w-6xl mx-auto px-6 py-10">
+
+  <!-- HERO -->
+  <header class="mb-10">
+    <div class="flex items-center gap-2 text-xs font-semibold text-indigo-600 mb-2 uppercase tracking-wide">
+      <span>architecture review · degenbot</span>
+    </div>
+    <h1 class="text-3xl font-extrabold text-slate-900">Where the Rust core is shallow — and how to deepen it</h1>
+    <p class="mt-3 text-slate-600 max-w-3xl leading-relaxed">
+      A review of the recently-changed leaderboard of the <b>degenbot-bot</b> orchestration crate and its
+      <code>degenbot-order-index</code> sibling, read through the <code>/codebase-design</code> lens
+      (module / interface / depth / seam / leverage / locality). The block pump is the single most-churned
+      slice of the codebase — <code>block_pump.rs</code> moved in 14 of the last 50 commits — and most of the
+      friction below is concentrated there and in the solve path it drives.
+    </p>
+    <div class="mt-4 flex flex-wrap gap-2">
+      <span class="pill px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 font-medium">4 candidates</span>
+      <span class="pill px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium">1 Strong</span>
+      <span class="pill px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 font-medium">2 Worth exploring</span>
+      <span class="pill px-2.5 py-1 rounded-full bg-slate-200 text-slate-600 font-medium">1 Speculative</span>
+    </div>
+  </header>
+
+  <!-- ============ CANDIDATE 1 ============ -->
+  <section id="c1" class="mb-14">
+    <h2 class="text-2xl font-bold text-slate-900 mb-1">1 · The per-family projection in <code>resolve_path</code> is a wide flat match</h2>
+    <div class="flex gap-2 mb-4">
+      <span class="pill px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Strong</span>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Files</h3>
+        <p class="text-sm"><code>degenbot-bot/src/solvers/arb_engine/solver_dispatch.rs</code>
+        — <code>resolve_path</code> (~470 lines) + the solver intake types in
+        <code>degenbot-solvers/src/mixed/*</code> (<code>ResolvedMixedPath</code>, <code>ResolvedHop</code>,
+        <code>SolidlyHopState</code>…).</p>
+      </div>
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Recommendation</h3>
+        <p class="text-sm">Colocate each DEX family's <em>"project <code>BotState</code> → solver hop-state"</em>
+        projection into that family's own module, and give the whole step a typed
+        <code>Option</code>/<code>Result</code> instead of a mid-loop silent <code>return</code>.</p>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+      <h3 class="font-bold text-slate-900 mb-2">Problem</h3>
+      <div class="text-sm leading-relaxed text-slate-700 space-y-2">
+        <p><code>resolve_path</code> is the single flat <code>match pool_ref.hop_type</code> that walks every
+        family — V2, V3, V4, SolidlyStable (which itself splits Aerodrome vs Camelot with a <b>duplicated
+        token-decimals lookup</b>), plus the balance-vector arms — interleaving five concerns per family:
+        identity lookup, state lookup, token-decimals resolution, swap-orientation, and solver-type
+        construction. Each arm ends in <code>let Some(…) else { return; }</code> — a failed lookup silently
+        invalidates the whole path <em>mid-loop</em>, after earlier hops were already pushed. This is a
+        shallow <b>interface</b>: the function reads many different <code>BotState</code> accessors
+        (<code>get_v2_pool_state</code>, <code>build_int_v3_sequence</code>, <code>token_entry</code>, …),
+        and its contract is "construct this, or quietly refuse the path."</p>
+        <p>The <b>seam is already decided</b> (ADR-015): <code>resolve_path</code> is the degenbot-bot
+        core-bound projection and must stay there. This candidate refines <em>how</em> the projection is
+        structured internally — it does <b>not</b> move it crate-ward and does not re-litigate ADR-015.
+        The <b>deletion test</b> passes: pulling each family's projection into a family-local module
+        concentrates each family's projection + its decimals/orientation/fee logic in one place, rather
+        than scattering it as interleaved arms.</p>
+      </div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">Before · flat projection</h3>
+          <div class="box shallow mb-2">solver_dispatch.rs
+            <small class="concern">one <code>match hop_type</code> · every family interleaved</small>
+          </div>
+          <div class="flex flex-col gap-1 pl-2 text-xs text-slate-600">
+            <div class="box">V2 arm · identity+state+orient → <code>IntHopState</code></div>
+            <div class="box">V3 arm · identity + <code>build_int_v3_sequence</code>(24) → seq</div>
+            <div class="box">V4 arm · identity + twin sequence + debug dump</div>
+            <div class="box">SolidlyStable arm · Aerodrome / Camelot (decimals ×2)</div>
+            <div class="box">balance-vector arms · …</div>
+          </div>
+          <div class="box tall mt-2">failed lookup ⇒ <code>return</code> mid-loop, path silently invalid</div>
+        </div>
+      </div>
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">After · per-family projection</h3>
+          <div class="box mb-2"><code>resolve_path</code> — thin dispatcher
+            <small class="concern">matches family → delegates → assembles <code>ResolvedMixedPath</code>, collects a typed error/none</small>
+          </div>
+          <div class="flex flex-col gap-1 pl-2 text-xs text-slate-600">
+            <div class="box deep">V2 module · <code>IntHopState::from(&BotState, ref)</code></div>
+            <div class="box deep">V3 module · sequence builder + debug dump</div>
+            <div class="box deep">V4 module · twin</div>
+            <div class="box deep">Solidly module · Aerodrome/Camelot once, shared decimals</div>
+            <div class="box deep">balance-vector module(s)</div>
+          </div>
+          <div class="box deep mt-2">missing piece ⇒ typed <code>Result</code>/<code>Option</code>, reasoned per-family</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+      <h3 class="font-bold text-slate-900 mb-2">Benefits (locality · leverage · tests)</h3>
+      <ul class="text-sm text-slate-700 list-disc list-inside space-y-1.5">
+        <li><b>Locality:</b> adding a DEX family, or debugging one (e.g. the recent V4-clamp/V4-alignment churn that keeps landing in this exact file), becomes a single-family edit instead of a scan-and-patch of one long match.</li>
+        <li><b>Leverage:</b> <code>resolve_path</code> shrinks to a dispatcher whose interface ("give me the hop-state for this pool ref, or say missing") is far smaller than today's interface (a dozen <code>BotState</code> accessors reachable from one place).</li>
+        <li><b>Tests:</b> each family's projection is today only exercised end-to-end through the engine. A per-family module gets its own <em>unit</em> tests (orientation, decimals, fee-inversion, missing-pool) without standing up a full engine + registered path.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ CANDIDATE 2 ============ -->
+  <section id="c2" class="mb-14">
+    <h2 class="text-2xl font-bold text-slate-900 mb-1">2 · The <code>ArbitrageEngine</code> path registry is five maps that must stay consistent</h2>
+    <div class="flex gap-2 mb-4">
+      <span class="pill px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 font-semibold">Worth exploring</span>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Files</h3>
+        <p class="text-sm"><code>arb_engine/{mod,solver_dispatch,delivery_policy,lifecycle}.rs</code> — the
+        engine's derived state + <code>rebuild_and_solve_affected</code> (~235 lines).</p>
+      </div>
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Recommendation</h3>
+        <p class="text-sm">Extract the reverse-index + dirty-set traversal behind a deep <code>PathRegistry</code>
+        module owning add / remove / affected-traversal, so the engine stops hand-maintaining every derived map.</p>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+      <h3 class="font-bold text-slate-900 mb-2">Problem</h3>
+      <div class="text-sm leading-relaxed text-slate-700 space-y-2">
+        <p>The engine holds five mutually-conditional derived structures —
+        <code>path_pools</code> (path → pools), <code>pool_to_paths</code> (reverse index),
+        <code>path_resolved</code>, <code>results</code>, <code>pending_new_paths</code> +
+        <code>last_solved_path_ids</code> — plus a phase <b>FSM</b> (<code>EnginePhase</code>), and
+        registration/removal must update several of them together
+        (<code>delivery_policy.rs:298</code> "Removes the path from the solve state
+        (<code>path_pools</code>, <code>pool_to_paths</code>…)"). The invariant "these maps are
+        mutually consistent" is a real, delicate contract — but it is <em>embedded</em>, not named.
+        <code>rebuild_and_solve_affected</code> orchestrates index traversal → re-resolution → rayond
+        solve → CL-clamp → result merge <em>and</em> maintains the change-set bookkeeping, all in one
+        <code>&amp;mut self</code> method.</p>
+        <p>The reverse-index and dirty-set traversal are cleanly separable from the solver math. The
+        <b>deletion test</b>: a <code>PathRegistry</code> would concentrate the consistency invariant in
+        one deep module (its interface <em>is</em> the invariant), where today it is smeared across three
+        files and only <code>tests.rs</code> can prove it.</p>
+      </div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">Before · consistency smeared</h3>
+          <div class="flex flex-col gap-1 text-xs">
+            <div class="box">mod.rs — the 5 maps + phase fsm</div>
+            <div class="box">lifecycle.rs — register writes path_pools + pool_to_paths</div>
+            <div class="box">delivery_policy.rs — deregister removes path_pools + pool_to_paths</div>
+            <div class="box tall">solver_dispatch.rs — rebuild_and_solve_affected touches path_pools, path_resolved, results, pending_new_paths, last_solved_path_ids</div>
+            <div class="box">tests.rs — only place the invariant is asserted</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">After · deep PathRegistry</h3>
+          <div class="flex flex-col gap-1 text-xs">
+            <div class="box deep">PathRegistry — one owner of path_pools + pool_to_paths + pending</div>
+            <div class="box">lifecycle.rs — <code>registry.register(path)</code> (one call)</div>
+            <div class="box">delivery_policy.rs — <code>registry.remove(id)</code> (one call)</div>
+            <div class="box deep">rebuild_and_solve_affected → <code>registry.affected(v2,v3,v4)</code> then solve clamped into results</div>
+            <div class="box">unit tests on PathRegistry — add/remove/traversal alone</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+      <h3 class="font-bold text-slate-900 mb-2">Benefits (locality · leverage · tests)</h3>
+      <ul class="text-sm text-slate-700 list-disc list-inside space-y-1.5">
+        <li><b>Locality:</b> "when is map X and map Y updated together?" has one answer (in <code>PathRegistry</code>) instead of three.</li>
+        <li><b>Leverage:</b> <code>rebuild_and_solve_affected</code> shrinks to "ask the registry for the affected set + the change-set, solve, commit" — the engine stops owning index bookkeeping.</li>
+        <li><b>Tests:</b> the add/remove/affected-traversal invariant is testable directly on the registry in isolation (Red→Green), instead of only through the whole engine; the ADR-021 change-set accumulation moves inside too.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ CANDIDATE 3 ============ -->
+  <section id="c3" class="mb-14">
+    <h2 class="text-2xl font-bold text-slate-900 mb-1">3 · <code>block_pump.rs</code> is four lifecycles in one 4.7k-line file</h2>
+    <div class="flex gap-2 mb-4">
+      <span class="pill px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 font-semibold">Worth exploring</span>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Files</h3>
+        <p class="text-sm"><code>degenbot-bot/src/bot_core/block_pump.rs</code> — 4,738 lines;
+        ~2,110 impl lines + ~2,610 lines of inline <code>mod tests</code>. Hot spot: 14 commits in the
+        last 50. The decision state already moved into <code>pump_fsm.rs</code> (ADR-028); the rest has
+        not.</p>
+      </div>
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Recommendation</h3>
+        <p class="text-sm">Split the genuinely-separable lifecycles into sibling modules — the WS
+        session/handshake lifecycle, the solver-state verifier task, and the backfill engine — and split
+        the monolithic inline test module into per-module tests.</p>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+      <h3 class="font-bold text-slate-900 mb-2">Problem</h3>
+      <div class="text-sm leading-relaxed text-slate-700 space-y-2">
+        <p>One <code>BlockPump</code> struct + one file holds <b>four distinct lifecycles with different
+        liveness rules and different change-drivers</b>: (a) the <b>WS session/handshake</b>
+        (<code>subscribe</code>, <code>subscribe_with_stream</code>, <code>observe_complete_block</code>,
+        <code>resume_from_subscribe</code>, <code>drain_stream_during_backfill</code>); (b) the
+        <b>steady-state drain dispatcher</b> (<code>run_with_stream</code>, ~730 lines — the thin driver the
+        FSM feeds); (c) the <b>solver-state verify loop</b> (<code>solver_state_verify_loop</code> →
+        <code>verify_solver_state_against_chain</code>, ~290 lines) which already runs on its own spawned
+        task with its own latest-wins <code>watch</code> channel; (d) the <b>backfill engine</b>
+        (<code>backfill_range</code>, <code>backfill_to_ws_block</code>, <code>backfill_from_snapshot</code>).</p>
+        <p>The verifier loop is the cleanest split — it is a self-contained subsystem (dedicated task +
+        channel), so the <b>deletion test</b> passes: pulling it out concentrates its logic, it is not just
+        moving it. The WS-handshake and backfill are more entangled with the drain cursor, so those splits
+        are lower-confidence. The 2,610-line inline test module is the other locality problem: its
+        hand-rolled <code>FakeDrainSink</code> / <code>pump_for_test*</code> / bot builders are trapped
+        inside <code>mod tests</code> and cannot be reused by a sibling module's tests.</p>
+      </div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">Before · one god-file</h3>
+          <div class="flex flex-col gap-1 text-xs">
+            <div class="box shallow">struct BlockPump (session cfg + io toggles + deps)</div>
+            <div class="box">session · subscribe / observe_complete_block / resume</div>
+            <div class="box tall">run_with_stream dispatcher (~730 lines)</div>
+            <div class="box">verify · solver_state_verify_loop + verify_solver_state_against_chain (~290)</div>
+            <div class="box">backfill · range / to_ws / from_snapshot</div>
+            <div class="box shallow">mod tests (~2,610 lines, helpers trapped inside)</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">After · sibling modules</h3>
+          <div class="flex flex-col gap-1 text-xs">
+            <div class="box deep">ws_session.rs · handshake lifecycle</div>
+            <div class="box">block_pump.rs · struct + run_with_stream driver (+ pump_fsm)</div>
+            <div class="box deep">solver_state_verifier_task.rs · spawned loop + watch channel</div>
+            <div class="box">backfill.rs · the three backfill entry points (shared test helpers)</div>
+            <div class="box deep">per-module tests + a shared <code>test_util</code> for FakeDrainSink/bot builders</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+      <h3 class="font-bold text-slate-900 mb-2">Benefits (locality · leverage · tests) <span class="text-slate-400 font-normal text-xs">+ honest caveat</span></h3>
+      <ul class="text-sm text-slate-700 list-disc list-inside space-y-1.5">
+        <li><b>Locality:</b> the hottest file shrinks; each lifecycle's change driver commits into its own local module (session fixes land in <code>ws_session.rs</code>, verifier fixes in the verifier task module).</li>
+        <li><b>Tests:</b> the verifier task and backfill become unit-testable in isolation, and the shared <code>FakeDrainSink</code>/bot builders stop being trapped inside one <code>mod tests</code>.</li>
+        <li><b>Caveat (honesty):</b> the drag of a big file is real but partly cosmetic — the <em>high-value</em> extraction is the self-contained verifier task and the test-module decomposition. Splitting the entangled session<->backfill<->drain-cursor logic purely for file size would <b>fail</b> the deletion test (just moving complexity), so that part is lower-confidence.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ CANDIDATE 4 ============ -->
+  <section id="c4" class="mb-14">
+    <h2 class="text-2xl font-bold text-slate-900 mb-1">4 · <code>solver_state_verifier.rs</code>: a stack of env-gated tripwires in one module</h2>
+    <div class="flex gap-2 mb-4">
+      <span class="pill px-2.5 py-1 rounded-full bg-slate-200 text-slate-600 font-semibold">Speculative</span>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Files</h3>
+        <p class="text-sm"><code>degenbot-bot/src/bot_core/solver_state_verifier.rs</code> — 2,132 lines,
+        of which ~1,900 are inline tests. Several separately-gated diagnostic probes as free functions.</p>
+      </div>
+      <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+        <h3 class="font-bold text-slate-900 mb-2">Recommendation</h3>
+        <p class="text-sm">Treat the ADR-021 fail-fast family as a set of seams: colocate each probe (its
+        matcher + its env gate + its tests) in its own module, rather than stacking them as sibling free
+        functions with sibling <code>*_enabled()</code> env-readers.</p>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+      <h3 class="font-bold text-slate-900 mb-2">Problem</h3>
+      <div class="text-sm leading-relaxed text-slate-700 space-y-2">
+        <p>The module stacks at least four independently-config-gated diagnostic tripwires as flat free
+        functions: <code>divergence_scan_enabled</code>, <code>solve_anchor_probe_enabled</code>,
+        <code>staged_clock_probe_enabled</code>, plus a CL-staleness threshold
+        (<code>parse_cl_staleness_blocks</code> / <code>is_cl_pool_stale</code>). Several are OFF by
+        default and carry <code>probe_default_off_single_env_get</code> tests. These probes were added
+        incrementally (recent commits: "staged-clock probe on the solve-time skip-in-progress path",
+        "solve/verify anchor at the settled block"). Each is a small shallow module glued to its own
+        predicate cluster (<code>is_lagging_tracked</code>, <code>is_future_price</code>,
+        <code>skip_in_progress_hop</code>, …).</p>
+        <p>The friction is <b>discoverability</b>: a future explorer / AI must parse which predicate
+        belongs to which gated probe, and the env-flag to turn it on, all from one dense module. This is
+        the weakest of the four candidates (hence <b>Speculative</b>) — the code is not buggy, just
+        undifferentiated, so the deletion-test case ("concentrates, doesn't just move") is real but mild.</p>
+      </div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4 mb-4">
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">Before · flat probe stack</h3>
+          <div class="flex flex-col gap-1 text-xs">
+            <div class="box">divergence_scan · enabled() + predicates</div>
+            <div class="box">solve_anchor_probe · enabled() + advancement consensus</div>
+            <div class="box">staged_clock_probe · enabled() + skip-in-progress</div>
+            <div class="box">CL-staleness · parse threshold + is_stale/isfuture</div>
+            <div class="box shallow">~1,900-line inline test module</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 h-full">
+          <h3 class="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide text-slate-500">After · probe per module</h3>
+          <div class="flex flex-col gap-1 text-xs">
+            <div class="box deep">probes/divergence.rs · gate + matcher + tests</div>
+            <div class="box deep">probes/solve_anchor.rs · gate + consensus + tests</div>
+            <div class="box deep">probes/staged_clock.rs · gate + skip + tests</div>
+            <div class="box deep">probes/cl_staleness.rs · threshold + predicates + tests</div>
+            <div class="box">verifier.rs · the one always-on ADR-021 publish-point check</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-white rounded-2xl border border-slate-200 p-5">
+      <h3 class="font-bold text-slate-900 mb-2">Benefits (locality · tests)</h3>
+      <ul class="text-sm text-slate-700 list-disc list-inside space-y-1.5">
+        <li><b>Locality:</b> "which env flag enables this tripwire, and what are its rules?" answers itself per-probe module.</li>
+        <li><b>Tests:</b> each probe's gate-behaviour + matcher tests live beside it, shrinking the 1,900-line inline test module and letting a probe be understood (and toggled) in isolation.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ TOP RECOMMENDATION ============ -->
+  <section id="top" class="mb-10">
+    <div class="bg-indigo-950 rounded-3xl p-8 text-indigo-50">
+      <h2 class="text-2xl font-bold mb-3">Top recommendation — start with <span class="text-indigo-300">Candidate 1</span></h2>
+      <p class="leading-relaxed text-indigo-100 mb-4 max-w-4xl">
+        <b>Per-family <code>resolve_path</code> projection</b> is where I'd begin, for three reasons. It is
+        the only <b>Strong</b> candidate: the deepening is real and self-contained (split one long match,
+        give the step a typed result), it is <b>not pre-empted by an ADR</b> (ADR-015 only fixes
+        <em>where</em> the projection lives, not <em>how</em> it is built), and it pays off immediately
+        because this exact file keeps absorbing the churn — the V4-clamp/V4-alignment convergence fixes,
+        the terminal-V2 exact-out fix, the CL-hop capacity clamp — all the recent "align the hop output to
+        the twin" work lands in <code>solver_dispatch.rs</code>.</p>
+      <p class="leading-relaxed text-indigo-100 mb-4 max-w-4xl">
+        Candidate 1 also unlocks the others: it's the front half of the solve path, so its per-family
+        modules give the <code>PathRegistry</code> (Candidate 2) a clean place to hand a family-indexed
+        projection. I'd do <b>1 → then the verifier-task extraction half of 3 → then 4</b> if the
+        tripwires keep growing. The entangled session/backfill half of Candidate 3 I'd leave alone until a
+        real forcing function appears — it would fail the deletion test today.</p>
+      <p class="text-sm text-indigo-300">
+        Detail: the per-family projection currently carries a <code>let Some(…) else { return; }</code>
+        silent-invalidation pattern; any deepened module should convert that to a typed
+        <code>Result</code>/<code>Option</code> so a missing pool is a reasoned unit, not a mid-loop
+        bail. This is Red→Green territory: write the per-family unit tests first (orientation, decimals,
+        fee-inversion, missing-pool) pinned to the current end-to-end behaviour, then split.
+      </p>
+    </div>
+  </section>
+
+  <footer class="text-xs text-slate-400 border-t border-slate-200 pt-4">
+    Vocabulary: module · interface · depth · seam · adapter · leverage · locality (from <code>/codebase-design</code>).
+    Domain terms from <code>CONTEXT.md</code> (block pump, drain sink, solver intake, <code>resolve_path</code>, hop).
+    No ADR is contradicted by these candidates; ADR-015, ADR-021, ADR-027/028 are respected.
+  </footer>
+</div>
+</body>
+</html>

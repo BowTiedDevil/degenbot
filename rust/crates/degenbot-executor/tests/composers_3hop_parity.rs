@@ -2451,6 +2451,7 @@ fn parity_v4_v4_v4_batch() {
         EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: true,
+            ..Default::default()
         },
     );
     // V4a→V4b→V4c (use_v4_batch). No gap → single V4_BATCH of 3 swaps
@@ -2558,6 +2559,7 @@ fn parity_v4_v4_v4_erc6909() {
         EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: false,
+            ..Default::default()
         },
     );
     // V4a→V4b→V4c (erc6909_profit, but profit currency = USDC ≠ WETH so the ERC6909

@@ -2925,6 +2925,7 @@ fn v4v4_batch_executes_with_exact_delta() {
     let opts = EncodeOptions {
         erc6909_profit: false,
         use_v4_batch: true,
+        ..Default::default()
     };
     let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
     let inputs = ComposerInputs {
@@ -2960,6 +2961,7 @@ fn v4v4_tok_batch_executes_and_captures_tok_profit() {
     let opts = EncodeOptions {
         erc6909_profit: false,
         use_v4_batch: true,
+        ..Default::default()
     };
     let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
     let inputs = ComposerInputs {
@@ -2999,6 +3001,7 @@ fn v4v4v4_batch_executes_with_exact_delta() {
     let opts = EncodeOptions {
         erc6909_profit: false,
         use_v4_batch: true,
+        ..Default::default()
     };
     let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
     let inputs = ComposerInputs {
@@ -3029,6 +3032,7 @@ fn v4v4_erc6909_executes_with_exact_profit() {
     let opts = EncodeOptions {
         erc6909_profit: true,
         use_v4_batch: false,
+        ..Default::default()
     };
     let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
     let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
@@ -3082,6 +3086,7 @@ fn v4v4v4_erc6909_executes_with_exact_profit() {
     let opts = EncodeOptions {
         erc6909_profit: true,
         use_v4_batch: false,
+        ..Default::default()
     };
     let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
     let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;

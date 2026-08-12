@@ -37,12 +37,13 @@ pub enum Prot {
 /// (ADR-029 D1). **One per stream, chosen at runtime by the strategy/operator**
 /// — an economic knob (self-fund = cheaper gas for small opportunities; flash
 /// = access to outside capital for large ones).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum FundingSource {
     /// Executor holds the entry WETH and pre-funds the leading hop.
     SelfFund,
     /// The outermost pool's own swap-callback extends the entry credit, repaid
     /// by the path itself (in-path flash source).
+    #[default]
     InPathFlash,
     /// PoolManager delta accounting carries the entry credit (no-prefund V4).
     PmLedger,
@@ -56,9 +57,10 @@ pub enum FundingSource {
 /// The declared destination of the stream's **terminal profit** (the excess
 /// over the entry capital). **One per stream.** Modeled values are declared
 /// even where the current executor cannot yet express them.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ProfitCapture {
     /// Executor holds the terminal asset in its own balance.
+    #[default]
     Custody,
     /// Sent to `OWNER_ADDR`.
     Owner,
@@ -73,14 +75,12 @@ pub enum ProfitCapture {
 
 /// Whether and how the stream pays a **builder bribe** (ADR-029 Q3 — a **live**
 /// axis distinct from profit capture). `None` = no bribe (the default today).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Bribe {
+    #[default]
     None,
     /// `bips` of profit (1–10000) to `recipient_idx` (0 = `block.coinbase`).
-    Some {
-        bips: u16,
-        recipient_idx: u8,
-    },
+    Some { bips: u16, recipient_idx: u8 },
 }
 
 /// A family's shape: hop-protocol sequence + the three output-bearing axes.

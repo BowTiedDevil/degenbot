@@ -50,34 +50,16 @@ use crate::grammar::{cl_swap_in, v2_forward_addr};
 use crate::grammar_ledger::LedgerOp;
 
 /// A hop-protocol family member.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Prot {
-    V2,
-    V3,
-    V4,
-}
+pub use crate::grammar_ledger::Prot;
 
 /// How the stream's entry (seed) capital is supplied (ADR-029 D1).
 ///
-/// Exactly one per stream. For the V2/V3 2-hop domain this is *derived* from
-/// the leading-hop protocol and the D0 invariant (never user-chosen).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FundingSource {
-    /// The outermost pool's own swap-callback extends the entry credit and is
-    /// repaid **by the path itself** (executor may start at 0).
-    InPathFlash,
-    /// The executor holds the entry WETH and pre-funds the leading hop.
-    SelfFund,
-}
-
-/// A family's shape: hop-protocol sequence + funding source. Profit capture,
-/// builder bribe, hop coupling, and repayment pivot are **derived** from the
-/// ledger rules (ADR-029 D1/D3), not carried here.
-#[derive(Clone, Debug)]
-pub struct ShapeClass {
-    pub protocols: Vec<Prot>,
-    pub funding: FundingSource,
-}
+// V2/V3-only 2-hop / 3-hop-(V2/V3) axis types live in grammar_ledger (ADR-029 D1,
+// WE45KC unification): FundingSource + ProfitCapture + Bribe + ShapeClass are
+// re-exported from there so the open-set enum is the single source of truth.
+pub use crate::grammar_ledger::{Bribe, FundingSource, ProfitCapture, ShapeClass};
+// The legacy 2-value FundingSource / 2-field ShapeClass that used to live here
+// were deleted in WE45KC in favor of the richer grammar_ledger versions.
 
 /// Declarative ledger facts for one hop — the *data* half of the hybrid
 /// (ADR-029 D4): which ledgers the hop touches, its forward (output) currency,
@@ -3030,7 +3012,13 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
             _ => unreachable!("V4 outside the V2/V3 branch"),
         })
         .collect();
-    let class = ShapeClass { protocols, funding };
+    let (_, capture, bribe) = crate::composers::resolve_axes(inputs.opts);
+    let class = ShapeClass {
+        protocols,
+        funding,
+        capture,
+        bribe,
+    };
     derive_2hop(path, inputs, &class)
 }
 
@@ -5603,6 +5591,7 @@ mod tests {
                 match expected {
                     FundingSource::InPathFlash => FundingSource::SelfFund,
                     FundingSource::SelfFund => FundingSource::InPathFlash,
+                    _ => FundingSource::InPathFlash,
                 }
             );
         }
@@ -6034,6 +6023,7 @@ mod tests {
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: true,
+            ..Default::default()
         });
         plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 batch");
         // Spot-check the Plan shape: outer `V4Unlock { inner: [V4Batch, V4SettleAll] }`.
@@ -6062,6 +6052,7 @@ mod tests {
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: false,
+            ..Default::default()
         });
         plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 erc6909");
         let (_preamble, plan, _at) =
@@ -6089,6 +6080,7 @@ mod tests {
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: true,
+            ..Default::default()
         });
         plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 batch+erc6909");
         let (_preamble, plan, _at) =
@@ -6114,6 +6106,7 @@ mod tests {
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: false,
+            ..Default::default()
         });
         let (_preamble, mut plan, _at) =
             build_v4v4_plan(&path, &inputs).expect("v4_v4 erc6909 build None");
@@ -6151,6 +6144,7 @@ mod tests {
                 EncodeOptions {
                     erc6909_profit: false,
                     use_v4_batch: true,
+                    ..Default::default()
                 },
             ),
             (
@@ -6158,6 +6152,7 @@ mod tests {
                 EncodeOptions {
                     erc6909_profit: true,
                     use_v4_batch: false,
+                    ..Default::default()
                 },
             ),
             (
@@ -6165,6 +6160,7 @@ mod tests {
                 EncodeOptions {
                     erc6909_profit: true,
                     use_v4_batch: true,
+                    ..Default::default()
                 },
             ),
         ];
@@ -6194,6 +6190,7 @@ mod tests {
             crate::composers::EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: true,
+                ..Default::default()
             },
         );
         let (_preamble, plan, _at) =
@@ -6239,6 +6236,7 @@ mod tests {
                 EncodeOptions {
                     erc6909_profit: false,
                     use_v4_batch: true,
+                    ..Default::default()
                 },
             ),
             (
@@ -6246,6 +6244,7 @@ mod tests {
                 EncodeOptions {
                     erc6909_profit: true,
                     use_v4_batch: false,
+                    ..Default::default()
                 },
             ),
             (
@@ -6253,6 +6252,7 @@ mod tests {
                 EncodeOptions {
                     erc6909_profit: true,
                     use_v4_batch: true,
+                    ..Default::default()
                 },
             ),
         ];

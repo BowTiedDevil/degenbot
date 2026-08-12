@@ -73,6 +73,7 @@ fn every_combo_encodes_through_both_entry_points() {
             EncodeOptions {
                 erc6909_profit: true,
                 use_v4_batch: false,
+                ..Default::default()
             },
         ),
         (
@@ -80,6 +81,7 @@ fn every_combo_encodes_through_both_entry_points() {
             EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: true,
+                ..Default::default()
             },
         ),
     ];

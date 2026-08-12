@@ -75,14 +75,17 @@ fn run_family(hops: Vec<HopInfo>, exact_in: u128) {
         EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: true,
+            ..Default::default()
         },
         EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: false,
+            ..Default::default()
         },
         EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: true,
+            ..Default::default()
         },
     ];
     for opts in modes {
@@ -611,14 +614,17 @@ fn assert_no_backstop(hops: Vec<HopInfo>, exact_in: u128) {
         EncodeOptions {
             erc6909_profit: false,
             use_v4_batch: true,
+            ..Default::default()
         },
         EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: false,
+            ..Default::default()
         },
         EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: true,
+            ..Default::default()
         },
     ];
     for opts in modes {

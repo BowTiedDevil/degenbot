@@ -271,14 +271,62 @@ pub(crate) fn emit_currency_bridge(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Tuning knobs for [`encode_cmd_stream`]. All default to `false`/`0`.
+///
+/// **Per-path output axes (ADR-029 D1, WE45KC):** `funding`, `capture`, and
+/// `bribe` carry the runtime economic choices the strategy/operator makes per
+/// path. Today only `capture` is honored by the encoder (via [`resolve_axes`]);
+/// `funding` is still DERIVED per family (V2-led → `InPathFlash`, V3-led →
+/// `SelfFund`) until the self-fund/flash-as-runtime-knob work lands; `bribe`
+/// wiring lands next. The legacy `erc6909_profit` bool is kept as a backwards-
+/// compatible alias for `capture = ProfitCapture::Erc6909` (see [`resolve_axes`]
+/// for the precedence rule).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EncodeOptions {
     /// If `true`, use `V4_MINT_COMPACT` instead of `V4_TAKE_DELTA` for profit
     /// capture on pure-V4 paths (saves ~20K gas; needs `check_mode=2`).
+    /// Legacy alias for `capture = ProfitCapture::Erc6909` (see [`resolve_axes`]).
     pub erc6909_profit: bool,
     /// If `true`, use `V4_BATCH` instead of individual `V4_SWAP_COMPACT`/`_DYNAMIC`
     /// for pure-V4 paths (single PM extcall).
     pub use_v4_batch: bool,
+    /// Declared origin of the stream's entry (seed) capital (ADR-029 D1). NOTE:
+    /// currently IGNORED by the encoder — funding is still derived per family.
+    /// Honoring it as a runtime economic knob is the remaining WE45KC work.
+    pub funding: crate::grammar_ledger::FundingSource,
+    /// Declared destination of the stream's terminal profit (ADR-029 D1).
+    /// Honored via [`resolve_axes`] (takes precedence over the legacy
+    /// `erc6909_profit` bool only when that bool is `false`).
+    pub capture: crate::grammar_ledger::ProfitCapture,
+    /// Whether/how a builder bribe is paid (ADR-029 D1/Q3). Not yet honored by
+    /// the encoder; wiring lands in a subsequent WE45KC increment.
+    pub bribe: crate::grammar_ledger::Bribe,
+}
+
+/// Resolve the per-path output axes (ADR-029 D1, WE45KC) from [`EncodeOptions`],
+/// collapsing the legacy `erc6909_profit` bool into the `capture` axis.
+///
+/// **Precedence (backwards-compatible):** `erc6909_profit: true` forces
+/// `ProfitCapture::Erc6909` regardless of the `capture` field — so every
+/// existing caller that sets the legacy bool keeps today's bytes. A caller that
+/// leaves `erc6909_profit: false` (the default) and sets `capture` directly is
+/// honored.
+///
+/// `funding` and `bribe` are passed through unchanged (the encoder does not yet
+/// read them; they are carried for the subsequent WE45KC increments).
+#[must_use]
+pub fn resolve_axes(
+    opts: EncodeOptions,
+) -> (
+    crate::grammar_ledger::FundingSource,
+    crate::grammar_ledger::ProfitCapture,
+    crate::grammar_ledger::Bribe,
+) {
+    let capture = if opts.erc6909_profit {
+        crate::grammar_ledger::ProfitCapture::Erc6909
+    } else {
+        opts.capture
+    };
+    (opts.funding, capture, opts.bribe)
 }
 
 /// Bundled context every composer needs beyond the hops.
@@ -765,5 +813,89 @@ mod tests {
         // And it is NOT the solver's over-predicted hop_outputs[1].
         assert_eq!(take_from(v4_actual), Some(v4_actual));
         assert_ne!(take_from(v4_actual), Some(v4_predicted));
+    }
+}
+
+// ── WE45KC: resolve_axes (ADR-029 D1) ────────────────────────────────
+
+#[test]
+fn resolve_axes_default_is_custody_no_bribe() {
+    let (funding, capture, bribe) = resolve_axes(EncodeOptions::default());
+    assert_eq!(funding, crate::grammar_ledger::FundingSource::InPathFlash);
+    assert_eq!(capture, crate::grammar_ledger::ProfitCapture::Custody);
+    assert_eq!(bribe, crate::grammar_ledger::Bribe::None);
+}
+
+#[test]
+fn resolve_axes_legacy_erc6909_bool_forces_erc6909_capture() {
+    // Backwards-compat: erc6909_profit: true wins over the capture field.
+    for capture in [
+        crate::grammar_ledger::ProfitCapture::Custody,
+        crate::grammar_ledger::ProfitCapture::Owner,
+        crate::grammar_ledger::ProfitCapture::Native,
+    ] {
+        let opts = EncodeOptions {
+            erc6909_profit: true,
+            use_v4_batch: false,
+            capture,
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_axes(opts).1,
+            crate::grammar_ledger::ProfitCapture::Erc6909,
+            "legacy erc6909_profit:true must force Erc6909 even with capture={capture:?}"
+        );
+    }
+}
+
+#[test]
+fn resolve_axes_capture_field_honored_when_legacy_bool_false() {
+    for capture in [
+        crate::grammar_ledger::ProfitCapture::Custody,
+        crate::grammar_ledger::ProfitCapture::Owner,
+        crate::grammar_ledger::ProfitCapture::Native,
+        crate::grammar_ledger::ProfitCapture::Erc6909,
+    ] {
+        let opts = EncodeOptions {
+            erc6909_profit: false,
+            use_v4_batch: false,
+            capture,
+            ..Default::default()
+        };
+        assert_eq!(resolve_axes(opts).1, capture);
+    }
+}
+
+#[test]
+fn resolve_axes_bribe_passes_through() {
+    let opts = EncodeOptions {
+        bribe: crate::grammar_ledger::Bribe::Some {
+            bips: 50,
+            recipient_idx: 0,
+        },
+        ..Default::default()
+    };
+    assert_eq!(
+        resolve_axes(opts).2,
+        crate::grammar_ledger::Bribe::Some {
+            bips: 50,
+            recipient_idx: 0
+        }
+    );
+}
+
+#[test]
+fn resolve_axes_funding_passes_through() {
+    for funding in [
+        crate::grammar_ledger::FundingSource::SelfFund,
+        crate::grammar_ledger::FundingSource::PmLedger,
+        crate::grammar_ledger::FundingSource::ExternalLender,
+        crate::grammar_ledger::FundingSource::Erc6909BurnToSettle,
+    ] {
+        let opts = EncodeOptions {
+            funding,
+            ..Default::default()
+        };
+        assert_eq!(resolve_axes(opts).0, funding);
     }
 }
