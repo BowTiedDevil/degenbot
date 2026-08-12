@@ -203,3 +203,77 @@ fn v3_v4_boundary_parity() {
     );
     run_family(vec![v3_pool(t2, t, false), v4_pair(t, t2, false)], 100_000);
 }
+
+// ── V4↔V2 boundary + native/mixed (WAYDTL step 2 / (A) close-out) ──────────
+
+/// V4→V2: V4's ERC-20 forward leaves the PM straight to the V2 pool; a native
+/// V4 output is wrapped first; a native V4 input is unwrapped to settle.
+#[test]
+fn v4_v2_native_and_boundary_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    run_family(
+        vec![v4_pair(weth(), t, true), v2_pair(t, weth(), true, 30)],
+        100_000,
+    );
+    // Native V4 output -> wrap into WETH for the V2 pool.
+    run_family(
+        vec![v4_pair(t, NATIVE, false), v2_pair(weth(), u, true, 30)],
+        100_000,
+    );
+    // Native V4 input -> unwrap WETH to settle.
+    run_family(
+        vec![v4_pair(NATIVE, t, true), v2_pair(t, weth(), true, 30)],
+        100_000,
+    );
+}
+
+/// V2→V4: the V2 flash's forward enters the PM to seed the V4 input; native V4
+/// input unwraps the V2 WETH output; native V4 output re-wraps for the V2
+/// repayment.
+#[test]
+fn v2_v4_native_and_boundary_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    run_family(
+        vec![v2_pair(weth(), t, true, 30), v4_pair(t, weth(), true)],
+        100_000,
+    );
+    // Native V4 input: V2 WETH output is unwrapped to seed the native input.
+    run_family(
+        vec![v2_pair(t, weth(), true, 30), v4_pair(NATIVE, u, true)],
+        100_000,
+    );
+    // Native V4 output: WETH_DEPOSIT re-wraps for the V2 repayment.
+    run_family(
+        vec![v2_pair(weth(), t, true, 30), v4_pair(t, NATIVE, true)],
+        100_000,
+    );
+}
+
+/// Mixed native↔WETH mids across V4↔V3 boundary-crossing families.
+#[test]
+fn v4_v3_and_v3_v4_native_mixed_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    // v4_v3: native V4 output wrapped into WETH for the V3 pool.
+    run_family(
+        vec![v4_pair(t, NATIVE, false), v3_pool(weth(), u, true)],
+        100_000,
+    );
+    // v4_v3: native V4 input unwrapped to settle before the V3 swap.
+    run_family(
+        vec![v4_pair(NATIVE, t, true), v3_pool(t, weth(), true)],
+        100_000,
+    );
+    // v3_v4: native V4 input, V3 WETH output unwrapped to seed it.
+    run_family(
+        vec![v3_pool(t, weth(), true), v4_pair(NATIVE, u, true)],
+        100_000,
+    );
+    // v3_v4: native V4 output taken directly (non-native input branch).
+    run_family(
+        vec![v3_pool(weth(), t, true), v4_pair(t, NATIVE, true)],
+        100_000,
+    );
+}

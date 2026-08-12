@@ -25,7 +25,7 @@
 //! coupling + native bridges) is the harder residual for `WAYDTL` — the spike
 //! reports that boundary honestly rather than pretending to span it.
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, U256};
 
 use crate::composers::{
     fits_int128, ComposerInputs, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
@@ -276,6 +276,8 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v4v4(a, b, inputs),
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => derive_2hop_v4v3(a, b, inputs),
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v3v4(a, b, inputs),
+        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), None) => derive_2hop_v4v2(a, b, inputs),
+        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v2v4(a, b, inputs),
         _ => derive_2hop_v2v3(path, inputs),
     }
 }
@@ -419,10 +421,10 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 /// V4→V3 2-hop derivation (WAYDTL step 2 / (A)).
 ///
 /// V4's forward currency **leaves the PM** to become the V3 input (boundary
-/// model: V4→outside = `V4_TAKE_COMPACT(cur→SELF, forward_out)`), then the V3
-/// swap auto-pays from the executor; the V4 input debt is settled. Scoped to
-/// the non-native V4 slice (the harness `v4_v3` family) — native V4 variants
-/// return `None` for now.
+/// model: V4→outside = `V4_TAKE_COMPACT(cur→SELF, forward_out)`); a native
+/// forward is wrapped (`WETH_DEPOSIT`) before the V3 swap; the V4 input debt
+/// is settled (`V4_SETTLE_DELTA`), with a `WETH_WITHDRAW` when the V4 input is
+/// itself native.
 fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
@@ -437,15 +439,16 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
     if !fits_int128(b_swap_in) {
         return None;
     }
-    // Non-native slice: the V4 output is an ERC-20 (handed to the V3 pool).
-    let forward_idx_cur = if a.zfo {
-        a.currency1_address
+    let v4_out_native = if a.zfo {
+        a.currency1_address == NATIVE_CURRENCY_ADDRESS
     } else {
-        a.currency0_address
+        a.currency0_address == NATIVE_CURRENCY_ADDRESS
     };
-    if forward_idx_cur == NATIVE_CURRENCY_ADDRESS || forward_idx_cur == inputs.weth_address {
-        return None; // native / WETH mid handled by later slices
-    }
+    let v4_in_native = if a.zfo {
+        a.currency0_address == NATIVE_CURRENCY_ADDRESS
+    } else {
+        a.currency1_address == NATIVE_CURRENCY_ADDRESS
+    };
 
     let mut at = AddressTable::with_sentinels(
         Some(inputs.weth_address),
@@ -455,8 +458,10 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
     let c0_a = at.add(a.currency0_address).ok()?;
     let c1_a = at.add(a.currency1_address).ok()?;
     let v3_idx = at.add(b.pool_address).ok()?;
-    let forward_idx = at.add(forward_idx_cur).ok()?;
     let weth_idx = SENTINEL_WETH;
+    // Native is address(0) — a sentinel, so registering it never adds a table
+    // entry; idx is just a sentinel value either way.
+    let native_idx = SENTINEL_NATIVE;
 
     let fee_a = u16::try_from(a.fee).ok()?;
     let ts_a = i16::try_from(a.tick_spacing).ok()?;
@@ -471,14 +476,35 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
         optimal_input,
     )
     .ok()?;
-    // V4 output leaves the PM to the executor, which funds the V3 swap.
-    inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(forward_idx, SENTINEL_SELF, forward_out).ok()?,
-    );
-    inner.extend_from_slice(
-        &encoders::enc_v3_swap_compact(v3_idx, b.zfo, b_swap_in, SENTINEL_SELF, &[]).ok()?,
-    );
-    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+    if v4_out_native {
+        // Native V4 output: take it out, wrap to WETH, then the V3 swap.
+        inner.extend_from_slice(
+            &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, forward_out).ok()?,
+        );
+        inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(forward_out)));
+        inner.extend_from_slice(
+            &encoders::enc_v3_swap_compact(v3_idx, b.zfo, b_swap_in, SENTINEL_SELF, &[]).ok()?,
+        );
+        let input_idx = if a.zfo { c0_a } else { c1_a };
+        inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+    } else {
+        // ERC-20 V4 output: take it to the executor, which funds the V3 swap.
+        let forward_idx = if a.zfo { c1_a } else { c0_a };
+        inner.extend_from_slice(
+            &encoders::enc_v4_take_compact(forward_idx, SENTINEL_SELF, forward_out).ok()?,
+        );
+        inner.extend_from_slice(
+            &encoders::enc_v3_swap_compact(v3_idx, b.zfo, b_swap_in, SENTINEL_SELF, &[]).ok()?,
+        );
+        if v4_in_native {
+            // Native V4 input: unwrap WETH to seed it before settling.
+            let input_idx = if a.zfo { c0_a } else { c1_a };
+            inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(optimal_input)));
+            inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+        } else {
+            inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+        }
+    }
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let commands = encoders::enc_v4_unlock(&inner).ok()?;
@@ -489,12 +515,13 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
 
 /// V3→V4 2-hop derivation (WAYDTL step 2 / (A)).
 ///
-/// The V3 (outer flash) output currency **enters the PM** to seed the V4 input
-/// (boundary model: outside→V4 = `V4_SYNC(cur)` + `ERC20_TRANSFER(cur, PM, out)`
-/// + `V4_SETTLE`), then the V4 swap + `V4_TAKE_COMPACT(output→SELF)` capture;
-/// the V3 flash is repaid `ERC20_TRANSFER(WETH→v3, optimal_input)`. Scoped to
-/// the non-native V3 slice (the harness `v3_v4` family) — native variants
-/// return `None` for now.
+/// A V3 (outer flash) feeds a V4 pool. When the V4 input is an ERC-20, the V3
+/// forward output **enters the PM** (boundary model: `V4_SYNC(cur)` +
+/// `ERC20_TRANSFER(cur, PM, out)` + `V4_SETTLE`) to seed the input, then the
+/// V4 swap + `V4_TAKE_COMPACT(output→SELF)` capture; the V3 flash is repaid
+/// `ERC20_TRANSFER(WETH→v3, optimal_input)`. When the V4 input is native the
+/// V3's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) to seed it and
+/// settled directly (`V4_SETTLE_DELTA(native)`).
 fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
@@ -509,16 +536,11 @@ fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     if !fits_int128(v4_swap_in) {
         return None;
     }
-    let forward_addr = if a.zfo {
-        a.token1_address
+    let v4_in_native = if b.zfo {
+        b.currency0_address == NATIVE_CURRENCY_ADDRESS
     } else {
-        a.token0_address
+        b.currency1_address == NATIVE_CURRENCY_ADDRESS
     };
-    // Non-native slice: the V3 forward (V4 input) is an ERC-20, and the V3
-    // input is non-native so the outer-funded WETH repayment path holds.
-    if forward_addr == NATIVE_CURRENCY_ADDRESS || forward_addr == inputs.weth_address {
-        return None;
-    }
 
     let mut at = AddressTable::with_sentinels(
         Some(inputs.weth_address),
@@ -529,35 +551,330 @@ fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     let v3_idx = at.add(a.pool_address).ok()?;
     let c0_b = at.add(b.currency0_address).ok()?;
     let c1_b = at.add(b.currency1_address).ok()?;
-    let forward_idx = at.add(forward_addr).ok()?;
     let weth_idx = SENTINEL_WETH;
+    let native_idx = SENTINEL_NATIVE;
 
     let fee_b = u16::try_from(b.fee).ok()?;
     let ts_b = i16::try_from(b.tick_spacing).ok()?;
 
-    // Phase inside the PM: seed the V4 input from the V3 forward output, swap,
-    // capture the V4 output to the executor.
-    let mut v4_inner = encoders::enc_v4_sync(forward_idx);
-    v4_inner
-        .extend_from_slice(&encoders::enc_erc20_transfer(forward_idx, pm_idx, forward_out).ok()?);
-    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
-    v4_inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, SENTINEL_NATIVE, b.zfo, v4_swap_in)
-            .ok()?,
-    );
-    let output_idx = if b.zfo { c1_b } else { c0_b };
-    v4_inner.extend_from_slice(
-        &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, weth_out).ok()?,
-    );
-    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+    let v3_callback = if v4_in_native {
+        // Native V4 input: settle it directly from executor native balance.
+        let mut v4_inner = encoders::enc_v4_swap_compact(
+            c0_b,
+            c1_b,
+            fee_b,
+            ts_b,
+            SENTINEL_NATIVE,
+            b.zfo,
+            v4_swap_in,
+        )
+        .ok()?;
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
+        let output_currency = if b.zfo {
+            b.currency1_address
+        } else {
+            b.currency0_address
+        };
+        if output_currency == NATIVE_CURRENCY_ADDRESS {
+            v4_inner.extend_from_slice(
+                &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, weth_out).ok()?,
+            );
+        } else {
+            let output_idx = if b.zfo { c1_b } else { c0_b };
+            v4_inner.extend_from_slice(
+                &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, weth_out).ok()?,
+            );
+        }
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
-    // Outer V3 flash: run the unlock, then repay the V3 pool with WETH.
-    let mut cb = encoders::enc_v4_unlock(&v4_inner).ok()?;
-    cb.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3_idx, optimal_input).ok()?);
+        let mut cb = encoders::enc_weth_withdraw(U256::from(forward_out));
+        cb.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
+        let input_currency_v3 = if a.zfo {
+            a.token0_address
+        } else {
+            a.token1_address
+        };
+        if input_currency_v3 == inputs.weth_address || input_currency_v3 == NATIVE_CURRENCY_ADDRESS
+        {
+            return None;
+        }
+        let forward_v3_idx = at.add(input_currency_v3).ok()?;
+        cb.extend_from_slice(
+            &encoders::enc_erc20_transfer(forward_v3_idx, v3_idx, optimal_input).ok()?,
+        );
+        cb
+    } else {
+        // ERC-20 V4 input: sync + transfer + settle to seed it into the PM.
+        let forward_addr = if a.zfo {
+            a.token1_address
+        } else {
+            a.token0_address
+        };
+        let forward_idx = at.add(forward_addr).ok()?;
+        let mut v4_inner = encoders::enc_v4_sync(forward_idx);
+        v4_inner.extend_from_slice(
+            &encoders::enc_erc20_transfer(forward_idx, pm_idx, forward_out).ok()?,
+        );
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+        v4_inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(
+                c0_b,
+                c1_b,
+                fee_b,
+                ts_b,
+                SENTINEL_NATIVE,
+                b.zfo,
+                v4_swap_in,
+            )
+            .ok()?,
+        );
+        let output_idx = if b.zfo { c1_b } else { c0_b };
+        v4_inner.extend_from_slice(
+            &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, weth_out).ok()?,
+        );
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+        let mut cb = encoders::enc_v4_unlock(&v4_inner).ok()?;
+        cb.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3_idx, optimal_input).ok()?);
+        cb
+    };
+
     let commands =
-        encoders::enc_v3_swap_compact(v3_idx, a.zfo, optimal_input, SENTINEL_SELF, &cb).ok()?;
+        encoders::enc_v3_swap_compact(v3_idx, a.zfo, optimal_input, SENTINEL_SELF, &v3_callback)
+            .ok()?;
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
+    Some(out)
+}
+
+/// V4→V2 2-hop derivation (WAYDTL step 2 / (A)).
+///
+/// V4's forward currency **leaves the PM to the V2 pool** (`V4_TAKE_COMPACT`
+/// with the V2 pool as recipient) and the terminal V2 swap runs; the V4 input
+/// is re-seeded. A native V4 output is wrapped (`WETH_DEPOSIT`) before being
+/// transferred to the V2 pool (and the terminal V2 always uses `V2_SWAP_CALC`,
+/// never exact-out). A native V4 input is settled via `WETH_WITHDRAW`.
+fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    if forward_out == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) || !fits_int128(forward_out) {
+        return None;
+    }
+    let v4_out_native = if a.zfo {
+        a.currency1_address == NATIVE_CURRENCY_ADDRESS
+    } else {
+        a.currency0_address == NATIVE_CURRENCY_ADDRESS
+    };
+    let v4_in_native = if a.zfo {
+        a.currency0_address == NATIVE_CURRENCY_ADDRESS
+    } else {
+        a.currency1_address == NATIVE_CURRENCY_ADDRESS
+    };
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let v2_idx = at.add(b.pool_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let native_idx = SENTINEL_NATIVE;
+
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a,
+        c1_a,
+        fee_a,
+        ts_a,
+        SENTINEL_NATIVE,
+        a.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    if v4_out_native {
+        // Native V4 output: take it out, wrap, then fund the terminal V2 pool.
+        inner.extend_from_slice(
+            &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, forward_out).ok()?,
+        );
+        inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(forward_out)));
+        inner.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v2_idx, forward_out).ok()?);
+        inner.extend_from_slice(&encoders::enc_v2_swap_calc(
+            v2_idx,
+            b.zfo,
+            SENTINEL_SELF,
+            b.fee,
+        ));
+        let input_idx = if a.zfo { c0_a } else { c1_a };
+        inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+    } else {
+        // ERC-20 V4 output: hand it directly to the V2 pool (recipient = V2).
+        let forward_idx = if a.zfo { c1_a } else { c0_a };
+        inner.extend_from_slice(
+            &encoders::enc_v4_take_compact(forward_idx, v2_idx, forward_out).ok()?,
+        );
+        inner.extend_from_slice(&encoders::enc_v2_swap_calc(
+            v2_idx,
+            b.zfo,
+            SENTINEL_SELF,
+            b.fee,
+        ));
+        if v4_in_native {
+            let input_idx = if a.zfo { c0_a } else { c1_a };
+            inner.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(optimal_input)));
+            inner.extend_from_slice(&encoders::enc_v4_settle_delta(input_idx));
+        } else {
+            inner.extend_from_slice(&encoders::enc_v4_sync(weth_idx));
+            inner.extend_from_slice(
+                &encoders::enc_erc20_transfer(weth_idx, pm_idx, optimal_input).ok()?,
+            );
+            inner.extend_from_slice(&encoders::enc_v4_settle());
+        }
+    }
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+/// V2→V4 2-hop derivation (WAYDTL step 2 / (A)).
+///
+/// A V2 (outer flash) feeds a V4 pool. When the V4 input is an ERC-20, the V2
+/// forward output **enters the PM** (boundary model: `V4_SYNC(cur)` +
+/// `ERC20_TRANSFER(cur, PM, out)` + `V4_SETTLE`) to seed it, the V4 swap +
+/// `V4_TAKE_COMPACT(output→SELF)` captures, and the V2 flash is repaid
+/// `ERC20_TRANSFER(WETH→v2, optimal_input)`. When the V4 input is native the
+/// V2's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) and the V4
+/// input settled directly.
+fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    let weth_out = *inputs.hop_outputs.get(1)?;
+    if forward_out == 0 || weth_out == 0 {
+        return None;
+    }
+    if !fits_int128(forward_out) || !fits_int128(weth_out) {
+        return None;
+    }
+    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(v4_swap_in) {
+        return None;
+    }
+    let v4_in_native = if b.zfo {
+        b.currency0_address == NATIVE_CURRENCY_ADDRESS
+    } else {
+        b.currency1_address == NATIVE_CURRENCY_ADDRESS
+    };
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let v2_idx = at.add(a.pool_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let native_idx = SENTINEL_NATIVE;
+    let forward_addr = if a.zfo {
+        a.token1_address
+    } else {
+        a.token0_address
+    };
+    let forward_idx = at.add(forward_addr).ok()?;
+
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+
+    let callback_cmds = if v4_in_native {
+        // Native V4 input: settle it directly from executor native balance.
+        let mut v4_inner = encoders::enc_v4_swap_compact(
+            c0_b,
+            c1_b,
+            fee_b,
+            ts_b,
+            SENTINEL_NATIVE,
+            b.zfo,
+            v4_swap_in,
+        )
+        .ok()?;
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(native_idx));
+        let output_idx = if b.zfo { c1_b } else { c0_b };
+        v4_inner.extend_from_slice(
+            &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, weth_out).ok()?,
+        );
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+        let mut cb = encoders::enc_weth_withdraw(U256::from(forward_out));
+        cb.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
+        cb.extend_from_slice(
+            &encoders::enc_erc20_transfer(forward_idx, v2_idx, optimal_input).ok()?,
+        );
+        cb
+    } else {
+        let v4_out_native = if b.zfo {
+            b.currency1_address == NATIVE_CURRENCY_ADDRESS
+        } else {
+            b.currency0_address == NATIVE_CURRENCY_ADDRESS
+        };
+        let mut v4_inner = encoders::enc_v4_sync(forward_idx);
+        v4_inner.extend_from_slice(
+            &encoders::enc_erc20_transfer(forward_idx, pm_idx, forward_out).ok()?,
+        );
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+        v4_inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(
+                c0_b,
+                c1_b,
+                fee_b,
+                ts_b,
+                SENTINEL_NATIVE,
+                b.zfo,
+                v4_swap_in,
+            )
+            .ok()?,
+        );
+        if v4_out_native {
+            v4_inner.extend_from_slice(
+                &encoders::enc_v4_take_compact(native_idx, SENTINEL_SELF, weth_out).ok()?,
+            );
+        } else {
+            let output_idx = if b.zfo { c1_b } else { c0_b };
+            v4_inner.extend_from_slice(
+                &encoders::enc_v4_take_compact(output_idx, SENTINEL_SELF, weth_out).ok()?,
+            );
+        }
+        v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+        let mut cb = encoders::enc_v4_unlock(&v4_inner).ok()?;
+        if v4_out_native {
+            cb.extend_from_slice(&encoders::enc_weth_deposit(U256::from(weth_out)));
+        }
+        cb.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v2_idx, optimal_input).ok()?);
+        cb
+    };
+
+    let outer = encoders::enc_v2_swap_compact(
+        v2_idx,
+        a.zfo,
+        forward_out,
+        SENTINEL_SELF,
+        a.fee,
+        &callback_cmds,
+    )
+    .ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&outer);
     Some(out)
 }
 
