@@ -97,21 +97,32 @@ to write" testable; fully-codified ordering lives per-protocol where nothing
 enforces it generically; fully-declarative mechanics cannot express the
 executor's imperative wiring.
 
-**What "derived" means here (clarified by `6ZIE5X`):** the deliverable is a
-**generic validator that proves ordering from declarative per-protocol facts**
-— *validation* from data, not necessarily *byte emission* from data. A family's
-byte stream may be produced by per-protocol **mechanics code** (a byte-proven
-transcription of the proven adapter), provided that code emits a `LedgerOp`
-trace of the declarative facts and the validator gates it. The `6YUNQN` spike
-*byte-derived* a V2/V3 2-hop slice from `ShapeClass` + `HopFacts` to prove
-feasibility; that byte-derivation is **not** mandated for every family. What
-is mandated is: (1) each per-protocol emitter emits the `LedgerOp` facts for
-its stream, and (2) the validator is the matrix-enforced gate that makes the
-invariants (credit-before-debit, terminal-V2 pre-fund-then-`V2_SWAP_CALC`)
-unrepresentable for every (protocol × funding × capture × bribe) combination.
-Language describing the V4 / 3-hop emitters as "derived" is to be read as
-"byte-proven transcription, ordering proven by the validator over facts," not
-as data-driven byte synthesis.
+**What "derived" means here (clarified by `6ZIE5X`, mechanism chosen `BP7KIR`):**
+the deliverable is a **`Plan` tree** — the family's ledger decisions authored
+as an execution-ordered, callback-nested tree of declarative facts. Two
+consumers derive from the **same** Plan: the **encoder** produces bytes
+(`Plan → Vec<u8>`, callback subtrees nested inside their `FlashSwap`/
+`V4Unlock` steps — the nesting IS execution order); the **validator** walks
+the Plan depth-first (`Plan → Vec<LedgerOp>`, depth-first = execution order)
+and enforces the invariants. One representation, no drift, no reordering, no
+per-family trace duplication. Byte emission is still code (per-protocol
+mechanics behind the encoder); the **decisions/facts are data** (the Plan).
+
+This supersedes two mechanisms the `6SRC23` POC ruled out: `enc_*`-instrumentation
+(produces emission-order traces, wrong for callback-nested flashes like
+`v3_v4_v3`'s 3-level V3c→V3a→`V4_UNLOCK` nesting) and byte→`LedgerOp` decoding
+(couples the gate to byte layout and fights additivity). The `6YUNQN` spike's
+`ShapeClass`+`HopFacts` byte-derivation of the V2/V3 2-hop slice proved
+feasibility of data-driven derivation; a future generic `ShapeClass`→Plan walker
+(the `6ZIE5X` (a)-branch, deferred) may build on Plan-authored families, but
+per-family Plan authoring is sufficient to deliver D4/D5. What is mandated:
+(1) each family's stream is produced by building a Plan then encoding it;
+(2) the validator gates the Plan (credit-before-debit, terminal-V2
+pre-fund-then-`V2_SWAP_CALC`, flash-debt-net-zero) for every
+(protocol × funding × capture × bribe) combination. Language describing the
+emitters as "derived" is to be read as "Plan-derived bytes; ordering proven
+by the validator over the Plan," not as data-driven byte synthesis from
+`ShapeClass`.
 
 ### D5 — The runtime matrix is the source of truth; byte-parity is a cross-check.
 
@@ -122,10 +133,11 @@ implementation detail **handled by the encoder methods the matrix calls**, so a
 future executor revision (new commands, new byte layout) is absorbed by those
 methods without re-validating bytes. Byte-parity is demoted to a weak "matches
 the current reference" check that the matrix may override (the reference corpus
-may itself contain latent bugs). **The matrix also runs every emitted stream's
-`LedgerOp` trace through the ledger validator** (D4) and asserts the ordering
-invariants hold — this is the gate that makes credit-before-debit and
-terminal-V2 pre-fund unrepresentable, not merely spot-tested.
+may itself contain latent bugs). **The matrix also validates every produced
+`Plan` through the ledger validator** (D4: `Plan → LedgerOp` depth-first walk,
+then `LedgerValidator::validate_full`) and asserts the ordering invariants hold
+— this is the gate that makes credit-before-debit and terminal-V2 pre-fund
+unrepresentable, not merely spot-tested.
 
 ### D6 — Scope and additive-proof boundary.
 
