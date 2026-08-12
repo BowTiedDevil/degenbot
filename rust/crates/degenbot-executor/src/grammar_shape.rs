@@ -1780,10 +1780,21 @@ pub fn build_v3v4_plan(
     } else {
         b.currency0_address
     };
-    // Scoped slice: V4 output must be an ERC-20 (the captured profit; the
-    // native-V4-output case is a follow-on).
+    // Native V4 OUTPUT: the V4's native output is captured to SELF as native
+    // profit (SelfFund WETH topology — the executor pre-holds WETH to repay the
+    // V3 flash, since the V4 outputs native, not WETH).
     if v4_out_currency == NATIVE_CURRENCY_ADDRESS {
-        return None;
+        return build_v3v4_native_output_plan(
+            a,
+            b,
+            v4_in_currency,
+            v4_out_amount,
+            v4_swap_in,
+            forward_out,
+            optimal_input,
+            weth,
+            inputs,
+        );
     }
     if v4_in_currency == NATIVE_CURRENCY_ADDRESS {
         return build_v3v4_native_input_plan(
@@ -1928,6 +1939,141 @@ fn build_v3v4_erc20_input_plan(
         auto_repay: false,
         callback,
     }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// `v3_v4` native V4 output (3c) — the native-profit topology. The V4's native
+/// output is captured to SELF as native profit; the V3 flash (WETH input) is
+/// repaid from a `SelfFund(WETH)` credit (the executor pre-holds WETH, since
+/// the V4 outputs native, not WETH — no WETH source in the V4 path). The V3
+/// forward (an ERC-20) seeds the V4 input. Profit = native captured − WETH
+/// spent. SelfFund is byte-neutral, so byte-parity with the proven emitter
+/// (which has no self-fund byte — the executor just holds the balance) holds.
+#[allow(clippy::too_many_lines)]
+fn build_v3v4_native_output_plan(
+    a: &V3HopInfo,
+    b: &V4HopInfo,
+    v4_in_currency: Address,
+    v4_out_amount: u128,
+    v4_swap_in: u128,
+    forward_out: u128,
+    optimal_input: u128,
+    weth: Address,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let forward_addr = if a.zfo {
+        a.token1_address
+    } else {
+        a.token0_address
+    };
+    let v3_in_currency = if a.zfo {
+        a.token0_address
+    } else {
+        a.token1_address
+    };
+    // V3 input must be WETH (self-funded to repay the flash); the V3 forward
+    // must be the V4's ERC-20 input; the V4 output is native (captured).
+    if v3_in_currency != weth
+        || forward_addr == NATIVE_CURRENCY_ADDRESS
+        || v4_in_currency != forward_addr
+        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
+    {
+        return None;
+    }
+    let mut at = AddressTable::with_sentinels(
+        Some(weth),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let v3_idx = at.add(a.pool_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let forward_idx = at.add(forward_addr).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let v4_inner: Plan = vec![
+        PlanStep::V4Sync {
+            currency_idx: forward_idx,
+            currency_addr: forward_addr,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: forward_idx,
+            token_addr: forward_addr,
+            recipient_idx: pm_idx,
+            amount: forward_out,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V4Settle {
+            currency_addr: forward_addr,
+            amount: forward_out,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0_b,
+            c1_idx: c1_b,
+            fee: fee_b,
+            tick_spacing: ts_b,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: b.zfo,
+            amount: v4_swap_in,
+            in_currency: forward_addr,
+            in_amount: v4_swap_in,
+            out_currency: NATIVE_CURRENCY_ADDRESS,
+            out_amount: v4_out_amount,
+        },
+        // Capture the V4's native output to SELF (NativeCredit — the profit).
+        PlanStep::V4TakeCompact {
+            currency_idx: SENTINEL_NATIVE,
+            currency_addr: NATIVE_CURRENCY_ADDRESS,
+            recipient_idx: SENTINEL_SELF,
+            amount: v4_out_amount,
+            seeds_pool: None,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    let callback: Plan = vec![
+        PlanStep::V4Unlock {
+            inner: v4_inner,
+            pool_manager_idx: pm_idx,
+        },
+        // Repay the V3 flash with the self-funded WETH (the V4 outputs native,
+        // not WETH, so the WETH comes from the SelfFund credit, not the V4).
+        PlanStep::Erc20Transfer {
+            token_idx: weth_idx,
+            token_addr: weth,
+            recipient_idx: v3_idx,
+            amount: optimal_input,
+            seeds_pool: None,
+            repays_flash: Some(a.pool_address),
+        },
+    ];
+    let plan: Plan = vec![
+        // SelfFund WETH: the executor pre-holds WETH to repay the V3 flash.
+        // Byte-neutral (no byte) — the emitter relies on the executor's pre-held
+        // balance; the Plan models it explicitly so the gate's Erc20[WETH]
+        // credit/debit balances.
+        PlanStep::SelfFund {
+            currency: weth,
+            amount: optimal_input,
+        },
+        PlanStep::FlashSwap {
+            pool_idx: v3_idx,
+            pool_addr: a.pool_address,
+            protocol: Prot::V3,
+            zfo: a.zfo,
+            fee: u16::try_from(a.fee).ok()?,
+            out_currency: forward_addr,
+            out_amount: forward_out,
+            in_currency: weth,
+            in_amount: optimal_input,
+            recipient_idx: SENTINEL_SELF,
+            auto_repay: false,
+            callback,
+        },
+    ];
     let preamble = encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -2097,8 +2243,21 @@ pub fn build_v2v4_plan(
     } else {
         b.currency0_address
     };
+    // Native V4 OUTPUT: the V4's native output is captured to SELF as native
+    // profit (SelfFund WETH topology — the executor pre-holds WETH to repay the
+    // V2 flash, since the V4 outputs native, not WETH).
     if v4_out_currency == NATIVE_CURRENCY_ADDRESS {
-        return None;
+        return build_v2v4_native_output_plan(
+            a,
+            b,
+            v4_in_currency,
+            v4_out_amount,
+            v4_swap_in,
+            forward_out,
+            optimal_input,
+            weth,
+            inputs,
+        );
     }
     if v4_in_currency == NATIVE_CURRENCY_ADDRESS {
         return build_v2v4_native_input_plan(
@@ -2215,6 +2374,137 @@ fn build_v2v4_erc20_input_plan(
             inner: v4_inner,
             pool_manager_idx: pm_idx,
         },
+        PlanStep::Erc20Transfer {
+            token_idx: weth_idx,
+            token_addr: weth,
+            recipient_idx: v2_idx,
+            amount: optimal_input,
+            seeds_pool: None,
+            repays_flash: Some(a.pool_address),
+        },
+    ];
+    let plan: Plan = vec![PlanStep::FlashSwap {
+        pool_idx: v2_idx,
+        pool_addr: a.pool_address,
+        protocol: Prot::V2,
+        zfo: a.zfo,
+        fee: a.fee,
+        out_currency: forward_addr,
+        out_amount: forward_out,
+        in_currency: weth,
+        in_amount: optimal_input,
+        recipient_idx: SENTINEL_SELF,
+        auto_repay: false,
+        callback,
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// `v2_v4` native V4 output (3c) — the wrap-and-repay topology (V2-flash
+/// variant, DIFFERS from v3_v4 native-output). The V4's native output is
+/// captured to SELF, then WRAPPED to WETH (`WethDeposit`) and the V2 flash is
+/// repaid from that WETH — the profit remains in WETH (weth_out − optimal_input),
+/// no SelfFund. (v3_v4 leaves profit as native + SelfFunds WETH; v2_v4 wraps.)
+/// Byte-parity with the proven emitter (which emits the WethDeposit).
+#[allow(clippy::too_many_lines)]
+fn build_v2v4_native_output_plan(
+    a: &V2HopInfo,
+    b: &V4HopInfo,
+    v4_in_currency: Address,
+    v4_out_amount: u128,
+    v4_swap_in: u128,
+    forward_out: u128,
+    optimal_input: u128,
+    weth: Address,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let forward_addr = if a.zfo {
+        a.token1_address
+    } else {
+        a.token0_address
+    };
+    let v2_in_currency = if a.zfo {
+        a.token0_address
+    } else {
+        a.token1_address
+    };
+    if v2_in_currency != weth
+        || forward_addr == NATIVE_CURRENCY_ADDRESS
+        || v4_in_currency != forward_addr
+        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
+    {
+        return None;
+    }
+    let mut at = AddressTable::with_sentinels(
+        Some(weth),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let v2_idx = at.add(a.pool_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let forward_idx = at.add(forward_addr).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let v4_inner: Plan = vec![
+        PlanStep::V4Sync {
+            currency_idx: forward_idx,
+            currency_addr: forward_addr,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: forward_idx,
+            token_addr: forward_addr,
+            recipient_idx: pm_idx,
+            amount: forward_out,
+            seeds_pool: None,
+            repays_flash: None,
+        },
+        PlanStep::V4Settle {
+            currency_addr: forward_addr,
+            amount: forward_out,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0_b,
+            c1_idx: c1_b,
+            fee: fee_b,
+            tick_spacing: ts_b,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: b.zfo,
+            amount: v4_swap_in,
+            in_currency: forward_addr,
+            in_amount: v4_swap_in,
+            out_currency: NATIVE_CURRENCY_ADDRESS,
+            out_amount: v4_out_amount,
+        },
+        // Capture the V4's native output to SELF (NativeCredit — the profit).
+        PlanStep::V4TakeCompact {
+            currency_idx: SENTINEL_NATIVE,
+            currency_addr: NATIVE_CURRENCY_ADDRESS,
+            recipient_idx: SENTINEL_SELF,
+            amount: v4_out_amount,
+            seeds_pool: None,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    let callback: Plan = vec![
+        PlanStep::V4Unlock {
+            inner: v4_inner,
+            pool_manager_idx: pm_idx,
+        },
+        // Wrap the V4's captured native output to WETH (the V4 outputs native,
+        // not WETH — wrap it so the V2 flash can be repaid in WETH). The
+        // profit remains in WETH (native take − wrap − repay = weth_out −
+        // optimal_input). Unlike v3_v4 native-output (which leaves profit as
+        // native + SelfFunds WETH), v2_v4 wraps — matches the proven emitter.
+        PlanStep::WethDeposit {
+            weth_idx,
+            weth_addr: weth,
+            amount: v4_out_amount,
+        },
+        // Repay the V2 flash from the just-wrapped WETH.
         PlanStep::Erc20Transfer {
             token_idx: weth_idx,
             token_addr: weth,

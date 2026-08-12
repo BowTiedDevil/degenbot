@@ -572,6 +572,80 @@ fn v2v4_native_input_plan_byte_parity_validates_and_executes() {
     println!("── v2_v4 native-input (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
 }
 
+/// BP7KIR Increment 3c (native-OUTPUT): the `v2_v4` **native-V4-output**
+/// sub-case (V2-flash variant, DIFFERS from v3_v4). The V4's native output is
+/// captured to SELF, wrapped to WETH (WethDeposit), and the V2 flash is repaid
+/// from that WETH — the profit remains in WETH (weth_out − optimal_input). No
+/// SelfFund (unlike v3_v4 native-output, which leaves profit as native).
+/// Build Plan → byte-parity + gate + runtime exact WETH delta.
+#[test]
+fn v2v4_native_output_plan_byte_parity_validates_and_executes() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{build_v2v4_plan, plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let weth = h.weth;
+
+    // Pool A (V2): WETH→t (WETH in, t forward seeds the V4). Pool B (V4):
+    // t→native (t in, native OUTPUT — captured, wrapped to WETH to repay V2).
+    let r: u128 = 1_000_000_000_000;
+    let p_a = HopPool::V2(h.add_pool(weth, t, r, r * 3).unwrap());
+    let p_b = HopPool::V4(
+        h.add_v4_pool(t, native, 3000, 60, sqrt_x(3), liq(), r, r)
+            .unwrap(),
+    );
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: native,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let (preamble, plan, at) = build_v2v4_plan(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v2_v4 native-output] build None"));
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v2_v4 native-output] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[v2_v4 native-output] Plan bytes != proven emitter"
+    );
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .unwrap_or_else(|e| panic!("[v2_v4 native-output] Plan must validate clean: {e:?}"));
+    // The captured native is wrapped to WETH and repays the V2 flash — the
+    // profit remains in WETH (weth_out − optimal_input), so assert_profitable's
+    // WETH-delta check is the right assertion here.
+    let result = h
+        .run_raw_payload(&hops, &plan_bytes, optimal_input, 8_000_000)
+        .unwrap_or_else(|e| panic!("[v2_v4 native-output] run_raw_payload: {e}"));
+    assert_profitable(&result, 2, "v2_v4 native-output");
+    println!(
+        "── v2_v4 native-output (Plan): byte-parity held, trace validated, weth_delta={}",
+        result.actual_weth_delta
+    );
+}
+
 /// BP7KIR Increment 3b: the `v3_v4` outside->V4 seed family on the Plan
 /// tree — the deepest nesting (a V3 FlashSwap wraps a V4Unlock in its
 /// callback). The V3 forward output enters the PM (V4Sync + Erc20Transfer +
@@ -686,6 +760,92 @@ fn v3v4_native_input_plan_byte_parity_validates_and_executes() {
     assert!((actual_delta - terminal as i128).abs() <= tol,
         "[v3_v4 native-input] terminal `u` delta {actual_delta} diverges from predicted {terminal} (tol {tol})");
     println!("── v3_v4 native-input (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
+}
+
+/// BP7KIR Increment 3c (native-OUTPUT): the `v3_v4` **native-V4-output**
+/// sub-case — the V4's native output is captured to SELF as native profit
+/// (the executor self-funds WETH to repay the V3 flash, since the V4 outputs
+/// native, not WETH). Build Plan → byte-parity + gate + runtime exact terminal
+/// native delta.
+#[test]
+fn v3v4_native_output_plan_byte_parity_validates_and_executes() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::{build_v3v4_plan, plan_to_bytes, plan_to_ledger_ops};
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let weth = h.weth;
+
+    // Pool A (V3): WETH→t (WETH in [self-funded], t forward seeds the V4).
+    // Pool B (V4): t→native (t in, native OUTPUT = the captured profit).
+    let r: u128 = 1_000_000_000_000;
+    let p_a = HopPool::V3(
+        h.add_v3_pool(weth, t, 3000, sqrt_x(3), liq(), r, r)
+            .unwrap(),
+    );
+    let p_b = HopPool::V4(
+        h.add_v4_pool(t, native, 3000, 60, sqrt_x(3), liq(), r, r)
+            .unwrap(),
+    );
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: native,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let terminal = *hop_outputs.last().unwrap();
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let (preamble, plan, at) = build_v3v4_plan(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v3_v4 native-output] build None"));
+    let reference = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("[v3_v4 native-output] derive_shape None"));
+    let mut plan_bytes = preamble;
+    plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+    assert_eq!(
+        plan_bytes, reference,
+        "[v3_v4 native-output] Plan bytes != proven emitter"
+    );
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = LedgerValidator::default();
+    v.validate_full(&ops)
+        .unwrap_or_else(|e| panic!("[v3_v4 native-output] Plan must validate clean: {e:?}"));
+    // The terminal profit is NATIVE (the V4's native output captured to SELF).
+    // The executor self-funds WETH (SelfFund) to repay the V3 flash, so WETH
+    // goes negative and native goes positive. `run_raw_payload` measures WETH
+    // delta (wrong currency here) — measure native delta directly, funded with
+    // WETH (self-fund) + `t` (V4 input, as a rounding buffer).
+    h.fund(weth, h.executor, optimal_input * 4).unwrap();
+    h.fund(t, h.executor, optimal_input * 4).unwrap();
+    let native_before = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&plan_bytes, 8_000_000).unwrap();
+    assert!(
+        outcome.executed(2),
+        "[v3_v4 native-output] must execute through both pools: {outcome:?}"
+    );
+    let native_after = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let actual_delta = native_after - native_before;
+    // Native delta == the V4's declared output (terminal = hop_outputs[1]).
+    let tol = (terminal as i128 / 1000).max(1);
+    assert!((actual_delta - terminal as i128).abs() <= tol,
+        "[v3_v4 native-output] native delta {actual_delta} diverges from V4 output {terminal} (tol {tol})");
+    println!("── v3_v4 native-output (Plan): byte-parity held, trace validated, native_delta={actual_delta}");
 }
 
 /// BP7KIR Increment 3b: the `v4_v3` boundary-take family on the Plan tree —
