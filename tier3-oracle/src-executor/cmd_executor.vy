@@ -1759,6 +1759,32 @@ def withdraw(amount: uint256, destination: address):
     )
 
 
+@internal
+def _combined_balance(check_mode: uint256) -> uint256:
+    """Read the executor's combined WETH+ETH (or ERC6909 WETH) balance.
+
+    Used at BOTH the start (combined_before) and end (combined_after) of the
+    execute() slow path so the profit assert and bribe compute on the TRUE
+    delta — never on an operator-supplied `expected_value` that may be
+    misconfigured (the U3WVLL defect: `expected_value=0` silently skipped the
+    profit check and over-bribed). Reading the on-chain balance at the start
+    costs one cold balanceOf (~2600 gas) the first time; the end read is warm
+    (the stream touches WETH/ERC6909) at ~100 gas.
+
+    Flash paths start at 0 (no-prefund architecture) so combined_before=0 —
+    the assert `combined_after >= 0` is trivially true (no regression vs the
+    M1 retraction); self-fund paths start >0 so the assert is the active
+    protection (a money-losing self-fund tx reverts).
+    """
+    if check_mode == 2:
+        # ERC6909 WETH held in the PoolManager.
+        return staticcall IERC6909Claims(POOL_MANAGER_ADDR).balanceOf(
+            self, convert(convert(WETH_ADDR, uint160), uint256)
+        )
+    # WETH + ETH combined (check_mode == 1).
+    return unsafe_add(staticcall IERC20(WETH_ADDR).balanceOf(self), self.balance)
+
+
 @external
 @payable
 def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 0) -> uint256:
@@ -1795,23 +1821,27 @@ def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 0) -> uint25
                         and fail. Mode-1 is the default for mixed V2/V3/V4 paths.
       bits 8-23:   bribe_bips (0 = no bribe, 1-10000 = basis points; >10000 reverts BipsTooHigh)
       bits 24-31:  bribe_recipient_idx (0 = block.coinbase / builder, 1-31 = address table index)
-      bits 32-255: expected_value (pre-tx balance for the selected mode)
+      bits 32-255: expected_value (IGNORED — kept for config-ABI compatibility;
+                   the contract reads its own combined balance at start+end)
 
-    Note on expected_value: when expected_value == 0 the profit-check assert
-    is a no-op (a uint combined_after is always >= 0). This is intentional —
-    the no-prefund flash-borrow architecture means many paths legitimately
-    start the executor at 0 balance. The operator is responsible for setting
-    expected_value to their real pre-tx balance when a meaningful check is
-    desired; with a bribe requested and expected_value == 0, profit is computed
-    against a 0 baseline, so the operator MUST set expected_value correctly in
-    that case (the contract cannot distinguish a true-0 flash path from a
-    misconfigured 0).
+    Note on the profit check (U3WVLL defect fix): the contract reads its OWN
+    combined balance at the start (combined_before) and end (combined_after)
+    of the slow path — NOT an operator-supplied `expected_value`. The profit
+    assert `combined_after >= combined_before` is UNCONDITIONAL (no
+    `expected_value > 0` guard): a money-losing self-fund tx reverts to
+    protect the operator. For flash paths combined_before=0 (no-prefund
+    architecture) so the assert is trivially true; a losing flash path reverts
+    at the protocol layer (flash-loan repayment) before reaching the check.
+    Bribes compute on the TRUE profit (combined_after - combined_before),
+    eliminating the `expected_value=0` over-bribe footgun. The rare "sweep
+    accumulated profit to another address" case (which requires the assert
+    defeated) is a deferred explicit opt-in, NOT `expected_value=0`.
 
     Examples:
-      0                                              → skip check, no bribe
-      (pre_tx_bal << 32) | 1                         → WETH+ETH check, no bribe
-      (pre_tx_bal << 32) | (500 << 8) | 2            → ERC6909 check, 5% coinbase bribe
-      (pre_tx_bal << 32) | (500 << 8) | (3 << 24) | 1 → WETH+ETH check, 5% bribe to addr[3]
+      0                                              → fast path: skip check, no bribe
+      1                                              → WETH+ETH profit check, no bribe
+      (500 << 8) | 2                                 → ERC6909 check, 5% coinbase bribe
+      (500 << 8) | (3 << 24) | 1                     → WETH+ETH check, 5% bribe to addr[3]
 
     Owner-only. Returns the profit (balance increase).
     """
@@ -1836,38 +1866,33 @@ def execute(commands: Bytes[MAX_COMMANDS_LENGTH], config: uint256 = 0) -> uint25
 
     # Slow path: balance check or bribe needed.
     # (Fast path already returned when check_mode==0 and bribe_bips==0.)
-    expected_value: uint256 = config >> 32
-    # NOTE on expected_value semantics (M1, analyzed + retracted):
-    # The no-prefund flash-borrow architecture means many paths legitimately
-    # start the executor at 0 balance, so expected_value == 0 is a valid,
-    # common config (not a misconfiguration). When expected_value == 0, the
-    # `if expected_value > 0` profit check below is skipped (a no-op: a uint
-    # combined_after is always >= 0). This is intentional and compatible with
-    # flash paths. The operator is responsible for setting expected_value to
-    # their real pre-tx balance when they want a meaningful profit check;
-    # setting it to 0 with a bribe requested would compute profit = full
-    # balance and over-bribe, but the contract cannot distinguish a genuine
-    # starts-from-zero flash path from a misconfigured 0, so we trust the
-    # operator's expected_value. See .auto/m1-profit-guard-retraction.md.
-    combined_before: uint256 = expected_value
+    # U3WVLL defect fix: the contract reads its OWN combined balance at the
+    # start (combined_before) and end (combined_after) of the slow path, so
+    # the profit assert + bribe compute on the TRUE delta. The operator's
+    # `expected_value` (config bits 32+) is IGNORED — it was the footgun
+    # (expected_value=0 silently skipped the assert and over-bribed; the
+    # contract couldn't distinguish a 0-balance flash path from a
+    # misconfigured 0). For flash paths combined_before=0 (no-prefund
+    # architecture); for self-fund paths combined_before>0 (the funded entry
+    # capital) so the assert is the active money-loss protection. A losing
+    # flash path reverts at the protocol layer (flash-loan repayment) before
+    # reaching here. See .auto_archived/m1-profit-guard-retraction.md (the M1
+    # retraction opposed forcing expected_value>0, which broke flash paths;
+    # reading on-chain instead does NOT break them — combined_before=0 is
+    # correct for flash paths).
+    combined_before: uint256 = self._combined_balance(check_mode)
     for _: uint256 in range(MAX_COMMANDS_LENGTH):
         offset = self._execute_command_at(commands, offset)
         if offset >= len(commands):
             break
-    combined_after: uint256 = 0
-    if check_mode == 2:
-        # ERC6909 WETH: read PM.balanceOf(self, weth_id).
-        # Warm on V4V4V4 paths (just written by V4_MINT_COMPACT),
-        # avoiding cold WETH.balanceOf (~4,900 gas saved).
-        combined_after = staticcall IERC6909Claims(POOL_MANAGER_ADDR).balanceOf(
-            self, convert(convert(WETH_ADDR, uint160), uint256)
-        )
-    else:
-        # WETH + ETH combined: read WETH.balanceOf + self.balance.
-        # Warm on V2/V3/V4+other paths (ERC20 transfers warm WETH).
-        combined_after = unsafe_add(staticcall IERC20(WETH_ADDR).balanceOf(self), self.balance)
-    if expected_value > 0:
-        assert combined_after >= expected_value, InsufficientProfit(actual=combined_after, expected=expected_value)
+    combined_after: uint256 = self._combined_balance(check_mode)
+    # Unconditional assert (no `if expected_value > 0` guard): a money-losing
+    # tx reverts to protect the operator. For flash paths (combined_before=0)
+    # this is `combined_after >= 0` (trivially true for uint); for self-fund
+    # paths it is the active floor. The rare "send accumulated profit to
+    # another address" sweep case needs this defeated — that is an explicit
+    # opt-in (see the deferred sweep mode, not `expected_value=0`).
+    assert combined_after >= combined_before, InsufficientProfit(actual=combined_after, expected=combined_before)
     
     # Bribes send a portion of this transaction's profit: profit * bips / 10000.
     # If the executor's ETH balance is insufficient, withdraws WETH (up to

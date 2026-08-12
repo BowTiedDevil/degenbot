@@ -3783,3 +3783,164 @@ fn v2_v3_self_fund_executes_with_exact_delta_and_differs_from_flash() {
     );
     println!("── v2_v3 self-fund (runtime): delta={delta}, predicted={predicted_profit}");
 }
+
+/// U3WVLL defect fix: the on-chain profit assert is now ACTIVE by default
+/// (check_mode=1, contract reads its own combined balance at start+end). A
+/// money-losing self-fund path reverts with `InsufficientProfit` — previously
+/// (expected_value=0 → no-op assert) it would silently succeed, exposing the
+/// operator to loss. Symmetric V2 reserves guarantee a round-trip loss (2x
+/// 0.3% fee), so the self-fund v2_v2 path here is money-losing by construction.
+#[test]
+fn u3wvll_money_losing_self_fund_path_reverts_with_profit_assert() {
+    use degenbot_executor::composers::config_for_options;
+    use degenbot_executor::grammar_ledger::FundingSource;
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let weth = h.weth;
+    let r: u128 = 1_000_000_000_000;
+    // SYMMETRIC reserves — the v2_v2 round-trip (weth→t→weth) loses ~0.6% to
+    // fees → guaranteed money-losing for a self-fund path.
+    let p_a = HopPool::V2(h.add_pool(weth, t, r, r).unwrap());
+    let p_b = HopPool::V2(h.add_pool(t, weth, r, r).unwrap());
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
+    // Confirm the path is money-losing (round-trip loses to fees).
+    assert!(
+        (*hop_outputs.last().unwrap() as i128 - optimal_input as i128) < 0,
+        "symmetric-reserve v2_v2 round-trip must be money-losing"
+    );
+
+    let payload = h
+        .encode_path_with_opts(
+            &path,
+            optimal_input,
+            &hop_outputs,
+            EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("self-fund v2_v2 must encode");
+
+    // check_mode=1 (default for Custody capture) → the profit assert is active.
+    let config = config_for_options(
+        EncodeOptions {
+            funding: FundingSource::SelfFund,
+            ..Default::default()
+        },
+        U256::ZERO,
+    );
+    assert_eq!(
+        config & U256::from(255u64),
+        U256::from(1u64),
+        "check_mode=1 (assert active)"
+    );
+
+    // Self-fund precondition: executor holds the entry WETH (combined_before > 0).
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+    let outcome = h
+        .execute_payload_config(&payload, 8_000_000, config)
+        .unwrap();
+    // The money-losing path must REVERT (the U3WVLL fix).
+    assert!(
+        !outcome.executed(2),
+        "money-losing self-fund path must revert (profit assert active): {outcome:?}"
+    );
+    match outcome {
+        degenbot_simulation::harness::ExecOutcome::Reverted { reason, .. } => {
+            // The contract's InsufficientProfit error. (Decode may be None if the
+            // harness doesn't ABI-decode the custom error; the revert itself is
+            // the proof.)
+            eprintln!("── u3wvll money-losing reverted: {reason:?}");
+        }
+        other => panic!("expected Reverted, got {other:?}"),
+    }
+}
+
+/// U3WVLL defect fix: bribes now compute on TRUE profit (combined_after -
+/// combined_before), not on combined_after. A self-fund path where the executor
+/// holds entry WETH (combined_before > 0): the bribe is bips * true_profit,
+/// NOT bips * combined_after (which would over-bribe by draining entry capital).
+#[test]
+fn u3wvll_bribe_on_self_fund_computes_on_true_profit_not_balance() {
+    use degenbot_executor::composers::config_for_options;
+    use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let weth = h.weth;
+    let r: u128 = 1_000_000_000_000;
+    // Asymmetric reserves → profitable arb (the standard fixture shape).
+    let p_a = HopPool::V2(h.add_pool(weth, t, r, r * 3).unwrap());
+    let p_b = HopPool::V2(h.add_pool(t, weth, r, r * 3).unwrap());
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: p_a,
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: p_b,
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
+    let true_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(true_profit > 0, "fixture should be profitable");
+
+    let opts = EncodeOptions {
+        funding: FundingSource::SelfFund,
+        capture: ProfitCapture::Custody,
+        bribe: Bribe::Some {
+            bips: 500,
+            recipient_idx: 0,
+        }, // 5% to coinbase
+        ..Default::default()
+    };
+    let payload = h
+        .encode_path_with_opts(&path, optimal_input, &hop_outputs, opts)
+        .expect("self-fund v2_v2 bribe must encode");
+    let config = config_for_options(opts, U256::ZERO);
+
+    // Self-fund: executor holds entry WETH. combined_before = optimal_input*2.
+    // Fund WETH with ETH so the bribe's WETH.withdraw can cover the coinbase payment.
+    h.set_native_balance(weth, U256::from(1_000_000_000_000_000_000u128));
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+    let weth_before = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h
+        .execute_payload_config(&payload, 8_000_000, config)
+        .unwrap();
+    assert!(
+        outcome.executed(2),
+        "profitable bribe path must execute: {outcome:?}"
+    );
+    let weth_after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let weth_delta = weth_after - weth_before;
+
+    // The bribe is 5% of TRUE profit (not 5% of combined_after). The executor's
+    // WETH delta = true_profit - bribe = true_profit * 0.95.
+    let bribe = true_profit / 20; // 5% of true profit
+    let expected_delta = true_profit - bribe;
+    let tol = (true_profit.abs() / 1000).max(64);
+    assert!(
+        (weth_delta - expected_delta).abs() <= tol,
+        "bribe on self-fund: WETH delta {weth_delta} != true_profit-bribe {expected_delta} (true_profit={true_profit}, bribe={bribe}, tol {tol}). Over-bribe would give ~{}",
+        true_profit - (weth_after / 20)
+    );
+    println!("── u3wvll self-fund bribe: delta={weth_delta}, true_profit={true_profit}, bribe={bribe} (not over-bribed)");
+}

@@ -427,19 +427,27 @@ pub struct EncodedCall {
 ///     forces `Erc6909`).
 ///   - `bribe` → `bribe_bips` + `bribe_recipient_idx`: `None` = (0, 0) (no bribe);
 ///     `Some{bips, recipient_idx}` is forwarded (recipient_idx 0 = block.coinbase).
-///   - `expected_value` is forwarded unchanged (the operator's pre-tx balance,
-///     used by check_mode=1/2 profit verification; `U256::ZERO` skips the
-///     `assert combined_after >= expected_value` check).
+///   - `expected_value` is IGNORED (kept in the signature for ABI compat; the
+///     U3WVLL contract fix made the executor read its OWN combined balance at
+///     start+end, so the operator no longer supplies the pre-tx balance).
 ///
 /// This is the single axis-aware config builder; production still uses a
 /// hardcoded `EXECUTE_CONFIG = ZERO` constant (a separate strategy-layer fork
 /// to migrate), but tests use this to prove the axis→config→contract path.
 #[must_use]
 pub fn config_for_options(opts: EncodeOptions, expected_value: U256) -> U256 {
+    let _ = expected_value; // U3WVLL: ignored — the contract reads its own balance.
+    let _ = expected_value; // U3WVLL: ignored — the contract reads its own balance.
     let (_, capture, bribe) = resolve_axes(opts);
+    // U3WVLL defect fix: the profit assert is active by default. Non-erc6909
+    // captures use check_mode=1 (WETH+ETH combined balance assert — the
+    // on-chain money-loss protection the operator wants active "nearly
+    // always"); Erc6909 uses check_mode=2 (ERC6909 WETH). check_mode=0 (fast
+    // path, no assert) is no longer the default — it was the footgun that
+    // silently skipped the profit check.
     let check_mode = match capture {
         crate::grammar_ledger::ProfitCapture::Erc6909 => 2u8,
-        _ => 0u8,
+        _ => 1u8,
     };
     let (bribe_bips, bribe_recipient_idx) = match bribe {
         crate::grammar_ledger::Bribe::None => (0u16, 0u8),
@@ -448,8 +456,7 @@ pub fn config_for_options(opts: EncodeOptions, expected_value: U256) -> U256 {
             recipient_idx,
         } => (bips, recipient_idx),
     };
-    crate::encoders::pack_config(check_mode, expected_value, bribe_bips, bribe_recipient_idx)
-        .expect(
+    crate::encoders::pack_config(check_mode, U256::ZERO, bribe_bips, bribe_recipient_idx).expect(
         "check_mode 0/2 in range; bribe_bips<=10000 and recipient_idx<32 validated by pack_config",
     )
 }
@@ -926,11 +933,21 @@ fn resolve_axes_funding_passes_through() {
 // ── WE45KC: config_for_options axis→config mapping ───────────────────
 
 #[test]
-fn config_for_options_default_is_zero() {
-    // Default (Custody, no bribe, expected_value=0) → config = 0.
+fn config_for_options_default_is_check_mode_1() {
+    // U3WVLL defect fix: default (Custody, no bribe) → check_mode=1 (WETH+ETH
+    // profit assert active). The contract reads its own combined balance at
+    // start+end and asserts combined_after >= combined_before. This is the
+    // "profit assert active nearly always" protection the operator wants.
+    let cfg = config_for_options(EncodeOptions::default(), U256::ZERO);
     assert_eq!(
-        config_for_options(EncodeOptions::default(), U256::ZERO),
-        U256::ZERO
+        cfg & U256::from(255u64),
+        U256::from(1u64),
+        "default → check_mode=1"
+    );
+    assert_eq!(
+        (cfg >> 8) & U256::from(65535u64),
+        U256::ZERO,
+        "no bribe by default"
     );
 }
 
@@ -949,10 +966,10 @@ fn config_for_options_capture_erc6909_sets_check_mode_2() {
 }
 
 #[test]
-fn config_for_options_capture_native_is_check_mode_0() {
-    // Native capture: the profit is WETH-withdrawn in-stream; no on-chain
-    // profit check needed (check_mode=0). This is why Native capture works
-    // in production with EXECUTE_CONFIG=ZERO.
+fn config_for_options_capture_native_is_check_mode_1() {
+    // U3WVLL: Native capture also uses check_mode=1 (WETH+ETH combined assert;
+    // the in-stream WETH_WITHDRAW leaves the profit as ETH, still counted in
+    // the combined balance). The profit assert is active for Native capture too.
     let opts = EncodeOptions {
         capture: crate::grammar_ledger::ProfitCapture::Native,
         ..Default::default()
@@ -960,8 +977,8 @@ fn config_for_options_capture_native_is_check_mode_0() {
     let cfg = config_for_options(opts, U256::ZERO);
     assert_eq!(
         cfg & U256::from(255u64),
-        U256::ZERO,
-        "Native → check_mode=0"
+        U256::from(1u64),
+        "Native → check_mode=1 (assert active)"
     );
 }
 
@@ -999,15 +1016,22 @@ fn config_for_options_bribe_packs_bips_and_recipient() {
 }
 
 #[test]
-fn config_for_options_expected_value_lands_in_high_bits() {
+fn config_for_options_expected_value_is_ignored() {
+    // U3WVLL: expected_value is IGNORED (the contract reads its own combined
+    // balance at start+end). The high bits are always 0 regardless of the
+    // operator-supplied expected_value.
     let ev = U256::from(0xBEEFu64);
     let cfg = config_for_options(EncodeOptions::default(), ev);
-    assert_eq!(cfg >> 32, ev, "expected_value in bits 32+");
+    assert_eq!(
+        cfg >> 32,
+        U256::ZERO,
+        "expected_value ignored by the builder"
+    );
 }
 
 #[test]
 fn config_for_options_combines_all_axes() {
-    // Erc6909 check + 5% bribe to coinbase + expected_value.
+    // Erc6909 check + 5% bribe to coinbase.
     let opts = EncodeOptions {
         capture: crate::grammar_ledger::ProfitCapture::Erc6909,
         bribe: crate::grammar_ledger::Bribe::Some {
@@ -1016,10 +1040,9 @@ fn config_for_options_combines_all_axes() {
         },
         ..Default::default()
     };
-    let ev = U256::from(1_000_000u64);
-    let cfg = config_for_options(opts, ev);
+    let cfg = config_for_options(opts, U256::from(1_000_000u64));
     assert_eq!(cfg & U256::from(255u64), U256::from(2u64)); // check_mode=2
     assert_eq!((cfg >> 8) & U256::from(65535u64), U256::from(500u64)); // bips
     assert_eq!((cfg >> 24) & U256::from(255u64), U256::ZERO); // recipient=0 (coinbase)
-    assert_eq!(cfg >> 32, ev); // expected_value
+    assert_eq!(cfg >> 32, U256::ZERO); // expected_value ignored (U3WVLL)
 }
