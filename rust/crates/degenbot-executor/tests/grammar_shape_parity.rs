@@ -316,3 +316,18 @@ fn v4_v4_v4_native_and_bridge_parity() {
         100_000,
     );
 }
+
+/// v4_v2_v2: V4 output leaves PM to a V2 pool, chaining two V2_SWAP_CALC legs.
+#[test]
+fn v4_v2_v2_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    run_family(
+        vec![
+            v4_pair(weth(), t, true),
+            v2_pair(t, u, true, 30),
+            v2_pair(u, weth(), true, 30),
+        ],
+        100_000,
+    );
+}

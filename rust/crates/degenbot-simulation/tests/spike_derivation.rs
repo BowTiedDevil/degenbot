@@ -717,3 +717,67 @@ fn native_v4v4v4_derived_executes_with_exact_native_delta() {
         "native v4_v4_v4 delta {actual} != predicted {predicted} (tol {tol})"
     );
 }
+
+/// WETH-only 3-hop v4_v2_v2: derive -> byte-parity -> execute exact WETH delta.
+#[test]
+fn derived_v4v2v2_executes_with_exact_delta() {
+    let mut h = Harness::new().unwrap();
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V2(
+                h.add_pool(t1, t2, 1_000_000_000_000, 1_000_000_000_000)
+                    .unwrap(),
+            ),
+        },
+        Hop {
+            src: t2,
+            dst: h.weth,
+            pool: HopPool::V2(
+                h.add_pool(t2, h.weth, 1_000_000_000_000, 3_000_000_000_000)
+                    .unwrap(),
+            ),
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive v4_v2_v2 None"));
+    let reference = h
+        .encode_path(&path, optimal_input, &hop_outputs)
+        .unwrap_or_else(|e| panic!("encode: {e}"));
+    assert_eq!(derived, reference, "v4_v2_v2 derived != hand-written");
+    let result = h
+        .run_raw_payload(&hops, &derived, optimal_input, 40_000_000)
+        .unwrap_or_else(|e| panic!("run: {e}"));
+    assert_profitable(&result, 3, "v4_v2_v2");
+}
