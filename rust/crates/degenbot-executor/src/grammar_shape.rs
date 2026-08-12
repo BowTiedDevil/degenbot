@@ -204,6 +204,35 @@ fn derive_2hop(
             out.extend_from_slice(&commands);
             Some(out)
         }
+        // ── v2_v3 — V2 self-fund; pre-fund V2a, terminal V3 pulls from exec. ──
+        // WE45KC: the operator self-funds (holds the entry WETH). Pre-fund V2a,
+        // V2_SWAP_CALC swaps WETH→forward (output to SELF), then the terminal
+        // V3 swaps forward→WETH (empty callback — V3 auto-pays by pulling the
+        // forward from the executor, which the V2 just output there). No flash
+        // callback, no flash-repay — gas-cheaper than InPathFlash.
+        (HopInfo::V2(a), HopInfo::V3(b), FundingSource::SelfFund) => {
+            let v2_idx = at.add(a.pool_address).ok()?;
+            let v3_idx = at.add(b.pool_address).ok()?;
+            // Top-level pre-fund of V2a with the entry WETH.
+            let mut commands =
+                encoders::enc_erc20_transfer(SENTINEL_WETH, v2_idx, optimal_input).ok()?;
+            // V2a swaps from the pre-granted excess; output (forward) → SELF.
+            commands.extend_from_slice(&encoders::enc_v2_swap_calc(
+                v2_idx,
+                a.zfo,
+                SENTINEL_SELF,
+                a.fee,
+            ));
+            // Terminal V3 swaps forward→WETH to SELF; empty callback (V3
+            // auto-pays the owed forward from the executor's balance).
+            commands.extend_from_slice(
+                &encoders::enc_v3_swap_compact(v3_idx, b.zfo, b_swap_in, SENTINEL_SELF, &[])
+                    .ok()?,
+            );
+            let mut out = encoders::enc_preamble(&at);
+            out.extend_from_slice(&commands);
+            Some(out)
+        }
         // ── v3_v2 — V3 self-fund; terminal V2 pre-funded + V2_SWAP_CALC. ──
         (HopInfo::V3(a), HopInfo::V2(b), FundingSource::SelfFund) => {
             let v3_idx = at.add(a.pool_address).ok()?;
@@ -3023,10 +3052,19 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 
 /// V2/V3 2-hop / 3-hop-(V2/V3) entry (the previous funding-based dispatch).
 fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    let funding = match path.hops.first()? {
-        HopInfo::V2(_) => FundingSource::InPathFlash,
-        HopInfo::V3(_) => FundingSource::SelfFund,
-        _ => return None,
+    let funding = if inputs.opts.funding == FundingSource::SelfFund
+        && matches!(path.hops.first()?, HopInfo::V2(_))
+    {
+        // WE45KC: the operator explicitly chose self-fund for a V2-led path —
+        // honor it (pre-fund V2a, no flash callback). The default for V3-led
+        // paths is already SelfFund; only V2-led needs the override.
+        FundingSource::SelfFund
+    } else {
+        match path.hops.first()? {
+            HopInfo::V2(_) => FundingSource::InPathFlash,
+            HopInfo::V3(_) => FundingSource::SelfFund,
+            _ => return None,
+        }
     };
     let protocols: Vec<Prot> = path
         .hops

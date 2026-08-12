@@ -3712,3 +3712,74 @@ fn config_for_options_bribe_axis_reaches_contract_and_pays() {
     );
     println!("── config_for_options bribe axis (runtime): delta={delta}, bribe paid ~= {bribe}");
 }
+
+/// WE45KC: FundingSource::SelfFund on a mixed V2-led family (v2_v3). The
+/// economic knob generalizes beyond all-V2: the executor pre-funds V2a with the
+/// entry WETH (V2_SWAP_CALC, no flash callback), the V2 output goes directly to
+/// the V3b pool, and the terminal V3 swaps to WETH profit (SELF, empty
+/// callback). Structure is distinct from InPathFlash (V2_SWAP_COMPACT + nested
+/// flash-repay callback). Runtime: executes with exact WETH delta = profit.
+#[test]
+fn v2_v3_self_fund_executes_with_exact_delta_and_differs_from_flash() {
+    use degenbot_executor::grammar_ledger::FundingSource;
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let weth = h.weth;
+    let r: u128 = 1_000_000_000_000;
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: HopPool::V2(h.add_pool(weth, t, r, r * 3).unwrap()),
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: HopPool::V3(
+                h.add_v3_pool(t, weth, 3000, sqrt_x(3), liq(), r, r)
+                    .unwrap(),
+            ),
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(predicted_profit > 0, "v2_v3 path should be profitable");
+
+    let self_fund = h
+        .encode_path_with_opts(
+            &path,
+            optimal_input,
+            &hop_outputs,
+            EncodeOptions {
+                funding: FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .expect("self-fund v2_v3 must encode");
+    let flash = h
+        .encode_path_with_opts(&path, optimal_input, &hop_outputs, EncodeOptions::default())
+        .expect("flash v2_v3 must encode");
+    assert_ne!(
+        self_fund, flash,
+        "SelfFund and InPathFlash bytes must differ"
+    );
+
+    // Self-fund precondition: executor holds the entry WETH.
+    h.fund(weth, h.executor, optimal_input * 2).unwrap();
+    let before = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&self_fund, 8_000_000).unwrap();
+    assert!(
+        outcome.executed(2),
+        "self-fund v2_v3 must execute: {outcome:?}"
+    );
+    let after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let delta = after - before;
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!(
+        (delta - predicted_profit).abs() <= tol,
+        "self-fund v2_v3 delta {delta} != predicted {predicted_profit} (tol {tol})"
+    );
+    println!("── v2_v3 self-fund (runtime): delta={delta}, predicted={predicted_profit}");
+}
