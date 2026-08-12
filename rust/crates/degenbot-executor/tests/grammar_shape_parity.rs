@@ -356,3 +356,26 @@ fn v4_trailing_v2_lead_parity() {
         100_000,
     );
 }
+
+/// V4-trailing (V3-lead): v3_v2_v4 and v3_v3_v4.
+#[test]
+fn v4_trailing_v3_lead_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    run_family(
+        vec![
+            v3_pool(weth(), t, true),
+            v2_pair(t, u, true, 30),
+            v4_pair(u, weth(), true),
+        ],
+        100_000,
+    );
+    run_family(
+        vec![
+            v3_pool(weth(), t, true),
+            v3_pool(t, u, true),
+            v4_pair(u, weth(), true),
+        ],
+        100_000,
+    );
+}
