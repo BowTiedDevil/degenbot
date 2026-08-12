@@ -277,6 +277,35 @@ pub fn seed_slots(evm: &mut FixtureEvm, account: Address, slots: &[(U256, U256)]
     }
 }
 
+/// Set the native (ETH) balance of an account, preserving its code + nonce + storage.
+/// This is how the harness funds native-V4 flows (the PoolManager's holdings
+/// that back `take` of a native delta, and the executor's native seed). The
+/// plain `Token`-mint path can't mint `eth`, so native money is seeded here.
+pub fn set_native_balance(evm: &mut FixtureEvm, account: Address, balance: U256) {
+    use revm::DatabaseRef as _;
+    let db = evm.ctx.db_mut();
+    let existing = db.basic_ref(account).ok().flatten().unwrap_or_default();
+    db.insert_account_info(
+        account,
+        revm::state::AccountInfo {
+            balance,
+            ..existing
+        },
+    );
+}
+
+/// Read the native (ETH) balance of an account (the revm account balance, not
+/// an ERC-20 `balanceOf`).
+pub fn native_balance_of(evm: &mut FixtureEvm, account: Address) -> U256 {
+    use revm::DatabaseRef as _;
+    let db = evm.ctx.db_mut();
+    db.basic_ref(account)
+        .ok()
+        .flatten()
+        .map(|a| a.balance)
+        .unwrap_or_default()
+}
+
 /// First 4 bytes of `keccak256(signature)` — the Solidity function selector.
 #[must_use]
 pub fn selector(sig: &str) -> [u8; 4] {

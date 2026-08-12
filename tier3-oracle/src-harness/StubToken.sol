@@ -52,4 +52,24 @@ contract Token {
         balanceOf[to] += amount;
         emit Transfer(from, to, amount);
     }
+
+    // ── WETH9-style wrap/unwrap (native flows) ──
+    // The executor's `WETH_DEPOSIT`/`WETH_WITHDRAW` commands need the WETH
+    // instance to actually convert native<->WETH. `deposit()` wraps ETH into
+    // WETH; `withdraw()` unwraps WETH back to ETH; a `receive()` forwards bare
+    // ETH (WETH9's `() external payable`). `mint` remains for harness seeding.
+    function deposit() external payable {
+        balanceOf[msg.sender] += msg.value;
+    }
+
+    function withdraw(uint256 wad) external {
+        require(balanceOf[msg.sender] >= wad, "T:balance");
+        balanceOf[msg.sender] -= wad;
+        (bool ok, ) = msg.sender.call{value: wad}("");
+        require(ok, "T:ETH");
+    }
+
+    receive() external payable {
+        balanceOf[msg.sender] += msg.value;
+    }
 }

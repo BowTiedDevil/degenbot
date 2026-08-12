@@ -43,8 +43,9 @@ use revm::{ExecuteCommitEvm, ExecuteEvm};
 use std::path::PathBuf;
 
 use crate::oracle::{
-    call_bytes, decode_error_string, deploy, new_fixture_evm, selector, set_code_size_limits,
-    set_disable_nonce_check, set_tx_gas_limit_cap, transact, FixtureEvm, TxSpec, Verdict,
+    call_bytes, decode_error_string, deploy, native_balance_of, new_fixture_evm, selector,
+    set_code_size_limits, set_disable_nonce_check, set_native_balance, set_tx_gas_limit_cap,
+    transact, FixtureEvm, TxSpec, Verdict,
 };
 
 pub mod declarative;
@@ -328,8 +329,15 @@ impl Harness {
             &init_v4(c0, c1, fee, tick_spacing, sqrt_price, liquidity),
             500_000,
         )?;
-        let _ = self.call(self.pool_manager, &fund_v4(c0, fund_c0), 200_000)?;
-        let _ = self.call(self.pool_manager, &fund_v4(c1, fund_c1), 200_000)?;
+        for (c, amt) in [(c0, fund_c0), (c1, fund_c1)] {
+            let _ = self.call(self.pool_manager, &fund_v4(c, amt), 200_000)?;
+            // Native currency has no ERC-20 to mint, so seed the PM's actual
+            // native balance too (it's what `take` of a native delta sends).
+            if c == Address::ZERO {
+                let held = native_balance_of(&mut self.evm, self.pool_manager);
+                set_native_balance(&mut self.evm, self.pool_manager, held + U256::from(amt));
+            }
+        }
         for t in [c0, c1] {
             if !self.tokens.contains(&t) {
                 self.tokens.push(t);
@@ -348,8 +356,35 @@ impl Harness {
     }
 
     /// Give `who` `amount` of `token` (mint — the harness's free liquidity).
+    /// For the native currency (`Address::ZERO`), sets the recipient's revm
+    /// native balance instead (there is no ERC-20 to mint). Minting WETH also
+    /// credits the WETH contract the **matching native backing** — real WETH9
+    /// is always deposit-backed, and `WETH_WITHDRAW` needs the contract to hold
+    /// native to pay out (the executor can't withdraw unbacked minted WETH).
     pub fn fund(&mut self, token: Address, who: Address, amount: u128) -> Result<(), String> {
-        self.call(token, &mint_to(who, amount), 200_000).map(|_| ())
+        if token == Address::ZERO {
+            let held = native_balance_of(&mut self.evm, who);
+            set_native_balance(&mut self.evm, who, held + U256::from(amount));
+            return Ok(());
+        }
+        self.call(token, &mint_to(who, amount), 200_000)
+            .map(|_| ())?;
+        if token == self.weth {
+            // Back the mint: give the WETH contract native so `withdraw` can pay.
+            let backing = native_balance_of(&mut self.evm, token);
+            set_native_balance(&mut self.evm, token, backing + U256::from(amount));
+        }
+        Ok(())
+    }
+
+    /// Set an account's native (ETH) balance directly (preserving its code).
+    pub fn set_native_balance(&mut self, who: Address, amount: U256) {
+        set_native_balance(&mut self.evm, who, amount);
+    }
+
+    /// Read an account's native (ETH) balance.
+    pub fn native_balance_of(&mut self, who: Address) -> Result<U256, String> {
+        Ok(native_balance_of(&mut self.evm, who))
     }
 
     /// Have the executor approve `pool` for both of its tokens to `max`

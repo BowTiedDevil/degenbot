@@ -41,9 +41,10 @@ pub mod harness;
 pub mod oracle;
 
 pub use oracle::{
-    call_bytes, decode_error_string, deploy, load_foundry_creation_bytecode, new_fixture_evm,
-    parse_foundry_creation_bytecode, read_address, seed_slots, selector, set_code_size_limits,
-    set_disable_nonce_check, transact, FixtureEvm, TxSpec, Verdict,
+    call_bytes, decode_error_string, deploy, load_foundry_creation_bytecode, native_balance_of,
+    new_fixture_evm, parse_foundry_creation_bytecode, read_address, seed_slots, selector,
+    set_code_size_limits, set_disable_nonce_check, set_native_balance, transact, FixtureEvm,
+    TxSpec, Verdict,
 };
 // Re-export the engine surface at the crate root for ergonomic access + for
 // the strategy crate (`degenbot-backrun-strategy`) + the PyO3 wrapper. The
