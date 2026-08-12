@@ -291,6 +291,9 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
             derive_3hop_v3v3v4(a, b, c, inputs)
         }
+        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
+            derive_3hop_v2v4v2(a, b, c, inputs)
+        }
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v4v4(a, b, inputs),
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => derive_2hop_v4v3(a, b, inputs),
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v3v4(a, b, inputs),
@@ -1345,6 +1348,77 @@ fn derive_3hop_v3v3v4(
     commands.extend_from_slice(
         &encoders::enc_v3_swap_compact(v3b, b.zfo, b_swap_in, pm_idx, &b_fwd).ok()?,
     );
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+/// V2→V4→V2 3-hop derivation (WAYDTL step 3).
+///
+/// V2 c is the outer flash; its callback transfers WETH to V2 a (repay), then
+/// runs a V4 unlock that syncs a's forward into the PM (via V2 a paying the
+/// PM), swaps the V4 middle pool b, takes b's forward directly to V2 c, and
+/// settles a's forward delta.
+fn derive_3hop_v2v4v2(
+    a: &V2HopInfo,
+    b: &V4HopInfo,
+    c: &V2HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let out_b = *inputs.hop_outputs.get(1)?;
+    let out_c = *inputs.hop_outputs.get(2)?;
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
+    let forward_a_addr = if a.zfo {
+        a.token1_address
+    } else {
+        a.token0_address
+    };
+    let forward_b_addr = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let forward_a = at.add(forward_a_addr).ok()?;
+    let forward_b = at.add(forward_b_addr).ok()?;
+    let zero_idx = SENTINEL_NATIVE;
+    let v2a = at.add(a.pool_address).ok()?;
+    let v2c = at.add(c.pool_address).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_sync(forward_a);
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a, a.zfo, pm_idx, a.fee));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in).ok()?,
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b, v2c, out_b).ok()?);
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_a));
+
+    let mut c_fwd = encoders::enc_erc20_transfer(SENTINEL_WETH, v2a, optimal_input).ok()?;
+    c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
+
+    let commands =
+        encoders::enc_v2_swap_compact(v2c, c.zfo, out_c, SENTINEL_SELF, c.fee, &c_fwd).ok()?;
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
     Some(out)
