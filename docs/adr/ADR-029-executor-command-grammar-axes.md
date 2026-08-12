@@ -2,6 +2,11 @@
 
 **Status: accepted.**
 
+> **Implementation: landed** (epic `463V2C`, closed). See
+> [executor-command-grammar.md](../architecture/executor-command-grammar.md)
+> (the architecture) and [executor-grammar-usage.md](../architecture/executor-grammar-usage.md)
+> (the usage guide) for the realized model. This ADR is the decision record.
+
 ## Context
 
 The `degenbot-executor` command grammar is the model that turns a solver result
