@@ -1845,3 +1845,276 @@ fn derived_v4v3v4_executes() {
     });
     assert_derived_executes(&mut h, hops, "v4_v3_v4");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EYUWFG — runtime proof of the two pure-V4 gas-saving modes. Byte-parity
+// (new-vs-old) can't prove an untested layout executes; these drive the DERIVED
+// payloads through the real cmd_executor and assert Accepted + exact profit.
+//
+//   * `use_v4_batch=true`  → single `V4_BATCH` PM extcall; profit is physical
+//     WETH on the executor (measured via `balance_of`).
+//   * `erc6909_profit=true` → `V4_MINT_COMPACT` mints profit as an ERC6909
+//     claim held on the PM; the execute `config` must set `check_mode=2`
+//     (see `config_for_options`) and profit is measured via `pm_balance_of`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Build a WETH→t→WETH 2-hop V4 path (pool A at price 1x, pool B at 3x).
+fn build_v4v4_weth(h: &mut Harness) -> (Vec<Hop>, u128, u64) {
+    let t = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t,
+            dst: h.weth,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t,
+                    h.weth,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    (hops, 100_000u128, 8_000_000)
+}
+
+/// Build a WETH→t1→t2→WETH 3-hop V4 path (pools A/B at 1x, pool C at 3x).
+fn build_v4v4v4_weth(h: &mut Harness) -> (Vec<Hop>, u128, u64) {
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t1,
+                    t2,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t2,
+            dst: h.weth,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t2,
+                    h.weth,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    (hops, 100_000u128, 40_000_000)
+}
+
+/// v4_v4 with `use_v4_batch=true`: the payload must execute through the real
+/// executor and leave physical WETH profit on the executor (exact delta).
+#[test]
+fn v4v4_batch_executes_with_exact_delta() {
+    let mut h = Harness::new().unwrap();
+    let (hops, optimal_input, gas) = build_v4v4_weth(&mut h);
+    let opts = EncodeOptions {
+        erc6909_profit: false,
+        use_v4_batch: true,
+    };
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts,
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive v4_v4 batch None"));
+    let result = h
+        .run_raw_payload(&hops, &derived, optimal_input, gas)
+        .unwrap_or_else(|e| panic!("run v4_v4 batch: {e}"));
+    assert_profitable(&result, 2, "v4_v4 batch");
+}
+
+/// v4_v4_v4 with `use_v4_batch=true`: 3-hop batch executes with exact delta.
+#[test]
+fn v4v4v4_batch_executes_with_exact_delta() {
+    let mut h = Harness::new().unwrap();
+    let (hops, optimal_input, gas) = build_v4v4v4_weth(&mut h);
+    let opts = EncodeOptions {
+        erc6909_profit: false,
+        use_v4_batch: true,
+    };
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts,
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive v4_v4_v4 batch None"));
+    let result = h
+        .run_raw_payload(&hops, &derived, optimal_input, gas)
+        .unwrap_or_else(|e| panic!("run v4_v4_v4 batch: {e}"));
+    assert_profitable(&result, 3, "v4_v4_v4 batch");
+}
+
+/// v4_v4 with `erc6909_profit=true`: profit is minted as an ERC6909 WETH claim
+/// on the PM, and the execute `config` is wired to `check_mode=2` so the
+/// profit-check settles. Assert Accepted + the ERC6909 balance equals the exact
+/// predicted profit.
+#[test]
+fn v4v4_erc6909_executes_with_exact_profit() {
+    let mut h = Harness::new().unwrap();
+    let (hops, optimal_input, gas) = build_v4v4_weth(&mut h);
+    let opts = EncodeOptions {
+        erc6909_profit: true,
+        use_v4_batch: false,
+    };
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(predicted_profit > 0, "v4_v4 should be profitable");
+
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts,
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive v4_v4 erc6909 None"));
+    let config = degenbot_executor::composers::config_for_options(opts, U256::ZERO);
+    assert_eq!(
+        config & U256::from(255u64),
+        U256::from(2u64),
+        "check_mode=2 wired"
+    );
+
+    let before = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
+    let outcome = h
+        .execute_payload_config(&derived, gas, config)
+        .unwrap_or_else(|e| panic!("run v4_v4 erc6909: {e}"));
+    assert!(
+        outcome.executed(2),
+        "v4_v4 erc6909 must execute: {:?}",
+        outcome
+    );
+    let after = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
+    let actual_profit = after - before;
+    assert!(
+        actual_profit > 0,
+        "v4_v4 erc6909 must capture ERC6909 profit, got {actual_profit}"
+    );
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!(
+        (actual_profit - predicted_profit).abs() <= tol,
+        "v4_v4 erc6909 profit {actual_profit} diverges from predicted {predicted_profit} (tol {tol})"
+    );
+}
+
+/// v4_v4_v4 with `erc6909_profit=true` + `check_mode=2`: 3-hop mint capture.
+#[test]
+fn v4v4v4_erc6909_executes_with_exact_profit() {
+    let mut h = Harness::new().unwrap();
+    let (hops, optimal_input, gas) = build_v4v4v4_weth(&mut h);
+    let opts = EncodeOptions {
+        erc6909_profit: true,
+        use_v4_batch: false,
+    };
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    assert!(predicted_profit > 0, "v4_v4_v4 should be profitable");
+
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts,
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive v4_v4_v4 erc6909 None"));
+    let config = degenbot_executor::composers::config_for_options(opts, U256::ZERO);
+
+    let before = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
+    let outcome = h
+        .execute_payload_config(&derived, gas, config)
+        .unwrap_or_else(|e| panic!("run v4_v4_v4 erc6909: {e}"));
+    assert!(
+        outcome.executed(3),
+        "v4_v4_v4 erc6909 must execute: {:?}",
+        outcome
+    );
+    let after = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
+    let actual_profit = after - before;
+    assert!(
+        actual_profit > 0,
+        "v4_v4_v4 erc6909 must capture ERC6909 profit, got {actual_profit}"
+    );
+    let tol = (predicted_profit.abs() / 1000).max(64);
+    assert!(
+        (actual_profit - predicted_profit).abs() <= tol,
+        "v4_v4_v4 erc6909 profit {actual_profit} diverges from predicted {predicted_profit} (tol {tol})"
+    );
+}

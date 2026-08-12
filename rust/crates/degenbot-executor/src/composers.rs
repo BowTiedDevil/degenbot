@@ -369,6 +369,20 @@ pub struct EncodedCall {
     pub value: U256,
 }
 
+/// Build the `execute(bytes,uint256)` `config` uint256 matching an
+/// [`EncodeOptions`] (EYUWFG wiring): `erc6909_profit` selects `check_mode=2`
+/// (ERC6909 WETH — the pure-V4 profit is minted as an ERC6909 claim and the
+/// executor settles/verifies via `PM.balanceOf(self, weth_id)`), otherwise
+/// `check_mode=0` (skip the in-stream profit check). `expected_value` (the
+/// operator's pre-tx balance) and bribe fields are forwarded unchanged; use
+/// [`encoders::pack_config`] directly when you need to derive them.
+#[must_use]
+pub fn config_for_options(opts: EncodeOptions, expected_value: U256) -> U256 {
+    let check_mode = if opts.erc6909_profit { 2u8 } else { 0u8 };
+    crate::encoders::pack_config(check_mode, expected_value, 0, 0)
+        .expect("check_mode 0/2 is always in range")
+}
+
 /// Wrap a command-stream `commands` payload in the `execute(bytes, uint256)`
 /// ABI call to the `cmd_executor` contract.
 ///

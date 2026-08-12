@@ -443,9 +443,23 @@ impl Harness {
         }
     }
 
-    /// Execute an encoded payload and classify the outcome.
+    /// Execute an encoded payload with `config=0` (skip profit check, no
+    /// bribe) and classify the outcome.
     pub fn execute_payload(&mut self, payload: &[u8], gas: u64) -> Result<ExecOutcome, String> {
-        let data = execute_data(payload);
+        self.execute_payload_config(payload, gas, U256::ZERO)
+    }
+
+    /// Execute an encoded payload with an explicit `execute()` `config` uint256
+    /// (packed `check_mode`/bribe/expected_value — see [`execute_data_config`])
+    /// and classify the outcome. Enables runtime proof of the `erc6909_profit`
+    /// (`check_mode=2`) and bribe config axes (EYUWFG / WE45KC).
+    pub fn execute_payload_config(
+        &mut self,
+        payload: &[u8],
+        gas: u64,
+        config: U256,
+    ) -> Result<ExecOutcome, String> {
+        let data = execute_data_config(payload, config);
         match transact(
             &mut self.evm,
             TxSpec::Call {
@@ -475,6 +489,23 @@ impl Harness {
         let out = self.call(token, &balance_of_data(account), 200_000)?;
         if out.len() < 32 {
             return Err(format!("balanceOf returned {} bytes", out.len()));
+        }
+        Ok(U256::from_be_bytes::<32>(
+            out.as_ref()[..32].try_into().unwrap(),
+        ))
+    }
+
+    /// Read `PM.balanceOf(account, uint160(currency))` — the executor's
+    /// ERC6909 WETH balance held inside the PoolManager (the `erc6909_profit`
+    /// capture destination and the value `check_mode=2` verifies).
+    pub fn pm_balance_of(&mut self, account: Address, currency: Address) -> Result<U256, String> {
+        let out = self.call(
+            self.pool_manager,
+            &pm_balance_of_data(account, currency),
+            200_000,
+        )?;
+        if out.len() < 32 {
+            return Err(format!("PM.balanceOf returned {} bytes", out.len()));
         }
         Ok(U256::from_be_bytes::<32>(
             out.as_ref()[..32].try_into().unwrap(),
@@ -612,8 +643,22 @@ fn balance_of_data(account: Address) -> Vec<u8> {
     out.extend_from_slice(&pad32(account));
     out
 }
-/// The `execute(bytes,uint256)` call: selector + (bytes, 0x0) ABI encoding.
+/// `PM.balanceOf(address,uint256)` ABI: selector + (account, currencyId).
+fn pm_balance_of_data(account: Address, currency: Address) -> Vec<u8> {
+    let h = keccak256(b"balanceOf(address,uint256)");
+    let mut out = h.0[..4].to_vec();
+    out.extend_from_slice(&pad32(account));
+    // id = uint256(uint160(currency)) → the address occupying the low 20 bytes.
+    out.extend_from_slice(&pad32(currency));
+    out
+}
+/// The `execute(bytes,uint256)` call: selector + (bytes, config=0) ABI encoding.
 pub fn execute_data(payload: &[u8]) -> Bytes {
+    execute_data_config(payload, U256::ZERO)
+}
+/// The `execute(bytes,uint256)` call: selector + (bytes, config) ABI encoding,
+/// where `config` is the packed execute config (check_mode/bribe/expected_value).
+pub fn execute_data_config(payload: &[u8], config: U256) -> Bytes {
     let mut out = Vec::with_capacity(4 + 96 + payload.len().next_multiple_of(32));
     out.extend_from_slice(selector("execute(bytes,uint256)").as_slice());
     out.extend_from_slice(&U256::from(0x20u64).to_be_bytes::<32>()); // bytes offset
@@ -623,7 +668,7 @@ pub fn execute_data(payload: &[u8]) -> Bytes {
     if rem != 0 {
         out.extend(std::iter::repeat_n(0u8, 32 - rem));
     }
-    out.extend_from_slice(&U256::from(0u64).to_be_bytes::<32>()); // config
+    out.extend_from_slice(&config.to_be_bytes::<32>()); // config
     Bytes::from(out)
 }
 

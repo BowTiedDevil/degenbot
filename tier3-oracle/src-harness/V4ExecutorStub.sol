@@ -309,6 +309,42 @@ contract PoolManager {
     }
     mapping(address => uint256) internal _touchedLen;
 
+    // ── ERC6909 internal balances (V4_MINT_COMPACT / V4_BURN_COMPACT / check_mode=2) ──
+    // v4-core ERC6909: `id = uint160(currency)`. `balanceOf[owner][id]` is the
+    // PM-held claim; minting converts a positive caller delta into a claim,
+    // burning converts a claim back into a payable caller delta. Enables the
+    // executor's 0x58/0x59 commands and `check_mode=2` profit measurement for
+    // the gas-saving pure-V4 paths (EYUWFG).
+    mapping(address => mapping(uint256 => uint256)) public balanceOf;
+
+    /// Convert a positive caller PM delta into an ERC6909 claim for `to`.
+    /// Mirrors v4-core `mint`: requires the caller to be owed `currency`
+    /// (D0 credit-before-debit), decrements the caller's delta, and credits
+    /// `to`'s ERC6909 balance. No physical transfer — the asset stays inside
+    /// the PM as an accounting entry.
+    function mint(address to, uint256 id, uint256 amount) external {
+        address currency = address(uint160(id));
+        bytes32 s = _slot(msg.sender, currency);
+        int256 cur; assembly { cur := tload(s) }
+        require(cur > 0, "D0"); // credit-before-debit
+        uint256 taken = amount < uint256(cur) ? amount : uint256(cur);
+        int256 newCur = cur - int256(uint256(taken));
+        assembly { tstore(s, newCur) }
+        balanceOf[to][id] += taken;
+    }
+
+    /// Convert `from`'s ERC6909 claim into a payable PM delta for the caller.
+    /// Mirrors v4-core `burn` (the executor always burns its OWN claim, so
+    /// `from` == `msg.sender` in practice): decrements the claim balance and
+    /// credits the caller's delta, retrievable via a later `take`.
+    function burn(address from, uint256 id, uint256 amount) external {
+        address currency = address(uint160(id));
+        require(balanceOf[from][id] >= amount, "BAL");
+        balanceOf[from][id] -= amount;
+        _accountDelta(msg.sender, currency, int256(uint256(amount)));
+        _noteDelta(msg.sender, currency);
+    }
+
     /// Exact-input swap. Returns (int256 delta0, int256 delta1).
     function swap(PoolKey calldata key, SwapParams calldata params, bytes calldata /*data*/)
         external returns (int256, int256)
