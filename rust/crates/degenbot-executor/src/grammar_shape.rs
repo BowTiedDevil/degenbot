@@ -309,6 +309,12 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
             derive_3hop_v3v4v4(a, b, c, inputs)
         }
+        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
+            derive_3hop_v4v4v2(a, b, c, inputs)
+        }
+        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V3(c))) => {
+            derive_3hop_v4v4v3(a, b, c, inputs)
+        }
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v4v4(a, b, inputs),
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => derive_2hop_v4v3(a, b, inputs),
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v3v4(a, b, inputs),
@@ -1796,6 +1802,149 @@ fn derive_3hop_v3v4v4(
     commands.extend_from_slice(
         &encoders::enc_v3_swap_compact(v3a, a.zfo, optimal_input, pm_idx, &a_fwd).ok()?,
     );
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+/// V4→V4→V2 3-hop derivation (WAYDTL step 3).
+///
+/// One unlock: two V4 swaps, then b's forward `V4_TAKE_COMPACT`'d straight to
+/// the terminal V2 pool, which sells via `V2_SWAP_CALC` (never exact-out
+/// over-draws the 1-wei K edge); `V4_SETTLE_ALL` nets.
+fn derive_3hop_v4v4v2(
+    a: &V4HopInfo,
+    b: &V4HopInfo,
+    c: &V2HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    let out_b = *inputs.hop_outputs.get(1)?;
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let a_swap_in = *inputs.consumed_inputs.first()?;
+    if !fits_int128(a_swap_in) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
+    let forward_b_cur = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+    if forward_b_cur == NATIVE_CURRENCY_ADDRESS || forward_b_cur == inputs.weth_address {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let zero_idx = SENTINEL_NATIVE;
+    let forward_b = at.add(forward_b_cur).ok()?;
+    let v2c = at.add(c.pool_address).ok()?;
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+
+    let mut inner =
+        encoders::enc_v4_swap_compact(c0_a, c1_a, fee_a, ts_a, zero_idx, a.zfo, a_swap_in).ok()?;
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in).ok()?,
+    );
+    inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b, v2c, out_b).ok()?);
+    inner.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2c,
+        c.zfo,
+        SENTINEL_SELF,
+        c.fee,
+    ));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+/// V4→V4→V3 3-hop derivation (WAYDTL step 3).
+///
+/// Two V4 swaps then a V3 tail whose own callback takes b's forward straight
+/// to the V3 (`V4_TAKE_COMPACT(forward_b→v3c)`); `V4_SETTLE_ALL` nets.
+fn derive_3hop_v4v4v3(
+    a: &V4HopInfo,
+    b: &V4HopInfo,
+    c: &V3HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    let optimal_input = inputs.optimal_input;
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let a_swap_in = *inputs.consumed_inputs.first()?;
+    if !fits_int128(a_swap_in) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    if !fits_int128(b_swap_in) {
+        return None;
+    }
+    let c_swap_in = *inputs.consumed_inputs.get(2)?;
+    if !fits_int128(c_swap_in) {
+        return None;
+    }
+    let forward_b_cur = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let zero_idx = SENTINEL_NATIVE;
+    let forward_b = at.add(forward_b_cur).ok()?;
+    let v3c = at.add(c.pool_address).ok()?;
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+
+    let c_take = encoders::enc_v4_take_compact(forward_b, v3c, c_swap_in).ok()?;
+
+    let mut inner =
+        encoders::enc_v4_swap_compact(c0_a, c1_a, fee_a, ts_a, zero_idx, a.zfo, a_swap_in).ok()?;
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in).ok()?,
+    );
+    inner.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3c, c.zfo, c_swap_in, SENTINEL_SELF, &c_take).ok()?,
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&commands);
     Some(out)
