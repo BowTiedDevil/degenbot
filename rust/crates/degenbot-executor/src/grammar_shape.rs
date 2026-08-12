@@ -371,9 +371,6 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 /// family) — `default` opts (no `V4_BATCH`, no `erc6909_profit`). Other V4 shapes
 /// (native bridges, non-WETH output, batch/mint) return `None` for now (later steps).
 fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     use crate::composers::{emit_currency_bridge, CurrencyBridge};
 
     let optimal_input = inputs.optimal_input;
@@ -427,18 +424,26 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     let fee_b = u16::try_from(b.fee).ok()?;
     let ts_b = i16::try_from(b.tick_spacing).ok()?;
 
-    // One unlock: both swaps, the native<->WETH boundary bridge when present,
-    // profit capture, and a trailing settle to net every currency to zero.
-    let mut inner = encoders::enc_v4_swap_compact(
-        c0_a,
-        c1_a,
-        fee_a,
-        ts_a,
-        SENTINEL_NATIVE,
-        a.zfo,
-        optimal_input,
-    )
-    .ok()?;
+    // One unlock. Default layout: two individual V4_SWAP_COMPACT commands with
+    // an optional native<->WETH boundary bridge, a terminal profit take, and a
+    // trailing settle. `use_v4_batch` (no currency gap) collapses the two swaps
+    // into a single V4_BATCH PM extcall; `erc6909_profit` (WETH output) captures
+    // the profit as an ERC6909 mint instead of a physical take. Both mirror the
+    // hand-written `v4_v4` adapter byte-for-byte.
+    let mut inner = if !inputs.opts.use_v4_batch || currency_gap {
+        encoders::enc_v4_swap_compact(
+            c0_a,
+            c1_a,
+            fee_a,
+            ts_a,
+            SENTINEL_NATIVE,
+            a.zfo,
+            optimal_input,
+        )
+        .ok()?
+    } else {
+        Vec::new()
+    };
     if currency_gap {
         let bridge_idx = match bridge {
             CurrencyBridge::Wrap => native_idx,
@@ -446,31 +451,104 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
             CurrencyBridge::None => unreachable!("currency_gap implies a bridge"),
         };
         emit_currency_bridge(&mut inner, bridge, bridge_idx, forward_out)?;
-    }
-    inner.extend_from_slice(
-        &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, SENTINEL_NATIVE, b.zfo, b_swap_in)
+        inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(
+                c0_b,
+                c1_b,
+                fee_b,
+                ts_b,
+                SENTINEL_NATIVE,
+                b.zfo,
+                b_swap_in,
+            )
             .ok()?,
-    );
-    if currency_gap {
+        );
         inner.extend_from_slice(&encoders::enc_v4_settle_delta(if b_needs_native {
             native_idx
         } else {
             weth_idx
         }));
-    }
-    // Capture the terminal profit out of the PM to the executor (physical).
-    if output_currency_b == NATIVE_CURRENCY_ADDRESS {
-        inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, SENTINEL_SELF));
-    } else if output_currency_b == inputs.weth_address {
-        inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
+        // Capture the terminal profit out of the PM to the executor (physical).
+        if output_currency_b == NATIVE_CURRENCY_ADDRESS {
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, SENTINEL_SELF));
+        } else if output_currency_b == inputs.weth_address {
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
+        } else {
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(
+                if b.zfo { c1_b } else { c0_b },
+                SENTINEL_SELF,
+            ));
+        }
+        inner.extend_from_slice(&encoders::enc_v4_settle_all());
     } else {
-        inner.extend_from_slice(&encoders::enc_v4_take_delta(
-            if b.zfo { c1_b } else { c0_b },
-            SENTINEL_SELF,
-        ));
+        if inputs.opts.use_v4_batch {
+            let batch = [
+                encoders::V4BatchEntry {
+                    c0_idx: c0_a,
+                    c1_idx: c1_a,
+                    fee: fee_a,
+                    tick_spacing: ts_a,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: a.zfo,
+                    amount_u96: optimal_input,
+                },
+                encoders::V4BatchEntry {
+                    c0_idx: c0_b,
+                    c1_idx: c1_b,
+                    fee: fee_b,
+                    tick_spacing: ts_b,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: b.zfo,
+                    amount_u96: b_swap_in,
+                },
+            ];
+            inner.extend_from_slice(&encoders::enc_v4_batch(&batch).ok()?);
+            if output_currency_b != NATIVE_CURRENCY_ADDRESS
+                && output_currency_b != inputs.weth_address
+            {
+                inner.extend_from_slice(&encoders::enc_v4_take_delta(
+                    if b.zfo { c1_b } else { c0_b },
+                    SENTINEL_SELF,
+                ));
+            }
+        } else {
+            inner.extend_from_slice(
+                &encoders::enc_v4_swap_compact(
+                    c0_b,
+                    c1_b,
+                    fee_b,
+                    ts_b,
+                    SENTINEL_NATIVE,
+                    b.zfo,
+                    b_swap_in,
+                )
+                .ok()?,
+            );
+        }
+        if inputs.opts.erc6909_profit && output_currency_b == inputs.weth_address {
+            let profit_amount = weth_out.saturating_sub(optimal_input);
+            if profit_amount > 0 {
+                inner.extend_from_slice(
+                    &encoders::enc_v4_mint_compact(weth_idx, SENTINEL_SELF, profit_amount).ok()?,
+                );
+            }
+        } else if !inputs.opts.use_v4_batch
+            || (output_currency_b != NATIVE_CURRENCY_ADDRESS
+                && output_currency_b != inputs.weth_address)
+        {
+            if output_currency_b == NATIVE_CURRENCY_ADDRESS {
+                inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, SENTINEL_SELF));
+            } else if output_currency_b == inputs.weth_address {
+                inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
+            } else {
+                inner.extend_from_slice(&encoders::enc_v4_take_delta(
+                    if b.zfo { c1_b } else { c0_b },
+                    SENTINEL_SELF,
+                ));
+            }
+        }
+        inner.extend_from_slice(&encoders::enc_v4_settle_all());
     }
-    // Resolve any residual deltas so every currency nets to zero.
-    inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
     let commands = encoders::enc_v4_unlock(&inner).ok()?;
     let mut out = encoders::enc_preamble(&at);
@@ -486,9 +564,6 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 /// is settled (`V4_SETTLE_DELTA`), with a `WETH_WITHDRAW` when the V4 input is
 /// itself native.
 fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -586,9 +661,6 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
 /// V3's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) to seed it and
 /// settled directly (`V4_SETTLE_DELTA(native)`).
 fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -721,9 +793,6 @@ fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 /// transferred to the V2 pool (and the terminal V2 always uses `V2_SWAP_CALC`,
 /// never exact-out). A native V4 input is settled via `WETH_WITHDRAW`.
 fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     if forward_out == 0 {
@@ -825,9 +894,6 @@ fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -
 /// V2's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) and the V4
 /// input settled directly.
 fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -965,11 +1031,6 @@ fn derive_3hop_v4v4v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     use crate::composers::{emit_currency_bridge, CurrencyBridge};
 
     let optimal_input = inputs.optimal_input;
@@ -1037,44 +1098,101 @@ fn derive_3hop_v4v4v4(
     let fee_c = u16::try_from(c.fee).ok()?;
     let ts_c = i16::try_from(c.tick_spacing).ok()?;
 
-    let mut inner =
-        encoders::enc_v4_swap_compact(c0_a, c1_a, fee_a, ts_a, zero_idx, a.zfo, a_swap_in).ok()?;
-    if bridge_ab.needs_bridge() {
-        let (take_idx, b_input_idx) = bridge_ab.bridge_indices(weth_idx, SENTINEL_NATIVE);
-        emit_currency_bridge(&mut inner, bridge_ab, take_idx, out_a)?;
-        inner.extend_from_slice(
-            &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in)
-                .ok()?,
-        );
-        inner.extend_from_slice(&encoders::enc_v4_settle_delta(b_input_idx));
+    // One unlock. Default layout: three individual V4_SWAP_COMPACT commands with
+    // optional native<->WETH boundary bridges, a terminal profit take, and a
+    // trailing settle. `use_v4_batch` (no currency gap) collapses all three swaps
+    // into a single V4_BATCH PM extcall; `erc6909_profit` (WETH output) captures
+    // the profit as an ERC6909 mint instead of a physical take. Both mirror the
+    // hand-written `v4_v4_v4` adapter byte-for-byte.
+    let any_gap = bridge_ab.needs_bridge() || bridge_bc.needs_bridge();
+    let mut inner = if inputs.opts.use_v4_batch && !any_gap {
+        let batch = [
+            encoders::V4BatchEntry {
+                c0_idx: c0_a,
+                c1_idx: c1_a,
+                fee: fee_a,
+                tick_spacing: ts_a,
+                hooks_idx: zero_idx,
+                zfo: a.zfo,
+                amount_u96: a_swap_in,
+            },
+            encoders::V4BatchEntry {
+                c0_idx: c0_b,
+                c1_idx: c1_b,
+                fee: fee_b,
+                tick_spacing: ts_b,
+                hooks_idx: zero_idx,
+                zfo: b.zfo,
+                amount_u96: b_swap_in,
+            },
+            encoders::V4BatchEntry {
+                c0_idx: c0_c,
+                c1_idx: c1_c,
+                fee: fee_c,
+                tick_spacing: ts_c,
+                hooks_idx: zero_idx,
+                zfo: c.zfo,
+                amount_u96: c_swap_in,
+            },
+        ];
+        let mut v = encoders::enc_v4_batch(&batch).ok()?;
+        if output_c != NATIVE_CURRENCY_ADDRESS && output_c != inputs.weth_address {
+            let profit_idx = at.add(output_c).ok()?;
+            v.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, SENTINEL_SELF));
+        }
+        v
     } else {
-        inner.extend_from_slice(
-            &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in)
-                .ok()?,
-        );
-    }
-    if bridge_bc.needs_bridge() {
-        let (take_idx, c_input_idx) = bridge_bc.bridge_indices(weth_idx, SENTINEL_NATIVE);
-        emit_currency_bridge(&mut inner, bridge_bc, take_idx, out_b)?;
-        inner.extend_from_slice(
-            &encoders::enc_v4_swap_compact(c0_c, c1_c, fee_c, ts_c, zero_idx, c.zfo, c_swap_in)
-                .ok()?,
-        );
-        inner.extend_from_slice(&encoders::enc_v4_settle_delta(c_input_idx));
-    } else {
-        inner.extend_from_slice(
-            &encoders::enc_v4_swap_compact(c0_c, c1_c, fee_c, ts_c, zero_idx, c.zfo, c_swap_in)
-                .ok()?,
-        );
-    }
-    // Capture the terminal profit out of the PM to the executor.
-    if output_c == NATIVE_CURRENCY_ADDRESS {
-        inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_NATIVE, SENTINEL_SELF));
-    } else if output_c == inputs.weth_address {
-        inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
-    } else {
-        let profit_idx = at.add(output_c).ok()?;
-        inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, SENTINEL_SELF));
+        let mut v =
+            encoders::enc_v4_swap_compact(c0_a, c1_a, fee_a, ts_a, zero_idx, a.zfo, a_swap_in)
+                .ok()?;
+        if bridge_ab.needs_bridge() {
+            let (take_idx, b_input_idx) = bridge_ab.bridge_indices(weth_idx, SENTINEL_NATIVE);
+            emit_currency_bridge(&mut v, bridge_ab, take_idx, out_a)?;
+            v.extend_from_slice(
+                &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in)
+                    .ok()?,
+            );
+            v.extend_from_slice(&encoders::enc_v4_settle_delta(b_input_idx));
+        } else {
+            v.extend_from_slice(
+                &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in)
+                    .ok()?,
+            );
+        }
+        if bridge_bc.needs_bridge() {
+            let (take_idx, c_input_idx) = bridge_bc.bridge_indices(weth_idx, SENTINEL_NATIVE);
+            emit_currency_bridge(&mut v, bridge_bc, take_idx, out_b)?;
+            v.extend_from_slice(
+                &encoders::enc_v4_swap_compact(c0_c, c1_c, fee_c, ts_c, zero_idx, c.zfo, c_swap_in)
+                    .ok()?,
+            );
+            v.extend_from_slice(&encoders::enc_v4_settle_delta(c_input_idx));
+        } else {
+            v.extend_from_slice(
+                &encoders::enc_v4_swap_compact(c0_c, c1_c, fee_c, ts_c, zero_idx, c.zfo, c_swap_in)
+                    .ok()?,
+            );
+        }
+        v
+    };
+    // Capture the terminal profit. Default/`any_gap`: physical take to the
+    // executor. `erc6909_profit` (WETH output): mint an ERC6909 claim.
+    if inputs.opts.erc6909_profit && output_c == inputs.weth_address {
+        let profit_amount = out_c.saturating_sub(optimal_input);
+        if profit_amount > 0 {
+            inner.extend_from_slice(
+                &encoders::enc_v4_mint_compact(weth_idx, SENTINEL_SELF, profit_amount).ok()?,
+            );
+        }
+    } else if !inputs.opts.use_v4_batch || any_gap {
+        if output_c == NATIVE_CURRENCY_ADDRESS {
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_NATIVE, SENTINEL_SELF));
+        } else if output_c == inputs.weth_address {
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
+        } else {
+            let profit_idx = at.add(output_c).ok()?;
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, SENTINEL_SELF));
+        }
     }
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
 
@@ -1096,11 +1214,6 @@ fn derive_3hop_v4v2v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.first()?;
     if inputs.hop_outputs.contains(&0) {
@@ -1160,11 +1273,6 @@ fn derive_3hop_v2v2v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1227,11 +1335,6 @@ fn derive_3hop_v2v3v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     let out_c = *inputs.hop_outputs.get(2)?;
@@ -1302,11 +1405,6 @@ fn derive_3hop_v3v2v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_b = *inputs.hop_outputs.get(1)?;
     let out_c = *inputs.hop_outputs.get(2)?;
@@ -1372,11 +1470,6 @@ fn derive_3hop_v3v3v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1446,11 +1539,6 @@ fn derive_3hop_v2v4v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_b = *inputs.hop_outputs.get(1)?;
     let out_c = *inputs.hop_outputs.get(2)?;
@@ -1522,11 +1610,6 @@ fn derive_3hop_v2v4v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1598,11 +1681,6 @@ fn derive_3hop_v3v4v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1678,11 +1756,6 @@ fn derive_3hop_v3v4v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1757,11 +1830,6 @@ fn derive_3hop_v2v4v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1831,11 +1899,6 @@ fn derive_3hop_v3v4v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1908,11 +1971,6 @@ fn derive_3hop_v4v4v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_b = *inputs.hop_outputs.get(1)?;
     if inputs.hop_outputs.contains(&0) {
@@ -1985,11 +2043,6 @@ fn derive_3hop_v4v4v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -2061,11 +2114,6 @@ fn derive_3hop_v4v2v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2137,11 +2185,6 @@ fn derive_3hop_v4v2v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2216,11 +2259,6 @@ fn derive_3hop_v4v3v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2293,11 +2331,6 @@ fn derive_3hop_v4v3v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2360,11 +2393,6 @@ fn derive_3hop_v4v3v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
-    // This derivation only emits the `default` opts layout (no V4_BATCH,
-    // no erc6909_profit). For those modes fall back to the hand-written adapter.
-    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
-        return None;
-    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {

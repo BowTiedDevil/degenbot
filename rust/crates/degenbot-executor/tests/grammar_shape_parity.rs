@@ -58,38 +58,57 @@ fn run_family(hops: Vec<HopInfo>, exact_in: u128) {
         .chain(hop_outputs.iter().copied())
         .take(n)
         .collect();
-    let inputs = ComposerInputs {
-        executor_address: executor(),
-        pool_manager_address: pm(),
-        weth_address: weth(),
-        optimal_input: exact_in,
-        hop_outputs: &hop_outputs,
-        consumed_inputs: &consumed,
-        opts: EncodeOptions {
+
+    // Sweep every EncodeOptions mode (default, V4_BATCH, erc6909 mint, both).
+    // The `cutover` debug_assert independently re-derives against the hand-written
+    // adapter (its oracle), so a wrong batch/erc6909 layout panics here even
+    // though the assert_eq below compares the derivation to production (both
+    // derive — the debug_assert inside `encode_cmd_stream` is the real check).
+    let modes = [
+        EncodeOptions::default(),
+        EncodeOptions {
             erc6909_profit: false,
+            use_v4_batch: true,
+        },
+        EncodeOptions {
+            erc6909_profit: true,
             use_v4_batch: false,
         },
-    };
+        EncodeOptions {
+            erc6909_profit: true,
+            use_v4_batch: true,
+        },
+    ];
+    for opts in modes {
+        let inputs = ComposerInputs {
+            executor_address: executor(),
+            pool_manager_address: pm(),
+            weth_address: weth(),
+            optimal_input: exact_in,
+            hop_outputs: &hop_outputs,
+            consumed_inputs: &consumed,
+            opts,
+        };
 
-    // The derivation must be live (Some) for every folded family.
-    let derived = derive_shape(&path, &inputs)
-        .unwrap_or_else(|| panic!("derive_shape returned None for a folded family"));
-    // Production (which routes this family through the cutover) must equal it.
-    let prod = composers::encode_cmd_stream(
-        &path,
-        exact_in,
-        &hop_outputs,
-        &consumed,
-        executor(),
-        pm(),
-        weth(),
-        EncodeOptions::default(),
-    )
-    .unwrap_or_else(|| panic!("encode_cmd_stream returned None"));
-    assert_eq!(
-        derived, prod,
-        "folded family: production must be byte-identical to the derivation"
-    );
+        // The derivation must be live (Some) for every folded family in every mode.
+        let derived = derive_shape(&path, &inputs)
+            .unwrap_or_else(|| panic!("derive_shape returned None for a folded family"));
+        let prod = composers::encode_cmd_stream(
+            &path,
+            exact_in,
+            &hop_outputs,
+            &consumed,
+            executor(),
+            pm(),
+            weth(),
+            opts,
+        )
+        .unwrap_or_else(|| panic!("encode_cmd_stream returned None"));
+        assert_eq!(
+            derived, prod,
+            "folded family: production must be byte-identical to the derivation (opts {opts:?})"
+        );
+    }
 }
 
 #[test]
