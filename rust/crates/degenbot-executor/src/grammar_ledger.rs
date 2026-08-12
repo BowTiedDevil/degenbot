@@ -302,13 +302,15 @@ impl LedgerOp {
 /// V4 "every delta nets to zero by callback end" invariant).
 #[derive(Debug, Default)]
 pub struct LedgerValidator {
-    /// `PM[currency]` balance (positive = PM owes executor).
-    pm: HashMap<Address, i128>,
+    /// `PM[currency]` balance (positive = PM owes executor) — behind the
+    /// [`PmLedger`] newtype (ADR-029 D2 open-set: a `dyn BalanceLedger`).
+    pm: PmLedger,
     /// `H[pool]` — seeded-but-unswapped pair excess per pool.
     pair: HashMap<Address, u128>,
     /// `Erc20[currency]` — the executor's own balance per currency (extended
-    /// by flash swaps, consumed by `Erc20Transfer`).
-    erc20: HashMap<Address, i128>,
+    /// by flash swaps, consumed by `Erc20Transfer`) — behind the
+    /// [`Erc20Ledger`] newtype.
+    erc20: Erc20Ledger,
     /// `Native` — the executor's native ETH balance. Extended by V4 native
     /// takes (`V4TakeCompact(native→SELF)`) and `WethWithdraw`; consumed by
     /// `NativeTransfer` (the pay-into-PM leg of a native settle) and
@@ -355,13 +357,152 @@ pub enum ValidationError {
     NativeTransferBeforeCredit { wanted: u128, have: i128 },
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// `BalanceLedger` trait + concrete ledgers (ADR-029 D2 — the open-set
+// abstraction)
+// ═══════════════════════════════════════════════════════════════════════
+// The Address-keyed signed-balance ledgers (PM delta + executor ERC-20)
+// share `credit` / `debit` (the credit-before-debit D0 check) / `balance`.
+// That shared interface is the open-set seam: an external Vault/lender's
+// held-balance or delta ledger (VIXQYH) plugs in as one more `BalanceLedger`
+// impl, and the validator's D0 enforcement applies uniformly. PM-specific ops
+// (debt-creation, settle, take-delta, check-all-zero) stay inherent — they
+// don't generalize across ledgers. `native` (scalar), `pair` (unsigned
+// consume), `flash_debt` (tracking) are structurally different and stay
+// specialized until a concrete external-ledger use case demands the trait.
+// (Named `BalanceLedger` to avoid clashing with the [`Ledger`] location-identifier
+// enum above.)
+
+/// A signed-balance ledger keyed by address (ADR-029 D2). The credit-before-
+/// debit invariant: [`Self::debit`] checks the held balance is sufficient
+/// before withdrawing, failing with the impl's typed error otherwise.
+pub trait BalanceLedger {
+    /// Credit `amount` to `key` (may go negative for debt ledgers like PM).
+    fn credit(&mut self, key: Address, amount: u128);
+    /// Debit `amount` from `key` — the D0 credit-before-debit check. Returns
+    /// `Err` if the balance is insufficient; the error variant is per-impl
+    /// (`TakeBeforeCredit` for PM, `Erc20TransferBeforeCredit` for Erc20).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationError::TakeBeforeCredit`] (PM) or
+    /// [`ValidationError::Erc20TransferBeforeCredit`] (Erc20) when the held
+    /// balance is below `amount`.
+    fn debit(&mut self, key: Address, amount: u128) -> Result<(), ValidationError>;
+    /// The current signed balance at `key` (positive = credit, negative = debt).
+    fn balance(&self, key: Address) -> i128;
+}
+
+/// The PoolManager delta ledger (`PM[token]`): positive = PM owes executor
+/// (credit), negative = executor owes PM (debt). Implements [`Ledger`] (the
+/// `Take`/`Mint` ops → `debit`); carries inherent ops for V4-specific moves:
+/// `debit_debt` (unchecked — `V4Swap` creates debt without a D0 check),
+/// `take_delta` (zero the whole positive delta), and the settle family.
+#[derive(Debug, Default)]
+pub struct PmLedger {
+    deltas: HashMap<Address, i128>,
+}
+
+impl PmLedger {
+    /// Debit `amount` from `key` WITHOUT a credit check (creates PM debt).
+    /// `V4Swap`'s input leg — debt is the point (settled later).
+    fn debit_debt(&mut self, key: Address, amount: u128) {
+        *self.deltas.entry(key).or_default() -= amount as i128;
+    }
+
+    /// `V4_TAKE_DELTA` — take the ENTIRE positive `PM[key]` delta to the
+    /// recipient. Requires `PM[key] > 0` immediately before (D0). Zeros it.
+    fn take_delta(&mut self, key: Address) -> Result<(), ValidationError> {
+        let have = *self.deltas.get(&key).unwrap_or(&0);
+        if have <= 0 {
+            return Err(ValidationError::TakeBeforeCredit {
+                currency: key,
+                wanted: 1,
+                have,
+            });
+        }
+        self.deltas.insert(key, 0);
+        Ok(())
+    }
+
+    /// `V4_SETTLE_DELTA(cur)` — zero one currency's PM delta.
+    fn settle_key(&mut self, key: Address) {
+        self.deltas.insert(key, 0);
+    }
+
+    /// `V4_SETTLE_ALL` — zero every touched PM currency.
+    fn settle_all(&mut self) {
+        for v in self.deltas.values_mut() {
+            *v = 0;
+        }
+    }
+
+    /// `V4_UNLOCK` callback end — the master invariant: every touched
+    /// `PM[currency]` must net to zero. Returns the first nonzero delta if any.
+    fn first_nonzero(&self) -> Option<(Address, i128)> {
+        self.deltas
+            .iter()
+            .find(|(_, delta)| **delta != 0)
+            .map(|(cur, delta)| (*cur, *delta))
+    }
+}
+
+impl BalanceLedger for PmLedger {
+    fn credit(&mut self, key: Address, amount: u128) {
+        *self.deltas.entry(key).or_default() += amount as i128;
+    }
+    fn debit(&mut self, key: Address, amount: u128) -> Result<(), ValidationError> {
+        let have = *self.deltas.get(&key).unwrap_or(&0);
+        if have < amount as i128 {
+            return Err(ValidationError::TakeBeforeCredit {
+                currency: key,
+                wanted: amount,
+                have,
+            });
+        }
+        self.deltas.insert(key, have - amount as i128);
+        Ok(())
+    }
+    fn balance(&self, key: Address) -> i128 {
+        *self.deltas.get(&key).unwrap_or(&0)
+    }
+}
+
+/// The executor's ERC-20 balance ledger (`E[token]`, incl. WETH). Implements
+/// [`Ledger`]; the D0 check (`debit`) emits `Erc20TransferBeforeCredit`.
+#[derive(Debug, Default)]
+pub struct Erc20Ledger {
+    balances: HashMap<Address, i128>,
+}
+
+impl BalanceLedger for Erc20Ledger {
+    fn credit(&mut self, key: Address, amount: u128) {
+        *self.balances.entry(key).or_default() += amount as i128;
+    }
+    fn debit(&mut self, key: Address, amount: u128) -> Result<(), ValidationError> {
+        let have = *self.balances.get(&key).unwrap_or(&0);
+        if have < amount as i128 {
+            return Err(ValidationError::Erc20TransferBeforeCredit {
+                currency: key,
+                wanted: amount,
+                have,
+            });
+        }
+        self.balances.insert(key, have - amount as i128);
+        Ok(())
+    }
+    fn balance(&self, key: Address) -> i128 {
+        *self.balances.get(&key).unwrap_or(&0)
+    }
+}
+
 impl LedgerValidator {
     /// The ledger balance effect of one op; non-term ops are no-ops here and
     /// are checked (enforced) in [`Self::push`] instead.
     fn apply(&mut self, e: LedgerEffect) {
         match e {
             LedgerEffect::PmCredit(cur, amt) => {
-                *self.pm.entry(cur).or_default() += amt as i128;
+                self.pm.credit(cur, amt);
             }
             LedgerEffect::PairCredit(pool, amt) => {
                 *self.pair.entry(pool).or_default() += amt;
@@ -388,83 +529,42 @@ impl LedgerValidator {
                 out_currency,
                 out_amount,
             } => {
-                *self.pm.entry(in_currency).or_default() -= in_amount as i128;
-                *self.pm.entry(out_currency).or_default() += out_amount as i128;
+                // PM[in] debt (unchecked — debt is the point); PM[out] credit.
+                self.pm.debit_debt(in_currency, in_amount);
+                self.pm.credit(out_currency, out_amount);
                 Ok(())
             }
             // V4 settle: executor pays `amount` of `currency` into the PM,
-            // cancelling debt (PM[currency] += amount). Models the executor
-            // holding the token; the net-zero check fires at `V4UnlockEnd`.
+            // cancelling debt (PM[currency] += amount).
             LedgerOp::V4Settle { currency, amount } => {
-                *self.pm.entry(currency).or_default() += amount as i128;
+                self.pm.credit(currency, amount);
                 Ok(())
             }
             // V4_SETTLE_DELTA: auto-net one currency's PM delta to 0.
             LedgerOp::V4SettleDelta { currency } => {
-                self.pm.insert(currency, 0);
+                self.pm.settle_key(currency);
                 Ok(())
             }
             // V4_SETTLE_ALL: auto-net every touched PM currency to 0.
             LedgerOp::V4SettleAll => {
-                for v in self.pm.values_mut() {
-                    *v = 0;
-                }
+                self.pm.settle_all();
                 Ok(())
             }
             // V4_TAKE_DELTA: take the entire positive PM[currency] delta to rcp.
             // Requires PM[currency] > 0 immediately before (credit-before-debit).
-            LedgerOp::V4TakeDelta { currency, .. } => {
-                let have = *self.pm.get(&currency).unwrap_or(&0);
-                if have <= 0 {
-                    return Err(ValidationError::TakeBeforeCredit {
-                        currency,
-                        wanted: 1,
-                        have,
-                    });
-                }
-                self.pm.insert(currency, 0);
-                Ok(())
-            }
+            LedgerOp::V4TakeDelta { currency, .. } => self.pm.take_delta(currency),
             // V4_UNLOCK callback end: the master invariant — every touched
             // PM currency must net to zero by callback end. (A prior
             // `V4SettleAll` would have zeroed them; this catches any stream
             // that forgot to settle.)
             LedgerOp::V4UnlockEnd => {
-                for (currency, delta) in &self.pm {
-                    if *delta != 0 {
-                        return Err(ValidationError::PmDeltaNonzero {
-                            currency: *currency,
-                            delta: *delta,
-                        });
-                    }
+                if let Some((currency, delta)) = self.pm.first_nonzero() {
+                    return Err(ValidationError::PmDeltaNonzero { currency, delta });
                 }
                 Ok(())
             }
-            LedgerOp::Take { currency, amount } => {
-                let have = *self.pm.get(&currency).unwrap_or(&0);
-                if have < amount as i128 {
-                    return Err(ValidationError::TakeBeforeCredit {
-                        currency,
-                        wanted: amount,
-                        have,
-                    });
-                }
-                // Credit consumed by the take.
-                self.pm.insert(currency, have - amount as i128);
-                Ok(())
-            }
-            LedgerOp::Mint { currency, amount } => {
-                let have = *self.pm.get(&currency).unwrap_or(&0);
-                if have < amount as i128 {
-                    return Err(ValidationError::TakeBeforeCredit {
-                        currency,
-                        wanted: amount,
-                        have,
-                    });
-                }
-                self.pm.insert(currency, have - amount as i128);
-                Ok(())
-            }
+            LedgerOp::Take { currency, amount } => self.pm.debit(currency, amount),
+            LedgerOp::Mint { currency, amount } => self.pm.debit(currency, amount),
             LedgerOp::SwapCalc {
                 pool,
                 out_currency,
@@ -479,7 +579,7 @@ impl LedgerValidator {
                 // swap's computed output is credited to the executor (option B:
                 // swaps credit their output so the executor ledger fully accounts).
                 self.pair.insert(pool, have - 1);
-                *self.erc20.entry(out_currency).or_default() += out_amount as i128;
+                self.erc20.credit(out_currency, out_amount);
                 Ok(())
             }
             // POC (6SRC23): V2/V3 flash swaps — term ops extending executor
@@ -498,18 +598,15 @@ impl LedgerValidator {
                 in_currency,
                 in_amount,
             } => {
-                *self.erc20.entry(out_currency).or_default() += out_amount as i128;
+                self.erc20.credit(out_currency, out_amount);
                 *self.flash_debt.entry(in_currency).or_default() += in_amount;
                 Ok(())
             }
             // Self-fund seed OR cross-ledger credit (`V4_TAKE_COMPACT(cur→SELF)`):
-            // both credit the executor's `Erc20` balance (SelfFund sources it
-            // from the executor's own held entry capital; Erc20Credit from a V4
-            // take that physically moved the token PM→executor). No debt, no
-            // D0 check — both are pure credits a later debit consumes.
+            // both credit the executor's `Erc20` balance. No debt, no D0 check.
             LedgerOp::SelfFund { currency, amount }
             | LedgerOp::Erc20Credit { currency, amount } => {
-                *self.erc20.entry(currency).or_default() += amount as i128;
+                self.erc20.credit(currency, amount);
                 Ok(())
             }
             // Native pay-in (executor→PM, native settle leg): debit the
@@ -527,15 +624,7 @@ impl LedgerValidator {
             }
             // Unwrap WETH → native: debit Erc20[WETH], credit Native.
             LedgerOp::WethWithdraw { weth, amount } => {
-                let have = *self.erc20.get(&weth).unwrap_or(&0);
-                if have < amount as i128 {
-                    return Err(ValidationError::Erc20TransferBeforeCredit {
-                        currency: weth,
-                        wanted: amount,
-                        have,
-                    });
-                }
-                self.erc20.insert(weth, have - amount as i128);
+                self.erc20.debit(weth, amount)?;
                 self.native += amount as i128;
                 Ok(())
             }
@@ -548,7 +637,7 @@ impl LedgerValidator {
                     });
                 }
                 self.native -= amount as i128;
-                *self.erc20.entry(weth).or_default() += amount as i128;
+                self.erc20.credit(weth, amount);
                 Ok(())
             }
             // Native credit half of V4TakeCompact(native→SELF).
@@ -573,15 +662,10 @@ impl LedgerValidator {
                 } else {
                     amount
                 };
-                let have = *self.erc20.get(&currency).unwrap_or(&0);
-                if have < debit as i128 {
-                    return Err(ValidationError::Erc20TransferBeforeCredit {
-                        currency,
-                        wanted: debit,
-                        have,
-                    });
-                }
-                self.erc20.insert(currency, have - debit as i128);
+                // The checked withdrawal (D0 credit-before-debit) routes
+                // through the `Erc20Ledger::debit` trait method, which emits
+                // `Erc20TransferBeforeCredit` on insufficient balance.
+                self.erc20.debit(currency, debit)?;
                 if repays_flash.is_some() {
                     let owed = self.flash_debt.entry(currency).or_default();
                     *owed = owed.saturating_sub(debit);
@@ -640,6 +724,76 @@ mod tests {
     }
     fn native() -> Address {
         Address::ZERO
+    }
+
+    // ── BalanceLedger trait + PmLedger/Erc20Ledger newtypes (ADR-029 D2) ──
+    // The ledgers are unit-tested in isolation here (the full `LedgerValidator`
+    // exercises them end-to-end via `push`). These lock the abstraction's
+    // credit-before-debit semantics directly.
+
+    #[test]
+    fn pm_ledger_credit_debit_balance() {
+        let mut pm = PmLedger::default();
+        assert_eq!(pm.balance(usdc()), 0);
+        pm.credit(usdc(), 1_000);
+        assert_eq!(pm.balance(usdc()), 1_000);
+        // Debt allowed — unchecked debit creates negative balance.
+        pm.debit_debt(usdc(), 1_500);
+        assert_eq!(pm.balance(usdc()), -500);
+        // The trait `debit` (checked) on a negative balance fails D0.
+        assert!(matches!(
+            pm.debit(usdc(), 1),
+            Err(ValidationError::TakeBeforeCredit { currency, wanted: 1, have: -500 }) if currency == usdc()
+        ));
+    }
+
+    #[test]
+    fn pm_ledger_take_delta_zeros_positive_credit() {
+        let mut pm = PmLedger::default();
+        // Before any credit → reject (D0).
+        assert!(matches!(
+            pm.take_delta(weth()),
+            Err(ValidationError::TakeBeforeCredit {
+                wanted: 1,
+                have: 0,
+                ..
+            })
+        ));
+        pm.credit(weth(), 5_000);
+        assert!(pm.take_delta(weth()).is_ok());
+        assert_eq!(pm.balance(weth()), 0, "take_delta zeros the whole delta");
+    }
+
+    #[test]
+    fn pm_ledger_settle_family() {
+        let mut pm = PmLedger::default();
+        pm.credit(usdc(), 100);
+        pm.debit_debt(weth(), 50);
+        // settle_key zeroes one.
+        pm.settle_key(usdc());
+        assert_eq!(pm.balance(usdc()), 0);
+        assert_eq!(pm.balance(weth()), -50, "settle_key touches only its key");
+        assert!(matches!(pm.first_nonzero(), Some((c, -50)) if c == weth()));
+        // settle_all zeroes everything.
+        pm.settle_all();
+        assert!(pm.first_nonzero().is_none(), "settle_all clears all deltas");
+    }
+
+    #[test]
+    fn erc20_ledger_credit_debit_d0() {
+        let mut e = Erc20Ledger::default();
+        e.credit(weth(), 1_000);
+        assert_eq!(e.balance(weth()), 1_000);
+        // Checked debit succeeds when covered.
+        assert!(e.debit(weth(), 600).is_ok());
+        assert_eq!(e.balance(weth()), 400);
+        // Over-draw fails with Erc20TransferBeforeCredit (D0).
+        assert!(matches!(
+            e.debit(weth(), 401),
+            Err(ValidationError::Erc20TransferBeforeCredit { wanted: 401, have: 400, currency }) if currency == weth()
+        ));
+        // The failed debit does not change the balance.
+        assert_eq!(e.balance(weth()), 400);
     }
 
     /// D0 — take-before-credit is rejected (the pre-fix `v2_v2_v4` bug).
