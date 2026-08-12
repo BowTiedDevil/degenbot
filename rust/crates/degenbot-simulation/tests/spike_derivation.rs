@@ -139,6 +139,54 @@ fn derived_v2v3_executes_with_exact_delta() {
     run_spike(Prot::V2, Prot::V3, "v2_v3");
 }
 
+/// POC (6SRC23): the `v2_v3` (InPathFlash) flash-credit chain through the
+/// emitter→validator gate AND the runtime matrix in one vertical slice. Proves
+/// the gate (credit-before-debit on the executor ledger; every flash debt
+/// repaid) agrees with runtime reality (the derived bytes execute with exact
+/// delta) — the alignment that makes `LedgerValidator` a trustworthy
+/// structural check (ADR-029 D4/D5), catching the misorderings byte-parity and
+/// the runtime matrix alone cannot name.
+#[test]
+fn v2v3_trace_validates_and_executes_with_exact_delta() {
+    use degenbot_executor::grammar_ledger::LedgerValidator;
+    use degenbot_executor::grammar_shape::derive_2hop_v2v3_trace;
+
+    let mut h = Harness::new().unwrap();
+    let hops = build_two_hop(&mut h, Prot::V2, Prot::V3, 3);
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    // Pad the last hop output to a profitable terminal WETH return so the
+    // run is profitable. Mirrors `run_spike`'s `build_two_hop` ~3× return.
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+
+    // 1. The trace validates: credit-before-debit + flash-debt-net-zero hold.
+    let trace = derive_2hop_v2v3_trace(&path, &inputs).expect("v2_v3 must derive a trace");
+    let mut v = LedgerValidator::default();
+    v.validate_full(&trace)
+        .expect("canonical v2_v3 trace must validate clean through the gate");
+
+    // 2. The bytes execute with the exact predicted WETH delta (alignment
+    //    with runtime reality — what makes the gate trustworthy).
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .expect("v2_v3 derive_shape returned None");
+    let result = h
+        .run_raw_payload(&hops, &derived, optimal_input, 8_000_000)
+        .expect("run_raw_payload failed");
+    assert_profitable(&result, 2, "v2_v3 gate+runtime");
+    println!(
+        "── v2_v3 (gate): trace validated, derived bytes executed, actual_delta={}",
+        result.actual_weth_delta
+    );
+}
+
 #[test]
 fn derived_v3v2_executes_with_exact_delta() {
     run_spike(Prot::V3, Prot::V2, "v3_v2");

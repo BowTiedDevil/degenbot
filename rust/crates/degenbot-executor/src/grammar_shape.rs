@@ -47,6 +47,7 @@ use crate::composers::{
 };
 use crate::encoders::{self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 use crate::grammar::{cl_swap_in, v2_forward_addr};
+use crate::grammar_ledger::LedgerOp;
 
 /// A hop-protocol family member.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -276,6 +277,75 @@ fn derive_2hop(
         }
         _ => None,
     }
+}
+
+/// POC (6SRC23): emit the [`LedgerOp`] trace for the `v2_v3` (InPathFlash)
+/// family — the same stream [`derive_2hop`] produces as bytes, expressed as
+/// the declarative ledger facts the [`LedgerValidator`] reasons over. This is
+/// the conservative single-family proof of the emitter→validator seam
+/// (ADR-029 D4/D5): a co-located trace that mirrors the byte emitter, NOT a
+/// wide instrumentation of every `enc_*` primitive. If the pattern generalizes
+/// (larger effort), each `derive_*` gains a sibling `*_trace`.
+///
+/// Stream order = byte order = the validator's walk order:
+/// 1. `V2Flash` — `V2_SWAP_COMPACT(v2a)` credits the forward token (t1) and owes
+///    WETH repayable in the callback.
+/// 2. `V3Flash` — `V3_SWAP_COMPACT(v3b)` credits WETH and owes t1.
+/// 3. `Erc20Transfer(t1)` — repay the V3 flash (credit extended by op 1).
+/// 4. `Erc20Transfer(WETH)` — repay the V2 flash (credit extended by op 2).
+///
+/// The gate enforces credit-before-debit on the executor ledger (op 3 sees
+/// t1 credit; op 4 sees WETH credit) and that every flash debt is repaid at
+/// `finish()`.
+#[must_use]
+pub fn derive_2hop_v2v3_trace(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<LedgerOp>> {
+    let n = path.hops.len();
+    if n != 2 {
+        return None;
+    }
+    let (HopInfo::V2(a), HopInfo::V3(_b)) = (&path.hops[0], &path.hops[1]) else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let forward_out = *inputs.hop_outputs.first()?;
+    if forward_out == 0 {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    let weth = inputs.weth_address;
+    let fwd_a = v2_forward(a);
+    // The V3's forward output is the terminal WETH (the path ends in WETH).
+    let terminal_out = *inputs.hop_outputs.get(1)?;
+
+    Some(vec![
+        // 1. V2 flash: credit t1 (forward), owe WETH (optimal_input).
+        LedgerOp::V2Flash {
+            out_currency: fwd_a,
+            out_amount: forward_out,
+            in_currency: weth,
+            in_amount: optimal_input,
+        },
+        // 2. V3 flash: credit WETH (terminal), owe t1 (b_swap_in).
+        LedgerOp::V3Flash {
+            out_currency: weth,
+            out_amount: terminal_out,
+            in_currency: fwd_a,
+            in_amount: b_swap_in,
+        },
+        // 3. Repay the V3 flash — t1 credit extended by op 1.
+        LedgerOp::Erc20Transfer {
+            currency: fwd_a,
+            amount: b_swap_in,
+        },
+        // 4. Repay the V2 flash — WETH credit extended by op 2.
+        LedgerOp::Erc20Transfer {
+            currency: weth,
+            amount: optimal_input,
+        },
+    ])
 }
 
 /// Public spike entry: derive a family's command stream from its
@@ -2799,6 +2869,92 @@ mod tests {
         emit_terminal_hop(&mut at, &HopInfo::V2(h), &inputs, 0, 0, &mut out).unwrap();
         // 0x21 = V2_SWAP_CALC (never exact-out V2_SWAP_COMPACT 0x20).
         assert_eq!(out[0], 0x21, "terminal V2 must encode as V2_SWAP_CALC");
+        let _ = U256::ZERO;
+    }
+
+    // POC (6SRC23): the v2_v3 InPathFlash flash-credit chain exercises the
+    // executor-ledger credit-before-debit invariant the runtime matrix can't
+    // see. The derived trace must validate clean; a misordering must reject.
+    fn v2_v3_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+        let v2a = address!("00000000000000000000000000000000000000aa");
+        let v3b = address!("00000000000000000000000000000000000000bb");
+        let path = PathInfo::new(vec![
+            HopInfo::V2(V2HopInfo {
+                pool_address: v2a,
+                token0_address: weth,
+                token1_address: usdc,
+                fee: 30,
+                zfo: true, // WETH → USDC: forward token = USDC
+            }),
+            HopInfo::V3(V3HopInfo {
+                pool_address: v3b,
+                token0_address: usdc,
+                token1_address: weth,
+                fee: 3000,
+                zfo: true, // USDC → WETH: forward token = WETH (terminal)
+            }),
+        ]);
+        static OPTIMAL: u128 = 1_000_000;
+        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
+        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
+        let inputs = ComposerInputs {
+            executor_address: address!("00000000000000000000000000000000000000ee"),
+            pool_manager_address: address!("00000000000000000000000000000000000000ff"),
+            weth_address: weth,
+            optimal_input: OPTIMAL,
+            hop_outputs: &OUTS,
+            consumed_inputs: &CONSUMED,
+            opts: crate::composers::EncodeOptions::default(),
+        };
+        (path, inputs)
+    }
+
+    #[test]
+    fn v2_v3_trace_validates_clean_and_aligns_with_bytes() {
+        let (path, inputs) = v2_v3_path_inputs();
+        // The byte emitter still produces a stream (alignment sanity).
+        let bytes = derive_shape(&path, &inputs).expect("v2_v3 must derive bytes");
+        assert!(!bytes.is_empty());
+        // The trace mirrors the bytes.
+        let trace = derive_2hop_v2v3_trace(&path, &inputs).expect("v2_v3 must derive a trace");
+        assert_eq!(trace.len(), 4, "v2_v3 trace has exactly 4 ops");
+        // credit-before-debit + flash-debt-net-zero must hold.
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            v.validate_full(&trace).is_ok(),
+            "canonical v2_v3 trace validates"
+        );
+        // Sanity: the forward currency is USDC, the terminal credit is WETH.
+        use crate::grammar_ledger::LedgerOp::*;
+        assert!(matches!(trace[0], V2Flash { out_currency, in_currency, .. }
+            if out_currency == address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48")
+            && in_currency == inputs.weth_address));
+        assert!(matches!(trace[1], V3Flash { out_currency, .. }
+            if out_currency == inputs.weth_address));
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v2_v3_trace_misordered_repay_before_credit_rejects() {
+        let (path, inputs) = v2_v3_path_inputs();
+        let mut trace = derive_2hop_v2v3_trace(&path, &inputs).expect("v2_v3 must derive a trace");
+        // Hoist the WETH repayment (op 4, index 3) BEFORE the V3 flash (op 2,
+        // index 1) extends WETH credit. Executor WETH balance is 0 at that
+        // point → the gate rejects with the structural reason the runtime
+        // matrix cannot see (the misordered bytes would revert on-chain with
+        // an opaque transfer failure).
+        let weth_repay = trace.remove(3);
+        trace.insert(1, weth_repay);
+        let mut v = crate::grammar_ledger::LedgerValidator::default();
+        assert!(
+            matches!(
+                v.validate_full(&trace),
+                Err(crate::grammar_ledger::ValidationError::Erc20TransferBeforeCredit { .. })
+            ),
+            "misordered WETH repayment must be rejected before credit"
+        );
         let _ = U256::ZERO;
     }
 }

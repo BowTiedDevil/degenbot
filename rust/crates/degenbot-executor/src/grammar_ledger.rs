@@ -140,6 +140,29 @@ pub enum LedgerOp {
     SeedPair { pool: Address, amount: u128 },
     /// `V2_SWAP_CALC(pool)` — consumes `H[pool]` credit (terminal-V2 rule).
     SwapCalc { pool: Address, amount_in: u128 },
+    // ── POC (6SRC23): V2/V3 flash-credit chain for `v2_v3` (ADR-029 D4/D5). ──
+    /// A `V2_SWAP_COMPACT` flash: the pool extends `out_currency` credit to the
+    /// executor (the swap output, before repayment), and incurs an `in_currency`
+    /// flash debt repayable within the callback. Extends the executor `Erc20`
+    /// ledger (the same credit-before-debit rule as `PM`, on a different ledger).
+    V2Flash {
+        out_currency: Address,
+        out_amount: u128,
+        in_currency: Address,
+        in_amount: u128,
+    },
+    /// A `V3_SWAP_COMPACT` flash: same shape as [`V2Flash`] — the V3 pool credits
+    /// `out_currency` and is owed `in_currency` within the callback.
+    V3Flash {
+        out_currency: Address,
+        out_amount: u128,
+        in_currency: Address,
+        in_amount: u128,
+    },
+    /// An `ERC20_TRANSFER(cur→rcp, amount)` debiting the executor's `Erc20[cur]`
+    /// balance (the flash-repayment / pair-seed move). Requires credit ≥ amount
+    /// immediately before (the V2/V3 analogue of the `PM` take-before-credit rule).
+    Erc20Transfer { currency: Address, amount: u128 },
 }
 
 /// A `V4_SWAP` term op returned by the proto-trace builder — kept separate from
@@ -156,13 +179,20 @@ pub enum LedgerEffect {
 impl LedgerOp {
     /// A single processable op. The validator special-cases term helpers
     /// ([`LedgerEffect`]) directly; this is the effect of non-term ops.
+    ///
+    /// `V2Flash`/`V3Flash`/`Erc20Transfer` are handled directly in [`LedgerValidator::push`]` ([`LedgerEffect`] covers only the PM/pair ledgers).
     fn effect(&self) -> Option<LedgerEffect> {
         match *self {
             LedgerOp::V4Swap { output, amount_out } => {
                 Some(LedgerEffect::PmCredit(output, amount_out))
             }
             LedgerOp::SeedPair { pool, amount } => Some(LedgerEffect::PairCredit(pool, amount)),
-            LedgerOp::Take { .. } | LedgerOp::Mint { .. } | LedgerOp::SwapCalc { .. } => None,
+            LedgerOp::Take { .. }
+            | LedgerOp::Mint { .. }
+            | LedgerOp::SwapCalc { .. }
+            | LedgerOp::V2Flash { .. }
+            | LedgerOp::V3Flash { .. }
+            | LedgerOp::Erc20Transfer { .. } => None,
         }
     }
 }
@@ -173,12 +203,24 @@ impl LedgerOp {
 ///
 /// `take`/`mint` require `PM[currency] ≥ amount` **immediately before**; a
 /// `SwapCalc` requires the pair to have been seeded (`H[pool] ≥ 0`) first.
+///
+/// POC (`6SRC23`): the executor's own `Erc20[currency]` balance is the same
+/// credit-before-debit ledger for V2/V3 flash swaps — a flash repayment
+/// (`Erc20Transfer`) is only legal after a prior flash extended the credit.
+/// Flash debts must be fully repaid by `finish()` (the V2/V3 analogue of the
+/// V4 "every delta nets to zero by callback end" invariant).
 #[derive(Debug, Default)]
 pub struct LedgerValidator {
     /// `PM[currency]` balance (positive = PM owes executor).
     pm: HashMap<Address, i128>,
     /// `H[pool]` — seeded-but-unswapped pair excess per pool.
     pair: HashMap<Address, u128>,
+    /// `Erc20[currency]` — the executor's own balance per currency (extended
+    /// by flash swaps, consumed by `Erc20Transfer`).
+    erc20: HashMap<Address, i128>,
+    /// Outstanding flash debt per currency (owed by the executor, awaiting
+    /// repayment within a callback). Checked zero at `finish()`.
+    flash_debt: HashMap<Address, u128>,
 }
 
 /// Why a stream was rejected — the invariant that fired and the offending op.
@@ -194,6 +236,17 @@ pub enum ValidationError {
     /// A `V2_SWAP_CALC` fired before the pair was seeded (the terminal-V2 /
     /// `2PT5HH` über-draw class).
     SwapCalcBeforeCredit { pool: Address },
+    /// An `ERC20_TRANSFER` debiting the executor fired before the executor held
+    /// `currency` credit (the V2/V3 flash-repay-before-credit class; surfaced
+    /// by the `6SRC23` POC — byte-parity cannot see this ordering defect).
+    Erc20TransferBeforeCredit {
+        currency: Address,
+        wanted: u128,
+        have: i128,
+    },
+    /// A flash debt was left unpaid at `finish()` — the V2/V3 analogue of the
+    /// V4 "every delta nets to zero by callback end" invariant.
+    FlashDebtUnpaid { currency: Address, amount: u128 },
 }
 
 impl LedgerValidator {
@@ -254,15 +307,75 @@ impl LedgerValidator {
                 self.pair.insert(pool, have - 1);
                 Ok(())
             }
+            // POC (6SRC23): V2/V3 flash swaps — term ops extending executor
+            // `Erc20` credit and incurring flash debt (repayable within the
+            // callback). Same credit-before-debit rule as `V4Swap`→`PM`, on the
+            // executor-ledger axis.
+            LedgerOp::V2Flash {
+                out_currency,
+                out_amount,
+                in_currency,
+                in_amount,
+            }
+            | LedgerOp::V3Flash {
+                out_currency,
+                out_amount,
+                in_currency,
+                in_amount,
+            } => {
+                *self.erc20.entry(out_currency).or_default() += out_amount as i128;
+                *self.flash_debt.entry(in_currency).or_default() += in_amount;
+                Ok(())
+            }
+            LedgerOp::Erc20Transfer { currency, amount } => {
+                let have = *self.erc20.get(&currency).unwrap_or(&0);
+                if have < amount as i128 {
+                    return Err(ValidationError::Erc20TransferBeforeCredit {
+                        currency,
+                        wanted: amount,
+                        have,
+                    });
+                }
+                // The executor's credit is consumed by the transfer; if this
+                // transfer repays a flash, the debt is retired below.
+                self.erc20.insert(currency, have - amount as i128);
+                let owed = self.flash_debt.entry(currency).or_default();
+                *owed = owed.saturating_sub(amount);
+                Ok(())
+            }
         }
     }
 
+    /// Finish the stream: every flash debt must have been repaid (the V2/V3
+    /// analogue of the V4 "every delta nets to zero by callback end"
+    /// invariant). Call after the last `push` (or after `validate`).
+    pub fn finish(&mut self) -> Result<(), ValidationError> {
+        for (currency, amount) in &self.flash_debt {
+            if *amount > 0 {
+                return Err(ValidationError::FlashDebtUnpaid {
+                    currency: *currency,
+                    amount: *amount,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Convenience: validate a whole stream. Stops at the first violation.
+    /// Does **not** call [`Self::finish`] — call it separately to enforce the
+    /// flash-debt-net-zero invariant, or use [`Self::validate_full`].
     pub fn validate(&mut self, ops: &[LedgerOp]) -> Result<(), ValidationError> {
         for op in ops {
             self.push(*op)?;
         }
         Ok(())
+    }
+
+    /// Validate a whole stream AND assert every flash debt was repaid at the
+    /// end (the full D4/D5 gate for streams that include V2/V3 flashes).
+    pub fn validate_full(&mut self, ops: &[LedgerOp]) -> Result<(), ValidationError> {
+        self.validate(ops)?;
+        self.finish()
     }
 }
 
@@ -386,5 +499,113 @@ mod tests {
             },
         ];
         assert!(v.validate(&stream).is_ok());
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // POC (6SRC23): the V2/V3 flash-credit chain for `v2_v3` (InPathFlash).
+    // The executor starts at 0; a flash repayment (ERC20_TRANSFER from the
+    // executor) is only legal AFTER the flash that extended that currency's
+    // credit. Byte-parity cannot see this ordering defect; the gate can.
+    // ════════════════════════════════════════════════════════════════════
+
+    /// The canonical `v2_v3` (InPathFlash) trace in stream order — the same
+    /// ordering `derive_2hop_v2v3_trace` (grammar_shape) will emit. The V2
+    /// flash credits t1 (forward); the V3 flash credits WETH (terminal); each
+    /// flash's repayment consumes the credit the OTHER flash extended, in
+    /// order. Must validate clean.
+    #[test]
+    fn v2_v3_flash_chain_accepted() {
+        let mut v = LedgerValidator::default();
+        // 1. V2 flash: credit t1, owe WETH.
+        v.push(LedgerOp::V2Flash {
+            out_currency: usdc(),
+            out_amount: 1_000_000,
+            in_currency: weth(),
+            in_amount: 900_000,
+        })
+        .unwrap();
+        // 2. V3 flash: credit WETH, owe t1.
+        v.push(LedgerOp::V3Flash {
+            out_currency: weth(),
+            out_amount: 1_200_000,
+            in_currency: usdc(),
+            in_amount: 1_000_000,
+        })
+        .unwrap();
+        // 3. Repay the V3 flash (t1) — credit extended by op 1.
+        v.push(LedgerOp::Erc20Transfer {
+            currency: usdc(),
+            amount: 1_000_000,
+        })
+        .unwrap();
+        // 4. Repay the V2 flash (WETH) — credit extended by op 2.
+        v.push(LedgerOp::Erc20Transfer {
+            currency: weth(),
+            amount: 900_000,
+        })
+        .unwrap();
+        assert!(v.finish().is_ok(), "fully-repaid flash chain must validate");
+    }
+
+    /// Misordered `v2_v3`: the WETH flash repayment (op 4) is hoisted BEFORE
+    /// the V3 flash (op 2) extends WETH credit. The executor's WETH balance is
+    /// still 0 at that point → rejected. This is the structural defect the
+    /// runtime matrix cannot see (the bytes would revert on-chain with an
+    /// opaque transfer-revert; the gate names the invariant).
+    #[test]
+    fn v2_v3_flash_repay_before_credit_rejected() {
+        let mut v = LedgerValidator::default();
+        v.push(LedgerOp::V2Flash {
+            out_currency: usdc(),
+            out_amount: 1_000_000,
+            in_currency: weth(),
+            in_amount: 900_000,
+        })
+        .unwrap();
+        // BUG: repay the V2 flash (WETH) BEFORE the V3 flash credits WETH.
+        assert_eq!(
+            v.push(LedgerOp::Erc20Transfer {
+                currency: weth(),
+                amount: 900_000,
+            }),
+            Err(ValidationError::Erc20TransferBeforeCredit {
+                currency: weth(),
+                wanted: 900_000,
+                have: 0,
+            })
+        );
+    }
+
+    /// An underpaid flash debt is rejected at `finish()` (the V2/V3 analogue of
+    /// the V4 "every delta nets to zero by callback end" invariant).
+    #[test]
+    fn underpaid_flash_debt_rejected_at_finish() {
+        let mut v = LedgerValidator::default();
+        v.push(LedgerOp::V2Flash {
+            out_currency: usdc(),
+            out_amount: 1_000_000,
+            in_currency: weth(),
+            in_amount: 900_000,
+        })
+        .unwrap();
+        v.push(LedgerOp::V3Flash {
+            out_currency: weth(),
+            out_amount: 1_200_000,
+            in_currency: usdc(),
+            in_amount: 1_000_000,
+        })
+        .unwrap();
+        // Repay V3 fully, but "forget" to repay the V2 flash's WETH debt.
+        v.push(LedgerOp::Erc20Transfer {
+            currency: usdc(),
+            amount: 1_000_000,
+        })
+        .unwrap();
+        assert!(matches!(
+            v.finish(),
+            Err(ValidationError::FlashDebtUnpaid {
+                currency, amount
+            }) if currency == weth() && amount == 900_000
+        ));
     }
 }
