@@ -37,7 +37,7 @@ use alloy::primitives::{Address, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_executor::composers::{
-    encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V4HopInfo,
+    config_for_options, encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V4HopInfo,
 };
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::fees::BlockPriorityFees;
@@ -1023,8 +1023,14 @@ where
         return Ok(None);
     };
 
-    // execute(bytes, uint256) ABI wrap (config=0 — no on-chain profit check).
-    let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, EXECUTE_CONFIG)
+    // execute(bytes, uint256) ABI wrap. Q35IJN: build `config` via the
+    // axis-aware `config_for_options` (U3WVLL — the contract reads its own
+    // combined balance; default Custody capture → check_mode=1 profit assert
+    // active; Erc6909 → check_mode=2; SweepToAddress → check_mode=3). Replaces
+    // the hardcoded `EXECUTE_CONFIG = ZERO` (check_mode=0 fast path, no
+    // assert) — a money-losing production path now reverts on-chain.
+    let execute_config = config_for_options(path.opts, U256::ZERO);
+    let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config)
         .map_err(|e| ProviderError::RpcError {
             code: -32603,
             message: format!("execute() ABI encode failed: {e}"),

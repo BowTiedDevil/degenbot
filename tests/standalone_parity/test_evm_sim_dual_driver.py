@@ -110,7 +110,7 @@ def test_deliberately_wrong_fixture_fails_both_halves() -> None:
     *different* fixtures. The shared JSON file is the single source of truth.
     """
     fx = _load_fixture()
-    # Corrupt the expected gas_used — the real sim produces 30736.
+    # Corrupt the expected gas_used — the real sim produces 30748.
     fx["expected"]["gas_used"] = 999_999
     path_id = fx["fixture"]["path_id"]
     outcome = simulate_in_process_success_probe(path_id)
