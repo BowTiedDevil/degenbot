@@ -542,3 +542,178 @@ fn native_v4v4_unwrap_bridge_executes_with_terminal_delta() {
         "unwrap-bridge terminal u delta {u_delta} != predicted {terminal} (tol {tol})"
     );
 }
+
+/// WETH-only 3-hop v4_v4_v4: derive -> byte-parity -> execute with exact WETH
+/// delta (the 36-family matrix shape W->t1->t2->W).
+#[test]
+fn derived_v4v4v4_executes_with_exact_delta() {
+    let mut h = Harness::new().unwrap();
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t1,
+                    t2,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t2,
+            dst: h.weth,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t2,
+                    h.weth,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive v4_v4_v4 None"));
+    let reference = h
+        .encode_path(&path, optimal_input, &hop_outputs)
+        .unwrap_or_else(|e| panic!("encode: {e}"));
+    assert_eq!(derived, reference, "v4_v4_v4 derived != hand-written");
+    let result = h
+        .run_raw_payload(&hops, &derived, optimal_input, 40_000_000)
+        .unwrap_or_else(|e| panic!("run: {e}"));
+    assert_profitable(&result, 3, "v4_v4_v4");
+}
+
+/// Native 3-hop v4_v4_v4 (NATIVE->t1->t2->NATIVE): the executor's native delta
+/// must equal predicted profit (native pool funding + native capture).
+#[test]
+fn native_v4v4v4_derived_executes_with_exact_native_delta() {
+    let mut h = Harness::new().unwrap();
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let native = Address::ZERO;
+    let hops = vec![
+        Hop {
+            src: native,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    native,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t1,
+                    t2,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t2,
+            dst: native,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t2,
+                    native,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let gas = 40_000_000;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive native v4_v4_v4 None"));
+    h.fund(native, h.executor, optimal_input * 2).unwrap();
+    let before = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h.execute_payload(&derived, gas).unwrap();
+    assert!(
+        outcome.executed(3),
+        "native v4_v4_v4 must execute 3 pools: {outcome:?}"
+    );
+    let after = h.native_balance_of(h.executor).unwrap().to::<u128>() as i128;
+    let actual = after - before;
+    let tol = (predicted.abs() / 1000).max(64);
+    assert!(
+        actual > 0 && (actual - predicted).abs() <= tol,
+        "native v4_v4_v4 delta {actual} != predicted {predicted} (tol {tol})"
+    );
+}

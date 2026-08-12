@@ -277,3 +277,42 @@ fn v4_v3_and_v3_v4_native_mixed_parity() {
         100_000,
     );
 }
+
+// ── 3-hop pure-V4 container (WAYDTL step 3) ────────────────────────────────
+
+/// v4_v4_v4: one unlock over three internal V4 swaps; must be byte-identical
+/// to the hand-written adapter for WETH-only and native/bridge configs.
+#[test]
+fn v4_v4_v4_native_and_bridge_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    let t2 = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    let _ = t2;
+    // WETH -> t -> u -> WETH (no gaps).
+    run_family(
+        vec![
+            v4_pair(weth(), t, true),
+            v4_pair(t, u, true),
+            v4_pair(u, weth(), true),
+        ],
+        100_000,
+    );
+    // NATIVE -> t -> u -> NATIVE (native at both ends, ERC20 mids).
+    run_family(
+        vec![
+            v4_pair(NATIVE, t, true),
+            v4_pair(t, u, true),
+            v4_pair(u, NATIVE, true),
+        ],
+        100_000,
+    );
+    // WETH -> native -> WETH -> u (native mid, non-gap).
+    run_family(
+        vec![
+            v4_pair(weth(), NATIVE, true),
+            v4_pair(NATIVE, weth(), true),
+            v4_pair(weth(), t, true),
+        ],
+        100_000,
+    );
+}

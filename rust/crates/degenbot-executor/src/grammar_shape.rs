@@ -273,6 +273,9 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
     // choice is needed (the PM carries the entry credit). Handle it before the
     // V2/V3 funding dispatch.
     match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
+        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
+            derive_3hop_v4v4v4(a, b, c, inputs)
+        }
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v4v4(a, b, inputs),
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => derive_2hop_v4v3(a, b, inputs),
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v3v4(a, b, inputs),
@@ -875,6 +878,135 @@ fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     .ok()?;
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&outer);
+    Some(out)
+}
+
+/// Pure V4→V4→V4 3-hop container derivation (WAYDTL step 3).
+///
+/// Like the 2-hop `v4_v4`, the whole stream is one `V4_UNLOCK` of internal
+/// ledger movement — each V4 hop delegates to its own `V4_SWAP_COMPACT`;
+/// native↔WETH representation gaps between hops emit a `V4_TAKE_COMPACT` +
+/// `WETH_DEPOSIT`/`WETH_WITHDRAW` bridge + settle; the terminal profit is
+/// captured (`V4_TAKE_DELTA(output→SELF)`); a trailing `V4_SETTLE_ALL` nets
+/// every currency to zero. Scoped to `default` opts (no `V4_BATCH`,
+/// no `erc6909_profit`).
+fn derive_3hop_v4v4v4(
+    a: &V4HopInfo,
+    b: &V4HopInfo,
+    c: &V4HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    use crate::composers::{emit_currency_bridge, CurrencyBridge};
+
+    let optimal_input = inputs.optimal_input;
+    let out_a = *inputs.hop_outputs.get(0)?;
+    let out_b = *inputs.hop_outputs.get(1)?;
+    let out_c = *inputs.hop_outputs.get(2)?;
+    if out_a == 0 || out_b == 0 || out_c == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let a_swap_in = *inputs.consumed_inputs.first()?;
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    let c_swap_in = *inputs.consumed_inputs.get(2)?;
+    if !fits_int128(a_swap_in) || !fits_int128(b_swap_in) || !fits_int128(c_swap_in) {
+        return None;
+    }
+
+    let mid_a_out = if a.zfo {
+        a.currency1_address
+    } else {
+        a.currency0_address
+    };
+    let mid_b_in = if b.zfo {
+        b.currency0_address
+    } else {
+        b.currency1_address
+    };
+    let mid_b_out = if b.zfo {
+        b.currency1_address
+    } else {
+        b.currency0_address
+    };
+    let mid_c_in = if c.zfo {
+        c.currency0_address
+    } else {
+        c.currency1_address
+    };
+    let output_c = if c.zfo {
+        c.currency1_address
+    } else {
+        c.currency0_address
+    };
+    let bridge_ab = CurrencyBridge::at_boundary(mid_a_out, mid_b_in);
+    let bridge_bc = CurrencyBridge::at_boundary(mid_b_out, mid_c_in);
+
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let zero_idx = SENTINEL_NATIVE;
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let c0_c = at.add(c.currency0_address).ok()?;
+    let c1_c = at.add(c.currency1_address).ok()?;
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let fee_c = u16::try_from(c.fee).ok()?;
+    let ts_c = i16::try_from(c.tick_spacing).ok()?;
+
+    let mut inner =
+        encoders::enc_v4_swap_compact(c0_a, c1_a, fee_a, ts_a, zero_idx, a.zfo, a_swap_in).ok()?;
+    if bridge_ab.needs_bridge() {
+        let (take_idx, b_input_idx) = bridge_ab.bridge_indices(weth_idx, SENTINEL_NATIVE);
+        emit_currency_bridge(&mut inner, bridge_ab, take_idx, out_a)?;
+        inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in)
+                .ok()?,
+        );
+        inner.extend_from_slice(&encoders::enc_v4_settle_delta(b_input_idx));
+    } else {
+        inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(c0_b, c1_b, fee_b, ts_b, zero_idx, b.zfo, b_swap_in)
+                .ok()?,
+        );
+    }
+    if bridge_bc.needs_bridge() {
+        let (take_idx, c_input_idx) = bridge_bc.bridge_indices(weth_idx, SENTINEL_NATIVE);
+        emit_currency_bridge(&mut inner, bridge_bc, take_idx, out_b)?;
+        inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(c0_c, c1_c, fee_c, ts_c, zero_idx, c.zfo, c_swap_in)
+                .ok()?,
+        );
+        inner.extend_from_slice(&encoders::enc_v4_settle_delta(c_input_idx));
+    } else {
+        inner.extend_from_slice(
+            &encoders::enc_v4_swap_compact(c0_c, c1_c, fee_c, ts_c, zero_idx, c.zfo, c_swap_in)
+                .ok()?,
+        );
+    }
+    // Capture the terminal profit out of the PM to the executor.
+    if output_c == NATIVE_CURRENCY_ADDRESS {
+        inner.extend_from_slice(&encoders::enc_v4_take_delta(SENTINEL_NATIVE, SENTINEL_SELF));
+    } else if output_c == inputs.weth_address {
+        inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, SENTINEL_SELF));
+    } else {
+        let profit_idx = at.add(output_c).ok()?;
+        inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, SENTINEL_SELF));
+    }
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
     Some(out)
 }
 
