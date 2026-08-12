@@ -1298,13 +1298,15 @@ pub fn build_v4v4_plan(
     } else {
         b.currency1_address
     };
-    if mid_currency_a == NATIVE_CURRENCY_ADDRESS
-        || mid_currency_b == NATIVE_CURRENCY_ADDRESS
-        || crate::composers::CurrencyBridge::at_boundary(mid_currency_a, mid_currency_b)
-            .needs_bridge()
-    {
-        return None;
-    }
+    // Hop a's INPUT currency (computed, not hardcoded WETH — the gap slice
+    // allows a native or tok input that the bridge then converts).
+    let in_currency_a = if a.zfo {
+        a.currency0_address
+    } else {
+        a.currency1_address
+    };
+    let bridge = crate::composers::CurrencyBridge::at_boundary(mid_currency_a, mid_currency_b);
+    let currency_gap = bridge.needs_bridge();
     let out_currency_a = mid_currency_a;
     let out_currency_b = if b.zfo {
         b.currency1_address
@@ -1312,7 +1314,7 @@ pub fn build_v4v4_plan(
         b.currency0_address
     };
     // Terminal output may be WETH (profit capture), a tok (explicit take), or
-    // native (batch auto-settles; non-batch takes). The `use_v4_batch` /
+    // native. The `use_v4_batch` /
     // `erc6909_profit` opts interact with the terminal currency exactly as
     // `derive_2hop_v4v4` — the capture block below mirrors it.
 
@@ -1333,7 +1335,98 @@ pub fn build_v4v4_plan(
     let fee_b = u16::try_from(b.fee).ok()?;
     let ts_b = i16::try_from(b.tick_spacing).ok()?;
 
-    let inner: Plan = {
+    // The gap slice (native↔WETH representation gap at the mid): the derive's
+    // gap branch emits swap a → bridge (take+wrap/unwrap) → swap b → settle the
+    // swapped-in side → take the terminal profit → settle_all. `use_v4_batch`
+    // and `erc6909_profit` are inoperative here (the derive forces individual
+    // swaps across a gap and always takes physically). All PlanSteps + their
+    // byte/ledger projections already exist — this just wires them.
+    let inner: Plan = if currency_gap {
+        use crate::composers::CurrencyBridge;
+        // The bridge currency to TAKE out of the PM + the currency to SETTLE
+        // after hop b (the swapped-in side). Mirrors `CurrencyBridge::bridge_indices`.
+        let (take_currency, settle_currency) = match bridge {
+            CurrencyBridge::Wrap => (NATIVE_CURRENCY_ADDRESS, weth),
+            CurrencyBridge::Unwrap => (weth, NATIVE_CURRENCY_ADDRESS),
+            CurrencyBridge::None => unreachable!("currency_gap implies a bridge"),
+        };
+        let take_idx = if take_currency == NATIVE_CURRENCY_ADDRESS {
+            SENTINEL_NATIVE
+        } else {
+            weth_idx
+        };
+        let settle_idx = if settle_currency == NATIVE_CURRENCY_ADDRESS {
+            SENTINEL_NATIVE
+        } else {
+            weth_idx
+        };
+        let out_idx = if b.zfo { c1_b } else { c0_b };
+        vec![
+            // Swap a: produces `forward_out` of the gap currency (PM credit).
+            PlanStep::V4Swap {
+                c0_idx: c0_a,
+                c1_idx: c1_a,
+                fee: fee_a,
+                tick_spacing: ts_a,
+                hooks_idx: SENTINEL_NATIVE,
+                zfo: a.zfo,
+                amount: optimal_input,
+                in_currency: in_currency_a,
+                in_amount: optimal_input,
+                out_currency: out_currency_a,
+                out_amount: forward_out,
+            },
+            // Bridge: take the gap currency out of the PM to the executor.
+            PlanStep::V4TakeCompact {
+                currency_idx: take_idx,
+                currency_addr: take_currency,
+                recipient_idx: SENTINEL_SELF,
+                amount: forward_out,
+                seeds_pool: None,
+            },
+            // Convert: Wrap (native→WETH) or Unwrap (WETH→native).
+            match bridge {
+                CurrencyBridge::Wrap => PlanStep::WethDeposit {
+                    weth_idx,
+                    weth_addr: weth,
+                    amount: forward_out,
+                },
+                CurrencyBridge::Unwrap => PlanStep::WethWithdraw {
+                    weth_idx,
+                    weth_addr: weth,
+                    amount: forward_out,
+                },
+                CurrencyBridge::None => unreachable!(),
+            },
+            // Swap b: consumes the bridged currency, produces the terminal.
+            PlanStep::V4Swap {
+                c0_idx: c0_b,
+                c1_idx: c1_b,
+                fee: fee_b,
+                tick_spacing: ts_b,
+                hooks_idx: SENTINEL_NATIVE,
+                zfo: b.zfo,
+                amount: b_swap_in,
+                in_currency: mid_currency_b,
+                in_amount: b_swap_in,
+                out_currency: out_currency_b,
+                out_amount: b_out,
+            },
+            // Settle the swapped-in side (hop b's input debt).
+            PlanStep::V4SettleDelta {
+                currency_idx: settle_idx,
+                currency_addr: settle_currency,
+            },
+            // Capture the terminal profit (physical take).
+            PlanStep::V4TakeDelta {
+                currency_idx: out_idx,
+                currency_addr: out_currency_b,
+                recipient_idx: SENTINEL_SELF,
+            },
+            PlanStep::V4SettleAll,
+        ]
+    } else {
+        // No-gap slice: swap(s) + profit capture (batch/erc6909/default).
         // The two swaps: one `V4Batch` (2 entries) when `use_v4_batch`, else
         // two `V4Swap`s.
         let swaps: Vec<PlanStep> = if inputs.opts.use_v4_batch {
@@ -1347,7 +1440,7 @@ pub fn build_v4v4_plan(
                         hooks_idx: SENTINEL_NATIVE,
                         zfo: a.zfo,
                         amount: optimal_input,
-                        in_currency: weth,
+                        in_currency: in_currency_a,
                         in_amount: optimal_input,
                         out_currency: out_currency_a,
                         out_amount: forward_out,
@@ -1377,7 +1470,7 @@ pub fn build_v4v4_plan(
                     hooks_idx: SENTINEL_NATIVE,
                     zfo: a.zfo,
                     amount: optimal_input,
-                    in_currency: weth,
+                    in_currency: in_currency_a,
                     in_amount: optimal_input,
                     out_currency: out_currency_a,
                     out_amount: forward_out,
@@ -5321,6 +5414,15 @@ mod tests {
         Native,
     }
 
+    /// The two v4_v4 currency-gap topologies (native↔WETH bridge at the mid).
+    #[derive(Clone, Copy)]
+    enum Gap {
+        /// Hop a outputs native, hop b needs WETH → take native + `WETH_DEPOSIT`.
+        Wrap,
+        /// Hop a outputs WETH, hop b needs native → take WETH + `WETH_WITHDRAW`.
+        Unwrap,
+    }
+
     fn v4_v4_inputs(
         terminal: Terminal,
         opts: crate::composers::EncodeOptions,
@@ -5379,6 +5481,95 @@ mod tests {
                 tick_spacing: 60,
                 hook_address: Address::ZERO,
                 zfo: false,
+            }),
+        };
+        let path = PathInfo::new(vec![hop_a, hop_b]);
+        static OPTIMAL: u128 = 1_000_000;
+        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
+        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
+        (
+            path,
+            ComposerInputs {
+                executor_address: address!("00000000000000000000000000000000000000ee"),
+                pool_manager_address: pm,
+                weth_address: weth,
+                optimal_input: OPTIMAL,
+                hop_outputs: &OUTS,
+                consumed_inputs: &CONSUMED,
+                opts,
+            },
+        )
+    }
+
+    /// Build a v4_v4 **gap** topology (native↔WETH bridge at the mid). `Wrap`:
+    /// hop a outputs native, hop b needs WETH (take native + `WETH_DEPOSIT`).
+    /// `Unwrap`: hop a outputs WETH, hop b needs native (take WETH +
+    /// `WETH_WITHDRAW`). V4 sorts currency0 < currency1, so native (address 0)
+    /// is always currency0; zfo is set so the output/input legs match the gap.
+    fn v4_v4_gap_inputs(
+        gap: Gap,
+        opts: crate::composers::EncodeOptions,
+    ) -> (PathInfo, ComposerInputs<'static>) {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let t1 = address!("0000000000000000000000000000000000000da1");
+        let t2 = address!("0000000000000000000000000000000000000da2");
+        let pm = address!("00000000000000000000000000000000000000ff");
+        let v4a_id = "0x0".to_string();
+        let v4b_id = "0x1".to_string();
+        // Hop a: output the gap currency (mid_a). zfo=false → output=currency0;
+        // zfo=true → output=currency1.
+        let hop_a = match gap {
+            // Wrap: mid_a=native. currency0=native, currency1=weth, zfo=false
+            // → output=currency0=native, input=currency1=weth.
+            Gap::Wrap => HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4a_id,
+                currency0_address: NATIVE_CURRENCY_ADDRESS,
+                currency1_address: weth,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: false,
+            }),
+            // Unwrap: mid_a=weth. currency0=t1, currency1=weth, zfo=true
+            // → output=currency1=weth, input=currency0=t1.
+            Gap::Unwrap => HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4a_id,
+                currency0_address: t1,
+                currency1_address: weth,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: true,
+            }),
+        };
+        // Hop b: input the bridged currency (mid_b), output the terminal.
+        // mid_b = input = currency0 if zfo else currency1.
+        let hop_b = match gap {
+            // Wrap: mid_b=weth. currency0=t2, currency1=weth, zfo=false
+            // → input=currency1=weth, output=currency0=t2.
+            Gap::Wrap => HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4b_id,
+                currency0_address: t2,
+                currency1_address: weth,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: false,
+            }),
+            // Unwrap: mid_b=native. currency0=native, currency1=weth, zfo=true
+            // → input=currency0=native, output=currency1=weth.
+            Gap::Unwrap => HopInfo::V4(V4HopInfo {
+                pool_manager_address: pm,
+                pool_id_hex: v4b_id,
+                currency0_address: NATIVE_CURRENCY_ADDRESS,
+                currency1_address: weth,
+                fee: 3000,
+                tick_spacing: 60,
+                hook_address: Address::ZERO,
+                zfo: true,
             }),
         };
         let path = PathInfo::new(vec![hop_a, hop_b]);
@@ -6019,6 +6210,95 @@ mod tests {
         );
         assert!(matches!(inner[0], PlanStep::V4Batch { .. }));
         assert!(matches!(inner[1], PlanStep::V4SettleAll));
+        let _ = U256::ZERO;
+    }
+
+    // ── BP7KIR currency-gap slice: native↔WETH bridge at the mid. Byte-parity
+    //    with derive_2hop_v4v4's gap branch AND gate validation. ──
+    #[test]
+    fn v4_v4_gap_byte_parity_and_validates() {
+        // Both gap topologies (Wrap + Unwrap), default opts. The gap branch
+        // emits: swap a → take+bridge → swap b → settle_delta → take(terminal)
+        // → settle_all.
+        for (name, gap) in [("wrap", Gap::Wrap), ("unwrap", Gap::Unwrap)] {
+            let label = format!("v4_v4 gap {name}");
+            let (path, inputs) = v4_v4_gap_inputs(gap, crate::composers::EncodeOptions::default());
+            plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, &label);
+        }
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_v4_gap_opt_matrix_byte_parity_and_validates() {
+        // The gap branch is opt-invariant (use_v4_batch + erc6909_profit are
+        // inoperative across a gap — the derive forces individual swaps + a
+        // physical take). Sweep all 4 opt modes for both gap topologies.
+        use crate::composers::EncodeOptions;
+        let modes = [
+            ("default", EncodeOptions::default()),
+            (
+                "batch",
+                EncodeOptions {
+                    erc6909_profit: false,
+                    use_v4_batch: true,
+                },
+            ),
+            (
+                "erc6909",
+                EncodeOptions {
+                    erc6909_profit: true,
+                    use_v4_batch: false,
+                },
+            ),
+            (
+                "batch+erc6909",
+                EncodeOptions {
+                    erc6909_profit: true,
+                    use_v4_batch: true,
+                },
+            ),
+        ];
+        for (g_name, gap) in [("wrap", Gap::Wrap), ("unwrap", Gap::Unwrap)] {
+            for (m_name, opts) in modes {
+                let label = format!("v4_v4 gap {g_name}+{m_name}");
+                let (path, inputs) = v4_v4_gap_inputs(gap, opts);
+                plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, &label);
+            }
+        }
+        let _ = U256::ZERO;
+    }
+
+    #[test]
+    fn v4_v4_gap_shape_is_swap_bridge_swap_settle_take() {
+        // Plan-shape spot check: the gap branch lays out
+        // [V4Swap, V4TakeCompact, (WethDeposit|WethWithdraw), V4Swap,
+        //  V4SettleDelta, V4TakeDelta, V4SettleAll].
+        let (path, inputs) =
+            v4_v4_gap_inputs(Gap::Wrap, crate::composers::EncodeOptions::default());
+        let (_preamble, plan, _at) = build_v4v4_plan(&path, &inputs).expect("v4_v4 gap build None");
+        let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
+            panic!("expected outer V4Unlock");
+        };
+        assert_eq!(inner.len(), 7, "gap inner = 7 steps");
+        assert!(matches!(inner[0], PlanStep::V4Swap { .. }), "0: swap a");
+        assert!(
+            matches!(inner[1], PlanStep::V4TakeCompact { .. }),
+            "1: bridge take"
+        );
+        assert!(
+            matches!(inner[2], PlanStep::WethDeposit { .. }),
+            "2: wrap deposit (Wrap gap)"
+        );
+        assert!(matches!(inner[3], PlanStep::V4Swap { .. }), "3: swap b");
+        assert!(
+            matches!(inner[4], PlanStep::V4SettleDelta { .. }),
+            "4: settle"
+        );
+        assert!(
+            matches!(inner[5], PlanStep::V4TakeDelta { .. }),
+            "5: profit take"
+        );
+        assert!(matches!(inner[6], PlanStep::V4SettleAll), "6: settle all");
         let _ = U256::ZERO;
     }
 }
