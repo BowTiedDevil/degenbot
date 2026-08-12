@@ -32,6 +32,7 @@ use crate::composers::{
     NATIVE_CURRENCY_ADDRESS,
 };
 use crate::encoders::{self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
+use crate::grammar::{cl_swap_in, v2_forward_addr};
 
 /// A hop-protocol family member.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -335,6 +336,30 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v3v4(a, b, inputs),
         (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), None) => derive_2hop_v4v2(a, b, inputs),
         (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v2v4(a, b, inputs),
+        // V2/V3-only 3-hop folds (WAYDTL): byte-faithful transcriptions of the
+        // previously-hand-written adapters, byte-identical to them (verified by
+        // the `cutover` `debug_assert` oracle in dev + the parity suite).
+        (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
+            derive_3hop_v2v2v3(a, b, c, inputs)
+        }
+        (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
+            derive_3hop_v2v3v2(a, b, c, inputs)
+        }
+        (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
+            derive_3hop_v2v3v3(a, b, c, inputs)
+        }
+        (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
+            derive_3hop_v3v2v2(a, b, c, inputs)
+        }
+        (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
+            derive_3hop_v3v2v3(a, b, c, inputs)
+        }
+        (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
+            derive_3hop_v3v3v2(a, b, c, inputs)
+        }
+        (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
+            derive_3hop_v3v3v3(a, b, c, inputs)
+        }
         _ => derive_2hop_v2v3(path, inputs),
     }
 }
@@ -1013,6 +1038,259 @@ fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
     .ok()?;
     let mut out = encoders::enc_preamble(&at);
     out.extend_from_slice(&outer);
+    Some(out)
+}
+
+// ── V2/V3-only 3-hop derivations (WAYDTL fold) ────────────────────────────
+// Byte-faithful transcriptions of the former hand-written `v2_v2_v3`..`v3_v3_v3`
+// adapters. The V2/V3 3-hop families are heterogeneous nested callback chains
+// (the *enclosure* — which hop wraps which — depends on the protocol sequence,
+// not a uniform rule), so like the V4 3-hop families they are explicit
+// per-family encoders. Each is kept byte-identical to the adapter it replaces
+// (the `cutover` `debug_assert` oracle in dev + the parity suite in release).
+// Address-table registration ORDER is part of the byte contract and must match.
+
+fn derive_3hop_v2v2v3(
+    a: &V2HopInfo,
+    b: &V2HopInfo,
+    c: &V3HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let c_swap_in = cl_swap_in(inputs, 2)?;
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v2a_idx = at.add(a.pool_address).ok()?;
+    let v2b_idx = at.add(b.pool_address).ok()?;
+    let v3c_idx = at.add(c.pool_address).ok()?;
+
+    let mut c_fwd =
+        encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, inputs.optimal_input).ok()?;
+    c_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, a.zfo, v2b_idx, a.fee));
+    c_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(v2b_idx, b.zfo, v3c_idx, b.fee));
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, c.zfo, c_swap_in, SENTINEL_SELF, &c_fwd).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+fn derive_3hop_v2v3v2(
+    a: &V2HopInfo,
+    b: &V3HopInfo,
+    c: &V2HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    let out_a = inputs.hop_outputs[0];
+    let out_c = inputs.hop_outputs[2];
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let b_swap_in = cl_swap_in(inputs, 1)?;
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    // Register forward token of A (discarded — affects table index order).
+    at.add(v2_forward_addr(a)).ok()?;
+    let v2a_idx = at.add(a.pool_address).ok()?;
+    let v2c_idx = at.add(c.pool_address).ok()?;
+    let v3b_idx = at.add(b.pool_address).ok()?;
+
+    let mut b_fwd =
+        encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, inputs.optimal_input).ok()?;
+    b_fwd.extend_from_slice(&encoders::enc_v2_swap_direct(v2a_idx, a.zfo, out_a, v3b_idx).ok()?);
+    let c_fwd = encoders::enc_v3_swap_compact(v3b_idx, b.zfo, b_swap_in, v2c_idx, &b_fwd).ok()?;
+    let commands =
+        encoders::enc_v2_swap_compact(v2c_idx, c.zfo, out_c, SENTINEL_SELF, c.fee, &c_fwd).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+fn derive_3hop_v2v3v3(
+    a: &V2HopInfo,
+    b: &V3HopInfo,
+    c: &V3HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    let out_a = inputs.hop_outputs[0];
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let b_swap_in = cl_swap_in(inputs, 1)?;
+    let c_swap_in = cl_swap_in(inputs, 2)?;
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v2a_idx = at.add(a.pool_address).ok()?;
+    let v3b_idx = at.add(b.pool_address).ok()?;
+    let v3c_idx = at.add(c.pool_address).ok()?;
+
+    let mut v3b_fwd =
+        encoders::enc_erc20_transfer(SENTINEL_WETH, v2a_idx, inputs.optimal_input).ok()?;
+    v3b_fwd.extend_from_slice(&encoders::enc_v2_swap_direct(v2a_idx, a.zfo, out_a, v3b_idx).ok()?);
+    let v3c_fwd =
+        encoders::enc_v3_swap_compact(v3b_idx, b.zfo, b_swap_in, v3c_idx, &v3b_fwd).ok()?;
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, c.zfo, c_swap_in, SENTINEL_SELF, &v3c_fwd).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+fn derive_3hop_v3v2v2(
+    a: &V3HopInfo,
+    b: &V2HopInfo,
+    c: &V2HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v2b_idx = at.add(b.pool_address).ok()?;
+    let v2c_idx = at.add(c.pool_address).ok()?;
+    let v3a_idx = at.add(a.pool_address).ok()?;
+
+    // Both V2 hops (b, then terminal c) encode as V2_SWAP_CALC (swap from the
+    // delta actually delivered to the pool) rather than V2_SWAP_DIRECT exact-out
+    // — the V3 a-hop's output can deliver 1 wei less than the solver forward
+    // (CL twin/clamp), so an exact-out over-draws by 1 -> `UniswapV2: K`.
+    let mut a_fwd = encoders::enc_v2_swap_calc(v2b_idx, b.zfo, v2c_idx, b.fee);
+    a_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2c_idx,
+        c.zfo,
+        SENTINEL_SELF,
+        c.fee,
+    ));
+    a_fwd.extend_from_slice(
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, inputs.optimal_input).ok()?,
+    );
+    let commands =
+        encoders::enc_v3_swap_compact(v3a_idx, a.zfo, inputs.optimal_input, v2b_idx, &a_fwd)
+            .ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+fn derive_3hop_v3v2v3(
+    a: &V3HopInfo,
+    b: &V2HopInfo,
+    c: &V3HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let c_swap_in = cl_swap_in(inputs, 2)?;
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v2b_idx = at.add(b.pool_address).ok()?;
+    let v3a_idx = at.add(a.pool_address).ok()?;
+    let v3c_idx = at.add(c.pool_address).ok()?;
+
+    let mut v3a_fwd = encoders::enc_v2_swap_calc(v2b_idx, b.zfo, v3c_idx, b.fee);
+    v3a_fwd.extend_from_slice(
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, inputs.optimal_input).ok()?,
+    );
+    let v3c_fwd =
+        encoders::enc_v3_swap_compact(v3a_idx, a.zfo, inputs.optimal_input, v2b_idx, &v3a_fwd)
+            .ok()?;
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, c.zfo, c_swap_in, SENTINEL_SELF, &v3c_fwd).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+fn derive_3hop_v3v3v2(
+    a: &V3HopInfo,
+    b: &V3HopInfo,
+    c: &V2HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let b_swap_in = cl_swap_in(inputs, 1)?;
+    if !fits_int128(inputs.optimal_input) {
+        return None;
+    }
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v2c_idx = at.add(c.pool_address).ok()?;
+    let v3a_idx = at.add(a.pool_address).ok()?;
+
+    // Terminal V2 hop: swap from the USDT the V3 b-hop actually delivered to
+    // the pool (V2_SWAP_CALC), not the raw exact-out hop_outputs[2] — the CL
+    // b-hop output can be 1 wei below the solver forward (path-110302/182449).
+    let mut v3a_fwd = encoders::enc_v2_swap_calc(v2c_idx, c.zfo, SENTINEL_SELF, c.fee);
+    v3a_fwd.extend_from_slice(
+        &encoders::enc_erc20_transfer(SENTINEL_WETH, v3a_idx, inputs.optimal_input).ok()?,
+    );
+    let v3b_idx = at.add(b.pool_address).ok()?;
+    let v3b_fwd =
+        encoders::enc_v3_swap_compact(v3a_idx, a.zfo, inputs.optimal_input, v3b_idx, &v3a_fwd)
+            .ok()?;
+    let commands =
+        encoders::enc_v3_swap_compact(v3b_idx, b.zfo, b_swap_in, v2c_idx, &v3b_fwd).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+fn derive_3hop_v3v3v3(
+    a: &V3HopInfo,
+    b: &V3HopInfo,
+    c: &V3HopInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let b_swap_in = cl_swap_in(inputs, 1)?;
+    let c_swap_in = cl_swap_in(inputs, 2)?;
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v3a_idx = at.add(a.pool_address).ok()?;
+    let v3b_idx = at.add(b.pool_address).ok()?;
+    let v3c_idx = at.add(c.pool_address).ok()?;
+
+    let v3a_callback: Vec<u8> = Vec::new();
+    let v3b_callback =
+        encoders::enc_v3_swap_compact(v3a_idx, a.zfo, inputs.optimal_input, v3b_idx, &v3a_callback)
+            .ok()?;
+    let v3c_callback =
+        encoders::enc_v3_swap_compact(v3b_idx, b.zfo, b_swap_in, v3c_idx, &v3b_callback).ok()?;
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, c.zfo, c_swap_in, SENTINEL_SELF, &v3c_callback)
+            .ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
     Some(out)
 }
 

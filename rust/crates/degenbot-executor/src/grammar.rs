@@ -30,7 +30,7 @@ use alloy::primitives::U256;
 /// A concentrated-liquidity (V3/V4) hop's executable swap-in is the solver's
 /// clamped `consumed_inputs[i]`; a V2/Curve/Balancer/Solidly hop (no clamp)
 /// consumes its full prior output. Gated by the int128 guard.
-fn cl_swap_in(inputs: &ComposerInputs<'_>, i: usize) -> Option<u128> {
+pub(crate) fn cl_swap_in(inputs: &ComposerInputs<'_>, i: usize) -> Option<u128> {
     let v = *inputs.consumed_inputs.get(i)?;
     if !fits_int128(v) {
         return None;
@@ -39,7 +39,7 @@ fn cl_swap_in(inputs: &ComposerInputs<'_>, i: usize) -> Option<u128> {
 }
 
 /// The forward (output) currency of a V2 hop.
-fn v2_forward_addr(h: &V2HopInfo) -> alloy::primitives::Address {
+pub(crate) fn v2_forward_addr(h: &V2HopInfo) -> alloy::primitives::Address {
     if h.zfo {
         h.token1_address
     } else {
@@ -48,7 +48,7 @@ fn v2_forward_addr(h: &V2HopInfo) -> alloy::primitives::Address {
 }
 
 /// The forward (output) currency of a V3 hop.
-fn v3_forward_addr(h: &V3HopInfo) -> alloy::primitives::Address {
+pub(crate) fn v3_forward_addr(h: &V3HopInfo) -> alloy::primitives::Address {
     if h.zfo {
         h.token1_address
     } else {

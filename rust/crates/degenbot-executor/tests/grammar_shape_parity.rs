@@ -37,6 +37,12 @@ fn v2_pair(t0: Address, t1: Address, zfo: bool, fee: u16) -> HopInfo {
         zfo,
     })
 }
+
+/// A V2 pair with the default 0.3% fee (3-arg form, for homogeneous fn-pointer
+/// dispatch in the V2/V3-only 3-hop fold tests).
+fn v2_pair3(t0: Address, t1: Address, zfo: bool) -> HopInfo {
+    v2_pair(t0, t1, zfo, 30)
+}
 fn v3_pool(t0: Address, t1: Address, zfo: bool) -> HopInfo {
     HopInfo::V3(V3HopInfo {
         pool_address: address!("00000000000000000000000000000000000000bb"),
@@ -153,6 +159,40 @@ fn v3_v3_fold_is_live_and_stable_across_zfo_and_amounts() {
                 );
             }
         }
+    }
+}
+
+// ── V2/V3-only 3-hop folds (WAYDTL) ────────────────────────────────────────
+// The 7 previously-unfolded V2/V3-only 3-hop chains. Each is now emitted by
+// `derive_shape` (byte-faithful transcription); `run_family` asserts it is
+// live in every EncodeOptions mode and equals production (`encode_cmd_stream`,
+// whose `cutover` `debug_assert` re-derives against the hand-written adapter as
+// an independent oracle in dev builds), plus the 36-family runtime matrix.
+#[test]
+fn v2v3_only_3hop_folds_are_live_across_families() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9");
+    let families: Vec<(
+        &str,
+        fn(Address, Address, bool) -> HopInfo,
+        fn(Address, Address, bool) -> HopInfo,
+        fn(Address, Address, bool) -> HopInfo,
+    )> = vec![
+        ("v2_v2_v3", v2_pair3, v2_pair3, v3_pool),
+        ("v2_v3_v2", v2_pair3, v3_pool, v2_pair3),
+        ("v2_v3_v3", v2_pair3, v3_pool, v3_pool),
+        ("v3_v2_v2", v3_pool, v2_pair3, v2_pair3),
+        ("v3_v2_v3", v3_pool, v2_pair3, v3_pool),
+        ("v3_v3_v2", v3_pool, v3_pool, v2_pair3),
+        ("v3_v3_v3", v3_pool, v3_pool, v3_pool),
+    ];
+    for (name, fa, fb, fc) in families {
+        // A fixed 3-hop token chain (entry WETH → t → u → terminal WETH).
+        let hops = vec![fa(weth(), t, true), fb(t, u, true), fc(u, weth(), false)];
+        for amount in [1_000u128, 100_000, 10_000_000] {
+            run_family(hops.clone(), amount);
+        }
+        eprintln!("    folded {name} (parity, all modes)");
     }
 }
 
