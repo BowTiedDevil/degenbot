@@ -293,7 +293,7 @@ fn v3_v3(ha: &V3HopInfo, hb: &V3HopInfo, inputs: &ComposerInputs<'_>) -> Option<
 /// surfaces any divergence in dev builds. This lets the derivation be folded
 /// into production with zero risk of behavior change while the remaining
 /// families (V4 / 3-hop) are still on the bespoke path.
-fn cutover_2hop(
+fn cutover(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
     reference: impl FnOnce() -> Option<Vec<u8>>,
@@ -313,9 +313,12 @@ fn cutover_2hop(
     }
 }
 
-/// The generic 2/3-hop dispatcher. Routes to per-shape-class adapters; the
-/// V4-involving and remaining 3-hop classes are the quantified Facet A residual
-/// (added as more adapters — see `spike_grammar_gap_report.md`).
+/// The generic 2/3-hop dispatcher. Every arm routes through [`cutover`]:
+/// [`derive_shape`][crate::grammar_shape::derive_shape] is the production path
+/// for every class it handles (the V4 2/3-hop families and the V2/V3 2-hop
+/// folds), with the hand-written adapter kept as a backstop and a
+/// `debug_assert_eq` parity guard. Classes the derivation doesn't handle yet
+/// (e.g. the V2/V3-only 3-hop chains) fall back to the adapter unchanged.
 #[must_use]
 pub fn encode_grammar(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let hops = &path.hops;
@@ -326,99 +329,109 @@ pub fn encode_grammar(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Ve
     }
     match (hops.first(), hops.get(1), hops.get(2)) {
         (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
-            v2_v2_v2(a, b, c, inputs)
+            cutover(path, inputs, || v2_v2_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), None) => {
-            cutover_2hop(path, inputs, || v2_v3(a, b, inputs))
+            cutover(path, inputs, || v2_v3(a, b, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), None) => {
-            cutover_2hop(path, inputs, || v3_v2(a, b, inputs))
+            cutover(path, inputs, || v3_v2(a, b, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), None) => {
-            cutover_2hop(path, inputs, || v3_v3(a, b, inputs))
+            cutover(path, inputs, || v3_v3(a, b, inputs))
         }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => v4_v4(a, b, inputs),
-        (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => v4_v3(a, b, inputs),
-        (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => v3_v4(a, b, inputs),
-        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), None) => v4_v2(a, b, inputs),
-        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), None) => v2_v4(a, b, inputs),
+        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => {
+            cutover(path, inputs, || v4_v4(a, b, inputs))
+        }
+        (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => {
+            cutover(path, inputs, || v4_v3(a, b, inputs))
+        }
+        (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => {
+            cutover(path, inputs, || v3_v4(a, b, inputs))
+        }
+        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), None) => {
+            cutover(path, inputs, || v4_v2(a, b, inputs))
+        }
+        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), None) => {
+            cutover(path, inputs, || v2_v4(a, b, inputs))
+        }
         (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
-            v2_v2_v4(a, b, c, inputs)
+            cutover(path, inputs, || v2_v2_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
-            v2_v3_v4(a, b, c, inputs)
+            cutover(path, inputs, || v2_v3_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
-            v2_v4_v2(a, b, c, inputs)
+            cutover(path, inputs, || v2_v4_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V3(c))) => {
-            v2_v4_v3(a, b, c, inputs)
+            cutover(path, inputs, || v2_v4_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            v2_v4_v4(a, b, c, inputs)
+            cutover(path, inputs, || v2_v4_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
-            v3_v2_v4(a, b, c, inputs)
+            cutover(path, inputs, || v3_v2_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
-            v3_v3_v4(a, b, c, inputs)
+            cutover(path, inputs, || v3_v3_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
-            v3_v4_v2(a, b, c, inputs)
+            cutover(path, inputs, || v3_v4_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V3(c))) => {
-            v3_v4_v3(a, b, c, inputs)
+            cutover(path, inputs, || v3_v4_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            v3_v4_v4(a, b, c, inputs)
+            cutover(path, inputs, || v3_v4_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
-            v4_v2_v2(a, b, c, inputs)
+            cutover(path, inputs, || v4_v2_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
-            v4_v2_v3(a, b, c, inputs)
+            cutover(path, inputs, || v4_v2_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
-            v4_v2_v4(a, b, c, inputs)
+            cutover(path, inputs, || v4_v2_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
-            v4_v3_v2(a, b, c, inputs)
+            cutover(path, inputs, || v4_v3_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
-            v4_v3_v3(a, b, c, inputs)
+            cutover(path, inputs, || v4_v3_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
-            v4_v3_v4(a, b, c, inputs)
+            cutover(path, inputs, || v4_v3_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
-            v4_v4_v2(a, b, c, inputs)
+            cutover(path, inputs, || v4_v4_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V3(c))) => {
-            v4_v4_v3(a, b, c, inputs)
+            cutover(path, inputs, || v4_v4_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            v4_v4_v4(a, b, c, inputs)
+            cutover(path, inputs, || v4_v4_v4(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
-            v2_v2_v3(a, b, c, inputs)
+            cutover(path, inputs, || v2_v2_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
-            v2_v3_v2(a, b, c, inputs)
+            cutover(path, inputs, || v2_v3_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
-            v2_v3_v3(a, b, c, inputs)
+            cutover(path, inputs, || v2_v3_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
-            v3_v2_v2(a, b, c, inputs)
+            cutover(path, inputs, || v3_v2_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
-            v3_v2_v3(a, b, c, inputs)
+            cutover(path, inputs, || v3_v2_v3(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
-            v3_v3_v2(a, b, c, inputs)
+            cutover(path, inputs, || v3_v3_v2(a, b, c, inputs))
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
-            v3_v3_v3(a, b, c, inputs)
+            cutover(path, inputs, || v3_v3_v3(a, b, c, inputs))
         }
         _ => None, // residual: V4-involving combos
     }

@@ -371,6 +371,9 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 /// family) — `default` opts (no `V4_BATCH`, no `erc6909_profit`). Other V4 shapes
 /// (native bridges, non-WETH output, batch/mint) return `None` for now (later steps).
 fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     use crate::composers::{emit_currency_bridge, CurrencyBridge};
 
     let optimal_input = inputs.optimal_input;
@@ -483,6 +486,9 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 /// is settled (`V4_SETTLE_DELTA`), with a `WETH_WITHDRAW` when the V4 input is
 /// itself native.
 fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -580,6 +586,9 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
 /// V3's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) to seed it and
 /// settled directly (`V4_SETTLE_DELTA(native)`).
 fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -712,6 +721,9 @@ fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 /// transferred to the V2 pool (and the terminal V2 always uses `V2_SWAP_CALC`,
 /// never exact-out). A native V4 input is settled via `WETH_WITHDRAW`.
 fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     if forward_out == 0 {
@@ -813,6 +825,9 @@ fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -
 /// V2's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) and the V4
 /// input settled directly.
 fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
     let weth_out = *inputs.hop_outputs.get(1)?;
@@ -950,6 +965,11 @@ fn derive_3hop_v4v4v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     use crate::composers::{emit_currency_bridge, CurrencyBridge};
 
     let optimal_input = inputs.optimal_input;
@@ -1076,6 +1096,11 @@ fn derive_3hop_v4v2v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.first()?;
     if inputs.hop_outputs.contains(&0) {
@@ -1135,6 +1160,11 @@ fn derive_3hop_v2v2v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1197,6 +1227,11 @@ fn derive_3hop_v2v3v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     let out_c = *inputs.hop_outputs.get(2)?;
@@ -1267,6 +1302,11 @@ fn derive_3hop_v3v2v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_b = *inputs.hop_outputs.get(1)?;
     let out_c = *inputs.hop_outputs.get(2)?;
@@ -1332,6 +1372,11 @@ fn derive_3hop_v3v3v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1401,6 +1446,11 @@ fn derive_3hop_v2v4v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_b = *inputs.hop_outputs.get(1)?;
     let out_c = *inputs.hop_outputs.get(2)?;
@@ -1472,6 +1522,11 @@ fn derive_3hop_v2v4v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1543,6 +1598,11 @@ fn derive_3hop_v3v4v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1618,6 +1678,11 @@ fn derive_3hop_v3v4v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1692,6 +1757,11 @@ fn derive_3hop_v2v4v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1761,6 +1831,11 @@ fn derive_3hop_v3v4v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1833,6 +1908,11 @@ fn derive_3hop_v4v4v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_b = *inputs.hop_outputs.get(1)?;
     if inputs.hop_outputs.contains(&0) {
@@ -1905,6 +1985,11 @@ fn derive_3hop_v4v4v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     if inputs.hop_outputs.contains(&0) {
         return None;
@@ -1976,6 +2061,11 @@ fn derive_3hop_v4v2v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2047,6 +2137,11 @@ fn derive_3hop_v4v2v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2121,6 +2216,11 @@ fn derive_3hop_v4v3v2(
     c: &V2HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2193,6 +2293,11 @@ fn derive_3hop_v4v3v3(
     c: &V3HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
@@ -2255,6 +2360,11 @@ fn derive_3hop_v4v3v4(
     c: &V4HopInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
+    // This derivation only emits the `default` opts layout (no V4_BATCH,
+    // no erc6909_profit). For those modes fall back to the hand-written adapter.
+    if inputs.opts.use_v4_batch || inputs.opts.erc6909_profit {
+        return None;
+    }
     let optimal_input = inputs.optimal_input;
     let out_a = *inputs.hop_outputs.get(0)?;
     if inputs.hop_outputs.contains(&0) {
