@@ -97,6 +97,22 @@ to write" testable; fully-codified ordering lives per-protocol where nothing
 enforces it generically; fully-declarative mechanics cannot express the
 executor's imperative wiring.
 
+**What "derived" means here (clarified by `6ZIE5X`):** the deliverable is a
+**generic validator that proves ordering from declarative per-protocol facts**
+— *validation* from data, not necessarily *byte emission* from data. A family's
+byte stream may be produced by per-protocol **mechanics code** (a byte-proven
+transcription of the proven adapter), provided that code emits a `LedgerOp`
+trace of the declarative facts and the validator gates it. The `6YUNQN` spike
+*byte-derived* a V2/V3 2-hop slice from `ShapeClass` + `HopFacts` to prove
+feasibility; that byte-derivation is **not** mandated for every family. What
+is mandated is: (1) each per-protocol emitter emits the `LedgerOp` facts for
+its stream, and (2) the validator is the matrix-enforced gate that makes the
+invariants (credit-before-debit, terminal-V2 pre-fund-then-`V2_SWAP_CALC`)
+unrepresentable for every (protocol × funding × capture × bribe) combination.
+Language describing the V4 / 3-hop emitters as "derived" is to be read as
+"byte-proven transcription, ordering proven by the validator over facts," not
+as data-driven byte synthesis.
+
 ### D5 — The runtime matrix is the source of truth; byte-parity is a cross-check.
 
 Correctness is judged by **actual execution through the on-chain contract**:
@@ -106,7 +122,10 @@ implementation detail **handled by the encoder methods the matrix calls**, so a
 future executor revision (new commands, new byte layout) is absorbed by those
 methods without re-validating bytes. Byte-parity is demoted to a weak "matches
 the current reference" check that the matrix may override (the reference corpus
-may itself contain latent bugs).
+may itself contain latent bugs). **The matrix also runs every emitted stream's
+`LedgerOp` trace through the ledger validator** (D4) and asserts the ordering
+invariants hold — this is the gate that makes credit-before-debit and
+terminal-V2 pre-fund unrepresentable, not merely spot-tested.
 
 ### D6 — Scope and additive-proof boundary.
 
@@ -120,6 +139,20 @@ integration, which is a separate epic including `cmd_executor` primitive work.
 `2PT5HH` (the 1-wei terminal-V2 fix) is **subsumed**: the "terminal V2 is
 pre-funded-then-`V2_SWAP_CALC`" rule becomes an encoded ledger invariant fixed
 once for all affected families.
+
+**Additive, not grafted (clarified by `6ZIE5X`):** a new protocol composes as
+**one or more axis values** — a new `Ledger`/`FundingSource`/`ProfitCapture`
+value + a per-protocol mechanics impl + its own declarative facts (+ new
+`cmd_executor` primitives / `LedgerOp` variants only where the math is
+genuinely different). Some per-protocol complexity is expected and bounded to
+**that protocol's layer**. The additive proof is demonstrated on a
+**representative row** (one new value × one existing protocol) that executes
+against a stub and passes the validator — **never** by grafting the new pool
+into every slot of the existing 2-or-3-hop matrix. The combinatorial explosion
+of (new protocol × every position × every neighbor × funding × capture) cells
+is the bespoke-adapter disease this epic kills; the additive proof must not
+rebuild it. Bounded per-protocol complexity in exchange for zero cross-matrix
+fan-out is the intended trade.
 
 ## Considered options
 

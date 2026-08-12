@@ -24,6 +24,20 @@
 //! **terminal-V2 pre-fund rule** (`2PT5HH`). Pure-V4 (PM-ledger + `V4_TAKE`
 //! coupling + native bridges) is the harder residual for `WAYDTL` — the spike
 //! reports that boundary honestly rather than pretending to span it.
+//!
+//! ---
+//! **Status of the V4 / 3-hop families below (clarified by `6ZIE5X`, see ADR-029
+//! D4 "What 'derived' means here"):** the `derive_2hop_v4*` and `derive_3hop_*`
+//! functions are **byte-proven transcriptions** of the hand-written adapters —
+//! *not* data-driven byte synthesis from `ShapeClass`/`HopFacts`. Only the V2/V3
+//! 2-hop slice (`derive_2hop`) is genuinely `ShapeClass`-driven.
+//! ADR-029 D4 does **not** require byte-derivation for every family: the
+//! deliverable is a **generic validator proving ordering from declarative facts**
+//! (D5), with emitters as per-protocol mechanics code. Each `derive_*` is the
+//! sole production emitter for its family (the hand-written adapter exists only
+//! as a `cutover` `debug_assert_eq!` backstop, to be retired by `WAYDTL`); the
+//! next foundational step is to emit a `LedgerOp` trace from each and gate it on
+//! [`crate::grammar_ledger::LedgerValidator`].
 
 use alloy::primitives::{Address, U256};
 
