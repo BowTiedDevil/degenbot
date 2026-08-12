@@ -331,3 +331,28 @@ fn v4_v2_v2_parity() {
         100_000,
     );
 }
+
+/// V4-trailing: v2_v2_v4 and v2_v3_v4. Byte-parity vs hand-written.
+#[test]
+fn v4_trailing_v2_lead_parity() {
+    let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    // v2_v2_v4: W -> t -> u -> W through V4's trailing pool.
+    run_family(
+        vec![
+            v2_pair(weth(), t, true, 30),
+            v2_pair(t, u, true, 30),
+            v4_pair(u, weth(), true),
+        ],
+        100_000,
+    );
+    // v2_v3_v4: W -> t -> u -> W (V2, then V3, then trailing V4).
+    run_family(
+        vec![
+            v2_pair(weth(), t, true, 30),
+            v3_pool(t, u, true),
+            v4_pair(u, weth(), true),
+        ],
+        100_000,
+    );
+}
