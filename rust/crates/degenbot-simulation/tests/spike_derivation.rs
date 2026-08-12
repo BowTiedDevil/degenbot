@@ -1654,3 +1654,194 @@ fn derived_v4v4v3_executes_with_exact_delta() {
         .unwrap_or_else(|e| panic!("run: {e}"));
     assert_profitable(&result, 3, "v4_v4_v3");
 }
+
+fn run_v4lead(
+    h: &mut Harness,
+    tail_kind: &str,
+    tail_zfo: bool,
+    reserve3: u64,
+    name: &str,
+) -> Vec<Hop> {
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let mut hops = vec![Hop {
+        src: h.weth,
+        dst: t1,
+        pool: HopPool::V4(
+            h.add_v4_pool(
+                h.weth,
+                t1,
+                3000,
+                60,
+                sqrt_x(1),
+                liq(),
+                1_000_000_000_000,
+                1_000_000_000_000,
+            )
+            .unwrap(),
+        ),
+    }];
+    match tail_kind {
+        "v2" => hops.push(Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V2(
+                h.add_pool(t1, t2, 1_000_000_000_000, 1_000_000_000_000)
+                    .unwrap(),
+            ),
+        }),
+        "v3" => hops.push(Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V3(
+                h.add_v3_pool(
+                    t1,
+                    t2,
+                    3000,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        }),
+        _ => unreachable!(),
+    }
+    let _ = tail_zfo;
+    let _ = reserve3;
+    let _ = name;
+    hops
+}
+fn assert_derived_executes(h: &mut Harness, hops: Vec<Hop>, name: &str) {
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, consumed) = h.path_and_amounts(&hops, optimal_input);
+    let inputs = ComposerInputs {
+        executor_address: h.executor,
+        pool_manager_address: h.pool_manager,
+        weth_address: h.weth,
+        optimal_input,
+        hop_outputs: &hop_outputs,
+        consumed_inputs: &consumed,
+        opts: EncodeOptions::default(),
+    };
+    let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
+        .unwrap_or_else(|| panic!("derive {name} None"));
+    let reference = h
+        .encode_path(&path, optimal_input, &hop_outputs)
+        .unwrap_or_else(|e| panic!("encode: {e}"));
+    assert_eq!(derived, reference, "{name} derived != hand-written");
+    let result = h
+        .run_raw_payload(&hops, &derived, optimal_input, 40_000_000)
+        .unwrap_or_else(|e| panic!("run: {e}"));
+    assert_profitable(&result, 3, name);
+}
+#[test]
+fn derived_v4v2v3_executes() {
+    let mut h = Harness::new().unwrap();
+    let mut hops = run_v4lead(&mut h, "v2", true, 0, "");
+    let t2 = hops[1].dst;
+    hops.push(Hop {
+        src: t2,
+        dst: h.weth,
+        pool: HopPool::V3(
+            h.add_v3_pool(
+                t2,
+                h.weth,
+                3000,
+                sqrt_x(3),
+                liq(),
+                1_000_000_000_000,
+                1_000_000_000_000,
+            )
+            .unwrap(),
+        ),
+    });
+    assert_derived_executes(&mut h, hops, "v4_v2_v3");
+}
+#[test]
+fn derived_v4v2v4_executes() {
+    let mut h = Harness::new().unwrap();
+    let mut hops = run_v4lead(&mut h, "v2", true, 0, "");
+    let t2 = hops[1].dst;
+    hops.push(Hop {
+        src: t2,
+        dst: h.weth,
+        pool: HopPool::V4(
+            h.add_v4_pool(
+                t2,
+                h.weth,
+                3000,
+                60,
+                sqrt_x(3),
+                liq(),
+                1_000_000_000_000,
+                1_000_000_000_000,
+            )
+            .unwrap(),
+        ),
+    });
+    assert_derived_executes(&mut h, hops, "v4_v2_v4");
+}
+#[test]
+fn derived_v4v3v2_executes() {
+    let mut h = Harness::new().unwrap();
+    let mut hops = run_v4lead(&mut h, "v3", true, 0, "");
+    let t2 = hops[1].dst;
+    hops.push(Hop {
+        src: t2,
+        dst: h.weth,
+        pool: HopPool::V2(
+            h.add_pool(t2, h.weth, 1_000_000_000_000, 3_000_000_000_000)
+                .unwrap(),
+        ),
+    });
+    assert_derived_executes(&mut h, hops, "v4_v3_v2");
+}
+#[test]
+fn derived_v4v3v3_executes() {
+    let mut h = Harness::new().unwrap();
+    let mut hops = run_v4lead(&mut h, "v3", true, 0, "");
+    let t2 = hops[1].dst;
+    hops.push(Hop {
+        src: t2,
+        dst: h.weth,
+        pool: HopPool::V3(
+            h.add_v3_pool(
+                t2,
+                h.weth,
+                3000,
+                sqrt_x(3),
+                liq(),
+                1_000_000_000_000,
+                1_000_000_000_000,
+            )
+            .unwrap(),
+        ),
+    });
+    assert_derived_executes(&mut h, hops, "v4_v3_v3");
+}
+#[test]
+fn derived_v4v3v4_executes() {
+    let mut h = Harness::new().unwrap();
+    let mut hops = run_v4lead(&mut h, "v3", true, 0, "");
+    let t2 = hops[1].dst;
+    hops.push(Hop {
+        src: t2,
+        dst: h.weth,
+        pool: HopPool::V4(
+            h.add_v4_pool(
+                t2,
+                h.weth,
+                3000,
+                60,
+                sqrt_x(3),
+                liq(),
+                1_000_000_000_000,
+                1_000_000_000_000,
+            )
+            .unwrap(),
+        ),
+    });
+    assert_derived_executes(&mut h, hops, "v4_v3_v4");
+}
