@@ -418,17 +418,40 @@ pub struct EncodedCall {
 }
 
 /// Build the `execute(bytes,uint256)` `config` uint256 matching an
-/// [`EncodeOptions`] (EYUWFG wiring): `erc6909_profit` selects `check_mode=2`
-/// (ERC6909 WETH — the pure-V4 profit is minted as an ERC6909 claim and the
-/// executor settles/verifies via `PM.balanceOf(self, weth_id)`), otherwise
-/// `check_mode=0` (skip the in-stream profit check). `expected_value` (the
-/// operator's pre-tx balance) and bribe fields are forwarded unchanged; use
-/// [`encoders::pack_config`] directly when you need to derive them.
+/// [`EncodeOptions`] (the axis-aware config builder, WE45KC). Reads the full
+/// per-path axis set:
+///   - `capture` → `check_mode`: `Erc6909` = 2 (verify via PM.balanceOf),
+///     `Custody`/`Native`/`Owner`/`BalancerVault` = 0 (skip the on-chain profit
+///     check). Resolved through [`resolve_axes`] so the legacy `erc6909_profit`
+///     bool is collapsed into `capture` (backwards-compatible: `erc6909_profit: true`
+///     forces `Erc6909`).
+///   - `bribe` → `bribe_bips` + `bribe_recipient_idx`: `None` = (0, 0) (no bribe);
+///     `Some{bips, recipient_idx}` is forwarded (recipient_idx 0 = block.coinbase).
+///   - `expected_value` is forwarded unchanged (the operator's pre-tx balance,
+///     used by check_mode=1/2 profit verification; `U256::ZERO` skips the
+///     `assert combined_after >= expected_value` check).
+///
+/// This is the single axis-aware config builder; production still uses a
+/// hardcoded `EXECUTE_CONFIG = ZERO` constant (a separate strategy-layer fork
+/// to migrate), but tests use this to prove the axis→config→contract path.
 #[must_use]
 pub fn config_for_options(opts: EncodeOptions, expected_value: U256) -> U256 {
-    let check_mode = if opts.erc6909_profit { 2u8 } else { 0u8 };
-    crate::encoders::pack_config(check_mode, expected_value, 0, 0)
-        .expect("check_mode 0/2 is always in range")
+    let (_, capture, bribe) = resolve_axes(opts);
+    let check_mode = match capture {
+        crate::grammar_ledger::ProfitCapture::Erc6909 => 2u8,
+        _ => 0u8,
+    };
+    let (bribe_bips, bribe_recipient_idx) = match bribe {
+        crate::grammar_ledger::Bribe::None => (0u16, 0u8),
+        crate::grammar_ledger::Bribe::Some {
+            bips,
+            recipient_idx,
+        } => (bips, recipient_idx),
+    };
+    crate::encoders::pack_config(check_mode, expected_value, bribe_bips, bribe_recipient_idx)
+        .expect(
+        "check_mode 0/2 in range; bribe_bips<=10000 and recipient_idx<32 validated by pack_config",
+    )
 }
 
 /// Wrap a command-stream `commands` payload in the `execute(bytes, uint256)`
@@ -898,4 +921,105 @@ fn resolve_axes_funding_passes_through() {
         };
         assert_eq!(resolve_axes(opts).0, funding);
     }
+}
+
+// ── WE45KC: config_for_options axis→config mapping ───────────────────
+
+#[test]
+fn config_for_options_default_is_zero() {
+    // Default (Custody, no bribe, expected_value=0) → config = 0.
+    assert_eq!(
+        config_for_options(EncodeOptions::default(), U256::ZERO),
+        U256::ZERO
+    );
+}
+
+#[test]
+fn config_for_options_capture_erc6909_sets_check_mode_2() {
+    let opts = EncodeOptions {
+        capture: crate::grammar_ledger::ProfitCapture::Erc6909,
+        ..Default::default()
+    };
+    let cfg = config_for_options(opts, U256::ZERO);
+    assert_eq!(
+        cfg & U256::from(255u64),
+        U256::from(2u64),
+        "Erc6909 → check_mode=2"
+    );
+}
+
+#[test]
+fn config_for_options_capture_native_is_check_mode_0() {
+    // Native capture: the profit is WETH-withdrawn in-stream; no on-chain
+    // profit check needed (check_mode=0). This is why Native capture works
+    // in production with EXECUTE_CONFIG=ZERO.
+    let opts = EncodeOptions {
+        capture: crate::grammar_ledger::ProfitCapture::Native,
+        ..Default::default()
+    };
+    let cfg = config_for_options(opts, U256::ZERO);
+    assert_eq!(
+        cfg & U256::from(255u64),
+        U256::ZERO,
+        "Native → check_mode=0"
+    );
+}
+
+#[test]
+fn config_for_options_legacy_erc6909_bool_forces_check_mode_2() {
+    // Backwards-compat: the legacy `erc6909_profit: true` bool forces
+    // Erc6909 (via resolve_axes precedence) → check_mode=2.
+    let opts = EncodeOptions {
+        erc6909_profit: true,
+        capture: crate::grammar_ledger::ProfitCapture::Custody, // overridden
+        ..Default::default()
+    };
+    let cfg = config_for_options(opts, U256::ZERO);
+    assert_eq!(
+        cfg & U256::from(255u64),
+        U256::from(2u64),
+        "legacy bool forces check_mode=2"
+    );
+}
+
+#[test]
+fn config_for_options_bribe_packs_bips_and_recipient() {
+    let opts = EncodeOptions {
+        bribe: crate::grammar_ledger::Bribe::Some {
+            bips: 500,
+            recipient_idx: 3,
+        },
+        ..Default::default()
+    };
+    let cfg = config_for_options(opts, U256::ZERO);
+    // bits 8-23: bribe_bips = 500
+    assert_eq!((cfg >> 8) & U256::from(65535u64), U256::from(500u64));
+    // bits 24-31: bribe_recipient_idx = 3
+    assert_eq!((cfg >> 24) & U256::from(255u64), U256::from(3u64));
+}
+
+#[test]
+fn config_for_options_expected_value_lands_in_high_bits() {
+    let ev = U256::from(0xBEEFu64);
+    let cfg = config_for_options(EncodeOptions::default(), ev);
+    assert_eq!(cfg >> 32, ev, "expected_value in bits 32+");
+}
+
+#[test]
+fn config_for_options_combines_all_axes() {
+    // Erc6909 check + 5% bribe to coinbase + expected_value.
+    let opts = EncodeOptions {
+        capture: crate::grammar_ledger::ProfitCapture::Erc6909,
+        bribe: crate::grammar_ledger::Bribe::Some {
+            bips: 500,
+            recipient_idx: 0,
+        },
+        ..Default::default()
+    };
+    let ev = U256::from(1_000_000u64);
+    let cfg = config_for_options(opts, ev);
+    assert_eq!(cfg & U256::from(255u64), U256::from(2u64)); // check_mode=2
+    assert_eq!((cfg >> 8) & U256::from(65535u64), U256::from(500u64)); // bips
+    assert_eq!((cfg >> 24) & U256::from(255u64), U256::ZERO); // recipient=0 (coinbase)
+    assert_eq!(cfg >> 32, ev); // expected_value
 }

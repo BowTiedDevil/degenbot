@@ -3646,3 +3646,69 @@ fn all_v2_in_path_flash_pays_builder_bribe_from_profit() {
         "── all_v2 bribe (runtime): no-bribe delta={delta_nobribe}, bribe delta={delta_bribe}, bribe paid~= {bribe}"
     );
 }
+
+/// WE45KC: the full axis→config→contract path. `EncodeOptions { bribe }`
+/// → `config_for_options` (the axis-aware builder) → the packed `config` →
+/// the contract pays the builder bribe. Proves the axis layer isn't just
+/// modeled — it reaches the on-chain `execute()` config and pays.
+#[test]
+fn config_for_options_bribe_axis_reaches_contract_and_pays() {
+    use degenbot_executor::composers::config_for_options;
+    use degenbot_executor::grammar_ledger::{Bribe, ProfitCapture};
+
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let weth = h.weth;
+    let r: u128 = 1_000_000_000_000;
+    let hops = vec![
+        Hop {
+            src: weth,
+            dst: t,
+            pool: HopPool::V2(h.add_pool(weth, t, r, r * 3).unwrap()),
+        },
+        Hop {
+            src: t,
+            dst: weth,
+            pool: HopPool::V2(h.add_pool(t, weth, r, r * 3).unwrap()),
+        },
+    ];
+    let optimal_input = 100_000u128;
+    let (path, hop_outputs, _consumed) = h.path_and_amounts(&hops, optimal_input);
+    let predicted_profit = *hop_outputs.last().unwrap() as i128 - optimal_input as i128;
+    let tol = (predicted_profit.abs() / 1000).max(64);
+
+    let opts = EncodeOptions {
+        capture: ProfitCapture::Custody,
+        bribe: Bribe::Some {
+            bips: 500,
+            recipient_idx: 0,
+        }, // 5% to coinbase
+        ..Default::default()
+    };
+    let payload = h
+        .encode_path_with_opts(&path, optimal_input, &hop_outputs, opts)
+        .expect("flash all-V2 must encode");
+    // The axis-aware builder produces the packed config (check_mode=0, bips=500).
+    let config = config_for_options(opts, U256::ZERO);
+    assert_eq!((config >> 8) & U256::from(65535u64), U256::from(500u64));
+
+    // Fund WETH with ETH so the executor's WETH.withdraw can cover the bribe.
+    h.set_native_balance(weth, U256::from(1_000_000_000_000_000_000u128));
+    let weth_before = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let outcome = h
+        .execute_payload_config(&payload, 8_000_000, config)
+        .unwrap();
+    assert!(
+        outcome.executed(2),
+        "bribe (via config_for_options) must execute: {outcome:?}"
+    );
+    let weth_after = h.balance_of(weth, h.executor).unwrap().to::<u128>() as i128;
+    let delta = weth_after - weth_before;
+    let bribe = predicted_profit / 20;
+    let expected = predicted_profit - bribe;
+    assert!(
+        (delta - expected).abs() <= tol,
+        "bribe WETH delta {delta} != profit-bribe {expected} (predicted={predicted_profit}, bribe={bribe}, tol {tol})"
+    );
+    println!("── config_for_options bribe axis (runtime): delta={delta}, bribe paid ~= {bribe}");
+}
