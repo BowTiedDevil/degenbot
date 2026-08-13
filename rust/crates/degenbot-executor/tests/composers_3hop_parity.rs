@@ -945,7 +945,7 @@ fn parity_v3_v2_v4() {
             HopInfo::V2(V2HopInfo {
                 pool_address: address!("2222222222222222222222222222222222222222"),
                 token0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
-                token1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                token1_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"), // b fwd (t1) = WBTC
                 fee: 30u16,
                 zfo: true,
             }),
@@ -953,8 +953,8 @@ fn parity_v3_v2_v4() {
                 pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
-                currency0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                currency1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                currency0_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"), // tail input = WBTC
+                currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // tail output = WETH
                 fee: 500u32,
                 tick_spacing: 10i32,
                 hook_address: address!("0000000000000000000000000000000000000000"),
@@ -985,9 +985,10 @@ fn parity_v3_v2_v4() {
     let v2b_idx = at
         .add(address!("2222222222222222222222222222222222222222"))
         .unwrap(); // 1
-    let forward_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (hb forward = token1 = WETH)
-    let c0_c_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
-    let c1_c_idx = at.add(USDC).unwrap(); // 2
+    let wbtc = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    let forward_b_idx = at.add(wbtc).unwrap(); // hb fwd (t1) = WBTC
+    let c0_c_idx = at.add(wbtc).unwrap(); // tail input = WBTC
+    let c1_c_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (tail output)
     let mut v4_inner = Vec::new();
     v4_inner.extend_from_slice(
         &encoders::enc_v4_swap_compact(
@@ -1198,7 +1199,7 @@ fn parity_v3_v3_v4() {
             HopInfo::V3(V3HopInfo {
                 pool_address: address!("5555555555555555555555555555555555555555"),
                 token0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
-                token1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                token1_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"), // b fwd = WBTC
                 fee: 500u32,
                 zfo: true,
             }),
@@ -1206,8 +1207,8 @@ fn parity_v3_v3_v4() {
                 pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
-                currency0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                currency1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                currency0_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"), // tail input = WBTC
+                currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // tail output = WETH
                 fee: 3000u32,
                 tick_spacing: 60i32,
                 hook_address: address!("0000000000000000000000000000000000000000"),
@@ -1215,7 +1216,12 @@ fn parity_v3_v3_v4() {
             }),
         ]),
         1000000000000000000u128,
-        &[2000000000u128, 2001000000000000000u128, 2001000000u128],
+        // Terminal WETH profit > optimal_input (the V4 take repays optimal).
+        &[
+            2000000000u128,
+            2001000000000000000u128,
+            2001000000000000001u128,
+        ],
         &[
             1000000000000000000u128,
             1_999_999_999u128,
@@ -1241,9 +1247,10 @@ fn parity_v3_v3_v4() {
     let v3b_idx = at
         .add(address!("5555555555555555555555555555555555555555"))
         .unwrap(); // 1
-    let forward_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (hb forward = token1 = WETH)
-    let c0_c_idx = at.add(WETH).unwrap(); // SENTINEL_WETH
-    let c1_c_idx = at.add(USDC).unwrap(); // 2
+    let wbtc = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    let forward_b_idx = at.add(wbtc).unwrap(); // hb fwd (t1) = WBTC
+    let c0_c_idx = at.add(wbtc).unwrap(); // tail input = WBTC
+    let c1_c_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (tail output)
     let mut v4_inner = Vec::new();
     v4_inner.extend_from_slice(&encoders::enc_v4_settle());
     v4_inner.extend_from_slice(

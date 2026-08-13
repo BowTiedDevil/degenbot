@@ -76,24 +76,6 @@ fn v2_hop(t0: Address, t1: Address, zfo: bool) -> V2HopInfo {
     }
 }
 
-fn assert_encodes(hops: Vec<HopInfo>, label: &str) {
-    let path = PathInfo::new(hops);
-    let out = encode_cmd_3_hop(
-        &path,
-        1_000_000_000_000_000u128,
-        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
-        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
-        EXECUTOR,
-        PM,
-        WETH,
-        EncodeOptions::default(),
-    );
-    assert!(
-        out.is_some(),
-        "{label}: native path-ends should encode, got None"
-    );
-}
-
 /// V4-V2-V3 with native at path ends (V4a input + V3c output is WETH-bearing
 /// — but here both ends are native-ETH via V4/V3's native/WETH representations).
 ///
@@ -133,17 +115,31 @@ fn native_v4_v2_v3_path_starts_declines() {
 
 /// V3-V2-V4 with native at path ends.
 /// Hop A (V3): WETH→USDC (WETH = native-side ERC20 stand-in at path start).
-/// Hop B (V2): USDC→WBTC.
-/// Hop C (V4): WBTC→NATIVE (native output at path end).
+/// **Root Cause B**: the `v3_v2_v4` stream's profit-take is hardcoded to
+/// `V4_TAKE_COMPACT(WETH→SELF, out_c)` — a V4 terminal that outputs a native
+/// token (WETH twin here) is not expressible (the take would draw WETH the PM
+/// never received). The Plan+validator correctly declines; WETH-output
+/// terminals are the coherent subspace.
 #[test]
-fn native_v3_v2_v4_path_ends_encodes() {
+fn native_v3_v2_v4_path_ends_declines() {
     let a = v3_hop(WETH, USDC, true);
     let b = v2_hop(USDC, WBTC, true);
     // C: WBTC/NATIVE, zfo=true (in=WBTC, out=native)
     let c = v4_hop_c(WBTC, NATIVE, true);
-    assert_encodes(
-        vec![HopInfo::V3(a), HopInfo::V2(b), HopInfo::V4(c)],
-        "V3-V2-V4",
+    let path = PathInfo::new(vec![HopInfo::V3(a), HopInfo::V2(b), HopInfo::V4(c)]);
+    let out = encode_cmd_3_hop(
+        &path,
+        1_000_000_000_000_000u128,
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        EXECUTOR,
+        PM,
+        WETH,
+        EncodeOptions::default(),
+    );
+    assert!(
+        out.is_none(),
+        "V3-V2-V4 with native-output terminal must decline (WETH profit-take unsupported), got {out:?}"
     );
 }
 
@@ -186,22 +182,31 @@ fn native_v4_v2_v2_path_starts_declines() {
 /// Hop B (V4): USDC→NATIVE.
 /// Hop C (V2): NATIVE-side... (V2 can't hold native, so this shape is only
 /// well-formed if the V4↔V2 boundary token is WETH on the V2 side — which
-/// is the boundary-bridge case, NOT path-ends. This test documents that the
-/// composer accepts the WETH-twin shape; the genuine native-bridge is a
-/// separate gap.)
+/// **Root Cause B**: the `v2_v4_v2` stream repays the terminal V2 flash (`c`)
+/// by taking b's forward (WETH here) straight to `v2c` — but the terminal V2
+/// flash's own debt is in its INPUT currency (USDC), so the WETH take does not
+/// settle it (a currency-mismatched shape the lazy emitter over-covered; the
+/// WETH-twin boundary is genuinely not expressible). Declined by the
+/// Plan+validator.
 #[test]
-fn weth_twin_v2_v4_v2_encodes() {
+fn weth_twin_v2_v4_v2_declines() {
     // A (V2): WETH→USDC, zfo=true
     let a = v2_hop(WETH, USDC, true);
-    // B (V4): USDC→WETH (WETH twin, not native), zfo=false (in=c1=USDC? no)
-    //   c0=USDC, c1=WETH, zfo=false → in=c1=WETH, out=c0=USDC. Wrong dir.
-    //   Want: in=USDC, out=WETH. c0=USDC,c1=WETH,zfo=true → in=c0=USDC,out=c1=WETH. ✓
     let b = v4_hop_c(USDC, WETH, true);
-    // C (V2): WETH→USDC? No — cycle must close: A out=USDC, so C out must be
-    // WETH (A's input). C: WETH/USDC zfo=false → in=USDC, out=WETH. ✓
     let c = v2_hop(WETH, USDC, false);
-    assert_encodes(
-        vec![HopInfo::V2(a), HopInfo::V4(b), HopInfo::V2(c)],
-        "V2-V4-V2 (WETH twin)",
+    let path = PathInfo::new(vec![HopInfo::V2(a), HopInfo::V4(b), HopInfo::V2(c)]);
+    let out = encode_cmd_3_hop(
+        &path,
+        1_000_000_000_000_000u128,
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        EXECUTOR,
+        PM,
+        WETH,
+        EncodeOptions::default(),
+    );
+    assert!(
+        out.is_none(),
+        "V2-V4-V2 WETH-twin must decline (terminal-flash take-repay currency mismatch), got {out:?}"
     );
 }
