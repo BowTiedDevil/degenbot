@@ -166,9 +166,13 @@ pub enum LedgerOp {
     /// `rcp` (the profit capture). Debits whatever credit `PM[cur]` holds
     /// (amount is runtime state — the current balance). Requires `PM[cur] > 0`
     /// immediately before (the D0 credit-before-debit rule on the PM ledger).
+    /// When the recipient is a V2 pool (`seeds_pool`), the taken credit seeds
+    /// that pool's `H[pool]` (the 2PT5HH rule across a V4→V2 boundary — e.g.
+    /// the `v3_v4_v2` family).
     V4TakeDelta {
         currency: Address,
         recipient_idx: u8,
+        seeds_pool: Option<Address>,
     },
     /// `V4_UNLOCK` callback end — the master V4 invariant: every touched
     /// `PM[currency]` must net to zero by callback end
@@ -187,6 +191,13 @@ pub enum LedgerOp {
         amount_in: u128,
         out_currency: Address,
         out_amount: u128,
+        /// Where the swap's computed output goes (drives the downstream seed /
+        /// credit). [`SwapRecipient::Executor`] credits the executor (the 2-hop
+        /// terminal behavior, byte-identical); [`SwapRecipient::Pool`] seeds
+        /// that pool's `H[pool]` (a mid-chain calculator paying the next pool);
+        /// [`SwapRecipient::PoolManager`] pays into the PM (the following
+        /// `V4Settle`/net-zero accounts it) — no executor credit.
+        recipient: SwapRecipient,
     },
     // ── POC (6SRC23): V2/V3 flash-credit chain for `v2_v3` (ADR-029 D4/D5). ──
     /// A `V2_SWAP_COMPACT` flash: the pool extends `out_currency` credit to the
@@ -292,6 +303,23 @@ pub enum LedgerOp {
         /// The amount repaid.
         amount: u128,
     },
+}
+
+/// Where a V2 `SWAP_CALC` / `SWAP_DIRECT` computed output goes.
+///
+/// [`SwapRecipient::Executor`] credits the executor (the 2-hop terminal behavior —
+/// byte-identical precedent). [`SwapRecipient::Pool`] seeds that pool's
+/// `H[pool]` (the mid-chain handoff — the donor's seed is consumed, the output
+/// seeds the next pool). [`SwapRecipient::PoolManager`] pays into the PM (the
+/// following `V4Settle` / net-zero accounts it) — no executor credit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SwapRecipient {
+    /// The swap's output credits the executor.
+    Executor,
+    /// The swap's output seeds this pool's pair-handoff.
+    Pool(Address),
+    /// The swap's output pays into the PoolManager (PM-pay-in leg).
+    PoolManager,
 }
 
 /// A `V4_SWAP` term op returned by the proto-trace builder — kept separate from
@@ -676,6 +704,7 @@ impl LedgerValidator {
             LedgerOp::V4TakeDelta {
                 currency,
                 recipient_idx,
+                seeds_pool,
             } => {
                 let amount = self.pm.take_delta(currency)?;
                 if recipient_idx == SENTINEL_SELF {
@@ -684,6 +713,12 @@ impl LedgerValidator {
                     } else {
                         self.erc20.credit(currency, amount);
                     }
+                } else if let Some(pool) = seeds_pool {
+                    // The take hands the credit directly to a V2 pool (PM→pool
+                    // — the 2PT5HH terminal-V2 rule across the V4 boundary):
+                    // seed its pair-handoff so a following `V2SwapCalc` sees it.
+                    let h = *self.pair.get(&pool).unwrap_or(&0);
+                    self.pair.insert(pool, h + amount);
                 }
                 Ok(())
             }
@@ -704,17 +739,30 @@ impl LedgerValidator {
                 pool,
                 out_currency,
                 out_amount,
+                recipient,
                 ..
             } => {
                 let have = *self.pair.get(&pool).unwrap_or(&0);
                 if have == 0 {
                     return Err(ValidationError::SwapCalcBeforeCredit { pool });
                 }
-                // The pool's seeded excess is consumed by the swap, and the
-                // swap's computed output is credited to the executor (option B:
-                // swaps credit their output so the executor ledger fully accounts).
+                // The pool's seeded excess is consumed by the swap. Where the
+                // output goes is recipient-driven: SELF credits the executor
+                // (option B: swaps credit their output so the executor ledger
+                // fully accounts); a Pool seeds the recipient's H[pool] (the
+                // mid-chain handoff); the PM pays into the PM (the following
+                // V4Settle/net-zero accounts it, no executor credit).
                 self.pair.insert(pool, have - 1);
-                self.erc20.credit(out_currency, out_amount);
+                match recipient {
+                    SwapRecipient::Executor => {
+                        self.erc20.credit(out_currency, out_amount);
+                    }
+                    SwapRecipient::Pool(p) => {
+                        let h = *self.pair.get(&p).unwrap_or(&0);
+                        self.pair.insert(p, h + out_amount);
+                    }
+                    SwapRecipient::PoolManager => {}
+                }
                 Ok(())
             }
             // POC (6SRC23): V2/V3 flash swaps — term ops extending executor
@@ -1057,6 +1105,7 @@ mod tests {
                 amount_in: 10_000,
                 out_currency: weth(),
                 out_amount: 0,
+                recipient: SwapRecipient::Executor,
             }),
             Err(ValidationError::SwapCalcBeforeCredit { pool: pool() })
         );
@@ -1077,6 +1126,7 @@ mod tests {
                 amount_in: 10_000,
                 out_currency: weth(),
                 out_amount: 0,
+                recipient: SwapRecipient::Executor,
             })
             .is_ok());
     }
@@ -1358,6 +1408,7 @@ mod tests {
             amount_in: 0,
             out_currency: weth(),
             out_amount: 120_000,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         // Boundary-seed: pay WETH into the PM from the V2 output, settle the
@@ -1403,6 +1454,7 @@ mod tests {
                 amount_in: 0,
                 out_currency: weth(),
                 out_amount: 120_000,
+                recipient: SwapRecipient::Executor,
             }),
             Err(ValidationError::SwapCalcBeforeCredit { pool: pool() })
         );

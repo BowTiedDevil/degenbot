@@ -135,14 +135,32 @@ fn native_v3_v2_v4_path_ends_encodes() {
 /// Hop A (V4): NATIVE→USDC.
 /// Hop B (V2): USDC→WBTC.
 /// Hop C (V2): WBTC→WETH (WETH = native-side ERC20 stand-in at path end).
+///
+/// **Root Cause B**: the `v4_v2_v2` emitter settles the V4 input with
+/// `V4_SETTLE_DELTA(WETH)` unconditionally. With a NATIVE V4 input (a's debt is
+/// native, not WETH) that settle is incoherent — it leaves a residual PM[native]
+/// debt the validator (correctly) rejects as not-net-zero at `V4UnlockEnd`. The
+/// Plan gate therefore DECLINES the native-input shape (a non-chain over-code
+/// of the emitter); the WETH-input form is the coherent subspace.
 #[test]
-fn native_v4_v2_v2_path_starts_encodes() {
+fn native_v4_v2_v2_path_starts_declines() {
     let a = v4_hop_native_in_out(NATIVE, USDC, true);
     let b = v2_hop(USDC, WBTC, true);
     let c = v2_hop(WBTC, WETH, true);
-    assert_encodes(
-        vec![HopInfo::V4(a), HopInfo::V2(b), HopInfo::V2(c)],
-        "V4-V2-V2",
+    let path = PathInfo::new(vec![HopInfo::V4(a), HopInfo::V2(b), HopInfo::V2(c)]);
+    let out = encode_cmd_3_hop(
+        &path,
+        1_000_000_000_000_000u128,
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        EXECUTOR,
+        PM,
+        WETH,
+        EncodeOptions::default(),
+    );
+    assert!(
+        out.is_none(),
+        "V4-V2-V2 with native V4 input must decline (settle-WETH incoherent), got {out:?}"
     );
 }
 
