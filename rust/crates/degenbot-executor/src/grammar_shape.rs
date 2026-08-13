@@ -1292,6 +1292,187 @@ pub fn build_v2v2_plan(
     Some((preamble, plan, at))
 }
 
+/// Build the any-N (≥2) all-V2 Plan — the all-V2 speedrail as a Plan tree
+/// (SPVEIE / N4TJSZ T1). Generalizes [`build_v2v2_plan`] from exactly 2 hops
+/// to every arity N ≥ 2 (D6: hop-count-agnostic, the hop chain is derived, not
+/// special-cased per arity) and adds the SelfFund funding axis that
+/// `build_v2v2_plan` never handled. Honors BOTH funding modes byte-for-byte
+/// against [`crate::grammar::encode_all_v2`] (= `all_v2_walk`):
+///
+/// * `InPathFlash` (default): one `V2_SWAP_COMPACT` flash on pool[0] — it pays
+///   `hop_outputs[0]` of the leading pair's forward token to the executor and
+///   is owed `optimal_input` of the **closing** currency (the loop's terminal
+///   output) back. The callback seeds pool[1] with the forward token, walks
+///   the remaining pairs with chained `V2_SWAP_CALC`s (each mid output routed
+///   directly to the next pool's pair-handoff; the terminal calc pays the
+///   executor in the closing currency), and repays the flash with a trailing
+///   `ERC20_TRANSFER` of the closing currency to pool[0].
+/// * `SelfFund`: no flash — the executor's held entry capital (the loop's
+///   closing currency, WETH for the canonical WETH loop) pre-funds pool[0]
+///   (a `SelfFund` precondition + a bare `ERC20_TRANSFER`), then every pair is
+///   a no-callback `V2_SWAP_CALC` walk (gas-cheaper: no flash-callback
+///   overhead, no flash-repay transfer — ADR-029 D1).
+///
+/// The [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate (via
+/// [`build_plan_bytes`]) accepts both traces: each `V2SwapCalc` sees its pair's
+/// `PairHandoff` credited before it consumes it (the terminal-V2
+/// credit-before-debit rule), and the InPathFlash terminal credit covers the
+/// flash repayment.
+///
+/// Returns `None` for a path with < 2 hops, any non-V2 hop, or a zeroed hop
+/// output (mirrors the speedrail's own guards). No routing change: production
+/// still routes all-V2 to `encode_all_v2` until T2.
+#[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "both funding axes (InPathFlash + SelfFund) + the generic any-N hop chain"
+)]
+pub fn build_all_v2_chain(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n < 2 || inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    let v2_hops: Vec<&V2HopInfo> = path
+        .hops
+        .iter()
+        .map(|h| match h {
+            HopInfo::V2(h) => Some(h),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let optimal_input = inputs.optimal_input;
+    let weth = inputs.weth_address;
+    let fwd_a = v2_forward(v2_hops[0]);
+    // The chain's closing currency (the loop's regenerated entry token — WETH
+    // for the canonical arbitrage loop; `v2_forward` of the last pair keeps the
+    // general case faithful to the speedrail, which repays in this currency).
+    let weth_addr = v2_forward(v2_hops[n - 1]);
+
+    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+    // Same insertion order as the speedrail: pools in hop order, then the
+    // leading pair's forward token, then the closing currency (the preamble's
+    // `SET_ADDRESS` list is insertion-ordered, so parity needs this order).
+    let pool_idx: Vec<u8> = v2_hops
+        .iter()
+        .map(|h| at.add(h.pool_address).ok())
+        .collect::<Option<Vec<_>>>()?;
+    let forward_idx = at.add(fwd_a).ok()?;
+    let weth_idx = at.add(weth_addr).ok()?;
+
+    let plan: Plan = if inputs.opts.funding == FundingSource::SelfFund {
+        // No flash: the held entry capital (the closing currency, `weth_addr`
+        // — the token the loop regenerates at the end; WETH for the canonical
+        // WETH loop, faithfully mirroring the speedrail which seeds pool[0]
+        // with `weth_idx`) pre-funds pool[0], then every pair is a
+        // no-callback `V2_SWAP_CALC` walk (mid outputs route to the next pair's
+        // handoff; the terminal pays the executor in `weth_addr`).
+        let mut steps: Plan = vec![
+            PlanStep::SelfFund {
+                currency: weth_addr,
+                amount: optimal_input,
+            },
+            PlanStep::Erc20Transfer {
+                token_idx: weth_idx,
+                token_addr: weth_addr,
+                recipient_idx: pool_idx[0],
+                amount: optimal_input,
+                seeds_pool: Some(v2_hops[0].pool_address),
+                repays_flash: None,
+            },
+        ];
+        for i in 0..n {
+            let hop = v2_hops[i];
+            let terminal = i == n - 1;
+            steps.push(PlanStep::V2SwapCalc {
+                pool_idx: pool_idx[i],
+                pool_addr: hop.pool_address,
+                zfo: hop.zfo,
+                recipient_idx: if terminal {
+                    SENTINEL_SELF
+                } else {
+                    pool_idx[i + 1]
+                },
+                fee: hop.fee,
+                out_currency: if terminal { weth_addr } else { v2_forward(hop) },
+                out_amount: inputs.hop_outputs[i],
+                recipient_pool_addr: if terminal {
+                    None
+                } else {
+                    Some(v2_hops[i + 1].pool_address)
+                },
+                recipient_repays: false,
+            });
+        }
+        steps
+    } else {
+        // InPathFlash: flash pool[0] for the leading forward output; the
+        // callback seeds pool[1], walks pools[1..] with `V2_SWAP_CALC`s, and
+        // repays the flash with the closing currency.
+        let mut callback: Plan = vec![PlanStep::Erc20Transfer {
+            token_idx: forward_idx,
+            token_addr: fwd_a,
+            recipient_idx: pool_idx[1],
+            amount: inputs.hop_outputs[0],
+            seeds_pool: Some(v2_hops[1].pool_address),
+            repays_flash: None,
+        }];
+        for i in 1..n {
+            let hop = v2_hops[i];
+            let terminal = i == n - 1;
+            callback.push(PlanStep::V2SwapCalc {
+                pool_idx: pool_idx[i],
+                pool_addr: hop.pool_address,
+                zfo: hop.zfo,
+                recipient_idx: if terminal {
+                    SENTINEL_SELF
+                } else {
+                    pool_idx[i + 1]
+                },
+                fee: hop.fee,
+                out_currency: if terminal { weth_addr } else { v2_forward(hop) },
+                out_amount: inputs.hop_outputs[i],
+                recipient_pool_addr: if terminal {
+                    None
+                } else {
+                    Some(v2_hops[i + 1].pool_address)
+                },
+                recipient_repays: false,
+            });
+        }
+        callback.push(PlanStep::Erc20Transfer {
+            token_idx: weth_idx,
+            token_addr: weth_addr,
+            recipient_idx: pool_idx[0],
+            amount: optimal_input,
+            seeds_pool: None,
+            repays_flash: Some(v2_hops[0].pool_address),
+        });
+        let hop_a = v2_hops[0];
+        vec![PlanStep::FlashSwap {
+            pool_idx: pool_idx[0],
+            pool_addr: hop_a.pool_address,
+            protocol: Prot::V2,
+            zfo: hop_a.zfo,
+            fee: hop_a.fee,
+            out_currency: fwd_a,
+            out_amount: inputs.hop_outputs[0],
+            in_currency: weth_addr,
+            in_amount: optimal_input,
+            recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
+            auto_repay: false,
+            callback,
+        }]
+    };
+
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
 /// Build the `v4_v4` (pure-V4 container) Plan — default opts only (no
 /// `use_v4_batch`, no `erc6909_profit`, no native currency gap). The whole
 /// stream is one `V4_UNLOCK` over internal PM ledger movement: two
@@ -7115,6 +7296,72 @@ mod tests {
     fn v2_v2_plan_byte_parity_and_validates() {
         let (path, inputs) = v2_v2_path_inputs();
         plan_builds_and_validates(build_v2v2_plan, &path, &inputs, "v2_v2");
+    }
+
+    /// Build an `n`-hop all-V2 path closing on WETH: hop `i` is
+    /// `token_i → token_{i+1}`, with the final hop returning to WETH
+    /// (the canonical all-V2 arbitrage loop the speedrail serves).
+    fn all_v2_chain_hops(n: usize) -> Vec<HopInfo> {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+        let wbtc = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+        let dai = address!("6B175474E89094C44Da98b954EedeAC495271d0F");
+        let cycle = [weth, usdc, wbtc, dai];
+        (0..n)
+            .map(|i| {
+                HopInfo::V2(V2HopInfo {
+                    pool_address: Address::from([0xD0 + u8::try_from(i).expect("2..=4 hops"); 20]),
+                    token0_address: cycle[i % 4],
+                    token1_address: cycle[(i + 1) % 4],
+                    fee: 30,
+                    zfo: true,
+                })
+            })
+            .collect()
+    }
+
+    // SPVEIE (N4TJSZ T1): the any-N all-V2 Plan builder must reproduce the
+    // speedrail (`grammar::encode_all_v2` = `all_v2_walk`) byte-for-byte for
+    // every arity N ≥ 2 and BOTH funding modes, with the `LedgerValidator`
+    // gate accepting the Plan trace (`build_plan_bytes` runs
+    // build → validate_full → plan_to_bytes, so parity implies the gate
+    // accepted). Red (missing builder / divergent bytes) → Green.
+    #[test]
+    fn all_v2_chain_byte_parity_with_speedrail() {
+        for n in [2usize, 3, 4] {
+            let path = PathInfo::new(all_v2_chain_hops(n));
+            let outs: Vec<u128> = (0..n).map(|i| 1_100_000 * (i + 1) as u128).collect();
+            let consumed: Vec<u128> = (0..n).map(|i| 1_000_000 * (i + 1) as u128).collect();
+            for (flabel, funding) in [
+                ("InPathFlash", FundingSource::InPathFlash),
+                ("SelfFund", FundingSource::SelfFund),
+            ] {
+                let inputs = ComposerInputs {
+                    executor_address: address!("00000000000000000000000000000000000000ee"),
+                    pool_manager_address: address!("00000000000000000000000000000000000000ff"),
+                    weth_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                    optimal_input: 1_000_000,
+                    hop_outputs: &outs,
+                    consumed_inputs: &consumed,
+                    opts: crate::composers::EncodeOptions {
+                        funding,
+                        ..Default::default()
+                    },
+                };
+                let expected = crate::grammar::encode_all_v2(&path, &inputs)
+                    .unwrap_or_else(|| panic!("[{n}-hop {flabel}] speedrail returned None"));
+                let got =
+                    build_plan_bytes(&path, build_all_v2_chain, &inputs).unwrap_or_else(|| {
+                        panic!(
+                            "[{n}-hop {flabel}] build_all_v2_chain declined or validator rejected"
+                        )
+                    });
+                assert_eq!(
+                    got, expected,
+                    "[{n}-hop {flabel}] all_v2_chain bytes diverge from the speedrail"
+                );
+            }
+        }
     }
 
     #[test]
