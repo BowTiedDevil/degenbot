@@ -24,6 +24,12 @@ const OPTIMAL_INPUT: u128 = 1_000_000_000_000_000_000;
 const OUT_A: u128 = 500_000_000_000_000_000;
 const OUT_B: u128 = 1_900_000_000_000_000_000;
 const OUT_C: u128 = 1_000_000_000_000_000_000;
+// The bridge goldens' terminal must be PROFITABLE (OUT_C > OPTIMAL) so the
+// terminal take is a real profit take: the LedgerValidator rejects a
+// `V4TakeDelta` on a zeroed PM slot (a take(0) is structurally invalid — see
+// build_v4v4_plan's redundant-take removal). out_c is not encoded in the swap
+// bytes (exact-input + amount-less take), so this only affects the validator.
+const OUT_C_PROFIT: u128 = 1_500_000_000_000_000_000; // the profitable bridge terminal
 const OUT_A_CLAMP: u128 = 499_999_999_999_999_999; // OUT_A - 1 (CL gap-branch swap-in)
 const OUT_B_CLAMP: u128 = 1_899_999_999_999_999_999; // OUT_B - 1 (CL gap-branch swap-in)
 
@@ -291,7 +297,7 @@ fn v4_v4_v4_double_gap_both_boundaries_bridge() {
             HopInfo::V4(hop_c),
         ]),
         OPTIMAL_INPUT,
-        &[OUT_A, OUT_B, OUT_C],
+        &[OUT_A, OUT_B, OUT_C_PROFIT],
         &[OPTIMAL_INPUT, OUT_A_CLAMP, OUT_B_CLAMP],
         EXECUTOR,
         PM,
@@ -405,7 +411,7 @@ fn v4_v4_v4_wrap_at_bc_boundary() {
             HopInfo::V4(hop_c),
         ]),
         OPTIMAL_INPUT,
-        &[OUT_A, OUT_B, OUT_C],
+        &[OUT_A, OUT_B, OUT_C_PROFIT],
         &[OPTIMAL_INPUT, OUT_A, OUT_B_CLAMP],
         EXECUTOR,
         PM,

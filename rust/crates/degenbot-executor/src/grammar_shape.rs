@@ -3119,11 +3119,348 @@ fn build_v2v4_native_input_plan(
     Some((preamble, plan, at))
 }
 
-/// A 2-hop Plan builder: every `build_*_plan` returns the full payload's
-/// preamble bytes, the [`Plan`] tree, and the resolved [`AddressTable`].
-type Build2HopPlan = fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan, AddressTable)>;
+// ═══════════════════════════════════════════════════════════════════════════
+// 3-hop Plan scaffolding (W7FQN6 pilot). The shared topology pieces every
+// V4-crossing 3-hop builder (this pilot + task HPZTNT) calls: the sentinel
+// AddressTable scaffold, per-hop currency/orientation, the ADR-029 D1 capture
+// guard, the terminal-capture steps, and the native↔WETH bridge steps. The
+// pilot proves the existing `PlanStep` vocabulary needs NO new variant for the
+// 3-hop slice.
+// ═══════════════════════════════════════════════════════════════════════════
 
-/// Build a 2-hop family's [`Plan`] through its `build_*_plan` builder, run the
+/// The AddressTable scaffold for V4-crossing families: weth / executor /
+/// PoolManager sentinels (PM resolves to `SENTINEL_PM`, no table entry).
+fn v4_scaffold_table(inputs: &ComposerInputs<'_>) -> AddressTable {
+    AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        Some(inputs.pool_manager_address),
+    )
+}
+
+/// A V4 hop's swap orientation: `(forward/output currency, input currency)`
+/// from its `zfo` flag. Shared by every V4-crossing family.
+fn v4_hop_currencies(h: &V4HopInfo) -> (Address, Address) {
+    if h.zfo {
+        (h.currency1_address, h.currency0_address)
+    } else {
+        (h.currency0_address, h.currency1_address)
+    }
+}
+
+/// The ADR-029 D1 capture guard for a V4-crossing terminal: a
+/// `ProfitCapture::Native` on a non-WETH/non-native terminal is not
+/// expressible (the executor cannot convert an arbitrary ERC-20 to native).
+fn native_capture_declines(capture: ProfitCapture, terminal: Address, weth: Address) -> bool {
+    capture == ProfitCapture::Native && terminal != weth && terminal != NATIVE_CURRENCY_ADDRESS
+}
+
+/// Build the terminal-capture `PlanStep`s for a V4-crossing family (mirrors the
+/// emitters' terminal-capture block): `erc6909_profit` (WETH terminal) → an
+/// ERC6909 mint; otherwise a physical `V4TakeDelta` unless `use_v4_batch`
+/// auto-settles (a tok terminal still gets an explicit take — see the batch
+/// caller); plus `ProfitCapture::Native` on a WETH terminal → a `WethWithdraw`
+/// of the custodied profit. Shared by every V4-crossing builder.
+fn v4_terminal_capture_steps(
+    terminal: Address,
+    terminal_idx: u8,
+    capture: ProfitCapture,
+    use_v4_batch: bool,
+    any_gap: bool,
+    profit: u128,
+    weth: Address,
+) -> Vec<PlanStep> {
+    let mut steps = Vec::new();
+    if capture == ProfitCapture::Erc6909 && terminal == weth {
+        if profit > 0 {
+            steps.push(PlanStep::V4Mint {
+                currency_idx: SENTINEL_WETH,
+                currency_addr: weth,
+                recipient_idx: SENTINEL_SELF,
+                amount: profit,
+            });
+        }
+    } else if !use_v4_batch || any_gap {
+        steps.push(PlanStep::V4TakeDelta {
+            currency_idx: terminal_idx,
+            currency_addr: terminal,
+            recipient_idx: SENTINEL_SELF,
+        });
+    }
+    if capture == ProfitCapture::Native && terminal == weth {
+        steps.push(PlanStep::WethWithdraw {
+            weth_idx: SENTINEL_WETH,
+            weth_addr: weth,
+            amount: profit,
+        });
+    }
+    steps
+}
+
+/// Build the native↔WETH bridge `PlanStep`s for a boundary (mirrors
+/// `emit_currency_bridge`): a `V4TakeCompact` of the source-side currency to
+/// SELF + a `WethDeposit` (wrap) or `WethWithdraw` (unwrap), plus the
+/// `settle_idx`/`settle_currency` the following swap's input dedebt needs.
+fn v4_bridge_steps(
+    bridge: crate::composers::CurrencyBridge,
+    weth: Address,
+    amount: u128,
+) -> (Vec<PlanStep>, u8, Address) {
+    let wrap = matches!(bridge, crate::composers::CurrencyBridge::Wrap);
+    let take_currency = if wrap { NATIVE_CURRENCY_ADDRESS } else { weth };
+    let settle_currency = if wrap { weth } else { NATIVE_CURRENCY_ADDRESS };
+    let take_idx = if wrap { SENTINEL_NATIVE } else { SENTINEL_WETH };
+    let settle_idx = if wrap { SENTINEL_WETH } else { SENTINEL_NATIVE };
+    let convert = if wrap {
+        PlanStep::WethDeposit {
+            weth_idx: SENTINEL_WETH,
+            weth_addr: weth,
+            amount,
+        }
+    } else {
+        PlanStep::WethWithdraw {
+            weth_idx: SENTINEL_WETH,
+            weth_addr: weth,
+            amount,
+        }
+    };
+    (
+        vec![
+            PlanStep::V4TakeCompact {
+                currency_idx: take_idx,
+                currency_addr: take_currency,
+                recipient_idx: SENTINEL_SELF,
+                amount,
+                seeds_pool: None,
+            },
+            convert,
+        ],
+        settle_idx,
+        settle_currency,
+    )
+}
+
+/// Build the `v4_v4_v4` Plan — one `V4_UNLOCK` over three internal V4 swaps
+/// (the 3-hop pilot, W7FQN6). Byte-faithful to `derive_3hop_v4v4v4`: three
+/// individual `V4Swap`s with optional native↔WETH boundary bridges, or a single
+/// `V4Batch` (no gap); then the terminal take / ERC6909 mint / native-
+/// withdraw capture and a trailing `V4SettleAll` (the `V4UnlockEnd` net-zero
+/// gate fires at unlock close).
+#[must_use]
+#[expect(clippy::too_many_lines)]
+pub fn build_v4v4v4_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 3 {
+        return None;
+    }
+    let (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V4(c)) =
+        (&path.hops[0], &path.hops[1], &path.hops[2])
+    else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    let out_a = *inputs.hop_outputs.first()?;
+    let out_b = *inputs.hop_outputs.get(1)?;
+    let out_c = *inputs.hop_outputs.get(2)?;
+    if out_a == 0 || out_b == 0 || out_c == 0 {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let a_swap_in = *inputs.consumed_inputs.first()?;
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    let c_swap_in = *inputs.consumed_inputs.get(2)?;
+    if !fits_int128(a_swap_in) || !fits_int128(b_swap_in) || !fits_int128(c_swap_in) {
+        return None;
+    }
+    let (mid_a_out, in_currency_a) = v4_hop_currencies(a);
+    let (mid_b_out, mid_b_in) = v4_hop_currencies(b);
+    let (output_c, mid_c_in) = v4_hop_currencies(c);
+    let weth = inputs.weth_address;
+    let capture = crate::composers::resolve_axes(inputs.opts).1;
+    if native_capture_declines(capture, output_c, weth) {
+        return None;
+    }
+    let bridge_ab = crate::composers::CurrencyBridge::at_boundary(mid_a_out, mid_b_in);
+    let bridge_bc = crate::composers::CurrencyBridge::at_boundary(mid_b_out, mid_c_in);
+    let any_gap = bridge_ab.needs_bridge() || bridge_bc.needs_bridge();
+
+    let mut at = v4_scaffold_table(inputs);
+    let c0_a = at.add(a.currency0_address).ok()?;
+    let c1_a = at.add(a.currency1_address).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let c0_c = at.add(c.currency0_address).ok()?;
+    let c1_c = at.add(c.currency1_address).ok()?;
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?; // SENTINEL_PM
+
+    let fee_a = u16::try_from(a.fee).ok()?;
+    let ts_a = i16::try_from(a.tick_spacing).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let fee_c = u16::try_from(c.fee).ok()?;
+    let ts_c = i16::try_from(c.tick_spacing).ok()?;
+
+    let profit = out_c.saturating_sub(optimal_input);
+    let terminal_idx = if output_c == weth {
+        SENTINEL_WETH
+    } else if output_c == NATIVE_CURRENCY_ADDRESS {
+        SENTINEL_NATIVE
+    } else {
+        at.add(output_c).ok()?
+    };
+
+    let v4swap_a = PlanStep::V4Swap {
+        c0_idx: c0_a,
+        c1_idx: c1_a,
+        fee: fee_a,
+        tick_spacing: ts_a,
+        hooks_idx: SENTINEL_NATIVE,
+        zfo: a.zfo,
+        amount: a_swap_in,
+        in_currency: in_currency_a,
+        in_amount: a_swap_in,
+        out_currency: mid_a_out,
+        out_amount: out_a,
+    };
+    let v4swap_b = PlanStep::V4Swap {
+        c0_idx: c0_b,
+        c1_idx: c1_b,
+        fee: fee_b,
+        tick_spacing: ts_b,
+        hooks_idx: SENTINEL_NATIVE,
+        zfo: b.zfo,
+        amount: b_swap_in,
+        in_currency: mid_b_in,
+        in_amount: b_swap_in,
+        out_currency: mid_b_out,
+        out_amount: out_b,
+    };
+    let v4swap_c = PlanStep::V4Swap {
+        c0_idx: c0_c,
+        c1_idx: c1_c,
+        fee: fee_c,
+        tick_spacing: ts_c,
+        hooks_idx: SENTINEL_NATIVE,
+        zfo: c.zfo,
+        amount: c_swap_in,
+        in_currency: mid_c_in,
+        in_amount: c_swap_in,
+        out_currency: output_c,
+        out_amount: out_c,
+    };
+
+    let mut inner: Plan = if inputs.opts.use_v4_batch && !any_gap {
+        // Batch mode: one `V4_BATCH` of the three swaps. The contract
+        // auto-settles native/WETH; a tok terminal gets an explicit take.
+        let mut steps = vec![PlanStep::V4Batch {
+            entries: vec![
+                V4BatchSwap {
+                    c0_idx: c0_a,
+                    c1_idx: c1_a,
+                    fee: fee_a,
+                    tick_spacing: ts_a,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: a.zfo,
+                    amount: a_swap_in,
+                    in_currency: in_currency_a,
+                    in_amount: a_swap_in,
+                    out_currency: mid_a_out,
+                    out_amount: out_a,
+                },
+                V4BatchSwap {
+                    c0_idx: c0_b,
+                    c1_idx: c1_b,
+                    fee: fee_b,
+                    tick_spacing: ts_b,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: b.zfo,
+                    amount: b_swap_in,
+                    in_currency: mid_b_in,
+                    in_amount: b_swap_in,
+                    out_currency: mid_b_out,
+                    out_amount: out_b,
+                },
+                V4BatchSwap {
+                    c0_idx: c0_c,
+                    c1_idx: c1_c,
+                    fee: fee_c,
+                    tick_spacing: ts_c,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: c.zfo,
+                    amount: c_swap_in,
+                    in_currency: mid_c_in,
+                    in_amount: c_swap_in,
+                    out_currency: output_c,
+                    out_amount: out_c,
+                },
+            ],
+        }];
+        if output_c != NATIVE_CURRENCY_ADDRESS && output_c != weth {
+            steps.push(PlanStep::V4TakeDelta {
+                currency_idx: terminal_idx,
+                currency_addr: output_c,
+                recipient_idx: SENTINEL_SELF,
+            });
+        }
+        steps
+    } else {
+        let mut steps = vec![v4swap_a];
+        if bridge_ab.needs_bridge() {
+            let (bridge_steps, settle_idx, settle_currency) =
+                v4_bridge_steps(bridge_ab, weth, out_a);
+            steps.extend(bridge_steps);
+            steps.push(v4swap_b);
+            steps.push(PlanStep::V4SettleDelta {
+                currency_idx: settle_idx,
+                currency_addr: settle_currency,
+            });
+        } else {
+            steps.push(v4swap_b);
+        }
+        if bridge_bc.needs_bridge() {
+            let (bridge_steps, settle_idx, settle_currency) =
+                v4_bridge_steps(bridge_bc, weth, out_b);
+            steps.extend(bridge_steps);
+            steps.push(v4swap_c);
+            steps.push(PlanStep::V4SettleDelta {
+                currency_idx: settle_idx,
+                currency_addr: settle_currency,
+            });
+        } else {
+            steps.push(v4swap_c);
+        }
+        steps
+    };
+    inner.append(&mut v4_terminal_capture_steps(
+        output_c,
+        terminal_idx,
+        capture,
+        inputs.opts.use_v4_batch,
+        any_gap,
+        profit,
+        weth,
+    ));
+    inner.push(PlanStep::V4SettleAll);
+
+    let plan: Plan = vec![PlanStep::V4Unlock {
+        inner,
+        pool_manager_idx: pm_idx,
+    }];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// A Plan builder: every `build_*_plan` returns the full payload's
+/// preamble bytes, the [`Plan`] tree, and the resolved [`AddressTable`].
+/// (Also used by the 3-hop pilots — the signature is family-agnostic.)
+type BuildPlan = fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan, AddressTable)>;
+
+/// Build a family's [`Plan`] through its `build_*_plan` builder, run the
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate on the
 /// projected ledger trace, and fold `preamble + plan_to_bytes(&plan, &at)`
 /// into the full payload.
@@ -3134,9 +3471,9 @@ type Build2HopPlan = fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan
 /// the first time the validator gates real production bytes (ADR-029 D4/D5 for
 /// the 2-hop plane).
 #[must_use]
-fn build_2hop_plan_bytes(
+fn build_plan_bytes(
     path: &PathInfo,
-    build: Build2HopPlan,
+    build: BuildPlan,
     inputs: &ComposerInputs<'_>,
 ) -> Option<Vec<u8>> {
     let (preamble, plan, at) = build(path, inputs)?;
@@ -3160,7 +3497,10 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
     // V2/V3 funding dispatch.
     let bytes: Option<Vec<u8>> = match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            derive_3hop_v4v4v4(a, b, c, inputs)
+            // W7FQN6 pilot: v4_v4_v4 routes through the Plan + validator (no
+            // new PlanStep type needed — the pilot proved the vocabulary).
+            let _ = (a, b, c);
+            build_plan_bytes(path, build_v4v4v4_plan, inputs)
         }
         (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
             derive_3hop_v4v2v2(a, b, c, inputs)
@@ -3221,31 +3561,31 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         //    hand-written `derive_2hop_*` emitters are retained (until task
         //    RVNIPD deletes them) as the parity-oracle's reference half.
         (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), None) => {
-            build_2hop_plan_bytes(path, build_v4v4_plan, inputs)
+            build_plan_bytes(path, build_v4v4_plan, inputs)
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), None) => {
-            build_2hop_plan_bytes(path, build_v4v3_plan, inputs)
+            build_plan_bytes(path, build_v4v3_plan, inputs)
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), None) => {
-            build_2hop_plan_bytes(path, build_v3v4_plan, inputs)
+            build_plan_bytes(path, build_v3v4_plan, inputs)
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), None) => {
-            build_2hop_plan_bytes(path, build_v4v2_plan, inputs)
+            build_plan_bytes(path, build_v4v2_plan, inputs)
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), None) => {
-            build_2hop_plan_bytes(path, build_v2v4_plan, inputs)
+            build_plan_bytes(path, build_v2v4_plan, inputs)
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), None) => {
-            build_2hop_plan_bytes(path, build_v2v2_plan, inputs)
+            build_plan_bytes(path, build_v2v2_plan, inputs)
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), None) => {
-            build_2hop_plan_bytes(path, build_v2v3_plan, inputs)
+            build_plan_bytes(path, build_v2v3_plan, inputs)
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), None) => {
-            build_2hop_plan_bytes(path, build_v3v2_plan, inputs)
+            build_plan_bytes(path, build_v3v2_plan, inputs)
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), None) => {
-            build_2hop_plan_bytes(path, build_v3v3_plan, inputs)
+            build_plan_bytes(path, build_v3v3_plan, inputs)
         }
         // V2/V3-only 3-hop folds (WAYDTL): byte-faithful transcriptions of the
         // previously-hand-written adapters, byte-identical to them (verified by
@@ -3410,11 +3750,11 @@ fn oracle_reference(
         (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), None) => {
             (wrap(derive_2hop_v2v3(path, inputs)), "v3_v3")
         }
-        // ── 3-hop families (26): no Plan builder yet (tasks `W7FQN6`/`HPZTNT`
-        //    author them). Explicit arms name each family for the "no Plan"
-        //    record, and are the exact arms a future task upgrades.
-        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
-            (OracleReference::NoBuilder, "v4_v4_v4")
+        // ── 3-hop families (26): the v4_v4_v4 pilot (W7FQN6) has a Plan and
+        //    takes the emitter as its reference; the rest have no Plan builder
+        //    yet (task `HPZTNT` authors them). Explicit arms name each family.
+        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
+            (wrap(derive_3hop_v4v4v4(a, b, c, inputs)), "v4_v4_v4")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
             (OracleReference::NoBuilder, "v4_v2_v2")
@@ -4530,6 +4870,7 @@ fn derive_3hop_v3v3v3(
 /// every currency to zero. Scoped to `default` opts (no `V4_BATCH`,
 /// no `erc6909_profit`).
 #[expect(clippy::too_many_lines)]
+#[cfg(debug_assertions)]
 fn derive_3hop_v4v4v4(
     a: &V4HopInfo,
     b: &V4HopInfo,

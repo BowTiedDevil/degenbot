@@ -23,6 +23,9 @@
 // 2-hop and 3-hop composers all take a `&ComposerInputs` bundle beyond the
 // hops, so none trips `too_many_arguments`.
 
+// `emit_currency_bridge` (the only user of these) is the parity-oracle's
+// reference half — debug/CI only.
+#[cfg(debug_assertions)]
 use crate::encoders::{self, SENTINEL_SELF};
 use alloy::primitives::{Address, U256};
 use degenbot_abi::abi_encoder::encode_rust;
@@ -242,6 +245,7 @@ impl CurrencyBridge {
 /// Returns `None` (for `?` propagation) only if `V4_TAKE_COMPACT` fails to
 /// encode (uint96 overflow — caller should have guarded with `fits_int128`).
 /// [`CurrencyBridge::None`] emits nothing.
+#[cfg(debug_assertions)]
 pub(crate) fn emit_currency_bridge(
     inner: &mut Vec<u8>,
     bridge: CurrencyBridge,
