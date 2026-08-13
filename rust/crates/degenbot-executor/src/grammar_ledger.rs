@@ -148,8 +148,16 @@ pub enum LedgerOp {
         out_currency: Address,
         out_amount: u128,
     },
-    /// `V4_TAKE(cur→rcp, amount)` — debits `PM[cur]` credit (D0).
-    Take { currency: Address, amount: u128 },
+    /// `V4_TAKE(cur→rcp, amount)` — debits `PM[cur]` credit (D0). When
+    /// `repays_flash` is `Some(pool)`, the take is a flash repayment: it
+    /// saturating-repays `flash_debt[cur]` by `amount` (no executor Erc20
+    /// debit — the take draws from the PM, not the executor balance). The
+    /// `V4TakeCompact(→ V3 pool)` repayment case (e.g. the `v4_v4_v3` tail).
+    Take {
+        currency: Address,
+        amount: u128,
+        repays_flash: Option<Address>,
+    },
     /// `V4_MINT(cur, amount)` — converts `PM[cur]` credit to `F[cur]` (D0).
     Mint { currency: Address, amount: u128 },
     /// `V4_SETTLE(cur, amount)` — the executor pays `amount` of `cur` into the
@@ -316,8 +324,13 @@ pub enum LedgerOp {
 pub enum SwapRecipient {
     /// The swap's output credits the executor.
     Executor,
-    /// The swap's output seeds this pool's pair-handoff.
+    /// The swap's output seeds this pool's pair-handoff (a V2 pre-fund).
     Pool(Address),
+    /// The swap's output REPAYS this pool's flash debt (a V3 flash being
+    /// repaid — saturating `flash_debt[out_currency]`; no `SeedPair` credit).
+    /// Kept structurally distinct from [`SwapRecipient::Pool`] so a future
+    /// author can't seed when they meant to repay (or vice versa).
+    PoolRepay(Address),
     /// The swap's output pays into the PoolManager (PM-pay-in leg).
     PoolManager,
 }
@@ -732,9 +745,24 @@ impl LedgerValidator {
                 }
                 Ok(())
             }
-            LedgerOp::Take { currency, amount } | LedgerOp::Mint { currency, amount } => {
-                self.pm.debit(currency, amount)
+            // V4_TAKE / V4_MINT: debits the PM credit (D0). A `Take` that is a
+            // flash repayment additionally saturating-repays `flash_debt[cur]`
+            // (the V4TakeCompact→V3-pool repayment — no executor Erc20 debit;
+            // the take draws from the PM).
+            LedgerOp::Take {
+                currency,
+                amount,
+                repays_flash: Some(_),
+            } => {
+                self.pm.debit(currency, amount)?;
+                let owed = self.flash_debt.entry(currency).or_default();
+                *owed = owed.saturating_sub(amount);
+                Ok(())
             }
+            LedgerOp::Take {
+                currency, amount, ..
+            }
+            | LedgerOp::Mint { currency, amount } => self.pm.debit(currency, amount),
             LedgerOp::SwapCalc {
                 pool,
                 out_currency,
@@ -760,6 +788,14 @@ impl LedgerValidator {
                     SwapRecipient::Pool(p) => {
                         let h = *self.pair.get(&p).unwrap_or(&0);
                         self.pair.insert(p, h + out_amount);
+                    }
+                    SwapRecipient::PoolRepay(_) => {
+                        // The output repays a V3 flash pool's debt: saturating
+                        // reduction on `flash_debt[out_currency]` (the pool
+                        // param is documentary — the debt ledger is currency-,
+                        // not pool-keyed). No SeedPair, no executor credit.
+                        let owed = self.flash_debt.entry(out_currency).or_default();
+                        *owed = owed.saturating_sub(out_amount);
                     }
                     SwapRecipient::PoolManager => {}
                 }
@@ -1043,6 +1079,7 @@ mod tests {
         let err = v.push(LedgerOp::Take {
             currency: weth(),
             amount: 1_000_000,
+            repays_flash: None,
         });
         assert!(matches!(err, Err(ValidationError::TakeBeforeCredit { .. })));
     }
@@ -1062,6 +1099,7 @@ mod tests {
             .push(LedgerOp::Take {
                 currency: weth(),
                 amount: 1_000_000,
+                repays_flash: None,
             })
             .is_ok());
     }
@@ -1076,6 +1114,7 @@ mod tests {
             LedgerOp::Take {
                 currency: weth(),
                 amount: 100_000,
+                repays_flash: None,
             },
             LedgerOp::V4Swap {
                 in_currency: usdc(),
@@ -1152,6 +1191,7 @@ mod tests {
             LedgerOp::Take {
                 currency: weth(),
                 amount: 100_000,
+                repays_flash: None,
             },
         ];
         assert!(v.validate(&stream).is_ok());
@@ -1295,6 +1335,7 @@ mod tests {
         v.push(LedgerOp::Take {
             currency: usdc(),
             amount: 110_000,
+            repays_flash: None,
         })
         .unwrap();
         v.push(LedgerOp::Erc20Credit {
@@ -1395,6 +1436,7 @@ mod tests {
         v.push(LedgerOp::Take {
             currency: usdc(),
             amount: 110_000,
+            repays_flash: None,
         })
         .unwrap();
         v.push(LedgerOp::SeedPair {
@@ -1477,6 +1519,7 @@ mod tests {
         v.push(LedgerOp::Take {
             currency: usdc(),
             amount: 110_000,
+            repays_flash: None,
         })
         .unwrap();
         v.push(LedgerOp::SeedPair {
@@ -1613,6 +1656,7 @@ mod tests {
             LedgerOp::Take {
                 currency: usdc(),
                 amount: 1_100_000,
+                repays_flash: None,
             },
             // The V4 input debt: PM[weth] is −1_000_000 (the swap debited it).
             // Settle it (the executor's held weth — credited by the flash —

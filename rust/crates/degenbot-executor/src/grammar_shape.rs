@@ -377,6 +377,10 @@ pub enum PlanStep {
         /// credit; `None` + recipient = PM pays into the PM. 2-hop families
         /// always pass `None` (SELF recipients) — the byte-identical case.
         recipient_pool_addr: Option<Address>,
+        /// Whether a pool recipient is a **V3 flash repayment** (saturating
+        /// `flash_debt` reduction, `SwapRecipient::PoolRepay`) vs a V2 pre-fund
+        /// seed (`SwapRecipient::Pool`). Together with `recipient_pool_addr`.
+        recipient_repays: bool,
     },
     /// An exact-out `V2_SWAP_DIRECT(pool, zfo, out_amount, recipient)` — the
     /// V2 handoff that pays a specific `out_amount` to `recipient` (a next
@@ -397,6 +401,9 @@ pub enum PlanStep {
         out_currency: Address,
         /// The recipient pool's address when the direct pays a mid pool.
         recipient_pool_addr: Option<Address>,
+        /// Whether a pool recipient is a V3 flash repayment (`PoolRepay`) vs a
+        /// V2 pre-fund seed (`Pool`).
+        recipient_repays: bool,
     },
     /// A self-fund seed (ADR-029 FundingSource::SelfFund) — the executor holds
     /// `amount` of `currency` as entry capital before the stream. Not a command;
@@ -455,6 +462,11 @@ pub enum PlanStep {
         /// pre-funded directly (PM→pool) — credit `PairHandoff[pool]` so a
         /// following `V2SwapCalc` sees its seed. `None` for a →SELF take.
         seeds_pool: Option<Address>,
+        /// When `Some(pool)`, the take is a **flash repayment** to that pool
+        /// (a V3 flash repaid directly from the PM — e.g. the `v4_v4_v3` tail).
+        /// The take debits PM and saturating-repays the pool's flash debt (no
+        /// executor Erc20 debit). `None` for a take/seed.
+        repays_flash: Option<Address>,
     },
     /// `V4_SETTLE_DELTA(cur)` — auto-settle one currency's PM delta to 0.
     V4SettleDelta {
@@ -643,6 +655,7 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     out_currency,
                     out_amount,
                     recipient_pool_addr,
+                    recipient_repays,
                     ..
                 } => {
                     // `V2_SWAP_CALC` consumes the seeded pair-handoff credit and
@@ -651,9 +664,10 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     // pool's handoff); otherwise the sentinel dictates — PM
                     // pays the PM (the following V4Settle/net-zero accounts
                     // it), SELF credits the executor (the 2-hop terminal case).
-                    let recipient = match (recipient_pool_addr, *recipient_idx) {
-                        (Some(p), _) => SwapRecipient::Pool(*p),
-                        (None, SENTINEL_PM) => SwapRecipient::PoolManager,
+                    let recipient = match (recipient_pool_addr, recipient_repays, *recipient_idx) {
+                        (Some(p), true, _) => SwapRecipient::PoolRepay(*p),
+                        (Some(p), false, _) => SwapRecipient::Pool(*p),
+                        (None, _, SENTINEL_PM) => SwapRecipient::PoolManager,
                         _ => SwapRecipient::Executor,
                     };
                     ops.push(LedgerOp::SwapCalc {
@@ -673,11 +687,13 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     out_currency,
                     out_amount,
                     recipient_pool_addr,
+                    recipient_repays,
                     ..
                 } => {
-                    let recipient = match (recipient_pool_addr, *recipient_idx) {
-                        (Some(p), _) => SwapRecipient::Pool(*p),
-                        (None, SENTINEL_PM) => SwapRecipient::PoolManager,
+                    let recipient = match (recipient_pool_addr, recipient_repays, *recipient_idx) {
+                        (Some(p), true, _) => SwapRecipient::PoolRepay(*p),
+                        (Some(p), false, _) => SwapRecipient::Pool(*p),
+                        (None, _, SENTINEL_PM) => SwapRecipient::PoolManager,
                         _ => SwapRecipient::Executor,
                     };
                     ops.push(LedgerOp::SwapCalc {
@@ -734,11 +750,13 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     amount,
                     recipient_idx,
                     seeds_pool,
+                    repays_flash,
                     ..
                 } => {
                     ops.push(LedgerOp::Take {
                         currency: *currency_addr,
                         amount: *amount,
+                        repays_flash: *repays_flash,
                     });
                     // Cross-ledger move: when the take's recipient is the
                     // executor (SELF), the token physically arrives at the
@@ -1104,6 +1122,7 @@ pub fn build_v2v3_plan(
                 out_currency: fwd_a,
                 out_amount: forward_out,
                 recipient_pool_addr: None,
+                recipient_repays: false,
             },
             PlanStep::FlashSwap {
                 pool_idx: v3_idx,
@@ -1245,6 +1264,7 @@ pub fn build_v3v2_plan(
                     out_currency: weth,
                     out_amount: *inputs.hop_outputs.get(1)?,
                     recipient_pool_addr: None,
+                    recipient_repays: false,
                 },
             ],
         },
@@ -1390,6 +1410,7 @@ pub fn build_v2v2_plan(
                 out_currency: weth,
                 out_amount: *inputs.hop_outputs.get(1)?,
                 recipient_pool_addr: None,
+                recipient_repays: false,
             },
             PlanStep::Erc20Transfer {
                 token_idx: SENTINEL_WETH,
@@ -1553,6 +1574,7 @@ pub fn build_v4v4_plan(
                 recipient_idx: SENTINEL_SELF,
                 amount: forward_out,
                 seeds_pool: None,
+                repays_flash: None,
             },
             // Convert: Wrap (native→WETH) or Unwrap (WETH→native).
             match bridge {
@@ -1864,6 +1886,7 @@ pub fn build_v4v3_plan(
                 recipient_idx: SENTINEL_SELF,
                 amount: forward_out,
                 seeds_pool: None,
+                repays_flash: None,
             },
             PlanStep::WethDeposit {
                 weth_idx,
@@ -1903,6 +1926,7 @@ pub fn build_v4v3_plan(
                 recipient_idx: SENTINEL_SELF,
                 amount: forward_out,
                 seeds_pool: None,
+                repays_flash: None,
             },
             PlanStep::FlashSwap {
                 pool_idx: v3_idx,
@@ -2106,6 +2130,7 @@ pub fn build_v4v2_plan(
                 recipient_idx: SENTINEL_SELF,
                 amount: forward_out,
                 seeds_pool: None,
+                repays_flash: None,
             },
             PlanStep::WethDeposit {
                 weth_idx,
@@ -2129,6 +2154,7 @@ pub fn build_v4v2_plan(
                 out_currency: out_currency_b,
                 out_amount: weth_out,
                 recipient_pool_addr: None,
+                recipient_repays: false,
             },
             // Settle the V4's ERC-20 input debt: the V2 output credited
             // `out_currency_b` (== in_currency_a in a valid chain), funding
@@ -2151,6 +2177,7 @@ pub fn build_v4v2_plan(
                 recipient_idx: v2_idx,
                 amount: forward_out,
                 seeds_pool: Some(b.pool_address),
+                repays_flash: None,
             },
             PlanStep::V2SwapCalc {
                 pool_idx: v2_idx,
@@ -2161,6 +2188,7 @@ pub fn build_v4v2_plan(
                 out_currency: out_currency_b,
                 out_amount: weth_out,
                 recipient_pool_addr: None,
+                recipient_repays: false,
             },
             // Boundary-seed (WETH input): sync WETH, pay it into the PM from
             // the V2 output, settle the V4 input debt (PM[WETH] += optimal_input
@@ -2415,6 +2443,7 @@ fn build_v3v4_erc20_input_plan(
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
+            repays_flash: None,
         },
         PlanStep::V4SettleAll,
     ];
@@ -2567,6 +2596,7 @@ fn build_v3v4_native_output_plan(
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
+            repays_flash: None,
         },
         PlanStep::V4SettleAll,
     ];
@@ -2684,6 +2714,7 @@ fn build_v3v4_native_input_plan(
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
+            repays_flash: None,
         },
         PlanStep::V4SettleAll,
     ];
@@ -2903,6 +2934,7 @@ fn build_v2v4_erc20_input_plan(
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
+            repays_flash: None,
         },
         PlanStep::V4SettleAll,
     ];
@@ -3052,6 +3084,7 @@ fn build_v2v4_native_output_plan(
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
+            repays_flash: None,
         },
         PlanStep::V4SettleAll,
     ];
@@ -3160,6 +3193,7 @@ fn build_v2v4_native_input_plan(
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
+            repays_flash: None,
         },
         PlanStep::V4SettleAll,
     ];
@@ -3320,6 +3354,7 @@ fn v4_bridge_steps(
                 recipient_idx: SENTINEL_SELF,
                 amount,
                 seeds_pool: None,
+                repays_flash: None,
             },
             convert,
         ],
@@ -3619,6 +3654,7 @@ pub fn build_v4v2v2_plan(
             recipient_idx: v2b,
             amount: out_a,
             seeds_pool: Some(b.pool_address),
+            repays_flash: None,
         },
         PlanStep::V2SwapCalc {
             pool_idx: v2b,
@@ -3629,6 +3665,7 @@ pub fn build_v4v2v2_plan(
             out_currency: fwd_b,
             out_amount: b_out,
             recipient_pool_addr: Some(c.pool_address),
+            recipient_repays: false,
         },
         PlanStep::V2SwapCalc {
             pool_idx: v2c,
@@ -3639,6 +3676,7 @@ pub fn build_v4v2v2_plan(
             out_currency: fwd_c,
             out_amount: c_out,
             recipient_pool_addr: None,
+            recipient_repays: false,
         },
         PlanStep::V4SettleDelta {
             currency_idx: SENTINEL_WETH,
@@ -3725,6 +3763,7 @@ pub fn build_v4v2v4_plan(
             recipient_idx: v2b,
             amount: out_a,
             seeds_pool: Some(b.pool_address),
+            repays_flash: None,
         },
         PlanStep::V2SwapCalc {
             pool_idx: v2b,
@@ -3735,6 +3774,7 @@ pub fn build_v4v2v4_plan(
             out_currency: b_forward_cur,
             out_amount: b_out,
             recipient_pool_addr: None,
+            recipient_repays: false,
         },
         PlanStep::V4Swap {
             c0_idx: c0_c,
@@ -3842,6 +3882,7 @@ pub fn build_v4v4v2_plan(
             recipient_idx: v2c,
             amount: out_b,
             seeds_pool: Some(c.pool_address),
+            repays_flash: None,
         },
         PlanStep::V2SwapCalc {
             pool_idx: v2c,
@@ -3852,6 +3893,7 @@ pub fn build_v4v4v2_plan(
             out_currency: fwd_c,
             out_amount: out_c,
             recipient_pool_addr: None,
+            recipient_repays: false,
         },
         PlanStep::V4SettleAll,
     ];
