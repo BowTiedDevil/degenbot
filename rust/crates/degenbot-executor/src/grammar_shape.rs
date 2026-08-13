@@ -4528,6 +4528,344 @@ pub fn build_v3v3v3_plan(
     Some((preamble, plan, at))
 }
 
+/// Build the `v2_v2_v3` Plan — the terminal V3 flash's callback: a WETH
+/// `Erc20Transfer` seeds the first V2 (SelfFund entry), the two `V2_SWAP_CALC`
+/// legs chain (mid calc pays the next V2, terminal calc repays the V3 flash).
+#[must_use]
+#[expect(clippy::too_many_lines)]
+pub fn build_v2v2v3_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 3 {
+        return None;
+    }
+    let (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V3(c)) =
+        (&path.hops[0], &path.hops[1], &path.hops[2])
+    else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let c_swap_in = *inputs.consumed_inputs.get(2)?;
+    if !fits_int128(c_swap_in) {
+        return None;
+    }
+    let fwd_a = v2_forward(a);
+    let fwd_b = v2_forward(b);
+    let fwd_c = v3_forward(c);
+    let in_c = v3_input(c);
+    let out_a = *inputs.hop_outputs.first()?;
+    let out_b = *inputs.hop_outputs.get(1)?;
+    let out_c = *inputs.hop_outputs.get(2)?;
+    // AddressTable order must mirror `derive_3hop_v2v2v3`: v2a, v2b, v3c.
+    let mut at = AddressTable::with_sentinels(
+        Some(inputs.weth_address),
+        Some(inputs.executor_address),
+        None,
+    );
+    let v2a = at.add(a.pool_address).ok()?;
+    let v2b = at.add(b.pool_address).ok()?;
+    let v3c = at.add(c.pool_address).ok()?;
+    let weth = inputs.weth_address;
+
+    let plan: Plan = vec![
+        PlanStep::SelfFund {
+            currency: weth,
+            amount: optimal_input,
+        },
+        PlanStep::FlashSwap {
+            pool_idx: v3c,
+            pool_addr: c.pool_address,
+            protocol: Prot::V3,
+            zfo: c.zfo,
+            fee: u16::try_from(c.fee).ok()?,
+            out_currency: fwd_c,
+            out_amount: out_c,
+            in_currency: in_c,
+            in_amount: c_swap_in,
+            recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
+            auto_repay: false,
+            callback: vec![
+                PlanStep::Erc20Transfer {
+                    token_idx: SENTINEL_WETH,
+                    token_addr: weth,
+                    recipient_idx: v2a,
+                    amount: optimal_input,
+                    seeds_pool: Some(a.pool_address),
+                    repays_flash: None,
+                },
+                PlanStep::V2SwapCalc {
+                    pool_idx: v2a,
+                    pool_addr: a.pool_address,
+                    zfo: a.zfo,
+                    recipient_idx: v2b,
+                    fee: a.fee,
+                    out_currency: fwd_a,
+                    out_amount: out_a,
+                    recipient_pool_addr: Some(b.pool_address),
+                    recipient_repays: false,
+                },
+                PlanStep::V2SwapCalc {
+                    pool_idx: v2b,
+                    pool_addr: b.pool_address,
+                    zfo: b.zfo,
+                    recipient_idx: v3c,
+                    fee: b.fee,
+                    out_currency: fwd_b,
+                    out_amount: out_b,
+                    recipient_pool_addr: Some(c.pool_address),
+                    recipient_repays: true,
+                },
+            ],
+        },
+    ];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v2_v2_v4` Plan — one `V4_UNLOCK`: the V2 chain routes WETH → t2
+/// and pays the PM (`V2_SWAP_CALC → PoolManager`), t2 synced/settled into the
+/// PM, the trailing V4 swap nets the WETH profit. The executor's WETH funds
+/// the chain (SelfFund).
+#[must_use]
+pub fn build_v2v2v4_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 3 {
+        return None;
+    }
+    let (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V4(c)) =
+        (&path.hops[0], &path.hops[1], &path.hops[2])
+    else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let c_swap_in = *inputs.consumed_inputs.get(2)?;
+    if !fits_int128(c_swap_in) {
+        return None;
+    }
+    let fwd_a = v2_forward(a);
+    let fwd_b = v2_forward(b);
+    let (output_c, in_currency_c) = v4_hop_currencies(c);
+    let out_c = *inputs.hop_outputs.get(2)?;
+    // AddressTable order must mirror `derive_3hop_v2v2v4`: v2a, v2b, c0, c1,
+    // forward_b.
+    let mut at = v4_scaffold_table(inputs);
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let v2a = at.add(a.pool_address).ok()?;
+    let v2b = at.add(b.pool_address).ok()?;
+    let fee_c = u16::try_from(c.fee).ok()?;
+    let ts_c = i16::try_from(c.tick_spacing).ok()?;
+    let c0 = at.add(c.currency0_address).ok()?;
+    let c1 = at.add(c.currency1_address).ok()?;
+    let forward_b = at.add(fwd_b).ok()?;
+    let weth = inputs.weth_address;
+
+    let inner: Plan = vec![
+        PlanStep::V4Sync {
+            currency_idx: forward_b,
+            currency_addr: fwd_b,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: SENTINEL_WETH,
+            token_addr: weth,
+            recipient_idx: v2a,
+            amount: optimal_input,
+            seeds_pool: Some(a.pool_address),
+            repays_flash: None,
+        },
+        PlanStep::V2SwapCalc {
+            pool_idx: v2a,
+            pool_addr: a.pool_address,
+            zfo: a.zfo,
+            recipient_idx: v2b,
+            fee: a.fee,
+            out_currency: fwd_a,
+            out_amount: *inputs.hop_outputs.first()?,
+            recipient_pool_addr: Some(b.pool_address),
+            recipient_repays: false,
+        },
+        PlanStep::V2SwapCalc {
+            pool_idx: v2b,
+            pool_addr: b.pool_address,
+            zfo: b.zfo,
+            recipient_idx: pm_idx,
+            fee: b.fee,
+            out_currency: fwd_b,
+            out_amount: c_swap_in,
+            recipient_pool_addr: None,
+            recipient_repays: false,
+        },
+        PlanStep::V4Settle {
+            currency_addr: fwd_b,
+            amount: c_swap_in,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0,
+            c1_idx: c1,
+            fee: fee_c,
+            tick_spacing: ts_c,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: c.zfo,
+            amount: c_swap_in,
+            in_currency: in_currency_c,
+            in_amount: c_swap_in,
+            out_currency: output_c,
+            out_amount: out_c,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    let plan: Plan = vec![
+        PlanStep::SelfFund {
+            currency: weth,
+            amount: optimal_input,
+        },
+        PlanStep::V4Unlock {
+            inner,
+            pool_manager_idx: pm_idx,
+        },
+    ];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
+/// Build the `v2_v4_v4` Plan — one `V4_UNLOCK`: the leading V2 pays the PM
+/// (WETH → forward_a, `V2_SWAP_CALC → PoolManager`), synced/settled, then two
+/// V4 swaps; `V4_SETTLE_ALL` nets the WETH profit. SelfFund WETH entry.
+#[must_use]
+pub fn build_v2v4v4_plan(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> Option<(Vec<u8>, Plan, AddressTable)> {
+    let n = path.hops.len();
+    if n != 3 {
+        return None;
+    }
+    let (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V4(c)) =
+        (&path.hops[0], &path.hops[1], &path.hops[2])
+    else {
+        return None;
+    };
+    let optimal_input = inputs.optimal_input;
+    if inputs.hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+    let c_swap_in = *inputs.consumed_inputs.get(2)?;
+    if !fits_int128(b_swap_in) || !fits_int128(c_swap_in) {
+        return None;
+    }
+    let forward_a_cur = v2_forward(a);
+    let (forward_b_cur, in_currency_b) = v4_hop_currencies(b);
+    let (output_c, in_currency_c) = v4_hop_currencies(c);
+    let out_b = *inputs.hop_outputs.get(1)?;
+    let out_c = *inputs.hop_outputs.get(2)?;
+    // AddressTable order must mirror `derive_3hop_v2v4v4`: forward_a,
+    // c0_b, c1_b, c0_c, c1_c, v2a.
+    let mut at = v4_scaffold_table(inputs);
+    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+    let forward_a = at.add(forward_a_cur).ok()?;
+    let fee_b = u16::try_from(b.fee).ok()?;
+    let ts_b = i16::try_from(b.tick_spacing).ok()?;
+    let fee_c = u16::try_from(c.fee).ok()?;
+    let ts_c = i16::try_from(c.tick_spacing).ok()?;
+    let c0_b = at.add(b.currency0_address).ok()?;
+    let c1_b = at.add(b.currency1_address).ok()?;
+    let c0_c = at.add(c.currency0_address).ok()?;
+    let c1_c = at.add(c.currency1_address).ok()?;
+    let v2a = at.add(a.pool_address).ok()?;
+    let weth = inputs.weth_address;
+
+    let inner: Plan = vec![
+        PlanStep::V4Sync {
+            currency_idx: forward_a,
+            currency_addr: forward_a_cur,
+        },
+        PlanStep::Erc20Transfer {
+            token_idx: SENTINEL_WETH,
+            token_addr: weth,
+            recipient_idx: v2a,
+            amount: optimal_input,
+            seeds_pool: Some(a.pool_address),
+            repays_flash: None,
+        },
+        PlanStep::V2SwapCalc {
+            pool_idx: v2a,
+            pool_addr: a.pool_address,
+            zfo: a.zfo,
+            recipient_idx: pm_idx,
+            fee: a.fee,
+            out_currency: forward_a_cur,
+            out_amount: b_swap_in,
+            recipient_pool_addr: None,
+            recipient_repays: false,
+        },
+        PlanStep::V4Settle {
+            currency_addr: forward_a_cur,
+            amount: b_swap_in,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0_b,
+            c1_idx: c1_b,
+            fee: fee_b,
+            tick_spacing: ts_b,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: b.zfo,
+            amount: b_swap_in,
+            in_currency: in_currency_b,
+            in_amount: b_swap_in,
+            out_currency: forward_b_cur,
+            out_amount: out_b,
+        },
+        PlanStep::V4Swap {
+            c0_idx: c0_c,
+            c1_idx: c1_c,
+            fee: fee_c,
+            tick_spacing: ts_c,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: c.zfo,
+            amount: c_swap_in,
+            in_currency: in_currency_c,
+            in_amount: c_swap_in,
+            out_currency: output_c,
+            out_amount: out_c,
+        },
+        PlanStep::V4SettleAll,
+    ];
+    let plan: Plan = vec![
+        PlanStep::SelfFund {
+            currency: weth,
+            amount: optimal_input,
+        },
+        PlanStep::V4Unlock {
+            inner,
+            pool_manager_idx: pm_idx,
+        },
+    ];
+    let preamble = encoders::enc_preamble(&at);
+    Some((preamble, plan, at))
+}
+
 /// Build the `v4_v4_v2` Plan — one `V4_UNLOCK`: two V4 swaps, b's forward
 /// `V4_TAKE_COMPACT`'d straight to the terminal V2 pool, a `V2_SWAP_CALC`
 /// sells to the executor, `V4_SETTLE_ALL` nets.
@@ -5029,7 +5367,8 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
             build_plan_bytes(path, build_v4v2v2_plan, inputs)
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
-            derive_3hop_v2v2v4(a, b, c, inputs)
+            let _ = (a, b, c);
+            build_plan_bytes(path, build_v2v2v4_plan, inputs)
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
             derive_3hop_v2v3v4(a, b, c, inputs)
@@ -5053,7 +5392,8 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
             derive_3hop_v3v4v3(a, b, c, inputs)
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            derive_3hop_v2v4v4(a, b, c, inputs)
+            let _ = (a, b, c);
+            build_plan_bytes(path, build_v2v4v4_plan, inputs)
         }
         (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
             derive_3hop_v3v4v4(a, b, c, inputs)
@@ -5121,7 +5461,8 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         // previously-hand-written adapters, byte-identical to them (verified by
         // the `cutover` `debug_assert` oracle in dev + the parity suite).
         (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
-            derive_3hop_v2v2v3(a, b, c, inputs)
+            let _ = (a, b, c);
+            build_plan_bytes(path, build_v2v2v3_plan, inputs)
         }
         (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
             derive_3hop_v2v3v2(a, b, c, inputs)
@@ -5293,8 +5634,8 @@ fn oracle_reference(
         (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
             (wrap(derive_3hop_v4v2v2(a, b, c, inputs)), "v4_v2_v2")
         }
-        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V4(_))) => {
-            (OracleReference::NoBuilder, "v2_v2_v4")
+        (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
+            (wrap(derive_3hop_v2v2v4(a, b, c, inputs)), "v2_v2_v4")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V4(_))) => {
             (OracleReference::NoBuilder, "v2_v3_v4")
@@ -5317,8 +5658,8 @@ fn oracle_reference(
         (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V3(_))) => {
             (OracleReference::NoBuilder, "v3_v4_v3")
         }
-        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
-            (OracleReference::NoBuilder, "v2_v4_v4")
+        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
+            (wrap(derive_3hop_v2v4v4(a, b, c, inputs)), "v2_v4_v4")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
             (OracleReference::NoBuilder, "v3_v4_v4")
@@ -5344,8 +5685,8 @@ fn oracle_reference(
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
             (wrap(derive_3hop_v4v3v4(a, b, c, inputs)), "v4_v3_v4")
         }
-        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V3(_))) => {
-            (OracleReference::NoBuilder, "v2_v2_v3")
+        (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
+            (wrap(derive_3hop_v2v2v3(a, b, c, inputs)), "v2_v2_v3")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V2(_))) => {
             (OracleReference::NoBuilder, "v2_v3_v2")
@@ -6150,6 +6491,7 @@ fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 // (the `cutover` `debug_assert` oracle in dev + the parity suite in release).
 // Address-table registration ORDER is part of the byte contract and must match.
 
+#[cfg(debug_assertions)]
 fn derive_3hop_v2v2v3(
     a: &V2HopInfo,
     b: &V2HopInfo,
@@ -6668,6 +7010,7 @@ fn derive_3hop_v4v2v2(
 /// The V2 chain (a,b) routes WETH→t2; t2 is synced/transferred/settled **into
 /// the PM**, then the trailing V4 pool c swaps t2→WETH; `V4_SETTLE_ALL` nets
 /// the WETH profit to the executor.
+#[cfg(debug_assertions)]
 fn derive_3hop_v2v2v4(
     a: &V2HopInfo,
     b: &V2HopInfo,
@@ -7225,6 +7568,7 @@ fn derive_3hop_v3v4v3(
 /// One unlock: the V2 leg is seeded with WETH (repays the V2 chain into the
 /// PM via `V2_SWAP_CALC`→pm), syncing the forward into the PM, then two V4
 /// swaps run inside, and `V4_SETTLE_ALL` nets the WETH profit.
+#[cfg(debug_assertions)]
 fn derive_3hop_v2v4v4(
     a: &V2HopInfo,
     b: &V4HopInfo,
