@@ -4532,7 +4532,6 @@ pub fn build_v3v3v3_plan(
 /// `Erc20Transfer` seeds the first V2 (SelfFund entry), the two `V2_SWAP_CALC`
 /// legs chain (mid calc pays the next V2, terminal calc repays the V3 flash).
 #[must_use]
-#[expect(clippy::too_many_lines)]
 pub fn build_v2v2v3_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
@@ -4750,6 +4749,7 @@ pub fn build_v2v2v4_plan(
 /// (WETH → forward_a, `V2_SWAP_CALC → PoolManager`), synced/settled, then two
 /// V4 swaps; `V4_SETTLE_ALL` nets the WETH profit. SelfFund WETH entry.
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn build_v2v4v4_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
