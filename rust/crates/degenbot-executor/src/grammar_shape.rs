@@ -4872,6 +4872,7 @@ pub fn build_v2v4v4_plan(
 /// callback repays the leading V2 with WETH + a `V2_SWAP_DIRECT` that repays
 /// the V3 flash (`PoolRepay`). (The approved `V2SwapDirect` variant.)
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn build_v2v3v2_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
