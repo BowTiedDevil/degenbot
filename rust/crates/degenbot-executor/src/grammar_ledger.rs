@@ -212,16 +212,17 @@ pub enum LedgerOp {
     /// executor (the swap output, before repayment), and incurs an `in_currency`
     /// flash debt repayable within the callback. Extends the executor `Erc20`
     /// ledger (the same credit-before-debit rule as `PM`, on a different ledger).
-    /// When `recipient_pool` is `Some`, the OUTPUT goes straight to that pool
-    /// (a V3 flash paying the terminal V2) — seed its `H[pool]`, no executor
-    /// credit.
+    /// [`SwapRecipient`] routes where the output goes (see below).
     V2Flash {
         out_currency: Address,
         out_amount: u128,
         in_currency: Address,
         in_amount: u128,
-        recipient_pool: Option<Address>,
-        recipient_repays: bool,
+        /// Where the flash's output goes: Executor (credit Erc20), Pool(p)
+        /// (seed p's handoff — a V3 flash feeding the terminal V2),
+        /// PoolRepay(p) (repay p's flash debt — a V3→V3 repayment),
+        /// PoolManager (pay the PM — the following V4Settle accounts it).
+        recipient: SwapRecipient,
     },
     /// A `V3_SWAP_COMPACT` flash: same shape as [`V2Flash`] — the V3 pool credits
     /// `out_currency` and is owed `in_currency` within the callback.
@@ -230,8 +231,7 @@ pub enum LedgerOp {
         out_amount: u128,
         in_currency: Address,
         in_amount: u128,
-        recipient_pool: Option<Address>,
-        recipient_repays: bool,
+        recipient: SwapRecipient,
     },
     /// An `ERC20_TRANSFER(cur→rcp, amount)` debiting the executor's `Erc20[cur]`
     /// balance. When `repays_flash` is `Some(pool)`, the transfer is a flash
@@ -817,31 +817,34 @@ impl LedgerValidator {
                 out_amount,
                 in_currency,
                 in_amount,
-                recipient_pool,
-                recipient_repays,
+                recipient,
             }
             | LedgerOp::V3Flash {
                 out_currency,
                 out_amount,
                 in_currency,
                 in_amount,
-                recipient_pool,
-                recipient_repays,
+                recipient,
             } => {
                 // The flash extends the executor credit OR routes its output to
-                // a recipient pool: `recipient_repays` → saturating-repay that
-                // pool's flash debt (a V3→V3 repayment), else seed the pool's
-                // handoff (a V3 flash paying the terminal V2).
-                if let Some(pool) = recipient_pool {
-                    if recipient_repays {
-                        let owed = self.flash_debt.entry(out_currency).or_default();
-                        *owed = owed.saturating_sub(out_amount);
-                    } else {
+                // a recipient: Executor → the executor's Erc20; Pool(p) → seed
+                // p's handoff (a V3 flash feeding the terminal V2);
+                // PoolRepay(p) → saturating-repay p's flash debt (a V3→V3
+                // repayment); PoolManager → pays the PM (the following
+                // V4Settle/net-zero accounts it, no executor credit).
+                match recipient {
+                    SwapRecipient::Executor => {
+                        self.erc20.credit(out_currency, out_amount);
+                    }
+                    SwapRecipient::Pool(pool) => {
                         let have = *self.pair.get(&pool).unwrap_or(&0);
                         self.pair.insert(pool, have + out_amount);
                     }
-                } else {
-                    self.erc20.credit(out_currency, out_amount);
+                    SwapRecipient::PoolRepay(_) => {
+                        let owed = self.flash_debt.entry(out_currency).or_default();
+                        *owed = owed.saturating_sub(out_amount);
+                    }
+                    SwapRecipient::PoolManager => {}
                 }
                 *self.flash_debt.entry(in_currency).or_default() += in_amount;
                 Ok(())
@@ -1243,8 +1246,7 @@ mod tests {
             out_amount: 1_000_000,
             in_currency: weth(),
             in_amount: 900_000,
-            recipient_pool: None,
-            recipient_repays: false,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         // 2. V3 flash: credit WETH, owe t1.
@@ -1253,8 +1255,7 @@ mod tests {
             out_amount: 1_200_000,
             in_currency: usdc(),
             in_amount: 1_000_000,
-            recipient_pool: None,
-            recipient_repays: false,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         // 3. Repay the V3 flash (t1) — credit extended by op 1.
@@ -1287,8 +1288,7 @@ mod tests {
             out_amount: 1_000_000,
             in_currency: weth(),
             in_amount: 900_000,
-            recipient_pool: None,
-            recipient_repays: false,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         // BUG: repay the V2 flash (WETH) BEFORE the V3 flash credits WETH.
@@ -1316,8 +1316,7 @@ mod tests {
             out_amount: 1_000_000,
             in_currency: weth(),
             in_amount: 900_000,
-            recipient_pool: None,
-            recipient_repays: false,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         v.push(LedgerOp::V3Flash {
@@ -1325,8 +1324,7 @@ mod tests {
             out_amount: 1_200_000,
             in_currency: usdc(),
             in_amount: 1_000_000,
-            recipient_pool: None,
-            recipient_repays: false,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         // Repay V3 fully, but "forget" to repay the V2 flash's WETH debt.
@@ -1385,8 +1383,7 @@ mod tests {
             out_amount: 120_000,
             in_currency: usdc(),
             in_amount: 110_000,
-            recipient_pool: None,
-            recipient_repays: false,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         // Auto-repay (empty callback): debits min(110_000, 110_000) of t1.
@@ -1430,8 +1427,7 @@ mod tests {
             out_amount: 120_000,
             in_currency: usdc(),
             in_amount: 110_000,
-            recipient_pool: None,
-            recipient_repays: false,
+            recipient: SwapRecipient::Executor,
         })
         .unwrap();
         assert_eq!(

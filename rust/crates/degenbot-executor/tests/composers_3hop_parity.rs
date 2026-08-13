@@ -2219,7 +2219,7 @@ fn parity_v4_v4_v3() {
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
                 currency0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
-                currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                currency1_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
                 fee: 500u32,
                 tick_spacing: 10i32,
                 hook_address: address!("0000000000000000000000000000000000000000"),
@@ -2227,8 +2227,8 @@ fn parity_v4_v4_v3() {
             }),
             HopInfo::V3(V3HopInfo {
                 pool_address: address!("6666666666666666666666666666666666666666"),
-                token0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                token1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                token0_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
+                token1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
                 fee: 3000u32,
                 zfo: true,
             }),
@@ -2249,7 +2249,8 @@ fn parity_v4_v4_v3() {
     // swap_dynamic(B) + V3_SWAP_COMPACT(c: V4_TAKE_COMPACT(WETH→V3c), →executor) + settle_all.
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let executor_idx = SENTINEL_SELF;
-    let forward_b_idx = at.add(WETH).unwrap(); // V4b output (zfo→currency1) → SENTINEL_WETH
+    let wbtc = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    let forward_b_idx = at.add(wbtc).unwrap(); // V4b output (zfo→currency1) = WBTC
     let v3c_idx = at
         .add(address!("6666666666666666666666666666666666666666"))
         .unwrap();
@@ -2262,7 +2263,7 @@ fn parity_v4_v4_v3() {
     let c0_a_idx = at.add(WETH).unwrap();
     let c1_a_idx = at.add(USDC).unwrap();
     let c0_b_idx = at.add(USDC).unwrap();
-    let c1_b_idx = at.add(WETH).unwrap();
+    let c1_b_idx = at.add(wbtc).unwrap();
     let mut inner = encoders::enc_v4_swap_compact(
         c0_a_idx,
         c1_a_idx,

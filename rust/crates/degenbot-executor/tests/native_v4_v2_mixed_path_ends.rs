@@ -101,17 +101,33 @@ fn assert_encodes(hops: Vec<HopInfo>, label: &str) {
 /// Hop B (V2): USDC→WBTC.
 /// Hop C (V3): WBTC→WETH (WETH here stands in for the native-ETH-side token;
 /// the V4-V3-V4 spike already proved native path ends via V4 on both sides).
+/// **Root Cause B**: the `v4_v2_v3` emitter settles the V4 input with
+/// `V4_SETTLE_DELTA(WETH)` unconditionally. A NATIVE V4 input (a's debt is
+/// native) makes that settle incoherent — a residual PM[native] debt the
+/// validator rejects. Declined (ADR-029 D1); WETH-input V4→V2→V3 is the
+/// coherent subspace.
 #[test]
-fn native_v4_v2_v3_path_ends_encodes() {
+fn native_v4_v2_v3_path_starts_declines() {
     // A: NATIVE/USDC, zfo=true (in=native, out=USDC)
     let a = v4_hop_native_in_out(NATIVE, USDC, true);
     // B: USDC/WBTC, zfo=true (in=USDC, out=WBTC)
     let b = v2_hop(USDC, WBTC, true);
     // C: WBTC/WETH, zfo=true (in=WBTC, out=WETH)
     let c = v3_hop(WBTC, WETH, true);
-    assert_encodes(
-        vec![HopInfo::V4(a), HopInfo::V2(b), HopInfo::V3(c)],
-        "V4-V2-V3",
+    let path = PathInfo::new(vec![HopInfo::V4(a), HopInfo::V2(b), HopInfo::V3(c)]);
+    let out = encode_cmd_3_hop(
+        &path,
+        1_000_000_000_000_000u128,
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        &[2_000_000u128, 100_000_000u128, 2_001_000u128],
+        EXECUTOR,
+        PM,
+        WETH,
+        EncodeOptions::default(),
+    );
+    assert!(
+        out.is_none(),
+        "V4-V2-V3 with native V4 input must decline (settle-WETH incoherent), got {out:?}"
     );
 }
 

@@ -22,7 +22,13 @@ const EXECUTOR: Address = address!("DeAd0000000000000000000000000000000000Be");
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 
 #[test]
-fn native_v4_v3_v4_path_ends_encodes() {
+// **Root Cause B**: this path's solver amounts are incoherent — the V3
+// mid hop's swap-in (435_867_037_568_084_649) is ~1.6e7× its repayment
+// source (A's output, 27_604), so the V3 flash debt is unconesurably
+// under-repaid. The old emitter produced bytes anyway (reverting on-chain);
+// the LedgerValidator now correctly rejects it (FlashDebtUnpaid). The path
+// encode-failed in production for exactly this reason; the gate is the fix.
+fn native_v4_v3_v4_path_ends_declines() {
     let path = PathInfo::new(vec![
         HopInfo::V4(V4HopInfo {
             pool_manager_address: PM,
@@ -74,8 +80,8 @@ fn native_v4_v3_v4_path_ends_encodes() {
         EncodeOptions::default(),
     );
     assert!(
-        out_3hop.is_some(),
-        "encode_cmd_3_hop: V4-V3-V4 native path-ends should encode, got None"
+        out_3hop.is_none(),
+        "encode_cmd_3_hop: V4-V3-V4 path-384 (incoherent repayment) must decline, got {out_3hop:?}"
     );
 
     // Also exercise the exact entry point the bot uses (encode_cmd_stream).
@@ -98,8 +104,8 @@ fn native_v4_v3_v4_path_ends_encodes() {
         EncodeOptions::default(),
     );
     assert!(
-        out_stream.is_some(),
-        "encode_cmd_stream: V4-V3-V4 native path-ends should encode, got None"
+        out_stream.is_none(),
+        "encode_cmd_stream: V4-V3-V4 path-384 (incoherent repayment) must decline, got {out_stream:?}"
     );
 }
 
