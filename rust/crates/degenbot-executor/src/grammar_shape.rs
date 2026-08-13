@@ -21,11 +21,14 @@
 //! for every 2/3-hop family. The revm runtime matrix (`degenbot-simulation`
 //! `harness_declarative` full-matrix, exact delta) is the ADR-029 D5 source of
 //! truth; the primitive wire format is pinned by `tests/encoders_parity.rs`
-//! and the native bridge by `tests/native_eth_3hop_bridge.rs`. The one
-//! retained hand-written emitter is `grammar::v2_v2_v2` (the deliberate all-V2
-//! 3-hop routing split, reached only via the test-only `encode_cmd_3_hop`
-//! entry — see the `6ZIE5X` decision); it is NOT a `derive_shape` family.
-
+//! and the native bridge by `tests/native_eth_3hop_bridge.rs`. KO5NNB
+//! (epic N4TJSZ) cutover: the all-V2 family (2-hop, 3-hop, any-N) now routes
+//! through [`build_all_v2_chain`] + the [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
+//! gate (D4's "the validator gates the Plan for every family" is now literal
+//! for all-V2 too). The former hand-written all-V2 emitters
+//! (`grammar::all_v2_walk` / `encode_all_v2` / `v2_v2_v2`) and
+//! [`build_v2v2_plan`] are orphaned (no production caller) but retained pending
+//! the T3 deletion task.
 #![expect(clippy::similar_names)] // v2a/v2b/v3a/v3b/v3c hop-slot names are canonical per-family labels
 
 use alloy::primitives::{Address, U256};
@@ -6651,6 +6654,17 @@ fn build_plan_bytes(
     Some(out)
 }
 
+/// Public all-V2 entry (KO5NNB cutover): the any-N (≥2) all-V2 family through
+/// the Plan + validator gate — [`build_all_v2_chain`] → `validate_full` →
+/// `plan_to_bytes`. Replaces the hand-written `all_v2_walk` speedrail as the
+/// production producer for every all-V2 path (`encode_cmd_stream`'s all-V2
+/// short-circuit funnels here; `derive_shape`'s `(V2,V2)`/`(V2,V2,V2)` arms do
+/// too). Returns `None` when the builder declines or the gate rejects.
+#[must_use]
+pub fn derive_all_v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
+    build_plan_bytes(path, build_all_v2_chain, inputs)
+}
+
 /// Public entry: derive a family's command bytes from its Plan builder
 /// (`build_*_plan` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
 /// gate → `plan_to_bytes`) — the sole production producer since RVNIPD removed
@@ -6762,7 +6776,12 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
             build_plan_bytes(path, build_v2v4_plan, inputs)
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), None) => {
-            build_plan_bytes(path, build_v2v2_plan, inputs)
+            // KO5NNB: the 2-hop all-V2 family routes through `build_all_v2_chain`
+            // (the any-N builder, which handles BOTH funding axes — the former
+            // `build_v2v2_plan` never handled SelfFund). `build_v2v2_plan` is now
+            // orphaned (retained pending T3 deletion). Byte-identical to the old
+            // speedrail for N=2 in both funding modes (SPVEIE parity test).
+            build_plan_bytes(path, build_all_v2_chain, inputs)
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), None) => {
             build_plan_bytes(path, build_v2v3_plan, inputs)
@@ -6773,9 +6792,19 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), None) => {
             build_plan_bytes(path, build_v3v3_plan, inputs)
         }
-        // V2/V3-only 3-hop folds (WAYDTL): byte-faithful transcriptions of the
-        // previously-hand-written adapters, byte-identical to them (verified by
-        // the `cutover` `debug_assert` oracle in dev + the parity suite).
+        // V2/V3-only 3-hop folds (WAYDTL) + the all-V2 3-hop cutover arm
+        // (KO5NNB): byte-faithful transcriptions of the previously-hand-written
+        // adapters, byte-identical to them (verified by the `cutover`
+        // `debug_assert` oracle in dev + the parity suite). The all-V2 3-hop
+        // (and any-N reaching here) family routes through `build_all_v2_chain`
+        // — the distinct `v2_v2_v2` layout is COLLAPSED to the N-hop
+        // speedrail/Plan layout (top-swap-on-pool-A). Runtime-safe: the revm
+        // full_matrix only ever exercised the speedrail layout for all-V2-3-hop
+        // via `encode_cmd_stream`; the distinct layout was only asserted to
+        // exist-and-differ by `all_v2_routing_split_holds` (deleted in KO5NNB).
+        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
+            build_plan_bytes(path, build_all_v2_chain, inputs)
+        }
         (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
             let _ = (a, b, c);
             build_plan_bytes(path, build_v2v2v3_plan, inputs)
@@ -7326,6 +7355,72 @@ mod tests {
     // gate accepting the Plan trace (`build_plan_bytes` runs
     // build → validate_full → plan_to_bytes, so parity implies the gate
     // accepted). Red (missing builder / divergent bytes) → Green.
+    // KO5NNB gate proof: an InPathFlash all-V2 stream whose terminal output
+    // cannot cover the flash repayment is REJECTED by the LedgerValidator
+    // (the flash-repay `Erc20Transfer` would over-debit `erc20[weth]`, so
+    // credit-before-debit fires). The old `all_v2_walk` speedrail emitted this
+    // stream unvalidated (and the revm harness's 2× WETH buffer let it
+    // "execute but lose"); the gate now makes it unrepresentable — N4TJSZ's
+    // entire point. The SAME losing stream under SelfFund still validates
+    // (no flash debt to repay — the executor eats the loss from held capital,
+    // which is what a negative-control delta assert should measure).
+    #[test]
+    fn all_v2_gate_rejects_unprofitable_inpathflash_stream() {
+        let path = PathInfo::new(all_v2_chain_hops(2));
+        let outs: Vec<u128> = vec![80_000, 60_000]; // terminal 60k < optimal 100k — losing
+        let consumed: Vec<u128> = vec![50_000, 80_000];
+        for (flabel, funding) in [
+            ("InPathFlash", FundingSource::InPathFlash),
+            ("SelfFund", FundingSource::SelfFund),
+        ] {
+            let inputs = ComposerInputs {
+                executor_address: address!("00000000000000000000000000000000000000ee"),
+                pool_manager_address: address!("00000000000000000000000000000000000000ff"),
+                weth_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                optimal_input: 100_000,
+                hop_outputs: &outs,
+                consumed_inputs: &consumed,
+                opts: crate::composers::EncodeOptions {
+                    funding,
+                    ..Default::default()
+                },
+            };
+            let (_preamble, plan, _at) = build_all_v2_chain(&path, &inputs)
+                .unwrap_or_else(|| panic!("[{flabel}] build None"));
+            let ops = plan_to_ledger_ops(&plan);
+            let mut v = crate::grammar_ledger::LedgerValidator::default();
+            if flabel == "InPathFlash" {
+                let err = v
+                    .validate_full(&ops)
+                    .expect_err("losing InPathFlash stream must be rejected");
+                // The exact invariant fired: the flash repay tries to debit
+                // more WETH than the stream generated (terminal 60k < 100k owed).
+                assert!(
+                    matches!(
+                        err,
+                        crate::grammar_ledger::ValidationError::Erc20TransferBeforeCredit { .. }
+                    ),
+                    "expected Erc20TransferBeforeCredit, got {err:?}"
+                );
+                // The OLD speedrail emitted this losing stream (Some) — the
+                // divergence IS the new gate, not a builder bug.
+                assert!(
+                    crate::grammar::encode_all_v2(&path, &inputs).is_some(),
+                    "speedrail emitted the losing stream"
+                );
+                assert!(
+                    derive_all_v2(&path, &inputs).is_none(),
+                    "production Plan path must decline the losing InPathFlash stream"
+                );
+            } else {
+                assert!(
+                    v.validate_full(&ops).is_ok(),
+                    "losing SelfFund stream must still validate (no flash debt)"
+                );
+            }
+        }
+    }
+
     #[test]
     fn all_v2_chain_byte_parity_with_speedrail() {
         for n in [2usize, 3, 4] {

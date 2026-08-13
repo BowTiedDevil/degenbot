@@ -2,28 +2,25 @@
 //!
 //! Since `encode_cmd_stream` / `encode_cmd_3_hop` all *delegate* to the Plan
 //! (`grammar::encode_grammar` → `derive_shape` → `build_*_plan` + validator +
-//! `plan_to_bytes`, with `grammar::encode_all_v2` / `v2_v2_v2` for all-V2
-//! paths), the byte-identity of every combo is pinned by the revm runtime
-//! matrix (`degenbot-simulation` `harness_declarative` `full_matrix`, exact
-//! delta — the ADR-029 D5 source of truth) plus the primitive wire-format
-//! layer (`encoders_parity.rs`) and the native bridge byte-golden
-//! (`native_eth_3hop_bridge.rs`). The former golden-master byte corpus
-//! (`composers_parity.rs` / `composers_3hop_parity.rs` / `grammar_shape_parity`
-//! / `native_v4_*`) was deleted in EYQ6UF — those were Plan-vs-Plan or
-//! byte-literal duplication with the Plan as sole producer.
+//! `plan_to_bytes`, and the all-V2 any-N family → `grammar_shape::derive_all_v2`
+//! since the KO5NNB cutover), the byte-identity of every combo is pinned by the
+//! revm runtime matrix (`degenbot-simulation` `harness_declarative`
+//! `full_matrix`, exact delta — the ADR-029 D5 source of truth) plus the
+//! primitive wire-format layer (`encoders_parity.rs`) and the native bridge
+//! byte-golden (`native_eth_3hop_bridge.rs`). The former golden-master byte
+//! corpus (`composers_parity.rs` / `composers_3hop_parity.rs` /
+//! `grammar_shape_parity` / `native_v4_*`) was deleted in EYQ6UF — those were
+//! Plan-vs-Plan or byte-literal duplication with the Plan as sole producer.
 //!
 //! This test instead guards the **routing/coverage** invariant: every 2-hop
 //! and 3-hop family combo must still encode (`Some`) through both public entry
 //! points for valid amounts — i.e. no combo is accidentally dropped by the
-//! grammar walk. It also asserts the deliberate all-V2 routing split: the
-//! N-hop speedrail (`encode_cmd_stream`) and the 3-hop `v2_v2_v2` layout
-//! (`encode_cmd_3_hop`) are both reachable and non-empty.
+//! grammar walk. The former all-V2 routing split (N-hop speedrail vs the 3-hop
+//! `v2_v2_v2` layout) is GONE since KO5NNB: all-V2 any-N (2/3/any) routes
+//! through the single `build_all_v2_chain` Plan producer via both entries, so
+//! the split test (`all_v2_routing_split_holds`) was deleted.
 
-#![expect(
-    clippy::cast_possible_truncation,
-    clippy::print_stderr,
-    clippy::too_many_lines
-)]
+#![expect(clippy::cast_possible_truncation, clippy::too_many_lines)]
 
 use alloy::primitives::{address, Address};
 use degenbot_executor::composers::{
@@ -180,11 +177,13 @@ fn every_combo_encodes_through_both_entry_points() {
 }
 
 #[test]
-fn all_v2_routing_split_holds() {
-    // For an all-V2 3-hop path, `encode_cmd_stream` (N-hop speedrail, top swap
-    // on pool A) and `encode_cmd_3_hop` (v2_v2_v2 layout, top swap on pool C)
-    // produce structurally distinct non-empty streams — the deliberate routing
-    // split preserved from the bespoke encoders.
+fn all_v2_entries_produce_identical_plan_bytes() {
+    // KO5NNB: the former all-V2 routing split is collapsed — both public
+    // entries now route all-V2-3-hop through the same `build_all_v2_chain`
+    // Plan producer (`encode_cmd_stream`'s `derive_all_v2` short-circuit and
+    // `derive_shape`'s `(V2,V2,V2)` arm). This replaces
+    // `all_v2_routing_split_holds` (which asserted the two producers DIFFER
+    // — impossible with one producer).
     let tessera: Vec<HopInfo> = vec![v2(WETH, USDC, 0), v2(USDC, WBTC, 1), v2(WBTC, WETH, 2)];
     let path = PathInfo::new(tessera);
     let out2: Vec<u128> = vec![1_000_000_000_000_000_000u128; 3];
@@ -213,12 +212,8 @@ fn all_v2_routing_split_holds() {
         a.is_some() && b.is_some(),
         "all-V2 3-hop must encode through both entries"
     );
-    assert_ne!(a, b, "speedrail and v2_v2_v2 layouts must remain distinct");
-    if let (Some(a), Some(b)) = (a, b) {
-        eprintln!(
-            "  all-V2 3-hop: encode_cmd_stream len={} encode_cmd_3_hop len={}",
-            a.len(),
-            b.len()
-        );
-    }
+    assert_eq!(
+        a, b,
+        "both entries must now emit the single build_all_v2_chain Plan layout"
+    );
 }

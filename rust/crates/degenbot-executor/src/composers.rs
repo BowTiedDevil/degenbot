@@ -365,7 +365,8 @@ pub struct ComposerInputs<'a> {
 ///
 /// # Path-type routing
 ///
-/// * all-V2 hops (≥2): [`encode_cmd_v2_n_hop`]
+/// * all-V2 hops (≥2): [`crate::grammar_shape::derive_all_v2`] — the Plan +
+///   validator path (KO5NNB cutover)
 /// * 2-hop V4-V4 / V4-V3 / V3-V4 / V4-V2 / V2-V4 / V3-V3 / V2-V3 / V3-V2:
 ///   the corresponding `encode_cmd_*` two-hop composer
 /// * 3-hop: [`encode_cmd_3_hop`] (all 27 V2/V3/V4 combinations)
@@ -398,9 +399,10 @@ pub fn encode_cmd_stream(
     // Facet A (T2TCJM): a generic per-shape-class hop-grammar walk replaces the
     // former 8 two-hop + 27 three-hop bespoke permutation bodies, producing
     // byte-identical output (validated by the golden corpus). All-V2 any-N uses
-    // the N-hop speedrail; other 2/3-hop paths use the combo grammar walk.
+    // the Plan + validator path (`derive_all_v2` → `build_all_v2_chain` → gate
+    // → `plan_to_bytes`, KO5NNB); other 2/3-hop paths use the combo grammar walk.
     if num_hops >= 2 && path_info.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
-        crate::grammar::encode_all_v2(path_info, &inputs)
+        crate::grammar_shape::derive_all_v2(path_info, &inputs)
     } else {
         crate::grammar::encode_grammar(path_info, &inputs)
     }

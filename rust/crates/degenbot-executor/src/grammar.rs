@@ -1,8 +1,10 @@
 //! Facet A grammar — the production command-stream encoder (ADR-025 / ADR-029).
 //!
 //! `encode_grammar` is the **sole** production encoder for every 2/3-hop path
-//! (the all-V2 any-N speedrail lives in [`encode_all_v2`], reached first by
-//! `encode_cmd_stream`). Production delegates byte-emission to
+//! (the all-V2 any-N family routes through
+//! [`grammar_shape::derive_all_v2`][crate::grammar_shape::derive_all_v2] — the
+//! Plan+validator path — reached first by `encode_cmd_stream`). Production
+//! delegates byte-emission to
 //! [`grammar_shape::derive_shape`][crate::grammar_shape::derive_shape] — the
 //! per-shape-class deriver — for every family it handles, with **no hand-written
 //! backstop**: a family either derives or it does not encode. The ~32
@@ -12,12 +14,14 @@
 //! layer (`tests/encoders_parity.rs`), and the native bridge byte-golden
 //! (`tests/native_eth_3hop_bridge.rs`).
 //!
-//! The single retained hand-written emitter is [`v2_v2_v2`] — the all-V2
-//! **3-hop** layout, structurally distinct from the N-hop speedrail (per the
-//! `6ZIE5X` decision: emitters are per-protocol code; this is **not** a backstop,
-//! it is the deliberate primary path for that routing split, reached only via the
-//! test-only `encode_cmd_3_hop` entry). `encode_all_v2` (the speedrail) is the
-//! production path for any-N all-V2.
+//! **KO5NNB (epic N4TJSZ) cutover:** the all-V2 family (2-hop, 3-hop, any-N)
+//! now routes through `build_all_v2_chain` + the `LedgerValidator` gate — D4's
+//! "the validator gates the Plan for every family" is literal for all-V2, and
+//! the terminal-V2 exact-draw invariant is enforced on the streams the bot
+//! actually ships. The hand-written emitters [`encode_all_v2`] (the N-hop
+//! speedrail), `all_v2_walk`, and [`v2_v2_v2`] (the former all-V2 3-hop distinct
+//! layout, now COLLAPSED to the N-hop speedrail/Plan layout) are **orphaned**
+//! (no production caller) but retained pending the T3 deletion task.
 //!
 //! The CL-clamp swap-in rule (`V2 → full output; CL → consumed_inputs[i]` +
 //! `fits_int128`) is applied directly in the retained emitters/builders.
@@ -129,22 +133,24 @@ fn all_v2_walk(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> 
     Some(out)
 }
 
-/// The all-V2 N-hop **speedrail** (matching `encode_cmd_stream`'s routing of
-/// any all-V2 path to the generic flash-borrow + chained `V2_SWAP_CALC` walk,
-/// regardless of arity). `encode_cmd_3_hop` uses [`encode_grammar`] instead,
-/// which for an all-V2 **3-hop** path emits the distinct `v2_v2_v2` layout.
+/// The all-V2 N-hop **speedrail** — the former production path for any all-V2
+/// route (`encode_cmd_stream`'s short-circuit). **ORPHANED since the KO5NNB
+/// cutover**: `encode_cmd_stream` now funnels all-V2 through
+/// [`crate::grammar_shape::derive_all_v2`] (the Plan + validator path). Retained
+/// only as the byte-parity oracle for [`crate::grammar_shape::build_all_v2_chain`]
+/// (the `all_v2_chain_byte_parity_with_speedrail` test, T1) until T3 deletes it.
 #[must_use]
 pub fn encode_all_v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     all_v2_walk(path, inputs)
 }
 
 /// Adapt an all-V2 **3-hop** path to the `three_hop_v2_v2_v2` layout (the
-/// 3-hop entry, structurally distinct from the N-hop speedrail).
-///
-/// Reached only via the test-only `encode_cmd_3_hop` entry (production
-/// `encode_cmd_stream` routes any-N all-V2 to the speedrail first). Retained as a
-/// hand-written emitter per the `6ZIE5X` decision (emitters are per-protocol
-/// code); this is **not** a derive_shape backstop.
+/// former distinct 3-hop entry, top-swap-on-pool-C). **ORPHANED since the
+/// KO5NNB cutover**: `encode_grammar` no longer dispatches here — the all-V2
+/// 3-hop family routes through `derive_shape`'s `(V2,V2,V2)` arm
+/// (`build_all_v2_chain`, N-hop speedrail/Plan layout; the distinct layout is
+/// COLLAPSED). Retained pending the T3 deletion task.
+#[expect(dead_code)]
 fn v2_v2_v2(
     ha: &V2HopInfo,
     hb: &V2HopInfo,
@@ -182,27 +188,15 @@ fn v2_v2_v2(
     Some(out)
 }
 
-/// The generic 2/3-hop dispatcher — the **sole** production entry for the
-/// non-speedrail families.
-///
-/// Every family except the all-V2 3-hop path delegates byte-emission to
+/// The generic 2/3-hop dispatcher — delegates every family (the all-V2
+/// routes included since KO5NNB) to
 /// [`derive_shape`][crate::grammar_shape::derive_shape]. There is **no
 /// hand-written backstop**: `derive_shape` either derives the family's bytes or
-/// `encode_grammar` returns `None` (byte-parity is held by the golden-master
-/// suites, not by an adapter oracle). The single retained hand-written emitter
-/// is [`v2_v2_v2`] (the deliberate all-V2-3-hop routing split; see the
-/// `6ZIE5X` decision).
+/// `encode_grammar` returns `None` (byte-parity is held by the revm runtime
+/// matrix + the golden suites, not by an adapter oracle). The former all-V2-3-hop
+/// hand-written emitter [`v2_v2_v2`] is orphaned (retained pending T3).
 #[must_use]
 pub fn encode_grammar(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    // The all-V2 3-hop path: the deliberate speedrail/routing split, reached
-    // only via the test-only `encode_cmd_3_hop` entry. Emitted by the retained
-    // hand-written `v2_v2_v2` adapter (NOT derive_shape; the split is
-    // structural — `encode_cmd_stream` routes any-N all-V2 to the speedrail).
-    if let (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) =
-        (path.hops.first(), path.hops.get(1), path.hops.get(2))
-    {
-        return v2_v2_v2(a, b, c, inputs);
-    }
-    // Every other 2/3-hop family: derived. No backstop.
+    // Every 2/3-hop family (all-V2 included) is derived by `derive_shape`.
     crate::grammar_shape::derive_shape(path, inputs)
 }
