@@ -1,10 +1,16 @@
 //! Facet A (T2TCJM) grammar coverage + routing invariant.
 //!
-//! Since `encode_cmd_stream` / `encode_cmd_3_hop` now *delegate* to the grammar
-//! (`grammar::encode_grammar` / `grammar::encode_all_v2`), the byte-identity of
-//! every combo is pinned end-to-end by the golden corpus
-//! (`composers_parity.rs`, `composers_3hop_parity.rs`, `native_*`). The
-//! byte-for-byte parity harness is therefore redundant post-swap.
+//! Since `encode_cmd_stream` / `encode_cmd_3_hop` all *delegate* to the Plan
+//! (`grammar::encode_grammar` → `derive_shape` → `build_*_plan` + validator +
+//! `plan_to_bytes`, with `grammar::encode_all_v2` / `v2_v2_v2` for all-V2
+//! paths), the byte-identity of every combo is pinned by the revm runtime
+//! matrix (`degenbot-simulation` `harness_declarative` `full_matrix`, exact
+//! delta — the ADR-029 D5 source of truth) plus the primitive wire-format
+//! layer (`encoders_parity.rs`) and the native bridge byte-golden
+//! (`native_eth_3hop_bridge.rs`). The former golden-master byte corpus
+//! (`composers_parity.rs` / `composers_3hop_parity.rs` / `grammar_shape_parity`
+//! / `native_v4_*`) was deleted in EYQ6UF — those were Plan-vs-Plan or
+//! byte-literal duplication with the Plan as sole producer.
 //!
 //! This test instead guards the **routing/coverage** invariant: every 2-hop
 //! and 3-hop family combo must still encode (`Some`) through both public entry

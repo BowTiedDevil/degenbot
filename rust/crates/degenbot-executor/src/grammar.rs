@@ -5,11 +5,12 @@
 //! `encode_cmd_stream`). Production delegates byte-emission to
 //! [`grammar_shape::derive_shape`][crate::grammar_shape::derive_shape] — the
 //! per-shape-class deriver — for every family it handles, with **no hand-written
-//! backstop**: a family either derives or it does not encode (the
-//! `cutover`/`debug_assert` oracle and the ~32 proven adapter fns it guarded
-//! were retired in WAYDTL once `derive_shape` covered every family
-//! byte-identically; byte-parity is now held by the golden-master suites in
-//! `tests/composers_parity.rs` / `tests/composers_3hop_parity.rs`).
+//! backstop**: a family either derives or it does not encode. The ~32
+//! hand-written adapter fns and their `cutover` parity-oracle were retired in
+//! WAYDTL/RVNIPD; byte-parity is now pinned by the revm runtime matrix
+//! (`degenbot-simulation` full_matrix, exact delta), the primitive wire-format
+//! layer (`tests/encoders_parity.rs`), and the native bridge byte-golden
+//! (`tests/native_eth_3hop_bridge.rs`).
 //!
 //! The single retained hand-written emitter is [`v2_v2_v2`] — the all-V2
 //! **3-hop** layout, structurally distinct from the N-hop speedrail (per the

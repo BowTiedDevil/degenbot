@@ -1,41 +1,30 @@
-//! Facet-A derivation **spike** (ergo `6YUNQN`, epic `463V2C`).
+//! Grammar derivation (ADR-029 D4 hybrid) — the **Plan tree** as the primary
+//! artifact (epics `463V2C` / `MNF6VU`).
 //!
-//! Feasibility proof for ADR-029 **D4 (hybrid)**: a 2/3-hop family can be
-//! emitted from a [`ShapeClass`] + declarative per-hop ledger facts + a
-//! per-protocol encoder, instead of a hand-written adapter — and the result
-//! executes through the runtime matrix with exact delta.
+//! A 2/3-hop family's stream is authored as an execution-ordered,
+//! callback-nested [`Plan`] of [`PlanStep`]s. Two consumers derive from the
+//! SAME Plan:
+//! * the **encoder** — [`plan_to_bytes`] emits the command stream;
+//! * the **validator** — [`plan_to_ledger_ops`] projects the execution trace,
+//!   gated by [`crate::grammar_ledger::LedgerValidator`] (ADR-029 D5: the
+//!   generic validator proving ordering from declarative facts).
 //!
-//! The hybrid split this spike embodies (ADR-029 D4):
-//! * **declarative coupling/ledger facts** — [`HopFacts`]: which ledgers a hop
-//!   touches, its forward (output) currency, and its coupling role at each
-//!   boundary. These are *data* the derivation reasons over.
-//! * **per-protocol mechanics** — the `enc_event_*`-style encoder selection in
-//!   [`emit_hop`] / [`derive_2hop`] (here a `match`; in production a trait impl
-//!   per protocol). The Solidity callback wiring is code, not data (D4).
-//!
-//! The **enclosure/call-structure** (which hop wraps which `unlock`/callback)
-//! and the **repayment pivot** are *derived* from the funding source + the
-//! ledgers, never chosen by the caller (ADR-029 D3).
-//!
-//! **Scope:** this spike covers the V2/V3 2-hop domain (`v2_v3`, `v3_v2`,
-//! `v3_v3`) — the minimal cross-section that exercises two *distinct* funding
-//! sources (in-path flash vs self-fund), two *distinct* coupling modes
-//! (exec-balance bridge vs pool-to-pool via `V2_SWAP_CALC`), and the
-//! **terminal-V2 pre-fund rule** (`2PT5HH`). Pure-V4 (PM-ledger + `V4_TAKE`
-//! coupling + native bridges) is the harder residual for `WAYDTL` — the spike
-//! reports that boundary honestly rather than pretending to span it.
+//! One representation, no drift, no reordering, no per-family trace
+//! duplication. [`derive_shape`] dispatches every well-formed family to its
+//! `build_*_plan` + `build_plan_bytes` (build → `validate_full` →
+//! `plan_to_bytes`), returning `None` on decline or gate rejection.
 //!
 //! ---
-//! **Status after RVNIPD (epic MNF6VU):** the hand-written `derive_2hop_*` and
-//! `derive_3hop_*` byte-assembling emitters are **deleted** — the Plan tree
-//! below is the sole production producer for every 2/3-hop family, gated through
-//! [`crate::grammar_ledger::LedgerValidator`] (ADR-029 D5) before `plan_to_bytes`.
-//! The parity-oracle's reference half is gone; the ADR-029 D5 runtime matrix
-//! (the `harness_declarative` exact-delta suite) is its replacement detector.
-//! The one retained hand-written emitter is `grammar::v2_v2_v2` (the deliberate
-//! all-V2 3-hop routing split, reached only via the test-only
-//! `encode_cmd_3_hop` entry — see the `6ZIE5X` decision); it is
-//! NOT a `derive_shape` family.
+//! **Status after RVNIPD / EYQ6UF (epic MNF6VU):** the hand-written
+//! `derive_2hop_*` / `derive_3hop_*` byte-assembling emitters and their
+//! parity-oracle are **deleted** — the Plan is the sole production producer
+//! for every 2/3-hop family. The revm runtime matrix (`degenbot-simulation`
+//! `harness_declarative` full-matrix, exact delta) is the ADR-029 D5 source of
+//! truth; the primitive wire format is pinned by `tests/encoders_parity.rs`
+//! and the native bridge by `tests/native_eth_3hop_bridge.rs`. The one
+//! retained hand-written emitter is `grammar::v2_v2_v2` (the deliberate all-V2
+//! 3-hop routing split, reached only via the test-only `encode_cmd_3_hop`
+//! entry — see the `6ZIE5X` decision); it is NOT a `derive_shape` family.
 
 #![expect(clippy::similar_names)] // v2a/v2b/v3a/v3b/v3c hop-slot names are canonical per-family labels
 
@@ -6930,22 +6919,6 @@ mod tests {
 
     // BP7KIR Checkpoint 1: the Plan tree is the primary artifact for v2_v3.
     #[test]
-    fn v2_v3_plan_byte_parity_with_proven_emitter() {
-        let (path, inputs) = v2_v3_path_inputs();
-        // The proven hand-written-emitter-derived bytes (today's production path).
-        let reference = derive_shape(&path, &inputs).expect("v2_v3 derive_shape returned None");
-        // The Plan-derived bytes: build the Plan, encode it, prepend preamble.
-        let (preamble, plan, at) =
-            build_v2v3_plan(&path, &inputs).expect("v2_v3 must build a Plan");
-        let mut plan_bytes = preamble;
-        plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
-        assert_eq!(
-            plan_bytes, reference,
-            "Plan-derived bytes must be byte-identical to the proven emitter"
-        );
-    }
-
-    #[test]
     fn v2_v3_plan_projects_a_validating_trace() {
         let (path, inputs) = v2_v3_path_inputs();
         let (_preamble, plan, _at) =
@@ -7107,22 +7080,19 @@ mod tests {
         )
     }
 
-    fn plan_byte_parity_and_validate(
+    /// RVNIPD/EYQ6UF: build the Plan and assert it projects a trace that
+    /// validates clean through the gate. The byte-level `derive_shape`
+    /// comparison this used to make is gone — `derive_shape` IS the same
+    /// Plan path now, so it was a self-comparison (the runtime matrix is the
+    /// byte source of truth; `encoders_parity` pins the primitive wire format).
+    fn plan_builds_and_validates(
         build: fn(&PathInfo, &ComposerInputs) -> Option<(Vec<u8>, Plan, AddressTable)>,
         path: &PathInfo,
         inputs: &ComposerInputs,
         name: &str,
     ) {
-        let reference =
-            derive_shape(path, inputs).unwrap_or_else(|| panic!("[{name}] derive_shape None"));
-        let (preamble, plan, at) =
+        let (_preamble, plan, _at) =
             build(path, inputs).unwrap_or_else(|| panic!("[{name}] build None"));
-        let mut plan_bytes = preamble;
-        plan_bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
-        assert_eq!(
-            plan_bytes, reference,
-            "[{name}] Plan bytes != proven emitter"
-        );
         let ops = plan_to_ledger_ops(&plan);
         let mut v = crate::grammar_ledger::LedgerValidator::default();
         assert!(
@@ -7134,17 +7104,17 @@ mod tests {
     #[test]
     fn v3_v2_plan_byte_parity_and_validates() {
         let (path, inputs) = v3_v2_path_inputs();
-        plan_byte_parity_and_validate(build_v3v2_plan, &path, &inputs, "v3_v2");
+        plan_builds_and_validates(build_v3v2_plan, &path, &inputs, "v3_v2");
     }
     #[test]
     fn v3_v3_plan_byte_parity_and_validates() {
         let (path, inputs) = v3_v3_path_inputs();
-        plan_byte_parity_and_validate(build_v3v3_plan, &path, &inputs, "v3_v3");
+        plan_builds_and_validates(build_v3v3_plan, &path, &inputs, "v3_v3");
     }
     #[test]
     fn v2_v2_plan_byte_parity_and_validates() {
         let (path, inputs) = v2_v2_path_inputs();
-        plan_byte_parity_and_validate(build_v2v2_plan, &path, &inputs, "v2_v2");
+        plan_builds_and_validates(build_v2v2_plan, &path, &inputs, "v2_v2");
     }
 
     #[test]
@@ -7185,7 +7155,7 @@ mod tests {
     #[test]
     fn v4_v4_plan_byte_parity_and_validates() {
         let (path, inputs) = v4_v4_path_inputs();
-        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4");
+        plan_builds_and_validates(build_v4v4_plan, &path, &inputs, "v4_v4");
     }
 
     #[test]
@@ -7293,7 +7263,7 @@ mod tests {
             use_v4_batch: true,
             ..Default::default()
         });
-        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 batch");
+        plan_builds_and_validates(build_v4v4_plan, &path, &inputs, "v4_v4 batch");
         // Spot-check the Plan shape: outer `V4Unlock { inner: [V4Batch, V4SettleAll] }`.
         let (_preamble, plan, _at) =
             build_v4v4_plan(&path, &inputs).expect("v4_v4 batch build None");
@@ -7322,7 +7292,7 @@ mod tests {
             use_v4_batch: false,
             ..Default::default()
         });
-        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 erc6909");
+        plan_builds_and_validates(build_v4v4_plan, &path, &inputs, "v4_v4 erc6909");
         let (_preamble, plan, _at) =
             build_v4v4_plan(&path, &inputs).expect("v4_v4 erc6909 build None");
         let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
@@ -7350,7 +7320,7 @@ mod tests {
             use_v4_batch: true,
             ..Default::default()
         });
-        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 batch+erc6909");
+        plan_builds_and_validates(build_v4v4_plan, &path, &inputs, "v4_v4 batch+erc6909");
         let (_preamble, plan, _at) =
             build_v4v4_plan(&path, &inputs).expect("v4_v4 batch+erc6909 build None");
         let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
@@ -7441,7 +7411,7 @@ mod tests {
             for (m_name, opts) in modes {
                 let label = format!("v4_v4 {t_name}+{m_name}");
                 let (path, inputs) = v4_v4_inputs(terminal, opts);
-                plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, &label);
+                plan_builds_and_validates(build_v4v4_plan, &path, &inputs, &label);
             }
         }
         let _ = U256::ZERO;
@@ -7486,7 +7456,7 @@ mod tests {
         for (name, gap) in [("wrap", Gap::Wrap), ("unwrap", Gap::Unwrap)] {
             let label = format!("v4_v4 gap {name}");
             let (path, inputs) = v4_v4_gap_inputs(gap, crate::composers::EncodeOptions::default());
-            plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, &label);
+            plan_builds_and_validates(build_v4v4_plan, &path, &inputs, &label);
         }
         let _ = U256::ZERO;
     }
@@ -7528,7 +7498,7 @@ mod tests {
             for (m_name, opts) in modes {
                 let label = format!("v4_v4 gap {g_name}+{m_name}");
                 let (path, inputs) = v4_v4_gap_inputs(gap, opts);
-                plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, &label);
+                plan_builds_and_validates(build_v4v4_plan, &path, &inputs, &label);
             }
         }
         let _ = U256::ZERO;
@@ -7676,6 +7646,6 @@ mod tests {
             capture: ProfitCapture::Native,
             ..Default::default()
         });
-        plan_byte_parity_and_validate(build_v4v4_plan, &path, &inputs, "v4_v4 native-capture");
+        plan_builds_and_validates(build_v4v4_plan, &path, &inputs, "v4_v4 native-capture");
     }
 }
