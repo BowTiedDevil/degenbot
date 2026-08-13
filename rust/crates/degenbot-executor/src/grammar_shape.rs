@@ -4987,7 +4987,6 @@ pub fn build_v2v3v2_plan(
 /// repaid by WETH (`Erc20Transfer` seeds it) then a `V2_SWAP_DIRECT` repaying
 /// the inner V3 (`PoolRepay`); the inner V3 repays the outer V3 (`PoolRepay`).
 #[must_use]
-#[expect(clippy::too_many_lines)]
 pub fn build_v2v3v3_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
