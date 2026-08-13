@@ -2620,8 +2620,10 @@ mod tests {
                 HopInfo::V4(V4HopInfo {
                     pool_manager_address: pm,
                     pool_id_hex: "0x1111".to_string(),
-                    currency0_address: weth,
-                    currency1_address: usdc,
+                    // b's input = a's output (USDC), output WETH (the coherent
+                    // V2V4V3 chain — b must consume a's forward).
+                    currency0_address: usdc,
+                    currency1_address: weth,
                     fee: 3000,
                     tick_spacing: 60,
                     hook_address: Address::ZERO,

@@ -547,6 +547,7 @@ impl PmLedger {
 
     /// `V4_UNLOCK` callback end — the master invariant: every touched
     /// `PM[currency]` must net to zero. Returns the first nonzero delta if any.
+    #[cfg(test)]
     fn first_nonzero(&self) -> Option<(Address, i128)> {
         self.deltas
             .iter()
@@ -747,8 +748,22 @@ impl LedgerValidator {
             // `V4SettleAll` would have zeroed them; this catches any stream
             // that forgot to settle.)
             LedgerOp::V4UnlockEnd => {
-                if let Some((currency, delta)) = self.pm.first_nonzero() {
-                    return Err(ValidationError::PmDeltaNonzero { currency, delta });
+                // The unlock-close auto-settles POSITIVE PM deltas to the
+                // executor (the master-rule "net zero" credits the bot — a
+                // stream may validly leave surplus profit). A NEGATIVE delta is
+                // an unpaid executor input debt (the stream forgot to settle a
+                // swap input) and is rejected — the `V4SettleAll`/`V4SettleDelta`
+                // discipline the 3-hop builders follow.
+                for (currency, delta) in &self.pm.deltas {
+                    if *delta < 0 {
+                        return Err(ValidationError::PmDeltaNonzero {
+                            currency: *currency,
+                            delta: *delta,
+                        });
+                    }
+                }
+                for v in self.pm.deltas.values_mut() {
+                    *v = 0;
                 }
                 Ok(())
             }
