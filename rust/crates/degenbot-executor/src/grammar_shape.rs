@@ -2980,7 +2980,7 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
     // whole stream is one V4_UNLOCK over internal ledger movement, so no funding
     // choice is needed (the PM carries the entry credit). Handle it before the
     // V2/V3 funding dispatch.
-    match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
+    let bytes: Option<Vec<u8>> = match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
         (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
             derive_3hop_v4v4v4(a, b, c, inputs)
         }
@@ -3068,8 +3068,279 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
             derive_3hop_v3v3v3(a, b, c, inputs)
         }
         _ => derive_2hop_v2v3(path, inputs),
+    };
+    // JT57TH — the cutover() parity-oracle: every family's derived bytes are
+    // cross-checked against the Plan tree (`build_*_plan` + `plan_to_bytes`) in
+    // dev/CI builds. Zero cost in release (`#[cfg(debug_assertions)]`). This is
+    // the live divergence detector for the RFPI6H bug class — the moment a Plan
+    // builder and a hand-written emitter disagree on any family, CI fails loud.
+    cutover_parity_oracle(path, inputs, bytes.as_ref());
+    bytes
+}
+
+/// JT57TH — the **cutover() parity-oracle**: a `debug_assert_eq!` divergence
+/// detector on [`derive_shape`]'s production path.
+///
+/// This re-establishes the oracle WAYDTL retired (commit `79db9621`), with the
+/// roles inverted. Then `derive_shape` was the untrusted "derivation" checked
+/// against hand-written references. Now `derive_shape` **is** the production
+/// encoder (the `derive_2hop_*` / `derive_3hop_*` emitters) and the Plan tree
+/// (`build_*_plan` + [`plan_to_bytes`]) is the oracle reference — a live
+/// cross-check that fails CI the moment a Plan builder and an emitter disagree
+/// on any family; exactly the divergence class RFPI6H (commit `1e06beaf`)
+/// exposed: two hand-written emitters disagreeing on flash-repayment currency.
+///
+/// Per family, the oracle either:
+/// * **compares** — the 9 2-hop families have Plan builders: the Plan is built
+///   and `debug_assert_eq!`'d against the derived bytes;
+/// * **records an axis gap** (non-fatal) — a builder exists but does not yet
+///   express an axis the emitter honors. Today: `v2_v3` × `funding=SelfFund`
+///   (WE45KC — the builder is InPathFlash-only until task `5I25WS` extends it);
+///   or
+/// * **records "no Plan"** (non-fatal, once per family) — the 26 3-hop families
+///   have no builder yet (tasks `W7FQN6` / `HPZTNT` author them). An explicit
+///   record, NOT a false-green pass.
+///
+/// Compiled out entirely when `debug_assertions` is off — zero release cost.
+#[cfg(debug_assertions)]
+#[expect(
+    clippy::print_stderr,
+    reason = "JT57TH cutover() oracle: non-fatal no-bytes-to-compare record"
+)]
+fn cutover_parity_oracle(path: &PathInfo, inputs: &ComposerInputs<'_>, derived: Option<&Vec<u8>>) {
+    let Some(derived) = derived else {
+        // `derive_shape` declined the family — nothing to cross-check.
+        return;
+    };
+    let (plan, family) = oracle_plan_reference(path, inputs);
+    match plan {
+        OraclePlan::Built(plan_bytes) => {
+            debug_assert_eq!(
+                derived.as_slice(),
+                plan_bytes.as_slice(),
+                "parity-oracle [{family}]: Plan bytes diverged from derive_shape"
+            );
+        }
+        OraclePlan::AxisUncovered(axis) => {
+            eprintln!(
+                "parity-oracle [{family}]: Plan builder does not cover axis `{axis}` yet — no \
+                 bytes to compare (not a false-green pass)"
+            );
+        }
+        OraclePlan::NoBuilder => {
+            record_no_plan_once(family);
+        }
     }
 }
+
+/// Release-build no-op: the oracle is a dev/CI-only divergence detector.
+#[cfg(not(debug_assertions))]
+fn cutover_parity_oracle(_: &PathInfo, _: &ComposerInputs<'_>, _: Option<&Vec<u8>>) {}
+
+/// The oracle reference a family maps to on the cutover path.
+#[cfg(debug_assertions)]
+enum OraclePlan {
+    /// The Plan built for this input: `preamble + plan_to_bytes(&plan, &at)`
+    /// (the full payload, byte-comparable to the derived bytes).
+    Built(Vec<u8>),
+    /// A builder exists for this family but does not express the requested
+    /// axis (e.g. `v2_v3` × SelfFund) — the emitter covers it, the builder is
+    /// extended under task `5I25WS`. Record, don't compare.
+    AxisUncovered(&'static str),
+    /// No Plan builder exists for this family yet (all 3-hop families — tasks
+    /// `W7FQN6` / `HPZTNT` author them, upgrading these arms to `Built`).
+    NoBuilder,
+}
+
+/// Map a path to its oracle reference: which family, and which Plan builder
+/// (if any) covers it. **Mirrors the [`derive_shape`] dispatcher — keep the
+/// two in lockstep.**
+#[cfg(debug_assertions)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one explicit arm per family, mirroring derive_shape"
+)]
+fn oracle_plan_reference(
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> (OraclePlan, &'static str) {
+    match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
+        // ── 2-hop families (9): a Plan builder exists → build + compare. ──
+        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), None) => {
+            (oracle_build(build_v4v4_plan, path, inputs), "v4_v4")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), None) => {
+            (oracle_build(build_v4v3_plan, path, inputs), "v4_v3")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), None) => {
+            (oracle_build(build_v3v4_plan, path, inputs), "v3_v4")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), None) => {
+            (oracle_build(build_v4v2_plan, path, inputs), "v4_v2")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), None) => {
+            (oracle_build(build_v2v4_plan, path, inputs), "v2_v4")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), None) => {
+            // The V2/V3-only 2-hop folds live on `derive_shape`'s `_` arm
+            // (→ `derive_2hop_v2v3`). A SelfFund V2-led path returns `None`
+            // there (no `derive_2hop` arm) — the oracle never sees bytes for
+            // it and the builder's InPathFlash reference stays authoritative.
+            (oracle_build(build_v2v2_plan, path, inputs), "v2_v2")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), None) => {
+            if inputs.opts.funding == FundingSource::SelfFund {
+                // WE45KC: the emitter honors SelfFund for V2-led `v2_v3`; the
+                // builder is InPathFlash-only (task `5I25WS` extends it), so it
+                // would otherwise build the *other* funding's bytes and fire a
+                // false RED. Record the gap, don't compare.
+                (OraclePlan::AxisUncovered("funding=SelfFund"), "v2_v3")
+            } else {
+                (oracle_build(build_v2v3_plan, path, inputs), "v2_v3")
+            }
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), None) => {
+            (oracle_build(build_v3v2_plan, path, inputs), "v3_v2")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), None) => {
+            (oracle_build(build_v3v3_plan, path, inputs), "v3_v3")
+        }
+        // ── 3-hop families (26): no Plan builder yet (tasks `W7FQN6`/`HPZTNT`
+        //    author them). Explicit arms name each family for the "no Plan"
+        //    record, and are the exact arms a future task upgrades to `Built`.
+        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v4_v4_v4")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v4_v2_v2")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v2_v2_v4")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v2_v3_v4")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v3_v2_v4")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v3_v3_v4")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v2_v4_v2")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v2_v4_v3")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v3_v4_v2")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v3_v4_v3")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v2_v4_v4")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v3_v4_v4")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v4_v4_v2")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v4_v4_v3")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v4_v2_v3")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v4_v2_v4")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v4_v3_v2")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v4_v3_v3")
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), Some(HopInfo::V4(_))) => {
+            (OraclePlan::NoBuilder, "v4_v3_v4")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v2_v2_v3")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v2_v3_v2")
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v2_v3_v3")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v3_v2_v2")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v3_v2_v3")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), Some(HopInfo::V2(_))) => {
+            (OraclePlan::NoBuilder, "v3_v3_v2")
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), Some(HopInfo::V3(_))) => {
+            (OraclePlan::NoBuilder, "v3_v3_v3")
+        }
+        _ => (OraclePlan::NoBuilder, "<unhandled path>"),
+    }
+}
+
+/// Build a family's Plan and fold `preamble + plan_to_bytes(&plan, &at)` into
+/// the full payload byte string the oracle compares against the derived bytes.
+#[cfg(debug_assertions)]
+#[expect(
+    clippy::type_complexity,
+    reason = "plan-builder fn pointer signature (preamble, Plan, AddressTable)"
+)]
+fn oracle_build(
+    build: fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan, AddressTable)>,
+    path: &PathInfo,
+    inputs: &ComposerInputs<'_>,
+) -> OraclePlan {
+    match build(path, inputs) {
+        Some((preamble, plan, at)) => {
+            let mut bytes = preamble;
+            bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
+            OraclePlan::Built(bytes)
+        }
+        None => OraclePlan::AxisUncovered("this input's shape"),
+    }
+}
+
+/// Record — exactly once per family — that the oracle found no Plan to compare
+/// (the 3-hop families have no builder yet). A visible, non-fatal record in CI
+/// output; never a silent pass.
+#[cfg(debug_assertions)]
+#[expect(
+    clippy::print_stderr,
+    reason = "JT57TH cutover() oracle: once-per-family no-Plan record"
+)]
+fn record_no_plan_once(family: &'static str) {
+    use std::sync::{Mutex, OnceLock};
+    static RECORDED: OnceLock<Mutex<OracleNoPlanFamilies>> = OnceLock::new();
+    let recorded = RECORDED.get_or_init(|| Mutex::new(OracleNoPlanFamilies::new()));
+    let Ok(mut seen) = recorded.lock() else {
+        // Poisoned (a panic while holding the lock) — record anyway.
+        eprintln!("parity-oracle [{family}]: no Plan to compare (not a false-green pass)");
+        return;
+    };
+    if seen.insert(family) {
+        eprintln!(
+            "parity-oracle [{family}]: no Plan builder yet — bypassed (not a false-green pass; \
+             authored by epic MNF6VU tasks 3–4)"
+        );
+    }
+}
+
+/// The once-per-process set of 3-hop families already recorded as "no Plan"
+/// (caps the oracle's stderr record to one line per family per process).
+#[cfg(debug_assertions)]
+type OracleNoPlanFamilies = std::collections::HashSet<&'static str>;
 
 /// V2/V3 2-hop / 3-hop-(V2/V3) entry (the previous funding-based dispatch).
 fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
