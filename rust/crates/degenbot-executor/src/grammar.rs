@@ -19,27 +19,11 @@
 //! production path for any-N all-V2.
 //!
 //! The CL-clamp swap-in rule (`V2 → full output; CL → consumed_inputs[i]` +
-//! `fits_int128`) is resolved at ONE shared point: [`cl_swap_in`].
+//! `fits_int128`) is applied directly in the retained emitters/builders.
 #![expect(clippy::similar_names)] // canonical v2a/v2b/v2c hop-slot names in the retained v2_v2_v2 emitter
 
-#[cfg(debug_assertions)]
-use crate::composers::fits_int128;
 use crate::composers::{ComposerInputs, HopInfo, PathInfo, V2HopInfo};
 use crate::encoders::{self, AddressTable, SENTINEL_SELF, SENTINEL_WETH};
-
-/// The ONE shared CL-clamp swap-in resolution point (ADR-025).
-///
-/// A concentrated-liquidity (V3/V4) hop's executable swap-in is the solver's
-/// clamped `consumed_inputs[i]`; a V2/Curve/Balancer/Solidly hop (no clamp)
-/// consumes its full prior output. Gated by the int128 guard.
-#[cfg(debug_assertions)]
-pub(crate) fn cl_swap_in(inputs: &ComposerInputs<'_>, i: usize) -> Option<u128> {
-    let v = *inputs.consumed_inputs.get(i)?;
-    if !fits_int128(v) {
-        return None;
-    }
-    Some(v)
-}
 
 /// The forward (output) currency of a V2 hop.
 pub(crate) fn v2_forward_addr(h: &V2HopInfo) -> alloy::primitives::Address {
