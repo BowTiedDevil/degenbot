@@ -206,3 +206,6 @@ logs/*
 .pi/mega-compact
 tests/standalone_anvil/cache/
 tests/standalone_anvil/out/build-info/
+
+# Architectural reviews
+**/architecture-review*
