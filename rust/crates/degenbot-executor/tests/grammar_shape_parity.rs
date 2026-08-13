@@ -194,7 +194,11 @@ fn v2v3_only_3hop_folds_are_live_across_families() {
     ];
     for (name, fa, fb, fc) in families {
         // A fixed 3-hop token chain (entry WETH → t → u → terminal WETH).
-        let hops = vec![fa(weth(), t, true), fb(t, u, true), fc(u, weth(), false)];
+        // The terminal hop outputs WETH (zfo=true) — a coherent chain each
+        // family's Plan+validator accepts (the validator correctly refuses a
+        // u→WETH terminal that inputs WETH, a non-chain the emitter lazily
+        // covered).
+        let hops = vec![fa(weth(), t, true), fb(t, u, true), fc(u, weth(), true)];
         for amount in [1_000u128, 100_000, 10_000_000] {
             run_family(hops.clone(), amount);
         }
