@@ -332,6 +332,16 @@ pub enum PlanStep {
         in_currency: Address,
         in_amount: u128,
         recipient_idx: u8,
+        /// The recipient pool's address when the flash's OUTPUT directly seeds
+        /// a pool (e.g. a V3 flash paying the terminal V2 — `v4_v3_v2`).
+        /// `None` for a →SELF output. Bytes encode `recipient_idx`; this is
+        /// ledger-only (the output seeds the pool's pair-handoff instead of
+        /// crediting the executor).
+        recipient_pool_addr: Option<Address>,
+        /// Whether a pool-recipient flash output REPAYS that pool's flash debt
+        /// (a V3→V3 repayment — `v4_v3_v3`) vs seeds it (a V3 flash feeding the
+        /// terminal V2 — `v4_v3_v2`).
+        recipient_pool_repays: bool,
         /// Whether the cmd_executor auto-pays `in_currency` from the executor's
         /// `E[]` balance at callback-end (V2/V3 `*_SWAP_COMPACT` with an empty /
         /// no-repay callback). When true, the projection emits a trailing
@@ -594,22 +604,30 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                     in_amount,
                     auto_repay,
                     callback,
+                    recipient_pool_addr,
+                    recipient_pool_repays,
                     ..
                 } => {
-                    // The swap credits `out_currency` to the executor and incurs
-                    // an `in_currency` flash debt repayable within the callback.
+                    // The swap extends `out_currency` (to the executor, or
+                    // directly seeds `recipient_pool` when the flash's output
+                    // pays a V2 pool) and incurs an `in_currency` flash debt
+                    // repayable within the callback.
                     let flash = match protocol {
                         Prot::V2 => LedgerOp::V2Flash {
                             out_currency: *out_currency,
                             out_amount: *out_amount,
                             in_currency: *in_currency,
                             in_amount: *in_amount,
+                            recipient_pool: *recipient_pool_addr,
+                            recipient_repays: *recipient_pool_repays,
                         },
                         Prot::V3 => LedgerOp::V3Flash {
                             out_currency: *out_currency,
                             out_amount: *out_amount,
                             in_currency: *in_currency,
                             in_amount: *in_amount,
+                            recipient_pool: *recipient_pool_addr,
+                            recipient_repays: *recipient_pool_repays,
                         },
                         Prot::V4 => unreachable!("V4 flash is not a FlashSwap (V4 has no flash); V4Unlock lands in a later increment"),
                     };
@@ -1135,6 +1153,8 @@ pub fn build_v2v3_plan(
                 in_currency: fwd_a,
                 in_amount: b_swap_in,
                 recipient_idx: SENTINEL_SELF,
+                recipient_pool_addr: None,
+                recipient_pool_repays: false,
                 auto_repay: true,
                 callback: vec![],
             },
@@ -1153,6 +1173,8 @@ pub fn build_v2v3_plan(
             in_currency: weth,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback: vec![
                 PlanStep::FlashSwap {
@@ -1166,6 +1188,8 @@ pub fn build_v2v3_plan(
                     in_currency: fwd_a,
                     in_amount: b_swap_in,
                     recipient_idx: SENTINEL_SELF,
+                    recipient_pool_addr: None,
+                    recipient_pool_repays: false,
                     auto_repay: false,
                     callback: vec![PlanStep::Erc20Transfer {
                         token_idx: forward_idx,
@@ -1237,6 +1261,8 @@ pub fn build_v3v2_plan(
             in_currency: weth,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback: vec![
                 PlanStep::Erc20Transfer {
@@ -1318,6 +1344,8 @@ pub fn build_v3v3_plan(
             in_currency: weth,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback: vec![
                 PlanStep::Erc20Transfer {
@@ -1342,6 +1370,8 @@ pub fn build_v3v3_plan(
                     in_currency: fwd_a,
                     in_amount: b_swap_in,
                     recipient_idx: SENTINEL_SELF,
+                    recipient_pool_addr: None,
+                    recipient_pool_repays: false,
                     auto_repay: true,
                     callback: vec![],
                 },
@@ -1391,6 +1421,8 @@ pub fn build_v2v2_plan(
         in_currency: weth,
         in_amount: optimal_input,
         recipient_idx: SENTINEL_SELF,
+        recipient_pool_addr: None,
+        recipient_pool_repays: false,
         auto_repay: false,
         callback: vec![
             PlanStep::Erc20Transfer {
@@ -1904,6 +1936,8 @@ pub fn build_v4v3_plan(
                 in_currency: weth,
                 in_amount: b_swap_in,
                 recipient_idx: SENTINEL_SELF,
+                recipient_pool_addr: None,
+                recipient_pool_repays: false,
                 auto_repay: true,
                 callback: vec![],
             },
@@ -1939,6 +1973,8 @@ pub fn build_v4v3_plan(
                 in_currency: out_currency_a,
                 in_amount: b_swap_in,
                 recipient_idx: SENTINEL_SELF,
+                recipient_pool_addr: None,
+                recipient_pool_repays: false,
                 auto_repay: true,
                 callback: vec![],
             },
@@ -2478,6 +2514,8 @@ fn build_v3v4_erc20_input_plan(
             in_currency: weth,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback,
         }]
@@ -2498,6 +2536,8 @@ fn build_v3v4_erc20_input_plan(
                 in_currency: weth,
                 in_amount: optimal_input,
                 recipient_idx: SENTINEL_SELF,
+                recipient_pool_addr: None,
+                recipient_pool_repays: false,
                 auto_repay: false,
                 callback,
             },
@@ -2636,6 +2676,8 @@ fn build_v3v4_native_output_plan(
             in_currency: weth,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback,
         },
@@ -2757,6 +2799,8 @@ fn build_v3v4_native_input_plan(
             in_currency: tok,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback,
         },
@@ -2969,6 +3013,8 @@ fn build_v2v4_erc20_input_plan(
             in_currency: weth,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback,
         }]
@@ -2989,6 +3035,8 @@ fn build_v2v4_erc20_input_plan(
                 in_currency: weth,
                 in_amount: optimal_input,
                 recipient_idx: SENTINEL_SELF,
+                recipient_pool_addr: None,
+                recipient_pool_repays: false,
                 auto_repay: false,
                 callback,
             },
@@ -3124,6 +3172,8 @@ fn build_v2v4_native_output_plan(
         in_currency: weth,
         in_amount: optimal_input,
         recipient_idx: SENTINEL_SELF,
+        recipient_pool_addr: None,
+        recipient_pool_repays: false,
         auto_repay: false,
         callback,
     }];
@@ -3232,6 +3282,8 @@ fn build_v2v4_native_input_plan(
             in_currency: tok,
             in_amount: optimal_input,
             recipient_idx: SENTINEL_SELF,
+            recipient_pool_addr: None,
+            recipient_pool_repays: false,
             auto_repay: false,
             callback,
         },
