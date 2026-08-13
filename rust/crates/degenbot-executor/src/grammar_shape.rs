@@ -39,6 +39,8 @@
 //! next foundational step is to emit a `LedgerOp` trace from each and gate it on
 //! [`crate::grammar_ledger::LedgerValidator`].
 
+#![expect(clippy::similar_names)] // v2a/v2b/v3a/v3b/v3c hop-slot names are canonical per-family labels
+
 use alloy::primitives::{Address, U256};
 
 use crate::composers::{
@@ -67,7 +69,7 @@ pub use crate::grammar_ledger::{Bribe, FundingSource, ProfitCapture, ShapeClass}
 ///
 /// Resolved by [`hop_facts`] per hop (a simplified stand-in for the production
 /// descriptor record; the field list is the same as `HopFacts`).
-
+///
 /// Resolve the forward currency + terminal-V2 fact for a hop (the declarative
 /// "coupling/ledger facts" of ADR-029 D4).
 fn hop_facts(h: &HopInfo) -> (Address, bool) {
@@ -144,6 +146,7 @@ fn emit_terminal_hop(
 /// flash-capable hop and returns the facts needed for the next boundary. To
 /// keep the spike readable it is specialized to the V2/V3 2-hop shapes; the
 /// production emitter (WAYDTL) generalizes this into a HopFacts-driven walk.
+#[expect(clippy::too_many_lines)]
 fn derive_2hop(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
@@ -531,8 +534,9 @@ pub type Plan = Vec<PlanStep>;
 /// emits its flash credit/debt term, then recurses into its callback). This is
 /// the validator's input — decoupled from byte layout (ADR-029 D5).
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
-    let mut ops = Vec::new();
+    #[expect(clippy::too_many_lines)]
     fn walk(plan: &Plan, ops: &mut Vec<LedgerOp>) {
         for step in plan {
             match step {
@@ -761,6 +765,7 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
             }
         }
     }
+    let mut ops = Vec::new();
     walk(plan, &mut ops);
     ops
 }
@@ -770,9 +775,14 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
 /// proven hand-written emitter's `enc_*` calls — byte-parity with it is the
 /// guard that this Plan-derived encoder reproduces the exact proven bytes.
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
-    let mut out = Vec::new();
+    #[expect(clippy::too_many_lines)]
     fn walk(plan: &Plan, at: &AddressTable, out: &mut Vec<u8>) {
+        // The plan is LedgerValidator-validated before encoding, so the encoder
+        // range checks below are unreachable; the `.expect()`s are deliberate
+        // documentation of that invariant (args are in range by construction).
+        #![allow(clippy::expect_used)]
         for step in plan {
             match step {
                 PlanStep::FlashSwap {
@@ -833,8 +843,9 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                     *recipient_idx,
                     *fee,
                 )),
-                // Self-fund is a stream precondition, not a command.
-                PlanStep::SelfFund { .. } => {}
+                // Self-fund and native transfer are stream preconditions /
+                // ledger-only moves, not on-chain commands — no byte.
+                PlanStep::SelfFund { .. } | PlanStep::NativeTransfer { .. } => {}
                 // V4 container: encode inner, wrap in V4_UNLOCK.
                 PlanStep::V4Unlock {
                     inner,
@@ -892,8 +903,6 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                 PlanStep::V4Settle { .. } => {
                     out.extend_from_slice(&encoders::enc_v4_settle());
                 }
-                // Ledger-only (native flows as msg.value on the settle) — no byte.
-                PlanStep::NativeTransfer { .. } => {}
                 PlanStep::WethWithdraw { amount, .. } => {
                     out.extend_from_slice(&encoders::enc_weth_withdraw(U256::from(*amount)));
                 }
@@ -930,6 +939,7 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
             }
         }
     }
+    let mut out = Vec::new();
     walk(plan, at, &mut out);
     out
 }
@@ -1267,6 +1277,7 @@ pub fn build_v2v2_plan(
 /// Returns `None` for the batch / erc6909 / currency-gap variants (later
 /// sub-increments of BP7KIR Increment 3).
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn build_v4v4_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
@@ -1591,6 +1602,7 @@ pub fn build_v4v4_plan(
 /// (wrap-then-V3) and native-input (unwrap-then-settle) cases need
 /// `WethDeposit`/`WethWithdraw` PlanSteps and return `None` here.
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn build_v4v3_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
@@ -1783,7 +1795,9 @@ pub fn build_v4v3_plan(
         // into the PM (NativeTransfer), then SettleDelta zeroes PM[native].
         // (The WETH SettleDelta above is the WETH-input path; replaced here.)
         if v4_in_native {
-            let settle_all = inner.pop().unwrap(); // SettleAll (tail)
+            let Some(settle_all) = inner.pop() else {
+                return None; // machine-built plan always has a SettleAll tail
+            };
             inner.pop(); // drop the WETH SettleDelta placeholder
             inner.extend([
                 PlanStep::WethWithdraw {
@@ -1824,6 +1838,7 @@ pub fn build_v4v3_plan(
 /// unwrap-WETH-to-seed-native-input) need `WethDeposit`/`WethWithdraw` and
 /// return `None` here.
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn build_v4v2_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
@@ -2011,7 +2026,9 @@ pub fn build_v4v2_plan(
         //    Replaces the WETH-input V4Sync+Transfer+Settle sequence (spliced
         //    before SettleAll).
         if v4_in_native {
-            let settle_all = inner.pop().unwrap(); // tail SettleAll
+            let Some(settle_all) = inner.pop() else {
+                return None; // machine-built plan always has a SettleAll tail
+            };
             inner.pop(); // drop V4Settle placeholder
             inner.pop(); // drop Erc20Transfer placeholder
             inner.pop(); // drop V4Sync placeholder
@@ -2136,11 +2153,12 @@ pub fn build_v3v4_plan(
 /// `v3_v4` ERC-20 V4 input — the forward-seed topology (3b). V3 outputs an
 /// ERC-20 `forward` that enters the PM; V3 input is WETH.
 #[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
 fn build_v3v4_erc20_input_plan(
     a: &V3HopInfo,
     b: &V4HopInfo,
     v4_in_currency: Address,
-    _v4_out_currency: Address,
+    v4_out_currency: Address,
     v4_out_amount: u128,
     v4_swap_in: u128,
     forward_out: u128,
@@ -2165,7 +2183,7 @@ fn build_v3v4_erc20_input_plan(
         return None;
     }
     // (V4 output is WETH here — the captured profit funds the V3 repayment.)
-    if _v4_out_currency != weth {
+    if v4_out_currency != weth {
         return None;
     }
     let mut at = AddressTable::with_sentinels(
@@ -2261,6 +2279,7 @@ fn build_v3v4_erc20_input_plan(
 /// spent. SelfFund is byte-neutral, so byte-parity with the proven emitter
 /// (which has no self-fund byte — the executor just holds the balance) holds.
 #[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
 fn build_v3v4_native_output_plan(
     a: &V3HopInfo,
     b: &V4HopInfo,
@@ -2392,7 +2411,7 @@ fn build_v3v4_native_output_plan(
 /// outputs WETH (forward = weth, unwrapped to native to seed the V4 input);
 /// V3 input is an ERC-20 `tok` (entry capital, SelfFund). This is the
 /// SelfFund funding source surfacing in a V4-involving path.
-#[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
 fn build_v3v4_native_input_plan(
     a: &V3HopInfo,
     b: &V4HopInfo,
@@ -2597,11 +2616,12 @@ pub fn build_v2v4_plan(
 }
 
 /// `v2_v4` ERC-20 V4 input — the forward-seed topology (3b, V2-flash variant).
+#[expect(clippy::too_many_arguments)]
 fn build_v2v4_erc20_input_plan(
     a: &V2HopInfo,
     b: &V4HopInfo,
     v4_in_currency: Address,
-    _v4_out_currency: Address,
+    v4_out_currency: Address,
     v4_out_amount: u128,
     v4_swap_in: u128,
     forward_out: u128,
@@ -2622,7 +2642,7 @@ fn build_v2v4_erc20_input_plan(
     if v2_in_currency != weth
         || forward_addr == NATIVE_CURRENCY_ADDRESS
         || v4_in_currency != forward_addr
-        || _v4_out_currency != weth
+        || v4_out_currency != weth
     {
         return None;
     }
@@ -2718,6 +2738,7 @@ fn build_v2v4_erc20_input_plan(
 /// no SelfFund. (v3_v4 leaves profit as native + SelfFunds WETH; v2_v4 wraps.)
 /// Byte-parity with the proven emitter (which emits the WethDeposit).
 #[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
 fn build_v2v4_native_output_plan(
     a: &V2HopInfo,
     b: &V4HopInfo,
@@ -2845,7 +2866,7 @@ fn build_v2v4_native_output_plan(
 /// `v2_v4` native V4 input (3c) — the unwrap-then-native-seed topology (V2
 /// flash variant). V2 outputs WETH (unwrapped → native); V2 input is `tok`
 /// (SelfFund entry capital); the native seeds the V4 input.
-#[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_arguments)]
 fn build_v2v4_native_input_plan(
     a: &V2HopInfo,
     b: &V4HopInfo,
@@ -3063,7 +3084,7 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         match path.hops.first()? {
             HopInfo::V2(_) => FundingSource::InPathFlash,
             HopInfo::V3(_) => FundingSource::SelfFund,
-            _ => return None,
+            HopInfo::V4(_) => return None,
         }
     };
     let protocols: Vec<Prot> = path
@@ -3072,7 +3093,7 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         .map(|h| match h {
             HopInfo::V2(_) => Prot::V2,
             HopInfo::V3(_) => Prot::V3,
-            _ => unreachable!("V4 outside the V2/V3 branch"),
+            HopInfo::V4(_) => unreachable!("V4 outside the V2/V3 branch"),
         })
         .collect();
     let (_, capture, bribe) = crate::composers::resolve_axes(inputs.opts);
@@ -3096,6 +3117,7 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 /// Scoped to the WETH-only, no-native-bridge, WETH-output case (the harness `v4_v4`
 /// family) — `default` opts (no `V4_BATCH`, no `erc6909_profit`). Other V4 shapes
 /// (native bridges, non-WETH output, batch/mint) return `None` for now (later steps).
+#[expect(clippy::too_many_lines)]
 fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     use crate::composers::{emit_currency_bridge, CurrencyBridge};
 
@@ -3414,6 +3436,7 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
 /// `ERC20_TRANSFER(WETH→v3, optimal_input)`. When the V4 input is native the
 /// V3's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) to seed it and
 /// settled directly (`V4_SETTLE_DELTA(native)`).
+#[expect(clippy::too_many_lines)]
 fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
@@ -3647,6 +3670,7 @@ fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -
 /// `ERC20_TRANSFER(WETH→v2, optimal_input)`. When the V4 input is native the
 /// V2's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) and the V4
 /// input settled directly.
+#[expect(clippy::too_many_lines)]
 fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
@@ -4046,6 +4070,7 @@ fn derive_3hop_v3v3v3(
 /// captured (`V4_TAKE_DELTA(output→SELF)`); a trailing `V4_SETTLE_ALL` nets
 /// every currency to zero. Scoped to `default` opts (no `V4_BATCH`,
 /// no `erc6909_profit`).
+#[expect(clippy::too_many_lines)]
 fn derive_3hop_v4v4v4(
     a: &V4HopInfo,
     b: &V4HopInfo,
@@ -5495,6 +5520,14 @@ fn derive_3hop_v4v3v4(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::items_after_statements,
+        clippy::type_complexity,
+        clippy::naive_bytecount
+    )]
     use super::*;
     use alloy::primitives::{address, U256};
 
@@ -5698,7 +5731,6 @@ mod tests {
                 expected,
                 match expected {
                     FundingSource::InPathFlash => FundingSource::SelfFund,
-                    FundingSource::SelfFund => FundingSource::InPathFlash,
                     _ => FundingSource::InPathFlash,
                 }
             );
@@ -5725,7 +5757,7 @@ mod tests {
             optimal_input: 1000,
             hop_outputs: &[1000],
             consumed_inputs: &[1000],
-            opts: Default::default(),
+            opts: crate::composers::EncodeOptions::default(),
         };
         emit_terminal_hop(&mut at, &HopInfo::V2(h), &inputs, 0, 0, &mut out).unwrap();
         // 0x21 = V2_SWAP_CALC (never exact-out V2_SWAP_COMPACT 0x20).

@@ -3,7 +3,11 @@
     clippy::expect_used,
     clippy::panic,
     clippy::print_stdout,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::type_complexity
 )]
 //! Executor grammar harness — the generated declarative matrix (UQOAHA).
 //!

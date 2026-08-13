@@ -232,7 +232,7 @@ class UniswapV3Pool(
         # registration; the companion reads them here instead of the retired
         # `UNISWAP_V3_MAINNET_POOL_INIT_HASH` ClassVar. Non-JSON V3 pools get
         # the factory as deployer + the mainnet fallback init hash.
-        self.deployer_address = self._py_pool.deployer or self.factory
+        self.deployer_address = get_checksum_address(self._py_pool.deployer or self.factory)
         self.init_hash = self._py_pool.init_hash
 
         # The block of the registration snapshot (genesis journal delta).

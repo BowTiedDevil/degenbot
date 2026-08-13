@@ -109,7 +109,7 @@ impl HopPool {
     }
 
     /// Into the executor's `HopInfo`, using `pool_manager` for V4.
-    fn to_hop_info(&self, pool_manager: Address, src: Address) -> HopInfo {
+    fn to_hop_info(self, pool_manager: Address, src: Address) -> HopInfo {
         match self {
             HopPool::V2(p) => HopInfo::V2(V2HopInfo {
                 pool_address: p.pair,
@@ -168,7 +168,9 @@ impl Harness {
         gas: u64,
     ) -> Result<ChainResult, String> {
         let n = hops.len();
-        assert!(n >= 1, "run_chain needs >=1 hops");
+        if n < 1 {
+            return Err("run_chain needs >=1 hops".to_string());
+        }
 
         // 1. Forward-traverse amounts: output of hop i feeds hop i+1.
         let mut hop_outputs = Vec::with_capacity(n);
@@ -263,7 +265,9 @@ impl Harness {
         gas: u64,
     ) -> Result<ChainResult, String> {
         let n = hops.len();
-        assert!(n >= 1, "run_raw_payload needs >=1 hops");
+        if n < 1 {
+            return Err("run_raw_payload needs >=1 hops".to_string());
+        }
 
         let mut hop_outputs = Vec::with_capacity(n);
         let mut consumed = optimal_input;

@@ -3,7 +3,16 @@
     clippy::expect_used,
     clippy::panic,
     clippy::print_stdout,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::type_complexity,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::print_stderr,
+    clippy::needless_pass_by_value
 )]
 //! 6YUNQN derivation spike — prove the hybrid ShapeClass emitter (ADR-029 D4)
 //! reproduces a family's command stream AND executes through the runtime
@@ -3045,7 +3054,7 @@ fn v4v4_erc6909_executes_with_exact_profit() {
     };
     let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("derive v4_v4 erc6909 None"));
-    let config = degenbot_executor::composers::config_for_options(opts, U256::ZERO);
+    let config = degenbot_executor::composers::config_for_options(opts, U256::ZERO).unwrap();
     assert_eq!(
         config & U256::from(255u64),
         U256::from(2u64),
@@ -3098,7 +3107,7 @@ fn v4v4v4_erc6909_executes_with_exact_profit() {
     };
     let derived = degenbot_executor::grammar_shape::derive_shape(&path, &inputs)
         .unwrap_or_else(|| panic!("derive v4_v4_v4 erc6909 None"));
-    let config = degenbot_executor::composers::config_for_options(opts, U256::ZERO);
+    let config = degenbot_executor::composers::config_for_options(opts, U256::ZERO).unwrap();
 
     let before = h.pm_balance_of(h.executor, h.weth).unwrap().to::<u128>() as i128;
     let outcome = h
@@ -3689,7 +3698,7 @@ fn config_for_options_bribe_axis_reaches_contract_and_pays() {
         .encode_path_with_opts(&path, optimal_input, &hop_outputs, opts)
         .expect("flash all-V2 must encode");
     // The axis-aware builder produces the packed config (check_mode=0, bips=500).
-    let config = config_for_options(opts, U256::ZERO);
+    let config = config_for_options(opts, U256::ZERO).unwrap();
     assert_eq!((config >> 8) & U256::from(65535u64), U256::from(500u64));
 
     // Fund WETH with ETH so the executor's WETH.withdraw can cover the bribe.
@@ -3842,7 +3851,8 @@ fn u3wvll_money_losing_self_fund_path_reverts_with_profit_assert() {
             ..Default::default()
         },
         U256::ZERO,
-    );
+    )
+    .unwrap();
     assert_eq!(
         config & U256::from(255u64),
         U256::from(1u64),
@@ -3915,7 +3925,7 @@ fn u3wvll_bribe_on_self_fund_computes_on_true_profit_not_balance() {
     let payload = h
         .encode_path_with_opts(&path, optimal_input, &hop_outputs, opts)
         .expect("self-fund v2_v2 bribe must encode");
-    let config = config_for_options(opts, U256::ZERO);
+    let config = config_for_options(opts, U256::ZERO).unwrap();
 
     // Self-fund: executor holds entry WETH. combined_before = optimal_input*2.
     // Fund WETH with ETH so the bribe's WETH.withdraw can cover the coinbase payment.
@@ -4009,7 +4019,8 @@ fn u3wvll_sweep_mode_defeats_profit_assert() {
             ..Default::default()
         },
         U256::ZERO,
-    );
+    )
+    .unwrap();
     assert_eq!(
         sweep_cfg & U256::from(255u64),
         U256::from(3u64),

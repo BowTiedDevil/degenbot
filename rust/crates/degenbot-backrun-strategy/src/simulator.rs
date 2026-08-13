@@ -1029,7 +1029,11 @@ where
     // active; Erc6909 → check_mode=2; SweepToAddress → check_mode=3). Replaces
     // the hardcoded `EXECUTE_CONFIG = ZERO` (check_mode=0 fast path, no
     // assert) — a money-losing production path now reverts on-chain.
-    let execute_config = config_for_options(path.opts, U256::ZERO);
+    let execute_config =
+        config_for_options(path.opts, U256::ZERO).map_err(|e| ProviderError::RpcError {
+            code: -32603,
+            message: format!("config_for_options failed: {e}"),
+        })?;
     let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config)
         .map_err(|e| ProviderError::RpcError {
             code: -32603,

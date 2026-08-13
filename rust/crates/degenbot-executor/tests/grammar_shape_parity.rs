@@ -2,7 +2,10 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::cast_possible_truncation,
+    clippy::type_complexity,
+    clippy::print_stderr
 )]
 //! wayDTL cutover parity (epic 463V2C) — the V2/V3 2-hop families (`v2_v3`,
 //! `v3_v2`, `v3_v3`) emit via the `grammar_shape` derivation inside

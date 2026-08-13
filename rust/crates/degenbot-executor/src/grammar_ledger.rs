@@ -467,7 +467,7 @@ impl PmLedger {
     /// Debit `amount` from `key` WITHOUT a credit check (creates PM debt).
     /// `V4Swap`'s input leg — debt is the point (settled later).
     fn debit_debt(&mut self, key: Address, amount: u128) {
-        *self.deltas.entry(key).or_default() -= amount as i128;
+        *self.deltas.entry(key).or_default() -= amount.cast_signed();
     }
 
     /// `V4_TAKE_DELTA` — take the ENTIRE positive `PM[key]` delta to the
@@ -482,7 +482,7 @@ impl PmLedger {
             });
         }
         self.deltas.insert(key, 0);
-        Ok(have as u128)
+        Ok(have.cast_unsigned())
     }
 
     /// `V4_SETTLE_DELTA(cur)` — zero one currency's PM delta.
@@ -509,18 +509,18 @@ impl PmLedger {
 
 impl BalanceLedger for PmLedger {
     fn credit(&mut self, key: Address, amount: u128) {
-        *self.deltas.entry(key).or_default() += amount as i128;
+        *self.deltas.entry(key).or_default() += amount.cast_signed();
     }
     fn debit(&mut self, key: Address, amount: u128) -> Result<(), ValidationError> {
         let have = *self.deltas.get(&key).unwrap_or(&0);
-        if have < amount as i128 {
+        if have < amount.cast_signed() {
             return Err(ValidationError::TakeBeforeCredit {
                 currency: key,
                 wanted: amount,
                 have,
             });
         }
-        self.deltas.insert(key, have - amount as i128);
+        self.deltas.insert(key, have - amount.cast_signed());
         Ok(())
     }
     fn balance(&self, key: Address) -> i128 {
@@ -537,18 +537,18 @@ pub struct Erc20Ledger {
 
 impl BalanceLedger for Erc20Ledger {
     fn credit(&mut self, key: Address, amount: u128) {
-        *self.balances.entry(key).or_default() += amount as i128;
+        *self.balances.entry(key).or_default() += amount.cast_signed();
     }
     fn debit(&mut self, key: Address, amount: u128) -> Result<(), ValidationError> {
         let have = *self.balances.get(&key).unwrap_or(&0);
-        if have < amount as i128 {
+        if have < amount.cast_signed() {
             return Err(ValidationError::Erc20TransferBeforeCredit {
                 currency: key,
                 wanted: amount,
                 have,
             });
         }
-        self.balances.insert(key, have - amount as i128);
+        self.balances.insert(key, have - amount.cast_signed());
         Ok(())
     }
     fn balance(&self, key: Address) -> i128 {
@@ -572,21 +572,21 @@ pub struct ExternalLedger {
 
 impl BalanceLedger for ExternalLedger {
     fn credit(&mut self, key: Address, amount: u128) {
-        *self.balances.entry(key).or_default() += amount as i128;
+        *self.balances.entry(key).or_default() += amount.cast_signed();
     }
     fn debit(&mut self, key: Address, amount: u128) -> Result<(), ValidationError> {
         // The D0 check maps to the Erc20TransferBeforeCredit shape — the
         // external-ledger debit is a "repay/transfer out of a held balance"
         // and fails the same way when insufficient.
         let have = *self.balances.get(&key).unwrap_or(&0);
-        if have < amount as i128 {
+        if have < amount.cast_signed() {
             return Err(ValidationError::Erc20TransferBeforeCredit {
                 currency: key,
                 wanted: amount,
                 have,
             });
         }
-        self.balances.insert(key, have - amount as i128);
+        self.balances.insert(key, have - amount.cast_signed());
         Ok(())
     }
     fn balance(&self, key: Address) -> i128 {
@@ -619,6 +619,16 @@ impl LedgerValidator {
 
     /// Push one ledger op, enforcing credit-before-debit. Returns `Err` on the
     /// first violation (the op is **not** applied to the state on error).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationError`] on the first invariant violation: a
+    /// `Take`/`Mint`/`Erc20Transfer`/`Weth*` debit before credit
+    /// (`TakeBeforeCredit`/`Erc20TransferBeforeCredit`/`NativeTransferBeforeCredit`),
+    /// an unknown external-ledger index (`UnknownExternalLedger`), a nonzero
+    /// PM delta at `V4UnlockEnd` (`PmDeltaNonzero`), or a `SwapCalc` on an
+    /// unseeded pair (`SwapCalcBeforeCredit`).
+    #[expect(clippy::too_many_lines)]
     pub fn push(&mut self, op: LedgerOp) -> Result<(), ValidationError> {
         // Term ops create credit; apply them first so later debits see it.
         if let Some(e) = op.effect() {
@@ -670,7 +680,7 @@ impl LedgerValidator {
                 let amount = self.pm.take_delta(currency)?;
                 if recipient_idx == SENTINEL_SELF {
                     if currency == NATIVE_CURRENCY_ADDRESS {
-                        self.native += amount as i128;
+                        self.native += amount.cast_signed();
                     } else {
                         self.erc20.credit(currency, amount);
                     }
@@ -687,8 +697,9 @@ impl LedgerValidator {
                 }
                 Ok(())
             }
-            LedgerOp::Take { currency, amount } => self.pm.debit(currency, amount),
-            LedgerOp::Mint { currency, amount } => self.pm.debit(currency, amount),
+            LedgerOp::Take { currency, amount } | LedgerOp::Mint { currency, amount } => {
+                self.pm.debit(currency, amount)
+            }
             LedgerOp::SwapCalc {
                 pool,
                 out_currency,
@@ -737,36 +748,36 @@ impl LedgerValidator {
             // executor's native balance. Requires Native ≥ amount immediately
             // before — a `WethWithdraw` or native V4 take must have produced it.
             LedgerOp::NativeTransfer { amount } => {
-                if self.native < amount as i128 {
+                if self.native < amount.cast_signed() {
                     return Err(ValidationError::NativeTransferBeforeCredit {
                         wanted: amount,
                         have: self.native,
                     });
                 }
-                self.native -= amount as i128;
+                self.native -= amount.cast_signed();
                 Ok(())
             }
             // Unwrap WETH → native: debit Erc20[WETH], credit Native.
             LedgerOp::WethWithdraw { weth, amount } => {
                 self.erc20.debit(weth, amount)?;
-                self.native += amount as i128;
+                self.native += amount.cast_signed();
                 Ok(())
             }
             // Wrap native → WETH: debit Native, credit Erc20[WETH].
             LedgerOp::WethDeposit { weth, amount } => {
-                if self.native < amount as i128 {
+                if self.native < amount.cast_signed() {
                     return Err(ValidationError::NativeTransferBeforeCredit {
                         wanted: amount,
                         have: self.native,
                     });
                 }
-                self.native -= amount as i128;
+                self.native -= amount.cast_signed();
                 self.erc20.credit(weth, amount);
                 Ok(())
             }
             // Native credit half of V4TakeCompact(native→SELF).
             LedgerOp::NativeCredit { amount } => {
-                self.native += amount as i128;
+                self.native += amount.cast_signed();
                 Ok(())
             }
             LedgerOp::Erc20Transfer {
@@ -843,6 +854,11 @@ impl LedgerValidator {
     /// Finish the stream: every flash debt must have been repaid (the V2/V3
     /// analogue of the V4 "every delta nets to zero by callback end"
     /// invariant). Call after the last `push` (or after `validate`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationError::FlashDebtUnpaid`] if any flash debt is
+    /// still outstanding.
     pub fn finish(&mut self) -> Result<(), ValidationError> {
         for (currency, amount) in &self.flash_debt {
             if *amount > 0 {
@@ -858,6 +874,10 @@ impl LedgerValidator {
     /// Convenience: validate a whole stream. Stops at the first violation.
     /// Does **not** call [`Self::finish`] — call it separately to enforce the
     /// flash-debt-net-zero invariant, or use [`Self::validate_full`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates the first [`ValidationError`] from [`Self::push`].
     pub fn validate(&mut self, ops: &[LedgerOp]) -> Result<(), ValidationError> {
         for op in ops {
             self.push(*op)?;
@@ -867,6 +887,12 @@ impl LedgerValidator {
 
     /// Validate a whole stream AND assert every flash debt was repaid at the
     /// end (the full D4/D5 gate for streams that include V2/V3 flashes).
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`ValidationError`] from the stream, or
+    /// [`ValidationError::FlashDebtUnpaid`] if a flash debt remains after all
+    /// ops.
     pub fn validate_full(&mut self, ops: &[LedgerOp]) -> Result<(), ValidationError> {
         self.validate(ops)?;
         self.finish()
@@ -875,6 +901,7 @@ impl LedgerValidator {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use alloy::primitives::address;
 
