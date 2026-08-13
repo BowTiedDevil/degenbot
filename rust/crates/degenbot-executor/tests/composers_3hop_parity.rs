@@ -400,7 +400,7 @@ fn parity_v2_v3_v4() {
             HopInfo::V3(V3HopInfo {
                 pool_address: address!("5555555555555555555555555555555555555555"),
                 token0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
-                token1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                token1_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"), // b fwd (t1) = WBTC
                 fee: 500u32,
                 zfo: true,
             }),
@@ -408,8 +408,8 @@ fn parity_v2_v3_v4() {
                 pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
-                currency0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                currency1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                currency0_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"), // V4 tail input = WBTC
+                currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // tail output = WETH
                 fee: 3000u32,
                 tick_spacing: 60i32,
                 hook_address: address!("0000000000000000000000000000000000000000"),
@@ -444,9 +444,10 @@ fn parity_v2_v3_v4() {
     let v3b_idx = at
         .add(address!("5555555555555555555555555555555555555555"))
         .unwrap(); // 1
-    let c0_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (hc.currency0 = WETH)
-    let c1_idx = at.add(USDC).unwrap(); // 2 (hc.currency1 = USDC)
-    let forward_b_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (hb forward = token1 = WETH)
+    let wbtc = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    let c0_idx = at.add(wbtc).unwrap(); // V4 tail input = WBTC
+    let c1_idx = at.add(WETH).unwrap(); // SENTINEL_WETH (tail output = WETH)
+    let forward_b_idx = at.add(wbtc).unwrap(); // hb fwd (t1) = WBTC
     let executor_idx = SENTINEL_SELF;
     let mut v4_inner = Vec::new();
     v4_inner.extend_from_slice(&encoders::enc_v4_settle());

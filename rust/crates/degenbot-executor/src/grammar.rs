@@ -22,7 +22,9 @@
 //! `fits_int128`) is resolved at ONE shared point: [`cl_swap_in`].
 #![expect(clippy::similar_names)] // canonical v2a/v2b/v2c hop-slot names in the retained v2_v2_v2 emitter
 
-use crate::composers::{fits_int128, ComposerInputs, HopInfo, PathInfo, V2HopInfo};
+#[cfg(debug_assertions)]
+use crate::composers::fits_int128;
+use crate::composers::{ComposerInputs, HopInfo, PathInfo, V2HopInfo};
 use crate::encoders::{self, AddressTable, SENTINEL_SELF, SENTINEL_WETH};
 
 /// The ONE shared CL-clamp swap-in resolution point (ADR-025).
@@ -30,6 +32,7 @@ use crate::encoders::{self, AddressTable, SENTINEL_SELF, SENTINEL_WETH};
 /// A concentrated-liquidity (V3/V4) hop's executable swap-in is the solver's
 /// clamped `consumed_inputs[i]`; a V2/Curve/Balancer/Solidly hop (no clamp)
 /// consumes its full prior output. Gated by the int128 guard.
+#[cfg(debug_assertions)]
 pub(crate) fn cl_swap_in(inputs: &ComposerInputs<'_>, i: usize) -> Option<u128> {
     let v = *inputs.consumed_inputs.get(i)?;
     if !fits_int128(v) {
