@@ -229,8 +229,8 @@ fn v4_v4_native_and_bridge_parity() {
         (weth(), t, true, t, weth(), true),           // WETH->t->WETH
         (NATIVE, t, true, t, NATIVE, true),           // NATIVE->t->NATIVE (native capture)
         (weth(), NATIVE, true, NATIVE, weth(), true), // WETH->native->WETH (non-gap, mid native)
-        (t, NATIVE, false, weth(), t, true),          // Wrap bridge (a out native, b in WETH)
-        (weth(), t, true, NATIVE, t, true),           // Unwrap bridge (a out t, b in native)
+        (t, NATIVE, true, weth(), t, true),           // Wrap bridge (a out native, b in WETH)
+        (t, weth(), true, NATIVE, t, true),           // Unwrap bridge (a out WETH, b in native)
         (NATIVE, t, false, t, weth(), false),         // mixed zfo
         (weth(), t, false, t, NATIVE, false),         // mixed zfo + native end
     ] {
@@ -250,8 +250,11 @@ fn v4_v3_boundary_parity() {
         vec![v4_pair(weth(), t, true), v3_pool(t, weth(), true)],
         100_000,
     );
+    // A non-WETH forward token (t2); WETH entry capital (a's input = WETH)
+    // so the boundary-take funds the terminal V3 (the coherent builder+emitter
+    // subspace).
     run_family(
-        vec![v4_pair(t2, t, false), v3_pool(t2, weth(), true)],
+        vec![v4_pair(weth(), t2, true), v3_pool(t2, weth(), true)],
         100_000,
     );
 }
@@ -266,7 +269,13 @@ fn v3_v4_boundary_parity() {
         vec![v3_pool(weth(), t, true), v4_pair(t, weth(), true)],
         100_000,
     );
-    run_family(vec![v3_pool(t2, t, false), v4_pair(t, t2, false)], 100_000);
+    // Non-WETH forward token (t2); V3 inputs WETH and the V4's ERC-20 input
+    // equals the V3's forward, with a WETH terminal (the coherent
+    // builder+emitter subspace).
+    run_family(
+        vec![v3_pool(weth(), t2, true), v4_pair(t2, weth(), true)],
+        100_000,
+    );
 }
 
 // ── V4↔V2 boundary + native/mixed (WAYDTL step 2 / (A) close-out) ──────────
@@ -281,9 +290,11 @@ fn v4_v2_native_and_boundary_parity() {
         vec![v4_pair(weth(), t, true), v2_pair(t, weth(), true, 30)],
         100_000,
     );
-    // Native V4 output -> wrap into WETH for the V2 pool.
+    // Native V4 output (a:(t, NATIVE), zfo=true → output=c1=NATIVE) -> wrap
+    // into WETH for the V2 pool (which consumes WETH). The wrap bridges
+    // a's native output to b's WETH input — the coherent wrap topology.
     run_family(
-        vec![v4_pair(t, NATIVE, false), v2_pair(weth(), u, true, 30)],
+        vec![v4_pair(t, NATIVE, true), v2_pair(weth(), u, true, 30)],
         100_000,
     );
     // Native V4 input -> unwrap WETH to settle.
@@ -321,9 +332,11 @@ fn v2_v4_native_and_boundary_parity() {
 fn v4_v3_and_v3_v4_native_mixed_parity() {
     let t = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
     let u = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
-    // v4_v3: native V4 output wrapped into WETH for the V3 pool.
+    // v4_v3: native V4 output (a:(t, NATIVE), zfo=true → output=NATIVE)
+    // wrapped into WETH for the V3 pool (which consumes WETH). The wrap
+    // bridges a's native output to the V3's WETH input — coherent wrap.
     run_family(
-        vec![v4_pair(t, NATIVE, false), v3_pool(weth(), u, true)],
+        vec![v4_pair(t, NATIVE, true), v3_pool(weth(), u, true)],
         100_000,
     );
     // v4_v3: native V4 input unwrapped to settle before the V3 swap.

@@ -944,15 +944,23 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
     out
 }
 
-/// Build the `v2_v3` (InPathFlash) Plan — the family's ledger decisions in
-/// execution order, callback-nested exactly as the proven `derive_2hop` v2_v3
-/// arm emits. This is the Checkpoint-1 re-baseline: the Plan is the primary
+/// Build the `v2_v3` Plan — both funding axes, callback-nested exactly as the
+/// proven `derive_2hop` v2_v3 arms emit. Default (`InPathFlash`): V2 flash,
+/// forward bridged to the terminal V3 via exec. `SelfFund` (WE45KC, the
+/// operator pre-holds the entry WETH): pre-fund V2a with the entry WETH, then
+/// a `V2_SWAP_CALC` (exact-in, output to SELF), then the terminal V3 with an
+/// empty callback (V3 auto-pays its owed `forward` from the executor's
+/// balance). This is the Checkpoint-1 re-baseline: the Plan is the primary
 /// artifact; `plan_to_bytes` derives the byte stream; `plan_to_ledger_ops`
 /// derives the validator's input.
 ///
 /// Returns `(preamble_bytes, plan, address_table)` so callers can assemble
 /// the full payload (`preamble + plan_to_bytes(&plan, &at)`).
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "both funding axes (InPathFlash + SelfFund)"
+)]
 pub fn build_v2v3_plan(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
@@ -984,23 +992,38 @@ pub fn build_v2v3_plan(
     );
     let v2_idx = at.add(a.pool_address).ok()?;
     let v3_idx = at.add(b.pool_address).ok()?;
-    let forward_idx = at.add(v2_forward(a)).ok()?;
     let fwd_a = v2_forward(a);
     let weth = inputs.weth_address;
+    let terminal_out = *inputs.hop_outputs.get(1)?;
 
-    let plan: Plan = vec![PlanStep::FlashSwap {
-        pool_idx: v2_idx,
-        pool_addr: a.pool_address,
-        protocol: Prot::V2,
-        zfo: a.zfo,
-        fee: a.fee,
-        out_currency: fwd_a,
-        out_amount: forward_out,
-        in_currency: weth,
-        in_amount: optimal_input,
-        recipient_idx: SENTINEL_SELF,
-        auto_repay: false,
-        callback: vec![
+    let plan: Plan = if inputs.opts.funding == FundingSource::SelfFund {
+        // WE45KC SelfFund axis: the entry WETH pre-funds V2a (no flash), V2a
+        // swaps exact-in to the executor, and the terminal V3 auto-pays its
+        // `forward` input from the executor's balance (empty callback). NOTE:
+        // the forward token is deliberately NOT registered in the AddressTable
+        // (mirrors `derive_2hop`'s SelfFund arm — the InPathFlash arm adds it).
+        vec![
+            PlanStep::SelfFund {
+                currency: weth,
+                amount: optimal_input,
+            },
+            PlanStep::Erc20Transfer {
+                token_idx: SENTINEL_WETH,
+                token_addr: weth,
+                recipient_idx: v2_idx,
+                amount: optimal_input,
+                seeds_pool: Some(a.pool_address),
+                repays_flash: None,
+            },
+            PlanStep::V2SwapCalc {
+                pool_idx: v2_idx,
+                pool_addr: a.pool_address,
+                zfo: a.zfo,
+                recipient_idx: SENTINEL_SELF,
+                fee: a.fee,
+                out_currency: fwd_a,
+                out_amount: forward_out,
+            },
             PlanStep::FlashSwap {
                 pool_idx: v3_idx,
                 pool_addr: b.pool_address,
@@ -1008,30 +1031,62 @@ pub fn build_v2v3_plan(
                 zfo: b.zfo,
                 fee: u16::try_from(b.fee).ok()?,
                 out_currency: weth,
-                out_amount: *inputs.hop_outputs.get(1)?,
+                out_amount: terminal_out,
                 in_currency: fwd_a,
                 in_amount: b_swap_in,
                 recipient_idx: SENTINEL_SELF,
-                auto_repay: false,
-                callback: vec![PlanStep::Erc20Transfer {
-                    token_idx: forward_idx,
-                    token_addr: fwd_a,
-                    recipient_idx: v3_idx,
-                    amount: b_swap_in,
+                auto_repay: true,
+                callback: vec![],
+            },
+        ]
+    } else {
+        // InPathFlash: V2 flash with a nested V3 flash + WETH repay callback.
+        let forward_idx = at.add(fwd_a).ok()?;
+        vec![PlanStep::FlashSwap {
+            pool_idx: v2_idx,
+            pool_addr: a.pool_address,
+            protocol: Prot::V2,
+            zfo: a.zfo,
+            fee: a.fee,
+            out_currency: fwd_a,
+            out_amount: forward_out,
+            in_currency: weth,
+            in_amount: optimal_input,
+            recipient_idx: SENTINEL_SELF,
+            auto_repay: false,
+            callback: vec![
+                PlanStep::FlashSwap {
+                    pool_idx: v3_idx,
+                    pool_addr: b.pool_address,
+                    protocol: Prot::V3,
+                    zfo: b.zfo,
+                    fee: u16::try_from(b.fee).ok()?,
+                    out_currency: weth,
+                    out_amount: terminal_out,
+                    in_currency: fwd_a,
+                    in_amount: b_swap_in,
+                    recipient_idx: SENTINEL_SELF,
+                    auto_repay: false,
+                    callback: vec![PlanStep::Erc20Transfer {
+                        token_idx: forward_idx,
+                        token_addr: fwd_a,
+                        recipient_idx: v3_idx,
+                        amount: b_swap_in,
+                        seeds_pool: None,
+                        repays_flash: Some(b.pool_address),
+                    }],
+                },
+                PlanStep::Erc20Transfer {
+                    token_idx: SENTINEL_WETH,
+                    token_addr: weth,
+                    recipient_idx: v2_idx,
+                    amount: optimal_input,
                     seeds_pool: None,
-                    repays_flash: Some(b.pool_address),
-                }],
-            },
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v2_idx,
-                amount: optimal_input,
-                seeds_pool: None,
-                repays_flash: Some(a.pool_address),
-            },
-        ],
-    }];
+                    repays_flash: Some(a.pool_address),
+                },
+            ],
+        }]
+    };
 
     let preamble = encoders::enc_preamble(&at);
     Some((preamble, plan, at))
@@ -1670,12 +1725,12 @@ pub fn build_v4v3_plan(
         }
     } else {
         // ERC-20 V4 output: the V4 input must be WETH or native (the two
-        // supported settle paths — settled from the V3's WETH output), and the
-        // captured profit (V3 output) must be WETH.
+        // supported settle paths). The terminal V3 output may be WETH (the
+        // V3's output funds the WETH-input settle) or any token (the V3's
+        // output is the standalone terminal profit; the WETH-input settle is
+        // funded by the executor's declared entry WETH — a `SelfFund`
+        // precondition, mirroring the emitter's semantics).
         if in_currency_a != weth && in_currency_a != NATIVE_CURRENCY_ADDRESS {
-            return None;
-        }
-        if out_currency_b != weth {
             return None;
         }
     }
@@ -1770,7 +1825,7 @@ pub fn build_v4v3_plan(
                 protocol: Prot::V3,
                 zfo: b.zfo,
                 fee: u16::try_from(b.fee).ok()?,
-                out_currency: weth,
+                out_currency: out_currency_b,
                 out_amount: weth_out,
                 in_currency: out_currency_a,
                 in_amount: b_swap_in,
@@ -1817,10 +1872,29 @@ pub fn build_v4v3_plan(
         }
         let _ = input_idx; // unused on the ERC-20 output path
     }
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
+    let plan: Plan = if out_currency_b == weth {
+        vec![PlanStep::V4Unlock {
+            inner,
+            pool_manager_idx: pm_idx,
+        }]
+    } else {
+        // Non-WETH terminal on the ERC-20-output path: the V3 outputs the
+        // terminal profit directly to the executor, so the V4-input WETH
+        // settle is funded by the executor's **own entry WETH** (a `SelfFund`
+        // precondition). WETH-terminal families fund the settle from the V3's
+        // WETH output instead. Ledger-only SelfFund emits no bytes — parity
+        // with the proven emitter is unaffected.
+        vec![
+            PlanStep::SelfFund {
+                currency: weth,
+                amount: optimal_input,
+            },
+            PlanStep::V4Unlock {
+                inner,
+                pool_manager_idx: pm_idx,
+            },
+        ]
+    };
     let preamble = encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -1883,20 +1957,22 @@ pub fn build_v4v2_plan(
     if v4_out_native {
         // Native V4 OUTPUT: take native to SELF, wrap to WETH (WethDeposit),
         // transfer that WETH to seed the V2 pair, then V2SwapCalc consumes the
-        // seed and outputs `out_currency_b` (≠ WETH — the terminal profit),
-        // which funds the V4's ERC-20 input settle (the in_a/out_b cycle). The
-        // V4 input here is a generic ERC-20 (the non-native leg).
-        if in_currency_a == NATIVE_CURRENCY_ADDRESS || in_currency_a == weth {
-            return None;
-        }
+        // seed and outputs `out_currency_b` (the terminal profit), which funds
+        // the V4's input settle (the in_a/out_b cycle). The V4 input is the
+        // non-native leg: a generic ERC-20 (the V2 output funds its settle) or
+        // WETH (the executor pre-holds WETH to settle it — the spike
+        // `native_wrap_v4_v2` runtime-proves this shape, mirroring the proven
+        // emitter). A native input is impossible for a 2-token pool one of
+        // whose legs is native.
+        {}
     } else {
         // ERC-20 V4 output: the V4 input must be WETH or native (the two
-        // supported settle paths — funded by the V2's WETH output), and the
-        // V2 terminal output must be WETH (the captured profit).
+        // supported settle paths). The terminal V2 output may be WETH (the
+        // V2's output funds the WETH-input settle) or any token (the V2's
+        // output is the standalone terminal profit; the WETH-input settle is
+        // then funded by the executor's declared entry WETH — a `SelfFund`
+        // precondition, mirroring the emitter's semantics).
         if in_currency_a != weth && in_currency_a != NATIVE_CURRENCY_ADDRESS {
-            return None;
-        }
-        if out_currency_b != weth {
             return None;
         }
     }
@@ -1996,7 +2072,7 @@ pub fn build_v4v2_plan(
                 zfo: b.zfo,
                 recipient_idx: SENTINEL_SELF,
                 fee: b.fee,
-                out_currency: weth,
+                out_currency: out_currency_b,
                 out_amount: weth_out,
             },
             // Boundary-seed (WETH input): sync WETH, pay it into the PM from
@@ -2050,10 +2126,30 @@ pub fn build_v4v2_plan(
         }
         let _ = input_idx; // unused on the ERC-20 output path
     }
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
+    // Non-WETH terminal on the ERC-20-output path: the V2 outputs the terminal
+    // profit directly to the executor, so the V4-input WETH settle is funded by
+    // the executor's **own entry WETH** (a `SelfFund` precondition so the
+    // validator enforces the executor pre-holds it). WETH-terminal families
+    // fund the settle from the V2's WETH output instead (no SelfFund). The
+    // ledger-only SelfFund emits no bytes, so byte-parity with the proven
+    // emitter is unaffected.
+    let plan: Plan = if out_currency_b == weth {
+        vec![PlanStep::V4Unlock {
+            inner,
+            pool_manager_idx: pm_idx,
+        }]
+    } else {
+        vec![
+            PlanStep::SelfFund {
+                currency: weth,
+                amount: optimal_input,
+            },
+            PlanStep::V4Unlock {
+                inner,
+                pool_manager_idx: pm_idx,
+            },
+        ]
+    };
     let preamble = encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -2182,10 +2278,6 @@ fn build_v3v4_erc20_input_plan(
     {
         return None;
     }
-    // (V4 output is WETH here — the captured profit funds the V3 repayment.)
-    if v4_out_currency != weth {
-        return None;
-    }
     let mut at = AddressTable::with_sentinels(
         Some(weth),
         Some(inputs.executor_address),
@@ -2227,12 +2319,12 @@ fn build_v3v4_erc20_input_plan(
             amount: v4_swap_in,
             in_currency: forward_addr,
             in_amount: v4_swap_in,
-            out_currency: weth,
+            out_currency: v4_out_currency,
             out_amount: v4_out_amount,
         },
         PlanStep::V4TakeCompact {
             currency_idx: output_idx,
-            currency_addr: weth,
+            currency_addr: v4_out_currency,
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
@@ -2253,20 +2345,48 @@ fn build_v3v4_erc20_input_plan(
             repays_flash: Some(a.pool_address),
         },
     ];
-    let plan: Plan = vec![PlanStep::FlashSwap {
-        pool_idx: v3_idx,
-        pool_addr: a.pool_address,
-        protocol: Prot::V3,
-        zfo: a.zfo,
-        fee: u16::try_from(a.fee).ok()?,
-        out_currency: forward_addr,
-        out_amount: forward_out,
-        in_currency: weth,
-        in_amount: optimal_input,
-        recipient_idx: SENTINEL_SELF,
-        auto_repay: false,
-        callback,
-    }];
+    // The V3 flash is repaid WETH (optimal_input). When the V4 output is WETH,
+    // the take funds the repayment; when it is any other token (the standalone
+    // terminal profit), the executor must pre-hold the WETH — a `SelfFund`
+    // precondition (ledger-only, no bytes; parity with the proven emitter is
+    // unaffected).
+    let plan: Plan = if v4_out_currency == weth {
+        vec![PlanStep::FlashSwap {
+            pool_idx: v3_idx,
+            pool_addr: a.pool_address,
+            protocol: Prot::V3,
+            zfo: a.zfo,
+            fee: u16::try_from(a.fee).ok()?,
+            out_currency: forward_addr,
+            out_amount: forward_out,
+            in_currency: weth,
+            in_amount: optimal_input,
+            recipient_idx: SENTINEL_SELF,
+            auto_repay: false,
+            callback,
+        }]
+    } else {
+        vec![
+            PlanStep::SelfFund {
+                currency: weth,
+                amount: optimal_input,
+            },
+            PlanStep::FlashSwap {
+                pool_idx: v3_idx,
+                pool_addr: a.pool_address,
+                protocol: Prot::V3,
+                zfo: a.zfo,
+                fee: u16::try_from(a.fee).ok()?,
+                out_currency: forward_addr,
+                out_amount: forward_out,
+                in_currency: weth,
+                in_amount: optimal_input,
+                recipient_idx: SENTINEL_SELF,
+                auto_repay: false,
+                callback,
+            },
+        ]
+    };
     let preamble = encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -2616,6 +2736,7 @@ pub fn build_v2v4_plan(
 }
 
 /// `v2_v4` ERC-20 V4 input — the forward-seed topology (3b, V2-flash variant).
+#[expect(clippy::too_many_lines, reason = "per-family axis dispatch / builder")]
 #[expect(clippy::too_many_arguments)]
 fn build_v2v4_erc20_input_plan(
     a: &V2HopInfo,
@@ -2642,7 +2763,6 @@ fn build_v2v4_erc20_input_plan(
     if v2_in_currency != weth
         || forward_addr == NATIVE_CURRENCY_ADDRESS
         || v4_in_currency != forward_addr
-        || v4_out_currency != weth
     {
         return None;
     }
@@ -2687,12 +2807,12 @@ fn build_v2v4_erc20_input_plan(
             amount: v4_swap_in,
             in_currency: forward_addr,
             in_amount: v4_swap_in,
-            out_currency: weth,
+            out_currency: v4_out_currency,
             out_amount: v4_out_amount,
         },
         PlanStep::V4TakeCompact {
             currency_idx: output_idx,
-            currency_addr: weth,
+            currency_addr: v4_out_currency,
             recipient_idx: SENTINEL_SELF,
             amount: v4_out_amount,
             seeds_pool: None,
@@ -2713,20 +2833,48 @@ fn build_v2v4_erc20_input_plan(
             repays_flash: Some(a.pool_address),
         },
     ];
-    let plan: Plan = vec![PlanStep::FlashSwap {
-        pool_idx: v2_idx,
-        pool_addr: a.pool_address,
-        protocol: Prot::V2,
-        zfo: a.zfo,
-        fee: a.fee,
-        out_currency: forward_addr,
-        out_amount: forward_out,
-        in_currency: weth,
-        in_amount: optimal_input,
-        recipient_idx: SENTINEL_SELF,
-        auto_repay: false,
-        callback,
-    }];
+    // The V2 flash is repaid WETH (optimal_input). When the V4 output is WETH,
+    // the take funds the repayment; when it is any other token (the standalone
+    // terminal profit), the executor must pre-hold the WETH — a `SelfFund`
+    // precondition (ledger-only, no bytes; parity with the proven emitter is
+    // unaffected).
+    let plan: Plan = if v4_out_currency == weth {
+        vec![PlanStep::FlashSwap {
+            pool_idx: v2_idx,
+            pool_addr: a.pool_address,
+            protocol: Prot::V2,
+            zfo: a.zfo,
+            fee: a.fee,
+            out_currency: forward_addr,
+            out_amount: forward_out,
+            in_currency: weth,
+            in_amount: optimal_input,
+            recipient_idx: SENTINEL_SELF,
+            auto_repay: false,
+            callback,
+        }]
+    } else {
+        vec![
+            PlanStep::SelfFund {
+                currency: weth,
+                amount: optimal_input,
+            },
+            PlanStep::FlashSwap {
+                pool_idx: v2_idx,
+                pool_addr: a.pool_address,
+                protocol: Prot::V2,
+                zfo: a.zfo,
+                fee: a.fee,
+                out_currency: forward_addr,
+                out_amount: forward_out,
+                in_currency: weth,
+                in_amount: optimal_input,
+                recipient_idx: SENTINEL_SELF,
+                auto_repay: false,
+                callback,
+            },
+        ]
+    };
     let preamble = encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -2971,9 +3119,39 @@ fn build_v2v4_native_input_plan(
     Some((preamble, plan, at))
 }
 
+/// A 2-hop Plan builder: every `build_*_plan` returns the full payload's
+/// preamble bytes, the [`Plan`] tree, and the resolved [`AddressTable`].
+type Build2HopPlan = fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan, AddressTable)>;
+
+/// Build a 2-hop family's [`Plan`] through its `build_*_plan` builder, run the
+/// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate on the
+/// projected ledger trace, and fold `preamble + plan_to_bytes(&plan, &at)`
+/// into the full payload.
+///
+/// Returns `None` when the builder declines **or** when the Plan fails
+/// validation — a stream that violates credit-before-debit / terminal-V2
+/// pre-fund / flash-debt-net-zero / PM-net-zero must NOT produce bytes. This is
+/// the first time the validator gates real production bytes (ADR-029 D4/D5 for
+/// the 2-hop plane).
+#[must_use]
+fn build_2hop_plan_bytes(
+    path: &PathInfo,
+    build: Build2HopPlan,
+    inputs: &ComposerInputs<'_>,
+) -> Option<Vec<u8>> {
+    let (preamble, plan, at) = build(path, inputs)?;
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = crate::grammar_ledger::LedgerValidator::default();
+    v.validate_full(&ops).ok()?;
+    let mut out = preamble;
+    out.extend_from_slice(&plan_to_bytes(&plan, &at));
+    Some(out)
+}
+
 /// Public spike entry: derive a family's command stream from its
 /// [`ShapeClass`] (funding chosen by the leading protocol, as the D0
 /// invariant forces). Returns the raw `execute()` payload bytes.
+#[expect(clippy::too_many_lines, reason = "per-family axis dispatch / builder")]
 #[must_use]
 pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     // V4-involving families: a pure-V4 2-hop path is the *container* case — the
@@ -3038,11 +3216,37 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
             derive_3hop_v4v3v4(a, b, c, inputs)
         }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v4v4(a, b, inputs),
-        (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => derive_2hop_v4v3(a, b, inputs),
-        (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v3v4(a, b, inputs),
-        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), None) => derive_2hop_v4v2(a, b, inputs),
-        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), None) => derive_2hop_v2v4(a, b, inputs),
+        // ── 2-hop families (9): production bytes now come from the Plan —
+        //    `build_*_plan` + `LedgerValidator` gate + `plan_to_bytes`. The
+        //    hand-written `derive_2hop_*` emitters are retained (until task
+        //    RVNIPD deletes them) as the parity-oracle's reference half.
+        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), None) => {
+            build_2hop_plan_bytes(path, build_v4v4_plan, inputs)
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), None) => {
+            build_2hop_plan_bytes(path, build_v4v3_plan, inputs)
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), None) => {
+            build_2hop_plan_bytes(path, build_v3v4_plan, inputs)
+        }
+        (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), None) => {
+            build_2hop_plan_bytes(path, build_v4v2_plan, inputs)
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), None) => {
+            build_2hop_plan_bytes(path, build_v2v4_plan, inputs)
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), None) => {
+            build_2hop_plan_bytes(path, build_v2v2_plan, inputs)
+        }
+        (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), None) => {
+            build_2hop_plan_bytes(path, build_v2v3_plan, inputs)
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), None) => {
+            build_2hop_plan_bytes(path, build_v3v2_plan, inputs)
+        }
+        (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), None) => {
+            build_2hop_plan_bytes(path, build_v3v3_plan, inputs)
+        }
         // V2/V3-only 3-hop folds (WAYDTL): byte-faithful transcriptions of the
         // previously-hand-written adapters, byte-identical to them (verified by
         // the `cutover` `debug_assert` oracle in dev + the parity suite).
@@ -3069,65 +3273,67 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         }
         _ => derive_2hop_v2v3(path, inputs),
     };
-    // JT57TH — the cutover() parity-oracle: every family's derived bytes are
-    // cross-checked against the Plan tree (`build_*_plan` + `plan_to_bytes`) in
-    // dev/CI builds. Zero cost in release (`#[cfg(debug_assertions)]`). This is
-    // the live divergence detector for the RFPI6H bug class — the moment a Plan
-    // builder and a hand-written emitter disagree on any family, CI fails loud.
+    // JT57TH cutover (5I25WS): production 2-hop bytes come from the Plan
+    // (`build_*_plan` + validator + `plan_to_bytes`); the 3-hop families still
+    // come from the hand-written emitters (tasks W7FQN6/HPZTNT fold them). The
+    // cutover() parity-oracle cross-checks production against the retained
+    // emitter (2-hop) or records "no Plan" (3-hop) in dev/CI builds. Zero cost
+    // in release (`#[cfg(debug_assertions)]`). This is the live divergence
+    // detector for the RFPI6H bug class — the moment a Plan builder and a
+    // hand-written emitter disagree on any family, CI fails loud.
     cutover_parity_oracle(path, inputs, bytes.as_ref());
     bytes
 }
 
-/// JT57TH — the **cutover() parity-oracle**: a `debug_assert_eq!` divergence
-/// detector on [`derive_shape`]'s production path.
+/// JT57TH (5I25WS) — the **cutover() parity-oracle**: a `debug_assert_eq!`
+/// divergence detector on [`derive_shape`]'s production path.
 ///
-/// This re-establishes the oracle WAYDTL retired (commit `79db9621`), with the
-/// roles inverted. Then `derive_shape` was the untrusted "derivation" checked
-/// against hand-written references. Now `derive_shape` **is** the production
-/// encoder (the `derive_2hop_*` / `derive_3hop_*` emitters) and the Plan tree
-/// (`build_*_plan` + [`plan_to_bytes`]) is the oracle reference — a live
-/// cross-check that fails CI the moment a Plan builder and an emitter disagree
-/// on any family; exactly the divergence class RFPI6H (commit `1e06beaf`)
-/// exposed: two hand-written emitters disagreeing on flash-repayment currency.
+/// The roles invert across the cutover: after 5I25WS, production 2-hop bytes
+/// come from the Plan (`build_*_plan` + validator + `plan_to_bytes`), and the
+/// retained hand-written `derive_2hop_*` emitters are the **reference** half —
+/// a live cross-check that fails CI the moment a Plan builder and an emitter
+/// disagree on any family; exactly the divergence class RFPI6H (commit
+/// `1e06beaf`) exposed: two hand-written emitters disagreeing on
+/// flash-repayment currency.
 ///
 /// Per family, the oracle either:
-/// * **compares** — the 9 2-hop families have Plan builders: the Plan is built
-///   and `debug_assert_eq!`'d against the derived bytes;
-/// * **records an axis gap** (non-fatal) — a builder exists but does not yet
-///   express an axis the emitter honors. Today: `v2_v3` × `funding=SelfFund`
-///   (WE45KC — the builder is InPathFlash-only until task `5I25WS` extends it);
-///   or
-/// * **records "no Plan"** (non-fatal, once per family) — the 26 3-hop families
-///   have no builder yet (tasks `W7FQN6` / `HPZTNT` author them). An explicit
-///   record, NOT a false-green pass.
+/// * **compares** — the 9 2-hop families: production (Plan) bytes are
+///   `debug_assert_eq!`'d against the retained emitter's bytes;
+/// * **records a missing reference** (non-fatal) — production produced bytes
+///   but the emitter declined this input (an unexpected coverage excess: the
+///   Plan should sit inside the emitter's subspace);
+/// * **records "no Plan"** (non-fatal, once per family) — the 26 3-hop
+///   families still run on the emitter and have no Plan builder yet (tasks
+///   `W7FQN6` / `HPZTNT` author them). An explicit record, NOT a false-green
+///   pass.
 ///
 /// Compiled out entirely when `debug_assertions` is off — zero release cost.
 #[cfg(debug_assertions)]
 #[expect(
     clippy::print_stderr,
-    reason = "JT57TH cutover() oracle: non-fatal no-bytes-to-compare record"
+    reason = "JT57TH cutover() oracle: non-fatal no-reference/no-Plan records"
 )]
-fn cutover_parity_oracle(path: &PathInfo, inputs: &ComposerInputs<'_>, derived: Option<&Vec<u8>>) {
-    let Some(derived) = derived else {
+fn cutover_parity_oracle(path: &PathInfo, inputs: &ComposerInputs<'_>, produced: Option<&Vec<u8>>) {
+    let Some(produced) = produced else {
         // `derive_shape` declined the family — nothing to cross-check.
         return;
     };
-    let (plan, family) = oracle_plan_reference(path, inputs);
-    match plan {
-        OraclePlan::Built(plan_bytes) => {
+    let (reference, family) = oracle_reference(path, inputs);
+    match reference {
+        OracleReference::Emitter(emitter) => {
             debug_assert_eq!(
-                derived.as_slice(),
-                plan_bytes.as_slice(),
-                "parity-oracle [{family}]: Plan bytes diverged from derive_shape"
+                produced.as_slice(),
+                emitter.as_slice(),
+                "parity-oracle [{family}]: Plan bytes diverged from derive_* emitter"
             );
         }
-        OraclePlan::AxisUncovered(axis) => {
+        OracleReference::NoEmitterReference => {
             eprintln!(
-                "parity-oracle [{family}]: Plan builder does not cover axis `{axis}` yet — no \
-                 bytes to compare (not a false-green pass)"
+                "parity-oracle [{family}]: production produced bytes but the emitter declined \
+                 this input — no reference to compare (not a false-green pass)"
             );
         }
-        OraclePlan::NoBuilder => {
+        OracleReference::NoBuilder => {
             record_no_plan_once(family);
         }
     }
@@ -3139,176 +3345,153 @@ fn cutover_parity_oracle(_: &PathInfo, _: &ComposerInputs<'_>, _: Option<&Vec<u8
 
 /// The oracle reference a family maps to on the cutover path.
 #[cfg(debug_assertions)]
-enum OraclePlan {
-    /// The Plan built for this input: `preamble + plan_to_bytes(&plan, &at)`
-    /// (the full payload, byte-comparable to the derived bytes).
-    Built(Vec<u8>),
-    /// A builder exists for this family but does not express the requested
-    /// axis (e.g. `v2_v3` × SelfFund) — the emitter covers it, the builder is
-    /// extended under task `5I25WS`. Record, don't compare.
-    AxisUncovered(&'static str),
-    /// No Plan builder exists for this family yet (all 3-hop families — tasks
-    /// `W7FQN6` / `HPZTNT` author them, upgrading these arms to `Built`).
+enum OracleReference {
+    /// The retained hand-written emitter produced reference bytes for this
+    /// family/input (2-hop). Production (the Plan) is compared against it.
+    Emitter(Vec<u8>),
+    /// Production produced bytes but the emitter declined this input — an
+    /// unexpected coverage excess (no reference to compare). Record, don't
+    /// panic: it means the builder covers a shape the emitter never did.
+    NoEmitterReference,
+    /// No Plan builder for this family yet (all 3-hop families — tasks
+    /// `W7FQN6` / `HPZTNT` author them, upgrading these arms to `Emitter`).
     NoBuilder,
 }
 
-/// Map a path to its oracle reference: which family, and which Plan builder
-/// (if any) covers it. **Mirrors the [`derive_shape`] dispatcher — keep the
-/// two in lockstep.**
+/// Map a path to its oracle reference: which family, and the retained emitter
+/// (if any) that produces the reference bytes. **Mirrors the [`derive_shape`]
+/// dispatcher — keep the two in lockstep.** For the 9 2-hop families the
+/// reference is the hand-written emitter (the divergence detector's reference
+/// half until task RVNIPD deletes it); for the 26 3-hop families there is no
+/// Plan yet → `NoBuilder`.
 #[cfg(debug_assertions)]
 #[expect(
     clippy::too_many_lines,
     reason = "one explicit arm per family, mirroring derive_shape"
 )]
-fn oracle_plan_reference(
+fn oracle_reference(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
-) -> (OraclePlan, &'static str) {
+) -> (OracleReference, &'static str) {
+    fn wrap(bytes: Option<Vec<u8>>) -> OracleReference {
+        match bytes {
+            Some(b) => OracleReference::Emitter(b),
+            None => OracleReference::NoEmitterReference,
+        }
+    }
     match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
-        // ── 2-hop families (9): a Plan builder exists → build + compare. ──
-        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), None) => {
-            (oracle_build(build_v4v4_plan, path, inputs), "v4_v4")
+        // ── 2-hop families (9): the retained emitter is the reference. ──
+        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), None) => {
+            (wrap(derive_2hop_v4v4(a, b, inputs)), "v4_v4")
         }
-        (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), None) => {
-            (oracle_build(build_v4v3_plan, path, inputs), "v4_v3")
+        (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), None) => {
+            (wrap(derive_2hop_v4v3(a, b, inputs)), "v4_v3")
         }
-        (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), None) => {
-            (oracle_build(build_v3v4_plan, path, inputs), "v3_v4")
+        (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), None) => {
+            (wrap(derive_2hop_v3v4(a, b, inputs)), "v3_v4")
         }
-        (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), None) => {
-            (oracle_build(build_v4v2_plan, path, inputs), "v4_v2")
+        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), None) => {
+            (wrap(derive_2hop_v4v2(a, b, inputs)), "v4_v2")
         }
-        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), None) => {
-            (oracle_build(build_v2v4_plan, path, inputs), "v2_v4")
+        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), None) => {
+            (wrap(derive_2hop_v2v4(a, b, inputs)), "v2_v4")
         }
+        // The V2/V3-only 2-hop fold (v2_v3 / v3_v2 / v3_v3 / v2_v2): the old
+        // `_` arm of derive_shape (funding dispatch lives inside the emitter).
         (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), None) => {
-            // The V2/V3-only 2-hop folds live on `derive_shape`'s `_` arm
-            // (→ `derive_2hop_v2v3`). A SelfFund V2-led path returns `None`
-            // there (no `derive_2hop` arm) — the oracle never sees bytes for
-            // it and the builder's InPathFlash reference stays authoritative.
-            (oracle_build(build_v2v2_plan, path, inputs), "v2_v2")
+            (wrap(derive_2hop_v2v3(path, inputs)), "v2_v2")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), None) => {
-            if inputs.opts.funding == FundingSource::SelfFund {
-                // WE45KC: the emitter honors SelfFund for V2-led `v2_v3`; the
-                // builder is InPathFlash-only (task `5I25WS` extends it), so it
-                // would otherwise build the *other* funding's bytes and fire a
-                // false RED. Record the gap, don't compare.
-                (OraclePlan::AxisUncovered("funding=SelfFund"), "v2_v3")
-            } else {
-                (oracle_build(build_v2v3_plan, path, inputs), "v2_v3")
-            }
+            (wrap(derive_2hop_v2v3(path, inputs)), "v2_v3")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), None) => {
-            (oracle_build(build_v3v2_plan, path, inputs), "v3_v2")
+            (wrap(derive_2hop_v2v3(path, inputs)), "v3_v2")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), None) => {
-            (oracle_build(build_v3v3_plan, path, inputs), "v3_v3")
+            (wrap(derive_2hop_v2v3(path, inputs)), "v3_v3")
         }
         // ── 3-hop families (26): no Plan builder yet (tasks `W7FQN6`/`HPZTNT`
         //    author them). Explicit arms name each family for the "no Plan"
-        //    record, and are the exact arms a future task upgrades to `Built`.
+        //    record, and are the exact arms a future task upgrades.
         (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v4_v4_v4")
+            (OracleReference::NoBuilder, "v4_v4_v4")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v4_v2_v2")
+            (OracleReference::NoBuilder, "v4_v2_v2")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v2_v2_v4")
+            (OracleReference::NoBuilder, "v2_v2_v4")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v2_v3_v4")
+            (OracleReference::NoBuilder, "v2_v3_v4")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v3_v2_v4")
+            (OracleReference::NoBuilder, "v3_v2_v4")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v3_v3_v4")
+            (OracleReference::NoBuilder, "v3_v3_v4")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v2_v4_v2")
+            (OracleReference::NoBuilder, "v2_v4_v2")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v2_v4_v3")
+            (OracleReference::NoBuilder, "v2_v4_v3")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v3_v4_v2")
+            (OracleReference::NoBuilder, "v3_v4_v2")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v3_v4_v3")
+            (OracleReference::NoBuilder, "v3_v4_v3")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v2_v4_v4")
+            (OracleReference::NoBuilder, "v2_v4_v4")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v3_v4_v4")
+            (OracleReference::NoBuilder, "v3_v4_v4")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v4_v4_v2")
+            (OracleReference::NoBuilder, "v4_v4_v2")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v4_v4_v3")
+            (OracleReference::NoBuilder, "v4_v4_v3")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v4_v2_v3")
+            (OracleReference::NoBuilder, "v4_v2_v3")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v4_v2_v4")
+            (OracleReference::NoBuilder, "v4_v2_v4")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v4_v3_v2")
+            (OracleReference::NoBuilder, "v4_v3_v2")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v4_v3_v3")
+            (OracleReference::NoBuilder, "v4_v3_v3")
         }
         (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), Some(HopInfo::V4(_))) => {
-            (OraclePlan::NoBuilder, "v4_v3_v4")
+            (OracleReference::NoBuilder, "v4_v3_v4")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v2_v2_v3")
+            (OracleReference::NoBuilder, "v2_v2_v3")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v2_v3_v2")
+            (OracleReference::NoBuilder, "v2_v3_v2")
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v2_v3_v3")
+            (OracleReference::NoBuilder, "v2_v3_v3")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v3_v2_v2")
+            (OracleReference::NoBuilder, "v3_v2_v2")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v3_v2_v3")
+            (OracleReference::NoBuilder, "v3_v2_v3")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), Some(HopInfo::V2(_))) => {
-            (OraclePlan::NoBuilder, "v3_v3_v2")
+            (OracleReference::NoBuilder, "v3_v3_v2")
         }
         (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), Some(HopInfo::V3(_))) => {
-            (OraclePlan::NoBuilder, "v3_v3_v3")
+            (OracleReference::NoBuilder, "v3_v3_v3")
         }
-        _ => (OraclePlan::NoBuilder, "<unhandled path>"),
-    }
-}
-
-/// Build a family's Plan and fold `preamble + plan_to_bytes(&plan, &at)` into
-/// the full payload byte string the oracle compares against the derived bytes.
-#[cfg(debug_assertions)]
-#[expect(
-    clippy::type_complexity,
-    reason = "plan-builder fn pointer signature (preamble, Plan, AddressTable)"
-)]
-fn oracle_build(
-    build: fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan, AddressTable)>,
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> OraclePlan {
-    match build(path, inputs) {
-        Some((preamble, plan, at)) => {
-            let mut bytes = preamble;
-            bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
-            OraclePlan::Built(bytes)
-        }
-        None => OraclePlan::AxisUncovered("this input's shape"),
+        _ => (OracleReference::NoBuilder, "<unhandled path>"),
     }
 }
 
@@ -3389,6 +3572,7 @@ fn derive_2hop_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 /// family) — `default` opts (no `V4_BATCH`, no `erc6909_profit`). Other V4 shapes
 /// (native bridges, non-WETH output, batch/mint) return `None` for now (later steps).
 #[expect(clippy::too_many_lines)]
+#[cfg(debug_assertions)]
 fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     use crate::composers::{emit_currency_bridge, CurrencyBridge};
 
@@ -3610,6 +3794,7 @@ fn derive_2hop_v4v4(a: &V4HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 /// forward is wrapped (`WETH_DEPOSIT`) before the V3 swap; the V4 input debt
 /// is settled (`V4_SETTLE_DELTA`), with a `WETH_WITHDRAW` when the V4 input is
 /// itself native.
+#[cfg(debug_assertions)]
 fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
@@ -3708,6 +3893,7 @@ fn derive_2hop_v4v3(a: &V4HopInfo, b: &V3HopInfo, inputs: &ComposerInputs<'_>) -
 /// V3's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) to seed it and
 /// settled directly (`V4_SETTLE_DELTA(native)`).
 #[expect(clippy::too_many_lines)]
+#[cfg(debug_assertions)]
 fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
@@ -3840,6 +4026,7 @@ fn derive_2hop_v3v4(a: &V3HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -
 /// is re-seeded. A native V4 output is wrapped (`WETH_DEPOSIT`) before being
 /// transferred to the V2 pool (and the terminal V2 always uses `V2_SWAP_CALC`,
 /// never exact-out). A native V4 input is settled via `WETH_WITHDRAW`.
+#[cfg(debug_assertions)]
 fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;
@@ -3942,6 +4129,7 @@ fn derive_2hop_v4v2(a: &V4HopInfo, b: &V2HopInfo, inputs: &ComposerInputs<'_>) -
 /// V2's WETH output is unwrapped (`WETH_WITHDRAW(forward_out)`) and the V4
 /// input settled directly.
 #[expect(clippy::too_many_lines)]
+#[cfg(debug_assertions)]
 fn derive_2hop_v2v4(a: &V2HopInfo, b: &V4HopInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
     let optimal_input = inputs.optimal_input;
     let forward_out = *inputs.hop_outputs.first()?;

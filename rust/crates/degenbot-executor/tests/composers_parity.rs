@@ -135,8 +135,12 @@ fn parity_v4v4_native_to_weth_wrap() {
                 pool_manager_address: address!("000000000004444c5dc75cB358380D2e3dE08A90"),
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
-                currency0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                currency1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                // Currency0 = USDC, currency1 = WETH, zfo=false → input WETH,
+                // output USDC — hop B CONSUMES the wrapped WETH the bridge
+                // produces (the coherent wrap: A outputs native → bridge wraps
+                // it to WETH → B inputs WETH → outputs USDC).
+                currency0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
                 fee: 500u32,
                 tick_spacing: 10i32,
                 hook_address: address!("0000000000000000000000000000000000000000"),
@@ -159,6 +163,9 @@ fn parity_v4v4_native_to_weth_wrap() {
     let executor_idx = SENTINEL_SELF;
     let native_idx = SENTINEL_NATIVE;
     let mut inner = Vec::new();
+    // Hop A: USDC→native (zfo=false: input c1=USDC, output c0=native).
+    // Gap branch: swap a → take native → wrap → swap b → settle → take →
+    // settle_all (mirrors the coherent inline `v4_v4` gap Wrap topology).
     inner.extend_from_slice(
         &encoders::enc_v4_swap_compact(
             native_idx,
@@ -175,10 +182,11 @@ fn parity_v4v4_native_to_weth_wrap() {
         &encoders::enc_v4_take_compact(native_idx, executor_idx, 2000000000u128).unwrap(),
     );
     inner.extend_from_slice(&encoders::enc_weth_deposit(U256::from(2000000000u128)));
+    // Hop B: WETH→USDC (zfo=false: input c1=WETH — the bridged wrap — output c0=USDC).
     inner.extend_from_slice(
         &encoders::enc_v4_swap_compact(
-            weth_idx,
             idx0,
+            weth_idx,
             500,
             10,
             native_idx,
@@ -188,7 +196,8 @@ fn parity_v4v4_native_to_weth_wrap() {
         .unwrap(),
     );
     inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
-    inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
+    // Terminal profit = hop B's USDC output (captured as an explicit take).
+    inner.extend_from_slice(&encoders::enc_v4_take_delta(idx0, executor_idx));
     inner.extend_from_slice(&encoders::enc_v4_settle_all());
     let expected = v4_envelope(&at, &inner);
     assert_eq!(rust, Some(expected));
