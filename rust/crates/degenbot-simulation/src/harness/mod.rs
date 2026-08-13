@@ -556,7 +556,27 @@ impl Harness {
         hop_outputs: &[u128],
         gas: u64,
     ) -> Result<ExecOutcome, String> {
-        let cmd = self.encode_path(path, optimal_input, hop_outputs)?;
+        self.run_path_with_opts(
+            path,
+            optimal_input,
+            hop_outputs,
+            gas,
+            degenbot_executor::composers::EncodeOptions::default(),
+        )
+    }
+
+    /// KO5NNB variant of [`Self::run_path`] with explicit [`EncodeOptions`]
+    /// (funding axis etc.), threaded through to `encode_path_with_opts` — used
+    /// by [`crate::harness::declarative::Harness::run_chain_with_opts`].
+    pub fn run_path_with_opts(
+        &mut self,
+        path: &degenbot_executor::composers::PathInfo,
+        optimal_input: u128,
+        hop_outputs: &[u128],
+        gas: u64,
+        opts: degenbot_executor::composers::EncodeOptions,
+    ) -> Result<ExecOutcome, String> {
+        let cmd = self.encode_path_with_opts(path, optimal_input, hop_outputs, opts)?;
         self.execute_payload(&cmd, gas)
     }
 

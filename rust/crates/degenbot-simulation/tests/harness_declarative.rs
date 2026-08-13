@@ -247,6 +247,16 @@ fn matrix_covers_full_reachable_grammar() {
 /// Negative control: a deliberately unprofitable chain still EXECUTES but with
 /// a negative WETH delta, so [`assert_profitable`] must reject it. Proves the
 /// delta guard fires on a real losing path rather than being vacuous.
+///
+/// **Ko5NNB cutover note — why SelfFund:** since the all-V2 family routes
+/// through the Plan + validator gate, a losing all-V2 **InPathFlash** stream is
+/// REJECTED (`Erc20TransferBeforeCredit`: the flash repay `100k` exceeds the
+/// stream's ~82k terminal WETH — see the executor's
+/// `all_v2_gate_rejects_unprofitable_inpathflash_stream`). A losing but
+/// EXECUTED path is only representable under `FundingSource::SelfFund`: no
+/// flash debt, so the executor eats the loss from its held WETH buffer
+/// (the `optimal_input * 2` funding) and the stream genuinely runs at a loss.
+/// This is exactly the case `assert_profitable` must catch.
 #[test]
 #[should_panic(expected = "expected a profitable (positive) WETH delta")]
 fn unprofitable_chain_is_rejected() {
@@ -267,7 +277,17 @@ fn unprofitable_chain_is_rejected() {
             pool: HopPool::V2(pb),
         },
     ];
-    let result = h.run_chain(&hops, 100_000, 5_000_000).unwrap();
+    let result = h
+        .run_chain_with_opts(
+            &hops,
+            100_000,
+            5_000_000,
+            degenbot_executor::composers::EncodeOptions {
+                funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     assert!(result.outcome.executed(2), "still touches both pools");
     assert!(
         result.actual_weth_delta < 0,

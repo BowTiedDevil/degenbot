@@ -167,6 +167,29 @@ impl Harness {
         optimal_input: u128,
         gas: u64,
     ) -> Result<ChainResult, String> {
+        self.run_chain_with_opts(
+            hops,
+            optimal_input,
+            gas,
+            degenbot_executor::composers::EncodeOptions::default(),
+        )
+    }
+
+    /// KO5NNB variant of [`Self::run_chain`] with explicit [`EncodeOptions`]
+    /// (funding axis etc.). A test that must drive a NON-default funding
+    /// source — e.g. a negative control that needs a losing path to still
+    /// EXECUTE: only representable under `FundingSource::SelfFund`, where the
+    /// executor eats the loss from its held capital (no flash to fail to
+    /// repay) — uses this. Same universal funding + approvals + measurement
+    /// as [`Self::run_chain`]; the existing `optimal_input * 2` WETH buffer
+    /// doubles as the self-fund seed.
+    pub fn run_chain_with_opts(
+        &mut self,
+        hops: &[Hop],
+        optimal_input: u128,
+        gas: u64,
+        opts: degenbot_executor::composers::EncodeOptions,
+    ) -> Result<ChainResult, String> {
         let n = hops.len();
         if n < 1 {
             return Err("run_chain needs >=1 hops".to_string());
@@ -211,7 +234,7 @@ impl Harness {
 
         // 4. Measure, execute, measure.
         let before = self.balance_of(self.weth, self.executor)?.to::<u128>();
-        let outcome = self.run_path(&path, optimal_input, &hop_outputs, gas)?;
+        let outcome = self.run_path_with_opts(&path, optimal_input, &hop_outputs, gas, opts)?;
         let after = self.balance_of(self.weth, self.executor)?.to::<u128>();
         let actual_weth_delta = after as i128 - before as i128;
 
