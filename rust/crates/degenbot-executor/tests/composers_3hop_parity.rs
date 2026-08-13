@@ -2121,7 +2121,10 @@ fn parity_v4_v4_v2() {
                 pool_id_hex: "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
                 currency0_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
-                currency1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+                // b's forward (zfo→currency1) = WBTC — NOT a's input (WETH), so
+                // the take of b's full output doesn't overshoot PM[WETH] (the
+                // coherent v4_v4_v2 subspace the Plan+validator accepts).
+                currency1_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
                 fee: 500u32,
                 tick_spacing: 10i32,
                 hook_address: address!("0000000000000000000000000000000000000000"),
@@ -2129,8 +2132,9 @@ fn parity_v4_v4_v2() {
             }),
             HopInfo::V2(V2HopInfo {
                 pool_address: address!("3333333333333333333333333333333333333333"),
-                token0_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                token1_address: address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"),
+                // consumes WBTC (b's forward), outputs WETH (terminal).
+                token0_address: address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
+                token1_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
                 fee: 30u16,
                 zfo: true,
             }),
@@ -2144,13 +2148,15 @@ fn parity_v4_v4_v2() {
         EncodeOptions::default(),
     );
     // V4a→V4b→V2c, all inside one V4_UNLOCK. Inner = swap_compact(A) +
-    // swap_compact(B) + take_compact(WETH→V2c) + V2_SWAP_CALC(c→executor) + settle_all.
+    // swap_compact(B) + take_compact(WBTC→V2c) + V2_SWAP_CALC(c→executor) +
+    // settle_all.
     // Terminal V2 hop is V2_SWAP_CALC (exact-output via hopper), matching the
     // production `v3_v4_v2`/`v4_v4_v2` composers — not V2_SWAP_DIRECT (460f23bf
     // / path-182449 closes the 1-wei exact-out K over-draw).
+    let wbtc = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
     let mut at = AddressTable::with_sentinels(Some(WETH), Some(EXECUTOR), Some(PM));
     let executor_idx = SENTINEL_SELF;
-    let forward_b_idx = at.add(WETH).unwrap(); // V4b output (zfo→currency1) → SENTINEL_WETH
+    let forward_b_idx = at.add(wbtc).unwrap(); // V4b output (zfo→currency1) = WBTC
     let v2c_idx = at
         .add(address!("3333333333333333333333333333333333333333"))
         .unwrap();
@@ -2158,7 +2164,7 @@ fn parity_v4_v4_v2() {
     let c0_a_idx = at.add(WETH).unwrap();
     let c1_a_idx = at.add(USDC).unwrap();
     let c0_b_idx = at.add(USDC).unwrap();
-    let c1_b_idx = at.add(WETH).unwrap();
+    let c1_b_idx = at.add(wbtc).unwrap();
     let mut inner = encoders::enc_v4_swap_compact(
         c0_a_idx,
         c1_a_idx,
