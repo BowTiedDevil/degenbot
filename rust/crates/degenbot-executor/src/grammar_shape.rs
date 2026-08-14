@@ -6589,181 +6589,87 @@ pub fn derive_all_v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec
     build_plan_bytes(path, build_all_v2_chain, inputs)
 }
 
+/// The protocol of a hop slot; `None` for a missing slot (a 2-hop path has a
+/// `None` third slot).
+#[must_use]
+fn prot_of(h: Option<&HopInfo>) -> Option<Prot> {
+    match h {
+        Some(HopInfo::V2(_)) => Some(Prot::V2),
+        Some(HopInfo::V3(_)) => Some(Prot::V3),
+        Some(HopInfo::V4(_)) => Some(Prot::V4),
+        None => None,
+    }
+}
+
 /// Public entry: derive a family's command bytes from its Plan builder
 /// (`build_*_plan` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
 /// gate → `plan_to_bytes`) — the sole production producer since RVNIPD removed
 /// the hand-written emitters. Returns `None` when the builder declines or the
 /// validator rejects the stream.
-#[expect(clippy::too_many_lines, reason = "per-family axis dispatch / builder")]
 #[must_use]
 pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    // V4-involving families: a pure-V4 2-hop path is the *container* case — the
-    // whole stream is one V4_UNLOCK over internal ledger movement, so no funding
-    // choice is needed (the PM carries the entry credit). Handle it before the
-    // V2/V3 funding dispatch.
-    let bytes: Option<Vec<u8>> = match (path.hops.first(), path.hops.get(1), path.hops.get(2)) {
-        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            // W7FQN6 pilot: v4_v4_v4 routes through the Plan + validator (no
-            // new PlanStep type needed — the pilot proved the vocabulary).
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v4v4_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v2v2_plan, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v2v4_plan, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v3v4_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v2v4_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v3v4_plan, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v4v2_plan, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v4v3_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v4v2_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v4v3_plan, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v4v4_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V4(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v4v4_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v4v2_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V4(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v4v3_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v2v3_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V2(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v2v4_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v3v2_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v3v3_plan, inputs)
-        }
-        (Some(HopInfo::V4(a)), Some(HopInfo::V3(b)), Some(HopInfo::V4(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v4v3v4_plan, inputs)
-        }
-        // ── 2-hop families (9): production bytes now come from the Plan —
-        //    `build_*_plan` + `LedgerValidator` gate + `plan_to_bytes`. The
-        //    hand-written `derive_2hop_*` emitters are retained (until task
-        //    RVNIPD deletes them) as the parity-oracle's reference half.
-        (Some(HopInfo::V4(_)), Some(HopInfo::V4(_)), None) => {
-            build_plan_bytes(path, build_v4v4_plan, inputs)
-        }
-        (Some(HopInfo::V4(_)), Some(HopInfo::V3(_)), None) => {
-            build_plan_bytes(path, build_v4v3_plan, inputs)
-        }
-        (Some(HopInfo::V3(_)), Some(HopInfo::V4(_)), None) => {
-            build_plan_bytes(path, build_v3v4_plan, inputs)
-        }
-        (Some(HopInfo::V4(_)), Some(HopInfo::V2(_)), None) => {
-            build_plan_bytes(path, build_v4v2_plan, inputs)
-        }
-        (Some(HopInfo::V2(_)), Some(HopInfo::V4(_)), None) => {
-            build_plan_bytes(path, build_v2v4_plan, inputs)
-        }
-        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), None) => {
-            // KO5NNB/4JOWO5: the 2-hop all-V2 family routes through
-            // `build_all_v2_chain` (the any-N builder, which handles BOTH
-            // funding axes — unlike the retired 2-hop-only builder, which
-            // never handled SelfFund). Byte-identical to the former speedrail
-            // for N=2 in both funding modes (proven by the T1 SPVEIE parity
-            // test before its retirement, and the revm full_matrix since).
-            build_plan_bytes(path, build_all_v2_chain, inputs)
-        }
-        (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), None) => {
-            build_plan_bytes(path, build_v2v3_plan, inputs)
-        }
-        (Some(HopInfo::V3(_)), Some(HopInfo::V2(_)), None) => {
-            build_plan_bytes(path, build_v3v2_plan, inputs)
-        }
-        (Some(HopInfo::V3(_)), Some(HopInfo::V3(_)), None) => {
-            build_plan_bytes(path, build_v3v3_plan, inputs)
-        }
-        // V2/V3-only 3-hop folds (WAYDTL) + the all-V2 3-hop cutover arm
-        // (KO5NNB): byte-faithful transcriptions of the previously-hand-written
-        // adapters, byte-identical to them (verified by the `cutover`
-        // `debug_assert` oracle in dev + the parity suite). The all-V2 3-hop
-        // (and any-N reaching here) family routes through `build_all_v2_chain`
-        // — the former distinct all-V2 3-hop layout is COLLAPSED to the any-N
-        // speedrail/Plan layout (top-swap-on-pool-A). Runtime-safe: the revm
-        // full_matrix only ever exercised the speedrail layout for all-V2-3-hop
-        // via `encode_cmd_stream`; the distinct 3-hop layout was only asserted
-        // to exist-and-differ by the split test (deleted in KO5NNB).
-        (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
-            build_plan_bytes(path, build_all_v2_chain, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v2v3_plan, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v3v2_plan, inputs)
-        }
-        (Some(HopInfo::V2(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v2v3v3_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v2v2_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V2(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v2v3_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V2(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v3v2_plan, inputs)
-        }
-        (Some(HopInfo::V3(a)), Some(HopInfo::V3(b)), Some(HopInfo::V3(c))) => {
-            let _ = (a, b, c);
-            build_plan_bytes(path, build_v3v3v3_plan, inputs)
-        }
-        // RVNIPD: the hand-written `derive_2hop_v2v3` emitter (the old `_`
-        // backstop) is deleted — every well-formed 2/3-hop family is routed to
-        // its Plan builder above; an unmatched path is unhandled.
-        _ => None,
+    // The family→author dispatch table: every reachable 2/3-hop
+    // `(Prot, Prot, Option<Prot>)` key routes to its Plan builder as a
+    // READABLE row, then ONE `build_plan_bytes` call runs builder → validator
+    // gate → plan_to_bytes. Keys without a row (1-hop, >3-hop, or an unknown
+    // combination) are unmatched — the family has no builder and does not
+    // encode. This is D1's "keyed by orthogonal axes" made data (ADR-029): a
+    // new family extends the table as a row, and candidate 4's per-family
+    // axis-support declaration rides this table.
+    let key = (
+        prot_of(path.hops.first()),
+        prot_of(path.hops.get(1)),
+        prot_of(path.hops.get(2)),
+    );
+    let build: BuildPlan = match key {
+        // ── 3-hop families (26) ── V4-involving + V2/V3-only folds. The all-V2
+        //    3-hop family is the shared any-N arm below (see `build_all_v2_chain`
+        //    note), not a separate row.
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4)) => build_v4v4v4_plan,
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V2)) => build_v4v2v2_plan,
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V4)) => build_v2v2v4_plan,
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V4)) => build_v2v3v4_plan,
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V4)) => build_v3v2v4_plan,
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V4)) => build_v3v3v4_plan,
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V2)) => build_v2v4v2_plan,
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V3)) => build_v2v4v3_plan,
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V2)) => build_v3v4v2_plan,
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V3)) => build_v3v4v3_plan,
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V4)) => build_v2v4v4_plan,
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V4)) => build_v3v4v4_plan,
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V2)) => build_v4v4v2_plan,
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V3)) => build_v4v4v3_plan,
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V3)) => build_v4v2v3_plan,
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V4)) => build_v4v2v4_plan,
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V2)) => build_v4v3v2_plan,
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V3)) => build_v4v3v3_plan,
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V4)) => build_v4v3v4_plan,
+        // All-V2 any-N: the 2-hop (third slot `None`) AND 3-hop families share
+        // one arity-agnostic producer (KO5NNB/4JOWO5) — the only family row
+        // that spans the 2-hop/3-hop split (merged so the family→author table
+        // has exactly one all-V2 row).
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V2) | None) => build_all_v2_chain,
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V3)) => build_v2v2v3_plan,
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V2)) => build_v2v3v2_plan,
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V3)) => build_v2v3v3_plan,
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V2)) => build_v3v2v2_plan,
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V3)) => build_v3v2v3_plan,
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V2)) => build_v3v3v2_plan,
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V3)) => build_v3v3v3_plan,
+        // ── 2-hop families (8; third slot `None`) ──
+        (Some(Prot::V4), Some(Prot::V4), None) => build_v4v4_plan,
+        (Some(Prot::V4), Some(Prot::V3), None) => build_v4v3_plan,
+        (Some(Prot::V3), Some(Prot::V4), None) => build_v3v4_plan,
+        (Some(Prot::V4), Some(Prot::V2), None) => build_v4v2_plan,
+        (Some(Prot::V2), Some(Prot::V4), None) => build_v2v4_plan,
+        // (V2,V2,None) all-V2 → the shared any-N arm above.
+        (Some(Prot::V2), Some(Prot::V3), None) => build_v2v3_plan,
+        (Some(Prot::V3), Some(Prot::V2), None) => build_v3v2_plan,
+        (Some(Prot::V3), Some(Prot::V3), None) => build_v3v3_plan,
+        // Any key with no row is unmatched — no builder, no bytes.
+        _ => return None,
     };
-    bytes
+    build_plan_bytes(path, build, inputs)
 }
 
 #[cfg(test)]
