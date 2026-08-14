@@ -1,4 +1,4 @@
-//! Command-stream primitives — opcode constants, `AddressTable`, `pack_config`,
+//! Command-stream primitives — opcode constants, `AddressTable`, and a `pub fn enc_*` builder.
 //! and a `pub fn enc_*` builder for every opcode (`0x00`–`0x59`, `0xFF`).
 //!
 //! A pyo3-free *core leaf* implementing the tightly-packed command-bytecode
@@ -10,8 +10,8 @@
 //!
 //! # Scope
 //!
-//! The primitive encoders + `AddressTable` + `pack_config` + `make_pool_key`
-//! ONLY. The per-path-type composers (in `composers.rs`) and the PyO3
+//! The primitive encoders + `AddressTable` + `make_pool_key` ONLY (`pack_config`
+//! lives in `config`, re-exported here). The per-path-type composers (in `composers.rs`) and the PyO3
 //! wrappers are sibling / cutover tasks. `# Errors` doc sections appear on
 //! every `pub fn` returning `Result`.
 //!
@@ -150,12 +150,6 @@ pub enum EncoderError {
     AddressTableFull,
     /// A `V4_BATCH` exceeded the contract's 8-swap cap.
     TooManyV4BatchSwaps(usize),
-    /// `pack_config` `check_mode` outside `0..=3`.
-    InvalidCheckMode(u8),
-    /// `pack_config` `bribe_bips` outside `0..=10_000`.
-    InvalidBribeBips(u16),
-    /// `pack_config` `bribe_recipient_idx` outside `0..MAX_INDEXED_ADDRESSES`.
-    InvalidBribeRecipientIdx(u8),
 }
 
 impl std::fmt::Display for EncoderError {
@@ -171,11 +165,6 @@ impl std::fmt::Display for EncoderError {
             ),
             Self::TooManyV4BatchSwaps(n) => {
                 write!(f, "V4_BATCH max 8 swaps, got {n}")
-            }
-            Self::InvalidCheckMode(v) => write!(f, "check_mode must be 0–3, got {v}"),
-            Self::InvalidBribeBips(v) => write!(f, "bribe_bips must be 0–10000, got {v}"),
-            Self::InvalidBribeRecipientIdx(v) => {
-                write!(f, "bribe_recipient_idx must be 0–31, got {v}")
             }
         }
     }
@@ -226,61 +215,9 @@ fn push_forward_data(out: &mut Vec<u8>, data: &[u8]) -> Result<(), EncoderError>
     Ok(())
 }
 
-// ── `pack_config` / `pack_expected_balance` ──────────────────────────────────
+// ── `pack_config` / `pack_expected_balance` (re-exported from `config`) ────────
 
-/// Pack the `execute()` `config` ABI parameter.
-///
-/// Layout (matches `cmd_executor.vy` `execute`):
-/// - bits `0–7`:   `check_mode` (0 = skip, 1 = WETH+ETH, 2 = ERC6909 WETH)
-/// - bits `8–23`:  `bribe_bips` (0 = no bribe, 1–10000 = basis points)
-/// - bits `24–31`: `bribe_recipient_idx` (0 = `block.coinbase`, 1–31 = table idx)
-/// - bits `32–255`: `expected_value` (pre-tx balance for the selected mode)
-///
-/// Bribes were moved OUT of the command stream (opcodes 0x02/0x03 are
-/// reserved) and into this parameter. Pass the result as the second argument
-/// to `execute(commands, config)`.
-///
-/// When `bribe_bips > 0`, `expected_value` MUST be the real pre-tx balance —
-/// the contract computes `profit = combined_after − expected_value`, so
-/// `expected_value = 0` with a bribe over-bribes (drains the full balance).
-///
-/// # Errors
-///
-/// Returns [`EncoderError::InvalidCheckMode`] if `check_mode` is not `0..=3`,
-/// [`EncoderError::InvalidBribeBips`] if `bribe_bips` is not `0..=10_000`, or
-/// [`EncoderError::InvalidBribeRecipientIdx`] if `bribe_recipient_idx` is not
-/// `0..MAX_INDEXED_ADDRESSES`.
-pub fn pack_config(
-    check_mode: u8,
-    expected_value: U256,
-    bribe_bips: u16,
-    bribe_recipient_idx: u8,
-) -> Result<U256, EncoderError> {
-    if check_mode > 3 {
-        return Err(EncoderError::InvalidCheckMode(check_mode));
-    }
-    if bribe_bips > 10_000 {
-        return Err(EncoderError::InvalidBribeBips(bribe_bips));
-    }
-    if bribe_recipient_idx as usize >= MAX_INDEXED_ADDRESSES {
-        return Err(EncoderError::InvalidBribeRecipientIdx(bribe_recipient_idx));
-    }
-    // (expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | check_mode
-    Ok((expected_value << 32)
-        | (U256::from(bribe_recipient_idx) << 24)
-        | (U256::from(bribe_bips) << 8)
-        | U256::from(check_mode))
-}
-
-/// Deprecated alias for [`pack_config`] (no bribe fields) — kept for callers
-/// that predate the bribe config move.
-///
-/// # Errors
-///
-/// Returns [`EncoderError::InvalidCheckMode`] if `check_mode` is not `0..=3`.
-pub fn pack_expected_balance(check_mode: u8, expected_value: U256) -> Result<U256, EncoderError> {
-    pack_config(check_mode, expected_value, 0, 0)
-}
+pub use crate::config::{pack_config, pack_expected_balance};
 
 // ── AddressTable ────────────────────────────────────────────────────────────
 
@@ -888,7 +825,7 @@ pub fn make_pool_key(
 #[expect(clippy::unwrap_used, clippy::cast_possible_truncation)]
 mod tests {
     use super::*;
-    use alloy::primitives::{address, U256};
+    use alloy::primitives::address;
 
     // ── uint96 boundary + overflow rejection ──
 
@@ -958,56 +895,6 @@ mod tests {
             EncoderError::AddressTableFull
         );
         assert_eq!(table.addresses().len(), MAX_INDEXED_ADDRESSES);
-    }
-
-    // ── pack_config bit-packing roundtrip ──
-
-    #[test]
-    fn pack_config_layout_roundtrips() {
-        for &(check_mode, bribe_bips, bribe_recipient_idx) in
-            &[(0u8, 0u16, 0u8), (1, 500, 2), (2, 10_000, 31), (0, 1, 1)]
-        {
-            let expected_value = U256::from((1u128 << 100) | 0xAB); // spans the high 224 bits
-            let packed =
-                pack_config(check_mode, expected_value, bribe_bips, bribe_recipient_idx).unwrap();
-            // Reconstruct via the documented bit layout and compare.
-            let manual = (expected_value << 32u32)
-                | (U256::from(bribe_recipient_idx) << 24u32)
-                | (U256::from(bribe_bips) << 8u32)
-                | U256::from(check_mode);
-            assert_eq!(packed, manual);
-            // Field extraction (bits 0–7, 8–23, 24–31, 32–255).
-            assert_eq!((packed & U256::from(0xFFu8)).to::<u8>(), check_mode);
-            let bips = ((packed >> 8u32) & U256::from(0xFFFFu32)).to::<u128>();
-            assert_eq!(bips as u16, bribe_bips);
-            let rcpt = ((packed >> 24u32) & U256::from(0xFFu8)).to::<u8>();
-            assert_eq!(rcpt, bribe_recipient_idx);
-            assert_eq!(packed >> 32u32, expected_value);
-        }
-    }
-
-    #[test]
-    fn pack_config_rejects_out_of_range() {
-        // check_mode must be 0–3 (3=SWEEP). 4 is rejected.
-        assert_eq!(
-            pack_config(4, U256::ZERO, 0, 0).unwrap_err(),
-            EncoderError::InvalidCheckMode(4)
-        );
-        // bribe_bips must be 0–10000.
-        assert_eq!(
-            pack_config(0, U256::ZERO, 10_001, 0).unwrap_err(),
-            EncoderError::InvalidBribeBips(10_001)
-        );
-        // bribe_recipient_idx must be 0–31.
-        assert_eq!(
-            pack_config(0, U256::ZERO, 0, MAX_INDEXED_ADDRESSES as u8).unwrap_err(),
-            EncoderError::InvalidBribeRecipientIdx(MAX_INDEXED_ADDRESSES as u8)
-        );
-        // pack_expected_balance is the no-bribe alias.
-        assert_eq!(
-            pack_expected_balance(0, U256::ZERO).unwrap(),
-            pack_config(0, U256::ZERO, 0, 0).unwrap()
-        );
     }
 
     // ── make_pool_key currency sort (proper property) ──

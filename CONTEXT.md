@@ -534,3 +534,37 @@ _Avoid_: conflating with "funding source" (the axis) or "pool flash-loan" alone.
 ledger; chosen by token roles + hop coupling, never hand-picked. Part of the
 derived enclosure, not a user axis.
 _Avoid_: "repay hop" (implies a hop; a pivot may be a settle, not a swap).
+
+**Derivation outcome** — the tri-state result of turning a shape-class into a
+command stream: `Encoded` / `Decline` / `Reject`. `None` used to collapse
+the last two into one value; they are meaningfully different:
+- **Decline** — the derivation layer declines to encode a path's family (no
+  producer/row for the shape, or a producer guard such as arity/`fits`
+  returns `None`). A routine, expected outcome for an unsupported or
+  unencodable path; the strategy skips it. Maps to `None` at the public
+  `encode_cmd_stream` seam.
+- **Reject** — a Plan *was* built (the producer returned a stream) but the
+  ledger validator rejected it (`ValidationError`). By the D4 contract a
+  successfully-built Plan never violates the ordering invariants, so a Reject
+  is definitionally a latent bug: it is **always fatal** — the revm
+  matrix/honesty suite hard-fails and a live run aborts. Never swallowed,
+  never degraded to a skip.
+_Avoid_: collapsing both under "None"/"unencodable"/"invalid"; treating a Reject
+like a skip.
+
+**Hop facts** — the per-protocol descriptor the Plan walker consumes to derive a
+command stream: which ledgers a hop touches, credit/debit, direction, funding
+and capture role, and repayment obligation. The *data* half of ADR-029 D4
+("coupling/ledger facts as data"); a new protocol adds one hop-facts descriptor
++ one mechanics module, never per-family Plan bodies.
+_Avoid_: conflating with "ledger" (a hop-facts entry is per protocol; a ledger
+is a location an operation reads/writes).
+
+**Enclosure (derived)** — the callback-nesting structure of a command stream —
+which `FlashSwap`/`V4Unlock` wraps which, and the repayment order — computed
+by the grammar from hop facts (ADR-029 D3 "derived, not chosen"), never
+hand-authored, so the take-before-credit / terminal-V2-draw classes are
+unrepresentable.
+_Avoid_: "nesting"/"wrapping" as the canonical term.
+
+

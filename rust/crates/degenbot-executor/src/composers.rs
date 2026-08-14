@@ -459,7 +459,7 @@ pub struct EncodedCall {
 pub fn config_for_options(
     opts: EncodeOptions,
     expected_value: U256,
-) -> Result<U256, crate::encoders::EncoderError> {
+) -> Result<U256, crate::config::ConfigError> {
     let _ = expected_value; // U3WVLL: ignored — the contract reads its own balance.
     let (_, capture, bribe) = resolve_axes(opts);
     // U3WVLL defect fix: the profit assert is active by default. Non-erc6909
@@ -480,14 +480,14 @@ pub fn config_for_options(
             recipient_idx,
         } => (bips, recipient_idx),
     };
-    crate::encoders::pack_config(check_mode, U256::ZERO, bribe_bips, bribe_recipient_idx)
+    crate::config::pack_config(check_mode, U256::ZERO, bribe_bips, bribe_recipient_idx)
 }
 
 /// Wrap a command-stream `commands` payload in the `execute(bytes, uint256)`
 /// ABI call to the `cmd_executor` contract.
 ///
 /// `config` is the packed `execute()` config uint256 (see
-/// [`encoders::pack_config`]); `0` = skip profit check, no bribe.
+/// [`config::pack_config`]); `0` = skip profit check, no bribe.
 ///
 /// # Errors
 ///

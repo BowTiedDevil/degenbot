@@ -68,7 +68,8 @@ fn liq() -> u128 {
 #[test]
 fn v4v2_native_input_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v4v2_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v4v2_walk as build_v4v2_plan;
 
     let mut h = Harness::new().unwrap();
     let t = h.add_token().unwrap();
@@ -141,7 +142,8 @@ fn v4v2_native_input_plan_byte_parity_validates_and_executes() {
 #[test]
 fn v4v2_native_output_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v4v2_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v4v2_walk as build_v4v2_plan;
 
     let mut h = Harness::new().unwrap();
     let tok = h.add_token().unwrap();
@@ -233,7 +235,8 @@ fn v4v2_native_output_plan_byte_parity_validates_and_executes() {
 #[test]
 fn v2v4_native_input_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v2v4_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v2v4_walk as build_v2v4_plan;
 
     let mut h = Harness::new().unwrap();
     let tok = h.add_token().unwrap();
@@ -319,7 +322,8 @@ fn v2v4_native_input_plan_byte_parity_validates_and_executes() {
 #[test]
 fn v2v4_native_output_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v2v4_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v2v4_walk as build_v2v4_plan;
 
     let mut h = Harness::new().unwrap();
     let t = h.add_token().unwrap();
@@ -399,7 +403,8 @@ fn v2v4_native_output_plan_byte_parity_validates_and_executes() {
 #[test]
 fn v3v4_native_input_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v3v4_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v3v4_walk as build_v3v4_plan;
 
     let mut h = Harness::new().unwrap();
     let tok = h.add_token().unwrap();
@@ -498,7 +503,8 @@ fn v3v4_native_input_plan_byte_parity_validates_and_executes() {
 #[test]
 fn v3v4_native_output_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v3v4_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v3v4_walk as build_v3v4_plan;
 
     let mut h = Harness::new().unwrap();
     let t = h.add_token().unwrap();
@@ -591,7 +597,8 @@ fn v3v4_native_output_plan_byte_parity_validates_and_executes() {
 #[test]
 fn v4v3_native_input_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v4v3_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v4v3_walk as build_v4v3_plan;
 
     let mut h = Harness::new().unwrap();
     let t = h.add_token().unwrap();
@@ -684,7 +691,8 @@ fn v4v3_native_input_plan_byte_parity_validates_and_executes() {
 #[test]
 fn v4v3_native_output_plan_byte_parity_validates_and_executes() {
     use degenbot_executor::grammar_ledger::LedgerValidator;
-    use degenbot_executor::grammar_shape::{build_v4v3_plan, plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_shape::{plan_to_bytes, plan_to_ledger_ops};
+    use degenbot_executor::grammar_walker::build_v4v3_walk as build_v4v3_plan;
 
     let mut h = Harness::new().unwrap();
     let tok = h.add_token().unwrap();

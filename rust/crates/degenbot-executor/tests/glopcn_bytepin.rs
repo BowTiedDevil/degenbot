@@ -556,9 +556,9 @@ const GOLDEN: &[&str] = &[
     "3hop_V4_V4_V3_erc6909_2 cb468d7d95e0d51e",
     "3hop_V4_V4_V3_erc6909_3 e8a4106fdd93e85e",
     "3hop_V4_V4_V4_base_0 39f195f6031f6dee",
-    "3hop_V4_V4_V4_base_1 None",
+    "3hop_V4_V4_V4_base_1 Reject",
     "3hop_V4_V4_V4_base_2 b94214b5afd781e8",
-    "3hop_V4_V4_V4_base_3 None",
+    "3hop_V4_V4_V4_base_3 Reject",
     "3hop_V4_V4_V4_batch_0 d5a0d382b8d2b575",
     "3hop_V4_V4_V4_batch_1 d76255dcc98bb884",
     "3hop_V4_V4_V4_batch_2 f8509c1e93981e5f",
@@ -591,11 +591,21 @@ fn glopcn_byte_identity_is_pinned() {
                      out: &[u128],
                      consumed: &[u128],
                      opts: EncodeOptions|
-         -> Option<Vec<u8>> {
-            if n == 2 {
-                encode_cmd_stream(path, optimal, out, consumed, EXECUTOR, PM, WETH, opts)
-            } else {
-                encode_cmd_3_hop(path, optimal, out, consumed, EXECUTOR, PM, WETH, opts)
+         -> String {
+            // ADR-030: a validator Reject is fatal (panics), distinct from a
+            // routine decline. Catch it so the pin can record the true
+            // decline/reject partition instead of conflating them under `None`.
+            let call = || {
+                if n == 2 {
+                    encode_cmd_stream(path, optimal, out, consumed, EXECUTOR, PM, WETH, opts)
+                } else {
+                    encode_cmd_3_hop(path, optimal, out, consumed, EXECUTOR, PM, WETH, opts)
+                }
+            };
+            match std::panic::catch_unwind(call) {
+                Ok(Some(b)) => format!("{:016x}", fnv1a(&b)),
+                Ok(None) => "None".to_string(),
+                Err(_) => "Reject".to_string(),
             }
         };
         for fidx in 0..fams.len().pow(n as u32) {
@@ -607,10 +617,7 @@ fn glopcn_byte_identity_is_pinned() {
                 for (ci, (optimal, out, consumed)) in configs().iter().enumerate() {
                     let out_vec: Vec<u128> = out[..n].to_vec();
                     let consumed_vec: Vec<u128> = consumed[..n].to_vec();
-                    let hash = match entry(&path, *optimal, &out_vec, &consumed_vec, opt) {
-                        Some(b) => format!("{:016x}", fnv1a(&b)),
-                        None => "None".to_string(),
-                    };
+                    let hash = entry(&path, *optimal, &out_vec, &consumed_vec, opt);
                     lines.push(format!(
                         "{}hop_{}_{}_{} {}",
                         n,
@@ -635,11 +642,12 @@ fn glopcn_byte_identity_is_pinned() {
             let path = PathInfo::new(hops);
             let out4: Vec<u128> = vec![out[0]; 4];
             let consumed4: Vec<u128> = vec![consumed[0]; 4];
-            let hash = match encode_cmd_stream(
-                &path, *optimal, &out4, &consumed4, EXECUTOR, PM, WETH, opt,
-            ) {
-                Some(b) => format!("{:016x}", fnv1a(&b)),
-                None => "None".to_string(),
+            let hash = match std::panic::catch_unwind(|| {
+                encode_cmd_stream(&path, *optimal, &out4, &consumed4, EXECUTOR, PM, WETH, opt)
+            }) {
+                Ok(Some(b)) => format!("{:016x}", fnv1a(&b)),
+                Ok(None) => "None".to_string(),
+                Err(_) => "Reject".to_string(),
             };
             lines.push(format!("4hop_allV2_{label}_{ci} {hash}"));
         }

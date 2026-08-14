@@ -17,7 +17,7 @@ use alloy::primitives::U256;
 use crate::encoders::MAX_INDEXED_ADDRESSES;
 
 /// Max bribe in basis points (100% = 10000 bips).
-pub const MAX_BRIBE_BIPS: u32 = 10_000;
+pub const MAX_BRIBE_BIPS: u16 = 10_000;
 
 /// Max `check_mode` selector (0=skip, 1=WETH+ETH, 2=ERC6909 WETH, 3=SWEEP).
 pub const MAX_CHECK_MODE: u8 = 3;
@@ -30,7 +30,7 @@ pub enum ConfigError {
     CheckModeOutOfRange(u8),
     /// `bribe_bips` not in `0..=10000`.
     #[error("bribe_bips must be 0–10000, got {0}")]
-    BribeBipsOutOfRange(u32),
+    BribeBipsOutOfRange(u16),
     /// `bribe_recipient_idx` not in `0..32`.
     #[error("bribe_recipient_idx must be 0–31, got {0}")]
     BribeRecipientOutOfRange(u8),
@@ -50,7 +50,7 @@ pub enum ConfigError {
 pub fn pack_config(
     check_mode: u8,
     expected_value: U256,
-    bribe_bips: u32,
+    bribe_bips: u16,
     bribe_recipient_idx: u8,
 ) -> Result<U256, ConfigError> {
     if check_mode > MAX_CHECK_MODE {

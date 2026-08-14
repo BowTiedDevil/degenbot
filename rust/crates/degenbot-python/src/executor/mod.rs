@@ -148,7 +148,7 @@ fn pack_config<'py>(
     py: Python<'py>,
     check_mode: u8,
     expected_value: &Bound<'_, PyAny>,
-    bribe_bips: u32,
+    bribe_bips: u16,
     bribe_recipient_idx: u8,
 ) -> PyResult<Bound<'py, PyAny>> {
     let ev = extract_u256(expected_value)?;

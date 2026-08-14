@@ -42,6 +42,8 @@ pub mod grammar_ledger;
 pub mod grammar_plan;
 pub mod grammar_shape;
 
+pub mod grammar_walker;
+
 /// The WETH9 `balanceOf` mapping storage slot (`name`@0, `symbol`@1,
 /// `decimals`@2, `balanceOf`@3).
 pub const WETH9_BALANCE_OF_SLOT: u64 = 3;
