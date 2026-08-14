@@ -39,6 +39,7 @@ pub mod config;
 pub mod encoders;
 pub mod grammar;
 pub mod grammar_ledger;
+pub mod grammar_plan;
 pub mod grammar_shape;
 
 /// The WETH9 `balanceOf` mapping storage slot (`name`@0, `symbol`@1,
