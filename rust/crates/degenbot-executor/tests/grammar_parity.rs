@@ -15,8 +15,8 @@
 //! This test instead guards the **routing/coverage** invariant: every 2-hop
 //! and 3-hop family combo must still encode (`Some`) through both public entry
 //! points for valid amounts — i.e. no combo is accidentally dropped by the
-//! grammar walk. The former all-V2 routing split (N-hop speedrail vs the 3-hop
-//! `v2_v2_v2` layout) is GONE since KO5NNB: all-V2 any-N (2/3/any) routes
+//! grammar walk. The former all-V2 routing split (N-hop speedrail vs the
+//! distinct 3-hop layout) is GONE since KO5NNB: all-V2 any-N (2/3/any) routes
 //! through the single `build_all_v2_chain` Plan producer via both entries, so
 //! the split test (`all_v2_routing_split_holds`) was deleted.
 

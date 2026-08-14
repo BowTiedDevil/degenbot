@@ -13,10 +13,10 @@
 //!
 //! The reachable 2- and 3-hop grammar is the **full cross-product** of
 //! `{V2,V3,V4}` per hop: `degenbot_executor::grammar::encode_grammar` (and the
-//! all-V2 `encode_all_v2` route) enumerate all `3²=9` two-hop and `3³=27`
-//! three-hop family tuples; there is no residual for 2/3-hop paths. Every
-//! family is therefore **one generated table row** — the whole matrix is built
-//! by a loop over [`family_list`], not by hand-written tests.
+//! all-V2 any-N route, since the KO5NNB cutover) enumerate all `3²=9` two-hop
+//! and `3³=27` three-hop family tuples; there is no residual for 2/3-hop
+//! paths. Every family is therefore **one generated table row** — the whole
+//! matrix is built by a loop over [`family_list`], not by hand-written tests.
 //!
 //! Each row builds its pools via the generic [`build_family`] scheme (entry/
 //! middle legs at ~1×, terminal leg at a ~2–3× return so the path is

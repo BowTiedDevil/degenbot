@@ -515,7 +515,8 @@ impl Harness {
     /// Encode a fully-V2 path via the production entry (`encode_cmd_stream`)
     /// and execute it. Each hop is `(pool index into [`Self::pools`],
     /// `zero_for_one`); `hop_outputs[i]` are the per-hop solver outputs. This
-    /// routes all-V2 through `encode_all_v2`/`all_v2_walk` exactly like
+    /// routes all-V2 through the Plan + validator path
+    /// (`grammar_shape::derive_all_v2` → `build_all_v2_chain`) exactly like
     /// production. Returns the classified outcome.
     pub fn run_v2_path(
         &mut self,

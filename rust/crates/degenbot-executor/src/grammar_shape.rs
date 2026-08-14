@@ -21,14 +21,13 @@
 //! for every 2/3-hop family. The revm runtime matrix (`degenbot-simulation`
 //! `harness_declarative` full-matrix, exact delta) is the ADR-029 D5 source of
 //! truth; the primitive wire format is pinned by `tests/encoders_parity.rs`
-//! and the native bridge by `tests/native_eth_3hop_bridge.rs`. KO5NNB
-//! (epic N4TJSZ) cutover: the all-V2 family (2-hop, 3-hop, any-N) now routes
-//! through [`build_all_v2_chain`] + the [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
+//! and the native bridge by `tests/native_eth_3hop_bridge.rs`. N4TJSZ
+//! (SPVEIE + KO5NNB + 4JOWO5): the all-V2 family (2-hop, 3-hop, any-N) now
+//! routes through [`build_all_v2_chain`] + the [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
 //! gate (D4's "the validator gates the Plan for every family" is now literal
-//! for all-V2 too). The former hand-written all-V2 emitters
-//! (`grammar::all_v2_walk` / `encode_all_v2` / `v2_v2_v2`) and
-//! [`build_v2v2_plan`] are orphaned (no production caller) but retained pending
-//! the T3 deletion task.
+//! for all-V2 too). The former hand-written all-V2 emitters and the superseded
+//! 2-hop-only builder are DELETED (4JOWO5) — [`build_all_v2_chain`] is the sole
+//! all-V2 producer.
 #![expect(clippy::similar_names)] // v2a/v2b/v3a/v3b/v3c hop-slot names are canonical per-family labels
 
 use alloy::primitives::{Address, U256};
@@ -1219,88 +1218,12 @@ pub fn build_v3v3_plan(
     Some((preamble, plan, at))
 }
 
-/// Build the `v2_v2` (InPathFlash) Plan — V2 in-path flash, pool-to-pool via
-/// `V2_SWAP_CALC` (the terminal V2 is pre-funded by the leading hop's forward
-/// output, then swapped). Mirror of `derive_2hop`'s v2_v2 arm.
-#[must_use]
-pub fn build_v2v2_plan(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let n = path.hops.len();
-    if n != 2 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V2(b)) = (&path.hops[0], &path.hops[1]) else {
-        return None;
-    };
-    let optimal_input = inputs.optimal_input;
-    let forward_out = *inputs.hop_outputs.first()?;
-    if forward_out == 0 {
-        return None;
-    }
-    let weth = inputs.weth_address;
-    let fwd_a = v2_forward(a);
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let v2_a = at.add(a.pool_address).ok()?;
-    let v2_b = at.add(b.pool_address).ok()?;
-    let forward_idx = at.add(fwd_a).ok()?;
-
-    let plan: Plan = vec![PlanStep::FlashSwap {
-        pool_idx: v2_a,
-        pool_addr: a.pool_address,
-        protocol: Prot::V2,
-        zfo: a.zfo,
-        fee: a.fee,
-        out_currency: fwd_a,
-        out_amount: forward_out,
-        in_currency: weth,
-        in_amount: optimal_input,
-        recipient_idx: SENTINEL_SELF,
-        recipient_pool_addr: None,
-        recipient_pool_repays: false,
-        auto_repay: false,
-        callback: vec![
-            PlanStep::Erc20Transfer {
-                token_idx: forward_idx,
-                token_addr: fwd_a,
-                recipient_idx: v2_b,
-                amount: forward_out,
-                seeds_pool: Some(b.pool_address),
-                repays_flash: None,
-            },
-            PlanStep::V2SwapCalc {
-                pool_idx: v2_b,
-                pool_addr: b.pool_address,
-                zfo: b.zfo,
-                recipient_idx: SENTINEL_SELF,
-                fee: b.fee,
-                out_currency: weth,
-                out_amount: *inputs.hop_outputs.get(1)?,
-                recipient_pool_addr: None,
-                recipient_repays: false,
-            },
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v2_a,
-                amount: optimal_input,
-                seeds_pool: None,
-                repays_flash: Some(a.pool_address),
-            },
-        ],
-    }];
-    let preamble = encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// Build the any-N (≥2) all-V2 Plan — the all-V2 speedrail as a Plan tree
-/// (SPVEIE / N4TJSZ T1). Generalizes [`build_v2v2_plan`] from exactly 2 hops
-/// to every arity N ≥ 2 (D6: hop-count-agnostic, the hop chain is derived, not
-/// special-cased per arity) and adds the SelfFund funding axis that
-/// `build_v2v2_plan` never handled. Honors BOTH funding modes byte-for-byte
-/// against [`crate::grammar::encode_all_v2`] (= `all_v2_walk`):
+/// Build the any-N (≥2) all-V2 Plan (SPVEIE / N4TJSZ T1) — the **sole** all-V2
+/// producer (the 2-hop-only builder it superseded was retired in 4JOWO5).
+/// Derives the hop chain generically for every arity N ≥ 2 (D6:
+/// hop-count-agnostic, the chain is derived, not special-cased per arity) and
+/// handles BOTH funding axes, byte-for-byte matching the retired speedrail's
+/// canonical layouts:
 ///
 /// * `InPathFlash` (default): one `V2_SWAP_COMPACT` flash on pool[0] — it pays
 ///   `hop_outputs[0]` of the leading pair's forward token to the executor and
@@ -1323,8 +1246,9 @@ pub fn build_v2v2_plan(
 /// flash repayment.
 ///
 /// Returns `None` for a path with < 2 hops, any non-V2 hop, or a zeroed hop
-/// output (mirrors the speedrail's own guards). No routing change: production
-/// still routes all-V2 to `encode_all_v2` until T2.
+/// output. Since KO5NNB this is the production all-V2 path (`encode_cmd_stream`
+/// funnels through here via [`derive_all_v2`]; `derive_shape`'s `(V2,V2)` and
+/// `(V2,V2,V2)` arms route here too).
 #[must_use]
 #[expect(
     clippy::too_many_lines,
@@ -6656,7 +6580,7 @@ fn build_plan_bytes(
 
 /// Public all-V2 entry (KO5NNB cutover): the any-N (≥2) all-V2 family through
 /// the Plan + validator gate — [`build_all_v2_chain`] → `validate_full` →
-/// `plan_to_bytes`. Replaces the hand-written `all_v2_walk` speedrail as the
+/// `plan_to_bytes`. Replaces the retired hand-written N-hop speedrail as the
 /// production producer for every all-V2 path (`encode_cmd_stream`'s all-V2
 /// short-circuit funnels here; `derive_shape`'s `(V2,V2)`/`(V2,V2,V2)` arms do
 /// too). Returns `None` when the builder declines or the gate rejects.
@@ -6776,11 +6700,12 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
             build_plan_bytes(path, build_v2v4_plan, inputs)
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), None) => {
-            // KO5NNB: the 2-hop all-V2 family routes through `build_all_v2_chain`
-            // (the any-N builder, which handles BOTH funding axes — the former
-            // `build_v2v2_plan` never handled SelfFund). `build_v2v2_plan` is now
-            // orphaned (retained pending T3 deletion). Byte-identical to the old
-            // speedrail for N=2 in both funding modes (SPVEIE parity test).
+            // KO5NNB/4JOWO5: the 2-hop all-V2 family routes through
+            // `build_all_v2_chain` (the any-N builder, which handles BOTH
+            // funding axes — unlike the retired 2-hop-only builder, which
+            // never handled SelfFund). Byte-identical to the former speedrail
+            // for N=2 in both funding modes (proven by the T1 SPVEIE parity
+            // test before its retirement, and the revm full_matrix since).
             build_plan_bytes(path, build_all_v2_chain, inputs)
         }
         (Some(HopInfo::V2(_)), Some(HopInfo::V3(_)), None) => {
@@ -6797,11 +6722,11 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
         // adapters, byte-identical to them (verified by the `cutover`
         // `debug_assert` oracle in dev + the parity suite). The all-V2 3-hop
         // (and any-N reaching here) family routes through `build_all_v2_chain`
-        // — the distinct `v2_v2_v2` layout is COLLAPSED to the N-hop
+        // — the former distinct all-V2 3-hop layout is COLLAPSED to the any-N
         // speedrail/Plan layout (top-swap-on-pool-A). Runtime-safe: the revm
         // full_matrix only ever exercised the speedrail layout for all-V2-3-hop
-        // via `encode_cmd_stream`; the distinct layout was only asserted to
-        // exist-and-differ by `all_v2_routing_split_holds` (deleted in KO5NNB).
+        // via `encode_cmd_stream`; the distinct 3-hop layout was only asserted
+        // to exist-and-differ by the split test (deleted in KO5NNB).
         (Some(HopInfo::V2(_)), Some(HopInfo::V2(_)), Some(HopInfo::V2(_))) => {
             build_plan_bytes(path, build_all_v2_chain, inputs)
         }
@@ -7252,44 +7177,6 @@ mod tests {
             },
         )
     }
-    fn v2_v2_path_inputs() -> (PathInfo, ComposerInputs<'static>) {
-        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
-        let v2a = address!("00000000000000000000000000000000000000a4");
-        let v2b = address!("00000000000000000000000000000000000000b4");
-        let path = PathInfo::new(vec![
-            HopInfo::V2(V2HopInfo {
-                pool_address: v2a,
-                token0_address: weth,
-                token1_address: usdc,
-                fee: 30,
-                zfo: true,
-            }),
-            HopInfo::V2(V2HopInfo {
-                pool_address: v2b,
-                token0_address: usdc,
-                token1_address: weth,
-                fee: 30,
-                zfo: true,
-            }),
-        ]);
-        static OPTIMAL: u128 = 1_000_000;
-        static OUTS: [u128; 2] = [1_100_000, 1_200_000];
-        static CONSUMED: [u128; 2] = [1_000_000, 1_100_000];
-        (
-            path,
-            ComposerInputs {
-                executor_address: address!("00000000000000000000000000000000000000ee"),
-                pool_manager_address: address!("00000000000000000000000000000000000000ff"),
-                weth_address: weth,
-                optimal_input: OPTIMAL,
-                hop_outputs: &OUTS,
-                consumed_inputs: &CONSUMED,
-                opts: crate::composers::EncodeOptions::default(),
-            },
-        )
-    }
-
     /// RVNIPD/EYQ6UF: build the Plan and assert it projects a trace that
     /// validates clean through the gate. The byte-level `derive_shape`
     /// comparison this used to make is gone — `derive_shape` IS the same
@@ -7321,11 +7208,6 @@ mod tests {
         let (path, inputs) = v3_v3_path_inputs();
         plan_builds_and_validates(build_v3v3_plan, &path, &inputs, "v3_v3");
     }
-    #[test]
-    fn v2_v2_plan_byte_parity_and_validates() {
-        let (path, inputs) = v2_v2_path_inputs();
-        plan_builds_and_validates(build_v2v2_plan, &path, &inputs, "v2_v2");
-    }
 
     /// Build an `n`-hop all-V2 path closing on WETH: hop `i` is
     /// `token_i → token_{i+1}`, with the final hop returning to WETH
@@ -7349,17 +7231,11 @@ mod tests {
             .collect()
     }
 
-    // SPVEIE (N4TJSZ T1): the any-N all-V2 Plan builder must reproduce the
-    // speedrail (`grammar::encode_all_v2` = `all_v2_walk`) byte-for-byte for
-    // every arity N ≥ 2 and BOTH funding modes, with the `LedgerValidator`
-    // gate accepting the Plan trace (`build_plan_bytes` runs
-    // build → validate_full → plan_to_bytes, so parity implies the gate
-    // accepted). Red (missing builder / divergent bytes) → Green.
     // KO5NNB gate proof: an InPathFlash all-V2 stream whose terminal output
     // cannot cover the flash repayment is REJECTED by the LedgerValidator
     // (the flash-repay `Erc20Transfer` would over-debit `erc20[weth]`, so
-    // credit-before-debit fires). The old `all_v2_walk` speedrail emitted this
-    // stream unvalidated (and the revm harness's 2× WETH buffer let it
+    // credit-before-debit fires). The retired hand-written speedrail emitted
+    // this stream unvalidated (and the revm harness's 2× WETH buffer let it
     // "execute but lose"); the gate now makes it unrepresentable — N4TJSZ's
     // entire point. The SAME losing stream under SelfFund still validates
     // (no flash debt to repay — the executor eats the loss from held capital,
@@ -7402,12 +7278,8 @@ mod tests {
                     ),
                     "expected Erc20TransferBeforeCredit, got {err:?}"
                 );
-                // The OLD speedrail emitted this losing stream (Some) — the
-                // divergence IS the new gate, not a builder bug.
-                assert!(
-                    crate::grammar::encode_all_v2(&path, &inputs).is_some(),
-                    "speedrail emitted the losing stream"
-                );
+                // The production path declines the losing InPathFlash stream
+                // (the gate fires; the retired speedrail would have emitted it).
                 assert!(
                     derive_all_v2(&path, &inputs).is_none(),
                     "production Plan path must decline the losing InPathFlash stream"
@@ -7416,44 +7288,6 @@ mod tests {
                 assert!(
                     v.validate_full(&ops).is_ok(),
                     "losing SelfFund stream must still validate (no flash debt)"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn all_v2_chain_byte_parity_with_speedrail() {
-        for n in [2usize, 3, 4] {
-            let path = PathInfo::new(all_v2_chain_hops(n));
-            let outs: Vec<u128> = (0..n).map(|i| 1_100_000 * (i + 1) as u128).collect();
-            let consumed: Vec<u128> = (0..n).map(|i| 1_000_000 * (i + 1) as u128).collect();
-            for (flabel, funding) in [
-                ("InPathFlash", FundingSource::InPathFlash),
-                ("SelfFund", FundingSource::SelfFund),
-            ] {
-                let inputs = ComposerInputs {
-                    executor_address: address!("00000000000000000000000000000000000000ee"),
-                    pool_manager_address: address!("00000000000000000000000000000000000000ff"),
-                    weth_address: address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
-                    optimal_input: 1_000_000,
-                    hop_outputs: &outs,
-                    consumed_inputs: &consumed,
-                    opts: crate::composers::EncodeOptions {
-                        funding,
-                        ..Default::default()
-                    },
-                };
-                let expected = crate::grammar::encode_all_v2(&path, &inputs)
-                    .unwrap_or_else(|| panic!("[{n}-hop {flabel}] speedrail returned None"));
-                let got =
-                    build_plan_bytes(&path, build_all_v2_chain, &inputs).unwrap_or_else(|| {
-                        panic!(
-                            "[{n}-hop {flabel}] build_all_v2_chain declined or validator rejected"
-                        )
-                    });
-                assert_eq!(
-                    got, expected,
-                    "[{n}-hop {flabel}] all_v2_chain bytes diverge from the speedrail"
                 );
             }
         }
