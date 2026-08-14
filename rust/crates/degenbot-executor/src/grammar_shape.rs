@@ -40,8 +40,8 @@ use crate::encoders::{self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTIN
 // `degenbot_executor::grammar_shape::{Plan, PlanStep, plan_to_bytes,
 // plan_to_ledger_ops, Prot, FundingSource, …}` paths keep resolving.
 pub use crate::grammar_plan::{
-    plan_to_bytes, plan_to_ledger_ops, Bribe, FundingSource, Plan, PlanStep, ProfitCapture, Prot,
-    ShapeClass, V4BatchSwap,
+    plan_to_bytes, plan_to_ledger_ops, Axis, AxisSupport, Bribe, FundingSource, Plan, PlanStep,
+    ProfitCapture, Prot, ShapeClass, V4BatchSwap,
 };
 // Fast-forward helpers are pub(crate) in the walker — shared by the per-family
 // builders + the V4 scaffold.
@@ -5696,6 +5696,27 @@ pub fn build_v4v3v2_plan(
 /// (Also used by the 3-hop pilots — the signature is family-agnostic.)
 type BuildPlan = fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan, AddressTable)>;
 
+/// A dispatch-table row datum: the family's Plan builder + its declared
+/// stream-varying axes (candidate 4, `3BTR22`). ONE shared table feeds both
+/// [`derive_shape`] (`.build`) and [`family_axis_support`] (`.axes`), so the
+/// axis declaration can never drift from the producer it rides.
+struct FamilySlot {
+    build: BuildPlan,
+    axes: AxisSupport,
+}
+
+/// Compact row constructor for [`build_for`].
+fn slot(build: BuildPlan, axes: AxisSupport) -> FamilySlot {
+    FamilySlot { build, axes }
+}
+
+/// Declared stream-varying axes for the rows: none (all derived), funding-only
+/// (`v2_v3`, any-N all-V2), capture-only (the pure-V4 families). `bribe` has
+/// no row — bribes ride `pack_config`, never the stream.
+const AX_NONE: AxisSupport = AxisSupport::none();
+const AX_FUNDING: AxisSupport = AxisSupport::funding();
+const AX_CAPTURE: AxisSupport = AxisSupport::capture();
+
 /// Build a family's [`Plan`] through its `build_*_plan` builder, run the
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate on the
 /// projected ledger trace, and fold `preamble + plan_to_bytes(&plan, &at)`
@@ -5744,6 +5765,74 @@ fn prot_of(h: Option<&HopInfo>) -> Option<Prot> {
     }
 }
 
+/// The single family→producer table: every reachable 2/3-hop
+/// `(Prot, Prot, Option<Prot>)` key routes to its Plan builder AND its
+/// declared stream-varying axes (a `.build`/`.axes` [`FamilySlot`]). One
+/// table, two consumers — [`derive_shape`] runs `.build`, [
+/// `family_axis_support`] reads `.axes` — so the declaration can't drift from
+/// the producer. Keys without a row (1-hop, >3-hop, or an unknown combination)
+/// are unmatched — the family has no builder and does not encode. This is D1's
+/// "keyed by orthogonal axes" made data (ADR-029): a new family extends the
+/// table as a row carrying its axis-support.
+#[must_use]
+fn build_for(key: (Option<Prot>, Option<Prot>, Option<Prot>)) -> Option<FamilySlot> {
+    Some(match key {
+        // ── 3-hop families (26) ── V4-involving + V2/V3-only folds. The all-V2
+        //    3-hop family is the shared any-N arm below (see `build_all_v2_chain`
+        //    note), not a separate row. Only the pure-V4 fold declares `capture`
+        //    (the V4 terminal-capture helpers); every other V4-involving row
+        //    does NOT branch capture in the stream (physical take only).
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4)) => slot(build_v4v4v4_plan, AX_CAPTURE),
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V2)) => slot(build_v4v2v2_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V4)) => slot(build_v2v2v4_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V4)) => slot(build_v2v3v4_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V4)) => slot(build_v3v2v4_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V4)) => slot(build_v3v3v4_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V2)) => slot(build_v2v4v2_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V3)) => slot(build_v2v4v3_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V2)) => slot(build_v3v4v2_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V3)) => slot(build_v3v4v3_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V4)) => slot(build_v2v4v4_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V4)) => slot(build_v3v4v4_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V2)) => slot(build_v4v4v2_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V3)) => slot(build_v4v4v3_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V3)) => slot(build_v4v2v3_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V4)) => slot(build_v4v2v4_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V2)) => slot(build_v4v3v2_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V3)) => slot(build_v4v3v3_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V4)) => slot(build_v4v3v4_plan, AX_NONE),
+        // All-V2 any-N: the 2-hop (third slot `None`) AND 3-hop families share
+        // one arity-agnostic producer (KO5NNB/4JOWO5) — the only family row
+        // that spans the 2-hop/3-hop split (merged so the family→author table
+        // has exactly one all-V2 row). `build_all_v2_chain` branches `funding`.
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V2) | None) => {
+            slot(build_all_v2_chain, AX_FUNDING)
+        }
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V3)) => slot(build_v2v2v3_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V2)) => slot(build_v2v3v2_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V3)) => slot(build_v2v3v3_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V2)) => slot(build_v3v2v2_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V3)) => slot(build_v3v2v3_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V2)) => slot(build_v3v3v2_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V3)) => slot(build_v3v3v3_plan, AX_NONE),
+        // ── 2-hop families (8; third slot `None`) ── Only the pure-V4 row
+        //     (`v4_v4`) branches `capture`; the V4-involving and pure-V2/V3
+        //    rows do not.
+        (Some(Prot::V4), Some(Prot::V4), None) => slot(build_v4v4_plan, AX_CAPTURE),
+        (Some(Prot::V4), Some(Prot::V3), None) => slot(build_v4v3_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V4), None) => slot(build_v3v4_plan, AX_NONE),
+        (Some(Prot::V4), Some(Prot::V2), None) => slot(build_v4v2_plan, AX_NONE),
+        (Some(Prot::V2), Some(Prot::V4), None) => slot(build_v2v4_plan, AX_NONE),
+        // (V2,V2,None) all-V2 → the shared any-N arm above. `build_v2v3_plan`
+        // branches `funding`; `v3_v2`/`v3_v3` derive it.
+        (Some(Prot::V2), Some(Prot::V3), None) => slot(build_v2v3_plan, AX_FUNDING),
+        (Some(Prot::V3), Some(Prot::V2), None) => slot(build_v3v2_plan, AX_NONE),
+        (Some(Prot::V3), Some(Prot::V3), None) => slot(build_v3v3_plan, AX_NONE),
+        // Any key with no row is unmatched — no builder, no bytes.
+        _ => return None,
+    })
+}
+
 /// Public entry: derive a family's command bytes from its Plan builder
 /// (`build_*_plan` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
 /// gate → `plan_to_bytes`) — the sole production producer since RVNIPD removed
@@ -5751,68 +5840,36 @@ fn prot_of(h: Option<&HopInfo>) -> Option<Prot> {
 /// validator rejects the stream.
 #[must_use]
 pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    // The family→author dispatch table: every reachable 2/3-hop
-    // `(Prot, Prot, Option<Prot>)` key routes to its Plan builder as a
-    // READABLE row, then ONE `build_plan_bytes` call runs builder → validator
-    // gate → plan_to_bytes. Keys without a row (1-hop, >3-hop, or an unknown
-    // combination) are unmatched — the family has no builder and does not
-    // encode. This is D1's "keyed by orthogonal axes" made data (ADR-029): a
-    // new family extends the table as a row, and candidate 4's per-family
-    // axis-support declaration rides this table.
     let key = (
         prot_of(path.hops.first()),
         prot_of(path.hops.get(1)),
         prot_of(path.hops.get(2)),
     );
-    let build: BuildPlan = match key {
-        // ── 3-hop families (26) ── V4-involving + V2/V3-only folds. The all-V2
-        //    3-hop family is the shared any-N arm below (see `build_all_v2_chain`
-        //    note), not a separate row.
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4)) => build_v4v4v4_plan,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V2)) => build_v4v2v2_plan,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V4)) => build_v2v2v4_plan,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V4)) => build_v2v3v4_plan,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V4)) => build_v3v2v4_plan,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V4)) => build_v3v3v4_plan,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V2)) => build_v2v4v2_plan,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V3)) => build_v2v4v3_plan,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V2)) => build_v3v4v2_plan,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V3)) => build_v3v4v3_plan,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V4)) => build_v2v4v4_plan,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V4)) => build_v3v4v4_plan,
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V2)) => build_v4v4v2_plan,
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V3)) => build_v4v4v3_plan,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V3)) => build_v4v2v3_plan,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V4)) => build_v4v2v4_plan,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V2)) => build_v4v3v2_plan,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V3)) => build_v4v3v3_plan,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V4)) => build_v4v3v4_plan,
-        // All-V2 any-N: the 2-hop (third slot `None`) AND 3-hop families share
-        // one arity-agnostic producer (KO5NNB/4JOWO5) — the only family row
-        // that spans the 2-hop/3-hop split (merged so the family→author table
-        // has exactly one all-V2 row).
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V2) | None) => build_all_v2_chain,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V3)) => build_v2v2v3_plan,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V2)) => build_v2v3v2_plan,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V3)) => build_v2v3v3_plan,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V2)) => build_v3v2v2_plan,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V3)) => build_v3v2v3_plan,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V2)) => build_v3v3v2_plan,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V3)) => build_v3v3v3_plan,
-        // ── 2-hop families (8; third slot `None`) ──
-        (Some(Prot::V4), Some(Prot::V4), None) => build_v4v4_plan,
-        (Some(Prot::V4), Some(Prot::V3), None) => build_v4v3_plan,
-        (Some(Prot::V3), Some(Prot::V4), None) => build_v3v4_plan,
-        (Some(Prot::V4), Some(Prot::V2), None) => build_v4v2_plan,
-        (Some(Prot::V2), Some(Prot::V4), None) => build_v2v4_plan,
-        // (V2,V2,None) all-V2 → the shared any-N arm above.
-        (Some(Prot::V2), Some(Prot::V3), None) => build_v2v3_plan,
-        (Some(Prot::V3), Some(Prot::V2), None) => build_v3v2_plan,
-        (Some(Prot::V3), Some(Prot::V3), None) => build_v3v3_plan,
-        // Any key with no row is unmatched — no builder, no bytes.
-        _ => return None,
-    };
+    let build = build_for(key)?.build;
     build_plan_bytes(path, build, inputs)
+}
+
+/// Public accessor (candidate 4, `3BTR22`): the declared stream-varying axes
+/// for a path's family, read from the family→producer dispatch table alone —
+/// no builder-body reverse-engineering. Mirrors [`derive_shape`]'s key
+/// construction (same `build_for` table, so the declaration is the producer's
+/// truth by construction). `None` for a shape with no builder (1-hop, >3-hop
+/// non-all-V2, unknown).
+///
+/// E.g. `v2_v3` and any-N all-V2 → `{funding}` (the two families that branch
+/// `FundingSource`); the pure-V4 families `v4_v4`/`v4_v4_v4` → `{capture}`
+/// (V4 terminal capture); every V4-involving-but-not-pure-V4 row and all
+/// V2/V3-only rows → `{}` (all axes derived; `ProfitCapture`/`Bribe` reach
+/// those streams only via the on-chain `check_mode`/`pack_config` config, never
+/// a stream byte).
+#[must_use]
+pub fn family_axis_support(path: &PathInfo) -> Option<AxisSupport> {
+    let key = (
+        prot_of(path.hops.first()),
+        prot_of(path.hops.get(1)),
+        prot_of(path.hops.get(2)),
+    );
+    build_for(key).map(|slot| slot.axes)
 }
 
 #[cfg(test)]
@@ -6217,6 +6274,114 @@ mod tests {
             v.validate_full(&ops).is_ok(),
             "[{name}] Plan must validate clean"
         );
+    }
+
+    /// A dummy path whose hop sequence is `combo` (only the protocol sequence
+    /// matters to [`family_axis_support`] — it inspects hop slots, not fees).
+    fn axis_path(combo: &[Prot]) -> PathInfo {
+        let weth = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+        let usdc = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+        let hops = combo
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match p {
+                Prot::V2 => HopInfo::V2(V2HopInfo {
+                    pool_address: Address::from([0xA0 + u8::try_from(i).unwrap(); 20]),
+                    token0_address: weth,
+                    token1_address: usdc,
+                    fee: 30,
+                    zfo: true,
+                }),
+                Prot::V3 => HopInfo::V3(V3HopInfo {
+                    pool_address: Address::from([0xB0 + u8::try_from(i).unwrap(); 20]),
+                    token0_address: weth,
+                    token1_address: usdc,
+                    fee: 3000,
+                    zfo: true,
+                }),
+                Prot::V4 => HopInfo::V4(V4HopInfo {
+                    pool_manager_address: Address::ZERO,
+                    pool_id_hex: format!("0x{i:x}"),
+                    currency0_address: weth,
+                    currency1_address: usdc,
+                    fee: 500,
+                    tick_spacing: 10,
+                    hook_address: Address::ZERO,
+                    zfo: true,
+                }),
+            })
+            .collect();
+        PathInfo::new(hops)
+    }
+
+    #[test]
+    fn family_axis_support_declares_the_honoring_surface() {
+        // funding is branched by exactly v2_v3 + any-N all-V2.
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V2, Prot::V3])).unwrap(),
+            AX_FUNDING
+        );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V2, Prot::V2])).unwrap(),
+            AX_FUNDING
+        );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V2, Prot::V2, Prot::V2])).unwrap(),
+            AX_FUNDING
+        );
+        // capture is branched by exactly the pure-V4 families.
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V4, Prot::V4])).unwrap(),
+            AX_CAPTURE
+        );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V4, Prot::V4, Prot::V4])).unwrap(),
+            AX_CAPTURE
+        );
+        // V4-involving but NOT pure-V4: capture is NOT varied in the stream
+        // (physical take only; `check_mode` is config) — the surfaced
+        // asymmetry the declaration makes explicit.
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V2, Prot::V2, Prot::V4])).unwrap(),
+            AX_NONE
+        );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V4, Prot::V2, Prot::V4])).unwrap(),
+            AX_NONE
+        );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V2, Prot::V4])).unwrap(),
+            AX_NONE
+        );
+        // V2/V3-only families derive funding (InPathFlash) — no axis varies.
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V3, Prot::V2])).unwrap(),
+            AX_NONE
+        );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V3, Prot::V3])).unwrap(),
+            AX_NONE
+        );
+        assert_eq!(
+            family_axis_support(&axis_path(&[Prot::V3, Prot::V3, Prot::V3])).unwrap(),
+            AX_NONE
+        );
+        // bribe is declared on no family; the per-axis accessor agrees.
+        for axes in [
+            family_axis_support(&axis_path(&[Prot::V2, Prot::V3])).unwrap(),
+            family_axis_support(&axis_path(&[Prot::V4, Prot::V4])).unwrap(),
+            family_axis_support(&axis_path(&[Prot::V3, Prot::V3])).unwrap(),
+        ] {
+            assert!(!axes.is_honored(Axis::Bribe), "no family branches bribe");
+        }
+        assert!(family_axis_support(&axis_path(&[Prot::V2, Prot::V3]))
+            .unwrap()
+            .is_honored(Axis::Funding));
+        assert!(family_axis_support(&axis_path(&[Prot::V4, Prot::V4]))
+            .unwrap()
+            .is_honored(Axis::Capture));
+        // 1-hop / unknown shapes have no builder row → None.
+        assert!(family_axis_support(&axis_path(&[Prot::V2])).is_none());
     }
 
     #[test]

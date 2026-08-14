@@ -107,6 +107,96 @@ pub struct ShapeClass {
     pub bribe: Bribe,
 }
 
+/// The stream-varying D1 output axes (candidate 4, `3BTR22`) — the axes a
+/// family's builder may **branch on in the produced STREAM**, as opposed to
+/// the runtime `check_mode`/`pack_config` config seam.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Axis {
+    /// `FundingSource` (InPathFlash vs SelfFund) branches the stream.
+    Funding,
+    /// `ProfitCapture` (incl. the `erc6909_profit` legacy alias) branches the
+    /// stream (V4 `MINT`/`WETH_WITHDRAW` terminal capture).
+    Capture,
+    /// `Bribe` branches the stream. Never — bribes ride `pack_config`.
+    Bribe,
+}
+
+/// A family's declared set of stream-varying axes — which of
+/// `{funding, capture, bribe}` its builder actually branches on in the
+/// produced bytes (declared on the family→producer dispatch row, `3BTR22`),
+/// so a caller reads a family's honored axes off the declaration instead of
+/// reverse-engineering the builder body. **Declaration, not behavior:** a
+/// family whose row leaves an axis off derives it implicitly (InPathFlash
+/// funding) or reaches it only via the on-chain `check_mode` config, never a
+/// stream byte.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct AxisSupport {
+    /// The funding axis branches this family's stream.
+    pub funding: bool,
+    /// The capture axis branches this family's stream (V4 terminal capture).
+    pub capture: bool,
+    /// The bribe axis branches this family's stream (always false today).
+    pub bribe: bool,
+}
+
+impl AxisSupport {
+    /// No output axis varies the stream — the family derives them all.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            funding: false,
+            capture: false,
+            bribe: false,
+        }
+    }
+
+    /// Only `funding` (the SelfFund/InPathFlash branch) varies the stream.
+    #[must_use]
+    pub const fn funding() -> Self {
+        Self {
+            funding: true,
+            capture: false,
+            bribe: false,
+        }
+    }
+
+    /// Only `capture` (V4 terminal capture) varies the stream.
+    #[must_use]
+    pub const fn capture() -> Self {
+        Self {
+            funding: false,
+            capture: true,
+            bribe: false,
+        }
+    }
+
+    /// Whether a specific axis varies the stream.
+    #[must_use]
+    pub const fn is_honored(self, axis: Axis) -> bool {
+        match axis {
+            Axis::Funding => self.funding,
+            Axis::Capture => self.capture,
+            Axis::Bribe => self.bribe,
+        }
+    }
+
+    /// The axes that vary the stream, most-significant-axis last.
+    #[must_use]
+    pub fn honored_axes(self) -> Vec<Axis> {
+        let mut axes = Vec::new();
+        if self.funding {
+            axes.push(Axis::Funding);
+        }
+        if self.capture {
+            axes.push(Axis::Capture);
+        }
+        if self.bribe {
+            axes.push(Axis::Bribe);
+        }
+        axes
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Ledgers (ADR-029 D2 — an open set, never a closed enum)
 // ═══════════════════════════════════════════════════════════════════════

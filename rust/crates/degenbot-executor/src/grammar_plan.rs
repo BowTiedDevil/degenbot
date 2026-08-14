@@ -39,7 +39,9 @@ pub use crate::grammar_ledger::Prot;
 // The 2/3-hop axis types (FundingSource + ProfitCapture + Bribe + ShapeClass)
 // live in grammar_ledger (ADR-029 D1, WE45KC unification): the open-set enum is
 // the single source of truth, re-exported here for the builders + consumers.
-pub use crate::grammar_ledger::{Bribe, FundingSource, ProfitCapture, ShapeClass};
+pub use crate::grammar_ledger::{
+    Axis, AxisSupport, Bribe, FundingSource, ProfitCapture, ShapeClass,
+};
 
 // The retained terminal-hop fixture (`emit_terminal_hop`) takes `ComposerInputs`
 // and matches on `HopInfo`; scoped to test builds so the lib build has no

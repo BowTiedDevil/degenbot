@@ -278,12 +278,20 @@ pub(crate) fn emit_currency_bridge(
 ///
 /// **Per-path output axes (ADR-029 D1, WE45KC):** `funding`, `capture`, and
 /// `bribe` carry the runtime economic choices the strategy/operator makes per
-/// path. Today only `capture` is honored by the encoder (via [`resolve_axes`]);
-/// `funding` is still DERIVED per family (V2-led → `InPathFlash`, V3-led →
-/// `SelfFund`) until the self-fund/flash-as-runtime-knob work lands; `bribe`
-/// wiring lands next. The legacy `erc6909_profit` bool is kept as a backwards-
-/// compatible alias for `capture = ProfitCapture::Erc6909` (see [`resolve_axes`]
-/// for the precedence rule).
+/// path. Whether a family's builder actually branches an axis IN THE STREAM is
+/// **declared per family** on the family→producer dispatch row
+/// ([`crate::grammar_shape::family_axis_support`]) — read that, not builder
+/// bodies. Today: `funding` is branched only by `v2_v3` + any-N all-V2 (their
+/// rows declare `{funding}`); every other family derives it (`InPathFlash`).
+/// `capture` is branched only by the pure-V4 families `v4_v4` / `v4_v4_v4`
+/// (their rows declare `{capture}`); V2/V3-only and V4-involving-but-not-
+/// pure-V4 streams reach `capture` only via the on-chain `check_mode` config
+/// (a different seam), NOT the stream bytes. `bribe` is branched by no family
+/// (it rides `pack_config`, never the stream). Spreading an axis across more
+/// families is separate post-WE45KC work, not this surface's claim. The legacy
+/// `erc6909_profit` bool is kept as a backwards-compatible alias for
+/// `capture = ProfitCapture::Erc6909` (see [`resolve_axes`] for the precedence
+/// rule).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EncodeOptions {
     /// If `true`, use `V4_MINT_COMPACT` instead of `V4_TAKE_DELTA` for profit
@@ -293,9 +301,11 @@ pub struct EncodeOptions {
     /// If `true`, use `V4_BATCH` instead of individual `V4_SWAP_COMPACT`/`_DYNAMIC`
     /// for pure-V4 paths (single PM extcall).
     pub use_v4_batch: bool,
-    /// Declared origin of the stream's entry (seed) capital (ADR-029 D1). NOTE:
-    /// currently IGNORED by the encoder — funding is still derived per family.
-    /// Honoring it as a runtime economic knob is the remaining WE45KC work.
+    /// Declared origin of the stream's entry (seed) capital (ADR-029 D1).
+    /// Branched IN THE STREAM only by the families whose dispatch row declares
+    /// `funding` ([`crate::grammar_shape::family_axis_support`]: `v2_v3` and
+    /// any-N all-V2); every other family derives `InPathFlash`. Honoring it as
+    /// a runtime economic knob across ALL families is separate post-WE45KC work.
     pub funding: crate::grammar_ledger::FundingSource,
     /// Declared destination of the stream's terminal profit (ADR-029 D1).
     /// Honored via [`resolve_axes`] (takes precedence over the legacy
