@@ -110,13 +110,13 @@ fn family_name(prots: &[Prot]) -> String {
 /// add its name here and un-ignore the row below.
 const DONE: &[&str] = &[
     "v3v4v3", "v2v2v2", "v3v2", "v3v3", "v2v3", "v3v3v3", "v3v3v2", "v3v2v3", "v3v2v2", "v2v2v3",
-    "v2v3v3", "v2v3v2",
+    "v2v3v3", "v2v3v2", "v4v2",
 ];
 
 /// Per-family deriver bodies (`fn derive_2hop_*` / `fn derive_3hop_*` /
 /// `fn derive_all_v2`) still present. Zero at full D6 realization. Decrement
 /// as each body is folded into the generic `derive_plan`.
-const EXPECTED_REMAINING: usize = 30;
+const EXPECTED_REMAINING: usize = 29;
 
 #[test]
 fn facts_driven_invariant() {
