@@ -36,8 +36,8 @@ fn fits_i128(v: u128) -> bool {
 }
 
 /// Where a hop's swap output is routed (the hop-coupling fact).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OutDest {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OutDest {
     /// Credits the executor.
     Executor,
     /// Routed into the PoolManager (seeds the V4 unlock ledger).
@@ -47,8 +47,8 @@ pub(crate) enum OutDest {
 }
 
 /// How a hop's borrowed input is repaid (the repayment-obligation fact).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Repay {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Repay {
     /// Repaid with a currency by an explicit transfer in its own callback.
     SelfRefund,
     /// Repaid off-stream by a downstream hop's take to this pool.
@@ -61,30 +61,22 @@ pub(crate) enum Repay {
 /// touches, direction, output slot, and repayment obligation. The walker
 /// derives the enclosure from these; the mechanics (the swap/callback step) is
 /// per-protocol code below.
-///
-/// `prot`/`zfo`/`repay` are declared here as part of the facts schema but are
-/// not yet consumed by the spike (A2's generic walker reads them): they pin the
-/// schema A2 generalizes over.
-#[expect(
-    dead_code,
-    reason = "T3-T7 (epic 6SU5LM): V4 mechanics read pool_id_hex; prot selects mechanics in the multi-shape deriver"
-)]
-pub(crate) struct HopFacts {
-    pub(crate) prot: Prot,
-    pub(crate) zfo: bool,
-    pub(crate) swap_fee: u16,
-    pub(crate) tick_spacing: i16,
-    pub(crate) out_currency: Address,
-    pub(crate) in_currency: Address,
-    pub(crate) out_dest: OutDest,
-    pub(crate) repay: Repay,
+pub struct HopFacts {
+    pub prot: Prot,
+    pub zfo: bool,
+    pub swap_fee: u16,
+    pub tick_spacing: i16,
+    pub out_currency: Address,
+    pub in_currency: Address,
+    pub out_dest: OutDest,
+    pub repay: Repay,
     /// The V2/V3 pool, or the V4 pool-manager — the mechanics' pool identity.
-    pub(crate) pool_address: Address,
+    pub pool_address: Address,
     /// V4 only — the pool-id hex. `None` for V2/V3.
-    pub(crate) pool_id_hex: Option<String>,
+    pub pool_id_hex: Option<String>,
     /// V4 only — currency0 / currency1.
-    pub(crate) currency0_address: Address,
-    pub(crate) currency1_address: Address,
+    pub currency0_address: Address,
+    pub currency1_address: Address,
 }
 
 /// Per-protocol **mechanics** (ADR-031 D4 code half): how a protocol's hop
@@ -1583,6 +1575,56 @@ pub fn build_v3v4v4_walk(
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
+/// A facts-descriptor function pointer (the same signature as `facts_of_*`).
+pub type FactsFn = fn(&PathInfo, &ComposerInputs<'_>) -> Option<Vec<HopFacts>>;
+
+/// The per-family facts descriptor for the given key (mirrors
+/// `build_for_walk`'s dispatch). Exposed for the D6 structural probe
+/// (`tests/facts_driven_invariant.rs`).
+#[must_use]
+pub fn family_facts(key: (Option<Prot>, Option<Prot>, Option<Prot>)) -> Option<FactsFn> {
+    Some(match key {
+        // ── 3-hop families (27) ──
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4)) => facts_of_v4v4v4,
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V2)) => facts_of_v4v2v2,
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V4)) => facts_of_v2v2v4,
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V4)) => facts_of_v2v3v4,
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V4)) => facts_of_v3v2v4,
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V4)) => facts_of_v3v3v4,
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V2)) => facts_of_v2v4v2,
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V3)) => facts_of_v2v4v3,
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V2)) => facts_of_v3v4v2,
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V3)) => facts_of_v3v4v3,
+        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V4)) => facts_of_v2v4v4,
+        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V4)) => facts_of_v3v4v4,
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V2)) => facts_of_v4v4v2,
+        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V3)) => facts_of_v4v4v3,
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V3)) => facts_of_v4v2v3,
+        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V4)) => facts_of_v4v2v4,
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V2)) => facts_of_v4v3v2,
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V3)) => facts_of_v4v3v3,
+        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V4)) => facts_of_v4v3v4,
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V2) | None) => facts_of_all_v2,
+        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V3)) => facts_of_v2v2v3,
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V2)) => facts_of_v2v3v2,
+        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V3)) => facts_of_v2v3v3,
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V2)) => facts_of_v3v2v2,
+        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V3)) => facts_of_v3v2v3,
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V2)) => facts_of_v3v3v2,
+        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V3)) => facts_of_v3v3v3,
+        // ── 2-hop families (8; third slot `None`) ──
+        (Some(Prot::V4), Some(Prot::V4), None) => facts_of_v4v4,
+        (Some(Prot::V4), Some(Prot::V3), None) => facts_of_v4v3,
+        (Some(Prot::V3), Some(Prot::V4), None) => facts_of_v3v4,
+        (Some(Prot::V4), Some(Prot::V2), None) => facts_of_v4v2,
+        (Some(Prot::V2), Some(Prot::V4), None) => facts_of_v2v4,
+        (Some(Prot::V2), Some(Prot::V3), None) => facts_of_v2v3,
+        (Some(Prot::V3), Some(Prot::V2), None) => facts_of_v3v2,
+        (Some(Prot::V3), Some(Prot::V3), None) => facts_of_v3v3,
+        _ => return None,
+    })
+}
+
 /// The walk feature-flag dispatch: the same `(Prot, Prot, Option<Prot>)`
 /// family keys as the reference producer, but every row routes to the
 /// facts-driven walker builder (`build_*_walk`) instead of the hand-written
@@ -1654,6 +1696,15 @@ pub(crate) fn build_for_walk(
 /// `build_*_walk` actually routes through the generic deriver rather than
 /// bypassing it. Each migration task (T4–T7) turns its family's row green.
 pub static DERIVE_PLAN_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Counter incremented every time `derive_plan` enters a hardcoded
+/// protocol-tuple match arm (the fallback dispatch D6 replaces with
+/// tag-driven derivation).  The D6 depth property requires this to be 0
+/// for every family — the enclosure must be derived from the `Repay` /
+/// `OutDest` tag partition, not from protocol-tuple match arms with
+/// hardcoded bodies.
+pub static FALLBACK_DISPATCH_CALLS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 #[must_use]
@@ -1774,6 +1825,7 @@ pub(crate) fn derive_plan(
         return Some((plan, at));
     }
     if facts.len() == 2 && facts[0].prot == Prot::V3 && facts[1].prot == Prot::V4 {
+        FALLBACK_DISPATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return {
             if facts.len() != 2 || facts[0].prot != Prot::V3 || facts[1].prot != Prot::V4 {
                 return None;
@@ -2113,6 +2165,7 @@ pub(crate) fn derive_plan(
         };
     }
     if facts.len() == 2 && facts[0].prot == Prot::V4 {
+        FALLBACK_DISPATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return match facts[1].prot {
             Prot::V4 => {
                 if facts.len() != 2 || facts[0].prot != Prot::V4 || facts[1].prot != Prot::V4 {
@@ -2680,6 +2733,7 @@ pub(crate) fn derive_plan(
         };
     }
     if facts.len() == 3 && facts.iter().all(|f| f.repay != Repay::NetZero) {
+        FALLBACK_DISPATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return match (facts[0].prot, facts[1].prot, facts[2].prot) {
             // ── v3v3v3: 3-deep nested V3 flashes. Hop2 outermost (SELF),
             // hop1 middle (recipient=hop2 pool, rpr=true), hop0 innermost
@@ -5051,6 +5105,7 @@ pub(crate) fn derive_plan(
         };
     }
     if facts.len() == 2 && facts[0].prot == Prot::V2 && facts[1].prot == Prot::V4 {
+        FALLBACK_DISPATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return {
             if facts.len() != 2 || facts[0].prot != Prot::V2 || facts[1].prot != Prot::V4 {
                 return None;
@@ -5389,6 +5444,7 @@ pub(crate) fn derive_plan(
         };
     }
     if facts.iter().all(|f| f.repay != Repay::NetZero) && facts.len() == 2 {
+        FALLBACK_DISPATCH_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match (facts[0].prot, facts[1].prot) {
             (Prot::V2, Prot::V3) => {
                 // ── 2-hop V2→V3 shape (folded from derive_2hop_v2v3; ADR-031 D6).
