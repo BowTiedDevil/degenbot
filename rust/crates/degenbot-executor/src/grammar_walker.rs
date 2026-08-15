@@ -443,93 +443,6 @@ pub(crate) fn facts_of_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
     ])
 }
 
-/// The 2-hop V2→V3 funding-branched shape (`v2v3`): SelfFund prefunds + V2Swap
-/// + a V3 flash terminal, or an InPathFlash leading V2 flash wrapping the V3.
-pub(crate) fn derive_2hop_v2v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 2 || facts[0].prot != Prot::V2 || facts[1].prot != Prot::V3 {
-        return None;
-    }
-    let (fa, fb) = (&facts[0], &facts[1]);
-    let optimal_input = inputs.optimal_input;
-    let forward_out = *inputs.hop_outputs.first()?;
-    if forward_out == 0 {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(b_swap_in) {
-        return None;
-    }
-    let terminal_out = *inputs.hop_outputs.get(1)?;
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let a_idx = at.add(fa.pool_address).ok()?;
-    let b_idx = at.add(fb.pool_address).ok()?;
-
-    // One funding branch's `at` borrow is live at a time (a plain if/else,
-    // not two simultaneous FnOnce closures), so the borrow checker is happy.
-    let plan: Plan = if inputs.opts.funding == FundingSource::SelfFund {
-        vec![
-            PlanStep::SelfFund {
-                currency: weth,
-                amount: optimal_input,
-            },
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: a_idx,
-                amount: optimal_input,
-                seeds_pool: Some(fa.pool_address),
-                repays_flash: None,
-            },
-            mechanics::v2_swap(&mut at, fa, forward_out, SENTINEL_SELF, None, false)?,
-            mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, vec![])?,
-        ]
-    } else {
-        let forward_idx = at.add(fa.out_currency).ok()?;
-        let inner_v3 = mechanics::v3_flash(
-            &mut at,
-            fb,
-            terminal_out,
-            b_swap_in,
-            false,
-            vec![PlanStep::Erc20Transfer {
-                token_idx: forward_idx,
-                token_addr: fa.out_currency,
-                recipient_idx: b_idx,
-                amount: b_swap_in,
-                seeds_pool: None,
-                repays_flash: Some(fb.pool_address),
-            }],
-        )?;
-        vec![mechanics::v2_flash(
-            &mut at,
-            fa,
-            forward_out,
-            weth,
-            optimal_input,
-            vec![
-                inner_v3,
-                PlanStep::Erc20Transfer {
-                    token_idx: SENTINEL_WETH,
-                    token_addr: weth,
-                    recipient_idx: a_idx,
-                    amount: optimal_input,
-                    seeds_pool: None,
-                    repays_flash: Some(fa.pool_address),
-                },
-            ],
-        )?]
-    };
-    Some((plan, at))
-}
-
 /// The any-N all-V2 facts (`all_v2`, funding-branched). `closing` is the last
 /// hop's `out_currency`; no `weth` is baked in (the chain is the whole stream).
 pub(crate) fn facts_of_all_v2(
@@ -565,118 +478,6 @@ pub(crate) fn facts_of_all_v2(
         return None;
     }
     Some(v2s)
-}
-
-/// The any-N all-V2 chain shape (`all_v2`, funding-branched): a SelfFund walk
-/// of `V2SwapCalc` steps, or an InPathFlash leading V2 flash wrapping the chain.
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_all_v2_chain(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    let n = facts.len();
-    if n < 2 || facts.iter().any(|f| f.prot != Prot::V2) {
-        return None;
-    }
-    let optimal_input = inputs.optimal_input;
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let closing = facts[n - 1].out_currency;
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let pool_idx: Vec<u8> = facts
-        .iter()
-        .map(|f| at.add(f.pool_address).ok())
-        .collect::<Option<Vec<_>>>()?;
-    let forward_idx = at.add(facts[0].out_currency).ok()?;
-    let closing_idx = at.add(closing).ok()?;
-
-    let plan: Plan = if inputs.opts.funding == FundingSource::SelfFund {
-        let mut steps: Plan = vec![
-            PlanStep::SelfFund {
-                currency: closing,
-                amount: optimal_input,
-            },
-            PlanStep::Erc20Transfer {
-                token_idx: closing_idx,
-                token_addr: closing,
-                recipient_idx: pool_idx[0],
-                amount: optimal_input,
-                seeds_pool: Some(facts[0].pool_address),
-                repays_flash: None,
-            },
-        ];
-        for i in 0..n {
-            let terminal = i == n - 1;
-            steps.push(mechanics::v2_swap(
-                &mut at,
-                &facts[i],
-                inputs.hop_outputs[i],
-                if terminal {
-                    SENTINEL_SELF
-                } else {
-                    pool_idx[i + 1]
-                },
-                if terminal {
-                    None
-                } else {
-                    Some(facts[i + 1].pool_address)
-                },
-                false,
-            )?);
-        }
-        steps
-    } else {
-        let mut callback: Plan = vec![PlanStep::Erc20Transfer {
-            token_idx: forward_idx,
-            token_addr: facts[0].out_currency,
-            recipient_idx: pool_idx[1],
-            amount: inputs.hop_outputs[0],
-            seeds_pool: Some(facts[1].pool_address),
-            repays_flash: None,
-        }];
-        for i in 1..n {
-            let terminal = i == n - 1;
-            callback.push(mechanics::v2_swap(
-                &mut at,
-                &facts[i],
-                inputs.hop_outputs[i],
-                if terminal {
-                    SENTINEL_SELF
-                } else {
-                    pool_idx[i + 1]
-                },
-                if terminal {
-                    None
-                } else {
-                    Some(facts[i + 1].pool_address)
-                },
-                false,
-            )?);
-        }
-        callback.push(PlanStep::Erc20Transfer {
-            token_idx: closing_idx,
-            token_addr: closing,
-            recipient_idx: pool_idx[0],
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(facts[0].pool_address),
-        });
-        vec![mechanics::v2_flash(
-            &mut at,
-            &facts[0],
-            inputs.hop_outputs[0],
-            closing,
-            optimal_input,
-            callback,
-        )?]
-    };
-    Some((plan, at))
 }
 
 /// The 2-hop V3→V3 facts (`v3v3`, SelfFund, two V3 flashes). The terminal's
@@ -5191,78 +4992,6 @@ pub(crate) fn derive_3hop_v4cross(
     }
 }
 
-pub(crate) fn derive_2hop_v3x(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 2 || facts[0].prot != Prot::V3 {
-        return None;
-    }
-    let (fa, fb) = (&facts[0], &facts[1]);
-    let optimal_input = inputs.optimal_input;
-    let forward_out = *inputs.hop_outputs.first()?;
-    if forward_out == 0 {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let terminal_out = *inputs.hop_outputs.get(1)?;
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let a_idx = at.add(fa.pool_address).ok()?;
-    let b_idx = at.add(fb.pool_address).ok()?;
-
-    // Build the terminal step first (releases the `at` borrow), then the
-    // leading flash whose callback nests it.
-    let mut callback: Plan = vec![PlanStep::Erc20Transfer {
-        token_idx: SENTINEL_WETH,
-        token_addr: weth,
-        recipient_idx: a_idx,
-        amount: optimal_input,
-        seeds_pool: None,
-        repays_flash: Some(fa.pool_address),
-    }];
-    if fb.prot == Prot::V2 {
-        // `v3v2`: seed the V2 with the forward, then the V2SwapCalc terminal.
-        let forward_idx = at.add(fa.out_currency).ok()?;
-        callback.push(PlanStep::Erc20Transfer {
-            token_idx: forward_idx,
-            token_addr: fa.out_currency,
-            recipient_idx: b_idx,
-            amount: forward_out,
-            seeds_pool: Some(fb.pool_address),
-            repays_flash: None,
-        });
-        callback.push(mechanics::v2_swap(
-            &mut at,
-            fb,
-            terminal_out,
-            SENTINEL_SELF,
-            None,
-            false,
-        )?);
-    } else {
-        // `v3v3`: a nested V3 terminal flash with auto_repay.
-        let b_swap_in = *inputs.consumed_inputs.get(1)?;
-        if !fits_i128(b_swap_in) {
-            return None;
-        }
-        let terminal = mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, vec![])?;
-        callback.push(terminal);
-    }
-
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        mechanics::v3_flash(&mut at, fa, forward_out, optimal_input, false, callback)?,
-    ];
-    Some((plan, at))
-}
-
 /// Build the `v3_v4_v3` Plan from hop facts + inputs, deriving the enclosure
 /// (which flash wraps which, the V4 unlock, the repayment order).
 ///
@@ -5316,7 +5045,7 @@ pub fn build_all_v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_all_v2(path, inputs)?;
-    let (plan, at) = derive_all_v2_chain(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5326,7 +5055,7 @@ pub fn build_v2v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v3(path, inputs)?;
-    let (plan, at) = derive_2hop_v2v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5336,7 +5065,7 @@ pub fn build_v3v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v2(path, inputs)?;
-    let (plan, at) = derive_2hop_v3x(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5350,7 +5079,7 @@ pub fn build_v3v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v3(path, inputs)?;
-    let (plan, at) = derive_2hop_v3x(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5793,15 +5522,21 @@ pub(crate) fn build_for_walk(
 /// nesting (which `FlashSwap`/`V4Unlock` wraps which, and the repayment order)
 /// from the `out_dest` + `repay` facts — NOT from hardcoded per-family indices.
 ///
-/// T1 generalizes this from [`build_v3v4v3_walk`]; T0 stubs it `None` so the
-/// D6 probe (`facts_driven_tests` below) compiles RED. Each migration task
-/// (T4–T7) turns its family's probe row green.
+/// T1 generalizes this from [`build_v3v4v3_walk`]. Instrumentation counter
+/// for the D6 delegation probe (`tests/facts_driven_invariant.rs`):
+/// incremented on every `derive_plan` entry so the probe can assert a family
+/// `build_*_walk` actually routes through the generic deriver rather than
+/// bypassing it. Each migration task (T4–T7) turns its family's row green.
+pub static DERIVE_PLAN_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 #[must_use]
 #[expect(clippy::too_many_lines)]
 pub(crate) fn derive_plan(
     facts: &[HopFacts],
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Plan, AddressTable)> {
+    DERIVE_PLAN_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // ── Shape dispatch (D3/D6 — the enclosure shape is read from the facts).
     // All 35 families route through here: pure V2/V3 shapes first, then the
     // V4-crossing dispatcher, then the single-V4-middle fallthrough.
@@ -5810,7 +5545,107 @@ pub(crate) fn derive_plan(
             .iter()
             .all(|f| f.repay != Repay::NetZero && f.prot == Prot::V2)
     {
-        return derive_all_v2_chain(facts, inputs);
+        // ── all-V2 any-N chain (folded from derive_all_v2_chain; ADR-031 D6).
+        if inputs.hop_outputs.contains(&0) {
+            return None;
+        }
+        let n = facts.len();
+        let optimal_input = inputs.optimal_input;
+        if !fits_i128(optimal_input) {
+            return None;
+        }
+        let closing = facts[n - 1].out_currency;
+        let weth = inputs.weth_address;
+
+        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+        let pool_idx: Vec<u8> = facts
+            .iter()
+            .map(|f| at.add(f.pool_address).ok())
+            .collect::<Option<Vec<_>>>()?;
+        let forward_idx = at.add(facts[0].out_currency).ok()?;
+        let closing_idx = at.add(closing).ok()?;
+
+        let plan: Plan = if inputs.opts.funding == FundingSource::SelfFund {
+            let mut steps: Plan = vec![
+                PlanStep::SelfFund {
+                    currency: closing,
+                    amount: optimal_input,
+                },
+                PlanStep::Erc20Transfer {
+                    token_idx: closing_idx,
+                    token_addr: closing,
+                    recipient_idx: pool_idx[0],
+                    amount: optimal_input,
+                    seeds_pool: Some(facts[0].pool_address),
+                    repays_flash: None,
+                },
+            ];
+            for i in 0..n {
+                let terminal = i == n - 1;
+                steps.push(mechanics::v2_swap(
+                    &mut at,
+                    &facts[i],
+                    inputs.hop_outputs[i],
+                    if terminal {
+                        SENTINEL_SELF
+                    } else {
+                        pool_idx[i + 1]
+                    },
+                    if terminal {
+                        None
+                    } else {
+                        Some(facts[i + 1].pool_address)
+                    },
+                    false,
+                )?);
+            }
+            steps
+        } else {
+            let mut callback: Plan = vec![PlanStep::Erc20Transfer {
+                token_idx: forward_idx,
+                token_addr: facts[0].out_currency,
+                recipient_idx: pool_idx[1],
+                amount: inputs.hop_outputs[0],
+                seeds_pool: Some(facts[1].pool_address),
+                repays_flash: None,
+            }];
+            for i in 1..n {
+                let terminal = i == n - 1;
+                callback.push(mechanics::v2_swap(
+                    &mut at,
+                    &facts[i],
+                    inputs.hop_outputs[i],
+                    if terminal {
+                        SENTINEL_SELF
+                    } else {
+                        pool_idx[i + 1]
+                    },
+                    if terminal {
+                        None
+                    } else {
+                        Some(facts[i + 1].pool_address)
+                    },
+                    false,
+                )?);
+            }
+            callback.push(PlanStep::Erc20Transfer {
+                token_idx: closing_idx,
+                token_addr: closing,
+                recipient_idx: pool_idx[0],
+                amount: optimal_input,
+                seeds_pool: None,
+                repays_flash: Some(facts[0].pool_address),
+            });
+            vec![mechanics::v2_flash(
+                &mut at,
+                &facts[0],
+                inputs.hop_outputs[0],
+                closing,
+                optimal_input,
+                callback,
+            )?]
+        };
+        return Some((plan, at));
     }
     if facts.len() == 2 && facts[0].prot == Prot::V3 && facts[1].prot == Prot::V4 {
         return derive_2hop_v3v4(facts, inputs);
@@ -5839,8 +5674,143 @@ pub(crate) fn derive_plan(
     }
     if facts.iter().all(|f| f.repay != Repay::NetZero) && facts.len() == 2 {
         match (facts[0].prot, facts[1].prot) {
-            (Prot::V2, Prot::V3) => return derive_2hop_v2v3(facts, inputs),
-            (Prot::V3, Prot::V2 | Prot::V3) => return derive_2hop_v3x(facts, inputs),
+            (Prot::V2, Prot::V3) => {
+                // ── 2-hop V2→V3 shape (folded from derive_2hop_v2v3; ADR-031 D6).
+                let (fa, fb) = (&facts[0], &facts[1]);
+                let optimal_input = inputs.optimal_input;
+                let forward_out = *inputs.hop_outputs.first()?;
+                if forward_out == 0 {
+                    return None;
+                }
+                if !fits_i128(optimal_input) {
+                    return None;
+                }
+                let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                if !fits_i128(b_swap_in) {
+                    return None;
+                }
+                let terminal_out = *inputs.hop_outputs.get(1)?;
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let a_idx = at.add(fa.pool_address).ok()?;
+                let b_idx = at.add(fb.pool_address).ok()?;
+                let plan: Plan = if inputs.opts.funding == FundingSource::SelfFund {
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal_input,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: SENTINEL_WETH,
+                            token_addr: weth,
+                            recipient_idx: a_idx,
+                            amount: optimal_input,
+                            seeds_pool: Some(fa.pool_address),
+                            repays_flash: None,
+                        },
+                        mechanics::v2_swap(&mut at, fa, forward_out, SENTINEL_SELF, None, false)?,
+                        mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, vec![])?,
+                    ]
+                } else {
+                    let forward_idx = at.add(fa.out_currency).ok()?;
+                    let inner_v3 = mechanics::v3_flash(
+                        &mut at,
+                        fb,
+                        terminal_out,
+                        b_swap_in,
+                        false,
+                        vec![PlanStep::Erc20Transfer {
+                            token_idx: forward_idx,
+                            token_addr: fa.out_currency,
+                            recipient_idx: b_idx,
+                            amount: b_swap_in,
+                            seeds_pool: None,
+                            repays_flash: Some(fb.pool_address),
+                        }],
+                    )?;
+                    vec![mechanics::v2_flash(
+                        &mut at,
+                        fa,
+                        forward_out,
+                        weth,
+                        optimal_input,
+                        vec![
+                            inner_v3,
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: a_idx,
+                                amount: optimal_input,
+                                seeds_pool: None,
+                                repays_flash: Some(fa.pool_address),
+                            },
+                        ],
+                    )?]
+                };
+                return Some((plan, at));
+            }
+            (Prot::V3, Prot::V2 | Prot::V3) => {
+                // ── 2-hop V3-led shape (folded from derive_2hop_v3x; ADR-031 D6).
+                let (fa, fb) = (&facts[0], &facts[1]);
+                let optimal_input = inputs.optimal_input;
+                let forward_out = *inputs.hop_outputs.first()?;
+                if forward_out == 0 {
+                    return None;
+                }
+                if !fits_i128(optimal_input) {
+                    return None;
+                }
+                let terminal_out = *inputs.hop_outputs.get(1)?;
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let a_idx = at.add(fa.pool_address).ok()?;
+                let b_idx = at.add(fb.pool_address).ok()?;
+                let mut callback: Plan = vec![PlanStep::Erc20Transfer {
+                    token_idx: SENTINEL_WETH,
+                    token_addr: weth,
+                    recipient_idx: a_idx,
+                    amount: optimal_input,
+                    seeds_pool: None,
+                    repays_flash: Some(fa.pool_address),
+                }];
+                if fb.prot == Prot::V2 {
+                    let forward_idx = at.add(fa.out_currency).ok()?;
+                    callback.push(PlanStep::Erc20Transfer {
+                        token_idx: forward_idx,
+                        token_addr: fa.out_currency,
+                        recipient_idx: b_idx,
+                        amount: forward_out,
+                        seeds_pool: Some(fb.pool_address),
+                        repays_flash: None,
+                    });
+                    callback.push(mechanics::v2_swap(
+                        &mut at,
+                        fb,
+                        terminal_out,
+                        SENTINEL_SELF,
+                        None,
+                        false,
+                    )?);
+                } else {
+                    let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                    if !fits_i128(b_swap_in) {
+                        return None;
+                    }
+                    let terminal =
+                        mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, vec![])?;
+                    callback.push(terminal);
+                }
+                let plan: Plan = vec![
+                    PlanStep::SelfFund {
+                        currency: weth,
+                        amount: optimal_input,
+                    },
+                    mechanics::v3_flash(&mut at, fa, forward_out, optimal_input, false, callback)?,
+                ];
+                return Some((plan, at));
+            }
             _ => {}
         }
     }
@@ -5943,314 +5913,4 @@ pub(crate) fn derive_plan(
         mechanics::v3_flash(&mut at, tf, out_term, term_in, false, vec![leading_flash])?,
     ];
     Some((plan, at))
-}
-
-#[cfg(test)]
-mod facts_driven_tests {
-    //! The D6 honesty invariant (epic `6SU5LM` / T0).
-    //!
-    //! For every family, the Plan produced by `build_<fam>_walk` must equal
-    //! the Plan produced by the generic `derive_plan(&facts_of_<fam>(path),
-    //! inputs)`. A family is D6-complete iff its row is un-ignored and green.
-    //!
-    //! Do NOT "fix" a failing row by relaxing the probe — the probe is the
-    //! truth (same discipline as `honesty_invariant.rs`). The migration tasks
-    //! (T4–T7) un-ignore their rows as they generalize `derive_plan` to each
-    //! family cluster.
-
-    #![allow(
-        clippy::too_many_lines,
-        clippy::similar_names,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::cast_possible_truncation
-    )]
-
-    use super::*;
-    use crate::composers::EncodeOptions;
-    use alloy::primitives::{address, Address};
-
-    const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
-    const WBTC: Address = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
-    const PM: Address = address!("000000000004444c5dc75cB358380D2e3De08A90");
-    const EXECUTOR: Address = address!("DeAd0000000000000000000000000000000000Be");
-
-    static OPTIMAL: u128 = 1_000_000_000_000_000_000;
-    static OUTS: [u128; 3] = [1_000_000_000_000_000_000; 3];
-    static CONSUMED: [u128; 3] = [999_999_999_999_999_999; 3];
-
-    fn make_hops(prots: &[Prot]) -> Vec<HopInfo> {
-        (0..prots.len())
-            .map(|i| {
-                let (in_t, out_t) = (
-                    match i % 3 {
-                        0 => WETH,
-                        1 => USDC,
-                        _ => WBTC,
-                    },
-                    match (i + 1) % 3 {
-                        0 => WETH,
-                        1 => USDC,
-                        _ => WBTC,
-                    },
-                );
-                match prots[i] {
-                    Prot::V2 => HopInfo::V2(V2HopInfo {
-                        pool_address: Address::from([0xA0 + i as u8; 20]),
-                        token0_address: in_t,
-                        token1_address: out_t,
-                        fee: 30,
-                        zfo: true,
-                    }),
-                    Prot::V3 => HopInfo::V3(V3HopInfo {
-                        pool_address: Address::from([0xB0 + i as u8; 20]),
-                        token0_address: in_t,
-                        token1_address: out_t,
-                        fee: 3000,
-                        zfo: true,
-                    }),
-                    Prot::V4 => HopInfo::V4(V4HopInfo {
-                        pool_manager_address: PM,
-                        pool_id_hex: format!("0x{i:02x}"),
-                        currency0_address: in_t,
-                        currency1_address: out_t,
-                        fee: 500,
-                        tick_spacing: 10,
-                        hook_address: Address::ZERO,
-                        zfo: true,
-                    }),
-                }
-            })
-            .collect()
-    }
-
-    /// Probe: assert `derive_plan` + the family's facts descriptor produces
-    /// the same Plan as the hand-authored `build_*_walk`.
-    #[expect(clippy::type_complexity)]
-    fn assert_facts_driven(
-        prots: &[Prot],
-        facts_of: Option<fn(&PathInfo, &ComposerInputs<'_>) -> Option<Vec<HopFacts>>>,
-    ) {
-        let path = PathInfo::new(make_hops(prots));
-        let n = prots.len();
-        let inputs = ComposerInputs {
-            executor_address: EXECUTOR,
-            pool_manager_address: PM,
-            weth_address: WETH,
-            optimal_input: OPTIMAL,
-            hop_outputs: &OUTS[..n],
-            consumed_inputs: &CONSUMED[..n],
-            opts: EncodeOptions::default(),
-        };
-        let key = (
-            prots.first().copied(),
-            prots.get(1).copied(),
-            prots.get(2).copied(),
-        );
-        let build = build_for_walk(key).expect("family has a builder");
-        let built = build(&path, &inputs).expect("family encodes under fixture");
-        let facts = facts_of.and_then(|f| f(&path, &inputs));
-        let derived = facts.and_then(|f| derive_plan(&f, &inputs));
-        assert_eq!(
-            Some(built.1),
-            derived.map(|(plan, _at)| plan),
-            "D6 invariant broken: derive_plan does not produce the same Plan as build_*_walk"
-        );
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // The reference family (T1+T3 complete it)
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn v3v4v3_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V4, Prot::V3], Some(facts_of_v3v4v3));
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // T4: 2-hop + any-N V2/V3 families (4)
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn v2v3_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V3], Some(facts_of_v2v3));
-    }
-
-    #[test]
-    fn v3v2_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V2], Some(facts_of_v3v2));
-    }
-
-    #[test]
-    fn v3v3_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V3], Some(facts_of_v3v3));
-    }
-
-    #[test]
-    fn all_v2_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V2, Prot::V2], Some(facts_of_all_v2));
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // T5: 3-hop pure V2/V3 families (7)
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn v2v2v3_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V2, Prot::V3], Some(facts_of_v2v2v3));
-    }
-
-    #[test]
-    fn v2v3v2_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V3, Prot::V2], Some(facts_of_v2v3v2));
-    }
-
-    #[test]
-    fn v2v3v3_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V3, Prot::V3], Some(facts_of_v2v3v3));
-    }
-
-    #[test]
-    fn v3v2v2_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V2, Prot::V2], Some(facts_of_v3v2v2));
-    }
-
-    #[test]
-    fn v3v2v3_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V2, Prot::V3], Some(facts_of_v3v2v3));
-    }
-
-    #[test]
-    fn v3v3v2_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V3, Prot::V2], Some(facts_of_v3v3v2));
-    }
-
-    #[test]
-    fn v3v3v3_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V3, Prot::V3], Some(facts_of_v3v3v3));
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // T6: 2-hop V4-crossing families (5)
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn v4v4_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V4], Some(facts_of_v4v4));
-    }
-
-    #[test]
-    fn v4v3_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V3], Some(facts_of_v4v3));
-    }
-
-    #[test]
-    fn v4v2_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V2], Some(facts_of_v4v2));
-    }
-
-    #[test]
-    fn v3v4_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V4], Some(facts_of_v3v4));
-    }
-
-    #[test]
-    fn v2v4_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V4], Some(facts_of_v2v4));
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // T7: 3-hop V4-crossing families (18, excl. v3v4v3 reference)
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn v4v4v4_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V4, Prot::V4], Some(facts_of_v4v4v4));
-    }
-
-    #[test]
-    fn v4v2v2_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V2, Prot::V2], Some(facts_of_v4v2v2));
-    }
-
-    #[test]
-    fn v2v2v4_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V2, Prot::V4], Some(facts_of_v2v2v4));
-    }
-
-    #[test]
-    fn v2v3v4_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V3, Prot::V4], Some(facts_of_v2v3v4));
-    }
-
-    #[test]
-    fn v3v2v4_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V2, Prot::V4], Some(facts_of_v3v2v4));
-    }
-
-    #[test]
-    fn v3v3v4_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V3, Prot::V4], Some(facts_of_v3v3v4));
-    }
-
-    #[test]
-    fn v2v4v2_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V4, Prot::V2], Some(facts_of_v2v4v2));
-    }
-
-    #[test]
-    fn v2v4v3_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V4, Prot::V3], Some(facts_of_v2v4v3));
-    }
-
-    #[test]
-    fn v3v4v2_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V4, Prot::V2], Some(facts_of_v3v4v2));
-    }
-
-    #[test]
-    fn v2v4v4_facts_driven() {
-        assert_facts_driven(&[Prot::V2, Prot::V4, Prot::V4], Some(facts_of_v2v4v4));
-    }
-
-    #[test]
-    fn v3v4v4_facts_driven() {
-        assert_facts_driven(&[Prot::V3, Prot::V4, Prot::V4], Some(facts_of_v3v4v4));
-    }
-
-    #[test]
-    fn v4v4v2_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V4, Prot::V2], Some(facts_of_v4v4v2));
-    }
-
-    #[test]
-    fn v4v4v3_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V4, Prot::V3], Some(facts_of_v4v4v3));
-    }
-
-    #[test]
-    fn v4v2v3_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V2, Prot::V3], Some(facts_of_v4v2v3));
-    }
-
-    #[test]
-    fn v4v2v4_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V2, Prot::V4], Some(facts_of_v4v2v4));
-    }
-
-    #[test]
-    fn v4v3v2_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V3, Prot::V2], Some(facts_of_v4v3v2));
-    }
-
-    #[test]
-    fn v4v3v3_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V3, Prot::V3], Some(facts_of_v4v3v3));
-    }
-
-    #[test]
-    fn v4v3v4_facts_driven() {
-        assert_facts_driven(&[Prot::V4, Prot::V3, Prot::V4], Some(facts_of_v4v3v4));
-    }
 }
