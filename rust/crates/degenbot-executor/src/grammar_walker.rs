@@ -799,215 +799,6 @@ pub(crate) fn facts_of_v4v4v4(
     Some(vec![v4_hop_facts(a), v4_hop_facts(b), v4_hop_facts(c)])
 }
 
-/// The 3-hop V4→V4→V4 shape: a single `V4Unlock` of three V4 swaps connected
-/// by optional native bridges + the shared terminal-capture steps. As with the
-/// gold, the bridge/capture/batch arms reuse the shared `v4_bridge_steps` and
-/// `v4_terminal_capture_steps` helpers; the facts carry only per-hop metadata.
-#[expect(clippy::too_many_lines)]
-#[expect(clippy::similar_names)]
-pub(crate) fn derive_3hop_v4v4v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3 || facts.iter().any(|f| f.prot != Prot::V4) {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if out_a == 0 || out_b == 0 || out_c == 0 {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let a_swap_in = *inputs.consumed_inputs.first()?;
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(a_swap_in) || !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let mid_a_out = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let mid_b_out = fb.out_currency;
-    let mid_b_in = fb.in_currency;
-    let output_c = fc.out_currency;
-    let mid_c_in = fc.in_currency;
-    let weth = inputs.weth_address;
-    let capture = resolve_axes(inputs.opts).1;
-    if native_capture_declines(capture, output_c, weth) {
-        return None;
-    }
-    let bridge_ab = CurrencyBridge::at_boundary(mid_a_out, mid_b_in);
-    let bridge_bc = CurrencyBridge::at_boundary(mid_b_out, mid_c_in);
-    let any_gap = bridge_ab.needs_bridge() || bridge_bc.needs_bridge();
-
-    let mut at = v4_scaffold_table(inputs);
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let c0_c = at.add(fc.currency0_address).ok()?;
-    let c1_c = at.add(fc.currency1_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-
-    let profit = out_c.saturating_sub(optimal_input);
-    let terminal_idx = if output_c == weth {
-        SENTINEL_WETH
-    } else if output_c == NATIVE_CURRENCY_ADDRESS {
-        SENTINEL_NATIVE
-    } else {
-        at.add(output_c).ok()?
-    };
-
-    let v4swap_a = PlanStep::V4Swap {
-        c0_idx: c0_a,
-        c1_idx: c1_a,
-        fee: fee_a,
-        tick_spacing: ts_a,
-        hooks_idx: SENTINEL_NATIVE,
-        zfo: fa.zfo,
-        amount: a_swap_in,
-        in_currency: in_currency_a,
-        in_amount: a_swap_in,
-        out_currency: mid_a_out,
-        out_amount: out_a,
-    };
-    let v4swap_b = PlanStep::V4Swap {
-        c0_idx: c0_b,
-        c1_idx: c1_b,
-        fee: fee_b,
-        tick_spacing: ts_b,
-        hooks_idx: SENTINEL_NATIVE,
-        zfo: fb.zfo,
-        amount: b_swap_in,
-        in_currency: mid_b_in,
-        in_amount: b_swap_in,
-        out_currency: mid_b_out,
-        out_amount: out_b,
-    };
-    let v4swap_c = PlanStep::V4Swap {
-        c0_idx: c0_c,
-        c1_idx: c1_c,
-        fee: fee_c,
-        tick_spacing: ts_c,
-        hooks_idx: SENTINEL_NATIVE,
-        zfo: fc.zfo,
-        amount: c_swap_in,
-        in_currency: mid_c_in,
-        in_amount: c_swap_in,
-        out_currency: output_c,
-        out_amount: out_c,
-    };
-
-    let mut inner: Plan = if inputs.opts.use_v4_batch && !any_gap {
-        let mut steps = vec![PlanStep::V4Batch {
-            entries: vec![
-                V4BatchSwap {
-                    c0_idx: c0_a,
-                    c1_idx: c1_a,
-                    fee: fee_a,
-                    tick_spacing: ts_a,
-                    hooks_idx: SENTINEL_NATIVE,
-                    zfo: fa.zfo,
-                    amount: a_swap_in,
-                    in_currency: in_currency_a,
-                    in_amount: a_swap_in,
-                    out_currency: mid_a_out,
-                    out_amount: out_a,
-                },
-                V4BatchSwap {
-                    c0_idx: c0_b,
-                    c1_idx: c1_b,
-                    fee: fee_b,
-                    tick_spacing: ts_b,
-                    hooks_idx: SENTINEL_NATIVE,
-                    zfo: fb.zfo,
-                    amount: b_swap_in,
-                    in_currency: mid_b_in,
-                    in_amount: b_swap_in,
-                    out_currency: mid_b_out,
-                    out_amount: out_b,
-                },
-                V4BatchSwap {
-                    c0_idx: c0_c,
-                    c1_idx: c1_c,
-                    fee: fee_c,
-                    tick_spacing: ts_c,
-                    hooks_idx: SENTINEL_NATIVE,
-                    zfo: fc.zfo,
-                    amount: c_swap_in,
-                    in_currency: mid_c_in,
-                    in_amount: c_swap_in,
-                    out_currency: output_c,
-                    out_amount: out_c,
-                },
-            ],
-        }];
-        if output_c != NATIVE_CURRENCY_ADDRESS && output_c != weth {
-            steps.push(PlanStep::V4TakeDelta {
-                currency_idx: terminal_idx,
-                currency_addr: output_c,
-                recipient_idx: SENTINEL_SELF,
-                seeds_pool: None,
-            });
-        }
-        steps
-    } else {
-        let mut steps = vec![v4swap_a];
-        if bridge_ab.needs_bridge() {
-            let (bridge_steps, settle_idx, settle_currency) =
-                v4_bridge_steps(bridge_ab, weth, out_a);
-            steps.extend(bridge_steps);
-            steps.push(v4swap_b);
-            steps.push(PlanStep::V4SettleDelta {
-                currency_idx: settle_idx,
-                currency_addr: settle_currency,
-            });
-        } else {
-            steps.push(v4swap_b);
-        }
-        if bridge_bc.needs_bridge() {
-            let (bridge_steps, settle_idx, settle_currency) =
-                v4_bridge_steps(bridge_bc, weth, out_b);
-            steps.extend(bridge_steps);
-            steps.push(v4swap_c);
-            steps.push(PlanStep::V4SettleDelta {
-                currency_idx: settle_idx,
-                currency_addr: settle_currency,
-            });
-        } else {
-            steps.push(v4swap_c);
-        }
-        steps
-    };
-    inner.append(&mut v4_terminal_capture_steps(
-        output_c,
-        terminal_idx,
-        capture,
-        inputs.opts.use_v4_batch,
-        any_gap,
-        profit,
-        weth,
-    ));
-    inner.push(PlanStep::V4SettleAll);
-
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
-}
-
 /// The 2-hop V2→V4 facts (`v2v4`).
 pub(crate) fn facts_of_v2v4(
     path: &PathInfo,
@@ -1020,375 +811,6 @@ pub(crate) fn facts_of_v2v4(
         return None;
     };
     Some(vec![v2_hop_facts(a), v4_hop_facts(b)])
-}
-
-/// The 2-hop V2→V4 shape: dispatch over the three V4-input/output arms (as
-/// `build_v2v4_walk`), each a V2 flash whose callback V4-unlocks the V4 swap.
-pub(crate) fn derive_2hop_v2v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 2 || facts[0].prot != Prot::V2 || facts[1].prot != Prot::V4 {
-        return None;
-    }
-    let (fa, fb) = (&facts[0], &facts[1]);
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    if forward_out == 0 || v4_out_amount == 0 {
-        return None;
-    }
-    if !fits_i128(forward_out) || !fits_i128(v4_out_amount) {
-        return None;
-    }
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(v4_swap_in) {
-        return None;
-    }
-    let v4_in_currency = fb.in_currency;
-    let v4_out_currency = fb.out_currency;
-    if v4_out_currency == NATIVE_CURRENCY_ADDRESS {
-        derive_2hop_v2v4_native_output(fa, fb, v4_in_currency, inputs)
-    } else if v4_in_currency == NATIVE_CURRENCY_ADDRESS {
-        derive_2hop_v2v4_native_input(fa, fb, v4_out_currency, inputs)
-    } else {
-        derive_2hop_v2v4_erc20(fa, fb, v4_in_currency, v4_out_currency, inputs)
-    }
-}
-
-/// `v2_v4` ERC-20 V4 input branch (V2 flash; byte-identical to `build_v2v4_erc20_input_walk`).
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_2hop_v2v4_erc20(
-    fa: &HopFacts,
-    fb: &HopFacts,
-    v4_in_currency: Address,
-    v4_out_currency: Address,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    let weth = inputs.weth_address;
-    let optimal_input = inputs.optimal_input;
-    let forward_addr = fa.out_currency;
-    let v2_in_currency = fa.in_currency;
-    if v2_in_currency != weth
-        || forward_addr == NATIVE_CURRENCY_ADDRESS
-        || v4_in_currency != forward_addr
-    {
-        return None;
-    }
-    let mut at = AddressTable::with_sentinels(
-        Some(weth),
-        Some(inputs.executor_address),
-        Some(inputs.pool_manager_address),
-    );
-    let v2_idx = at.add(fa.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let forward_idx = at.add(forward_addr).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let output_idx = if fb.zfo { c1_b } else { c0_b };
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_idx,
-            currency_addr: forward_addr,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: forward_idx,
-            token_addr: forward_addr,
-            recipient_idx: pm_idx,
-            amount: forward_out,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4Settle {
-            currency_addr: forward_addr,
-            amount: forward_out,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: v4_swap_in,
-            in_currency: forward_addr,
-            in_amount: v4_swap_in,
-            out_currency: v4_out_currency,
-            out_amount: v4_out_amount,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: output_idx,
-            currency_addr: v4_out_currency,
-            recipient_idx: SENTINEL_SELF,
-            amount: v4_out_amount,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let callback: Plan = vec![
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: weth_idx,
-            token_addr: weth,
-            recipient_idx: v2_idx,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let flash = PlanStep::FlashSwap {
-        pool_idx: v2_idx,
-        pool_addr: fa.pool_address,
-        protocol: Prot::V2,
-        zfo: fa.zfo,
-        fee: fa.swap_fee,
-        out_currency: forward_addr,
-        out_amount: forward_out,
-        in_currency: weth,
-        in_amount: optimal_input,
-        recipient_idx: SENTINEL_SELF,
-        recipient_pool_addr: None,
-        recipient_pool_repays: false,
-        auto_repay: false,
-        callback,
-    };
-    let plan: Plan = if v4_out_currency == weth {
-        vec![flash]
-    } else {
-        vec![
-            PlanStep::SelfFund {
-                currency: weth,
-                amount: optimal_input,
-            },
-            flash,
-        ]
-    };
-    Some((plan, at))
-}
-
-/// `v2_v4` native V4 output branch (wrap-and-repay; `build_v2v4_native_output_walk`).
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_2hop_v2v4_native_output(
-    fa: &HopFacts,
-    fb: &HopFacts,
-    v4_in_currency: Address,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    let weth = inputs.weth_address;
-    let optimal_input = inputs.optimal_input;
-    let forward_addr = fa.out_currency;
-    let v2_in_currency = fa.in_currency;
-    if v2_in_currency != weth
-        || forward_addr == NATIVE_CURRENCY_ADDRESS
-        || v4_in_currency != forward_addr
-        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
-    {
-        return None;
-    }
-    let mut at = AddressTable::with_sentinels(
-        Some(weth),
-        Some(inputs.executor_address),
-        Some(inputs.pool_manager_address),
-    );
-    let v2_idx = at.add(fa.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let forward_idx = at.add(forward_addr).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_idx,
-            currency_addr: forward_addr,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: forward_idx,
-            token_addr: forward_addr,
-            recipient_idx: pm_idx,
-            amount: forward_out,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4Settle {
-            currency_addr: forward_addr,
-            amount: forward_out,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: v4_swap_in,
-            in_currency: forward_addr,
-            in_amount: v4_swap_in,
-            out_currency: NATIVE_CURRENCY_ADDRESS,
-            out_amount: v4_out_amount,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: SENTINEL_NATIVE,
-            currency_addr: NATIVE_CURRENCY_ADDRESS,
-            recipient_idx: SENTINEL_SELF,
-            amount: v4_out_amount,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let callback: Plan = vec![
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        PlanStep::WethDeposit {
-            weth_idx,
-            weth_addr: weth,
-            amount: v4_out_amount,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: weth_idx,
-            token_addr: weth,
-            recipient_idx: v2_idx,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let plan: Plan = vec![PlanStep::FlashSwap {
-        pool_idx: v2_idx,
-        pool_addr: fa.pool_address,
-        protocol: Prot::V2,
-        zfo: fa.zfo,
-        fee: fa.swap_fee,
-        out_currency: forward_addr,
-        out_amount: forward_out,
-        in_currency: weth,
-        in_amount: optimal_input,
-        recipient_idx: SENTINEL_SELF,
-        recipient_pool_addr: None,
-        recipient_pool_repays: false,
-        auto_repay: false,
-        callback,
-    }];
-    Some((plan, at))
-}
-
-/// `v2_v4` native V4 input branch (byte-identical to `build_v2v4_native_input_walk`).
-pub(crate) fn derive_2hop_v2v4_native_input(
-    fa: &HopFacts,
-    fb: &HopFacts,
-    v4_out_currency: Address,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    let weth = inputs.weth_address;
-    let optimal_input = inputs.optimal_input;
-    let tok = fa.in_currency;
-    if tok == weth || tok == NATIVE_CURRENCY_ADDRESS {
-        return None;
-    }
-    let mut at = AddressTable::with_sentinels(
-        Some(weth),
-        Some(inputs.executor_address),
-        Some(inputs.pool_manager_address),
-    );
-    let v2_idx = at.add(fa.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let tok_idx = at.add(tok).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let output_idx = if fb.zfo { c1_b } else { c0_b };
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: v4_swap_in,
-            in_currency: NATIVE_CURRENCY_ADDRESS,
-            in_amount: v4_swap_in,
-            out_currency: v4_out_currency,
-            out_amount: v4_out_amount,
-        },
-        PlanStep::NativeTransfer { amount: v4_swap_in },
-        PlanStep::V4SettleDelta {
-            currency_idx: SENTINEL_NATIVE,
-            currency_addr: NATIVE_CURRENCY_ADDRESS,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: output_idx,
-            currency_addr: v4_out_currency,
-            recipient_idx: SENTINEL_SELF,
-            amount: v4_out_amount,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let callback: Plan = vec![
-        PlanStep::WethWithdraw {
-            weth_idx,
-            weth_addr: weth,
-            amount: forward_out,
-        },
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: tok_idx,
-            token_addr: tok,
-            recipient_idx: v2_idx,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: tok,
-            amount: optimal_input,
-        },
-        PlanStep::FlashSwap {
-            pool_idx: v2_idx,
-            pool_addr: fa.pool_address,
-            protocol: Prot::V2,
-            zfo: fa.zfo,
-            fee: fa.swap_fee,
-            out_currency: weth,
-            out_amount: forward_out,
-            in_currency: tok,
-            in_amount: optimal_input,
-            recipient_idx: SENTINEL_SELF,
-            recipient_pool_addr: None,
-            recipient_pool_repays: false,
-            auto_repay: false,
-            callback,
-        },
-    ];
-    Some((plan, at))
 }
 
 /// The 2-hop V3→V4 facts (`v3v4`).
@@ -1405,620 +827,6 @@ pub(crate) fn facts_of_v3v4(
     Some(vec![v3_hop_facts(a), v4_hop_facts(b)])
 }
 
-/// The 2-hop V3→V4 shape (dispatch over the three V4-input/output arms, as the
-/// gold's `build_v3v4_walk`): erc20-input / native-output / native-input. Each
-/// arm runs the V3 flash whose callback V4-unlocks the V4 swap and repays the
-/// V3 flash.
-pub(crate) fn derive_2hop_v3v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 2 || facts[0].prot != Prot::V3 || facts[1].prot != Prot::V4 {
-        return None;
-    }
-    let (fa, fb) = (&facts[0], &facts[1]);
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    if forward_out == 0 || v4_out_amount == 0 {
-        return None;
-    }
-    if !fits_i128(forward_out) || !fits_i128(v4_out_amount) {
-        return None;
-    }
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(v4_swap_in) {
-        return None;
-    }
-    let v4_in_currency = fb.in_currency;
-    let v4_out_currency = fb.out_currency;
-    if v4_out_currency == NATIVE_CURRENCY_ADDRESS {
-        derive_2hop_v3v4_native_output(fa, fb, v4_in_currency, inputs)
-    } else if v4_in_currency == NATIVE_CURRENCY_ADDRESS {
-        derive_2hop_v3v4_native_input(fa, fb, v4_out_currency, inputs)
-    } else {
-        derive_2hop_v3v4_erc20(fa, fb, v4_in_currency, v4_out_currency, inputs)
-    }
-}
-
-/// `v3_v4` ERC-20 V4 input branch (facts-driven, byte-identical to the gold's
-/// `build_v3v4_erc20_input_walk`).
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_2hop_v3v4_erc20(
-    fa: &HopFacts,
-    fb: &HopFacts,
-    v4_in_currency: Address,
-    v4_out_currency: Address,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    let optimal_input = inputs.optimal_input;
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    let weth = inputs.weth_address;
-    let forward_addr = fa.out_currency;
-    let v3_in_currency = fa.in_currency;
-    if v3_in_currency != weth
-        || forward_addr == NATIVE_CURRENCY_ADDRESS
-        || v4_in_currency != forward_addr
-    {
-        return None;
-    }
-    let mut at = AddressTable::with_sentinels(
-        Some(weth),
-        Some(inputs.executor_address),
-        Some(inputs.pool_manager_address),
-    );
-    let v3_idx = at.add(fa.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let forward_idx = at.add(forward_addr).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let output_idx = if fb.zfo { c1_b } else { c0_b };
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_idx,
-            currency_addr: forward_addr,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: forward_idx,
-            token_addr: forward_addr,
-            recipient_idx: pm_idx,
-            amount: forward_out,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4Settle {
-            currency_addr: forward_addr,
-            amount: forward_out,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: v4_swap_in,
-            in_currency: forward_addr,
-            in_amount: v4_swap_in,
-            out_currency: v4_out_currency,
-            out_amount: v4_out_amount,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: output_idx,
-            currency_addr: v4_out_currency,
-            recipient_idx: SENTINEL_SELF,
-            amount: v4_out_amount,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let callback: Plan = vec![
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: weth_idx,
-            token_addr: weth,
-            recipient_idx: v3_idx,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let flash = PlanStep::FlashSwap {
-        pool_idx: v3_idx,
-        pool_addr: fa.pool_address,
-        protocol: Prot::V3,
-        zfo: fa.zfo,
-        fee: fa.swap_fee,
-        out_currency: forward_addr,
-        out_amount: forward_out,
-        in_currency: weth,
-        in_amount: optimal_input,
-        recipient_idx: SENTINEL_SELF,
-        recipient_pool_addr: None,
-        recipient_pool_repays: false,
-        auto_repay: false,
-        callback,
-    };
-    let plan: Plan = if v4_out_currency == weth {
-        vec![flash]
-    } else {
-        vec![
-            PlanStep::SelfFund {
-                currency: weth,
-                amount: optimal_input,
-            },
-            flash,
-        ]
-    };
-    Some((plan, at))
-}
-
-/// `v3_v4` native V4 output branch (byte-identical to `build_v3v4_native_output_walk`).
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_2hop_v3v4_native_output(
-    fa: &HopFacts,
-    fb: &HopFacts,
-    v4_in_currency: Address,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    let optimal_input = inputs.optimal_input;
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    let weth = inputs.weth_address;
-    let forward_addr = fa.out_currency;
-    let v3_in_currency = fa.in_currency;
-    if v3_in_currency != weth
-        || forward_addr == NATIVE_CURRENCY_ADDRESS
-        || v4_in_currency != forward_addr
-        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
-    {
-        return None;
-    }
-    let mut at = AddressTable::with_sentinels(
-        Some(weth),
-        Some(inputs.executor_address),
-        Some(inputs.pool_manager_address),
-    );
-    let v3_idx = at.add(fa.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let forward_idx = at.add(forward_addr).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_idx,
-            currency_addr: forward_addr,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: forward_idx,
-            token_addr: forward_addr,
-            recipient_idx: pm_idx,
-            amount: forward_out,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4Settle {
-            currency_addr: forward_addr,
-            amount: forward_out,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: v4_swap_in,
-            in_currency: forward_addr,
-            in_amount: v4_swap_in,
-            out_currency: NATIVE_CURRENCY_ADDRESS,
-            out_amount: v4_out_amount,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: SENTINEL_NATIVE,
-            currency_addr: NATIVE_CURRENCY_ADDRESS,
-            recipient_idx: SENTINEL_SELF,
-            amount: v4_out_amount,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let callback: Plan = vec![
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: weth_idx,
-            token_addr: weth,
-            recipient_idx: v3_idx,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        PlanStep::FlashSwap {
-            pool_idx: v3_idx,
-            pool_addr: fa.pool_address,
-            protocol: Prot::V3,
-            zfo: fa.zfo,
-            fee: fa.swap_fee,
-            out_currency: forward_addr,
-            out_amount: forward_out,
-            in_currency: weth,
-            in_amount: optimal_input,
-            recipient_idx: SENTINEL_SELF,
-            recipient_pool_addr: None,
-            recipient_pool_repays: false,
-            auto_repay: false,
-            callback,
-        },
-    ];
-    Some((plan, at))
-}
-
-/// `v3_v4` native V4 input branch (byte-identical to `build_v3v4_native_input_walk`).
-pub(crate) fn derive_2hop_v3v4_native_input(
-    fa: &HopFacts,
-    fb: &HopFacts,
-    v4_out_currency: Address,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    let optimal_input = inputs.optimal_input;
-    let forward_out = inputs.hop_outputs[0];
-    let v4_out_amount = inputs.hop_outputs[1];
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    let weth = inputs.weth_address;
-    let tok = fa.in_currency;
-    if tok == weth || tok == NATIVE_CURRENCY_ADDRESS {
-        return None;
-    }
-    let mut at = AddressTable::with_sentinels(
-        Some(weth),
-        Some(inputs.executor_address),
-        Some(inputs.pool_manager_address),
-    );
-    let v3_idx = at.add(fa.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let tok_idx = at.add(tok).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let output_idx = if fb.zfo { c1_b } else { c0_b };
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: v4_swap_in,
-            in_currency: NATIVE_CURRENCY_ADDRESS,
-            in_amount: v4_swap_in,
-            out_currency: v4_out_currency,
-            out_amount: v4_out_amount,
-        },
-        PlanStep::NativeTransfer { amount: v4_swap_in },
-        PlanStep::V4SettleDelta {
-            currency_idx: SENTINEL_NATIVE,
-            currency_addr: NATIVE_CURRENCY_ADDRESS,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: output_idx,
-            currency_addr: v4_out_currency,
-            recipient_idx: SENTINEL_SELF,
-            amount: v4_out_amount,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let callback: Plan = vec![
-        PlanStep::WethWithdraw {
-            weth_idx,
-            weth_addr: weth,
-            amount: forward_out,
-        },
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: tok_idx,
-            token_addr: tok,
-            recipient_idx: v3_idx,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: tok,
-            amount: optimal_input,
-        },
-        PlanStep::FlashSwap {
-            pool_idx: v3_idx,
-            pool_addr: fa.pool_address,
-            protocol: Prot::V3,
-            zfo: fa.zfo,
-            fee: fa.swap_fee,
-            out_currency: weth,
-            out_amount: forward_out,
-            in_currency: tok,
-            in_amount: optimal_input,
-            recipient_idx: SENTINEL_SELF,
-            recipient_pool_addr: None,
-            recipient_pool_repays: false,
-            auto_repay: false,
-            callback,
-        },
-    ];
-    Some((plan, at))
-}
-
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_2hop_v4v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 2 || facts[0].prot != Prot::V4 || facts[1].prot != Prot::V4 {
-        return None;
-    }
-    let (fa, fb) = (&facts[0], &facts[1]);
-    let optimal_input = inputs.optimal_input;
-    let forward_out = inputs.hop_outputs[0];
-    let b_out = inputs.hop_outputs[1];
-    if forward_out == 0 || b_out == 0 {
-        return None;
-    }
-    if !fits_i128(optimal_input) || !fits_i128(forward_out) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(b_swap_in) {
-        return None;
-    }
-    let weth = inputs.weth_address;
-
-    let mid_currency_a = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let out_currency_b = fb.out_currency;
-    let mid_currency_b = fb.in_currency;
-    let bridge = CurrencyBridge::at_boundary(mid_currency_a, mid_currency_b);
-    let currency_gap = bridge.needs_bridge();
-    let out_currency_a = mid_currency_a;
-    let capture = resolve_axes(inputs.opts).1;
-    if capture == ProfitCapture::Native
-        && out_currency_b != weth
-        && out_currency_b != NATIVE_CURRENCY_ADDRESS
-    {
-        return None;
-    }
-
-    let mut at = v4_scaffold_table(inputs);
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let weth_idx = SENTINEL_WETH;
-
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-
-    let inner: Plan = if currency_gap {
-        let (take_currency, settle_currency) = match bridge {
-            CurrencyBridge::Wrap => (NATIVE_CURRENCY_ADDRESS, weth),
-            CurrencyBridge::Unwrap => (weth, NATIVE_CURRENCY_ADDRESS),
-            CurrencyBridge::None => unreachable!("currency_gap implies a bridge"),
-        };
-        let take_idx = if take_currency == NATIVE_CURRENCY_ADDRESS {
-            SENTINEL_NATIVE
-        } else {
-            weth_idx
-        };
-        let settle_idx = if settle_currency == NATIVE_CURRENCY_ADDRESS {
-            SENTINEL_NATIVE
-        } else {
-            weth_idx
-        };
-        let out_idx = if fb.zfo { c1_b } else { c0_b };
-        vec![
-            PlanStep::V4Swap {
-                c0_idx: c0_a,
-                c1_idx: c1_a,
-                fee: fee_a,
-                tick_spacing: ts_a,
-                hooks_idx: SENTINEL_NATIVE,
-                zfo: fa.zfo,
-                amount: optimal_input,
-                in_currency: in_currency_a,
-                in_amount: optimal_input,
-                out_currency: out_currency_a,
-                out_amount: forward_out,
-            },
-            PlanStep::V4TakeCompact {
-                currency_idx: take_idx,
-                currency_addr: take_currency,
-                recipient_idx: SENTINEL_SELF,
-                amount: forward_out,
-                seeds_pool: None,
-                repays_flash: None,
-            },
-            match bridge {
-                CurrencyBridge::Wrap => PlanStep::WethDeposit {
-                    weth_idx,
-                    weth_addr: weth,
-                    amount: forward_out,
-                },
-                CurrencyBridge::Unwrap => PlanStep::WethWithdraw {
-                    weth_idx,
-                    weth_addr: weth,
-                    amount: forward_out,
-                },
-                CurrencyBridge::None => unreachable!(),
-            },
-            PlanStep::V4Swap {
-                c0_idx: c0_b,
-                c1_idx: c1_b,
-                fee: fee_b,
-                tick_spacing: ts_b,
-                hooks_idx: SENTINEL_NATIVE,
-                zfo: fb.zfo,
-                amount: b_swap_in,
-                in_currency: mid_currency_b,
-                in_amount: b_swap_in,
-                out_currency: out_currency_b,
-                out_amount: b_out,
-            },
-            PlanStep::V4SettleDelta {
-                currency_idx: settle_idx,
-                currency_addr: settle_currency,
-            },
-            PlanStep::V4TakeDelta {
-                currency_idx: out_idx,
-                currency_addr: out_currency_b,
-                recipient_idx: SENTINEL_SELF,
-                seeds_pool: None,
-            },
-            PlanStep::V4SettleAll,
-        ]
-    } else {
-        let swaps: Vec<PlanStep> = if inputs.opts.use_v4_batch {
-            vec![PlanStep::V4Batch {
-                entries: vec![
-                    V4BatchSwap {
-                        c0_idx: c0_a,
-                        c1_idx: c1_a,
-                        fee: fee_a,
-                        tick_spacing: ts_a,
-                        hooks_idx: SENTINEL_NATIVE,
-                        zfo: fa.zfo,
-                        amount: optimal_input,
-                        in_currency: in_currency_a,
-                        in_amount: optimal_input,
-                        out_currency: out_currency_a,
-                        out_amount: forward_out,
-                    },
-                    V4BatchSwap {
-                        c0_idx: c0_b,
-                        c1_idx: c1_b,
-                        fee: fee_b,
-                        tick_spacing: ts_b,
-                        hooks_idx: SENTINEL_NATIVE,
-                        zfo: fb.zfo,
-                        amount: b_swap_in,
-                        in_currency: out_currency_a,
-                        in_amount: b_swap_in,
-                        out_currency: out_currency_b,
-                        out_amount: b_out,
-                    },
-                ],
-            }]
-        } else {
-            vec![
-                PlanStep::V4Swap {
-                    c0_idx: c0_a,
-                    c1_idx: c1_a,
-                    fee: fee_a,
-                    tick_spacing: ts_a,
-                    hooks_idx: SENTINEL_NATIVE,
-                    zfo: fa.zfo,
-                    amount: optimal_input,
-                    in_currency: in_currency_a,
-                    in_amount: optimal_input,
-                    out_currency: out_currency_a,
-                    out_amount: forward_out,
-                },
-                PlanStep::V4Swap {
-                    c0_idx: c0_b,
-                    c1_idx: c1_b,
-                    fee: fee_b,
-                    tick_spacing: ts_b,
-                    hooks_idx: SENTINEL_NATIVE,
-                    zfo: fb.zfo,
-                    amount: b_swap_in,
-                    in_currency: out_currency_a,
-                    in_amount: b_swap_in,
-                    out_currency: out_currency_b,
-                    out_amount: b_out,
-                },
-            ]
-        };
-        let out_idx = if fb.zfo { c1_b } else { c0_b };
-        let capture_steps: Vec<PlanStep> =
-            if capture == ProfitCapture::Erc6909 && out_currency_b == weth {
-                let profit = b_out.saturating_sub(optimal_input);
-                if profit > 0 {
-                    vec![PlanStep::V4Mint {
-                        currency_idx: weth_idx,
-                        currency_addr: weth,
-                        recipient_idx: SENTINEL_SELF,
-                        amount: profit,
-                    }]
-                } else {
-                    vec![]
-                }
-            } else if !inputs.opts.use_v4_batch
-                || (out_currency_b != NATIVE_CURRENCY_ADDRESS && out_currency_b != weth)
-            {
-                vec![PlanStep::V4TakeDelta {
-                    currency_idx: out_idx,
-                    currency_addr: out_currency_b,
-                    recipient_idx: SENTINEL_SELF,
-                    seeds_pool: None,
-                }]
-            } else {
-                vec![]
-            };
-        let native_withdraw: Vec<PlanStep> =
-            if capture == ProfitCapture::Native && out_currency_b == weth {
-                vec![PlanStep::WethWithdraw {
-                    weth_idx,
-                    weth_addr: weth,
-                    amount: b_out.saturating_sub(optimal_input),
-                }]
-            } else {
-                vec![]
-            };
-        swaps
-            .into_iter()
-            .chain(capture_steps)
-            .chain(native_withdraw)
-            .chain(std::iter::once(PlanStep::V4SettleAll))
-            .collect()
-    };
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
-}
-
 /// The 2-hop V4→V3 facts (`v4v3`).
 pub(crate) fn facts_of_v4v3(
     path: &PathInfo,
@@ -2031,193 +839,6 @@ pub(crate) fn facts_of_v4v3(
         return None;
     };
     Some(vec![v4_hop_facts(a), v3_hop_facts(b)])
-}
-
-/// The 2-hop V4→V3 shape (boundary-take): a `V4Unlock` that runs the V4 swap,
-/// takes its forward out of the PM, and hands it to a V3 flash (auto-repay),
-/// then settles the PM ledger. As with the gold, the native/output/input arms
-/// are read from the hop currencies + `inputs.opts`; `fb.in_currency` is NOT
-/// the flash's input (it is weth on the native arm, else a.out) — so the
-/// `FlashSwap` is assembled here directly rather than via a fixed-in-currency
-/// flash mechanic.
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_2hop_v4v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 2 || facts[0].prot != Prot::V4 || facts[1].prot != Prot::V3 {
-        return None;
-    }
-    let (fa, fb) = (&facts[0], &facts[1]);
-    let optimal_input = inputs.optimal_input;
-    let forward_out = inputs.hop_outputs[0];
-    let weth_out = inputs.hop_outputs[1];
-    if forward_out == 0 || weth_out == 0 {
-        return None;
-    }
-    if !fits_i128(optimal_input) || !fits_i128(forward_out) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(b_swap_in) {
-        return None;
-    }
-    let weth = inputs.weth_address;
-
-    let out_currency_a = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let v4_out_native = out_currency_a == NATIVE_CURRENCY_ADDRESS;
-    let out_currency_b = fb.out_currency;
-    if v4_out_native {
-        let in_currency_b = fb.in_currency;
-        if in_currency_b != weth {
-            return None;
-        }
-        if in_currency_a == NATIVE_CURRENCY_ADDRESS || in_currency_a == weth {
-            return None;
-        }
-    } else if in_currency_a != weth && in_currency_a != NATIVE_CURRENCY_ADDRESS {
-        return None;
-    }
-
-    let mut at = AddressTable::with_sentinels(
-        Some(weth),
-        Some(inputs.executor_address),
-        Some(inputs.pool_manager_address),
-    );
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let v3_idx = at.add(fb.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let weth_idx = SENTINEL_WETH;
-    let forward_idx = if fa.zfo { c1_a } else { c0_a };
-
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let v4_in_native = in_currency_a == NATIVE_CURRENCY_ADDRESS;
-    let input_idx = if fa.zfo { c0_a } else { c1_a };
-
-    let mut inner: Plan = vec![PlanStep::V4Swap {
-        c0_idx: c0_a,
-        c1_idx: c1_a,
-        fee: fee_a,
-        tick_spacing: ts_a,
-        hooks_idx: SENTINEL_NATIVE,
-        zfo: fa.zfo,
-        amount: optimal_input,
-        in_currency: in_currency_a,
-        in_amount: optimal_input,
-        out_currency: out_currency_a,
-        out_amount: forward_out,
-    }];
-    if v4_out_native {
-        inner.extend([
-            PlanStep::V4TakeCompact {
-                currency_idx: SENTINEL_NATIVE,
-                currency_addr: NATIVE_CURRENCY_ADDRESS,
-                recipient_idx: SENTINEL_SELF,
-                amount: forward_out,
-                seeds_pool: None,
-                repays_flash: None,
-            },
-            PlanStep::WethDeposit {
-                weth_idx,
-                weth_addr: weth,
-                amount: forward_out,
-            },
-            PlanStep::FlashSwap {
-                pool_idx: v3_idx,
-                pool_addr: fb.pool_address,
-                protocol: Prot::V3,
-                zfo: fb.zfo,
-                fee: fb.swap_fee,
-                out_currency: out_currency_b,
-                out_amount: weth_out,
-                in_currency: weth,
-                in_amount: b_swap_in,
-                recipient_idx: SENTINEL_SELF,
-                recipient_pool_addr: None,
-                recipient_pool_repays: false,
-                auto_repay: true,
-                callback: vec![],
-            },
-            PlanStep::V4SettleDelta {
-                currency_idx: input_idx,
-                currency_addr: in_currency_a,
-            },
-            PlanStep::V4SettleAll,
-        ]);
-    } else {
-        inner.extend([
-            PlanStep::V4TakeCompact {
-                currency_idx: forward_idx,
-                currency_addr: out_currency_a,
-                recipient_idx: SENTINEL_SELF,
-                amount: forward_out,
-                seeds_pool: None,
-                repays_flash: None,
-            },
-            PlanStep::FlashSwap {
-                pool_idx: v3_idx,
-                pool_addr: fb.pool_address,
-                protocol: Prot::V3,
-                zfo: fb.zfo,
-                fee: fb.swap_fee,
-                out_currency: out_currency_b,
-                out_amount: weth_out,
-                in_currency: out_currency_a,
-                in_amount: b_swap_in,
-                recipient_idx: SENTINEL_SELF,
-                recipient_pool_addr: None,
-                recipient_pool_repays: false,
-                auto_repay: true,
-                callback: vec![],
-            },
-            PlanStep::V4SettleDelta {
-                currency_idx: weth_idx,
-                currency_addr: weth,
-            },
-            PlanStep::V4SettleAll,
-        ]);
-        if v4_in_native {
-            let settle_all = inner.pop()?;
-            inner.pop();
-            inner.extend([
-                PlanStep::WethWithdraw {
-                    weth_idx,
-                    weth_addr: weth,
-                    amount: optimal_input,
-                },
-                PlanStep::NativeTransfer {
-                    amount: optimal_input,
-                },
-                PlanStep::V4SettleDelta {
-                    currency_idx: SENTINEL_NATIVE,
-                    currency_addr: NATIVE_CURRENCY_ADDRESS,
-                },
-                settle_all,
-            ]);
-        }
-        let _ = input_idx;
-    }
-    let plan: Plan = if out_currency_b == weth {
-        vec![PlanStep::V4Unlock {
-            inner,
-            pool_manager_idx: pm_idx,
-        }]
-    } else {
-        vec![
-            PlanStep::SelfFund {
-                currency: weth,
-                amount: optimal_input,
-            },
-            PlanStep::V4Unlock {
-                inner,
-                pool_manager_idx: pm_idx,
-            },
-        ]
-    };
-    Some((plan, at))
 }
 
 /// The 3-hop V4-crossing shape dispatcher: routes the 18 T7 families to their
@@ -2238,85 +859,6 @@ pub(crate) fn facts_of_v4v2v2(
     Some(vec![v4_hop_facts(a), v2_hop_facts(b), v2_hop_facts(c)])
 }
 
-/// The 3-hop V4→V2→V2 shape: a `V4Unlock` that runs the V4 swap, takes its
-/// forward V4 output directly into the first V2 pool, then a V2SwapCalc chain
-/// to SELF, settling the PM's WETH delta.
-pub(crate) fn derive_3hop_v4v2v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let b_out = inputs.hop_outputs[1];
-    let c_out = inputs.hop_outputs[2];
-    if out_a == 0 || inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let weth = inputs.weth_address;
-    if in_currency_a != weth {
-        return None;
-    }
-    let mut at = v4_scaffold_table(inputs);
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let v2b = at.add(fb.pool_address).ok()?;
-    let v2c = at.add(fc.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-
-    let b_step = mechanics::v2_swap(&mut at, fb, b_out, v2c, Some(fc.pool_address), false)?;
-    let c_step = mechanics::v2_swap(&mut at, fc, c_out, SENTINEL_SELF, None, false)?;
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: optimal_input,
-            in_currency: in_currency_a,
-            in_amount: optimal_input,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-            recipient_idx: v2b,
-            amount: out_a,
-            seeds_pool: Some(fb.pool_address),
-            repays_flash: None,
-        },
-        b_step,
-        c_step,
-        PlanStep::V4SettleDelta {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-        },
-    ];
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
-}
-
 /// The 3-hop V4→V2→V4 facts (`v4v2v4`).
 pub(crate) fn facts_of_v4v2v4(
     path: &PathInfo,
@@ -2331,99 +873,6 @@ pub(crate) fn facts_of_v4v2v4(
         return None;
     };
     Some(vec![v4_hop_facts(a), v2_hop_facts(b), v4_hop_facts(c)])
-}
-
-/// The 3-hop V4→V2→V4 shape: a `V4Unlock` running V4Swap → V2SwapCalc → V4Swap
-/// (the V2 forward handed to SELF between the two V4 swaps).
-pub(crate) fn derive_3hop_v4v2v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let b_out = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if out_a == 0 || inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let b_forward_cur = fb.out_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let _ = at.add(b_forward_cur).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let c0_c = at.add(fc.currency0_address).ok()?;
-    let c1_c = at.add(fc.currency1_address).ok()?;
-    let v2b = at.add(fb.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-
-    let b_step = mechanics::v2_swap(&mut at, fb, b_out, SENTINEL_SELF, None, false)?;
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: optimal_input,
-            in_currency: in_currency_a,
-            in_amount: optimal_input,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-            recipient_idx: v2b,
-            amount: out_a,
-            seeds_pool: Some(fb.pool_address),
-            repays_flash: None,
-        },
-        b_step,
-        PlanStep::V4Swap {
-            c0_idx: c0_c,
-            c1_idx: c1_c,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
 }
 
 /// The 3-hop V4→V3→V3 facts (`v4v3v3`).
@@ -2442,107 +891,6 @@ pub(crate) fn facts_of_v4v3v3(
     Some(vec![v4_hop_facts(a), v3_hop_facts(b), v3_hop_facts(c)])
 }
 
-/// The 3-hop V4→V3→V3 shape: a `V4Unlock` running the V4 swap whose forward is
-/// handed to a nested V3-flash pair (the inner V3 flash is repaid by the V4
-/// take-compact, and repays the outer one) — `v4_v3_v3`'s boundary-take.
-pub(crate) fn derive_3hop_v4v3v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V3
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let _ = at.add(inputs.pool_manager_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
-    let v3c = at.add(fc.pool_address).ok()?;
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let inner_take = PlanStep::V4TakeCompact {
-        currency_idx: forward_a,
-        currency_addr: forward_a_cur,
-        recipient_idx: v3b,
-        amount: out_a,
-        seeds_pool: None,
-        repays_flash: Some(fb.pool_address),
-    };
-    let inner_b = mechanics::v3_flash_to(
-        &mut at,
-        fb,
-        out_b,
-        b_swap_in,
-        false,
-        v3c,
-        Some(fc.pool_address),
-        true,
-        vec![inner_take],
-    )?;
-    let outer_c = mechanics::v3_flash_to(
-        &mut at,
-        fc,
-        out_c,
-        c_swap_in,
-        false,
-        SENTINEL_SELF,
-        None,
-        false,
-        vec![inner_b],
-    )?;
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: optimal_input,
-            in_currency: in_currency_a,
-            in_amount: optimal_input,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        outer_c,
-        PlanStep::V4SettleDelta {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-        },
-    ];
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
-}
-
 /// The 3-hop V4→V3→V4 facts (`v4v3v4`).
 pub(crate) fn facts_of_v4v3v4(
     path: &PathInfo,
@@ -2557,119 +905,6 @@ pub(crate) fn facts_of_v4v3v4(
         return None;
     };
     Some(vec![v4_hop_facts(a), v3_hop_facts(b), v4_hop_facts(c)])
-}
-
-/// The 3-hop V4→V3→V4 shape: a `V4Unlock` running the V4 swap, a V3 flash that
-/// repays the PM (its forward settled into the ledger), and a closing V4 swap.
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_3hop_v4v3v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let fwd_b = fb.out_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let forward_b = at.add(fwd_b).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let c0_c = at.add(fc.currency0_address).ok()?;
-    let c1_c = at.add(fc.currency1_address).ok()?;
-
-    let take = PlanStep::V4TakeCompact {
-        currency_idx: forward_a,
-        currency_addr: forward_a_cur,
-        recipient_idx: v3b,
-        amount: out_a,
-        seeds_pool: None,
-        repays_flash: Some(fb.pool_address),
-    };
-    let flash_b = mechanics::v3_flash_to(
-        &mut at,
-        fb,
-        out_b,
-        b_swap_in,
-        false,
-        pm_idx,
-        None,
-        false,
-        vec![take],
-    )?;
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: optimal_input,
-            in_currency: in_currency_a,
-            in_amount: optimal_input,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        PlanStep::V4Sync {
-            currency_idx: forward_b,
-            currency_addr: fwd_b,
-        },
-        flash_b,
-        PlanStep::V4Settle {
-            currency_addr: fwd_b,
-            amount: out_b,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_c,
-            c1_idx: c1_c,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
 }
 
 /// The 3-hop V4→V4→V2 facts (`v4v4v2`).
@@ -2688,99 +923,6 @@ pub(crate) fn facts_of_v4v4v2(
     Some(vec![v4_hop_facts(a), v4_hop_facts(b), v2_hop_facts(c)])
 }
 
-/// The 3-hop V4→V4→V2 shape: a `V4Unlock` of two V4 swaps whose second forward
-/// is taken directly into the V2 pool and swapped to SELF.
-#[expect(clippy::similar_names)]
-pub(crate) fn derive_3hop_v4v4v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V4
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let a_swap_in = *inputs.consumed_inputs.first()?;
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(a_swap_in) || !fits_i128(b_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let forward_b_cur = fb.out_currency;
-    let in_currency_b = fb.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let forward_b = at.add(forward_b_cur).ok()?;
-    let v2c = at.add(fc.pool_address).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-
-    let v2step = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: a_swap_in,
-            in_currency: in_currency_a,
-            in_amount: a_swap_in,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: b_swap_in,
-            in_currency: in_currency_b,
-            in_amount: b_swap_in,
-            out_currency: forward_b_cur,
-            out_amount: out_b,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: forward_b,
-            currency_addr: forward_b_cur,
-            recipient_idx: v2c,
-            amount: out_b,
-            seeds_pool: Some(fc.pool_address),
-            repays_flash: None,
-        },
-        v2step,
-        PlanStep::V4SettleAll,
-    ];
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
-}
-
 /// The 3-hop V4→V4→V3 facts (`v4v4v3`).
 pub(crate) fn facts_of_v4v4v3(
     path: &PathInfo,
@@ -2795,118 +937,6 @@ pub(crate) fn facts_of_v4v4v3(
         return None;
     };
     Some(vec![v4_hop_facts(a), v4_hop_facts(b), v3_hop_facts(c)])
-}
-
-/// The 3-hop V4→V4→V3 shape: a `V4Unlock` of two V4 swaps whose second forward
-/// feeds a V3 flash (repaid by taking that forward out of the PM ledger).
-#[expect(clippy::too_many_lines)]
-#[expect(clippy::similar_names)]
-pub(crate) fn derive_3hop_v4v4v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V4
-        || facts[2].prot != Prot::V3
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let a_swap_in = *inputs.consumed_inputs.first()?;
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(a_swap_in) || !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let forward_b_cur = fb.out_currency;
-    let in_currency_b = fb.in_currency;
-    let out_currency_c = fc.out_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let forward_b = at.add(forward_b_cur).ok()?;
-    let v3c = at.add(fc.pool_address).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let fee_c = fc.swap_fee;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-
-    let take = PlanStep::V4TakeCompact {
-        currency_idx: forward_b,
-        currency_addr: forward_b_cur,
-        recipient_idx: v3c,
-        amount: c_swap_in,
-        seeds_pool: None,
-        repays_flash: Some(fc.pool_address),
-    };
-    let flash_c = PlanStep::FlashSwap {
-        pool_idx: v3c,
-        pool_addr: fc.pool_address,
-        protocol: Prot::V3,
-        zfo: fc.zfo,
-        fee: fee_c,
-        out_currency: out_currency_c,
-        out_amount: out_c,
-        in_currency: forward_b_cur,
-        in_amount: c_swap_in,
-        recipient_idx: SENTINEL_SELF,
-        recipient_pool_addr: None,
-        recipient_pool_repays: false,
-        auto_repay: false,
-        callback: vec![take],
-    };
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: a_swap_in,
-            in_currency: in_currency_a,
-            in_amount: a_swap_in,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: b_swap_in,
-            in_currency: in_currency_b,
-            in_amount: b_swap_in,
-            out_currency: forward_b_cur,
-            out_amount: out_b,
-        },
-        flash_c,
-        PlanStep::V4SettleAll,
-    ];
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
 }
 
 /// The 3-hop V4→V2→V3 facts (`v4v2v3`).
@@ -2925,97 +955,6 @@ pub(crate) fn facts_of_v4v2v3(
     Some(vec![v4_hop_facts(a), v2_hop_facts(b), v3_hop_facts(c)])
 }
 
-/// The 3-hop V4→V2→V3 shape: a V3 (terminal) flash whose callback V4-unlocks
-/// the V4 swap + V2SwapCalc chain, the V2 forward repaying the V3 flash.
-pub(crate) fn derive_3hop_v4v2v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V3
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    if in_currency_a != inputs.weth_address {
-        return None;
-    }
-    let mut at = v4_scaffold_table(inputs);
-    let v3c = at.add(fc.pool_address).ok()?;
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let _ = at.add(fb.out_currency).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let v2b = at.add(fb.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let b_step = mechanics::v2_swap(&mut at, fb, out_b, v3c, Some(fc.pool_address), true)?;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: optimal_input,
-            in_currency: in_currency_a,
-            in_amount: optimal_input,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-            recipient_idx: v2b,
-            amount: out_a,
-            seeds_pool: Some(fb.pool_address),
-            repays_flash: None,
-        },
-        b_step,
-        PlanStep::V4SettleDelta {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-        },
-    ];
-    let plan: Plan = vec![mechanics::v3_flash_to(
-        &mut at,
-        fc,
-        out_c,
-        c_swap_in,
-        false,
-        SENTINEL_SELF,
-        None,
-        false,
-        vec![PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        }],
-    )?];
-    Some((plan, at))
-}
-
 /// The 3-hop V4→V3→V2 facts (`v4v3v2`).
 pub(crate) fn facts_of_v4v3v2(
     path: &PathInfo,
@@ -3030,102 +969,6 @@ pub(crate) fn facts_of_v4v3v2(
         return None;
     };
     Some(vec![v4_hop_facts(a), v3_hop_facts(b), v2_hop_facts(c)])
-}
-
-/// The 3-hop V4→V3→V2 shape: a `V4Unlock` running the V4 swap, then a V3 flash
-/// (its in-poison the V4 forward) whose callback takes that forward out of the
-/// PM to repay the V3 flash and runs a V2SwapCalc to SELF.
-pub(crate) fn derive_3hop_v4v3v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V4
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(b_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let in_currency_a = fa.in_currency;
-    let fwd_b = fb.out_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let v3b = at.add(fb.pool_address).ok()?;
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let _ = at.add(fwd_b).ok()?;
-    let fee_a = fa.swap_fee;
-    let ts_a = fa.tick_spacing;
-    let c0_a = at.add(fa.currency0_address).ok()?;
-    let c1_a = at.add(fa.currency1_address).ok()?;
-    let v2c = at.add(fc.pool_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let take = PlanStep::V4TakeCompact {
-        currency_idx: forward_a,
-        currency_addr: forward_a_cur,
-        recipient_idx: v3b,
-        amount: out_a,
-        seeds_pool: None,
-        repays_flash: Some(fb.pool_address),
-    };
-    let v2step = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-    let flash_b = PlanStep::FlashSwap {
-        pool_idx: v3b,
-        pool_addr: fb.pool_address,
-        protocol: Prot::V3,
-        zfo: fb.zfo,
-        fee: fb.swap_fee,
-        out_currency: fwd_b,
-        out_amount: out_b,
-        in_currency: forward_a_cur,
-        in_amount: b_swap_in,
-        recipient_idx: v2c,
-        recipient_pool_addr: Some(fc.pool_address),
-        recipient_pool_repays: false,
-        auto_repay: false,
-        callback: vec![take, v2step],
-    };
-    let inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0_a,
-            c1_idx: c1_a,
-            fee: fee_a,
-            tick_spacing: ts_a,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fa.zfo,
-            amount: optimal_input,
-            in_currency: in_currency_a,
-            in_amount: optimal_input,
-            out_currency: forward_a_cur,
-            out_amount: out_a,
-        },
-        flash_b,
-        PlanStep::V4SettleDelta {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-        },
-    ];
-    let plan: Plan = vec![PlanStep::V4Unlock {
-        inner,
-        pool_manager_idx: pm_idx,
-    }];
-    Some((plan, at))
 }
 
 /// The 3-hop V2→V2→V4 facts (`v2v2v4`).
@@ -3144,96 +987,6 @@ pub(crate) fn facts_of_v2v2v4(
     Some(vec![v2_hop_facts(a), v2_hop_facts(b), v4_hop_facts(c)])
 }
 
-/// The 3-hop V2→V2→V4 shape: a WETH-funded V4Unlock that seeds V2 pool a,
-/// runs the V2SwapCalc chain into the PM, then the closing V4 swap.
-pub(crate) fn derive_3hop_v2v2v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(c_swap_in) {
-        return None;
-    }
-    let fwd_b = fb.out_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let v2a = at.add(fa.pool_address).ok()?;
-    let v2b = at.add(fb.pool_address).ok()?;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0 = at.add(fc.currency0_address).ok()?;
-    let c1 = at.add(fc.currency1_address).ok()?;
-    let forward_b = at.add(fwd_b).ok()?;
-    let weth = inputs.weth_address;
-
-    let a_step = mechanics::v2_swap(&mut at, fa, out_a, v2b, Some(fb.pool_address), false)?;
-    let b_step = mechanics::v2_swap(&mut at, fb, c_swap_in, pm_idx, None, false)?;
-    let inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_b,
-            currency_addr: fwd_b,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal_input,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        a_step,
-        b_step,
-        PlanStep::V4Settle {
-            currency_addr: fwd_b,
-            amount: c_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0,
-            c1_idx: c1,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        PlanStep::V4Unlock {
-            inner,
-            pool_manager_idx: pm_idx,
-        },
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V2→V4→V4 facts (`v2v4v4`).
 pub(crate) fn facts_of_v2v4v4(
     path: &PathInfo,
@@ -3248,114 +1001,6 @@ pub(crate) fn facts_of_v2v4v4(
         return None;
     };
     Some(vec![v2_hop_facts(a), v4_hop_facts(b), v4_hop_facts(c)])
-}
-
-/// The 3-hop V2→V4→V4 shape: a WETH-funded V4Unlock that seeds V2 pool a (its
-/// forward entering the PM), then two V4 swaps.
-#[expect(clippy::similar_names)]
-pub(crate) fn derive_3hop_v2v4v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V4
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let forward_b_cur = fb.out_currency;
-    let in_currency_b = fb.in_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let c0_c = at.add(fc.currency0_address).ok()?;
-    let c1_c = at.add(fc.currency1_address).ok()?;
-    let v2a = at.add(fa.pool_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let a_step = mechanics::v2_swap(&mut at, fa, b_swap_in, pm_idx, None, false)?;
-    let inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-        },
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal_input,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        a_step,
-        PlanStep::V4Settle {
-            currency_addr: forward_a_cur,
-            amount: b_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: b_swap_in,
-            in_currency: in_currency_b,
-            in_amount: b_swap_in,
-            out_currency: forward_b_cur,
-            out_amount: out_b,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_c,
-            c1_idx: c1_c,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        PlanStep::V4Unlock {
-            inner,
-            pool_manager_idx: pm_idx,
-        },
-    ];
-    Some((plan, at))
 }
 
 /// The 3-hop V2→V3→V4 facts (`v2v3v4`).
@@ -3374,109 +1019,6 @@ pub(crate) fn facts_of_v2v3v4(
     Some(vec![v2_hop_facts(a), v3_hop_facts(b), v4_hop_facts(c)])
 }
 
-/// The 3-hop V2→V3→V4 shape: a V3 flash repaid by the PM (its callback V4-unlocks
-/// the closing V4 swap) and by a V2SwapDirect from pool a.
-pub(crate) fn derive_3hop_v2v3v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let fwd_b = fb.out_currency;
-    let fwd_a = fa.out_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let v2a = at.add(fa.pool_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0 = at.add(fc.currency0_address).ok()?;
-    let c1 = at.add(fc.currency1_address).ok()?;
-    let forward_b = at.add(fwd_b).ok()?;
-    let weth = inputs.weth_address;
-
-    let v4_inner: Plan = vec![
-        PlanStep::V4Settle {
-            currency_addr: fwd_b,
-            amount: c_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0,
-            c1_idx: c1,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal_input,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-            recipient_idx: SENTINEL_SELF,
-            amount: out_c - optimal_input,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4Sync {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let cb: Plan = vec![
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        mechanics::v2_swap_direct(&mut at, fa, out_a, fwd_a, v3b, Some(fb.pool_address), true)?,
-    ];
-    let plan: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_b,
-            currency_addr: fwd_b,
-        },
-        mechanics::v3_flash_to(
-            &mut at, fb, out_b, b_swap_in, false, pm_idx, None, false, cb,
-        )?,
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V3→V2→V4 facts (`v3v2v4`).
 pub(crate) fn facts_of_v3v2v4(
     path: &PathInfo,
@@ -3493,130 +1035,6 @@ pub(crate) fn facts_of_v3v2v4(
     Some(vec![v3_hop_facts(a), v2_hop_facts(b), v4_hop_facts(c)])
 }
 
-/// The 3-hop V3→V2→V4 shape: a WETH-funded V3 flash whose callback runs a V2
-/// flash (auto-repay) whose callback V4-unlocks the closing V4 swap, and repays
-/// the V3 flash from WETH.
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_3hop_v3v2v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V3
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let fwd_b = fb.out_currency;
-    let in_b = fb.in_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let _ = at.add(inputs.pool_manager_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-    let v2b = at.add(fb.pool_address).ok()?;
-    let forward_b = at.add(fwd_b).ok()?;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0 = at.add(fc.currency0_address).ok()?;
-    let c1 = at.add(fc.currency1_address).ok()?;
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let v4_inner: Plan = vec![
-        PlanStep::V4Swap {
-            c0_idx: c0,
-            c1_idx: c1,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-            recipient_idx: SENTINEL_SELF,
-            amount: out_c,
-            seeds_pool: None,
-            repays_flash: None,
-        },
-        PlanStep::V4SettleDelta {
-            currency_idx: forward_b,
-            currency_addr: fwd_b,
-        },
-    ];
-    let v2_flash = PlanStep::FlashSwap {
-        pool_idx: v2b,
-        pool_addr: fb.pool_address,
-        protocol: Prot::V2,
-        zfo: fb.zfo,
-        fee: fb.swap_fee,
-        out_currency: fwd_b,
-        out_amount: out_b,
-        in_currency: in_b,
-        in_amount: b_swap_in,
-        recipient_idx: SENTINEL_SELF,
-        recipient_pool_addr: None,
-        recipient_pool_repays: false,
-        auto_repay: true,
-        callback: vec![PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        }],
-    };
-    let a_cb: Plan = vec![
-        v2_flash,
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v3a,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        mechanics::v3_flash_to(
-            &mut at,
-            fa,
-            out_a,
-            optimal_input,
-            false,
-            v2b,
-            None,
-            false,
-            a_cb,
-        )?,
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V3→V3→V4 facts (`v3v3v4`).
 pub(crate) fn facts_of_v3v3v4(
     path: &PathInfo,
@@ -3631,112 +1049,6 @@ pub(crate) fn facts_of_v3v3v4(
         return None;
     };
     Some(vec![v3_hop_facts(a), v3_hop_facts(b), v4_hop_facts(c)])
-}
-
-/// The 3-hop V3→V3→V4 shape: a V3 flash repaid by the PM whose callback nests
-/// a V3 flash repaid by the first, whose callback V4-unlocks the closing swap.
-pub(crate) fn derive_3hop_v3v3v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V3
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let fwd_b = fb.out_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
-    let forward_b = at.add(fwd_b).ok()?;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0 = at.add(fc.currency0_address).ok()?;
-    let c1 = at.add(fc.currency1_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let v4_inner: Plan = vec![
-        PlanStep::V4Settle {
-            currency_addr: fwd_b,
-            amount: c_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0,
-            c1_idx: c1,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-            recipient_idx: v3a,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let unlock = PlanStep::V4Unlock {
-        inner: v4_inner,
-        pool_manager_idx: pm_idx,
-    };
-    let inner_a = mechanics::v3_flash_to(
-        &mut at,
-        fa,
-        out_a,
-        optimal_input,
-        false,
-        v3b,
-        Some(fb.pool_address),
-        true,
-        vec![unlock],
-    )?;
-    let plan: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_b,
-            currency_addr: fwd_b,
-        },
-        mechanics::v3_flash_to(
-            &mut at,
-            fb,
-            out_b,
-            b_swap_in,
-            false,
-            pm_idx,
-            None,
-            false,
-            vec![inner_a],
-        )?,
-    ];
-    Some((plan, at))
 }
 
 /// The 3-hop V2→V4→V2 facts (`v2v4v2`).
@@ -3774,227 +1086,6 @@ pub(crate) fn facts_of_v2v4v3(
     Some(vec![v2_hop_facts(a), v4_hop_facts(b), v3_hop_facts(c)])
 }
 
-/// The 3-hop V2→V4→V3 shape: a WETH-funded terminal V3 flash whose callback seeds
-/// V2 pool a and V4-unlocks the middle V4 swap (the V4 forward repaying the V3
-/// flash).
-#[expect(clippy::too_many_lines)]
-#[expect(clippy::similar_names)]
-pub(crate) fn derive_3hop_v2v4v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V4
-        || facts[2].prot != Prot::V3
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(v4_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let forward_b_cur = fb.out_currency;
-    let in_currency_b = fb.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let forward_b = at.add(forward_b_cur).ok()?;
-    let v2a = at.add(fa.pool_address).ok()?;
-    let v3c = at.add(fc.pool_address).ok()?;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let a_step = mechanics::v2_swap(&mut at, fa, v4_swap_in, pm_idx, None, false)?;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-        },
-        a_step,
-        PlanStep::V4Settle {
-            currency_addr: forward_a_cur,
-            amount: v4_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: v4_swap_in,
-            in_currency: in_currency_b,
-            in_amount: v4_swap_in,
-            out_currency: forward_b_cur,
-            out_amount: out_b,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: forward_b,
-            currency_addr: forward_b_cur,
-            recipient_idx: v3c,
-            amount: c_swap_in,
-            seeds_pool: None,
-            repays_flash: Some(fc.pool_address),
-        },
-        PlanStep::V4SettleDelta {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-        },
-    ];
-    let c_cb: Plan = vec![
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal_input,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        mechanics::v3_flash_to(
-            &mut at,
-            fc,
-            out_c,
-            c_swap_in,
-            false,
-            SENTINEL_SELF,
-            None,
-            false,
-            c_cb,
-        )?,
-    ];
-    Some((plan, at))
-}
-
-#[expect(clippy::similar_names)]
-pub(crate) fn derive_3hop_v2v4v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V4
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let forward_a_cur = fa.out_currency;
-    let forward_b_cur = fb.out_currency;
-    let in_currency_b = fb.in_currency;
-    let in_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let forward_a = at.add(forward_a_cur).ok()?;
-    let forward_b = at.add(forward_b_cur).ok()?;
-    let v2a = at.add(fa.pool_address).ok()?;
-    let v2c = at.add(fc.pool_address).ok()?;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let a_step = mechanics::v2_swap(&mut at, fa, b_swap_in, pm_idx, None, false)?;
-    let v4_inner: Plan = vec![
-        PlanStep::V4Sync {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-        },
-        a_step,
-        PlanStep::V4Settle {
-            currency_addr: forward_a_cur,
-            amount: b_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: b_swap_in,
-            in_currency: in_currency_b,
-            in_amount: b_swap_in,
-            out_currency: forward_b_cur,
-            out_amount: out_b,
-        },
-        PlanStep::V4TakeCompact {
-            currency_idx: forward_b,
-            currency_addr: forward_b_cur,
-            recipient_idx: v2c,
-            amount: out_b,
-            seeds_pool: None,
-            repays_flash: Some(fc.pool_address),
-        },
-        PlanStep::V4SettleDelta {
-            currency_idx: forward_a,
-            currency_addr: forward_a_cur,
-        },
-    ];
-    let c_cb: Plan = vec![
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal_input,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        mechanics::v2_flash(&mut at, fc, out_c, in_c, c_swap_in, c_cb)?,
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V3→V4→V2 facts (`v3v4v2`).
 pub(crate) fn facts_of_v3v4v2(
     path: &PathInfo,
@@ -4011,116 +1102,6 @@ pub(crate) fn facts_of_v3v4v2(
     Some(vec![v3_hop_facts(a), v4_hop_facts(b), v2_hop_facts(c)])
 }
 
-/// The 3-hop V3→V4→V2 shape: a WETH-funded V3 flash repaid by the PM whose
-/// callback V4-unlocks the middle V4 swap, runs a V2SwapCalc to SELF, and repays
-/// the V3 flash from WETH.
-pub(crate) fn derive_3hop_v3v4v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V3
-        || facts[1].prot != Prot::V4
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(b_swap_in) {
-        return None;
-    }
-    let fwd_a = fa.out_currency;
-    let forward_b_cur = fb.out_currency;
-    let in_currency_b = fb.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-    let v2c = at.add(fc.pool_address).ok()?;
-    let forward_a = at.add(fwd_a).ok()?;
-    let forward_b = at.add(forward_b_cur).ok()?;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let v4_inner: Plan = vec![
-        PlanStep::V4Settle {
-            currency_addr: fwd_a,
-            amount: b_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: b_swap_in,
-            in_currency: in_currency_b,
-            in_amount: b_swap_in,
-            out_currency: forward_b_cur,
-            out_amount: out_b,
-        },
-        PlanStep::V4TakeDelta {
-            currency_idx: forward_b,
-            currency_addr: forward_b_cur,
-            recipient_idx: v2c,
-            seeds_pool: Some(fc.pool_address),
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let c_step = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-    let cb: Plan = vec![
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-        c_step,
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v3a,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        PlanStep::V4Sync {
-            currency_idx: forward_a,
-            currency_addr: fwd_a,
-        },
-        mechanics::v3_flash_to(
-            &mut at,
-            fa,
-            out_a,
-            optimal_input,
-            false,
-            pm_idx,
-            None,
-            false,
-            cb,
-        )?,
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V3→V4→V4 facts (`v3v4v4`).
 pub(crate) fn facts_of_v3v4v4(
     path: &PathInfo,
@@ -4135,162 +1116,6 @@ pub(crate) fn facts_of_v3v4v4(
         return None;
     };
     Some(vec![v3_hop_facts(a), v4_hop_facts(b), v4_hop_facts(c)])
-}
-
-/// The 3-hop V3→V4→V4 shape: a WETH-funded V3 flash repaid by the PM whose
-/// callback V4-unlocks two V4 swaps and takes the terminal WETH delta.
-#[expect(clippy::too_many_lines)]
-pub(crate) fn derive_3hop_v3v4v4(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V3
-        || facts[1].prot != Prot::V4
-        || facts[2].prot != Prot::V4
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal_input = inputs.optimal_input;
-    let out_a = inputs.hop_outputs[0];
-    let out_b = inputs.hop_outputs[1];
-    let out_c = inputs.hop_outputs[2];
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    if !fits_i128(optimal_input) {
-        return None;
-    }
-    let b_swap_in = *inputs.consumed_inputs.get(1)?;
-    let c_swap_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-        return None;
-    }
-    let fwd_a = fa.out_currency;
-    let forward_b_cur = fb.out_currency;
-    let in_currency_b = fb.in_currency;
-    let output_c = fc.out_currency;
-    let in_currency_c = fc.in_currency;
-    let mut at = v4_scaffold_table(inputs);
-    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-    let forward_a = at.add(fwd_a).ok()?;
-    let fee_b = fb.swap_fee;
-    let ts_b = fb.tick_spacing;
-    let fee_c = fc.swap_fee;
-    let ts_c = fc.tick_spacing;
-    let c0_b = at.add(fb.currency0_address).ok()?;
-    let c1_b = at.add(fb.currency1_address).ok()?;
-    let c0_c = at.add(fc.currency0_address).ok()?;
-    let c1_c = at.add(fc.currency1_address).ok()?;
-    let weth = inputs.weth_address;
-
-    let v4_inner: Plan = vec![
-        PlanStep::V4Settle {
-            currency_addr: fwd_a,
-            amount: b_swap_in,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_b,
-            c1_idx: c1_b,
-            fee: fee_b,
-            tick_spacing: ts_b,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fb.zfo,
-            amount: b_swap_in,
-            in_currency: in_currency_b,
-            in_amount: b_swap_in,
-            out_currency: forward_b_cur,
-            out_amount: out_b,
-        },
-        PlanStep::V4Swap {
-            c0_idx: c0_c,
-            c1_idx: c1_c,
-            fee: fee_c,
-            tick_spacing: ts_c,
-            hooks_idx: SENTINEL_NATIVE,
-            zfo: fc.zfo,
-            amount: c_swap_in,
-            in_currency: in_currency_c,
-            in_amount: c_swap_in,
-            out_currency: output_c,
-            out_amount: out_c,
-        },
-        PlanStep::V4TakeDelta {
-            currency_idx: SENTINEL_WETH,
-            currency_addr: weth,
-            recipient_idx: SENTINEL_SELF,
-            seeds_pool: None,
-        },
-        PlanStep::V4SettleAll,
-    ];
-    let cb: Plan = vec![
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v3a,
-            amount: optimal_input,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-        PlanStep::V4Unlock {
-            inner: v4_inner,
-            pool_manager_idx: pm_idx,
-        },
-    ];
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal_input,
-        },
-        PlanStep::V4Sync {
-            currency_idx: forward_a,
-            currency_addr: fwd_a,
-        },
-        mechanics::v3_flash_to(
-            &mut at,
-            fa,
-            out_a,
-            optimal_input,
-            false,
-            pm_idx,
-            None,
-            false,
-            cb,
-        )?,
-    ];
-    Some((plan, at))
-}
-
-pub(crate) fn derive_3hop_v4cross(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3 {
-        return None;
-    }
-    match (facts[0].prot, facts[1].prot, facts[2].prot) {
-        (Prot::V4, Prot::V4, Prot::V4) => derive_3hop_v4v4v4(facts, inputs),
-        (Prot::V4, Prot::V2, Prot::V2) => derive_3hop_v4v2v2(facts, inputs),
-        (Prot::V4, Prot::V2, Prot::V4) => derive_3hop_v4v2v4(facts, inputs),
-        (Prot::V4, Prot::V3, Prot::V3) => derive_3hop_v4v3v3(facts, inputs),
-        (Prot::V4, Prot::V3, Prot::V4) => derive_3hop_v4v3v4(facts, inputs),
-        (Prot::V4, Prot::V4, Prot::V2) => derive_3hop_v4v4v2(facts, inputs),
-        (Prot::V4, Prot::V4, Prot::V3) => derive_3hop_v4v4v3(facts, inputs),
-        (Prot::V4, Prot::V2, Prot::V3) => derive_3hop_v4v2v3(facts, inputs),
-        (Prot::V4, Prot::V3, Prot::V2) => derive_3hop_v4v3v2(facts, inputs),
-        (Prot::V2, Prot::V2, Prot::V4) => derive_3hop_v2v2v4(facts, inputs),
-        (Prot::V2, Prot::V4, Prot::V4) => derive_3hop_v2v4v4(facts, inputs),
-        (Prot::V2, Prot::V3, Prot::V4) => derive_3hop_v2v3v4(facts, inputs),
-        (Prot::V3, Prot::V2, Prot::V4) => derive_3hop_v3v2v4(facts, inputs),
-        (Prot::V3, Prot::V3, Prot::V4) => derive_3hop_v3v3v4(facts, inputs),
-        (Prot::V2, Prot::V4, Prot::V2) => derive_3hop_v2v4v2(facts, inputs),
-        (Prot::V2, Prot::V4, Prot::V3) => derive_3hop_v2v4v3(facts, inputs),
-        (Prot::V3, Prot::V4, Prot::V2) => derive_3hop_v3v4v2(facts, inputs),
-        (Prot::V3, Prot::V4, Prot::V4) => derive_3hop_v3v4v4(facts, inputs),
-        _ => None, // T7: remaining 3-hop V4-crossing shapes arrive as migrated
-    }
 }
 
 /// Build the `v3_v4_v3` Plan from hop facts + inputs, deriving the enclosure
@@ -4393,7 +1218,7 @@ pub fn build_v4v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v4(path, inputs)?;
-    let (plan, at) = derive_2hop_v4v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4406,7 +1231,7 @@ pub fn build_v4v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v3(path, inputs)?;
-    let (plan, at) = derive_2hop_v4v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4432,7 +1257,7 @@ pub fn build_v4v4v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v4v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v4v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4445,7 +1270,7 @@ pub fn build_v4v2v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v2v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v2v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4458,7 +1283,7 @@ pub fn build_v4v2v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v2v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v2v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4471,7 +1296,7 @@ pub fn build_v4v3v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v3v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v3v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4484,7 +1309,7 @@ pub fn build_v4v3v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v3v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v3v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4540,7 +1365,7 @@ pub fn build_v3v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v4(path, inputs)?;
-    let (plan, at) = derive_2hop_v3v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4553,7 +1378,7 @@ pub fn build_v2v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v4(path, inputs)?;
-    let (plan, at) = derive_2hop_v2v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4566,7 +1391,7 @@ pub fn build_v4v4v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v4v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v4v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4579,7 +1404,7 @@ pub fn build_v4v4v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v4v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v4v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4592,7 +1417,7 @@ pub fn build_v4v2v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v2v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v2v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4605,7 +1430,7 @@ pub fn build_v4v3v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v4v3v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v4v3v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4618,7 +1443,7 @@ pub fn build_v2v2v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v2v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v2v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4631,7 +1456,7 @@ pub fn build_v2v4v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v4v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v4v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4666,7 +1491,7 @@ pub fn build_v2v3v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v3v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v3v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4689,7 +1514,7 @@ pub fn build_v3v2v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v2v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v2v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4702,7 +1527,7 @@ pub fn build_v3v3v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v3v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v3v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4715,7 +1540,7 @@ pub fn build_v2v4v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v4v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v4v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4728,7 +1553,7 @@ pub fn build_v2v4v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v4v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v4v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4741,7 +1566,7 @@ pub fn build_v3v4v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v4v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v4v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4754,7 +1579,7 @@ pub fn build_v3v4v4_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v4v4(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v4v4(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -4832,7 +1657,7 @@ pub static DERIVE_PLAN_CALLS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 #[must_use]
-#[expect(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, clippy::similar_names)]
 pub(crate) fn derive_plan(
     facts: &[HopFacts],
     inputs: &ComposerInputs<'_>,
@@ -4949,12 +1774,757 @@ pub(crate) fn derive_plan(
         return Some((plan, at));
     }
     if facts.len() == 2 && facts[0].prot == Prot::V3 && facts[1].prot == Prot::V4 {
-        return derive_2hop_v3v4(facts, inputs);
+        return {
+            if facts.len() != 2 || facts[0].prot != Prot::V3 || facts[1].prot != Prot::V4 {
+                return None;
+            }
+            let (fa, fb) = (&facts[0], &facts[1]);
+            let forward_out = inputs.hop_outputs[0];
+            let v4_out_amount = inputs.hop_outputs[1];
+            if forward_out == 0 || v4_out_amount == 0 {
+                return None;
+            }
+            if !fits_i128(forward_out) || !fits_i128(v4_out_amount) {
+                return None;
+            }
+            let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+            if !fits_i128(v4_swap_in) {
+                return None;
+            }
+            let v4_in_currency = fb.in_currency;
+            let v4_out_currency = fb.out_currency;
+            if v4_out_currency == NATIVE_CURRENCY_ADDRESS {
+                {
+                    let optimal_input = inputs.optimal_input;
+                    let forward_out = inputs.hop_outputs[0];
+                    let v4_out_amount = inputs.hop_outputs[1];
+                    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+                    let weth = inputs.weth_address;
+                    let forward_addr = fa.out_currency;
+                    let v3_in_currency = fa.in_currency;
+                    if v3_in_currency != weth
+                        || forward_addr == NATIVE_CURRENCY_ADDRESS
+                        || v4_in_currency != forward_addr
+                        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
+                    {
+                        return None;
+                    }
+                    let mut at = AddressTable::with_sentinels(
+                        Some(weth),
+                        Some(inputs.executor_address),
+                        Some(inputs.pool_manager_address),
+                    );
+                    let v3_idx = at.add(fa.pool_address).ok()?;
+                    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                    let c0_b = at.add(fb.currency0_address).ok()?;
+                    let c1_b = at.add(fb.currency1_address).ok()?;
+                    let forward_idx = at.add(forward_addr).ok()?;
+                    let weth_idx = SENTINEL_WETH;
+                    let fee_b = fb.swap_fee;
+                    let ts_b = fb.tick_spacing;
+                    let v4_inner: Plan = vec![
+                        PlanStep::V4Sync {
+                            currency_idx: forward_idx,
+                            currency_addr: forward_addr,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: forward_idx,
+                            token_addr: forward_addr,
+                            recipient_idx: pm_idx,
+                            amount: forward_out,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4Settle {
+                            currency_addr: forward_addr,
+                            amount: forward_out,
+                        },
+                        PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: v4_swap_in,
+                            in_currency: forward_addr,
+                            in_amount: v4_swap_in,
+                            out_currency: NATIVE_CURRENCY_ADDRESS,
+                            out_amount: v4_out_amount,
+                        },
+                        PlanStep::V4TakeCompact {
+                            currency_idx: SENTINEL_NATIVE,
+                            currency_addr: NATIVE_CURRENCY_ADDRESS,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: v4_out_amount,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4SettleAll,
+                    ];
+                    let callback: Plan = vec![
+                        PlanStep::V4Unlock {
+                            inner: v4_inner,
+                            pool_manager_idx: pm_idx,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: weth_idx,
+                            token_addr: weth,
+                            recipient_idx: v3_idx,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        },
+                    ];
+                    let plan: Plan = vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal_input,
+                        },
+                        PlanStep::FlashSwap {
+                            pool_idx: v3_idx,
+                            pool_addr: fa.pool_address,
+                            protocol: Prot::V3,
+                            zfo: fa.zfo,
+                            fee: fa.swap_fee,
+                            out_currency: forward_addr,
+                            out_amount: forward_out,
+                            in_currency: weth,
+                            in_amount: optimal_input,
+                            recipient_idx: SENTINEL_SELF,
+                            recipient_pool_addr: None,
+                            recipient_pool_repays: false,
+                            auto_repay: false,
+                            callback,
+                        },
+                    ];
+                    Some((plan, at))
+                }
+            } else if v4_in_currency == NATIVE_CURRENCY_ADDRESS {
+                {
+                    let optimal_input = inputs.optimal_input;
+                    let forward_out = inputs.hop_outputs[0];
+                    let v4_out_amount = inputs.hop_outputs[1];
+                    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+                    let weth = inputs.weth_address;
+                    let tok = fa.in_currency;
+                    if tok == weth || tok == NATIVE_CURRENCY_ADDRESS {
+                        return None;
+                    }
+                    let mut at = AddressTable::with_sentinels(
+                        Some(weth),
+                        Some(inputs.executor_address),
+                        Some(inputs.pool_manager_address),
+                    );
+                    let v3_idx = at.add(fa.pool_address).ok()?;
+                    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                    let c0_b = at.add(fb.currency0_address).ok()?;
+                    let c1_b = at.add(fb.currency1_address).ok()?;
+                    let tok_idx = at.add(tok).ok()?;
+                    let weth_idx = SENTINEL_WETH;
+                    let output_idx = if fb.zfo { c1_b } else { c0_b };
+                    let fee_b = fb.swap_fee;
+                    let ts_b = fb.tick_spacing;
+                    let v4_inner: Plan = vec![
+                        PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: v4_swap_in,
+                            in_currency: NATIVE_CURRENCY_ADDRESS,
+                            in_amount: v4_swap_in,
+                            out_currency: v4_out_currency,
+                            out_amount: v4_out_amount,
+                        },
+                        PlanStep::NativeTransfer { amount: v4_swap_in },
+                        PlanStep::V4SettleDelta {
+                            currency_idx: SENTINEL_NATIVE,
+                            currency_addr: NATIVE_CURRENCY_ADDRESS,
+                        },
+                        PlanStep::V4TakeCompact {
+                            currency_idx: output_idx,
+                            currency_addr: v4_out_currency,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: v4_out_amount,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4SettleAll,
+                    ];
+                    let callback: Plan = vec![
+                        PlanStep::WethWithdraw {
+                            weth_idx,
+                            weth_addr: weth,
+                            amount: forward_out,
+                        },
+                        PlanStep::V4Unlock {
+                            inner: v4_inner,
+                            pool_manager_idx: pm_idx,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: tok_idx,
+                            token_addr: tok,
+                            recipient_idx: v3_idx,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        },
+                    ];
+                    let plan: Plan = vec![
+                        PlanStep::SelfFund {
+                            currency: tok,
+                            amount: optimal_input,
+                        },
+                        PlanStep::FlashSwap {
+                            pool_idx: v3_idx,
+                            pool_addr: fa.pool_address,
+                            protocol: Prot::V3,
+                            zfo: fa.zfo,
+                            fee: fa.swap_fee,
+                            out_currency: weth,
+                            out_amount: forward_out,
+                            in_currency: tok,
+                            in_amount: optimal_input,
+                            recipient_idx: SENTINEL_SELF,
+                            recipient_pool_addr: None,
+                            recipient_pool_repays: false,
+                            auto_repay: false,
+                            callback,
+                        },
+                    ];
+                    Some((plan, at))
+                }
+            } else {
+                {
+                    let optimal_input = inputs.optimal_input;
+                    let forward_out = inputs.hop_outputs[0];
+                    let v4_out_amount = inputs.hop_outputs[1];
+                    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+                    let weth = inputs.weth_address;
+                    let forward_addr = fa.out_currency;
+                    let v3_in_currency = fa.in_currency;
+                    if v3_in_currency != weth
+                        || forward_addr == NATIVE_CURRENCY_ADDRESS
+                        || v4_in_currency != forward_addr
+                    {
+                        return None;
+                    }
+                    let mut at = AddressTable::with_sentinels(
+                        Some(weth),
+                        Some(inputs.executor_address),
+                        Some(inputs.pool_manager_address),
+                    );
+                    let v3_idx = at.add(fa.pool_address).ok()?;
+                    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                    let c0_b = at.add(fb.currency0_address).ok()?;
+                    let c1_b = at.add(fb.currency1_address).ok()?;
+                    let forward_idx = at.add(forward_addr).ok()?;
+                    let weth_idx = SENTINEL_WETH;
+                    let output_idx = if fb.zfo { c1_b } else { c0_b };
+                    let fee_b = fb.swap_fee;
+                    let ts_b = fb.tick_spacing;
+                    let v4_inner: Plan = vec![
+                        PlanStep::V4Sync {
+                            currency_idx: forward_idx,
+                            currency_addr: forward_addr,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: forward_idx,
+                            token_addr: forward_addr,
+                            recipient_idx: pm_idx,
+                            amount: forward_out,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4Settle {
+                            currency_addr: forward_addr,
+                            amount: forward_out,
+                        },
+                        PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: v4_swap_in,
+                            in_currency: forward_addr,
+                            in_amount: v4_swap_in,
+                            out_currency: v4_out_currency,
+                            out_amount: v4_out_amount,
+                        },
+                        PlanStep::V4TakeCompact {
+                            currency_idx: output_idx,
+                            currency_addr: v4_out_currency,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: v4_out_amount,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4SettleAll,
+                    ];
+                    let callback: Plan = vec![
+                        PlanStep::V4Unlock {
+                            inner: v4_inner,
+                            pool_manager_idx: pm_idx,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: weth_idx,
+                            token_addr: weth,
+                            recipient_idx: v3_idx,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        },
+                    ];
+                    let flash = PlanStep::FlashSwap {
+                        pool_idx: v3_idx,
+                        pool_addr: fa.pool_address,
+                        protocol: Prot::V3,
+                        zfo: fa.zfo,
+                        fee: fa.swap_fee,
+                        out_currency: forward_addr,
+                        out_amount: forward_out,
+                        in_currency: weth,
+                        in_amount: optimal_input,
+                        recipient_idx: SENTINEL_SELF,
+                        recipient_pool_addr: None,
+                        recipient_pool_repays: false,
+                        auto_repay: false,
+                        callback,
+                    };
+                    let plan: Plan = if v4_out_currency == weth {
+                        vec![flash]
+                    } else {
+                        vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            flash,
+                        ]
+                    };
+                    Some((plan, at))
+                }
+            }
+        };
     }
     if facts.len() == 2 && facts[0].prot == Prot::V4 {
         return match facts[1].prot {
-            Prot::V4 => derive_2hop_v4v4(facts, inputs),
-            Prot::V3 => derive_2hop_v4v3(facts, inputs),
+            Prot::V4 => {
+                if facts.len() != 2 || facts[0].prot != Prot::V4 || facts[1].prot != Prot::V4 {
+                    return None;
+                }
+                let (fa, fb) = (&facts[0], &facts[1]);
+                let optimal_input = inputs.optimal_input;
+                let forward_out = inputs.hop_outputs[0];
+                let b_out = inputs.hop_outputs[1];
+                if forward_out == 0 || b_out == 0 {
+                    return None;
+                }
+                if !fits_i128(optimal_input) || !fits_i128(forward_out) {
+                    return None;
+                }
+                let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                if !fits_i128(b_swap_in) {
+                    return None;
+                }
+                let weth = inputs.weth_address;
+
+                let mid_currency_a = fa.out_currency;
+                let in_currency_a = fa.in_currency;
+                let out_currency_b = fb.out_currency;
+                let mid_currency_b = fb.in_currency;
+                let bridge = CurrencyBridge::at_boundary(mid_currency_a, mid_currency_b);
+                let currency_gap = bridge.needs_bridge();
+                let out_currency_a = mid_currency_a;
+                let capture = resolve_axes(inputs.opts).1;
+                if capture == ProfitCapture::Native
+                    && out_currency_b != weth
+                    && out_currency_b != NATIVE_CURRENCY_ADDRESS
+                {
+                    return None;
+                }
+
+                let mut at = v4_scaffold_table(inputs);
+                let c0_a = at.add(fa.currency0_address).ok()?;
+                let c1_a = at.add(fa.currency1_address).ok()?;
+                let c0_b = at.add(fb.currency0_address).ok()?;
+                let c1_b = at.add(fb.currency1_address).ok()?;
+                let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                let weth_idx = SENTINEL_WETH;
+
+                let fee_a = fa.swap_fee;
+                let ts_a = fa.tick_spacing;
+                let fee_b = fb.swap_fee;
+                let ts_b = fb.tick_spacing;
+
+                let inner: Plan = if currency_gap {
+                    let (take_currency, settle_currency) = match bridge {
+                        CurrencyBridge::Wrap => (NATIVE_CURRENCY_ADDRESS, weth),
+                        CurrencyBridge::Unwrap => (weth, NATIVE_CURRENCY_ADDRESS),
+                        CurrencyBridge::None => unreachable!("currency_gap implies a bridge"),
+                    };
+                    let take_idx = if take_currency == NATIVE_CURRENCY_ADDRESS {
+                        SENTINEL_NATIVE
+                    } else {
+                        weth_idx
+                    };
+                    let settle_idx = if settle_currency == NATIVE_CURRENCY_ADDRESS {
+                        SENTINEL_NATIVE
+                    } else {
+                        weth_idx
+                    };
+                    let out_idx = if fb.zfo { c1_b } else { c0_b };
+                    vec![
+                        PlanStep::V4Swap {
+                            c0_idx: c0_a,
+                            c1_idx: c1_a,
+                            fee: fee_a,
+                            tick_spacing: ts_a,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fa.zfo,
+                            amount: optimal_input,
+                            in_currency: in_currency_a,
+                            in_amount: optimal_input,
+                            out_currency: out_currency_a,
+                            out_amount: forward_out,
+                        },
+                        PlanStep::V4TakeCompact {
+                            currency_idx: take_idx,
+                            currency_addr: take_currency,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: forward_out,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        match bridge {
+                            CurrencyBridge::Wrap => PlanStep::WethDeposit {
+                                weth_idx,
+                                weth_addr: weth,
+                                amount: forward_out,
+                            },
+                            CurrencyBridge::Unwrap => PlanStep::WethWithdraw {
+                                weth_idx,
+                                weth_addr: weth,
+                                amount: forward_out,
+                            },
+                            CurrencyBridge::None => unreachable!(),
+                        },
+                        PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: b_swap_in,
+                            in_currency: mid_currency_b,
+                            in_amount: b_swap_in,
+                            out_currency: out_currency_b,
+                            out_amount: b_out,
+                        },
+                        PlanStep::V4SettleDelta {
+                            currency_idx: settle_idx,
+                            currency_addr: settle_currency,
+                        },
+                        PlanStep::V4TakeDelta {
+                            currency_idx: out_idx,
+                            currency_addr: out_currency_b,
+                            recipient_idx: SENTINEL_SELF,
+                            seeds_pool: None,
+                        },
+                        PlanStep::V4SettleAll,
+                    ]
+                } else {
+                    let swaps: Vec<PlanStep> = if inputs.opts.use_v4_batch {
+                        vec![PlanStep::V4Batch {
+                            entries: vec![
+                                V4BatchSwap {
+                                    c0_idx: c0_a,
+                                    c1_idx: c1_a,
+                                    fee: fee_a,
+                                    tick_spacing: ts_a,
+                                    hooks_idx: SENTINEL_NATIVE,
+                                    zfo: fa.zfo,
+                                    amount: optimal_input,
+                                    in_currency: in_currency_a,
+                                    in_amount: optimal_input,
+                                    out_currency: out_currency_a,
+                                    out_amount: forward_out,
+                                },
+                                V4BatchSwap {
+                                    c0_idx: c0_b,
+                                    c1_idx: c1_b,
+                                    fee: fee_b,
+                                    tick_spacing: ts_b,
+                                    hooks_idx: SENTINEL_NATIVE,
+                                    zfo: fb.zfo,
+                                    amount: b_swap_in,
+                                    in_currency: out_currency_a,
+                                    in_amount: b_swap_in,
+                                    out_currency: out_currency_b,
+                                    out_amount: b_out,
+                                },
+                            ],
+                        }]
+                    } else {
+                        vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: optimal_input,
+                                in_currency: in_currency_a,
+                                in_amount: optimal_input,
+                                out_currency: out_currency_a,
+                                out_amount: forward_out,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: b_swap_in,
+                                in_currency: out_currency_a,
+                                in_amount: b_swap_in,
+                                out_currency: out_currency_b,
+                                out_amount: b_out,
+                            },
+                        ]
+                    };
+                    let out_idx = if fb.zfo { c1_b } else { c0_b };
+                    let capture_steps: Vec<PlanStep> =
+                        if capture == ProfitCapture::Erc6909 && out_currency_b == weth {
+                            let profit = b_out.saturating_sub(optimal_input);
+                            if profit > 0 {
+                                vec![PlanStep::V4Mint {
+                                    currency_idx: weth_idx,
+                                    currency_addr: weth,
+                                    recipient_idx: SENTINEL_SELF,
+                                    amount: profit,
+                                }]
+                            } else {
+                                vec![]
+                            }
+                        } else if !inputs.opts.use_v4_batch
+                            || (out_currency_b != NATIVE_CURRENCY_ADDRESS && out_currency_b != weth)
+                        {
+                            vec![PlanStep::V4TakeDelta {
+                                currency_idx: out_idx,
+                                currency_addr: out_currency_b,
+                                recipient_idx: SENTINEL_SELF,
+                                seeds_pool: None,
+                            }]
+                        } else {
+                            vec![]
+                        };
+                    let native_withdraw: Vec<PlanStep> =
+                        if capture == ProfitCapture::Native && out_currency_b == weth {
+                            vec![PlanStep::WethWithdraw {
+                                weth_idx,
+                                weth_addr: weth,
+                                amount: b_out.saturating_sub(optimal_input),
+                            }]
+                        } else {
+                            vec![]
+                        };
+                    swaps
+                        .into_iter()
+                        .chain(capture_steps)
+                        .chain(native_withdraw)
+                        .chain(std::iter::once(PlanStep::V4SettleAll))
+                        .collect()
+                };
+                let plan: Plan = vec![PlanStep::V4Unlock {
+                    inner,
+                    pool_manager_idx: pm_idx,
+                }];
+                Some((plan, at))
+            }
+            Prot::V3 => {
+                if facts.len() != 2 || facts[0].prot != Prot::V4 || facts[1].prot != Prot::V3 {
+                    return None;
+                }
+                let (fa, fb) = (&facts[0], &facts[1]);
+                let optimal_input = inputs.optimal_input;
+                let forward_out = inputs.hop_outputs[0];
+                let weth_out = inputs.hop_outputs[1];
+                if forward_out == 0 || weth_out == 0 {
+                    return None;
+                }
+                if !fits_i128(optimal_input) || !fits_i128(forward_out) {
+                    return None;
+                }
+                let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                if !fits_i128(b_swap_in) {
+                    return None;
+                }
+                let weth = inputs.weth_address;
+
+                let out_currency_a = fa.out_currency;
+                let in_currency_a = fa.in_currency;
+                let v4_out_native = out_currency_a == NATIVE_CURRENCY_ADDRESS;
+                let out_currency_b = fb.out_currency;
+                if v4_out_native {
+                    let in_currency_b = fb.in_currency;
+                    if in_currency_b != weth {
+                        return None;
+                    }
+                    if in_currency_a == NATIVE_CURRENCY_ADDRESS || in_currency_a == weth {
+                        return None;
+                    }
+                } else if in_currency_a != weth && in_currency_a != NATIVE_CURRENCY_ADDRESS {
+                    return None;
+                }
+
+                let mut at = AddressTable::with_sentinels(
+                    Some(weth),
+                    Some(inputs.executor_address),
+                    Some(inputs.pool_manager_address),
+                );
+                let c0_a = at.add(fa.currency0_address).ok()?;
+                let c1_a = at.add(fa.currency1_address).ok()?;
+                let v3_idx = at.add(fb.pool_address).ok()?;
+                let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                let weth_idx = SENTINEL_WETH;
+                let forward_idx = if fa.zfo { c1_a } else { c0_a };
+
+                let fee_a = fa.swap_fee;
+                let ts_a = fa.tick_spacing;
+                let v4_in_native = in_currency_a == NATIVE_CURRENCY_ADDRESS;
+                let input_idx = if fa.zfo { c0_a } else { c1_a };
+
+                let mut inner: Plan = vec![PlanStep::V4Swap {
+                    c0_idx: c0_a,
+                    c1_idx: c1_a,
+                    fee: fee_a,
+                    tick_spacing: ts_a,
+                    hooks_idx: SENTINEL_NATIVE,
+                    zfo: fa.zfo,
+                    amount: optimal_input,
+                    in_currency: in_currency_a,
+                    in_amount: optimal_input,
+                    out_currency: out_currency_a,
+                    out_amount: forward_out,
+                }];
+                if v4_out_native {
+                    inner.extend([
+                        PlanStep::V4TakeCompact {
+                            currency_idx: SENTINEL_NATIVE,
+                            currency_addr: NATIVE_CURRENCY_ADDRESS,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: forward_out,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::WethDeposit {
+                            weth_idx,
+                            weth_addr: weth,
+                            amount: forward_out,
+                        },
+                        PlanStep::FlashSwap {
+                            pool_idx: v3_idx,
+                            pool_addr: fb.pool_address,
+                            protocol: Prot::V3,
+                            zfo: fb.zfo,
+                            fee: fb.swap_fee,
+                            out_currency: out_currency_b,
+                            out_amount: weth_out,
+                            in_currency: weth,
+                            in_amount: b_swap_in,
+                            recipient_idx: SENTINEL_SELF,
+                            recipient_pool_addr: None,
+                            recipient_pool_repays: false,
+                            auto_repay: true,
+                            callback: vec![],
+                        },
+                        PlanStep::V4SettleDelta {
+                            currency_idx: input_idx,
+                            currency_addr: in_currency_a,
+                        },
+                        PlanStep::V4SettleAll,
+                    ]);
+                } else {
+                    inner.extend([
+                        PlanStep::V4TakeCompact {
+                            currency_idx: forward_idx,
+                            currency_addr: out_currency_a,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: forward_out,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::FlashSwap {
+                            pool_idx: v3_idx,
+                            pool_addr: fb.pool_address,
+                            protocol: Prot::V3,
+                            zfo: fb.zfo,
+                            fee: fb.swap_fee,
+                            out_currency: out_currency_b,
+                            out_amount: weth_out,
+                            in_currency: out_currency_a,
+                            in_amount: b_swap_in,
+                            recipient_idx: SENTINEL_SELF,
+                            recipient_pool_addr: None,
+                            recipient_pool_repays: false,
+                            auto_repay: true,
+                            callback: vec![],
+                        },
+                        PlanStep::V4SettleDelta {
+                            currency_idx: weth_idx,
+                            currency_addr: weth,
+                        },
+                        PlanStep::V4SettleAll,
+                    ]);
+                    if v4_in_native {
+                        let settle_all = inner.pop()?;
+                        inner.pop();
+                        inner.extend([
+                            PlanStep::WethWithdraw {
+                                weth_idx,
+                                weth_addr: weth,
+                                amount: optimal_input,
+                            },
+                            PlanStep::NativeTransfer {
+                                amount: optimal_input,
+                            },
+                            PlanStep::V4SettleDelta {
+                                currency_idx: SENTINEL_NATIVE,
+                                currency_addr: NATIVE_CURRENCY_ADDRESS,
+                            },
+                            settle_all,
+                        ]);
+                    }
+                    let _ = input_idx;
+                }
+                let plan: Plan = if out_currency_b == weth {
+                    vec![PlanStep::V4Unlock {
+                        inner,
+                        pool_manager_idx: pm_idx,
+                    }]
+                } else {
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal_input,
+                        },
+                        PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        },
+                    ]
+                };
+                Some((plan, at))
+            }
             Prot::V2 => {
                 // ── v4v2 (folded from derive_2hop_v4v2; ADR-031 D6)
                 let (fa, fb) = (&facts[0], &facts[1]);
@@ -5583,11 +3153,2240 @@ pub(crate) fn derive_plan(
                     at,
                 ));
             }
-            _ => derive_3hop_v4cross(facts, inputs),
+            _ => {
+                if facts.len() != 3 {
+                    return None;
+                }
+                match (facts[0].prot, facts[1].prot, facts[2].prot) {
+                    (Prot::V4, Prot::V4, Prot::V4) => {
+                        if facts.len() != 3 || facts.iter().any(|f| f.prot != Prot::V4) {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if out_a == 0 || out_b == 0 || out_c == 0 {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let a_swap_in = *inputs.consumed_inputs.first()?;
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(a_swap_in) || !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let mid_a_out = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let mid_b_out = fb.out_currency;
+                        let mid_b_in = fb.in_currency;
+                        let output_c = fc.out_currency;
+                        let mid_c_in = fc.in_currency;
+                        let weth = inputs.weth_address;
+                        let capture = resolve_axes(inputs.opts).1;
+                        if native_capture_declines(capture, output_c, weth) {
+                            return None;
+                        }
+                        let bridge_ab = CurrencyBridge::at_boundary(mid_a_out, mid_b_in);
+                        let bridge_bc = CurrencyBridge::at_boundary(mid_b_out, mid_c_in);
+                        let any_gap = bridge_ab.needs_bridge() || bridge_bc.needs_bridge();
+
+                        let mut at = v4_scaffold_table(inputs);
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let c0_c = at.add(fc.currency0_address).ok()?;
+                        let c1_c = at.add(fc.currency1_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+
+                        let profit = out_c.saturating_sub(optimal_input);
+                        let terminal_idx = if output_c == weth {
+                            SENTINEL_WETH
+                        } else if output_c == NATIVE_CURRENCY_ADDRESS {
+                            SENTINEL_NATIVE
+                        } else {
+                            at.add(output_c).ok()?
+                        };
+
+                        let v4swap_a = PlanStep::V4Swap {
+                            c0_idx: c0_a,
+                            c1_idx: c1_a,
+                            fee: fee_a,
+                            tick_spacing: ts_a,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fa.zfo,
+                            amount: a_swap_in,
+                            in_currency: in_currency_a,
+                            in_amount: a_swap_in,
+                            out_currency: mid_a_out,
+                            out_amount: out_a,
+                        };
+                        let v4swap_b = PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: b_swap_in,
+                            in_currency: mid_b_in,
+                            in_amount: b_swap_in,
+                            out_currency: mid_b_out,
+                            out_amount: out_b,
+                        };
+                        let v4swap_c = PlanStep::V4Swap {
+                            c0_idx: c0_c,
+                            c1_idx: c1_c,
+                            fee: fee_c,
+                            tick_spacing: ts_c,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fc.zfo,
+                            amount: c_swap_in,
+                            in_currency: mid_c_in,
+                            in_amount: c_swap_in,
+                            out_currency: output_c,
+                            out_amount: out_c,
+                        };
+
+                        let mut inner: Plan = if inputs.opts.use_v4_batch && !any_gap {
+                            let mut steps = vec![PlanStep::V4Batch {
+                                entries: vec![
+                                    V4BatchSwap {
+                                        c0_idx: c0_a,
+                                        c1_idx: c1_a,
+                                        fee: fee_a,
+                                        tick_spacing: ts_a,
+                                        hooks_idx: SENTINEL_NATIVE,
+                                        zfo: fa.zfo,
+                                        amount: a_swap_in,
+                                        in_currency: in_currency_a,
+                                        in_amount: a_swap_in,
+                                        out_currency: mid_a_out,
+                                        out_amount: out_a,
+                                    },
+                                    V4BatchSwap {
+                                        c0_idx: c0_b,
+                                        c1_idx: c1_b,
+                                        fee: fee_b,
+                                        tick_spacing: ts_b,
+                                        hooks_idx: SENTINEL_NATIVE,
+                                        zfo: fb.zfo,
+                                        amount: b_swap_in,
+                                        in_currency: mid_b_in,
+                                        in_amount: b_swap_in,
+                                        out_currency: mid_b_out,
+                                        out_amount: out_b,
+                                    },
+                                    V4BatchSwap {
+                                        c0_idx: c0_c,
+                                        c1_idx: c1_c,
+                                        fee: fee_c,
+                                        tick_spacing: ts_c,
+                                        hooks_idx: SENTINEL_NATIVE,
+                                        zfo: fc.zfo,
+                                        amount: c_swap_in,
+                                        in_currency: mid_c_in,
+                                        in_amount: c_swap_in,
+                                        out_currency: output_c,
+                                        out_amount: out_c,
+                                    },
+                                ],
+                            }];
+                            if output_c != NATIVE_CURRENCY_ADDRESS && output_c != weth {
+                                steps.push(PlanStep::V4TakeDelta {
+                                    currency_idx: terminal_idx,
+                                    currency_addr: output_c,
+                                    recipient_idx: SENTINEL_SELF,
+                                    seeds_pool: None,
+                                });
+                            }
+                            steps
+                        } else {
+                            let mut steps = vec![v4swap_a];
+                            if bridge_ab.needs_bridge() {
+                                let (bridge_steps, settle_idx, settle_currency) =
+                                    v4_bridge_steps(bridge_ab, weth, out_a);
+                                steps.extend(bridge_steps);
+                                steps.push(v4swap_b);
+                                steps.push(PlanStep::V4SettleDelta {
+                                    currency_idx: settle_idx,
+                                    currency_addr: settle_currency,
+                                });
+                            } else {
+                                steps.push(v4swap_b);
+                            }
+                            if bridge_bc.needs_bridge() {
+                                let (bridge_steps, settle_idx, settle_currency) =
+                                    v4_bridge_steps(bridge_bc, weth, out_b);
+                                steps.extend(bridge_steps);
+                                steps.push(v4swap_c);
+                                steps.push(PlanStep::V4SettleDelta {
+                                    currency_idx: settle_idx,
+                                    currency_addr: settle_currency,
+                                });
+                            } else {
+                                steps.push(v4swap_c);
+                            }
+                            steps
+                        };
+                        inner.append(&mut v4_terminal_capture_steps(
+                            output_c,
+                            terminal_idx,
+                            capture,
+                            inputs.opts.use_v4_batch,
+                            any_gap,
+                            profit,
+                            weth,
+                        ));
+                        inner.push(PlanStep::V4SettleAll);
+
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V2, Prot::V2) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V2
+                            || facts[2].prot != Prot::V2
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let b_out = inputs.hop_outputs[1];
+                        let c_out = inputs.hop_outputs[2];
+                        if out_a == 0 || inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let weth = inputs.weth_address;
+                        if in_currency_a != weth {
+                            return None;
+                        }
+                        let mut at = v4_scaffold_table(inputs);
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let v2b = at.add(fb.pool_address).ok()?;
+                        let v2c = at.add(fc.pool_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+
+                        let b_step = mechanics::v2_swap(
+                            &mut at,
+                            fb,
+                            b_out,
+                            v2c,
+                            Some(fc.pool_address),
+                            false,
+                        )?;
+                        let c_step =
+                            mechanics::v2_swap(&mut at, fc, c_out, SENTINEL_SELF, None, false)?;
+                        let inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: optimal_input,
+                                in_currency: in_currency_a,
+                                in_amount: optimal_input,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                                recipient_idx: v2b,
+                                amount: out_a,
+                                seeds_pool: Some(fb.pool_address),
+                                repays_flash: None,
+                            },
+                            b_step,
+                            c_step,
+                            PlanStep::V4SettleDelta {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                            },
+                        ];
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V2, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V2
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let b_out = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if out_a == 0 || inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let b_forward_cur = fb.out_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let _ = at.add(b_forward_cur).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let c0_c = at.add(fc.currency0_address).ok()?;
+                        let c1_c = at.add(fc.currency1_address).ok()?;
+                        let v2b = at.add(fb.pool_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+
+                        let b_step =
+                            mechanics::v2_swap(&mut at, fb, b_out, SENTINEL_SELF, None, false)?;
+                        let inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: optimal_input,
+                                in_currency: in_currency_a,
+                                in_amount: optimal_input,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                                recipient_idx: v2b,
+                                amount: out_a,
+                                seeds_pool: Some(fb.pool_address),
+                                repays_flash: None,
+                            },
+                            b_step,
+                            PlanStep::V4Swap {
+                                c0_idx: c0_c,
+                                c1_idx: c1_c,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V3, Prot::V3) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V3
+                            || facts[2].prot != Prot::V3
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let _ = at.add(inputs.pool_manager_address).ok()?;
+                        let v3b = at.add(fb.pool_address).ok()?;
+                        let v3c = at.add(fc.pool_address).ok()?;
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let inner_take = PlanStep::V4TakeCompact {
+                            currency_idx: forward_a,
+                            currency_addr: forward_a_cur,
+                            recipient_idx: v3b,
+                            amount: out_a,
+                            seeds_pool: None,
+                            repays_flash: Some(fb.pool_address),
+                        };
+                        let inner_b = mechanics::v3_flash_to(
+                            &mut at,
+                            fb,
+                            out_b,
+                            b_swap_in,
+                            false,
+                            v3c,
+                            Some(fc.pool_address),
+                            true,
+                            vec![inner_take],
+                        )?;
+                        let outer_c = mechanics::v3_flash_to(
+                            &mut at,
+                            fc,
+                            out_c,
+                            c_swap_in,
+                            false,
+                            SENTINEL_SELF,
+                            None,
+                            false,
+                            vec![inner_b],
+                        )?;
+                        let inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: optimal_input,
+                                in_currency: in_currency_a,
+                                in_amount: optimal_input,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            outer_c,
+                            PlanStep::V4SettleDelta {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                            },
+                        ];
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V3, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V3
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let fwd_b = fb.out_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let v3b = at.add(fb.pool_address).ok()?;
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let forward_b = at.add(fwd_b).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let c0_c = at.add(fc.currency0_address).ok()?;
+                        let c1_c = at.add(fc.currency1_address).ok()?;
+
+                        let take = PlanStep::V4TakeCompact {
+                            currency_idx: forward_a,
+                            currency_addr: forward_a_cur,
+                            recipient_idx: v3b,
+                            amount: out_a,
+                            seeds_pool: None,
+                            repays_flash: Some(fb.pool_address),
+                        };
+                        let flash_b = mechanics::v3_flash_to(
+                            &mut at,
+                            fb,
+                            out_b,
+                            b_swap_in,
+                            false,
+                            pm_idx,
+                            None,
+                            false,
+                            vec![take],
+                        )?;
+                        let inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: optimal_input,
+                                in_currency: in_currency_a,
+                                in_amount: optimal_input,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            PlanStep::V4Sync {
+                                currency_idx: forward_b,
+                                currency_addr: fwd_b,
+                            },
+                            flash_b,
+                            PlanStep::V4Settle {
+                                currency_addr: fwd_b,
+                                amount: out_b,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_c,
+                                c1_idx: c1_c,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V4, Prot::V2) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V4
+                            || facts[2].prot != Prot::V2
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let a_swap_in = *inputs.consumed_inputs.first()?;
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        if !fits_i128(a_swap_in) || !fits_i128(b_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let forward_b_cur = fb.out_currency;
+                        let in_currency_b = fb.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let forward_b = at.add(forward_b_cur).ok()?;
+                        let v2c = at.add(fc.pool_address).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+
+                        let v2step =
+                            mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
+                        let inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: a_swap_in,
+                                in_currency: in_currency_a,
+                                in_amount: a_swap_in,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: b_swap_in,
+                                in_currency: in_currency_b,
+                                in_amount: b_swap_in,
+                                out_currency: forward_b_cur,
+                                out_amount: out_b,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: forward_b,
+                                currency_addr: forward_b_cur,
+                                recipient_idx: v2c,
+                                amount: out_b,
+                                seeds_pool: Some(fc.pool_address),
+                                repays_flash: None,
+                            },
+                            v2step,
+                            PlanStep::V4SettleAll,
+                        ];
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V4, Prot::V3) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V4
+                            || facts[2].prot != Prot::V3
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let a_swap_in = *inputs.consumed_inputs.first()?;
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(a_swap_in) || !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let forward_b_cur = fb.out_currency;
+                        let in_currency_b = fb.in_currency;
+                        let out_currency_c = fc.out_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let forward_b = at.add(forward_b_cur).ok()?;
+                        let v3c = at.add(fc.pool_address).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let fee_c = fc.swap_fee;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+
+                        let take = PlanStep::V4TakeCompact {
+                            currency_idx: forward_b,
+                            currency_addr: forward_b_cur,
+                            recipient_idx: v3c,
+                            amount: c_swap_in,
+                            seeds_pool: None,
+                            repays_flash: Some(fc.pool_address),
+                        };
+                        let flash_c = PlanStep::FlashSwap {
+                            pool_idx: v3c,
+                            pool_addr: fc.pool_address,
+                            protocol: Prot::V3,
+                            zfo: fc.zfo,
+                            fee: fee_c,
+                            out_currency: out_currency_c,
+                            out_amount: out_c,
+                            in_currency: forward_b_cur,
+                            in_amount: c_swap_in,
+                            recipient_idx: SENTINEL_SELF,
+                            recipient_pool_addr: None,
+                            recipient_pool_repays: false,
+                            auto_repay: false,
+                            callback: vec![take],
+                        };
+                        let inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: a_swap_in,
+                                in_currency: in_currency_a,
+                                in_amount: a_swap_in,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: b_swap_in,
+                                in_currency: in_currency_b,
+                                in_amount: b_swap_in,
+                                out_currency: forward_b_cur,
+                                out_amount: out_b,
+                            },
+                            flash_c,
+                            PlanStep::V4SettleAll,
+                        ];
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V2, Prot::V3) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V2
+                            || facts[2].prot != Prot::V3
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        if in_currency_a != inputs.weth_address {
+                            return None;
+                        }
+                        let mut at = v4_scaffold_table(inputs);
+                        let v3c = at.add(fc.pool_address).ok()?;
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let _ = at.add(fb.out_currency).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let v2b = at.add(fb.pool_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let b_step = mechanics::v2_swap(
+                            &mut at,
+                            fb,
+                            out_b,
+                            v3c,
+                            Some(fc.pool_address),
+                            true,
+                        )?;
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: optimal_input,
+                                in_currency: in_currency_a,
+                                in_amount: optimal_input,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                                recipient_idx: v2b,
+                                amount: out_a,
+                                seeds_pool: Some(fb.pool_address),
+                                repays_flash: None,
+                            },
+                            b_step,
+                            PlanStep::V4SettleDelta {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                            },
+                        ];
+                        let plan: Plan = vec![mechanics::v3_flash_to(
+                            &mut at,
+                            fc,
+                            out_c,
+                            c_swap_in,
+                            false,
+                            SENTINEL_SELF,
+                            None,
+                            false,
+                            vec![PlanStep::V4Unlock {
+                                inner: v4_inner,
+                                pool_manager_idx: pm_idx,
+                            }],
+                        )?];
+                        Some((plan, at))
+                    }
+                    (Prot::V4, Prot::V3, Prot::V2) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V4
+                            || facts[1].prot != Prot::V3
+                            || facts[2].prot != Prot::V2
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        if !fits_i128(b_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let in_currency_a = fa.in_currency;
+                        let fwd_b = fb.out_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let v3b = at.add(fb.pool_address).ok()?;
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let _ = at.add(fwd_b).ok()?;
+                        let fee_a = fa.swap_fee;
+                        let ts_a = fa.tick_spacing;
+                        let c0_a = at.add(fa.currency0_address).ok()?;
+                        let c1_a = at.add(fa.currency1_address).ok()?;
+                        let v2c = at.add(fc.pool_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let take = PlanStep::V4TakeCompact {
+                            currency_idx: forward_a,
+                            currency_addr: forward_a_cur,
+                            recipient_idx: v3b,
+                            amount: out_a,
+                            seeds_pool: None,
+                            repays_flash: Some(fb.pool_address),
+                        };
+                        let v2step =
+                            mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
+                        let flash_b = PlanStep::FlashSwap {
+                            pool_idx: v3b,
+                            pool_addr: fb.pool_address,
+                            protocol: Prot::V3,
+                            zfo: fb.zfo,
+                            fee: fb.swap_fee,
+                            out_currency: fwd_b,
+                            out_amount: out_b,
+                            in_currency: forward_a_cur,
+                            in_amount: b_swap_in,
+                            recipient_idx: v2c,
+                            recipient_pool_addr: Some(fc.pool_address),
+                            recipient_pool_repays: false,
+                            auto_repay: false,
+                            callback: vec![take, v2step],
+                        };
+                        let inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0_a,
+                                c1_idx: c1_a,
+                                fee: fee_a,
+                                tick_spacing: ts_a,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fa.zfo,
+                                amount: optimal_input,
+                                in_currency: in_currency_a,
+                                in_amount: optimal_input,
+                                out_currency: forward_a_cur,
+                                out_amount: out_a,
+                            },
+                            flash_b,
+                            PlanStep::V4SettleDelta {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                            },
+                        ];
+                        let plan: Plan = vec![PlanStep::V4Unlock {
+                            inner,
+                            pool_manager_idx: pm_idx,
+                        }];
+                        Some((plan, at))
+                    }
+                    (Prot::V2, Prot::V2, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V2
+                            || facts[1].prot != Prot::V2
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let fwd_b = fb.out_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let v2a = at.add(fa.pool_address).ok()?;
+                        let v2b = at.add(fb.pool_address).ok()?;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0 = at.add(fc.currency0_address).ok()?;
+                        let c1 = at.add(fc.currency1_address).ok()?;
+                        let forward_b = at.add(fwd_b).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let a_step = mechanics::v2_swap(
+                            &mut at,
+                            fa,
+                            out_a,
+                            v2b,
+                            Some(fb.pool_address),
+                            false,
+                        )?;
+                        let b_step =
+                            mechanics::v2_swap(&mut at, fb, c_swap_in, pm_idx, None, false)?;
+                        let inner: Plan = vec![
+                            PlanStep::V4Sync {
+                                currency_idx: forward_b,
+                                currency_addr: fwd_b,
+                            },
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: v2a,
+                                amount: optimal_input,
+                                seeds_pool: Some(fa.pool_address),
+                                repays_flash: None,
+                            },
+                            a_step,
+                            b_step,
+                            PlanStep::V4Settle {
+                                currency_addr: fwd_b,
+                                amount: c_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0,
+                                c1_idx: c1,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            PlanStep::V4Unlock {
+                                inner,
+                                pool_manager_idx: pm_idx,
+                            },
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V2, Prot::V4, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V2
+                            || facts[1].prot != Prot::V4
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let forward_b_cur = fb.out_currency;
+                        let in_currency_b = fb.in_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let c0_c = at.add(fc.currency0_address).ok()?;
+                        let c1_c = at.add(fc.currency1_address).ok()?;
+                        let v2a = at.add(fa.pool_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let a_step =
+                            mechanics::v2_swap(&mut at, fa, b_swap_in, pm_idx, None, false)?;
+                        let inner: Plan = vec![
+                            PlanStep::V4Sync {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                            },
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: v2a,
+                                amount: optimal_input,
+                                seeds_pool: Some(fa.pool_address),
+                                repays_flash: None,
+                            },
+                            a_step,
+                            PlanStep::V4Settle {
+                                currency_addr: forward_a_cur,
+                                amount: b_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: b_swap_in,
+                                in_currency: in_currency_b,
+                                in_amount: b_swap_in,
+                                out_currency: forward_b_cur,
+                                out_amount: out_b,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_c,
+                                c1_idx: c1_c,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            PlanStep::V4Unlock {
+                                inner,
+                                pool_manager_idx: pm_idx,
+                            },
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V2, Prot::V3, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V2
+                            || facts[1].prot != Prot::V3
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let fwd_b = fb.out_currency;
+                        let fwd_a = fa.out_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let v2a = at.add(fa.pool_address).ok()?;
+                        let v3b = at.add(fb.pool_address).ok()?;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0 = at.add(fc.currency0_address).ok()?;
+                        let c1 = at.add(fc.currency1_address).ok()?;
+                        let forward_b = at.add(fwd_b).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Settle {
+                                currency_addr: fwd_b,
+                                amount: c_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0,
+                                c1_idx: c1,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                                recipient_idx: v2a,
+                                amount: optimal_input,
+                                seeds_pool: Some(fa.pool_address),
+                                repays_flash: None,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                                recipient_idx: SENTINEL_SELF,
+                                amount: out_c - optimal_input,
+                                seeds_pool: None,
+                                repays_flash: None,
+                            },
+                            PlanStep::V4Sync {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let cb: Plan = vec![
+                            PlanStep::V4Unlock {
+                                inner: v4_inner,
+                                pool_manager_idx: pm_idx,
+                            },
+                            mechanics::v2_swap_direct(
+                                &mut at,
+                                fa,
+                                out_a,
+                                fwd_a,
+                                v3b,
+                                Some(fb.pool_address),
+                                true,
+                            )?,
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::V4Sync {
+                                currency_idx: forward_b,
+                                currency_addr: fwd_b,
+                            },
+                            mechanics::v3_flash_to(
+                                &mut at, fb, out_b, b_swap_in, false, pm_idx, None, false, cb,
+                            )?,
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V3, Prot::V2, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V3
+                            || facts[1].prot != Prot::V2
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let fwd_b = fb.out_currency;
+                        let in_b = fb.in_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let _ = at.add(inputs.pool_manager_address).ok()?;
+                        let v3a = at.add(fa.pool_address).ok()?;
+                        let v2b = at.add(fb.pool_address).ok()?;
+                        let forward_b = at.add(fwd_b).ok()?;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0 = at.add(fc.currency0_address).ok()?;
+                        let c1 = at.add(fc.currency1_address).ok()?;
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Swap {
+                                c0_idx: c0,
+                                c1_idx: c1,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                                recipient_idx: SENTINEL_SELF,
+                                amount: out_c,
+                                seeds_pool: None,
+                                repays_flash: None,
+                            },
+                            PlanStep::V4SettleDelta {
+                                currency_idx: forward_b,
+                                currency_addr: fwd_b,
+                            },
+                        ];
+                        let v2_flash = PlanStep::FlashSwap {
+                            pool_idx: v2b,
+                            pool_addr: fb.pool_address,
+                            protocol: Prot::V2,
+                            zfo: fb.zfo,
+                            fee: fb.swap_fee,
+                            out_currency: fwd_b,
+                            out_amount: out_b,
+                            in_currency: in_b,
+                            in_amount: b_swap_in,
+                            recipient_idx: SENTINEL_SELF,
+                            recipient_pool_addr: None,
+                            recipient_pool_repays: false,
+                            auto_repay: true,
+                            callback: vec![PlanStep::V4Unlock {
+                                inner: v4_inner,
+                                pool_manager_idx: pm_idx,
+                            }],
+                        };
+                        let a_cb: Plan = vec![
+                            v2_flash,
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: v3a,
+                                amount: optimal_input,
+                                seeds_pool: None,
+                                repays_flash: Some(fa.pool_address),
+                            },
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            mechanics::v3_flash_to(
+                                &mut at,
+                                fa,
+                                out_a,
+                                optimal_input,
+                                false,
+                                v2b,
+                                None,
+                                false,
+                                a_cb,
+                            )?,
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V3, Prot::V3, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V3
+                            || facts[1].prot != Prot::V3
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let fwd_b = fb.out_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let v3a = at.add(fa.pool_address).ok()?;
+                        let v3b = at.add(fb.pool_address).ok()?;
+                        let forward_b = at.add(fwd_b).ok()?;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0 = at.add(fc.currency0_address).ok()?;
+                        let c1 = at.add(fc.currency1_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Settle {
+                                currency_addr: fwd_b,
+                                amount: c_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0,
+                                c1_idx: c1,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                                recipient_idx: v3a,
+                                amount: optimal_input,
+                                seeds_pool: None,
+                                repays_flash: Some(fa.pool_address),
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let unlock = PlanStep::V4Unlock {
+                            inner: v4_inner,
+                            pool_manager_idx: pm_idx,
+                        };
+                        let inner_a = mechanics::v3_flash_to(
+                            &mut at,
+                            fa,
+                            out_a,
+                            optimal_input,
+                            false,
+                            v3b,
+                            Some(fb.pool_address),
+                            true,
+                            vec![unlock],
+                        )?;
+                        let plan: Plan = vec![
+                            PlanStep::V4Sync {
+                                currency_idx: forward_b,
+                                currency_addr: fwd_b,
+                            },
+                            mechanics::v3_flash_to(
+                                &mut at,
+                                fb,
+                                out_b,
+                                b_swap_in,
+                                false,
+                                pm_idx,
+                                None,
+                                false,
+                                vec![inner_a],
+                            )?,
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V2, Prot::V4, Prot::V2) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V2
+                            || facts[1].prot != Prot::V4
+                            || facts[2].prot != Prot::V2
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let forward_b_cur = fb.out_currency;
+                        let in_currency_b = fb.in_currency;
+                        let in_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let forward_b = at.add(forward_b_cur).ok()?;
+                        let v2a = at.add(fa.pool_address).ok()?;
+                        let v2c = at.add(fc.pool_address).ok()?;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let a_step =
+                            mechanics::v2_swap(&mut at, fa, b_swap_in, pm_idx, None, false)?;
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Sync {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                            },
+                            a_step,
+                            PlanStep::V4Settle {
+                                currency_addr: forward_a_cur,
+                                amount: b_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: b_swap_in,
+                                in_currency: in_currency_b,
+                                in_amount: b_swap_in,
+                                out_currency: forward_b_cur,
+                                out_amount: out_b,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: forward_b,
+                                currency_addr: forward_b_cur,
+                                recipient_idx: v2c,
+                                amount: out_b,
+                                seeds_pool: None,
+                                repays_flash: Some(fc.pool_address),
+                            },
+                            PlanStep::V4SettleDelta {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                            },
+                        ];
+                        let c_cb: Plan = vec![
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: v2a,
+                                amount: optimal_input,
+                                seeds_pool: Some(fa.pool_address),
+                                repays_flash: None,
+                            },
+                            PlanStep::V4Unlock {
+                                inner: v4_inner,
+                                pool_manager_idx: pm_idx,
+                            },
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            mechanics::v2_flash(&mut at, fc, out_c, in_c, c_swap_in, c_cb)?,
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V2, Prot::V4, Prot::V3) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V2
+                            || facts[1].prot != Prot::V4
+                            || facts[2].prot != Prot::V3
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(v4_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let forward_a_cur = fa.out_currency;
+                        let forward_b_cur = fb.out_currency;
+                        let in_currency_b = fb.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let forward_a = at.add(forward_a_cur).ok()?;
+                        let forward_b = at.add(forward_b_cur).ok()?;
+                        let v2a = at.add(fa.pool_address).ok()?;
+                        let v3c = at.add(fc.pool_address).ok()?;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let a_step =
+                            mechanics::v2_swap(&mut at, fa, v4_swap_in, pm_idx, None, false)?;
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Sync {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                            },
+                            a_step,
+                            PlanStep::V4Settle {
+                                currency_addr: forward_a_cur,
+                                amount: v4_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: v4_swap_in,
+                                in_currency: in_currency_b,
+                                in_amount: v4_swap_in,
+                                out_currency: forward_b_cur,
+                                out_amount: out_b,
+                            },
+                            PlanStep::V4TakeCompact {
+                                currency_idx: forward_b,
+                                currency_addr: forward_b_cur,
+                                recipient_idx: v3c,
+                                amount: c_swap_in,
+                                seeds_pool: None,
+                                repays_flash: Some(fc.pool_address),
+                            },
+                            PlanStep::V4SettleDelta {
+                                currency_idx: forward_a,
+                                currency_addr: forward_a_cur,
+                            },
+                        ];
+                        let c_cb: Plan = vec![
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: v2a,
+                                amount: optimal_input,
+                                seeds_pool: Some(fa.pool_address),
+                                repays_flash: None,
+                            },
+                            PlanStep::V4Unlock {
+                                inner: v4_inner,
+                                pool_manager_idx: pm_idx,
+                            },
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            mechanics::v3_flash_to(
+                                &mut at,
+                                fc,
+                                out_c,
+                                c_swap_in,
+                                false,
+                                SENTINEL_SELF,
+                                None,
+                                false,
+                                c_cb,
+                            )?,
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V3, Prot::V4, Prot::V2) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V3
+                            || facts[1].prot != Prot::V4
+                            || facts[2].prot != Prot::V2
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        if !fits_i128(b_swap_in) {
+                            return None;
+                        }
+                        let fwd_a = fa.out_currency;
+                        let forward_b_cur = fb.out_currency;
+                        let in_currency_b = fb.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let v3a = at.add(fa.pool_address).ok()?;
+                        let v2c = at.add(fc.pool_address).ok()?;
+                        let forward_a = at.add(fwd_a).ok()?;
+                        let forward_b = at.add(forward_b_cur).ok()?;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Settle {
+                                currency_addr: fwd_a,
+                                amount: b_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: b_swap_in,
+                                in_currency: in_currency_b,
+                                in_amount: b_swap_in,
+                                out_currency: forward_b_cur,
+                                out_amount: out_b,
+                            },
+                            PlanStep::V4TakeDelta {
+                                currency_idx: forward_b,
+                                currency_addr: forward_b_cur,
+                                recipient_idx: v2c,
+                                seeds_pool: Some(fc.pool_address),
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let c_step =
+                            mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
+                        let cb: Plan = vec![
+                            PlanStep::V4Unlock {
+                                inner: v4_inner,
+                                pool_manager_idx: pm_idx,
+                            },
+                            c_step,
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: v3a,
+                                amount: optimal_input,
+                                seeds_pool: None,
+                                repays_flash: Some(fa.pool_address),
+                            },
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            PlanStep::V4Sync {
+                                currency_idx: forward_a,
+                                currency_addr: fwd_a,
+                            },
+                            mechanics::v3_flash_to(
+                                &mut at,
+                                fa,
+                                out_a,
+                                optimal_input,
+                                false,
+                                pm_idx,
+                                None,
+                                false,
+                                cb,
+                            )?,
+                        ];
+                        Some((plan, at))
+                    }
+                    (Prot::V3, Prot::V4, Prot::V4) => {
+                        if facts.len() != 3
+                            || facts[0].prot != Prot::V3
+                            || facts[1].prot != Prot::V4
+                            || facts[2].prot != Prot::V4
+                        {
+                            return None;
+                        }
+                        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                        let optimal_input = inputs.optimal_input;
+                        let out_a = inputs.hop_outputs[0];
+                        let out_b = inputs.hop_outputs[1];
+                        let out_c = inputs.hop_outputs[2];
+                        if inputs.hop_outputs.contains(&0) {
+                            return None;
+                        }
+                        if !fits_i128(optimal_input) {
+                            return None;
+                        }
+                        let b_swap_in = *inputs.consumed_inputs.get(1)?;
+                        let c_swap_in = *inputs.consumed_inputs.get(2)?;
+                        if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
+                            return None;
+                        }
+                        let fwd_a = fa.out_currency;
+                        let forward_b_cur = fb.out_currency;
+                        let in_currency_b = fb.in_currency;
+                        let output_c = fc.out_currency;
+                        let in_currency_c = fc.in_currency;
+                        let mut at = v4_scaffold_table(inputs);
+                        let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                        let v3a = at.add(fa.pool_address).ok()?;
+                        let forward_a = at.add(fwd_a).ok()?;
+                        let fee_b = fb.swap_fee;
+                        let ts_b = fb.tick_spacing;
+                        let fee_c = fc.swap_fee;
+                        let ts_c = fc.tick_spacing;
+                        let c0_b = at.add(fb.currency0_address).ok()?;
+                        let c1_b = at.add(fb.currency1_address).ok()?;
+                        let c0_c = at.add(fc.currency0_address).ok()?;
+                        let c1_c = at.add(fc.currency1_address).ok()?;
+                        let weth = inputs.weth_address;
+
+                        let v4_inner: Plan = vec![
+                            PlanStep::V4Settle {
+                                currency_addr: fwd_a,
+                                amount: b_swap_in,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_b,
+                                c1_idx: c1_b,
+                                fee: fee_b,
+                                tick_spacing: ts_b,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fb.zfo,
+                                amount: b_swap_in,
+                                in_currency: in_currency_b,
+                                in_amount: b_swap_in,
+                                out_currency: forward_b_cur,
+                                out_amount: out_b,
+                            },
+                            PlanStep::V4Swap {
+                                c0_idx: c0_c,
+                                c1_idx: c1_c,
+                                fee: fee_c,
+                                tick_spacing: ts_c,
+                                hooks_idx: SENTINEL_NATIVE,
+                                zfo: fc.zfo,
+                                amount: c_swap_in,
+                                in_currency: in_currency_c,
+                                in_amount: c_swap_in,
+                                out_currency: output_c,
+                                out_amount: out_c,
+                            },
+                            PlanStep::V4TakeDelta {
+                                currency_idx: SENTINEL_WETH,
+                                currency_addr: weth,
+                                recipient_idx: SENTINEL_SELF,
+                                seeds_pool: None,
+                            },
+                            PlanStep::V4SettleAll,
+                        ];
+                        let cb: Plan = vec![
+                            PlanStep::Erc20Transfer {
+                                token_idx: SENTINEL_WETH,
+                                token_addr: weth,
+                                recipient_idx: v3a,
+                                amount: optimal_input,
+                                seeds_pool: None,
+                                repays_flash: Some(fa.pool_address),
+                            },
+                            PlanStep::V4Unlock {
+                                inner: v4_inner,
+                                pool_manager_idx: pm_idx,
+                            },
+                        ];
+                        let plan: Plan = vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            PlanStep::V4Sync {
+                                currency_idx: forward_a,
+                                currency_addr: fwd_a,
+                            },
+                            mechanics::v3_flash_to(
+                                &mut at,
+                                fa,
+                                out_a,
+                                optimal_input,
+                                false,
+                                pm_idx,
+                                None,
+                                false,
+                                cb,
+                            )?,
+                        ];
+                        Some((plan, at))
+                    }
+                    _ => None, // T7: remaining 3-hop V4-crossing shapes arrive as migrated
+                }
+            }
         };
     }
     if facts.len() == 2 && facts[0].prot == Prot::V2 && facts[1].prot == Prot::V4 {
-        return derive_2hop_v2v4(facts, inputs);
+        return {
+            if facts.len() != 2 || facts[0].prot != Prot::V2 || facts[1].prot != Prot::V4 {
+                return None;
+            }
+            let (fa, fb) = (&facts[0], &facts[1]);
+            let forward_out = inputs.hop_outputs[0];
+            let v4_out_amount = inputs.hop_outputs[1];
+            if forward_out == 0 || v4_out_amount == 0 {
+                return None;
+            }
+            if !fits_i128(forward_out) || !fits_i128(v4_out_amount) {
+                return None;
+            }
+            let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+            if !fits_i128(v4_swap_in) {
+                return None;
+            }
+            let v4_in_currency = fb.in_currency;
+            let v4_out_currency = fb.out_currency;
+            if v4_out_currency == NATIVE_CURRENCY_ADDRESS {
+                {
+                    let forward_out = inputs.hop_outputs[0];
+                    let v4_out_amount = inputs.hop_outputs[1];
+                    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+                    let weth = inputs.weth_address;
+                    let optimal_input = inputs.optimal_input;
+                    let forward_addr = fa.out_currency;
+                    let v2_in_currency = fa.in_currency;
+                    if v2_in_currency != weth
+                        || forward_addr == NATIVE_CURRENCY_ADDRESS
+                        || v4_in_currency != forward_addr
+                        || v4_in_currency == NATIVE_CURRENCY_ADDRESS
+                    {
+                        return None;
+                    }
+                    let mut at = AddressTable::with_sentinels(
+                        Some(weth),
+                        Some(inputs.executor_address),
+                        Some(inputs.pool_manager_address),
+                    );
+                    let v2_idx = at.add(fa.pool_address).ok()?;
+                    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                    let c0_b = at.add(fb.currency0_address).ok()?;
+                    let c1_b = at.add(fb.currency1_address).ok()?;
+                    let forward_idx = at.add(forward_addr).ok()?;
+                    let weth_idx = SENTINEL_WETH;
+                    let fee_b = fb.swap_fee;
+                    let ts_b = fb.tick_spacing;
+                    let v4_inner: Plan = vec![
+                        PlanStep::V4Sync {
+                            currency_idx: forward_idx,
+                            currency_addr: forward_addr,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: forward_idx,
+                            token_addr: forward_addr,
+                            recipient_idx: pm_idx,
+                            amount: forward_out,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4Settle {
+                            currency_addr: forward_addr,
+                            amount: forward_out,
+                        },
+                        PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: v4_swap_in,
+                            in_currency: forward_addr,
+                            in_amount: v4_swap_in,
+                            out_currency: NATIVE_CURRENCY_ADDRESS,
+                            out_amount: v4_out_amount,
+                        },
+                        PlanStep::V4TakeCompact {
+                            currency_idx: SENTINEL_NATIVE,
+                            currency_addr: NATIVE_CURRENCY_ADDRESS,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: v4_out_amount,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4SettleAll,
+                    ];
+                    let callback: Plan = vec![
+                        PlanStep::V4Unlock {
+                            inner: v4_inner,
+                            pool_manager_idx: pm_idx,
+                        },
+                        PlanStep::WethDeposit {
+                            weth_idx,
+                            weth_addr: weth,
+                            amount: v4_out_amount,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: weth_idx,
+                            token_addr: weth,
+                            recipient_idx: v2_idx,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        },
+                    ];
+                    let plan: Plan = vec![PlanStep::FlashSwap {
+                        pool_idx: v2_idx,
+                        pool_addr: fa.pool_address,
+                        protocol: Prot::V2,
+                        zfo: fa.zfo,
+                        fee: fa.swap_fee,
+                        out_currency: forward_addr,
+                        out_amount: forward_out,
+                        in_currency: weth,
+                        in_amount: optimal_input,
+                        recipient_idx: SENTINEL_SELF,
+                        recipient_pool_addr: None,
+                        recipient_pool_repays: false,
+                        auto_repay: false,
+                        callback,
+                    }];
+                    Some((plan, at))
+                }
+            } else if v4_in_currency == NATIVE_CURRENCY_ADDRESS {
+                {
+                    let forward_out = inputs.hop_outputs[0];
+                    let v4_out_amount = inputs.hop_outputs[1];
+                    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+                    let weth = inputs.weth_address;
+                    let optimal_input = inputs.optimal_input;
+                    let tok = fa.in_currency;
+                    if tok == weth || tok == NATIVE_CURRENCY_ADDRESS {
+                        return None;
+                    }
+                    let mut at = AddressTable::with_sentinels(
+                        Some(weth),
+                        Some(inputs.executor_address),
+                        Some(inputs.pool_manager_address),
+                    );
+                    let v2_idx = at.add(fa.pool_address).ok()?;
+                    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                    let c0_b = at.add(fb.currency0_address).ok()?;
+                    let c1_b = at.add(fb.currency1_address).ok()?;
+                    let tok_idx = at.add(tok).ok()?;
+                    let weth_idx = SENTINEL_WETH;
+                    let output_idx = if fb.zfo { c1_b } else { c0_b };
+                    let fee_b = fb.swap_fee;
+                    let ts_b = fb.tick_spacing;
+                    let v4_inner: Plan = vec![
+                        PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: v4_swap_in,
+                            in_currency: NATIVE_CURRENCY_ADDRESS,
+                            in_amount: v4_swap_in,
+                            out_currency: v4_out_currency,
+                            out_amount: v4_out_amount,
+                        },
+                        PlanStep::NativeTransfer { amount: v4_swap_in },
+                        PlanStep::V4SettleDelta {
+                            currency_idx: SENTINEL_NATIVE,
+                            currency_addr: NATIVE_CURRENCY_ADDRESS,
+                        },
+                        PlanStep::V4TakeCompact {
+                            currency_idx: output_idx,
+                            currency_addr: v4_out_currency,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: v4_out_amount,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4SettleAll,
+                    ];
+                    let callback: Plan = vec![
+                        PlanStep::WethWithdraw {
+                            weth_idx,
+                            weth_addr: weth,
+                            amount: forward_out,
+                        },
+                        PlanStep::V4Unlock {
+                            inner: v4_inner,
+                            pool_manager_idx: pm_idx,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: tok_idx,
+                            token_addr: tok,
+                            recipient_idx: v2_idx,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        },
+                    ];
+                    let plan: Plan = vec![
+                        PlanStep::SelfFund {
+                            currency: tok,
+                            amount: optimal_input,
+                        },
+                        PlanStep::FlashSwap {
+                            pool_idx: v2_idx,
+                            pool_addr: fa.pool_address,
+                            protocol: Prot::V2,
+                            zfo: fa.zfo,
+                            fee: fa.swap_fee,
+                            out_currency: weth,
+                            out_amount: forward_out,
+                            in_currency: tok,
+                            in_amount: optimal_input,
+                            recipient_idx: SENTINEL_SELF,
+                            recipient_pool_addr: None,
+                            recipient_pool_repays: false,
+                            auto_repay: false,
+                            callback,
+                        },
+                    ];
+                    Some((plan, at))
+                }
+            } else {
+                {
+                    let forward_out = inputs.hop_outputs[0];
+                    let v4_out_amount = inputs.hop_outputs[1];
+                    let v4_swap_in = *inputs.consumed_inputs.get(1)?;
+                    let weth = inputs.weth_address;
+                    let optimal_input = inputs.optimal_input;
+                    let forward_addr = fa.out_currency;
+                    let v2_in_currency = fa.in_currency;
+                    if v2_in_currency != weth
+                        || forward_addr == NATIVE_CURRENCY_ADDRESS
+                        || v4_in_currency != forward_addr
+                    {
+                        return None;
+                    }
+                    let mut at = AddressTable::with_sentinels(
+                        Some(weth),
+                        Some(inputs.executor_address),
+                        Some(inputs.pool_manager_address),
+                    );
+                    let v2_idx = at.add(fa.pool_address).ok()?;
+                    let pm_idx = at.add(inputs.pool_manager_address).ok()?;
+                    let c0_b = at.add(fb.currency0_address).ok()?;
+                    let c1_b = at.add(fb.currency1_address).ok()?;
+                    let forward_idx = at.add(forward_addr).ok()?;
+                    let weth_idx = SENTINEL_WETH;
+                    let output_idx = if fb.zfo { c1_b } else { c0_b };
+                    let fee_b = fb.swap_fee;
+                    let ts_b = fb.tick_spacing;
+                    let v4_inner: Plan = vec![
+                        PlanStep::V4Sync {
+                            currency_idx: forward_idx,
+                            currency_addr: forward_addr,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: forward_idx,
+                            token_addr: forward_addr,
+                            recipient_idx: pm_idx,
+                            amount: forward_out,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4Settle {
+                            currency_addr: forward_addr,
+                            amount: forward_out,
+                        },
+                        PlanStep::V4Swap {
+                            c0_idx: c0_b,
+                            c1_idx: c1_b,
+                            fee: fee_b,
+                            tick_spacing: ts_b,
+                            hooks_idx: SENTINEL_NATIVE,
+                            zfo: fb.zfo,
+                            amount: v4_swap_in,
+                            in_currency: forward_addr,
+                            in_amount: v4_swap_in,
+                            out_currency: v4_out_currency,
+                            out_amount: v4_out_amount,
+                        },
+                        PlanStep::V4TakeCompact {
+                            currency_idx: output_idx,
+                            currency_addr: v4_out_currency,
+                            recipient_idx: SENTINEL_SELF,
+                            amount: v4_out_amount,
+                            seeds_pool: None,
+                            repays_flash: None,
+                        },
+                        PlanStep::V4SettleAll,
+                    ];
+                    let callback: Plan = vec![
+                        PlanStep::V4Unlock {
+                            inner: v4_inner,
+                            pool_manager_idx: pm_idx,
+                        },
+                        PlanStep::Erc20Transfer {
+                            token_idx: weth_idx,
+                            token_addr: weth,
+                            recipient_idx: v2_idx,
+                            amount: optimal_input,
+                            seeds_pool: None,
+                            repays_flash: Some(fa.pool_address),
+                        },
+                    ];
+                    let flash = PlanStep::FlashSwap {
+                        pool_idx: v2_idx,
+                        pool_addr: fa.pool_address,
+                        protocol: Prot::V2,
+                        zfo: fa.zfo,
+                        fee: fa.swap_fee,
+                        out_currency: forward_addr,
+                        out_amount: forward_out,
+                        in_currency: weth,
+                        in_amount: optimal_input,
+                        recipient_idx: SENTINEL_SELF,
+                        recipient_pool_addr: None,
+                        recipient_pool_repays: false,
+                        auto_repay: false,
+                        callback,
+                    };
+                    let plan: Plan = if v4_out_currency == weth {
+                        vec![flash]
+                    } else {
+                        vec![
+                            PlanStep::SelfFund {
+                                currency: weth,
+                                amount: optimal_input,
+                            },
+                            flash,
+                        ]
+                    };
+                    Some((plan, at))
+                }
+            }
+        };
     }
     if facts.iter().all(|f| f.repay != Repay::NetZero) && facts.len() == 2 {
         match (facts[0].prot, facts[1].prot) {
