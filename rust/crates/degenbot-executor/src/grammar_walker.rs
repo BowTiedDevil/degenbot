@@ -611,83 +611,6 @@ pub(crate) fn facts_of_v3v3v3(
     Some(vec![v3_hop_facts(a), v3_hop_facts(b), v3_hop_facts(c)])
 }
 
-/// The 3-hop V3→V3→V3 shape: a 3-deep nested V3 flash chain. The enclosure is
-/// built inside-out (innermost to outermost): hop2 is the OUTERMOST flash
-/// (SELF recipient), hop1 the middle (recipient = hop2's pool, rpr=true), hops0
-/// the innermost (recipient = hop1's pool, rpr=true, auto_repay).
-pub(crate) fn derive_3hop_v3v3v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3 || facts.iter().any(|f| f.prot != Prot::V3) {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal = inputs.optimal_input;
-    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-        return None;
-    }
-    let b_in = *inputs.consumed_inputs.get(1)?;
-    let c_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_in) || !fits_i128(c_in) {
-        return None;
-    }
-    let (out_a, out_b, out_c) = (
-        inputs.hop_outputs[0],
-        inputs.hop_outputs[1],
-        inputs.hop_outputs[2],
-    );
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let _ = at.add(fa.pool_address).ok()?;
-    let b_idx = at.add(fb.pool_address).ok()?;
-    let c_idx = at.add(fc.pool_address).ok()?;
-
-    // innermost first (release the `at` borrow), then wrap outward.
-    let inner_a = mechanics::v3_flash_to(
-        &mut at,
-        fa,
-        out_a,
-        optimal,
-        true, // auto_repay
-        b_idx,
-        Some(fb.pool_address),
-        true, // recipient_pool_repays
-        vec![],
-    )?;
-    let inner_b = mechanics::v3_flash_to(
-        &mut at,
-        fb,
-        out_b,
-        b_in,
-        false,
-        c_idx,
-        Some(fc.pool_address),
-        true, // recipient_pool_repays
-        vec![inner_a],
-    )?;
-    let outer = mechanics::v3_flash_to(
-        &mut at,
-        fc,
-        out_c,
-        c_in,
-        false,
-        SENTINEL_SELF,
-        None,
-        false,
-        vec![inner_b],
-    )?;
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal,
-        },
-        outer,
-    ];
-    Some((plan, at))
-}
-
 /// A V2 hop's facts (shared by the V2-involving shape derivers).
 pub(crate) fn v2_hop_facts(h: &V2HopInfo) -> HopFacts {
     HopFacts {
@@ -726,86 +649,6 @@ pub(crate) fn facts_of_v3v3v2(
     Some(vec![v3_hop_facts(a), v3_hop_facts(b), v2_hop_facts(c)])
 }
 
-/// The 3-hop V3→V3→V2 shape: the MIDDLE V3 flash is the OUTERMOST (recipient =
-/// the V2's pool, rpr=false); hop0 nests inside it (recipient = hop1's pool,
-/// rpr=true) with a V2SwapCalc terminal + WETH self-repay callback.
-pub(crate) fn derive_3hop_v3v3v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V3
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal = inputs.optimal_input;
-    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-        return None;
-    }
-    let b_in = *inputs.consumed_inputs.get(1)?;
-    if !fits_i128(b_in) {
-        return None;
-    }
-    let (out_a, out_b, out_c) = (
-        inputs.hop_outputs[0],
-        inputs.hop_outputs[1],
-        inputs.hop_outputs[2],
-    );
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let v2c = at.add(fc.pool_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
-
-    // innermost (hop0) first: its callback carries the V2SwapCalc terminal + repay.
-    let term = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-    let a_inner_cb: Vec<PlanStep> = vec![
-        term,
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v3a,
-            amount: optimal,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let inner_a = mechanics::v3_flash_to(
-        &mut at,
-        fa,
-        out_a,
-        optimal,
-        false,
-        v3b,
-        Some(fb.pool_address),
-        true,
-        a_inner_cb,
-    )?;
-    let outer_b = mechanics::v3_flash_to(
-        &mut at,
-        fb,
-        out_b,
-        b_in,
-        false,
-        v2c,
-        Some(fc.pool_address),
-        false,
-        vec![inner_a],
-    )?;
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal,
-        },
-        outer_b,
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V3→V2→V3 facts (`v3v2v3`).
 pub(crate) fn facts_of_v3v2v3(
     path: &PathInfo,
@@ -820,85 +663,6 @@ pub(crate) fn facts_of_v3v2v3(
         return None;
     };
     Some(vec![v3_hop_facts(a), v2_hop_facts(b), v3_hop_facts(c)])
-}
-
-/// The 3-hop V3→V2→V3 shape: the TERMINAL V3 flash is the OUTERMOST (SELF);
-/// hop0 nests inside it (recipient = the V2's pool, rpr=false) with a V2SwapCalc
-/// seeded to the terminal (repays) + WETH self-repay callback.
-pub(crate) fn derive_3hop_v3v2v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V3
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V3
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal = inputs.optimal_input;
-    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-        return None;
-    }
-    let c_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(c_in) {
-        return None;
-    }
-    let (out_a, out_b, out_c) = (
-        inputs.hop_outputs[0],
-        inputs.hop_outputs[1],
-        inputs.hop_outputs[2],
-    );
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let v2b = at.add(fb.pool_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-    let v3c = at.add(fc.pool_address).ok()?;
-
-    let term = mechanics::v2_swap(&mut at, fb, out_b, v3c, Some(fc.pool_address), true)?;
-    let a_inner_cb: Vec<PlanStep> = vec![
-        term,
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v3a,
-            amount: optimal,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let inner_a = mechanics::v3_flash_to(
-        &mut at,
-        fa,
-        out_a,
-        optimal,
-        false,
-        v2b,
-        Some(fb.pool_address),
-        false,
-        a_inner_cb,
-    )?;
-    let outer_c = mechanics::v3_flash_to(
-        &mut at,
-        fc,
-        out_c,
-        c_in,
-        false,
-        SENTINEL_SELF,
-        None,
-        false,
-        vec![inner_a],
-    )?;
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal,
-        },
-        outer_c,
-    ];
-    Some((plan, at))
 }
 
 /// The 3-hop V3→V2→V2 facts (`v3v2v2`).
@@ -917,71 +681,6 @@ pub(crate) fn facts_of_v3v2v2(
     Some(vec![v3_hop_facts(a), v2_hop_facts(b), v2_hop_facts(c)])
 }
 
-/// The 3-hop V3→V2→V2 shape: the leading V3 flash (recipient = the first V2's
-/// pool, rpr=false) whose callback is a V2SwapCalc chain to SELF + WETH repay.
-pub(crate) fn derive_3hop_v3v2v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V3
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal = inputs.optimal_input;
-    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-        return None;
-    }
-    let (out_a, out_b, out_c) = (
-        inputs.hop_outputs[0],
-        inputs.hop_outputs[1],
-        inputs.hop_outputs[2],
-    );
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let v2b = at.add(fb.pool_address).ok()?;
-    let v2c = at.add(fc.pool_address).ok()?;
-    let v3a = at.add(fa.pool_address).ok()?;
-
-    let b = mechanics::v2_swap(&mut at, fb, out_b, v2c, Some(fc.pool_address), false)?;
-    let c = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-    let a_inner_cb: Vec<PlanStep> = vec![
-        b,
-        c,
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v3a,
-            amount: optimal,
-            seeds_pool: None,
-            repays_flash: Some(fa.pool_address),
-        },
-    ];
-    let outer = mechanics::v3_flash_to(
-        &mut at,
-        fa,
-        out_a,
-        optimal,
-        false,
-        v2b,
-        Some(fb.pool_address),
-        false,
-        a_inner_cb,
-    )?;
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal,
-        },
-        outer,
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V2→V2→V3 facts (`v2v2v3`).
 pub(crate) fn facts_of_v2v2v3(
     path: &PathInfo,
@@ -996,75 +695,6 @@ pub(crate) fn facts_of_v2v2v3(
         return None;
     };
     Some(vec![v2_hop_facts(a), v2_hop_facts(b), v3_hop_facts(c)])
-}
-
-/// The 3-hop V2→V2→V3 shape: the TERMINAL V3 flash (SELF) whose callback is a
-/// WETH prefund + a V2SwapCalc chain to the terminal (hop1 repays it).
-pub(crate) fn derive_3hop_v2v2v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V2
-        || facts[2].prot != Prot::V3
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal = inputs.optimal_input;
-    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-        return None;
-    }
-    let c_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(c_in) {
-        return None;
-    }
-    let (out_a, out_b, out_c) = (
-        inputs.hop_outputs[0],
-        inputs.hop_outputs[1],
-        inputs.hop_outputs[2],
-    );
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let v2a = at.add(fa.pool_address).ok()?;
-    let v2b = at.add(fb.pool_address).ok()?;
-    let v3c = at.add(fc.pool_address).ok()?;
-
-    let b_repays = mechanics::v2_swap(&mut at, fb, out_b, v3c, Some(fc.pool_address), true)?;
-    let a_swap = mechanics::v2_swap(&mut at, fa, out_a, v2b, Some(fb.pool_address), false)?;
-    let c_cb: Vec<PlanStep> = vec![
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        a_swap,
-        b_repays,
-    ];
-    let outer_c = mechanics::v3_flash_to(
-        &mut at,
-        fc,
-        out_c,
-        c_in,
-        false,
-        SENTINEL_SELF,
-        None,
-        false,
-        c_cb,
-    )?;
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal,
-        },
-        outer_c,
-    ];
-    Some((plan, at))
 }
 
 /// The 3-hop V2→V3→V3 facts (`v2v3v3`).
@@ -1083,93 +713,6 @@ pub(crate) fn facts_of_v2v3v3(
     Some(vec![v2_hop_facts(a), v3_hop_facts(b), v3_hop_facts(c)])
 }
 
-/// The 3-hop V2→V3→V3 shape: the TERMINAL V3 flash (SELF) whose callback nests
-/// hop1 (recipient = terminal pool, rpr=true) with a WETH prefund + V2SwapDirect.
-pub(crate) fn derive_3hop_v2v3v3(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V3
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal = inputs.optimal_input;
-    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-        return None;
-    }
-    let b_in = *inputs.consumed_inputs.get(1)?;
-    let c_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_in) || !fits_i128(c_in) {
-        return None;
-    }
-    let (out_a, out_b, out_c) = (
-        inputs.hop_outputs[0],
-        inputs.hop_outputs[1],
-        inputs.hop_outputs[2],
-    );
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let v2a = at.add(fa.pool_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
-    let v3c = at.add(fc.pool_address).ok()?;
-
-    let direct = mechanics::v2_swap_direct(
-        &mut at,
-        fa,
-        out_a,
-        fa.out_currency,
-        v3b,
-        Some(fb.pool_address),
-        true,
-    )?;
-    let b_cb: Vec<PlanStep> = vec![
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        direct,
-    ];
-    let inner_b = mechanics::v3_flash_to(
-        &mut at,
-        fb,
-        out_b,
-        b_in,
-        false,
-        v3c,
-        Some(fc.pool_address),
-        true,
-        b_cb,
-    )?;
-    let outer_c = mechanics::v3_flash_to(
-        &mut at,
-        fc,
-        out_c,
-        c_in,
-        false,
-        SENTINEL_SELF,
-        None,
-        false,
-        vec![inner_b],
-    )?;
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal,
-        },
-        outer_c,
-    ];
-    Some((plan, at))
-}
-
 /// The 3-hop V2→V3→V2 facts (`v2v3v2`).
 pub(crate) fn facts_of_v2v3v2(
     path: &PathInfo,
@@ -1184,84 +727,6 @@ pub(crate) fn facts_of_v2v3v2(
         return None;
     };
     Some(vec![v2_hop_facts(a), v3_hop_facts(b), v2_hop_facts(c)])
-}
-
-/// The 3-hop V2→V3→V2 shape: the TERMINAL V2 flash (SELF) whose callback nests
-/// hop1 (recipient = terminal pool, rpr=true) with a WETH prefund + V2SwapDirect.
-pub(crate) fn derive_3hop_v2v3v2(
-    facts: &[HopFacts],
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Plan, AddressTable)> {
-    if facts.len() != 3
-        || facts[0].prot != Prot::V2
-        || facts[1].prot != Prot::V3
-        || facts[2].prot != Prot::V2
-    {
-        return None;
-    }
-    let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-    let optimal = inputs.optimal_input;
-    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-        return None;
-    }
-    let b_in = *inputs.consumed_inputs.get(1)?;
-    let c_in = *inputs.consumed_inputs.get(2)?;
-    if !fits_i128(b_in) || !fits_i128(c_in) {
-        return None;
-    }
-    let (out_a, out_b, out_c) = (
-        inputs.hop_outputs[0],
-        inputs.hop_outputs[1],
-        inputs.hop_outputs[2],
-    );
-    let weth = inputs.weth_address;
-
-    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-    let _ = at.add(fa.out_currency).ok()?; // fwd_a (order-preserving, per gold)
-    let v2a = at.add(fa.pool_address).ok()?;
-    let v2c = at.add(fc.pool_address).ok()?;
-    let v3b = at.add(fb.pool_address).ok()?;
-
-    let direct = mechanics::v2_swap_direct(
-        &mut at,
-        fa,
-        out_a,
-        fa.out_currency,
-        v3b,
-        Some(fb.pool_address),
-        true,
-    )?;
-    let b_cb: Vec<PlanStep> = vec![
-        PlanStep::Erc20Transfer {
-            token_idx: SENTINEL_WETH,
-            token_addr: weth,
-            recipient_idx: v2a,
-            amount: optimal,
-            seeds_pool: Some(fa.pool_address),
-            repays_flash: None,
-        },
-        direct,
-    ];
-    let inner_b = mechanics::v3_flash_to(
-        &mut at,
-        fb,
-        out_b,
-        b_in,
-        false,
-        v2c,
-        Some(fc.pool_address),
-        true,
-        b_cb,
-    )?;
-    let outer_c = mechanics::v2_flash(&mut at, fc, out_c, fc.in_currency, c_in, vec![inner_b])?;
-    let plan: Plan = vec![
-        PlanStep::SelfFund {
-            currency: weth,
-            amount: optimal,
-        },
-        outer_c,
-    ];
-    Some((plan, at))
 }
 
 /// A V4 hop's facts (shared by the V4-crossing shape derivers).
@@ -5193,7 +4658,7 @@ pub fn build_v3v2v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v2v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v2v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5203,7 +4668,7 @@ pub fn build_v3v3v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v3v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v3v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5213,7 +4678,7 @@ pub fn build_v3v3v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v3v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v3v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5226,7 +4691,7 @@ pub fn build_v2v2v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v2v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v2v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5340,7 +4805,7 @@ pub fn build_v2v3v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v3v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v3v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5352,7 +4817,7 @@ pub fn build_v2v3v3_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v2v3v3(path, inputs)?;
-    let (plan, at) = derive_3hop_v2v3v3(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5375,7 +4840,7 @@ pub fn build_v3v2v2_walk(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
     let facts = facts_of_v3v2v2(path, inputs)?;
-    let (plan, at) = derive_3hop_v3v2v2(&facts, inputs)?;
+    let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
 }
@@ -5659,13 +5124,478 @@ pub(crate) fn derive_plan(
     }
     if facts.len() == 3 && facts.iter().all(|f| f.repay != Repay::NetZero) {
         return match (facts[0].prot, facts[1].prot, facts[2].prot) {
-            (Prot::V3, Prot::V3, Prot::V3) => derive_3hop_v3v3v3(facts, inputs),
-            (Prot::V3, Prot::V3, Prot::V2) => derive_3hop_v3v3v2(facts, inputs),
-            (Prot::V3, Prot::V2, Prot::V3) => derive_3hop_v3v2v3(facts, inputs),
-            (Prot::V3, Prot::V2, Prot::V2) => derive_3hop_v3v2v2(facts, inputs),
-            (Prot::V2, Prot::V2, Prot::V3) => derive_3hop_v2v2v3(facts, inputs),
-            (Prot::V2, Prot::V3, Prot::V3) => derive_3hop_v2v3v3(facts, inputs),
-            (Prot::V2, Prot::V3, Prot::V2) => derive_3hop_v2v3v2(facts, inputs),
+            // ── v3v3v3: 3-deep nested V3 flashes. Hop2 outermost (SELF),
+            // hop1 middle (recipient=hop2 pool, rpr=true), hop0 innermost
+            // (auto_repay=true, recipient=hop1 pool, rpr=true).
+            (Prot::V3, Prot::V3, Prot::V3) => {
+                let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                let optimal = inputs.optimal_input;
+                if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+                    return None;
+                }
+                let b_in = *inputs.consumed_inputs.get(1)?;
+                let c_in = *inputs.consumed_inputs.get(2)?;
+                if !fits_i128(b_in) || !fits_i128(c_in) {
+                    return None;
+                }
+                let (out_a, out_b, out_c) = (
+                    inputs.hop_outputs[0],
+                    inputs.hop_outputs[1],
+                    inputs.hop_outputs[2],
+                );
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let _ = at.add(fa.pool_address).ok()?;
+                let b_idx = at.add(fb.pool_address).ok()?;
+                let c_idx = at.add(fc.pool_address).ok()?;
+                let inner_a = mechanics::v3_flash_to(
+                    &mut at,
+                    fa,
+                    out_a,
+                    optimal,
+                    true,
+                    b_idx,
+                    Some(fb.pool_address),
+                    true,
+                    vec![],
+                )?;
+                let inner_b = mechanics::v3_flash_to(
+                    &mut at,
+                    fb,
+                    out_b,
+                    b_in,
+                    false,
+                    c_idx,
+                    Some(fc.pool_address),
+                    true,
+                    vec![inner_a],
+                )?;
+                let outer = mechanics::v3_flash_to(
+                    &mut at,
+                    fc,
+                    out_c,
+                    c_in,
+                    false,
+                    SENTINEL_SELF,
+                    None,
+                    false,
+                    vec![inner_b],
+                )?;
+                return Some((
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal,
+                        },
+                        outer,
+                    ],
+                    at,
+                ));
+            }
+            // ── v3v3v2: hop1 outermost (recipient=V2 pool, rpr=false), hop0
+            // inner (recipient=hop1 pool, rpr=true) with V2SwapCalc terminal +
+            // WETH self-repay callback.
+            (Prot::V3, Prot::V3, Prot::V2) => {
+                let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                let optimal = inputs.optimal_input;
+                if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+                    return None;
+                }
+                let b_in = *inputs.consumed_inputs.get(1)?;
+                if !fits_i128(b_in) {
+                    return None;
+                }
+                let (out_a, out_b, out_c) = (
+                    inputs.hop_outputs[0],
+                    inputs.hop_outputs[1],
+                    inputs.hop_outputs[2],
+                );
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let v2c = at.add(fc.pool_address).ok()?;
+                let v3a = at.add(fa.pool_address).ok()?;
+                let v3b = at.add(fb.pool_address).ok()?;
+                let term = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
+                let a_inner_cb: Vec<PlanStep> = vec![
+                    term,
+                    PlanStep::Erc20Transfer {
+                        token_idx: SENTINEL_WETH,
+                        token_addr: weth,
+                        recipient_idx: v3a,
+                        amount: optimal,
+                        seeds_pool: None,
+                        repays_flash: Some(fa.pool_address),
+                    },
+                ];
+                let inner_a = mechanics::v3_flash_to(
+                    &mut at,
+                    fa,
+                    out_a,
+                    optimal,
+                    false,
+                    v3b,
+                    Some(fb.pool_address),
+                    true,
+                    a_inner_cb,
+                )?;
+                let outer_b = mechanics::v3_flash_to(
+                    &mut at,
+                    fb,
+                    out_b,
+                    b_in,
+                    false,
+                    v2c,
+                    Some(fc.pool_address),
+                    false,
+                    vec![inner_a],
+                )?;
+                return Some((
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal,
+                        },
+                        outer_b,
+                    ],
+                    at,
+                ));
+            }
+            // ── v3v2v3: hop2 outermost (SELF, rpr=false), hop0 inner
+            // (recipient=V2 pool, rpr=false) with V2SwapCalc to terminal
+            // (repays V3c) + WETH self-repay callback.
+            (Prot::V3, Prot::V2, Prot::V3) => {
+                let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                let optimal = inputs.optimal_input;
+                if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+                    return None;
+                }
+                let c_in = *inputs.consumed_inputs.get(2)?;
+                if !fits_i128(c_in) {
+                    return None;
+                }
+                let (out_a, out_b, out_c) = (
+                    inputs.hop_outputs[0],
+                    inputs.hop_outputs[1],
+                    inputs.hop_outputs[2],
+                );
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let v2b = at.add(fb.pool_address).ok()?;
+                let v3a = at.add(fa.pool_address).ok()?;
+                let v3c = at.add(fc.pool_address).ok()?;
+                let term =
+                    mechanics::v2_swap(&mut at, fb, out_b, v3c, Some(fc.pool_address), true)?;
+                let a_inner_cb: Vec<PlanStep> = vec![
+                    term,
+                    PlanStep::Erc20Transfer {
+                        token_idx: SENTINEL_WETH,
+                        token_addr: weth,
+                        recipient_idx: v3a,
+                        amount: optimal,
+                        seeds_pool: None,
+                        repays_flash: Some(fa.pool_address),
+                    },
+                ];
+                let inner_a = mechanics::v3_flash_to(
+                    &mut at,
+                    fa,
+                    out_a,
+                    optimal,
+                    false,
+                    v2b,
+                    Some(fb.pool_address),
+                    false,
+                    a_inner_cb,
+                )?;
+                let outer_c = mechanics::v3_flash_to(
+                    &mut at,
+                    fc,
+                    out_c,
+                    c_in,
+                    false,
+                    SENTINEL_SELF,
+                    None,
+                    false,
+                    vec![inner_a],
+                )?;
+                return Some((
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal,
+                        },
+                        outer_c,
+                    ],
+                    at,
+                ));
+            }
+            // ── v3v2v2: hop0 outermost (recipient=V2 pool, rpr=false) whose
+            // callback is a V2SwapCalc chain to SELF + WETH self-repay.
+            (Prot::V3, Prot::V2, Prot::V2) => {
+                let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                let optimal = inputs.optimal_input;
+                if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+                    return None;
+                }
+                let (out_a, out_b, out_c) = (
+                    inputs.hop_outputs[0],
+                    inputs.hop_outputs[1],
+                    inputs.hop_outputs[2],
+                );
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let v2b = at.add(fb.pool_address).ok()?;
+                let v2c = at.add(fc.pool_address).ok()?;
+                let v3a = at.add(fa.pool_address).ok()?;
+                let b = mechanics::v2_swap(&mut at, fb, out_b, v2c, Some(fc.pool_address), false)?;
+                let c = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
+                let a_inner_cb: Vec<PlanStep> = vec![
+                    b,
+                    c,
+                    PlanStep::Erc20Transfer {
+                        token_idx: SENTINEL_WETH,
+                        token_addr: weth,
+                        recipient_idx: v3a,
+                        amount: optimal,
+                        seeds_pool: None,
+                        repays_flash: Some(fa.pool_address),
+                    },
+                ];
+                let outer = mechanics::v3_flash_to(
+                    &mut at,
+                    fa,
+                    out_a,
+                    optimal,
+                    false,
+                    v2b,
+                    Some(fb.pool_address),
+                    false,
+                    a_inner_cb,
+                )?;
+                return Some((
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal,
+                        },
+                        outer,
+                    ],
+                    at,
+                ));
+            }
+            // ── v2v2v3: hop2 outermost (SELF, rpr=false) whose callback is a
+            // WETH prefund + V2SwapCalc chain (hop0→1, hop1 repays V3c).
+            (Prot::V2, Prot::V2, Prot::V3) => {
+                let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                let optimal = inputs.optimal_input;
+                if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+                    return None;
+                }
+                let c_in = *inputs.consumed_inputs.get(2)?;
+                if !fits_i128(c_in) {
+                    return None;
+                }
+                let (out_a, out_b, out_c) = (
+                    inputs.hop_outputs[0],
+                    inputs.hop_outputs[1],
+                    inputs.hop_outputs[2],
+                );
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let v2a = at.add(fa.pool_address).ok()?;
+                let v2b = at.add(fb.pool_address).ok()?;
+                let v3c = at.add(fc.pool_address).ok()?;
+                let b_repays =
+                    mechanics::v2_swap(&mut at, fb, out_b, v3c, Some(fc.pool_address), true)?;
+                let a_swap =
+                    mechanics::v2_swap(&mut at, fa, out_a, v2b, Some(fb.pool_address), false)?;
+                let c_cb: Vec<PlanStep> = vec![
+                    PlanStep::Erc20Transfer {
+                        token_idx: SENTINEL_WETH,
+                        token_addr: weth,
+                        recipient_idx: v2a,
+                        amount: optimal,
+                        seeds_pool: Some(fa.pool_address),
+                        repays_flash: None,
+                    },
+                    a_swap,
+                    b_repays,
+                ];
+                let outer_c = mechanics::v3_flash_to(
+                    &mut at,
+                    fc,
+                    out_c,
+                    c_in,
+                    false,
+                    SENTINEL_SELF,
+                    None,
+                    false,
+                    c_cb,
+                )?;
+                return Some((
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal,
+                        },
+                        outer_c,
+                    ],
+                    at,
+                ));
+            }
+            // ── v2v3v3: hop2 outermost (SELF, rpr=false) wrapping hop1
+            // (recipient=hop2 pool, rpr=true) whose callback is WETH prefund +
+            // V2SwapDirect (hop0 repays hop1 flash).
+            (Prot::V2, Prot::V3, Prot::V3) => {
+                let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                let optimal = inputs.optimal_input;
+                if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+                    return None;
+                }
+                let b_in = *inputs.consumed_inputs.get(1)?;
+                let c_in = *inputs.consumed_inputs.get(2)?;
+                if !fits_i128(b_in) || !fits_i128(c_in) {
+                    return None;
+                }
+                let (out_a, out_b, out_c) = (
+                    inputs.hop_outputs[0],
+                    inputs.hop_outputs[1],
+                    inputs.hop_outputs[2],
+                );
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let v2a = at.add(fa.pool_address).ok()?;
+                let v3b = at.add(fb.pool_address).ok()?;
+                let v3c = at.add(fc.pool_address).ok()?;
+                let direct = mechanics::v2_swap_direct(
+                    &mut at,
+                    fa,
+                    out_a,
+                    fa.out_currency,
+                    v3b,
+                    Some(fb.pool_address),
+                    true,
+                )?;
+                let b_cb: Vec<PlanStep> = vec![
+                    PlanStep::Erc20Transfer {
+                        token_idx: SENTINEL_WETH,
+                        token_addr: weth,
+                        recipient_idx: v2a,
+                        amount: optimal,
+                        seeds_pool: Some(fa.pool_address),
+                        repays_flash: None,
+                    },
+                    direct,
+                ];
+                let inner_b = mechanics::v3_flash_to(
+                    &mut at,
+                    fb,
+                    out_b,
+                    b_in,
+                    false,
+                    v3c,
+                    Some(fc.pool_address),
+                    true,
+                    b_cb,
+                )?;
+                let outer_c = mechanics::v3_flash_to(
+                    &mut at,
+                    fc,
+                    out_c,
+                    c_in,
+                    false,
+                    SENTINEL_SELF,
+                    None,
+                    false,
+                    vec![inner_b],
+                )?;
+                return Some((
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal,
+                        },
+                        outer_c,
+                    ],
+                    at,
+                ));
+            }
+            // ── v2v3v2: hop2 (V2 flash) outermost (SELF) wrapping hop1
+            // (recipient=hop2 pool, rpr=true) whose callback is WETH prefund +
+            // V2SwapDirect (hop0 repays hop1 flash).
+            (Prot::V2, Prot::V3, Prot::V2) => {
+                let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+                let optimal = inputs.optimal_input;
+                if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+                    return None;
+                }
+                let b_in = *inputs.consumed_inputs.get(1)?;
+                let c_in = *inputs.consumed_inputs.get(2)?;
+                if !fits_i128(b_in) || !fits_i128(c_in) {
+                    return None;
+                }
+                let (out_a, out_b, out_c) = (
+                    inputs.hop_outputs[0],
+                    inputs.hop_outputs[1],
+                    inputs.hop_outputs[2],
+                );
+                let weth = inputs.weth_address;
+                let mut at =
+                    AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+                let _ = at.add(fa.out_currency).ok()?;
+                let v2a = at.add(fa.pool_address).ok()?;
+                let v2c = at.add(fc.pool_address).ok()?;
+                let v3b = at.add(fb.pool_address).ok()?;
+                let direct = mechanics::v2_swap_direct(
+                    &mut at,
+                    fa,
+                    out_a,
+                    fa.out_currency,
+                    v3b,
+                    Some(fb.pool_address),
+                    true,
+                )?;
+                let b_cb: Vec<PlanStep> = vec![
+                    PlanStep::Erc20Transfer {
+                        token_idx: SENTINEL_WETH,
+                        token_addr: weth,
+                        recipient_idx: v2a,
+                        amount: optimal,
+                        seeds_pool: Some(fa.pool_address),
+                        repays_flash: None,
+                    },
+                    direct,
+                ];
+                let inner_b = mechanics::v3_flash_to(
+                    &mut at,
+                    fb,
+                    out_b,
+                    b_in,
+                    false,
+                    v2c,
+                    Some(fc.pool_address),
+                    true,
+                    b_cb,
+                )?;
+                let outer_c =
+                    mechanics::v2_flash(&mut at, fc, out_c, fc.in_currency, c_in, vec![inner_b])?;
+                return Some((
+                    vec![
+                        PlanStep::SelfFund {
+                            currency: weth,
+                            amount: optimal,
+                        },
+                        outer_c,
+                    ],
+                    at,
+                ));
+            }
             _ => derive_3hop_v4cross(facts, inputs),
         };
     }

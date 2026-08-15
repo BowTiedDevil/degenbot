@@ -108,12 +108,15 @@ fn family_name(prots: &[Prot]) -> String {
 /// `derive_plan` with the per-family body folded in (deleted). Migrate a
 /// family by folding its deriver into `derive_plan` + wiring delegation, then
 /// add its name here and un-ignore the row below.
-const DONE: &[&str] = &["v3v4v3", "v2v2v2", "v3v2", "v3v3", "v2v3"];
+const DONE: &[&str] = &[
+    "v3v4v3", "v2v2v2", "v3v2", "v3v3", "v2v3", "v3v3v3", "v3v3v2", "v3v2v3", "v3v2v2", "v2v2v3",
+    "v2v3v3", "v2v3v2",
+];
 
 /// Per-family deriver bodies (`fn derive_2hop_*` / `fn derive_3hop_*` /
 /// `fn derive_all_v2`) still present. Zero at full D6 realization. Decrement
 /// as each body is folded into the generic `derive_plan`.
-const EXPECTED_REMAINING: usize = 37;
+const EXPECTED_REMAINING: usize = 30;
 
 #[test]
 fn facts_driven_invariant() {
