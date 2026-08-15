@@ -1,6 +1,15 @@
 # ADR-031: The executor grammar as a facts-driven Plan walker — per-protocol hop facts + mechanics, derived enclosure
 
-**Status: accepted; implemented (A1–A3 of epic `62V6Q5` complete).**
+**Status: accepted; implemented (A1–A3 of epic `62V6Q5` complete) and D6 **realized** (epic `6SU5LM`).**
+
+> **D6 (epic `6SU5LM`) realization:** every one of the 35 `build_*_walk`
+> family producers is now a **thin delegate** — `derive_plan` routes every
+> family through `facts_of_<family>` + the per-shape derivers, and **no
+> `build_*_walk` body emits a `PlanStep` directly** (the D6 honesty invariant,
+> enforced by the `facts_driven_tests` probe + `honesty_invariant`). Structural
+> and behavioral parity is pinned by the revm contract matrix, the
+> `spike_derivation` golden suite (all 28 green), and the full executor +
+> simulation suites. The combined gate (T8) is green.
 
 ## Context
 

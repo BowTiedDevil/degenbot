@@ -140,7 +140,7 @@ fn emit_terminal_hop(
 /// encoder) and the currency/pool address (for the `LedgerOp` projection) —
 /// Checkpoint 1 keeps this minimal; a later refactor may separate
 /// address-collection from emission if it clarifies (see `BP7KIR` body).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PlanStep {
     /// A V2 or V3 `*_SWAP_COMPACT` flash — the pool credits `out_currency` to
     /// the executor and is owed `in_currency` within `callback` (the bytes the

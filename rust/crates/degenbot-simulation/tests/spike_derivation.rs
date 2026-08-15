@@ -1,3 +1,8 @@
+//! The golden proof suite for ADR-031 D6: for every family, the Plan produced
+//! by the facts-driven walker (`derive_plan` + `facts_of_<family>`) is executed
+//! end-to-end against the revm contract matrix and asserted byte-identical to
+//! the pre-refactor reference. Despite the historical "spike" filename, this is
+//! the standing behavioral-parity regression gate — not a throwaway probe.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

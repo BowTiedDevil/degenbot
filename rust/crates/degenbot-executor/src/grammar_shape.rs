@@ -30,10 +30,8 @@
 
 use alloy::primitives::Address;
 
-use crate::composers::{
-    fits_int128, ComposerInputs, HopInfo, PathInfo, V4HopInfo, NATIVE_CURRENCY_ADDRESS,
-};
-use crate::encoders::{self, AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
+use crate::composers::{ComposerInputs, HopInfo, PathInfo, V4HopInfo, NATIVE_CURRENCY_ADDRESS};
+use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 // Re-export the deep walker's public surface so external
 // `degenbot_executor::grammar_shape::{Plan, PlanStep, plan_to_bytes,
 // plan_to_ledger_ops, Prot, FundingSource, …}` paths keep resolving.
@@ -61,45 +59,12 @@ pub use crate::grammar_plan::{
 // diverges (`v2_v3` repays its flash in `weth`; all-V2 in `v2_forward(last)`).
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// The sentinel AddressTable scaffold for a pure V2/V3 family: weth /
-/// executor sentinels, no PoolManager. Byte-identical to the per-builder
-/// `with_sentinels` call it replaces.
-pub(crate) fn seed_address_table(inputs: &ComposerInputs<'_>) -> AddressTable {
-    AddressTable::with_sentinels(
-        Some(inputs.weth_address),
-        Some(inputs.executor_address),
-        None,
-    )
-}
+// The pure V2/V3 3-hop scaffolding (seed_address_table, guard_no_zeroed_output,
+// checked_swap_input, finish_plan) was decommissioned by the facts-driven T5
+// migration (epic 6SU5LM): every pure V2/V3 2-hop + 3-hop builder now delegates
+// to `derive_plan`, which inlines the equivalent guards.
 
-/// The zeroed-output guard for the 3-hop + any-N families. Byte-identical to
-/// the inlined `hop_outputs.contains(&0)`.
-pub(crate) fn guard_no_zeroed_output(inputs: &ComposerInputs<'_>) -> Option<()> {
-    if inputs.hop_outputs.contains(&0) {
-        return None;
-    }
-    Some(())
-}
-
-/// Guard a single hop's consumed swap input: `Some(amount)` when slot `i`
-/// exists and fits i128, else decline. Byte-identical to the inlined
-/// `consumed_inputs.get(i)?` + `fits_int128` ladder.
-pub(crate) fn checked_swap_input(inputs: &ComposerInputs<'_>, i: usize) -> Option<u128> {
-    let amount = *inputs.consumed_inputs.get(i)?;
-    if !fits_int128(amount) {
-        return None;
-    }
-    Some(amount)
-}
-
-/// Assemble the `(preamble, plan, address_table)` triple every builder
-/// returns. Byte-identical to the trailing `preamble + Some(...)` lines.
-pub(crate) fn finish_plan(at: AddressTable, plan: Plan) -> (Vec<u8>, Plan, AddressTable) {
-    let preamble = encoders::enc_preamble(&at);
-    (preamble, plan, at)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════// ═══════════════════════════════════════════════════════════════════════════
 // 3-hop Plan scaffolding (W7FQN6 pilot). The shared topology pieces every
 // V4-crossing 3-hop builder (this pilot + task HPZTNT) calls: the sentinel
 // AddressTable scaffold, per-hop currency/orientation, the ADR-029 D1 capture

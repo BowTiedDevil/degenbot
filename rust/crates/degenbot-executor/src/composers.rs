@@ -45,6 +45,10 @@ pub const EXECUTE_SELECTOR: [u8; 4] = [0xab, 0x58, 0x98, 0xe8];
 
 /// `INT128_MAX` = 2¹²⁷ − 1 — the upper bound the Python `fits_int128` guard
 /// checks for every explicitly-amounted swap.
+#[expect(
+    dead_code,
+    reason = "T5 (epic 6SU5LM) retired checked_swap_input; general composers guard"
+)]
 const INT128_MAX_U128: u128 = (1u128 << 127) - 1;
 
 /// True if `value` fits in a signed 128-bit integer (the Python
@@ -53,6 +57,10 @@ const INT128_MAX_U128: u128 = (1u128 << 127) - 1;
 ///
 /// `pub(crate)` so the Facet A grammar ([`crate::grammar`]) resolves the CL-clamp
 /// swap-in at this ONE shared point (ADR-025), rather than re-implementing it.
+#[expect(
+    dead_code,
+    reason = "T5 (epic 6SU5LM) retired checked_swap_input; general composers guard"
+)]
 pub(crate) fn fits_int128(value: u128) -> bool {
     value <= INT128_MAX_U128
 }
