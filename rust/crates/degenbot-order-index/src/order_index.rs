@@ -31,9 +31,18 @@ use std::fmt::Debug;
 /// Realistic magnitudes (gross ~1e30 wei, gas ~1e7, X ~1e13) are orders of
 /// magnitude inside these caps, so the guard never rejects real data; it exists
 /// to turn a malformed/absurd input into a safe clamp instead of a wrap.
-pub const GROSS_CAP: U256 = U256::from_limbs([0, 0x8000_0000_0000_0000, 0, 0]); // 2^127
-pub const GAS_CAP: U256 = U256::from_limbs([0, 0x0100_0000_0000_0000, 0, 0]); // 2^120
-pub const X_CAP: U256 = U256::from_limbs([0, 0x0100_0000_0000_0000, 0, 0]); // 2^120
+pub const GROSS_CAP: U256 = match U256::from_str_radix("80000000000000000000000000000000", 16) {
+    Ok(v) => v,
+    Err(_) => panic!("GROSS_CAP hex is a valid U256"),
+}; // 2^127
+pub const GAS_CAP: U256 = match U256::from_str_radix("1000000000000000000000000000000", 16) {
+    Ok(v) => v,
+    Err(_) => panic!("GAS_CAP hex is a valid U256"),
+}; // 2^120
+pub const X_CAP: U256 = match U256::from_str_radix("1000000000000000000000000000000", 16) {
+    Ok(v) => v,
+    Err(_) => panic!("X_CAP hex is a valid U256"),
+}; // 2^120
 
 /// Clamp `gross` into the exact-`I256` range (see the seam guard).
 #[inline]

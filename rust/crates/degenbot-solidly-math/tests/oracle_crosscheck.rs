@@ -273,7 +273,7 @@ fn cross_check_calc_exact_in_stable_camelot() {
 #[test]
 fn cross_check_calc_exact_out_stable_solidly_roundtrip() {
     let snap = load_snapshot();
-    let one = U256::from_limbs([1, 0, 0, 0]);
+    let one = U256::from(1u64);
     for case in snap["calc_exact_in_stable_solidly"].as_array().unwrap() {
         let args = case["args"].as_array().unwrap();
         let amount_in = args_as_u256(&args[0]);

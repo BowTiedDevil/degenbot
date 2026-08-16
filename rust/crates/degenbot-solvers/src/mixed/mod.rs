@@ -41,7 +41,10 @@ pub type V4SnapshotData = HashMap<(Address, [u8; 32]), HashMap<i32, degenbot_poo
 /// V4's `toBalanceDelta()` reverts with `SafeCastOverflow` if either
 /// component exceeds this value. The solver must reject paths where any
 /// V4 hop would produce amounts exceeding this limit.
-pub const INT128_MAX: U256 = U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF, 0, 0]);
+pub const INT128_MAX: U256 = match U256::from_str_radix("ffffffffffffffffffffffffffffffff", 16) {
+    Ok(v) => v,
+    Err(_) => panic!("INT128_MAX hex is a valid U256"),
+};
 
 // ---------------------------------------------------------------------------
 // Path types

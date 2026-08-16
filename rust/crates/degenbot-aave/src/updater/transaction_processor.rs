@@ -3345,12 +3345,7 @@ mod tests {
         // floor(debtToCover / idx) = 408_261_084 (the on-chain Mint effect)
         // while floor((balance_increase - value) / idx) = 408_261_083 (the
         // standard-mint REPAY-arm's under-burn by 1).
-        let index = U256::from_limbs([
-            0xd09b_1447_0cc7_39a4,
-            0x0000_0000_03ed_e331,
-            0x0000_0000_0000_0000,
-            0x0000_0000_0000_0000,
-        ]);
+        let index = U256::from_str_radix("3ede331d09b14470cc739a4", 16).unwrap();
         let debt_to_cover = U256::from(496_463_175u64);
         let balance_increase = U256::from(666_026_406u64);
         let mint_value = balance_increase - debt_to_cover + U256::from(1u64); // rounded +1 vs bi-debtToCover
