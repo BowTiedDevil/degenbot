@@ -32,17 +32,15 @@
 //! - V4 uses `V4PoolId` (bytes32) instead of pool contract address
 //! - The event is emitted by `PoolManager`, not by individual pool contracts
 
-use alloy::primitives::{Address, B256, I256};
+use alloy::primitives::{b256, Address, B256, I256};
 use alloy::rpc::types::Log;
 
 use crate::uniswap_tick_range::extract_int24_from_word;
 use crate::v4_swap_decoder::V4PoolId;
 
 /// Keccak256 of `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`.
-pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 = B256::new([
-    0xf2, 0x08, 0xf4, 0x91, 0x27, 0x82, 0xfd, 0x25, 0xc7, 0xf1, 0x14, 0xca, 0x37, 0x23, 0xa2, 0xd5,
-    0xdd, 0x6f, 0x3b, 0xcc, 0x3a, 0xc8, 0xdb, 0x5a, 0xf6, 0x3b, 0xaa, 0x85, 0xf7, 0x11, 0xd5, 0xec,
-]);
+pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 =
+    b256!("0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec");
 
 /// Decoded V4 `ModifyLiquidity` event carrying liquidity change data.
 #[derive(Clone, Debug, PartialEq, Eq)]

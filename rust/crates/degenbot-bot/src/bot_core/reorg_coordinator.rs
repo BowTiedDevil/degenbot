@@ -254,11 +254,9 @@ mod tests {
 
     /// The V2 `Sync` topic, duplicated here from `degenbot_decoders::v2_sync_decoder`
     /// to keep the test self-contained.
-    const V2_SYNC_TOPIC: alloy::primitives::B256 = alloy::primitives::B256::new([
-        0x1c, 0x41, 0x1e, 0x9a, 0x96, 0xe0, 0x71, 0x24, 0x1c, 0x2f, 0x21, 0xf7, 0x72, 0x6b, 0x17,
-        0xae, 0x89, 0xe3, 0xca, 0xb4, 0xc7, 0x8b, 0xe5, 0x0e, 0x06, 0x2b, 0x03, 0xa9, 0xff, 0xfb,
-        0xba, 0xd1,
-    ]);
+    const V2_SYNC_TOPIC: alloy::primitives::B256 = alloy::primitives::alloy::primitives::b256!(
+        "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
+    );
 
     /// Build a V2 `Sync` log for `pool_address` carrying `(reserve0, reserve1)`,
     /// at `block_number`, with `removed` set as requested.

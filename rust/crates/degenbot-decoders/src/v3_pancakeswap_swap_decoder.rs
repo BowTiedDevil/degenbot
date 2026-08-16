@@ -51,17 +51,15 @@
 #![allow(clippy::doc_markdown)]
 
 use crate::uniswap_tick_range::extract_int24_from_word;
-use alloy::primitives::{Address, B256, I256, U128, U256};
+use alloy::primitives::{b256, Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
 
 /// Keccak256 of `Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)`
 /// — the PancakeSwap V3 Swap topic0 (confirmed against the verified
 /// `PancakeV3Pool.sol` source; differs from the canonical Uniswap V3
 /// `V3_SWAP_TOPIC`).
-pub const V3_PANCAKESWAP_SWAP_TOPIC: B256 = B256::new([
-    0x19, 0xb4, 0x72, 0x79, 0x25, 0x6b, 0x2a, 0x23, 0xa1, 0x66, 0x5c, 0x81, 0x0c, 0x8d, 0x55, 0xa1,
-    0x75, 0x89, 0x40, 0xee, 0x09, 0x37, 0x7d, 0x4f, 0x8d, 0x26, 0x49, 0x7a, 0x35, 0x77, 0xdc, 0x83,
-]);
+pub const V3_PANCAKESWAP_SWAP_TOPIC: B256 =
+    b256!("0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83");
 
 /// Decoded PancakeSwap V3 Swap event carrying post-swap state. Field layout is
 /// shared with the Uniswap V3 decoder; only the topic and trailing words differ.

@@ -31,14 +31,12 @@
 //! 3. The event is emitted by `PoolManager`, not by individual pool contracts.
 
 use crate::uniswap_tick_range::extract_int24_from_word;
-use alloy::primitives::{Address, B256, I256, U128, U256};
+use alloy::primitives::{b256, Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
 
 /// Keccak256 of `Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)`.
-pub const V4_SWAP_TOPIC: B256 = B256::new([
-    0x40, 0xe9, 0xce, 0xcb, 0x9f, 0x5f, 0x1f, 0x1c, 0x5b, 0x9c, 0x97, 0xde, 0xc2, 0x91, 0x7b, 0x7e,
-    0xe9, 0x2e, 0x57, 0xba, 0x55, 0x63, 0x70, 0x8d, 0xac, 0xa9, 0x4d, 0xd8, 0x4a, 0xd7, 0x11, 0x2f,
-]);
+pub const V4_SWAP_TOPIC: B256 =
+    b256!("0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f");
 
 /// V4 pool identifier — a `bytes32` derived from `keccak256(PoolKey)`.
 pub type V4PoolId = [u8; 32];

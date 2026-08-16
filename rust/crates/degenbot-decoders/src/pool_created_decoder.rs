@@ -95,7 +95,7 @@
 //!         = ≥ 3 × 32 bytes (degenbot reads only the first 96)
 //! ```
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{b256, Address, B256, U256};
 use alloy::rpc::types::Log;
 
 use crate::uniswap_tick_range::extract_int24_from_word;
@@ -106,17 +106,13 @@ use crate::v4_swap_decoder::V4PoolId;
 /// Keccak256 of `PairCreated(address,address,address,uint256)` — the
 /// Uniswap V2 family sig (shared by `Uniswap`, `PancakeSwap`, `SushiSwap`,
 /// Swapbased V2, per `src/degenbot/cli/pool.py` constants).
-pub const V2_PAIR_CREATED_TOPIC: B256 = B256::new([
-    0x0d, 0x36, 0x48, 0xbd, 0x0f, 0x6b, 0xa8, 0x01, 0x34, 0xa3, 0x3b, 0xa9, 0x27, 0x5a, 0xc5, 0x85,
-    0xd9, 0xd3, 0x15, 0xf0, 0xad, 0x83, 0x55, 0xcd, 0xde, 0xfd, 0xe3, 0x1a, 0xfa, 0x28, 0xd0, 0xe9,
-]);
+pub const V2_PAIR_CREATED_TOPIC: B256 =
+    b256!("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9");
 
 /// Keccak256 of `PoolCreated(address,address,bool,address,uint256)` — the
 /// Aerodrome V2 family sig (the V2 variant with a `stable` indexed flag).
-pub const AERODROME_V2_POOL_CREATED_TOPIC: B256 = B256::new([
-    0x21, 0x28, 0xd8, 0x8d, 0x14, 0xc8, 0x0c, 0xb0, 0x81, 0xc1, 0x25, 0x2a, 0x5a, 0xcf, 0xf7, 0xa2,
-    0x64, 0x67, 0x1b, 0xf1, 0x99, 0xce, 0x22, 0x6b, 0x53, 0x78, 0x8f, 0xb2, 0x60, 0x65, 0x00, 0x5e,
-]);
+pub const AERODROME_V2_POOL_CREATED_TOPIC: B256 =
+    b256!("0x2128d88d14c80cb081c1252a5acff7a264671bf199ce226b53788fb26065005e");
 
 /// Keccak256 of Aerodrome V3's `PoolCreated` event signature — a distinct
 /// topic0 from the canonical Uniswap V3 sig ([`V3_POOL_CREATED_TOPIC`]),
@@ -127,25 +123,19 @@ pub const AERODROME_V2_POOL_CREATED_TOPIC: B256 = B256::new([
 /// `AERODROME_V3_POOLCREATED_EVENT_HASH`. The decode leaf that accepts this
 /// topic is deferred to task `CKXCOB` (the chunk loop) — the constant is
 /// surfaced here so `ExchangeSpec.event_topic` can carry it faithfully.
-pub const AERODROME_V3_POOL_CREATED_TOPIC: B256 = B256::new([
-    0xab, 0x0d, 0x57, 0xf0, 0xdf, 0x53, 0x7b, 0xb2, 0x5e, 0x80, 0x24, 0x5e, 0xf7, 0x74, 0x8f, 0xa6,
-    0x23, 0x53, 0x80, 0x8c, 0x54, 0xd6, 0xe5, 0x28, 0xa9, 0xdd, 0x20, 0x88, 0x7a, 0xed, 0x9a, 0xc2,
-]);
+pub const AERODROME_V3_POOL_CREATED_TOPIC: B256 =
+    b256!("0xab0d57f0df537bb25e80245ef7748fa62353808c54d6e528a9dd20887aed9ac2");
 
 /// Keccak256 of `PoolCreated(address,address,uint24,int24,address)` — the
 /// Uniswap V3 family sig (`PancakeSwap V3` + `SushiSwap V3` share it).
-pub const V3_POOL_CREATED_TOPIC: B256 = B256::new([
-    0x78, 0x3c, 0xca, 0x1c, 0x04, 0x12, 0xdd, 0x0d, 0x69, 0x5e, 0x78, 0x45, 0x68, 0xc9, 0x6d, 0xa2,
-    0xe9, 0xc2, 0x2f, 0xf9, 0x89, 0x35, 0x7a, 0x2e, 0x8b, 0x1d, 0x9b, 0x2b, 0x4e, 0x6b, 0x71, 0x18,
-]);
+pub const V3_POOL_CREATED_TOPIC: B256 =
+    b256!("0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118");
 
 /// Keccak256 of `Initialize(bytes32,address,address,uint24,int24,address,...)`
 /// — the Uniswap V4 `PoolCreated` sig (degenbot treats V4 `Initialize` as the
 /// pool-creation event, per the Python `UNISWAP_V4_POOLCREATED_EVENT_HASH`).
-pub const V4_INITIALIZE_TOPIC: B256 = B256::new([
-    0xdd, 0x46, 0x6e, 0x67, 0x4e, 0xa5, 0x57, 0xf5, 0x62, 0x95, 0xe2, 0xd0, 0x21, 0x8a, 0x12, 0x5e,
-    0xa4, 0xb4, 0xf0, 0xf6, 0xf3, 0x30, 0x7b, 0x95, 0xf8, 0x5e, 0x61, 0x10, 0x83, 0x8d, 0x64, 0x38,
-]);
+pub const V4_INITIALIZE_TOPIC: B256 =
+    b256!("0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438");
 
 // ── decoded structs ───────────────────────────────────────────────────────
 

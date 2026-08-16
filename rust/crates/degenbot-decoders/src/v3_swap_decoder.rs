@@ -25,14 +25,12 @@
 //! ```
 
 use crate::uniswap_tick_range::extract_int24_from_word;
-use alloy::primitives::{Address, B256, I256, U128, U256};
+use alloy::primitives::{b256, Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
 
 /// Keccak256 of `Swap(address,address,int256,int256,uint160,uint128,int24)`.
-pub const V3_SWAP_TOPIC: B256 = B256::new([
-    0xc4, 0x20, 0x79, 0xf9, 0x4a, 0x63, 0x50, 0xd7, 0xe6, 0x23, 0x5f, 0x29, 0x17, 0x49, 0x24, 0xf9,
-    0x28, 0xcc, 0x2a, 0xc8, 0x18, 0xeb, 0x64, 0xfe, 0xd8, 0x00, 0x4e, 0x11, 0x5f, 0xbc, 0xca, 0x67,
-]);
+pub const V3_SWAP_TOPIC: B256 =
+    b256!("0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67");
 
 /// Decoded V3 Swap event carrying post-swap state.
 #[derive(Clone, Debug, PartialEq, Eq)]
