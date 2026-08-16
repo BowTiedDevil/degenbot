@@ -2,16 +2,20 @@
 
 **Status: accepted; implemented (A1–A3 of epic `62V6Q5` complete) and D6 **realized** (epic `6SU5LM`).**
 
-> **D6 (epic `6SU5LM`) realization (VERIFIED, post re-drive):** every one of
-> the 35 `build_*_walk` family producers is now a **thin delegate** to
-> `derive_plan` — the sole facts-driven producer. All 40 per-family
+> **D6 realization (VERIFIED, post re-drive + enclosure-derivation migration):**
+> every one of the 35 `build_*_walk` family producers is a thin delegate to
+> `derive_plan` — the sole facts-driven producer. All per-family
 > `derive_2hop_*`/`derive_3hop_*`/`derive_all_v2` bodies are eliminated
 > (count = 0, enforced by `tests/facts_driven_invariant.rs::remaining_per_family_derivers`).
-> A `DERIVE_PLAN_CALLS` counter asserts every family actually routes through
-> the generic deriver (no bypass). Structural and behavioral parity is pinned
-> by the revm contract matrix, the
-> `spike_derivation` golden suite (all 28 green), and the full executor +
-> simulation suites. The combined gate (T8) is green.
+> A `DERIVE_PLAN_CALLS` counter asserts every family routes through the
+> generic deriver; a `FALLBACK_DISPATCH_CALLS` counter + a source-level
+> `match (facts[...].prot` arm count assert the enclosure is derived from
+> `Repay`/`OutDest` tags, NOT from prot-tuple match arms. Both are 0.
+> V4 hops carry `Repay::NetZero` (via `v4_hop_facts_netzero`), the tag
+> that routes to the tag-driven partition. Structural and behavioral parity
+> is pinned by the revm contract matrix + golden suites (209 tests green).
+> The combined D6 gate (`d6_enclosure_derived_from_facts` +
+> `d6_no_prot_tuple_match_arms`) is GREEN.
 
 ## Context
 
