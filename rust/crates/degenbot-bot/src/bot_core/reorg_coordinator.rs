@@ -254,7 +254,7 @@ mod tests {
 
     /// The V2 `Sync` topic, duplicated here from `degenbot_decoders::v2_sync_decoder`
     /// to keep the test self-contained.
-    const V2_SYNC_TOPIC: alloy::primitives::B256 = alloy::primitives::alloy::primitives::b256!(
+    const V2_SYNC_TOPIC: alloy::primitives::B256 = alloy::primitives::b256!(
         "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
     );
 
