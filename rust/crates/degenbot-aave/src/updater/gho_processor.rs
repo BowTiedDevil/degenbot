@@ -622,11 +622,15 @@ fn to_signed_neg(v: U256) -> Result<I256, GhoProcessorError> {
     // `I256::try_from(v)` succeeds for `v <= I256::MAX` (= `2^255 - 1`); the
     // boundary `v == 2^255` (= `I256::MAX + 1` = `-(I256::MIN)` in absolute)
     // must map to `I256::MIN`.
+    // `MAX_ABS` = `I256::MAX` = `2^255 - 1` (`0x7fff` is the HIGH
+    // limb; little-endian `from_limbs`). The prior constant put it in the LOW
+    // limb → `2^256 - 2^63 - 1`, making `v == 2^255` unreachable (it
+    // overflow-errored) while out-of-range `2^256 - 2^63` was coerced to `I256::MIN`.
     const MAX_ABS: U256 = U256::from_limbs([
+        0xffff_ffff_ffff_ffff,
+        0xffff_ffff_ffff_ffff,
+        0xffff_ffff_ffff_ffff,
         0x7fff_ffff_ffff_ffff,
-        0xffff_ffff_ffff_ffff,
-        0xffff_ffff_ffff_ffff,
-        0xffff_ffff_ffff_ffff,
     ]);
     if v > MAX_ABS + U256::from(1u8) {
         return Err(GhoProcessorError::DeltaOverflow(format!(
@@ -696,6 +700,31 @@ pub fn calculate_gho_discount_rate(
 mod tests {
     use super::*;
     use degenbot_evm_math::RAY;
+
+    // ── to_signed_neg boundary (the 2^255 → I256::MIN mapping) ───────────────
+
+    /// `to_signed_neg` must wrap `2^255` (the absolute value of `I256::MIN`)
+    /// into `I256::MIN` and error only above it. Regression for the prior
+    /// constant `from_limbs([0x7fff_ffff_ffff_ffff, 0xffff_ffff_ffff_ffff,
+    /// 0xffff_ffff_ffff_ffff, 0xffff_ffff_ffff_ffff])`, which decodes to
+    /// `2^256 - 2^63 - 1` instead of `2^255 - 1` — so `v == 2^255` never hit
+    /// the `I256::MIN` arm (it overflow-errored) while a huge out-of-range
+    /// `v == 2^256 - 2^63` was silently coerced to `I256::MIN`.
+    #[test]
+    fn to_signed_neg_maps_two_255_to_i256_min() {
+        let two_255 = U256::from(1u8) << 255;
+        // v == I256::MAX (2^255 - 1) → -I256::MAX (representable).
+        assert_eq!(to_signed_neg(I256::MAX.into_raw()).unwrap(), -I256::MAX);
+        // v == 2^255 (|I256::MIN|) → I256::MIN, NOT an overflow error.
+        assert_eq!(to_signed_neg(two_255).unwrap(), I256::MIN);
+        // v == 2^255 + 1 → DeltaOverflow.
+        assert!(matches!(
+            to_signed_neg(two_255 + U256::from(1u8)),
+            Err(GhoProcessorError::DeltaOverflow(_))
+        ));
+        // Sanity: 0 → Ok(0).
+        assert_eq!(to_signed_neg(U256::ZERO).unwrap(), I256::ZERO);
+    }
 
     // ── strategy fns ──────────────────────────────────────────────────────────
 
