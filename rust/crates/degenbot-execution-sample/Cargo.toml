@@ -12,7 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.3", features = ["signers"] }
+alloy = { version = "^2.4", features = ["signers"] }
 thiserror = { version = "^2.0" }
 # The seam itself — `PayloadComposer` / `ExecutionStrategy` + value types.
 degenbot-execution = { path = "../degenbot-execution" }

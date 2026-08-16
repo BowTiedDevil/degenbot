@@ -24,7 +24,7 @@ revm = { version = "^42.0", default-features = true, features = ["alloydb", "asy
 # The alloy umbrella (single source, matches degenbot-rpc's convention). The
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
-alloy = { version = "^2.3", features = ["full"] }
+alloy = { version = "^2.4", features = ["full"] }
 degenbot-core = { path = "../degenbot-core" }
 # `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
 # `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim

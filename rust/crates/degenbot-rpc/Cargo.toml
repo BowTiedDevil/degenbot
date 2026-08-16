@@ -12,7 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.3", features = ["full", "transport-throttle", "json-rpc"] }
+alloy = { version = "^2.4", features = ["full", "transport-throttle", "json-rpc"] }
 dashmap = { version = "^6.2" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }

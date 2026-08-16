@@ -12,7 +12,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.3", features = ["full", "transport-throttle"] }
+alloy = { version = "^2.4", features = ["full", "transport-throttle"] }
 # `async_trait` makes the construction-I/O core traits dyn-compatible (they're
 # held as `Arc<dyn DbConstruction + Send + Sync>` on `ConstructionIo`). The
 # macro desugars `async fn` to `-> Pin<Box<dyn Future + Send>>` — the standard

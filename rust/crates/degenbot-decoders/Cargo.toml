@@ -12,4 +12,4 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-alloy = { version = "^2.3" }
+alloy = { version = "^2.4" }
