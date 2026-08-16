@@ -40,10 +40,11 @@
 //!
 //! Two checks:
 //!
-//! 1. **No prot-tuple dispatch:** `FALLBACK_DISPATCH_CALLS` must be 0 for every
-//!    family. The counter fires in every `match (facts[...].prot …)` /
-//!    `if facts[...].prot == Prot::X && …` section — the hardcoded per-family
-//!    dispatch D6 replaces with tag-driven derivation.
+//! 1. **No prot-tuple dispatch:** enforced by the source-level lighthouse
+//!    `d6_no_prot_tuple_match_arms` (the `FALLBACK_DISPATCH_CALLS` atomic
+//!    that used to back this check was removed — it was never incremented, so
+//!    its `== 0` assertion was vacuous — and the property is fully covered by
+//!    the match-arm scan).
 //!
 //! 2. **V4 hops tagged `Repay::NetZero`:** V4 hops inside a V4Unlock must carry
 //!    `Repay::NetZero` (the tag that bypasses the prot-tuple arms and routes to
@@ -77,9 +78,7 @@ use degenbot_executor::composers::{
 };
 use degenbot_executor::grammar_ledger::Prot;
 use degenbot_executor::grammar_shape::derive_shape;
-use degenbot_executor::grammar_walker::{
-    family_facts, Repay, DERIVE_PLAN_CALLS, FALLBACK_DISPATCH_CALLS,
-};
+use degenbot_executor::grammar_walker::{family_facts, Repay, DERIVE_PLAN_CALLS};
 use std::sync::atomic::Ordering;
 
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
@@ -253,11 +252,12 @@ fn repay_tags(prots: &[Prot], path: &PathInfo, inputs: &ComposerInputs<'_>) -> O
 
 /// D6 enclosure-derivation invariant.
 ///
-/// Two checks (both RED until all 35 families are migrated):
+/// Two checks (both RED until all 35 families are migrated; the first is a
+/// source-level lighthouse):
 ///
-/// 1. **No prot-tuple dispatch** — `FALLBACK_DISPATCH_CALLS == 0` for every
-///    family. The enclosure must be derived from the `Repay`/`OutDest` tag
-///    partition, not from `match (facts[0].prot, …)` arms.
+/// 1. **No prot-tuple dispatch** — the enclosure must be derived from the
+///    `Repay`/`OutDest` tag partition, not from `match (facts[0].prot, …)`
+///    arms. See `d6_no_prot_tuple_match_arms`.
 ///
 /// 2. **V4 hops tagged `NetZero`** — every V4 hop must carry `Repay::NetZero`
 ///    (the tag that routes to the tag-driven partition). The generic
@@ -266,7 +266,6 @@ fn repay_tags(prots: &[Prot], path: &PathInfo, inputs: &ComposerInputs<'_>) -> O
 #[test]
 fn d6_enclosure_derived_from_facts() {
     let fams = [Prot::V2, Prot::V3, Prot::V4];
-    let mut fallback_families: Vec<String> = Vec::new();
     let mut netzero_missing: Vec<String> = Vec::new();
 
     for n in [2usize, 3] {
@@ -289,19 +288,8 @@ fn d6_enclosure_derived_from_facts() {
                 opts: EncodeOptions::default(),
             };
 
-            // 1. No prot-tuple dispatch.
-            FALLBACK_DISPATCH_CALLS.store(0, Ordering::Relaxed);
-            let encoded = derive_shape(&path, &inputs);
-            assert!(
-                encoded.is_some(),
-                "[{name}] probe fixture must encode the family"
-            );
-            let fb = FALLBACK_DISPATCH_CALLS.load(Ordering::Relaxed);
-            if fb > 0 {
-                fallback_families.push(format!("{name} (fallback_dispatches={fb})"));
-            }
-
-            // 2. V4 hops tagged Repay::NetZero.
+            // V4 hops tagged Repay::NetZero (no-prot-tuple dispatch is
+            // covered by `d6_no_prot_tuple_match_arms`).
             if let Some(tags) = repay_tags(&prots, &path, &inputs) {
                 let has_v4 = prots.contains(&Prot::V4);
                 let v4_has_netzero = prots
@@ -316,15 +304,6 @@ fn d6_enclosure_derived_from_facts() {
         }
     }
 
-    assert!(
-        fallback_families.is_empty(),
-        "D6 violation — families still using prot-tuple dispatch (hardcoded \
-         match arms), not tag-driven enclosure derivation:\n  {}\n\
-         Migration: set the correct Repay/OutDest tags in facts_of_<family>, \
-         extend the tag-driven partition in derive_plan, delete the prot-tuple \
-         match arm.",
-        fallback_families.join("\n  ")
-    );
     assert!(
         netzero_missing.is_empty(),
         "D6 violation — families whose V4 hops lack Repay::NetZero (the tag \

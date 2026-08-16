@@ -1778,15 +1778,6 @@ pub(crate) fn build_for_walk(
 pub static DERIVE_PLAN_CALLS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// Counter incremented every time `derive_plan` enters a hardcoded
-/// protocol-tuple match arm (the fallback dispatch D6 replaces with
-/// tag-driven derivation).  The D6 depth property requires this to be 0
-/// for every family — the enclosure must be derived from the `Repay` /
-/// `OutDest` tag partition, not from protocol-tuple match arms with
-/// hardcoded bodies.
-pub static FALLBACK_DISPATCH_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
 #[must_use]
 #[expect(clippy::too_many_lines, clippy::similar_names)]
 pub(crate) fn derive_plan(
