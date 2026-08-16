@@ -77,11 +77,16 @@ const GHO_DISCOUNT_DEPRECATION_REVISION: u32 = 4;
 /// The EIP-1967 implementation storage slot (the canonically-fixed
 /// `bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`).
 /// Mirrors the Python `ERC_1967_IMPLEMENTATION_SLOT` — read via
-/// `get_storage_at` to resolve a proxy's logic contract.
-const EIP_1967_IMPLEMENTATION_SLOT: U256 = U256::from_be_bytes::<32>([
-    0x36, 0x08, 0x94, 0xa1, 0x3b, 0xa1, 0xa3, 0x21, 0x06, 0x67, 0xc8, 0x28, 0x49, 0x2d, 0xb9, 0x8d,
-    0xca, 0x3e, 0x20, 0x76, 0xcc, 0x37, 0x35, 0xa9, 0x20, 0xa3, 0xca, 0x50, 0x5d, 0x38, 0x2b, 0xbc,
-]);
+/// `get_storage_at` to resolve a proxy's logic contract. Written as the
+/// canonical hex and parsed at compile time (a typo fails the build rather
+/// than silently mis-routing proxy resolution).
+const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix(
+    "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+    16,
+) {
+    Ok(v) => v,
+    Err(_) => panic!("EIP-1967 implementation slot hex is a valid U256"),
+};
 
 // ── error ──────────────────────────────────────────────────────────────────
 
