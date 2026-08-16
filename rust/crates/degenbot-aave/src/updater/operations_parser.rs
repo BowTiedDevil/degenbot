@@ -3438,10 +3438,7 @@ mod tests {
             });
         let inner = AlloyLog::new_unchecked(
             // Pool contract address (the MintedToTreasury emitter).
-            Address::from([
-                0x87, 0x87, 0x0B, 0xca, 0xF3, 0xFD, 0x63, 0x35, 0xC3, 0xF4, 0xce, 0x83, 0x92, 0xD6,
-                0x93, 0x50, 0xB4, 0xFA, 0x4E, 0x2,
-            ]),
+            alloy::primitives::address!("0x87870Bca3F3Fd6335c3f4ce8392D69350b4fA4e2"),
             topics,
             Bytes::from(data),
         );
@@ -3509,24 +3506,15 @@ mod tests {
         let conn = db.lock();
 
         // The Pool contract at 0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2.
-        let pool_address = Address::from([
-            0x87, 0x87, 0x0B, 0xca, 0xF3, 0xFD, 0x63, 0x35, 0xC3, 0xF4, 0xce, 0x83, 0x92, 0xD6,
-            0x93, 0x50, 0xB4, 0xFA, 0x4E, 0x2,
-        ]);
-        let a_token_address = Address::from([
-            0x4d, 0x5F, 0x47, 0xFA, 0x6A, 0x74, 0x75, 0x7f, 0x35, 0xC1, 0x4f, 0xD3, 0xa6, 0xEF,
-            0x8E, 0x3C, 0x9B, 0xC5, 0x14, 0xE8,
-        ]);
-        let reserve_weth = Address::from([
-            0xC0, 0x2a, 0xAA, 0x39, 0xb2, 0x23, 0xFE, 0x8D, 0x0A, 0x0e, 0x5C, 0x4F, 0x27, 0xEA,
-            0xD9, 0x08, 0x3C, 0x75, 0x6C, 0xc2,
-        ]);
+        let pool_address =
+            alloy::primitives::address!("0x87870Bca3F3Fd6335c3f4ce8392D69350b4fA4e2");
+        let a_token_address =
+            alloy::primitives::address!("0x4d5F47fA6A74757f35C14fD3a6Ef8E3C9Bc514E8");
+        let reserve_weth =
+            alloy::primitives::address!("0xC02aAA39b223FE8D0A0e5C4F27EAD9083C756Cc2");
         // Treasury 0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c (the user that
         // receives the minted-to-treasury aToken shares).
-        let treasury = Address::from([
-            0x46, 0x4C, 0x71, 0xf6, 0xc2, 0xF7, 0x60, 0xDD, 0xA6, 0x09, 0x3d, 0xCB, 0x91, 0xC2,
-            0x4c, 0x39, 0xe5, 0xd6, 0xe1, 0x8c,
-        ]);
+        let treasury = alloy::primitives::address!("0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c");
 
         // SB3XJF-relevant block 16516952 evidence tuple — the MintedToTreasury
         // emission that mints accrued yield to the treasury 0x464C's WETH

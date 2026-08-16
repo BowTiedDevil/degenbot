@@ -2334,17 +2334,11 @@ mod tests {
 
     #[test]
     fn dispatch_discount_token_updated_returns_none_when_emitter_mismatches() {
-        let gho_vtoken = Address::from([
-            0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
-            0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
-        ]);
+        let gho_vtoken = Address::from([0xa0; 20]);
         let gho_asset = sample_gho_asset(Some(&checksum(&gho_vtoken)));
         // An off-market emitter (any other contract) — the chain-wide fetch can
         // surface these; the Python guard drops them.
-        let off_emitter = Address::from([
-            0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb, 0xb,
-            0xb, 0xb, 0xb,
-        ]);
+        let off_emitter = Address::from([0xb; 20]);
         let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: off_emitter,
             old_discount_token: Address::ZERO,

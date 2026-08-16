@@ -2806,7 +2806,7 @@ mod tests {
     /// must return the seeded ticks with coverage `"tracked"`.
     #[test]
     fn assemble_v3_tick_map_returns_tracked_after_snapshot_load() {
-        use alloy::primitives::{aliases::U128, Address, I256, U256};
+        use alloy::primitives::{address, aliases::U128, Address, I256, U256};
         use degenbot_db::discovery::V3PoolRowInput;
         use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
         use std::collections::HashMap;
@@ -2826,10 +2826,7 @@ mod tests {
         {
             let (db, _state) = degenbot_db::connection::DegenbotDb::open_for_writes(&temp_path)
                 .expect("open_for_writes on temp");
-            let factory = Address::from([
-                0x1F, 0x98, 0x43, 0x1c, 0x8a, 0xD9, 0x85, 0x23, 0x63, 0x1A, 0xE4, 0xa5, 0x9f, 0x26,
-                0x73, 0x46, 0xea, 0x31, 0xF9, 0x84,
-            ]);
+            let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
             db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
             let pool_address = Address::from([0xaa; 20]);
             db.upsert_v3_pools(
