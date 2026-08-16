@@ -198,3 +198,9 @@ instead.
 - When you move a harness onto the driver, the tier-3 tests are the guard: they
   stay byte-exact or they fail loudly (`bucket=…`), so a driver change never
   silently corrupts an oracle.
+- **Retired one-off capture scripts (2026-08):** `capture_path13822_full_snapshot.py`
+  and `capture_path205_v2v4v3_fixture.py` plus their fixtures
+  (`path13822_v3v3v3_block25696004_onchain.json`, `path205_v2v4v3_block25695845.json`)
+  were deleted as dead weight — no live test/example/doc consumed them (verified by
+  whole-tree `rg` + git history). `capture_path13822_v3v3v3_fixture.py` remains: it is
+  the parameterized (`FIX_PATH_ID`) generator for the consumed `path13827` fixture.

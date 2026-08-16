@@ -37,7 +37,10 @@ import sqlite3
 import subprocess
 
 RPC = "http://host.containers.internal:8545"
-TARGET = 25678789  # solve block (path 11354) from [sim-diag] (live recurrence, 2nd data point)
+TARGET = 25678283  # solve block (path 11354) from [sim-diag] (canonical incident; matches
+# the example default). A 2nd confirmed data point also exists at block 25678789
+# (committed fixture path11354_v3v2v3_block25678789.json, same 1-wei IIA: predicted
+# 18419152813209 vs actual 18419152813208) — re-capture it by editing TARGET to 25678789.
 DB = os.path.expanduser("~/.config/degenbot/degenbot.db")
 
 POOLS = {
