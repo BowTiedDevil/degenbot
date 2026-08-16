@@ -7,7 +7,7 @@
 //! address-provider, discount-config, oracle). Each fn returns raw
 //! [`alloy::rpc::types::Log`]s sorted by `(block_number, log_index)` (the
 
-#![allow(clippy::missing_errors_doc, clippy::doc_markdown)]
+#![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
 //! fetcher's contract — AC4's deterministic ordering); the per-tx grouping +
 //! the `DecodedAaveEvent` decode are the orchestrator's concern (`-3`) — these
 //! fetchers do NOT decode (mirrors the Python `fetch_*` fns which return raw

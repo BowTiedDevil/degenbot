@@ -510,7 +510,6 @@ impl IntV3TickRangeSequence {
 #[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
     use super::*;
     use alloy::primitives::I256;
     use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;

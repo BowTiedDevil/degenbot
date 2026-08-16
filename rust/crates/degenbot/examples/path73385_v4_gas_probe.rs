@@ -50,8 +50,7 @@
 //! Optional: `FIXTURE_PATH=…` points at a different capture; `GAS_5M=… GAS_30M=…`
 //! override the two budgets (defaults 5_000_000 / 30_000_000).
 
-#![allow(clippy::doc_markdown, clippy::too_many_lines)]
-#![allow(clippy::cast_possible_wrap, clippy::match_same_arms)]
+#![expect(clippy::doc_markdown, clippy::too_many_lines)]
 
 use alloy::primitives::{aliases::I256, U160, U256};
 use degenbot::investigation::{build_v4_state, real_oracle, PathFixture};

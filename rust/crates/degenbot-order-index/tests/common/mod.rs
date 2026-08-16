@@ -88,7 +88,7 @@ pub fn check_topk_and_best<I: OrderIndex<u64> + Default>(
 }
 
 /// The invariant, as a directly-asserting helper for plain `#[test]`s.
-#[allow(dead_code)] // exercised only from the envelope test binary
+#[allow(dead_code, reason = "exercised only from the envelope test binary")]
 pub fn assert_invariant<I: OrderIndex<u64> + Default>(points: &[Cand], x: U256, k: usize) {
     assert!(check_topk_and_best::<I>(points, x, k));
 }

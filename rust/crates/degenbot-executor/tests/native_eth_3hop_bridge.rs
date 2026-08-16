@@ -6,7 +6,6 @@
 // emits the right opcodes in the right order, the bytes match. The native
 // V4-bridge opcode ORDER is the ordering risk the runtime matrix cannot name
 // precisely, so this byte-golden remains as the smoke-level byte cross-check.
-#![allow(clippy::too_many_lines, clippy::unreadable_literal)]
 
 use alloy::primitives::{address, Address};
 use degenbot_executor::composers::{encode_cmd_3_hop, EncodeOptions, HopInfo, PathInfo, V4HopInfo};

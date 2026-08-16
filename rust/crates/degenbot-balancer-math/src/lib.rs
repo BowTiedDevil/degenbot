@@ -5,13 +5,11 @@
 // `series_sum`, `z`, `num`) mirror the deployed Solidity + Python oracle
 // notation (1:1 direct ports), so renaming obscures the direct-port
 // correspondence.
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::many_single_char_names)]
-#![allow(clippy::missing_errors_doc)]
+#![expect(clippy::doc_markdown)]
+#![expect(clippy::missing_errors_doc)]
 // Direct Solidity ports: index-based loops, conditional subtract-then-multiply
 // patterns, single-function 1:1 mirrors of the deployed contract.
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::too_many_lines)]
+#![expect(clippy::needless_range_loop)]
 //!
 //! ADR-005 slice 12e — the **pure-math port** sub-slice of slice 12 (the
 //! Balancer family port). Mirrors `degenbot-curve-math`'s shape

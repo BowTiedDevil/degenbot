@@ -28,12 +28,7 @@
 //! Gamma = 1 - fee = (1_000_000 - fee) / 1_000_000.
 //! We store `gamma_numer = 1_000_000 - fee`, `fee_denom = 1_000_000`.
 
-#![allow(non_snake_case)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::similar_names)]
+#![expect(clippy::too_many_lines)]
 
 use alloy::primitives::U256;
 #[cfg(test)]
@@ -1227,7 +1222,12 @@ fn u512_to_u256(v: U512) -> U256 {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stderr,
+    clippy::similar_names
+)]
 mod tests {
     use super::*;
     use alloy::primitives::I256;

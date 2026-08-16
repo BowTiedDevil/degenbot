@@ -1,14 +1,5 @@
-#![allow(
-    clippy::doc_markdown,
-    clippy::too_many_lines,
-    clippy::unreadable_literal
-)]
-#![allow(
-    clippy::identity_op,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_truncation
-)]
+#![expect(clippy::doc_markdown, clippy::unreadable_literal)]
+#![expect(clippy::identity_op, clippy::cast_possible_wrap)]
 //! V3 on-chain storage-slot encoders — engine typed state → EVM slot words.
 //!
 //! Pure functions (no revm, no pyo3) that pack the engine's `V3PoolState`

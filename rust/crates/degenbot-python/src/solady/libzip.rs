@@ -4,8 +4,6 @@
 //! args → call core → wrap result as `HexBytes` (matching the Python oracle's
 //! return type in `degenbot.utils.solady.libzip`).
 
-#![allow(clippy::doc_markdown)]
-
 use crate::prelude::*;
 use pyo3::exceptions::PyTypeError;
 

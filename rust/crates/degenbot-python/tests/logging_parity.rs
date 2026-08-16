@@ -18,12 +18,7 @@
 //! every 50 ms; we wait up to 2 s).
 
 #![cfg(feature = "auto-initialize")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::doc_markdown,
-    clippy::unnecessary_wraps
-)]
+#![expect(clippy::unwrap_used)]
 
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};

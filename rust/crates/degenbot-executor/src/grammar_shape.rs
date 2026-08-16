@@ -357,7 +357,7 @@ pub fn family_axis_support(path: &PathInfo) -> Option<AxisSupport> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,

@@ -129,7 +129,7 @@ pub fn next_base_fee(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
+    #![expect(clippy::too_many_lines)]
 
     use super::*;
 

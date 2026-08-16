@@ -307,7 +307,7 @@ fn parse_int_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError>
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![expect(clippy::unwrap_used)]
 
     use super::*;
 

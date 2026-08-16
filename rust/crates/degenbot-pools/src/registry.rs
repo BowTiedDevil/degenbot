@@ -929,7 +929,6 @@ pub struct TokenEntry {
 #[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod projection_tests {
-    #![allow(unused_imports)]
     use super::*;
     use crate::v3_state::{RegisterV3PoolParams, V3PoolState};
 

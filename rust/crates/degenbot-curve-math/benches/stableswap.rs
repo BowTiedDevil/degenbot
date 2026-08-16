@@ -3,11 +3,8 @@
 //! `swap_fn` for a Curve hop calls `stableswap_get_y` (which internally calls
 //! `stableswap_get_d` once per call). Benches at mainnet-like 3pool magnitudes.
 
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::many_single_char_names)]
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::needless_range_loop)]
+#![expect(clippy::cast_precision_loss)]
+#![expect(clippy::many_single_char_names)]
 #![expect(clippy::unwrap_used)]
 
 use criterion::{criterion_group, criterion_main, Criterion};

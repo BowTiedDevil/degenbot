@@ -599,8 +599,6 @@ impl AlloyProvider {
 #[expect(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
     use super::*;
 
     /// Create a `SubscriptionHandle` with double-buffer infrastructure for testing.

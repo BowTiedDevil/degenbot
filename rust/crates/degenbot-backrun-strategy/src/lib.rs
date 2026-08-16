@@ -31,7 +31,7 @@
 
 // Solidity/EVM identifiers (balanceOf, WETH9, PoolManager, ERC6909, …) are
 // ubiquitous in this crate's docs; allow the pedantic doc-markdown lint.
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 /// The 7-call calldata builders (balanceOf / getEthBalance / ERC6909 /
 /// execute-wrap) — the backrun bundle's read + execute calldata.

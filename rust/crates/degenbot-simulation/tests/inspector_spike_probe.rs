@@ -23,7 +23,7 @@
 
 // revm/Solidity identifiers (LOG, SLOAD, CALL, REVERT, Inspector, etc.) are
 // ubiquitous here — match the degenbot-simulation convention.
-#![allow(clippy::doc_markdown, clippy::too_many_lines)]
+#![expect(clippy::doc_markdown)]
 
 use std::cell::RefCell;
 use std::rc::Rc;

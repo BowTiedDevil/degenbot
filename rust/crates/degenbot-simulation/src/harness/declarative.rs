@@ -27,13 +27,7 @@
 //! written test. `assert_profitable` is deliberately tolerant of ±1-wei
 //! per-hop rounding (`getAmountIn` round-up, terminal V2 calc recompute) but
 //! will catch a silently-wrong amount by orders of magnitude.
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss
-)]
+#![expect(clippy::cast_possible_wrap)]
 
 use alloy::primitives::{Address, U256};
 use degenbot_executor::composers::{HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};

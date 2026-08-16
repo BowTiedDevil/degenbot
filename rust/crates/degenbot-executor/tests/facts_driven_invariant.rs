@@ -65,12 +65,7 @@
 //! `EXPECTED_PROT_TUPLE_ARMS` counts `match (facts[...].prot` arms in the
 //! source — a source-level lighthouse that hits 0 only when every arm is gone.
 
-#![allow(
-    clippy::too_many_lines,
-    clippy::panic,
-    clippy::cast_possible_truncation,
-    clippy::doc_markdown
-)]
+#![expect(clippy::cast_possible_truncation, clippy::doc_markdown)]
 
 use alloy::primitives::{address, Address};
 use degenbot_executor::composers::{

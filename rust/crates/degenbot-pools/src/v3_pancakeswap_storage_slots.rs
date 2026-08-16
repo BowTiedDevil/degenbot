@@ -1,9 +1,4 @@
-#![allow(
-    clippy::doc_markdown,
-    clippy::too_many_lines,
-    clippy::unreadable_literal
-)]
-#![allow(clippy::identity_op, clippy::cast_possible_truncation)]
+#![expect(clippy::doc_markdown)]
 //! PancakeSwap V3 storage-slot encoders — fork-aware engine typed state →
 //! EVM slot words.
 //!

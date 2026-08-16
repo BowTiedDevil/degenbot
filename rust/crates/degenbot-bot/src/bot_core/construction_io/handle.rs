@@ -1,4 +1,4 @@
-#![allow(clippy::missing_errors_doc)]
+#![expect(clippy::missing_errors_doc)]
 //! The composite handle holding the two trait objects.
 use std::sync::Arc;
 

@@ -18,7 +18,7 @@
 //! pool id AND every identity/state field; divergence = a lossy FFI seam on
 //! the registration/identity path.
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{aliases::U112, Address};
 use degenbot::bot_core::BotState;

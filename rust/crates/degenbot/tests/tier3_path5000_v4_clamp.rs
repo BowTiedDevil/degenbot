@@ -49,7 +49,7 @@
 //! harness-source edit requires `tier3-oracle/build-tier3-v4-swap-harness.sh`
 //! to regenerate + `just verify-tier3-artifacts` to confirm, per ADR-020.
 
-#![allow(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, BalanceDelta…)
+#![expect(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, BalanceDelta…)
 
 use alloy::primitives::{aliases::I256, U160, U256};
 use degenbot::investigation::{build_v4_state, real_oracle, PathFixture};

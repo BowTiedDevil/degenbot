@@ -472,7 +472,7 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    #![allow(clippy::unwrap_used)]
+    #![expect(clippy::unwrap_used)]
 
     use super::*;
     use proptest::prelude::*;

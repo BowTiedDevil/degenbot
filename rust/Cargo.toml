@@ -48,6 +48,8 @@ panic = "deny"
 panic_in_result_fn = "deny"
 
 # The "no cheating" rule
+# NOTE: allow_attributes_without_reason would ALSO demand a reason on every #[expect]
+# (882 expects, only 19 reasoned) - too costly. keep allow_attributes (outer) + a CI rg guard for inner #![allow].
 allow_attributes = "deny"
 
 # Code hygiene - no debug leftovers

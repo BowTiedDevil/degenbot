@@ -56,7 +56,7 @@
 // The tick→u32 bit-pattern cast (two's-complement packing of an `int24`) is
 // intentional; clippy's `cast_sign_loss` suggestion (`cast_unsigned`) is not a
 // real std method — allow the intentional signed→unsigned bit cast here.
-#![allow(clippy::cast_sign_loss)]
+#![expect(clippy::cast_sign_loss)]
 #![cfg_attr(
     test,
     allow(clippy::decimal_bitwise_operands, clippy::unreadable_literal)
@@ -425,8 +425,6 @@ fn pack_tick_info_word(info: &degenbot_pools::TickInfo) -> B256 {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use crate::bot_core::{
         BotState, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,

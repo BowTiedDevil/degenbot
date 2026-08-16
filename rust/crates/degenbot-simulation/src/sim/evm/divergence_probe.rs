@@ -41,7 +41,6 @@
 // The signed→unsigned bit-pattern casts in the tests (two's-complement tick
 // packing) are intentional; clippy's `cast_sign_loss` suggestion is not a real
 // std method.
-#![allow(clippy::cast_sign_loss)]
 #![cfg_attr(
     test,
     allow(clippy::unreadable_literal, clippy::decimal_bitwise_operands)
@@ -250,11 +249,9 @@ pub fn dump_divergence_summary() {
     );
 }
 
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::cast_sign_loss)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use crate::sim::evm::BotStateDb;
     use alloy::primitives::{address, Address, B256, U256};

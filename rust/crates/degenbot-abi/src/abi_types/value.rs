@@ -411,9 +411,8 @@ fn strip_quotes(s: &str) -> String {
 }
 
 #[cfg(test)]
-#[expect(clippy::panic)]
+#[expect(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
 
@@ -713,7 +712,7 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    #![allow(
+    #![expect(
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::tuple_array_conversions

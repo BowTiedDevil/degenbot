@@ -37,7 +37,7 @@
 //! liquidity → stays in-tick → deterministic computed output
 //! `996_006_981` (symmetric for zfo/ofz at the 1:1 price).
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{I256, U256};
 use degenbot::bot_core::BotState;

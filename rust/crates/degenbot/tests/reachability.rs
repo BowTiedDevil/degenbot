@@ -37,8 +37,6 @@
 //! - Excess re-exports (umbrella exposes a core the binding doesn't use) —
 //!   that's harmless surplus, not a standalone claim violation.
 
-#![allow(clippy::expect_used, clippy::panic_in_result_fn)]
-
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};

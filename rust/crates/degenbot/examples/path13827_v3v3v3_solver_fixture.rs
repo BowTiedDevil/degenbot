@@ -22,9 +22,8 @@
 //! asserts the fix target: **solver hop-1 output == `v3_simulate_swap` ==
 //! recorded on-chain actual — all three byte-equal**, alongside the recorded
 //! [`sim-revert-swap`] `hop=1 matched=true` acceptance.
-#![allow(
+#![expect(
     clippy::too_many_lines,
-    clippy::doc_markdown,
     clippy::struct_field_names,
     clippy::similar_names
 )]

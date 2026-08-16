@@ -714,12 +714,11 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
 #[must_use]
 #[expect(clippy::too_many_lines)]
 pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
-    #[expect(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, clippy::expect_used)]
     fn walk(plan: &Plan, at: &AddressTable, out: &mut Vec<u8>) {
         // The plan is LedgerValidator-validated before encoding, so the encoder
         // range checks below are unreachable; the `.expect()`s are deliberate
         // documentation of that invariant (args are in range by construction).
-        #![allow(clippy::expect_used)]
         for step in plan {
             match step {
                 PlanStep::FlashSwap {
@@ -892,7 +891,7 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
 }
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    #![expect(clippy::unwrap_used)]
 
     use super::*;
     use alloy::primitives::{address, Address};

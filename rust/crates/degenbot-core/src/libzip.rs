@@ -23,7 +23,7 @@
 // `FastLZ`, `Solady`, `LibZip` are product/format names that clippy's
 // `doc_markdown` lint wants back-ticked; allowing at module scope keeps the
 // prose natural.
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 /// Maximum literals emitted in a single literal-run opcode.
 const MAX_LITERALS: usize = 32;

@@ -17,7 +17,7 @@
 //! builder is byte-for-byte parity vs the Python oracle's
 //! `selector + eth_abi.abi.encode(...)` output (golden tests pin the bytes).
 
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{Address, Bytes};
 use degenbot_abi::abi_encoder::encode_rust;
@@ -125,8 +125,6 @@ pub fn wrap_execute_calldata(
 #[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use alloy::primitives::address;
 

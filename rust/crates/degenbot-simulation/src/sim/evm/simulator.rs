@@ -43,7 +43,7 @@
 
 // Solidity/EVM identifiers (WETH9, PoolManager, ERC6909, cacheMD, databaseRef)
 // are ubiquitous here — match the degenbot-simulation convention.
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::eips::BlockId;
 use alloy::network::Ethereum;

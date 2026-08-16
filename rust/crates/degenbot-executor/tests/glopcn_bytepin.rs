@@ -7,14 +7,11 @@
 //! `None`-encoding (decline) is pinned too, so the guard ladder's decline
 //! partition is likewise frozen. Regenerate (`--nocapture` → sort -u) only
 //! when a change is *supposed* to alter bytes.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
-    clippy::too_many_lines,
     clippy::print_stdout,
     clippy::unreadable_literal,
-    clippy::unusual_byte_groupings,
-    clippy::doc_markdown,
-    clippy::uninlined_format_args
+    clippy::doc_markdown
 )]
 
 use alloy::primitives::{address, Address};

@@ -33,7 +33,7 @@
 //! any deviation bites there). The ray-math primitives (`ray_div` with
 //! floor/ceil/half-up) come from `degenbot-evm-math::wad_ray_math`.
 
-#![allow(clippy::doc_lazy_continuation)] // multi-line rustdoc phrasing
+#![expect(clippy::doc_lazy_continuation)] // multi-line rustdoc phrasing
 
 use alloy::primitives::{I256, U256};
 use degenbot_evm_math::{RayRounding, WadRayError};

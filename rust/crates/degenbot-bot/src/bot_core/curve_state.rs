@@ -7,10 +7,9 @@
 
 pub use ::degenbot_pools::curve_state::*;
 
-#[expect(clippy::expect_used)]
+#[expect(clippy::expect_used, unused_imports)]
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
     use super::*;
     use crate::bot_core::{BotState, RegisterCurvePoolParams};
     use ::degenbot_pools::curve_data_provider::CurveDataProvider;

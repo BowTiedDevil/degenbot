@@ -7,18 +7,18 @@
 // without backticks; the step functions return `Result` for overflow/
 // non-convergence but their contracts are trivial (documented under the
 // solvers that call them).
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::many_single_char_names)]
-#![allow(clippy::missing_errors_doc)]
+#![expect(clippy::doc_markdown)]
+#![expect(clippy::many_single_char_names)]
+#![expect(clippy::missing_errors_doc)]
 // n_coins (U256 -> usize) truncation is intentional — coin counts are always
 // <= MAX_COINS (8).
-#![allow(clippy::cast_possible_truncation)]
+#![expect(clippy::cast_possible_truncation)]
 // Direct Vyper ports: index-based loops that conditionally skip indices
 // (the contract's `if _i == i` pattern) read clearer as range loops than
 // iterator chains, and the solvers are intentionally single-function
 // 1:1 mirrors of the contract's Newton iterations.
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::too_many_lines)]
+#![expect(clippy::needless_range_loop)]
+#![expect(clippy::too_many_lines)]
 //!
 //! ADR-005 slice 11c (pure-math port). The counterpart of
 //! [`degenbot_cl_math`] for the Curve StableSwap family: a standalone,

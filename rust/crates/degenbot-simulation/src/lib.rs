@@ -17,7 +17,7 @@
 // Solidity/EVM identifiers (balanceOf, stateDiff, ERC6909, WETH9, PoolManager,
 // …) are ubiquitous in this crate's docs; allow the pedantic doc-markdown lint
 // to match the peer core crates.
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 /// The in-process revm engine + its DB stack (the EVM handle, overrides,
 /// AL collector, warm cache). The backrun strategy relocated to

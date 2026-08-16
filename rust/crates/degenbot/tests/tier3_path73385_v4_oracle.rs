@@ -15,7 +15,7 @@
 //! No RPC / toolchain — feeds the committed
 //! `tests/fixtures/path73385_v4_block25706469.json` capture.
 
-#![allow(clippy::doc_markdown)] // pool identifiers
+#![expect(clippy::doc_markdown)] // pool identifiers
 
 use alloy::primitives::aliases::I256;
 use alloy::primitives::U256;

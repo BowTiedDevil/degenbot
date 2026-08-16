@@ -6,11 +6,7 @@
 )]
 //! Fee-1 V3→V4→V3 fixture: Möbius solver V4-hop vs byte-exact on-chain (UO3JM4).
 //!
-#![allow(
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::doc_lazy_continuation
-)] // faithful mirror of the path13308 solver-fixture runner
+#![expect(clippy::too_many_lines, clippy::doc_markdown)] // faithful mirror of the path13308 solver-fixture runner
 //! Modeled 1:1 on `path13308_solver_fixture.rs` (multi-pool-state fixture that
 //! surfaced the PancakeSwap-V3 bug). Loads
 //! `tests/fixtures/fee1_v3v4v3_block<BLOCK>.json` — the exact V3-V4-V3 pool

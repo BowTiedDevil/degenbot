@@ -73,8 +73,20 @@ lint-rust:
 # Lint Rust (check-only; non-mutating). Mirrors the clippy gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
 # CI's `lint-rust`: fails on any warning `--fix` would have auto-applied.
-lint-rust-check:
+lint-rust-check: check-no-inner-allow
     cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
+
+# Forbid file-level inner "#![allow]" - clippy's allow_attributes catches only the
+# outer #[allow] form; this closes the historical inner-attribute loophole it
+# misses. One reasoned outer #[allow(..., reason = "...")] remains permitted for
+# the legitimate cross-target conditional suppressions #[expect] cannot express.
+check-no-inner-allow:
+    @if rg -n '#!\[allow\(' rust/crates -g '*.rs'; then \
+        echo "ERROR: inner #![allow] is forbidden - use #[expect], or a reasoned outer #[allow] for cross-target conditionals" >&2; \
+        exit 1; \
+    else \
+        echo "ok: no inner #![allow] in Rust sources"; \
+    fi
 
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check:

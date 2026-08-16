@@ -8,13 +8,9 @@
 // mirror the deployed Solidity + the Python oracle
 // (`src/degenbot/calculations/{solidly_stable,camelot}.py`) notation
 // (1:1 direct ports), so renaming obscures the direct-port correspondence.
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::many_single_char_names)]
-#![allow(clippy::missing_errors_doc)]
+#![expect(clippy::doc_markdown)]
 // Direct Solidity ports that mirror the deployed-contract control flow
 // (index-based loops, single-function 1:1 mirrors).
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::too_many_lines)]
 //!
 //! ADR-005 slice 12f — the **pure-math port** sub-slice of slice 12 (the
 //! Solidly-derived DEX port: Solidly/Aerodrome/Camelot). Mirrors

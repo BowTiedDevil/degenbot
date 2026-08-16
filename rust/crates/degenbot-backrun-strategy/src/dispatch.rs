@@ -34,7 +34,6 @@
 
 // Solidity/EVM + Rust-ecosystem identifiers (tokio, JoinSet, bps, PathSuppression,
 // MAX_SIMULATE_CONCURRENT, etc.) are ubiquitous here.
-#![allow(clippy::doc_markdown)]
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -914,8 +913,6 @@ fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
 #[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use crate::BlockPriorityFees;
     use alloy::primitives::{address, Address, Bytes, U256};

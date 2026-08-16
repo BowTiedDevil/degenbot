@@ -13,7 +13,7 @@
 //! complete) so `detach` is safe - no re-entry deadlock.
 
 #![cfg(feature = "auto-initialize")]
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::doc_markdown,

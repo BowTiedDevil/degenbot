@@ -53,7 +53,7 @@
 // Solidity/rpc/revm identifiers (PyO3, WETH9, PoolManager, DatabaseRef, AlloyDB,
 // CacheDB, ERC6909, RwLock) are ubiquitous here — allow clippy's doc-markdown
 // lint for this submodule.
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 /// The hot-path in-process simulation engine entry point.
 ///

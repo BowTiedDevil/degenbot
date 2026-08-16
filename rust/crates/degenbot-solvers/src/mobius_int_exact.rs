@@ -43,16 +43,7 @@
 //! keeps that discipline label while making the layer of exactness explicit
 //! at each per-candidate symbol.
 
-#![allow(non_snake_case)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::let_and_return)]
-#![allow(clippy::redundant_field_names)]
-#![allow(clippy::ptr_arg)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::similar_names)]
-#![allow(clippy::type_complexity)]
+#![expect(clippy::must_use_candidate)]
 
 use alloy::primitives::{U256, U512};
 
@@ -660,11 +651,7 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    #![allow(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::tuple_array_conversions
-    )]
+    #![expect(clippy::unwrap_used, clippy::tuple_array_conversions)]
 
     use super::*;
     use proptest::prelude::*;

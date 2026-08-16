@@ -23,7 +23,7 @@
 //!    irreducible 32-byte metadata — so a source/build drift that changes it
 //!    fails loudly.
 
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 #![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;
 

@@ -23,7 +23,7 @@
 //! spine), so it carries the same permits as the `oracle` fixture driver: it
 //! may panic/expect on a bad artifact or a broken fixture step (a harness
 //! problem, not a verdict) and its doc is `# Errors`/`# Panics`-annotated.
-#![allow(
+#![expect(
     clippy::expect_used,
     clippy::panic,
     clippy::unwrap_used,

@@ -260,7 +260,7 @@ impl ReorgPoolState for V2PoolState {
 // ===========================================================================
 #[cfg(test)]
 mod apply_inherent_tests {
-    #![allow(unused_imports)]
+    #![expect(unused_imports)]
     use super::*;
     use alloy::primitives::U256;
 

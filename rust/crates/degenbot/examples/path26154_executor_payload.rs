@@ -23,8 +23,8 @@
 //! determinism offline against the same real executor bytecode + the same
 //! recorded payload {optimal_input, hop_outputs, path_info}.
 
-#![allow(dead_code, unused_mut)] // deserialized fixture fields
-#![allow(clippy::too_many_lines, clippy::doc_markdown, clippy::ref_option)] // run-once investigation probe
+#![expect(dead_code)] // deserialized fixture fields
+#![expect(clippy::too_many_lines, clippy::doc_markdown, clippy::ref_option)] // run-once investigation probe
 
 use std::sync::Arc;
 

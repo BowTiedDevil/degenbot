@@ -537,9 +537,8 @@ pub fn value_to_alloy_for_type(
 }
 
 #[cfg(test)]
-#[expect(clippy::panic)]
+#[expect(clippy::panic, clippy::unwrap_used)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
 
     use super::*;
     use alloy::primitives::U256;

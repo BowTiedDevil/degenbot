@@ -38,7 +38,6 @@
 //! string ([`V2Fork`]), so a V2 fork (Sushi, …) is a one-line declaration and
 //! the two tests cannot drift (the HRT356 class).
 
-#![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 #![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;
 

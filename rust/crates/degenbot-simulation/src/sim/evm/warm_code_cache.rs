@@ -60,7 +60,6 @@
 // Solidity/EVM + Rust-ecosystem identifiers (EIP-6780, EIP-1967, DatabaseRef,
 // CacheDB, WrapDatabaseAsync, BlockSimHandle, etc.) are ubiquitous here —
 // match `degenbot-simulation`'s convention.
-#![allow(clippy::doc_markdown)]
 
 use alloy::primitives::map::{AddressHashMap, B256HashMap};
 use alloy::primitives::Address;
@@ -271,8 +270,6 @@ where
 #[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use alloy::primitives::{address, U256};
     use revm::database_interface::EmptyDB;

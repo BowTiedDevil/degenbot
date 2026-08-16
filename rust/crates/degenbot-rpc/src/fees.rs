@@ -18,7 +18,6 @@
 
 // Solidity/RPC identifiers (eth_feeHistory, reward, oldest_block, etc.) are
 // ubiquitous here.
-#![allow(clippy::doc_markdown)]
 
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::U256;

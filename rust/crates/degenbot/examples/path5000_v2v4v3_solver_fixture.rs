@@ -3,11 +3,7 @@
 //! (block 25704509), driven through the shared `degenbot::investigation`
 //! toolkit instead of a re-derived per-example preamble.
 //!
-#![allow(
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::doc_lazy_continuation
-)] // faithful mirror of the fee1_v3v4v3 / path11354 solver-fixture runners
+#![expect(clippy::too_many_lines, clippy::doc_markdown)] // faithful mirror of the fee1_v3v4v3 / path11354 solver-fixture runners
 //! Loads `tests/fixtures/path5000_v2v4v3_block25704509.json` and reconstructs
 //! the V2-V4-V3 pools into `BotState`, runs the production Möbius solver, and —
 //! per hop — feeds the solver's input into the tier-3-validated oracle twin

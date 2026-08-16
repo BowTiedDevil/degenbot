@@ -3,7 +3,7 @@
 //! end-to-end against the revm contract matrix and asserted byte-identical to
 //! the pre-refactor reference. Despite the historical "spike" filename, this is
 //! the standing behavioral-parity regression gate — not a throwaway probe.
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
@@ -13,11 +13,9 @@
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    clippy::type_complexity,
     clippy::similar_names,
     clippy::too_many_lines,
-    clippy::print_stderr,
-    clippy::needless_pass_by_value
+    clippy::print_stderr
 )]
 //! EYQ6UF: the native-bridge + capture-axis runtime proofs that complement the
 //! canonical revm matrix (`harness_declarative.rs`, which drives every

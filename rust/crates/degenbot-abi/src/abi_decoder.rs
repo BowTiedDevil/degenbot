@@ -154,16 +154,14 @@ pub fn decode_for_types(
     cached.decode(data)
 }
 #[cfg(test)]
-#[expect(clippy::panic)]
+#[expect(
+    clippy::panic,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::cast_possible_truncation,
+    clippy::needless_range_loop
+)]
 mod tests {
-    #![allow(
-        clippy::useless_vec,
-        clippy::expect_used,
-        clippy::unwrap_used,
-        clippy::cast_possible_truncation,
-        clippy::unreadable_literal,
-        clippy::needless_range_loop
-    )]
 
     use super::*;
     use alloy::primitives::{I256, U256};

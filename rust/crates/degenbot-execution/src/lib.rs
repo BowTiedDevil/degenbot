@@ -1,4 +1,4 @@
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 //! The `ExecutionStrategy` seam (ADR-025) — a deep, user-owned execution layer
 //! over the thin engine.
 //!

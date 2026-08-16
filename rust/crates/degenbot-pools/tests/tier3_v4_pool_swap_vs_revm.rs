@@ -48,8 +48,8 @@
 //! scalars (the live fee-1 reproduction) rather than duplicating the
 //! dual-driver fixture, so there is no cross-file constant to drift.
 
-#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-#![allow(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, slot0…)
+#![expect(clippy::cast_possible_wrap)]
+#![expect(clippy::doc_markdown)] // Solidity/V4 identifiers (PoolManager, slot0…)
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // Reuse the CL-family shared driver + the arbitrary-topology position type and
 // grid-snapping helpers from the V3/Pancake-V3 oracle's common module.

@@ -29,8 +29,7 @@
 //! RPC comes from `DEGENBOT_RPC_HTTP_CHAINID_1` (else `CHAIN_1_HTTP`, else
 //! `http://host.containers.internal:8545`).
 
-#![allow(clippy::doc_markdown, clippy::too_many_lines)]
-#![allow(clippy::cast_possible_wrap)] // run-once investigation probe
+#![expect(clippy::doc_markdown, clippy::too_many_lines)]
 
 use alloy::primitives::{utils::keccak256, Address, Bytes, B256, I256, U256};
 use degenbot::bot_core::BotState;

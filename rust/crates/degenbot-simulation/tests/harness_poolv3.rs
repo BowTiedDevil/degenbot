@@ -1,10 +1,4 @@
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::print_stdout,
-    clippy::doc_markdown
-)]
+#![expect(clippy::unwrap_used, clippy::print_stdout, clippy::doc_markdown)]
 //! Isolate `PoolV3.swap` behind the `TestV3SwapDriver`: does the stub's price
 //! math panic (the `Panic(0x11)` seen in v2_v3 / v3_v2)? Calls the pool
 //! directly with the driver as recipient + callback payer.

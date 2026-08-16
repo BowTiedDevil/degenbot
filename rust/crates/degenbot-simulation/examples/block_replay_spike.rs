@@ -57,11 +57,7 @@
 //! cargo run --release --example block_replay_spike --manifest-path rust/Cargo.toml
 //! ```
 
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::too_many_lines
-)]
+#![expect(clippy::cast_precision_loss, clippy::too_many_lines)]
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

@@ -52,7 +52,7 @@
 //! No `Transaction` lifecycle here — this file owns neither `commit` nor
 //! `drop`.
 
-#![allow(clippy::missing_errors_doc, clippy::doc_markdown)]
+#![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
 
 use std::collections::HashMap;
 

@@ -40,8 +40,6 @@
 //! V1: `supports_discount=true, has_discounted_balance_method=false`;
 //! V2/V3: both `true`; V4+: both `false`.
 
-#![allow(clippy::doc_lazy_continuation)] // multi-line rustdoc phrasing
-
 use alloy::primitives::{I256, U256};
 use degenbot_evm_math::{percent_mul, ray_div, ray_mul, wad_mul, WadRayError};
 

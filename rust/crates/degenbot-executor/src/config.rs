@@ -88,8 +88,6 @@ pub fn pack_expected_balance(check_mode: u8, expected_value: U256) -> Result<U25
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
 
     #[test]

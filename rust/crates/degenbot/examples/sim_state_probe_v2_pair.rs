@@ -45,7 +45,7 @@
 //! cargo run -p degenbot --example sim_state_probe_v2_pair           # faithful → exit 0
 //! DEGENBOT_PROBE_PHANTOM_RESERVE=1286682034390401 cargo run -p degenbot --example sim_state_probe_v2_pair  # → exit 1
 //! ```
-#![allow(clippy::doc_markdown, clippy::too_many_lines)]
+#![expect(clippy::too_many_lines)]
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot::bot_core::BotState;

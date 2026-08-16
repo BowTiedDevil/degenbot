@@ -7,8 +7,7 @@
 //! `stable_math` also benches `calculate_invariant_deployed` separately,
 //! since `resolve_path` computes D once (not per solve iteration).
 
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::cast_possible_truncation)]
+#![expect(clippy::cast_precision_loss)]
 #![expect(clippy::unwrap_used)]
 
 use criterion::{criterion_group, criterion_main, Criterion};

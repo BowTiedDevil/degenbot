@@ -15,7 +15,7 @@
 //! self-notify under the engine's non-reentrant `Mutex` — a deadlock; the
 //! pump-side relocation in slice 5 avoids that).
 
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};

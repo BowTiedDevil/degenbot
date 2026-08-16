@@ -48,7 +48,7 @@
 //!           (7 × 32-byte words)
 //! ```
 
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use crate::uniswap_tick_range::extract_int24_from_word;
 use alloy::primitives::{b256, Address, B256, I256, U128, U256};

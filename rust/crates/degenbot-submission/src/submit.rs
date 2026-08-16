@@ -33,7 +33,6 @@
 
 // Solidity/EVM + Rust-ecosystem identifiers (eth_sendRawTransaction,
 // eth_feeHistory, EIP-1559, maxFeePerGas, etc.) are ubiquitous here.
-#![allow(clippy::doc_markdown)]
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -549,8 +548,6 @@ fn build_transaction_request(params: &TxParams) -> TransactionRequest {
 #[expect(clippy::unwrap_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use crate::dispatcher::Dispatcher;
     use crate::signer::TxSigner;

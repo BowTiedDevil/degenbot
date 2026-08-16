@@ -321,8 +321,6 @@ fn raw_uncached_eth_get_code(rpc_url: &str, address: Address, block: u64) -> Opt
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U256};

@@ -125,11 +125,9 @@ pub trait TickBootstrapRpc: Send + Sync + std::fmt::Debug {
     ) -> Result<Option<BootstrapTickWord>, BootstrapTickError>;
 }
 
-#[expect(clippy::expect_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use super::*;
     use alloy::primitives::{I256, U128};
 

@@ -10,7 +10,7 @@
 //! `prune_dead_ends`; the Python `_prepare_graph` becomes a delegating shell.
 //! The DFS half (`find_paths_rust`) is unchanged.
 
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use crate::prelude::*;
 #[cfg(all(feature = "pathfinding", feature = "db"))]

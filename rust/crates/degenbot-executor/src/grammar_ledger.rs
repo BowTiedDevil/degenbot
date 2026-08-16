@@ -1118,7 +1118,7 @@ impl LedgerValidator {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    #![expect(clippy::unwrap_used)]
     use super::*;
     use alloy::primitives::address;
 

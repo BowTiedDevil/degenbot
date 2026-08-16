@@ -1,4 +1,4 @@
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 //! Value-only multi-hop arbitrage solver math — computes optimal arbitrage
 //! inputs + simulates multi-hop swap paths purely from in-memory hop states
 //! (V2 constant-product via `degenbot-v2-math::IntHopState`, V3/V4

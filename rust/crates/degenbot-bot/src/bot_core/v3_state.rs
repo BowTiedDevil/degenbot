@@ -7,10 +7,9 @@
 
 pub use ::degenbot_pools::v3_state::*;
 
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, unused_imports)]
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
     use super::*;
     use crate::bot_core::TickInfo;
     use ::degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};

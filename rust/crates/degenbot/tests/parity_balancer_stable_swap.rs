@@ -49,7 +49,7 @@
 //! on the multi-token `simulate_swap` API extension (sibling to VQ4OHX
 //! tasks `7D34LW` Aerodrome stable decimals + `U2K6FN` Curve get_dy).
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{address, U256};
 use degenbot::degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;

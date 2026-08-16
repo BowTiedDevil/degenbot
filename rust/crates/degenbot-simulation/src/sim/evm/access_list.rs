@@ -25,7 +25,6 @@
 
 // Solidity/rpc/revm identifiers (AccessList, EIP-2930, WETH9, PoolManager,
 // storage, journaled_state, etc.) are ubiquitous here.
-#![allow(clippy::doc_markdown)]
 
 use alloy::primitives::map::AddressHashMap;
 use alloy::primitives::B256;
@@ -251,8 +250,6 @@ impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for AccessListCollector {
 #[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use alloy::primitives::{Address, Bytes, B256, U256};
     use revm::state::{

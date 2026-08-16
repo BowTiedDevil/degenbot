@@ -10,13 +10,7 @@
 
 #![expect(clippy::panic)]
 #![cfg(feature = "auto-initialize")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::doc_markdown,
-    clippy::uninlined_format_args,
-    clippy::match_same_arms
-)]
+#![expect(clippy::unwrap_used, clippy::doc_markdown)]
 
 use alloy::primitives::{I256, U256};
 use degenbot_rs::abi_types::AbiValue;

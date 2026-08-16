@@ -1017,10 +1017,9 @@ pub fn v4_simulate_swap(
 // apply contract is the same shape (scalars-on-swap, tick-only-on-mint). These
 // exercise `V4PoolState::apply_swap` / `apply_liquidity_update` directly.
 // ===========================================================================
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, unused_imports)]
 #[cfg(test)]
 mod apply_inherent_tests {
-    #![allow(unused_imports)]
     use super::*;
     use crate::registry::ConcentratedLiquidityPoolMut;
     use crate::state_history::{ReorgJournal, V3BlockDelta};

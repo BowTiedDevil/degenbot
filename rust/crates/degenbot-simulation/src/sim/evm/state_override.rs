@@ -212,8 +212,6 @@ pub enum OverrideError {
 #[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use alloy::primitives::address;
     use degenbot_executor::compute_simulation_warmup_slots;

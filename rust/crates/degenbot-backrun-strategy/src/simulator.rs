@@ -29,7 +29,7 @@
 // Solidity/EVM identifiers (execute(bytes,uint256), int128, V4 BalanceDelta,
 // WETH9, PoolManager, Multicall3, balanceOf, getEthBalance, ERC6909, etc.) are
 // ubiquitous here — match the degenbot-simulation convention.
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use std::collections::BTreeMap;
 
@@ -1754,8 +1754,6 @@ fn log_reverted_swaps_vs_hop_outputs(
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use alloy::primitives::U256;
     use degenbot_executor::composers::V3HopInfo;

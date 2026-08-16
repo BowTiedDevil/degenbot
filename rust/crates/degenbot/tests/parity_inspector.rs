@@ -35,7 +35,7 @@
 //!
 //! V4 slice is deferred (gated on `5RI47E`, the transient V4 pool seeder).
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use std::collections::HashMap;
 use std::sync::Arc;

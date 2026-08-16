@@ -22,8 +22,8 @@
 //! the reconstructed fixture pools, and prints the payload size + the executor
 //! `execute(bytes,uint256)` calldata wrapper for inspection.
 
-#![allow(dead_code, unused_mut)] // deserialized fixture fields + probe locals
-#![allow(clippy::too_many_lines, clippy::ref_option)] // run-once investigation probe
+#![expect(dead_code)] // deserialized fixture fields + probe locals
+#![expect(clippy::too_many_lines, clippy::ref_option)] // run-once investigation probe
 
 use std::collections::HashMap;
 

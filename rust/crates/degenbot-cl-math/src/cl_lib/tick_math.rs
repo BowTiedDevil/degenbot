@@ -225,7 +225,7 @@ pub const fn compress(tick: i32, tick_spacing: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![expect(clippy::unwrap_used)]
 
     use super::*;
     use std::str::FromStr;

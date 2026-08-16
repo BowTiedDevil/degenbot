@@ -30,8 +30,8 @@
 //! and `tier3-oracle/verify-tier3-artifacts.sh` recompiles every harness and
 //! byte-compares it to the committed artifact.
 
-#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-#![allow(clippy::doc_markdown)] // Solidity/V3 identifiers (MIN_TICK, slot0…) in doc comments
+#![expect(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+#![expect(clippy::doc_markdown)] // Solidity/V3 identifiers (MIN_TICK, slot0…) in doc comments
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tier3_v3_common;
 

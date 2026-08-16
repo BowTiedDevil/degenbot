@@ -32,7 +32,7 @@
 //! fee tier produces a distinct output, ruling out an accidental
 //! hardcoding of the V3 constant.
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{I256, U256};
 use degenbot::bot_core::BotState;

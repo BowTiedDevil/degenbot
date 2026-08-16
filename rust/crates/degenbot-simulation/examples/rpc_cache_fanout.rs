@@ -87,7 +87,7 @@
 //! cargo run --release --example rpc_cache_fanout --manifest-path rust/Cargo.toml
 //! ```
 
-#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+#![expect(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
 use std::collections::HashMap;
 use std::env;

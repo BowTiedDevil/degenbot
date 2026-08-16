@@ -8,10 +8,10 @@
 //! only the row structs + read decoding land here, so the snapshot reader can
 //! surface them.
 
-#![allow(dead_code)] // Aave read structs decode here (spike AC); the fetch_aave_*
-                     // read fns + writer upserts land in AZGJUN, at which point these
-                     // decoders are exercised. Defined now so the typed surface is
-                     // ready for the consumer tasks.
+#![expect(dead_code)] // Aave read structs decode here (spike AC); the fetch_aave_*
+                      // read fns + writer upserts land in AZGJUN, at which point these
+                      // decoders are exercised. Defined now so the typed surface is
+                      // ready for the consumer tasks.
 
 use alloy::primitives::{Address, U256};
 use rusqlite::Row;

@@ -1305,10 +1305,14 @@ pub fn v3_simulate_swap(
 // the registry dispatch) stays in `bot_core/v3_state.rs` / `bot_core/mod.rs`
 // as the dispatch regression net.
 // ===========================================================================
-#[expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stderr,
+    unused_imports
+)]
 #[cfg(test)]
 mod apply_inherent_tests {
-    #![allow(unused_imports)]
     use super::*;
     use crate::registry::ConcentratedLiquidityPoolMut;
     use crate::state_history::{ReorgJournal, ScalarPriors, TickBefore, V3BlockDelta};

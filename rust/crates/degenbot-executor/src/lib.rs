@@ -30,7 +30,7 @@
 // Solidity/ERC identifiers (balanceOf, ERC6909, protocolFeesAccrued, …) are
 // ubiquitous in this crate's docs; allow the pedantic doc-markdown lint to
 // match the peer math crates (degenbot-solidly-math, -balancer-math, …).
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{keccak256, Address, U256};
 
@@ -172,8 +172,6 @@ pub fn compute_simulation_warmup_slots(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use alloy::primitives::{address, Address};
 

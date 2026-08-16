@@ -6,11 +6,7 @@
 )]
 //! V3→V2→V2 fixture: Möbius solver V2-hops vs byte-exact constant-product (path 11053).
 //!
-#![allow(
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::doc_lazy_continuation
-)] // faithful mirror of the path11354 / fee1_v3v4v3 solver-fixture runners
+#![expect(clippy::too_many_lines, clippy::doc_lazy_continuation)] // faithful mirror of the path11354 / fee1_v3v4v3 solver-fixture runners
 //! Modeled 1:1 on `path11354_v3v2v3_solver_fixture.rs` (the V3-V2-V3 sim-side
 //! under-delivery harness) and `fee1_v3v4v3_solver_fixture.rs`. Loads
 //! `tests/fixtures/path11053_v3v2v2_block<BLOCK>.json` — the exact V3-V2-V2

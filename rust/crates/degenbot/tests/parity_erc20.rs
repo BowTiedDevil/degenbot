@@ -25,8 +25,6 @@
 //! `expected`. A fixture edit that drifts the metadata fails BOTH sides
 //! mechanically (the shared-fixture contract that replaced copied constants).
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
-
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, Bytes, U256};

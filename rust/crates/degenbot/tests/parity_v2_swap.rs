@@ -34,7 +34,7 @@
 //! (the byte-identical EVM-exact integer path via
 //! `degenbot_v2_math::IntHopState::swap`).
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{address, aliases::U112, U256};
 use degenbot::dex_identity::UNISWAP_V2;

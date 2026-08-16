@@ -22,12 +22,12 @@
 //! revert must be matched by an engine rejection, ONLY a verbless Halt (the
 //! documented OOG trap, not a math verdict) is a legitimate skip.
 
-#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+#![expect(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 //! The module is compiled INTO each consuming test binary (V3, Pancake-V3, …),
 //! so an item may legitimately be dead in one consumer but live in another;
 //! dead-code warnings are therefore suppressed here rather than re-allowed at
 //! every call site.
-#![allow(dead_code)]
+#![expect(dead_code)]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

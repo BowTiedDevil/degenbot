@@ -26,8 +26,6 @@
 //!    (pseudo-random keccak outputs — a false positive is cryptographically
 //!    implausible), and `WETH_ADDR`/`POOL_MANAGER_ADDR` to appear as well.
 
-#![allow(clippy::doc_markdown)] // Vyper/address identifiers (WETH, POOL_MANAGER…)
-
 use alloy::primitives::{utils::keccak256, Address, Bytes, TxKind, B256};
 use revm::context::Context;
 use revm::context::TxEnv;

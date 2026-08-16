@@ -7,7 +7,7 @@
 //! Path-13308 (V3-V4-V3) snapshot: Möbius solver vs on-chain reality — driven
 //! through the shared `degenbot::investigation` toolkit.
 //!
-#![allow(clippy::too_many_lines)]
+#![expect(clippy::too_many_lines)]
 //! Loads `tests/fixtures/path13308_v3v4v3_block25664704.json` (exact pool states
 //! for block 25664704 captured by `scripts/capture_path_13308_fixture.py`),
 //! reconstructs the V3-V4-V3 pools, runs the production Möbius solver

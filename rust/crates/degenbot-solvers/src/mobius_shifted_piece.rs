@@ -60,15 +60,14 @@
 //! [`shifted_piece_model_optimal_input`] and never branch on which path
 //! ran.
 
-#![allow(non_snake_case)]
 // The Möbius 2×2 matrix entries are canonically `a, b, c, d`; the module is
 // already `non_snake_case`-allowed for that reason, so the matching
 // clippy lint is allowed here too.
-#![allow(clippy::many_single_char_names)]
+#![expect(clippy::many_single_char_names)]
 // `ShiftedMobiusPieceCoefficients::Fast` holds four fixed-width I1024 stack
 // values on purpose — the fast path's zero-allocation storage IS the point.
 // Boxing would add a heap indirection to the per-candidate solver hot path.
-#![allow(clippy::large_enum_variant)]
+#![expect(clippy::large_enum_variant)]
 
 use alloy::primitives::{Sign as AlloySign, U256};
 use degenbot_v2_math::IntHopState;
@@ -589,10 +588,9 @@ pub fn shifted_piece_slope_exceeds_unity_at(
     }
 }
 
-#[expect(clippy::panic)]
+#[expect(clippy::panic, clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     fn u256(v: u64) -> U256 {

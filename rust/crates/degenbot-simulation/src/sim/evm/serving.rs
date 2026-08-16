@@ -142,8 +142,6 @@ fn hex_padded_u256(word: U256) -> String {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::too_many_lines)]
-
     use super::*;
     use crate::sim::evm::BotStateDb;
     use alloy::primitives::{address, aliases::U112, Address, U256};

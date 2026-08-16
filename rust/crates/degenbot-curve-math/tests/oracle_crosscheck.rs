@@ -1,11 +1,11 @@
-#![allow(clippy::from_str_radix_10)]
+#![expect(clippy::from_str_radix_10)]
 //! Cross-check the Rust StableSwap math against a frozen Python oracle.
 //
 // Test-crate lint allows: throwaway parser code where short closures, range
 // loops, and match-or-panic read clearer than the idioms clippy prefers.
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::redundant_closure_for_method_calls)]
-#![allow(clippy::manual_let_else)]
+#![expect(clippy::doc_markdown)]
+#![expect(clippy::redundant_closure_for_method_calls)]
+#![expect(clippy::manual_let_else)]
 // The line parser below uses `panic!` on malformed oracle lines and `unwrap`/
 // `expect` on replay results — idiomatic for a test harness that asserts the
 // Rust port matches the frozen Python oracle byte-for-byte.

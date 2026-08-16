@@ -6,7 +6,7 @@
 //! under concurrent load.
 
 #![cfg(feature = "auto-initialize")]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize};

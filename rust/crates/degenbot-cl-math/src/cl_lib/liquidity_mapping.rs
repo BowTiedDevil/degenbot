@@ -283,13 +283,13 @@ pub fn apply_liquidity_mapping_update(
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 mod tests {
-    #![allow(
-        clippy::doc_markdown,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
 
     use super::*;
     use alloy::primitives::{I256, U128, U256};

@@ -7,7 +7,7 @@
 //! Path-142603 (V4->V4->V3) snapshot: Möbius solver vs on-chain reality — the
 //! live `DEGENBOT_SIM_EXIT_ON_FAIL=1` no-profit trap at block 25723658.
 //!
-#![allow(clippy::too_many_lines)]
+#![expect(clippy::too_many_lines)]
 //! Loads `tests/fixtures/path142603_v4v4v3_block25723658.json` (exact pool
 //! states captured by `scripts/capture_path142603_v4v4v3_fixture.py`),
 //! reconstructs the two V4 pools + one V3 pool, runs the production Möbius

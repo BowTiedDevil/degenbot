@@ -47,8 +47,7 @@
 //! enforced by `tier3_harness_artifacts.rs` (source-hash, toolchain-free) and
 //! `tier3-oracle/verify-tier3-artifacts.sh` (compile-vs-use).
 
-#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-#![allow(clippy::doc_markdown)] // Solidity/V3 identifiers (slot0, tickBitmap…) in doc comments
+#![expect(clippy::doc_markdown)] // Solidity/V3 identifiers (slot0, tickBitmap…) in doc comments
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tier3_v3_common;
 

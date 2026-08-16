@@ -22,7 +22,7 @@
 //! recorded constant — the shared-bug-breaking re-derivation is the Tier-3
 //! on-chain oracle (SWAP event byte-parity), tracked as a follow-on.
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::U256;
 use degenbot::{BotState, RegisterCurvePoolParams};

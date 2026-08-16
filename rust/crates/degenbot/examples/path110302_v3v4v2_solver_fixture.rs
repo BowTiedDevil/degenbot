@@ -3,11 +3,7 @@
 //! `UniswapV2: K` failure (block 25711761), driven through the shared
 //! `degenbot::investigation` toolkit.
 //!
-#![allow(
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::doc_lazy_continuation
-)] // faithful mirror of the path5000 / fee1_v3v4v3 solver-fixture runners
+#![expect(clippy::too_many_lines, clippy::doc_markdown)] // faithful mirror of the path5000 / fee1_v3v4v3 solver-fixture runners
 //! Loads `tests/fixtures/path110302_v3v4v2_block25711761.json` and reconstructs
 //! the V3-V4-V2 pools into `BotState`, runs the production Möbius solver, and —
 //! per hop — feeds the solver's input into the tier-3-validated oracle twin

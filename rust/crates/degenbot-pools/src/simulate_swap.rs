@@ -6,7 +6,6 @@
 //! sparse-map misses (Pattern B); the fetch+retry shell lives in `degenbot-bot`
 //! (it catches the value error + calls the pools-defined `TickWordFetcher`
 //! trait to fill the word, then retries).
-#![allow(clippy::doc_markdown)]
 //!
 //! The **not-yet-Rust-side** sentinel (`Ok(U256::ZERO)`) survives only for the
 //! families whose invariant math the Rust core does not yet own: non-`STANDARD`
@@ -450,6 +449,7 @@ fn simulate_aerodrome_stable_swap(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::doc_markdown)]
     use super::skip_bpt;
     use alloy::primitives::U256;
 

@@ -19,7 +19,7 @@
 //! every identity/state field; divergence = a lossy FFI seam on the
 //! registration/identity path that a swap-only parity gate cannot catch.
 
-#![allow(clippy::panic_in_result_fn, clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{Address, I256, U256};
 use degenbot::bot_core::BotState;

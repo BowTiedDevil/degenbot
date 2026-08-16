@@ -20,10 +20,8 @@
 //! truth; a builder honoring an un-declared axis is a latent bug; a builder
 //! NOT honoring a declared axis is a declaration bug).
 
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
-    clippy::too_many_lines,
-    clippy::similar_names,
     clippy::unreadable_literal,
     clippy::unusual_byte_groupings,
     clippy::panic

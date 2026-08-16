@@ -22,15 +22,7 @@
 //!
 //! where all values are integers and `/` is floor division (EVM semantics).
 
-#![allow(non_snake_case)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::let_and_return)]
-#![allow(clippy::redundant_field_names)]
-#![allow(clippy::ptr_arg)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::similar_names)]
-#![allow(clippy::type_complexity)]
+#![expect(non_snake_case)]
 
 use alloy::primitives::U512;
 use degenbot_v2_math::IntHopState;

@@ -26,8 +26,7 @@
 //! byte-compares it to the committed artifact. After a harness-source edit,
 //! regenerate + publish via `tier3-oracle/build-tier3-v2-swap-harness.sh`.
 
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::doc_markdown)] // repo-consistent tier3 doc lint
+#![expect(clippy::doc_markdown)] // repo-consistent tier3 doc lint
 
 mod tier3_v2_common;
 
