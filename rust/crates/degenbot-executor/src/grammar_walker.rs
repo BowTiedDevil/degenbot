@@ -78,6 +78,53 @@ pub enum TerminalForm {
     UnlockInternal,
 }
 
+/// The **repay-mechanism** axis (T6c / PZBGP7): how a flash hop's borrowed
+/// input is repaid, AND the timing of the draw relative to the callback.
+/// The existing [`Repay`] tag fixes the *obligation category* (who owes what)
+/// but is identical for the V2 flash in `v3v2v4` (forward nest, draws the
+/// repay at borrow — `auto_repay=true`) and the V2 flash in `v2v4v2`
+/// (reverse nest, repays in-callback). This sub-fact disambiguates the two —
+/// only the forward-nesting family needs it.
+///
+/// `None` (the default) for every flash hop except where a consumer family
+/// needs the timing distinction: scoped exactly like [`TerminalForm`]. Set
+/// only by the facts dispatcher's per-position override; consumed only by the
+/// group-C arm of [`shapes::three_hop`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RepayMechanism {
+    /// The flash draws its repay at borrow (pre-callback) — `auto_repay=true`.
+    /// Only the `v3v2v4` V2 flash (the sole forward-nested arm): the seeder
+    /// flash must run first (outer), so the leading V3 flash wraps it.
+    AutoFromExecutor,
+    /// Repaid by an explicit transfer inside the flash's own callback.
+    TransferInCallback,
+    /// Repaid by a `V4TakeCompact`/`V4TakeDelta` inside the enclosing V4Unlock.
+    V4TakeInUnlock,
+    /// The repay currency is delivered by a downstream flash's forward.
+    DownstreamFlashDelivery,
+    /// The repay currency is delivered by a downstream non-flash take (seed).
+    DownstreamTakeSeeds,
+}
+
+/// The **seed-delivery** axis (T6c / PZBGP7): how a WETH prefund (the optimal
+/// seed that funds a leading V2/V3 calc) is emitted. `Erc20Transfer` (the
+/// default) is the plain pre-callback transfer; `V4TakeCompact` emits the
+/// prefund as a `V4TakeCompact` *inside* the active V4Unlock's delta ledger
+/// (because the seed currency is a V4-managed WETH delta), plus a matching
+/// profit-take to SELF. Only the `v2v3v4` family needs the V4-ledger variant.
+///
+/// `None` (the default) for every hop except where a consumer family needs
+/// it: scoped exactly like [`TerminalForm`]. Set only by the facts
+/// dispatcher's per-position override; consumed only by the group-C arm of
+/// [`shapes::three_hop`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SeedDelivery {
+    /// The prefund is a plain `Erc20Transfer` in the flash callback.
+    Erc20Transfer,
+    /// The prefund is a `V4TakeCompact` inside the enclosing V4Unlock.
+    V4TakeCompact,
+}
+
 /// Per-protocol **hop facts** — the ADR-031 D4 data half: ledgers a hop
 /// touches, direction, output slot, and repayment obligation. The walker
 /// derives the enclosure from these; the mechanics (the swap/callback step) is
@@ -100,6 +147,12 @@ pub struct HopFacts {
     pub currency1_address: Address,
     /// [`TerminalForm`] — set on the terminal hop only when a shape consumes it (see enum).
     pub terminal_form: Option<TerminalForm>,
+    /// [`RepayMechanism`] — set on a flash hop only when a shape needs the
+    /// repay timing distinction (see enum). `None` everywhere else.
+    pub repay_mechanism: Option<RepayMechanism>,
+    /// [`SeedDelivery`] — set on the seeded hop only when a shape needs the
+    /// prefund-mechanism distinction (see enum). `None` everywhere else.
+    pub seed_delivery: Option<SeedDelivery>,
 }
 
 /// Per-protocol **mechanics** (ADR-031 D4 code half): how a protocol's hop
@@ -380,6 +433,8 @@ pub(crate) fn facts_of_v3v4v3(
         pool_address: a.pool_address,
         pool_id_hex: None,
         terminal_form: None,
+        repay_mechanism: None,
+        seed_delivery: None,
         currency0_address: a.token0_address,
         currency1_address: a.token1_address,
     };
@@ -395,6 +450,8 @@ pub(crate) fn facts_of_v3v4v3(
         pool_address: b.pool_manager_address,
         pool_id_hex: Some(b.pool_id_hex.clone()),
         terminal_form: None,
+        repay_mechanism: None,
+        seed_delivery: None,
         currency0_address: b.currency0_address,
         currency1_address: b.currency1_address,
     };
@@ -410,6 +467,8 @@ pub(crate) fn facts_of_v3v4v3(
         pool_address: c.pool_address,
         pool_id_hex: None,
         terminal_form: None,
+        repay_mechanism: None,
+        seed_delivery: None,
         currency0_address: c.token0_address,
         currency1_address: c.token1_address,
     };
@@ -444,6 +503,8 @@ pub(crate) fn facts_of_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             pool_address: a.pool_address,
             pool_id_hex: None,
             terminal_form: None,
+            repay_mechanism: None,
+            seed_delivery: None,
             currency0_address: a.token0_address,
             currency1_address: a.token1_address,
         },
@@ -459,6 +520,8 @@ pub(crate) fn facts_of_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             pool_address: b.pool_address,
             pool_id_hex: None,
             terminal_form: None,
+            repay_mechanism: None,
+            seed_delivery: None,
             currency0_address: b.token0_address,
             currency1_address: b.token1_address,
         },
@@ -491,6 +554,8 @@ pub(crate) fn facts_of_all_v2(
                 pool_address: h.pool_address,
                 pool_id_hex: None,
                 terminal_form: None,
+                repay_mechanism: None,
+                seed_delivery: None,
                 currency0_address: h.token0_address,
                 currency1_address: h.token1_address,
             }),
@@ -531,6 +596,8 @@ pub(crate) fn facts_of_v3v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             pool_address: a.pool_address,
             pool_id_hex: None,
             terminal_form: None,
+            repay_mechanism: None,
+            seed_delivery: None,
             currency0_address: a.token0_address,
             currency1_address: a.token1_address,
         },
@@ -546,6 +613,8 @@ pub(crate) fn facts_of_v3v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             pool_address: b.pool_address,
             pool_id_hex: None,
             terminal_form: None,
+            repay_mechanism: None,
+            seed_delivery: None,
             currency0_address: b.token0_address,
             currency1_address: b.token1_address,
         },
@@ -579,6 +648,8 @@ pub(crate) fn facts_of_v3v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             pool_address: a.pool_address,
             pool_id_hex: None,
             terminal_form: None,
+            repay_mechanism: None,
+            seed_delivery: None,
             currency0_address: a.token0_address,
             currency1_address: a.token1_address,
         },
@@ -594,6 +665,8 @@ pub(crate) fn facts_of_v3v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             pool_address: b.pool_address,
             pool_id_hex: None,
             terminal_form: None,
+            repay_mechanism: None,
+            seed_delivery: None,
             currency0_address: b.token0_address,
             currency1_address: b.token1_address,
         },
@@ -618,6 +691,8 @@ pub(crate) fn v3_hop_facts(h: &V3HopInfo) -> HopFacts {
         pool_address: h.pool_address,
         pool_id_hex: None,
         terminal_form: None,
+        repay_mechanism: None,
+        seed_delivery: None,
         currency0_address: h.token0_address,
         currency1_address: h.token1_address,
     }
@@ -641,6 +716,8 @@ pub(crate) fn v2_hop_facts(h: &V2HopInfo) -> HopFacts {
         pool_address: h.pool_address,
         pool_id_hex: None,
         terminal_form: None,
+        repay_mechanism: None,
+        seed_delivery: None,
         currency0_address: h.token0_address,
         currency1_address: h.token1_address,
     }
@@ -661,6 +738,8 @@ pub(crate) fn v4_hop_facts(h: &V4HopInfo) -> HopFacts {
         pool_address: h.pool_manager_address,
         pool_id_hex: Some(h.pool_id_hex.clone()),
         terminal_form: None,
+        repay_mechanism: None,
+        seed_delivery: None,
         currency0_address: h.currency0_address,
         currency1_address: h.currency1_address,
     }
@@ -741,6 +820,24 @@ pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<
         if let Some(form) = form {
             facts[2].terminal_form = Some(form);
         }
+    }
+    // ── T6c new-fact overrides (scoped like terminal_form: only the two
+    // group-C holdout families carry Some; every other hop stays None).
+    //
+    // v3v2v4: the V2 flash (hop1) draws its repay at borrow
+    // (`auto_repay=true`) — the sole forward-nested arm. Without this timing
+    // sub-fact the walker cannot tell the V2 flash here (forward, seeder
+    // outer) from the V2 flash in v2v4v2 (reverse, in-callback repay);
+    // both carry `Repay::SelfRefund`.
+    if prots == [Prot::V3, Prot::V2, Prot::V4] {
+        facts[1].repay_mechanism = Some(RepayMechanism::AutoFromExecutor);
+    }
+    // v2v3v4: the optimal-WETH prefund to the leading V2 pool (hop0) is
+    // emitted as a `V4TakeCompact` *inside* the V4Unlock (a V4-managed WETH
+    // delta), plus a matching profit-take to SELF — not the plain
+    // `Erc20Transfer` every other V2-led family uses.
+    if prots == [Prot::V2, Prot::V3, Prot::V4] {
+        facts[0].seed_delivery = Some(SeedDelivery::V4TakeCompact);
     }
     Some(facts)
 }

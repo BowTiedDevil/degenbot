@@ -79,3 +79,24 @@ on v3v3v2). three_hop.rs: 2,203 -> 2,150. All gates green.
 
 Next per T6-impl plan (WV4BUA): T6b (9 v4-led arms) + T6c (6 remaining + 2 holdouts consuming
 repay_mechanism / seed_delivery axes).
+
+## T6b (v4-led) — IMPLEMENTED, zero holdouts
+9 v4-led arms (incl. v4v4v4's V4Batch) collapse into rule_walk_v4_led; even the batch layout
+proved data-driven. NO new facts: the v4-led legs are derivable from prot + currencies alone.
+R1 exception: v4v2v3's terminal V3 flash wraps the V4Unlock. Gates green; three_hop.rs kept
+roughly flat (2120) since arm code turned into walker + shadow docs.
+
+## T6c (mixed group + holdouts) — IMPLEMENTED, epic closed
+7 remaining arms collapse into rule_walk_v2v3_v4_mixed. The analysis's 2 holdouts land the 2
+predicted facts: `seed_delivery = V4TakeCompact` (v2v3v4), `repay_mechanism = AutoFromExecutor`
+(v3v2v4). Facts scoped exactly like `terminal_form`: None default, set by facts_for only for
+consuming families, walker reads them (never None-panics).
+
+END STATE: zero hand-authored per-family bodies in three_hop.rs. The remaining structure:
+facts_for (per-variant facts) -> derive_plan (shape gates incl. terminal_form axis) -> the 3
+rule walkers -> LedgerValidator gate -> plan_to_bytes.
+
+File totals commit-by-commit: three_hop.rs 2203 -> 2150 (T6a) -> 2120 (T6b) -> 2279 (T6c),
+grammar_walker.rs 961 -> 1058. ~1560 lines of bespoke arms replaced by ~900 lines of walker +
+shadow tests, with the ADR-029 D4 data-vs-code split now fully honored: no arm enumerated by
+prot; every family is facts-set + walker-read.
