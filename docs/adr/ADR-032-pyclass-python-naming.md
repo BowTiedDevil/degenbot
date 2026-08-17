@@ -95,3 +95,40 @@ the new value; the 12 struct-default pyclasses gained an explicit
 per D1). All Python import sites, companion alias imports (collapsed to
 direct imports), `.pyi` stubs, tests, and examples were updated in the same
 change; Python-visible repr/error-message strings in Rust were aligned.
+
+## Considered alternatives: keeping `Py` on the colliding names
+
+Polars names its raw PyO3 layer `PySeries` / `PyDataFrame`, and that
+pattern was the original precedent for this repo's `PyBot`. It fits
+Polars because those names are **internal**: `polars.polars` is not part
+of the documented API, no example imports it, and the public surface is
+the clean Python class (`polars.Series`). There, `Py` works as a
+keep-out marker for internals, and "wrapping mechanism" is a fair label
+for things nobody is meant to touch directly.
+
+degenbot inverts that premise: `degenbot._ffi` is a **documented,
+first-class seam** — `.pyi`-stubbed, drift-gated against its
+registrations (task `DSWX6Z`), exercised by the README code-block (sybil)
+gate, and imported directly by companion modules and shipped examples.
+The seam's names are public surface, so:
+
+- `Py` is zero-information there: every name in the module is
+  PyO3-managed, so the prefix disambiguates nothing and merely repeats
+  the module path's fact.
+- the colliding names (`PyBot` vs. `degenbot.bot.Bot`, `PyErc20Token` vs.
+  `degenbot.erc20.Erc20Token`, ...) collide on **layer**, not mechanism —
+  Python driver class vs. Rust engine handle — so the informative
+  qualifier is the layer origin: `RustBot` reads as "the Rust engine
+  handle" at exactly the point where the reader crosses the boundary.
+- Rust is the sole core implementation by architectural commitment
+  (Rust is the engine; Python is a driver shell), so `Rust` encodes a
+  design promise rather than an implementation detail.
+
+**Rejected: keep `PyBot` etc. (Polars precedent).** The precedent
+depends on the raw layer staying hidden; degenbot's seam is a public,
+gated, documented surface, and the prefix there would be noise.
+
+**Rejected: uniform `Rust*` prefix on every handle.** Over-prefixing —
+clean names remain the default (D1); the prefix is reserved for names
+where the clean form is already occupied by a Python type. The Mapping
+table above lists each such case and why.
