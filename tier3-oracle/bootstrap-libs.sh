@@ -12,15 +12,24 @@ TD="$(cd "$(dirname "$0")" && pwd)"
 cd "${TD}"
 mkdir -p lib
 
-ensure_lib() {  # ensure_lib <name> <repo-url> <tag> <marker-file>
-    local name="$1" url="$2" tag="$3" marker="lib/$1/$4"
+ensure_lib() {  # ensure_lib <name> <repo-url> <ref(tag/branch name, or pinned full 40-char sha)> <marker-file>
+    local name="$1" url="$2" ref="$3" marker="lib/$1/$4"
     if [ -f "${marker}" ]; then
         echo "lib/${name}: present ($(head -c 12 "lib/${name}/.git" 2>/dev/null || echo cloned)), skipping"
         return 0
     fi
-    echo "lib/${name}: cloning ${url}@${tag}…"
+    echo "lib/${name}: cloning ${url}@${ref:0:7}…"
     rm -rf "lib/${name}"
-    git clone --depth 1 --branch "${tag}" "${url}" "lib/${name}"
+    if [[ "${ref}" =~ ^[0-9a-f]{40}$ ]]; then
+        # Pinned commit: `git clone --branch` rejects a raw sha, so clone the
+        # default branch shallow, fetch the exact sha (GitHub allows
+        # reachable-sha fetches), then check it out.
+        git clone --depth 1 "${url}" "lib/${name}"
+        git -C "lib/${name}" fetch --depth 1 origin "${ref}"
+        git -C "lib/${name}" checkout -q "${ref}"
+    else
+        git clone --depth 1 --branch "${ref}" "${url}" "lib/${name}"
+    fi
     rm -rf "lib/${name}/.git"
 }
 
@@ -37,8 +46,11 @@ ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager
 
 # v4-core's ProtocolFees imports solmate's `Owned.sol`; the depth-1 clone above
 # drops submodules, so vendor solmate separately (needed by the V4 swap oracle
-# harness, 2LTKVO).
-ensure_lib v4-core/lib/solmate https://github.com/transmissions11/solmate.git main src/auth/Owned.sol
+# harness, 2LTKVO). Pinned to the exact commit — main's head at the time the
+# vendored copy was created (tip as of 2026-08-17) — because `main` is a
+# moving ref and was a latent source of artifact drift on fresh checkouts.
+SOLMATE_PIN="89365b880c4f3c786bdd453d4b8e8fe410344a69"
+ensure_lib v4-core/lib/solmate https://github.com/transmissions11/solmate.git "${SOLMATE_PIN}" src/auth/Owned.sol
 
 # Balancer math cores (FixedPoint/LogExpMath/WeightedMath/StableMath + their
 # FixedPoint imports) for the Balancer tier-3 oracle (task EZLECC). The
@@ -109,4 +121,4 @@ PY
 }
 ensure_pancake_v3
 
-echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate), balancer-src@${BALANCER_PIN}, pancake-src@${PANCAKE_POOL}"  # no pancake2-src: the PancakeSwap V2 pair is PINNED (Sourcify on-chain bytecode, artifacts/PancakeV2Pair/)
+echo "tier3-oracle libs ready: v2-core@v1.0.0, v3-core@v1.0.0, v4-core@v4.0.0 (with solmate@${SOLMATE_PIN:0:7}), balancer-src@${BALANCER_PIN}, pancake-src@${PANCAKE_POOL}"  # no pancake2-src: the PancakeSwap V2 pair is PINNED (Sourcify on-chain bytecode, artifacts/PancakeV2Pair/)
