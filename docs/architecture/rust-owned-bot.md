@@ -1,4 +1,4 @@
-# Rust-Owned Backrun Bot Architecture
+# Rust-Owned Settlement-Arbitrage Bot Architecture
 
 > Covers the Rust extension, unified engine, pump, executor, and Python orchestration layer for Uniswap V2/V3/V4 same-block arbitrage on Ethereum mainnet.
 >
@@ -55,7 +55,7 @@ Every hot-path operation — event decoding, pool state mutation, tick-range con
 | V2 swap encoding | Rust | `rust/crates/degenbot-bot/src/bot_core/v2_encoding.rs` | Pre-encoded `swap()` calldata production |
 | PyArbitrageEngine | Rust/PyO3 | `arb_engine.rs` (bottom) | PyO3 wrapper exposing engine to Python |
 | Executor contract | Vyper | `contracts/tstore_executor.vy` | Generic payload queue with V2/V3/V4 callbacks |
-| Backrun bot | Python | `examples/eth_backrun_v2_v3_v4_rust.py` | Pool discovery, encoding, simulation, submission |
+| Settlement-arbitrage bot | Python | `examples/eth_backrun_v2_v3_v4_rust.py` | Pool discovery, encoding, simulation, submission |
 
 ---
 

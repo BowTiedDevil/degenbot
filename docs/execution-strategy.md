@@ -54,7 +54,7 @@ There is **one** seam — `degenbot-execution` — and two ways to reach it:
   GIL). No Rust required.
 
 Both meet the same seam. degenbot bundles **one** default adapter — the
-backrun strategy's `cmd_executor` path (`degenbot-settlement-strategy`,
+settlement-arbitrage strategy's `cmd_executor` path (`degenbot-settlement-strategy`,
 Rust-canonical). It is not the only way; it's the default.
 
 ## The solve result view
@@ -148,7 +148,7 @@ and the gate and the fee default to the market-shaped behavior.
 ## What is NOT on offer
 
 - **Re-deriving degenbot's canonical bundle in Python.** The `cmd_executor`
-  composer + the backrun 7-call balance gate are Rust and stay Rust. The seam
+  composer + the settlement-arbitrage 7-call balance gate are Rust and stay Rust. The seam
   lets you add *your own contract*; it does not let you re-implement the
   default in another language. Python users *use* the default, and supply their
   own for a *different* contract.
@@ -173,7 +173,7 @@ parity oracle) and never touch the canonical `dispatch_profitable_*` fan-out.
 ## See also
 
 - [ADR-025 — the `ExecutionStrategy` seam](adr/ADR-025-execution-strategy-seam.md)
-- ADR-019 — `cmd_executor` + the backrun 7-call balance gate are Rust and stay
+- ADR-019 — `cmd_executor` + the settlement-arbitrage 7-call balance gate are Rust and stay
   Rust (the default adapter); pricing folds into Assess.
 - `CONTEXT.md` — the seam / two-consumer (Rust engine, Python driver shell)
   framing.

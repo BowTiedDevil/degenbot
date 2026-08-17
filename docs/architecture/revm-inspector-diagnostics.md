@@ -226,7 +226,7 @@ these as the JHPW5W task's children OR as a separate epic on approval.
    `test_inspector_dual_driver.py` (V2+V3 now, V4 when `5RI47E` lands).
 
 ## Implementation status (autonomous session — exercised against the
-backrun bot's test harness)
+settlement-arbitrage bot's test harness)
 
 Delivered + exercised (committed):
 

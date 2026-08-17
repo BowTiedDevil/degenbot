@@ -38,7 +38,7 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 - [License](#license)
 - [Donation](#donation)
 
-> **Investigating a failing backrun / building a revm harness?** See
+> **Investigating a failing settlement-arbitrage path / building a revm harness?** See
 > **[`INVESTIGATIONS.md`](INVESTIGATIONS.md)** — the reusable
 > `degenbot_simulation::oracle` driver, the per-contract scaffolder, and
 > degenbot's path-fixture toolkit.
@@ -1644,7 +1644,7 @@ Additional documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture/)**: High-level architectural patterns
   - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — The CurveDataProvider seam for decoupled I/O
-  - [Rust-Owned Backrun Bot](docs/architecture/rust-owned-bot.md) — V2/V3/V4 arbitrage engine, dual-subscription pump, integer-exact Möbius solver, executor contract, and Python orchestration layer
+  - [Rust-Owned Settlement-Arbitrage Bot](docs/architecture/rust-owned-bot.md) — V2/V3/V4 arbitrage engine, dual-subscription pump, integer-exact Möbius solver, executor contract, and Python orchestration layer
   - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
 - **[Aave V3](docs/aave/)**: Comprehensive control flow diagrams and amount transformations for Aave operations
 - **[Arbitrage](docs/arbitrage/)**: Multi-pool cycle testing documentation
