@@ -1,4 +1,4 @@
-"""Dispatch + sim-render helpers for the backrun ``BotRunner``.
+"""Dispatch + sim-render helpers for the settlement-arbitrage ``BotRunner``.
 
 Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
 DZTFSJ). Owns the encode→simulate→submit leaf

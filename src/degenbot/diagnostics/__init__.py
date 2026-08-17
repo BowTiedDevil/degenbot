@@ -1,6 +1,6 @@
 """Runtime diagnostics (GIL-probe stuck-watchdog) — stable ADR-013 home.
 
-The backrun bot installs a GIL-acquire-latency probe + main-loop stuck-watchdog
+The settlement-arbitrage bot installs a GIL-acquire-latency probe + main-loop stuck-watchdog
 (``start_gil_probe`` / ``mark_progress``). These pyfunctions are dynamically
 created in ``degenbot._ffi.diagnostics`` by the PyO3 wrapper; this ``__init__.py``
 is the stable ``degenbot.<domain>`` home leaf modules must import from (ADR-013:

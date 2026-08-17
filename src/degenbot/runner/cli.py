@@ -1,4 +1,4 @@
-"""Backrun bot CLI (argparse) building — stable package home.
+"""Settlement-arbitrage bot CLI (argparse) building — stable package home.
 
 The ``argv -> BotRunner`` entrypoint's argument parser (epic 5TSYKN). The
 example ``examples/eth_backrun_v2_v3_v4_rust.py`` is a thin wrapper that calls
@@ -13,7 +13,7 @@ import argparse
 
 
 def build_backrun_arg_parser() -> argparse.ArgumentParser:
-    """Build the backrun example's argument parser.
+    """Build the settlement-arbitrage example's argument parser.
 
     Extracted so the CLI surface (especially the ``--node-http`` / ``--node-ws``
     cascade overrides) is testable without running the full async session.
@@ -42,7 +42,7 @@ def build_backrun_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "HTTP RPC endpoint for the backrun chain (Ethereum mainnet). "
+            "HTTP RPC endpoint for the arbitrage chain (Ethereum mainnet). "
             "Highest-priority source in the RPC URI cascade: "
             "--node-http > DEGENBOT_RPC_HTTP_CHAINID_1 > NODE_HOST_HTTP "
             "> config.toml rpc[1] > error."
@@ -53,7 +53,7 @@ def build_backrun_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "WebSocket RPC endpoint for the backrun chain (Ethereum mainnet). "
+            "WebSocket RPC endpoint for the arbitrage chain (Ethereum mainnet). "
             "Highest-priority source in the RPC URI cascade: "
             "--node-ws > DEGENBOT_RPC_WS_CHAINID_1 > NODE_HOST_WEBSOCKET "
             "> config.toml ws[1] > error."

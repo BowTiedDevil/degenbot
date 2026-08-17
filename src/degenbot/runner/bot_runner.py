@@ -1,4 +1,4 @@
-"""Backrun runtime driver facade (``BotRunner``).
+"""Settlement-arbitrage runtime driver facade (``BotRunner``).
 
 Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
 DKUOBL; renamed ``BackrunSession`` -> ``BotRunner``). ``BotRunner`` is the
@@ -63,7 +63,7 @@ from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
 
 def _make_backrun_config(node_http: str) -> DegenbotConfig:
-    """Build a single-chain DegenbotConfig for the backrun session (ADR-006 D5).
+    """Build a single-chain DegenbotConfig for the arbitrage session (ADR-006 D5).
 
     The chain identity is Ethereum mainnet (1); the RPC is the caller's
     ``node_http`` — the cascade-resolved endpoint from
@@ -105,7 +105,7 @@ def _make_backrun_config(node_http: str) -> DegenbotConfig:
 
 
 class BotRunner:
-    """Orchestrator that collapses the backrun startup ritual behind one facade.
+    """Orchestrator that collapses the settlement-arbitrage startup ritual behind one facade.
 
     Owns the config + the three actors (``bot``, ``engine_registry``, ``async_w3``)
     + the ``Dispatcher`` + scalar block state, and is the ONE place that

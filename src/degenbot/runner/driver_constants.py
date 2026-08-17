@@ -1,4 +1,4 @@
-"""Shared runtime configuration constants for the backrun ``BotRunner``.
+"""Shared runtime configuration constants for the settlement-arbitrage ``BotRunner``.
 
 Central home for the driver's module-level tunables and deployment addresses,
 extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN). Each

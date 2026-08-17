@@ -1,4 +1,4 @@
-"""Driver configuration + display-only helpers for the backrun ``BotRunner``.
+"""Driver configuration + display-only helpers for the settlement-arbitrage ``BotRunner``.
 
 Extracted from ``examples/eth_backrun_helpers.py`` (epic 5TSYKN, task RVSYWB).
 This module owns the Python-companion, ``stays-python`` surface that the
@@ -25,7 +25,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_rpc_uris
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 
-# Backrun configuration
+# Arbitrage configuration
 # ──────────────────────────────────────────────────────────────────
 
 # Default dispatch tunables — match the example's current operational values
@@ -165,7 +165,7 @@ def _checksum_or_empty(addr: str | None) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class BackrunConfig:
-    """Unified backrun configuration — one object for the ~20 tunables `main()` reads.
+    """Unified settlement-arbitrage configuration — one object for the ~20 tunables `main()` reads.
 
     Replaces the three scattered config sources (a ``mainnet.env`` dotenv
     dict, module-top constants, and CLI args) with a single frozen value object.

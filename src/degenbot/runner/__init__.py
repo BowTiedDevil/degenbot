@@ -1,4 +1,4 @@
-"""Backrun runtime driver (``BotRunner``) companion package.
+"""Settlement-arbitrage runtime driver (``BotRunner``) companion package.
 
 Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` / ``eth_backrun_helpers.py``
 (epic 5TSYKN). This is the Python-companion ``stays-python`` cockpit over the

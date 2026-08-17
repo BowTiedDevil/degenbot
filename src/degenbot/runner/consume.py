@@ -1,4 +1,4 @@
-"""Block-stream + result-batch consumption for the backrun ``BotRunner``.
+"""Block-stream + result-batch consumption for the settlement-arbitrage ``BotRunner``.
 
 Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
 CXWQDI). Owns the permanent main loop: :func:`consume_result_batches` awaits

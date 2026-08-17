@@ -35,7 +35,7 @@ def get_provider_from_config(
     (:func:`degenbot.config.resolve_http_rpc_uri`): CLI arg > OS env
     ``DEGENBOT_RPC_HTTP_CHAINID_{cid}`` > caller fallback > config.toml
     ``rpc[cid]`` > raise. This is the single resolution path shared by the
-    library, the ``degenbot`` click CLI, and the backrun example (see
+    library, the ``degenbot`` click CLI, and the settlement-arbitrage example (see
     ``docs/migration-guides/rpc-uri-cascade.md``), so a plain ``export`` in the
     devcontainer takes effect here too.
 

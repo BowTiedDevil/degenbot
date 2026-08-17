@@ -282,7 +282,7 @@ def resolve_rpc_uris(
        plain ``export`` in the devcontainer takes effect (the .env-file dict is
        NOT consulted).
     3. ``fallback_http`` / ``fallback_ws`` — caller-supplied lower-priority
-       candidates. The backrun example uses this slot to inject the deprecated
+       candidates. The settlement-arbitrage example uses this slot to inject the deprecated
        ``NODE_HOST_*`` rebuilt URIs without leaking that naming into the
        library resolver.
     4. config.toml ``rpc[chain_id]`` / ``ws[chain_id]`` via

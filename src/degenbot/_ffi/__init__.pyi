@@ -1178,7 +1178,7 @@ class ArbitrageEngine:
 class BlockStream:
     """Async iterator over `newHeads` block notifications from the pump.
 
-    The authoritative block clock for the backrun bot (epic 6W35AI) —
+    The authoritative block clock for the settlement-arbitrage bot (epic 6W35AI) —
     obtained via `ArbitrageEngine.block_stream()`. Yields one dict per
     accepted block header: `number`, `timestamp`, `base_fee_per_gas`
     (int | None), `gas_used`, `gas_limit`. Raises `StopAsyncIteration` when

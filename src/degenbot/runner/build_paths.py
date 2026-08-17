@@ -1,4 +1,4 @@
-"""Path discovery + registration for the backrun ``BotRunner``.
+"""Path discovery + registration for the settlement-arbitrage ``BotRunner``.
 
 Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
 JKYVST). Owns ``build_paths`` and its registration machinery:
