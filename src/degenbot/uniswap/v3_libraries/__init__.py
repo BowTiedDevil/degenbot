@@ -5,15 +5,14 @@ Stand-alone tick-math primitives re-exported from the Rust
 (tick ↔ √P and the CL boundary constants) that a driver or pool class
 needs without holding any pool state — e.g. to set a price-limit by tick.
 
-The CL swap-step machinery (``compute_swap_step``,
-``get_next_sqrt_price_from_*``, ``add_delta``, ``get_amount0/1_delta``,
-``max/min_usable_tick``, ``div_rounding_up``) is intentionally **not**
-re-exported here: that machinery is the guts of the CL swap-step loop,
-which the Rust core owns and runs end-to-end inside ``LiquidityPool``.
-Re-exporting it at the package surface would advertise a driver API that
-reaches below the abstraction and that no consumer uses. The underlying
-``cl_*`` FFI pyfunctions remain available to internal callers; they are
-just not promoted as a public surface.
+The CL swap-step machinery (``get_next_sqrt_price_from_*``,
+``add_delta``, ``get_amount0/1_delta``, ``max/min_usable_tick``,
+``div_rounding_up``, ``simple_mul_div``,
+``apply_liquidity_mapping_update``) is the guts of the CL swap-step loop,
+which the Rust core owns and runs end-to-end inside ``LiquidityPool``. The
+U64B2O census found no Python consumer, so those internals are removed from
+the FFI surface entirely (``compute_swap_step_v3``/``_v4`` remain as the
+dual-driver parity fixture seam).
 
 The leaf submodules (``.full_math``, ``.bit_math``, ``.tick``,
 ``.tick_bitmap``, ``.functions``) are the Solidity-matching surface that
