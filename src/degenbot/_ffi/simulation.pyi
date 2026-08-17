@@ -101,10 +101,32 @@ def dispatch_profitable_py(
     *,
     engine: ArbitrageEngine | None = None,
 ) -> Coroutine[Any, Any, PyDispatchOutcome]: ...
+def simulate_in_process_revert_probe(
+    path_id: int,
+    runtime_bytecode: bytes,
+) -> dict[str, Any]:
+    """In-process revm diagnostic probe for a REVERTING path.
+
+    Drives the same ``simulate_in_process_with_db`` core the production
+    dispatch uses, against a recorded failing path, and returns the
+    failure record as a dict (captured swaps, reverting frame, balances).
+    Test/diagnostic surface (tests/standalone_parity); not part of the
+    production dispatch loop.
+    """
+
+def simulate_in_process_success_probe(path_id: int) -> dict[str, Any]:
+    """In-process revm diagnostic probe for a SUCCESSFUL path.
+
+    Twin of simulate_in_process_revert_probe: replays a recorded accepted
+    path through the in-process core and returns the success record dict.
+    Test/diagnostic surface only.
+    """
 
 __all__ = [
     "PyDispatchCandidate",
     "PyDispatchOutcome",
     "PySimulateContext",
     "dispatch_profitable_py",
+    "simulate_in_process_revert_probe",
+    "simulate_in_process_success_probe",
 ]

@@ -67,6 +67,22 @@ class PyDispatcher:
     def fot_tokens(self, current_block: int) -> list[str]: ...
     def set_fot_verified_non_fot(self, tokens: list[str]) -> None: ...
 
+class PyDivergentPool:
+    """Per-pool divergence flag (sim vs solve mismatch) — FoT / divergence monitor.
+
+    Key shape depends on family: V2/V3 set ``address`` (and leave
+    ``pool_id`` None); V4 sets ``pool_id`` (bytes32 hex, ``address`` None).
+    """
+
+    @property
+    def family(self) -> str: ...
+    @property
+    def address(self) -> str | None: ...
+    @property
+    def pool_id(self) -> str | None: ...
+    @property
+    def last_flagged_block(self) -> int: ...
+
 class PyTxSigner:
     """EIP-1559 transaction signer holding the operator key once.
 
@@ -158,6 +174,7 @@ def finalize_fees(
 
 __all__ = [
     "PyDispatcher",
+    "PyDivergentPool",
     "PySubmitCandidate",
     "PyTxParams",
     "PyTxSigner",

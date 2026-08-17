@@ -10,13 +10,6 @@ from typing import Any, overload
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
-from degenbot.types.rpc_types import (
-    BlockData,
-    LogData,
-    TransactionData,
-    TransactionReceiptData,
-)
-
 from . import aave as aave
 
 # ------------------------------------------------------------------
@@ -41,11 +34,14 @@ from . import cancel as cancel
 # tick-boundary constants (MIN_TICK/MAX_TICK/MIN_SQRT_RATIO/MAX_SQRT_RATIO).
 from . import concentrated_liquidity_math as concentrated_liquidity_math
 from . import contract as contract
+from . import curve_dy as curve_dy
 from . import curve_math as curve_math
 from . import db as db
 from . import deployments as deployments
 from . import dex_identity as dex_identity
+from . import diagnostics as diagnostics
 from . import eip_1559 as eip_1559
+from . import execution as execution
 from . import executor as executor
 from . import fork as fork
 from . import pool as pool
@@ -133,23 +129,8 @@ def find_paths_rust(
 # any connection / DDL / backup / integrity-check failure.
 # `db_upgrade_database` returns a discriminant string.
 
-class CancelHandle:
-    """Cooperative cancel flag for the long-running updater loops.
-
-    Construct up front; pass to ``run_pool_update`` / ``run_aave_update``; a
-    ``signal.SIGINT`` handler (installed by the CLI driver) calls ``.cancel()``
-    to stop the run at the next chunk boundary. The loop polls the flag
-    between chunks (NOT mid-chunk) so a cancel never breaks chunk atomicity.
-    """
-
-    def __init__(self) -> None: ...
-    def cancel(self) -> None:
-        """Request cancellation (honored at the next chunk boundary)."""
-    def is_cancelled(self) -> bool:
-        """Whether cancellation was requested."""
-    def reset(self) -> None:
-        """Reset the flag to ``False`` (reuse the handle)."""
-
+# The CancelHandle class lives on the degenbot._ffi.cancel submodule
+# (stub: cancel.pyi) — do not define it at this top level.
 # ------------------------------------------------------------------
 # V3/V4 DB-aware liquidity updater seam (feature = "db").
 # ------------------------------------------------------------------
@@ -229,31 +210,8 @@ def compute_aerodrome_v3_pool_address(
 # unsupported types (e.g. fixed-point).
 from . import abi as abi  # ruff:ignore[module-import-not-at-top-of-file]
 
-class AsyncContract:
-    """Async wrapper for contract interactions."""
-
-    @staticmethod
-    def create(
-        address: str,
-        provider_url: str,
-        max_retries: int | None = None,
-    ) -> Coroutine[Any, Any, AsyncContract]: ...
-    @staticmethod
-    def from_provider(address: str, provider: AlloyProvider) -> AsyncContract: ...
-    @property
-    def address(self) -> str: ...
-    def call(
-        self,
-        function_signature: str,
-        args: list[str],
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, list[str]]: ...
-    def batch_call(
-        self,
-        calls: list[tuple[str, list[str]]],
-        block_number: int | None = None,
-    ) -> Coroutine[Any, Any, list[list[str]]]: ...
-
+# The AsyncContract class lives on the degenbot._ffi.contract submodule
+# (stub: contract.pyi) — do not define it at this top level.
 class PyErc20Token:
     """Thin PyO3 handle to a token registered in the Rust `Bot`.
 
@@ -1345,6 +1303,76 @@ class HighFeePoolRejectedError(PoolRegistrationError):
     """
 
 # ------------------------------------------------------------------
+# Structural pool handle + read-only state views (feature = "bot").
+# Thin PyO3 handles over the Rust BotState pool entries; all state lives
+# in Rust. PyPool is the structural (not identity-based) handle that
+# mirrors the Rust degenbot_pools::Pool handle.
+# ------------------------------------------------------------------
+class PyPool:
+    """Structural pool handle mirroring the Rust degenbot_pools::Pool."""
+
+    def structure(self) -> str: ...
+    def identity(self) -> tuple[str, str | None]: ...
+    @property
+    def dex_name(self) -> str | None: ...
+    def reserve_pair(self) -> PyReservePairView: ...
+    def concentrated_liquidity(self) -> PyConcentratedLiquidityView: ...
+    def balance_vector(self) -> PyBalanceVectorView: ...
+
+class PyReservePairView:
+    """Read-only V2 reserve-pair view (token0/1 + reserve0/1)."""
+
+    @property
+    def token0(self) -> str: ...
+    @property
+    def token1(self) -> str: ...
+    @property
+    def reserve0(self) -> int: ...
+    @property
+    def reserve1(self) -> int: ...
+
+class PyConcentratedLiquidityView:
+    """Read-only V3/V4 concentrated-liquidity slot0 view."""
+
+    @property
+    def token0(self) -> str: ...
+    @property
+    def token1(self) -> str: ...
+    @property
+    def fee(self) -> int: ...
+    @property
+    def tick_spacing(self) -> int: ...
+    @property
+    def sqrt_price_x96(self) -> int: ...
+    @property
+    def liquidity(self) -> int: ...
+    @property
+    def tick(self) -> int: ...
+
+class PyBalanceVectorView:
+    """Read-only multi-token balance vector (Balancer family)."""
+
+    @property
+    def tokens(self) -> list[str]: ...
+    @property
+    def balances(self) -> list[int]: ...
+    @property
+    def n_tokens(self) -> int: ...
+
+# ------------------------------------------------------------------
+# Drainer lifecycle pyfunctions (top-level, module-lifecycle). Registered
+# outside c_api::register: shutdown_log_drainer by the tracing log layer
+# (python_log_layer::register_pyfunction, called from the module init)
+# and shutdown_subscriber_drainer by the pub/sub subscriber seam.
+# Both are idempotent; call before interpreter finalization.
+# ------------------------------------------------------------------
+def shutdown_log_drainer() -> None:
+    """Flush + stop the batched Python log drainer thread (idempotent)."""
+
+def shutdown_subscriber_drainer() -> None:
+    """Stop the pool-state subscriber drainer thread (idempotent)."""
+
+# ------------------------------------------------------------------
 # Simulation seam (per-block profitability pipeline)
 # ------------------------------------------------------------------
 
@@ -1373,20 +1401,23 @@ def solve_balancer_weighted_basket(
 
 __all__ = [
     "ArbitrageEngine",
-    "AsyncContract",
-    "BlockData",
     "BlockStream",
-    "CancelHandle",
     "DynamicFeePoolRejectedError",
     "Erc20TokenRow",
+    "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
-    "LogData",
+    "PathIterator",
+    "PoolAlreadyRegisteredError",
+    "PoolRegistrationError",
+    "PyBalanceVectorView",
     "PyBot",
     "PyBotIo",
+    "PyConcentratedLiquidityView",
     "PyErc20Token",
     "PyLiquidityPool",
-    "TransactionData",
-    "TransactionReceiptData",
+    "PyPool",
+    "PyReservePairView",
+    "SpecViolationError",
     "VerificationMismatchError",
     "VerificationRpcError",
     "aave",
@@ -1394,20 +1425,25 @@ __all__ = [
     "balancer_math",
     "build_path_graph",
     "cancel",
-    "concentrated_liquidity_math",
     "compute_aerodrome_v2_pool_address",
     "compute_aerodrome_v3_pool_address",
+    "concentrated_liquidity_math",
     "contract",
+    "curve_dy",
     "curve_math",
     "db",
     "deployments",
     "dex_identity",
+    "diagnostics",
+    "execution",
     "executor",
     "find_paths_rust",
     "fork",
     "pool",
     "price",
     "provider",
+    "shutdown_log_drainer",
+    "shutdown_subscriber_drainer",
     "simulation",
     "solady",
     "solidly_math",
