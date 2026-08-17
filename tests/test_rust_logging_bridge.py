@@ -38,7 +38,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # (``[bridge-probe]``) emit ``log::info!`` from these crates; the base
     # config in ``degenbot.logging`` lowers them so the records are visible.
     "degenbot_simulation",
-    "degenbot_backrun_strategy",
+    "degenbot_settlement_strategy",
 )
 
 #: The same contract is exported by ``degenbot.logging`` so other code (e.g. the
@@ -181,6 +181,7 @@ def test_degenbot_arbitrage_info_record_reaches_handler() -> None:
 # I/O, no GIL held across slow writes; the listener thread is the only thread
 # that ever calls ``stream.flush()`` (single writer → no lock contention).
 
+
 def test_configured_loggers_attach_queue_handler_not_stream_handler() -> None:
     """The GIL-held-across-flush stall class is closed by routing records
     through ``QueueHandler`` instead of a bare ``StreamHandler``.
@@ -205,9 +206,7 @@ def test_configured_loggers_attach_queue_handler_not_stream_handler() -> None:
     # NONE (it lives only as a ``QueueListener`` destination).
     for name in (*RUST_BRIDGE_LOGGER_NAMES, *PY_PACKAGE_ROOT_LOGGER_NAMES, "degenbot.logging"):
         lg = logging.getLogger(name)
-        own_handlers = [
-            h for h in lg.handlers if not type(h).__module__.startswith("_pytest.")
-        ]
+        own_handlers = [h for h in lg.handlers if not type(h).__module__.startswith("_pytest.")]
         assert any(h is dl._QUEUED_HANDLER for h in own_handlers), (
             f"{name} is not attached to degenbot.logging._QUEUED_HANDLER — records "
             "flow directly to a StreamHandler and the GIL is held across stdout "

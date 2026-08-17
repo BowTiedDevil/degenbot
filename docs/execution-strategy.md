@@ -54,7 +54,7 @@ There is **one** seam — `degenbot-execution` — and two ways to reach it:
   GIL). No Rust required.
 
 Both meet the same seam. degenbot bundles **one** default adapter — the
-backrun strategy's `cmd_executor` path (`degenbot-backrun-strategy`,
+backrun strategy's `cmd_executor` path (`degenbot-settlement-strategy`,
 Rust-canonical). It is not the only way; it's the default.
 
 ## The solve result view

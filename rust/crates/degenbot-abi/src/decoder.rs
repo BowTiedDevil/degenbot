@@ -123,13 +123,13 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
 ///
 /// ```
 /// use degenbot_abi::abi_types::{AbiType, AbiValue};
-/// use degenbot_abi::abi_decoder::decode_for_types;
+/// use degenbot_abi::decoder::decode_for_types;
 /// use alloy::primitives::U256;
 ///
 /// let types = vec![AbiType::Uint(256), AbiType::Bool];
 ///
 /// // Encode first, then decode
-/// use degenbot_abi::abi_encoder::encode_for_types;
+/// use degenbot_abi::encoder::encode_for_types;
 /// let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
 /// let encoded = encode_for_types(&types, &values)?;
 ///

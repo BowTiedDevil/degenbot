@@ -18,7 +18,7 @@
 //! # Lazy Initialization
 //!
 //! The runtime is only created on first call to `get_runtime()`. Pure Rust
-//! functions (`tick_math`, `abi_decoder`, `address_utils`) never initialize
+//! functions (`tick_math`, `decoder`, `address_utils`) never initialize
 //! it, so scripts that don't use provider/contract code pay no runtime cost.
 //!
 //! # Usage

@@ -96,7 +96,7 @@ implementation task, not a prototype re-spin.
 
 ## 3. The `SimFailure` deepening (revert attribution)
 
-`rust/crates/degenbot-backrun-strategy/src/simulator.rs::SimFailure` today:
+`rust/crates/degenbot-settlement-strategy/src/simulator.rs::SimFailure` today:
 
 ```rust
 pub struct SimFailure {

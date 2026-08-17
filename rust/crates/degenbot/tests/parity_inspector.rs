@@ -44,11 +44,11 @@ use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
-use degenbot::degenbot_backrun_strategy::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
-};
 use degenbot::degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot::degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
+use degenbot::degenbot_settlement_strategy::{
+    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
+};
 use degenbot::degenbot_simulation::apply_simulation_overrides;
 use degenbot_rpc::provider::AlloyProvider;
 use revm::database::CacheDB;

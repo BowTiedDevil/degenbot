@@ -20,7 +20,7 @@
 //!   market-percentile policy).
 //!
 //! Guardrails observed:
-//! - **No `degenbot-backrun-strategy` dependency** (this crate uses only the
+//! - **No `degenbot-settlement-strategy` dependency** (this crate uses only the
 //!   thin seam + its descriptor/solver input types).
 //! - **No `pyo3`** — a pure-Rust consumer, per AGENTS.md consumer #1.
 //! - **Encode is unconditional user code**; Probe/Assess/Fee are data/defaults

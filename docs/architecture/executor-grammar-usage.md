@@ -130,7 +130,7 @@ let call: EncodedCall = encode_execute_call(
 
 ## Putting it together — the production call site
 
-This is exactly what `degenbot-backrun-strategy::simulator` does (task
+This is exactly what `degenbot-settlement-strategy::simulator` does (task
 `Q35IJN`):
 
 ```rust
@@ -151,7 +151,7 @@ let execute_config = config_for_options(path.opts, U256::ZERO);
 let execute_calldata = encode_execute_call(ctx.executor_address, &cmd_bytes, execute_config)?;
 ```
 
-See `rust/crates/degenbot-backrun-strategy/src/simulator.rs` (~`build_execute_tx`)
+See `rust/crates/degenbot-settlement-strategy/src/simulator.rs` (~`build_execute_tx`)
 for the full production path, including the pre/post balance reads that prove
 profitability.
 

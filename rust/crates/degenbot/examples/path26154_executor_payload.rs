@@ -32,13 +32,13 @@ use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
-use degenbot::degenbot_backrun_strategy::{
-    simulate_in_process_with_db, FailBuckets, SimResult, SimulateContext, SimulatePath,
-};
 use degenbot::degenbot_executor::composers::{
     encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
 };
 use degenbot::degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
+use degenbot::degenbot_settlement_strategy::{
+    simulate_in_process_with_db, FailBuckets, SimResult, SimulateContext, SimulatePath,
+};
 use degenbot::degenbot_simulation::apply_simulation_overrides;
 use degenbot_rpc::provider::AlloyProvider;
 use revm::database::CacheDB;
@@ -251,11 +251,11 @@ fn build_path(fx: &Fixture, path_id: u64) -> SimulatePath {
 #[expect(clippy::too_many_lines)]
 fn run_executor_call_trace(fx: &Fixture, runtime: &[u8]) {
     use alloy::primitives::{Bytes, TxKind, U256};
-    use degenbot::degenbot_backrun_strategy::calldata::{
+    use degenbot::degenbot_settlement_strategy::calldata::{
         encode_balance_of_calldata, encode_erc6909_balance_of_calldata,
         encode_get_eth_balance_calldata, wrap_execute_calldata,
     };
-    use degenbot::degenbot_backrun_strategy::{BALANCE_CALL_GAS_LIMIT, EXECUTE_CONFIG};
+    use degenbot::degenbot_settlement_strategy::{BALANCE_CALL_GAS_LIMIT, EXECUTE_CONFIG};
     use degenbot::degenbot_simulation::CallTraceInspector;
     use revm::context::TxEnv;
     use revm::{ExecuteEvm, InspectCommitEvm, MainBuilder, MainContext};

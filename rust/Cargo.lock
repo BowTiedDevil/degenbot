@@ -2047,7 +2047,6 @@ dependencies = [
  "async-trait",
  "degenbot-aave",
  "degenbot-abi",
- "degenbot-backrun-strategy",
  "degenbot-balancer-math",
  "degenbot-bot",
  "degenbot-concentrated-liquidity-math",
@@ -2063,6 +2062,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-price",
  "degenbot-rpc",
+ "degenbot-settlement-strategy",
  "degenbot-simulation",
  "degenbot-solidly-math",
  "degenbot-solvers",
@@ -2100,28 +2100,6 @@ dependencies = [
  "parking_lot",
  "proptest",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "degenbot-backrun-strategy"
-version = "0.6.0-alpha.3"
-dependencies = [
- "alloy",
- "degenbot-abi",
- "degenbot-bot",
- "degenbot-core",
- "degenbot-decoders",
- "degenbot-executor",
- "degenbot-order-index",
- "degenbot-rpc",
- "degenbot-simulation",
- "degenbot-submission",
- "parking_lot",
- "revm",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -2350,6 +2328,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-settlement-strategy"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-abi",
+ "degenbot-bot",
+ "degenbot-core",
+ "degenbot-decoders",
+ "degenbot-executor",
+ "degenbot-order-index",
+ "degenbot-rpc",
+ "degenbot-simulation",
+ "degenbot-submission",
+ "parking_lot",
+ "revm",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "degenbot-simulation"
 version = "0.6.0-alpha.3"
 dependencies = [
@@ -2446,7 +2446,6 @@ dependencies = [
  "dashmap",
  "degenbot-aave",
  "degenbot-abi",
- "degenbot-backrun-strategy",
  "degenbot-balancer-math",
  "degenbot-bot",
  "degenbot-concentrated-liquidity-math",
@@ -2462,6 +2461,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-price",
  "degenbot-rpc",
+ "degenbot-settlement-strategy",
  "degenbot-simulation",
  "degenbot-solidly-math",
  "degenbot-solvers",

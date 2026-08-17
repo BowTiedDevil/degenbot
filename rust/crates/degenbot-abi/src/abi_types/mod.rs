@@ -5,7 +5,7 @@
 //! - `AbiValue` enum for representing encoded/decoded ABI values
 //! - `CachedAbiTypes` struct for pre-parsed batch encoding/decoding
 //!
-//! Used by `abi_decoder.rs`, `abi_encoder.rs`, and `contract.rs` to ensure
+//! Used by `decoder.rs`, `encoder.rs`, and `contract.rs` to ensure
 //! consistent type handling across the codebase.
 //!
 //! # Module Organization

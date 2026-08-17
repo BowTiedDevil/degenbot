@@ -29,12 +29,12 @@ use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
-use degenbot_backrun_strategy::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
-};
 use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_settlement_strategy::{
+    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use revm::database::CacheDB;
@@ -79,7 +79,7 @@ fn executor_stub_bytecode(gift: alloy::primitives::Address) -> Vec<u8> {
 // ---- the hardcoded smoke fixture (mirrors the Rust smoke test) ----
 // Constants are `const` (not `static`) so they're compiled inline + have no
 // `Sync` requirement — matches the `simulate_in_process_with_db_*` smoke
-// tests in `degenbot-backrun-strategy`.
+// tests in `degenbot-settlement-strategy`.
 const SMOKE_OWNER: alloy::primitives::Address =
     alloy::primitives::address!("9c56a29c7231974c269e24f9fb3c29203039089e");
 const SMOKE_EXECUTOR: alloy::primitives::Address =

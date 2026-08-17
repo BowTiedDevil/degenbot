@@ -6,7 +6,7 @@
 //! pre/post-balance bundle, `compute_priority_fee`, `decode_balance`,
 //! `SimResult`, `dispatch_profitable_results`, `SimulateContext`,
 //! `SimulatePath`, `FailBuckets`, the calldata builders — relocated to the
-//! `degenbot-backrun-strategy` crate, which drives the borrowed `&mut evm`
+//! `degenbot-settlement-strategy` crate, which drives the borrowed `&mut evm`
 //! the engine exposes via [`BlockSimHandle::evm_mut`].
 //!
 //! # Standalone-Rust consumer
@@ -21,7 +21,7 @@
 
 /// The in-process revm engine + its DB stack (the EVM handle, overrides,
 /// AL collector, warm cache). The backrun strategy relocated to
-/// `degenbot-backrun-strategy` (ADR-019 D4/D7, decision R).
+/// `degenbot-settlement-strategy` (ADR-019 D4/D7, decision R).
 pub mod sim;
 
 /// The executor grammar harness (UQOAHA): deploy the real `cmd_executor` +
@@ -47,9 +47,9 @@ pub use oracle::{
     TxSpec, Verdict,
 };
 // Re-export the engine surface at the crate root for ergonomic access + for
-// the strategy crate (`degenbot-backrun-strategy`) + the PyO3 wrapper. The
+// the strategy crate (`degenbot-settlement-strategy`) + the PyO3 wrapper. The
 // strategy value types (`SimResult`, `SimulateContext`, `FailBuckets`, …)
-// now live in `degenbot-backrun-strategy`.
+// now live in `degenbot-settlement-strategy`.
 pub use sim::evm::{
     apply_simulation_overrides, divergence_probe, emit_access_list_from_state, AccessListCollector,
     BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle,

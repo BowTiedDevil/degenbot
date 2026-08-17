@@ -1,4 +1,4 @@
-//! `PyO3` seam over the `degenbot-backrun-strategy` core crate.
+//! `PyO3` seam over the `degenbot-settlement-strategy` core crate.
 //!
 //! The backrun strategy is the per-block profitability pipeline — it takes a
 //! batch of solved arbitrage candidates, runs each through the in-process
@@ -15,7 +15,7 @@
 //! - **Engine** (`degenbot-simulation`): the in-process revm EVM handle
 //!   (`BlockSimHandle`, layered DB, overrides, AL collector, warm cache).
 //!   Zero pyo3.
-//! - **Strategy** (`degenbot-backrun-strategy`): the backrun bundle —
+//! - **Strategy** (`degenbot-settlement-strategy`): the backrun bundle —
 //!   `dispatch_profitable_results`, `SimResult`, `SimulateContext`,
 //!   `DispatchCandidate`, `DispatchOutcome`, `FailBuckets`,
 //!   `compute_priority_fee`, the 7-call `simulate_path_on_evm`. Zero pyo3.

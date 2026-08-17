@@ -40,7 +40,7 @@ clock** because a hop's `update_block` can exceed the lagging header clock:
 
 - `solver_dispatch.rs:109` — `solve_block = max(block_number, pool_state_head())`
 - `block_pump.rs:609` — verifier `anchor = max(block, pool_state_head())`
-- `dispatch.rs:593` (`degenbot-backrun-strategy`, the Python-driven sim) —
+- `dispatch.rs:593` (`degenbot-settlement-strategy`, the Python-driven sim) —
   `sim_block = max(candidate.solve_block)`
 
 So "solve for a block", "verify at a block", and "simulate at a block" are
@@ -167,7 +167,7 @@ a backwards-compat layer, and we do not introduce a rival state mirror.
 2. `solver_dispatch.rs:109` — consume the promoted `active_block` (threaded as
    the solve anchor) instead of re-deriving `max(block_number, pool_state_head())`.
 3. `solver_state_verifier.rs:297` — anchor to the promoted `active_block`.
-4. `dispatch.rs:593` (`degenbot-backrun-strategy`) — `sim_block` becomes the
+4. `dispatch.rs:593` (`degenbot-settlement-strategy`) — `sim_block` becomes the
    promoted block threaded through `candidate.solve_block`; the per-batch `max`
    collapses (keep `max` as a defensive invariant assertion, not a re-anchor).
 5. Thread the promoted block through the existing solve_block → DispatchCandidate

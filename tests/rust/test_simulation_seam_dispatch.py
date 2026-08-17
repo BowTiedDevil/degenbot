@@ -7,7 +7,7 @@ Python oracle over the anvil mock corpus. The goal here is to pin the
 wiring + the empty-candidate short-circuit + the ``PyDispatchOutcome`` join
 shape (the join itself, ``SimResult → PySubmitCandidate``, is exercised by
 the simulation-core mock-transport tests in
-``rust/crates/degenbot-backrun-strategy/src/dispatch.rs`` — A4 only wires
+``rust/crates/degenbot-settlement-strategy/src/dispatch.rs`` — A4 only wires
 it through the seam).
 
 The empty-candidate case is RPC-free: the core short-circuits before any
@@ -324,4 +324,3 @@ class TestPoolDivergenceFfiGetters:
         assert isinstance(pools, list)
         # PyDivergentPool is registered on the submission submodule.
         assert PyDivergentPool is not None
-

@@ -301,7 +301,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::diagnostics::add_diagnostics_module(m)?;
 
     // Simulation seam (feature = "simulation") — the PyO3 binding over
-    // `degenbot-backrun-strategy` (per-block profitability pipeline:
+    // `degenbot-settlement-strategy` (per-block profitability pipeline:
     // `dispatch_profitable_results` + the 7-call `simulate_path_on_evm`,
     // driven over the `degenbot-simulation` engine's `BlockSimHandle`).
     #[cfg(feature = "simulation")]

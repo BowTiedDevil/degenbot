@@ -119,7 +119,7 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
 ///
 /// ```
 /// use degenbot_abi::abi_types::{AbiType, AbiValue};
-/// use degenbot_abi::abi_encoder::encode_for_types;
+/// use degenbot_abi::encoder::encode_for_types;
 /// use alloy::primitives::U256;
 ///
 /// let types = vec![AbiType::Uint(256), AbiType::Bool];
@@ -179,7 +179,7 @@ pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8
 /// # Example
 ///
 /// ```
-/// use degenbot_abi::abi_encoder::encode_packed_rust;
+/// use degenbot_abi::encoder::encode_packed_rust;
 /// use degenbot_abi::abi_types::AbiValue;
 /// use alloy::primitives::U256;
 ///

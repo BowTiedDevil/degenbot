@@ -12,7 +12,7 @@
 //! - **Fee** — the **defaulted pricing half of Assess** ([`FeePolicy`]), not a
 //!   fifth seam.
 //!
-//! This crate holds **no default strategy** — `degenbot-backrun-strategy`
+//! This crate holds **no default strategy** — `degenbot-settlement-strategy`
 //! implements this trait as the default adapter; a foreign searcher implements
 //! it (or supplies a Python callable lifted into it by `degenbot-python`) for
 //! their own contract.
@@ -27,7 +27,7 @@ use crate::solve_result::SolveResult;
 
 /// The full four-part `ExecutionStrategy` seam (ADR-025 D2).
 ///
-/// Implement this (a) as the default adapter (`degenbot-backrun-strategy`, the
+/// Implement this (a) as the default adapter (`degenbot-settlement-strategy`, the
 /// canonical `cmd_executor` path), or (b) in a foreign searcher's own crate for
 /// their own execution contract — the exact same trait. A Python consumer
 /// instead supplies a callable + probe/assess spec, lifted into this seam by

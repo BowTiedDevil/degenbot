@@ -58,7 +58,7 @@ mkdir -p "$LOGDIR"
 # Both respect a pre-set value: set RUST_LOG / DEGENBOT_DEBUG yourself to opt
 # out (e.g. RUST_LOG=warn ./run_bot.sh) or tighten the scope.
 # --------------------------------------------------------------------------
-DEFAULT_RUST_LOG="info,degenbot_bot=debug,degenbot_backrun_strategy=debug,degenbot_simulation=debug,degenbot_solvers=debug,alloy_pubsub=warn,alloy_transport=warn,alloy_transport_ws=warn,alloy_transport_ipc=warn,alloy_transport_http=warn,alloy_provider=warn,alloy_rpc=warn,alloy_network=warn,alloy_contract=warn,tungstenite=warn"
+DEFAULT_RUST_LOG="info,degenbot_bot=debug,degenbot_settlement_strategy=debug,degenbot_simulation=debug,degenbot_solvers=debug,alloy_pubsub=warn,alloy_transport=warn,alloy_transport_ws=warn,alloy_transport_ipc=warn,alloy_transport_http=warn,alloy_provider=warn,alloy_rpc=warn,alloy_network=warn,alloy_contract=warn,tungstenite=warn"
 export RUST_LOG="${RUST_LOG:-$DEFAULT_RUST_LOG}"
 export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-1}"
 

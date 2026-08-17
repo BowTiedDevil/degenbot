@@ -42,7 +42,7 @@ degenbot-price = { path = "../degenbot-price", optional = true, features = ["pyo
 degenbot-submission = { path = "../degenbot-submission", optional = true, features = ["pyo3"] }
 degenbot-simulation = { path = "../degenbot-simulation", optional = true }
 revm = { version = "^42.0", default-features = false }
-degenbot-backrun-strategy = { path = "../degenbot-backrun-strategy", optional = true }
+degenbot-settlement-strategy = { path = "../degenbot-settlement-strategy", optional = true }
 degenbot-executor = { path = "../degenbot-executor", optional = true }
 degenbot-execution = { path = "../degenbot-execution", optional = true }
 degenbot-fork = { path = "../degenbot-fork", optional = true }
@@ -81,7 +81,7 @@ auto-initialize = ["pyo3/auto-initialize"]
 bot = ["dep:degenbot-bot", "dep:degenbot-solvers", "rpc", "decoders", "uniswap"]
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "rpc"]
-simulation = ["dep:degenbot-simulation", "dep:degenbot-backrun-strategy", "rpc", "executor", "submission"]
+simulation = ["dep:degenbot-simulation", "dep:degenbot-settlement-strategy", "rpc", "executor", "submission"]
 executor = ["dep:degenbot-executor"]
 execution = ["dep:degenbot-execution", "executor"]
 fork = ["dep:degenbot-fork"]

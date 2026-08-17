@@ -13,7 +13,7 @@
 //! generic engine. The engine no longer references them.
 //!
 //! All selectors are `keccak256(signature)[:4]`; values are ABI-encoded via
-//! `degenbot_abi::abi_encoder::encode_rust` (the pure-Rust encoder). Each
+//! `degenbot_abi::encoder::encode_rust` (the pure-Rust encoder). Each
 //! builder is byte-for-byte parity vs the Python oracle's
 //! `selector + eth_abi.abi.encode(...)` output (golden tests pin the bytes).
 

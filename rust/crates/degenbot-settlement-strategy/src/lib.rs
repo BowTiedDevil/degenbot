@@ -23,7 +23,7 @@
 //!
 //! # Standalone-Rust consumer
 //!
-//! `cargo add degenbot-backrun-strategy` reaches the backrun strategy with
+//! `cargo add degenbot-settlement-strategy` reaches the backrun strategy with
 //! zero `pyo3` dependency (ADR-005 standalone-core). The Python driver
 //! (`examples/eth_backrun_v2_v3_v4_rust.py`) is a thin cockpit over a PyO3
 //! wrapper around `dispatch_profitable_results` — it does NOT re-derive the

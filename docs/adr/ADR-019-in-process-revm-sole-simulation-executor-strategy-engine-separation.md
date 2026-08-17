@@ -46,7 +46,7 @@ Two historical facts collided to violate this separation:
 The architecture review surfaced the duplication as a Candidate-A deepening
 ("collapse the dual-driver 7-call orchestration behind one seam"). Grilling
 then inverted that framing: the two `simulate_*` methods are not duplicated
-*engine* code — they are duplicated *backrun-strategy* code misplaced in
+*engine* code — they are duplicated *settlement-strategy* code misplaced in
 engine crates. The dedup target is the **strategy layer** (extraction /
 deletion), not the simulation core. The simulation engine itself stays
 deliberately thin.
@@ -311,7 +311,7 @@ leaves a green, verifiable codebase:
   backrun strategy *as the simulation core's interface*, wedging every
   searcher into the example's shape. The dedup target is the strategy
   layer, not the engine.
-- **A `degenbot-backrun-strategy` crate.** Rejected: a crate for one
+- **A `degenbot-settlement-strategy` crate.** Rejected: a crate for one
   example doesn't earn its Cargo / PyO3 / standalone-reachability surface.
   `examples/` enforces the distinction more cheaply.
 - **Keep the RPC sim path as a fallback** (two adapters retained). Rejected:
@@ -331,7 +331,7 @@ leaves a green, verifiable codebase:
 - **Fold the strategy into `degenbot-bot` as a bundled default.** Rejected:
   AGENTS.md's "no permanent Python responsibility" framing could pull any
   code living in `degenbot-bot` toward "core" again, re-wedging. Code in
-  a crate named `backrun-strategy` or under `examples/` cannot accidentally
+  a crate named `settlement-strategy` or under `examples/` cannot accidentally
   be re-read as core.
 
 ## References

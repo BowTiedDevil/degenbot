@@ -6,8 +6,8 @@
 //! # Architecture
 //!
 //! This module uses `AbiType` and `AbiValue` from `abi_types` as the unified
-//! type system. Encoding and decoding delegate to `abi_encoder` and
-//! `abi_decoder` modules.
+//! type system. Encoding and decoding delegate to `encoder` and
+//! `decoder` modules.
 //!
 //! # Encoding Flow
 //!
@@ -751,7 +751,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Array encoding tests (via abi_encoder)
+    // Array encoding tests (via encoder)
     // =========================================================================
 
     #[test]
@@ -847,7 +847,7 @@ mod tests {
     }
 
     // =========================================================================
-    // encode_arguments: integration with abi_encoder
+    // encode_arguments: integration with encoder
     // =========================================================================
 
     #[test]
@@ -858,7 +858,7 @@ mod tests {
 
         let encoded = encode_arguments(&types, &args).expect("should encode mixed args");
 
-        // Verify we got some bytes back (actual encoding verified in abi_encoder tests)
+        // Verify we got some bytes back (actual encoding verified in encoder tests)
         assert!(!encoded.is_empty());
         assert!(encoded.len() >= 128); // At least head + tail
     }
@@ -922,7 +922,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Array decoding tests (via abi_decoder)
+    // Array decoding tests (via decoder)
     // =========================================================================
 
     #[test]
@@ -941,7 +941,7 @@ mod tests {
 
     #[test]
     fn test_decode_dynamic_uint_array() {
-        // Use abi_encoder to create test data, then decode it
+        // Use encoder to create test data, then decode it
         let types = vec![AbiType::Array(Box::new(AbiType::Uint(256)))];
         let args = vec!["[1, 2, 3]".to_string()];
 

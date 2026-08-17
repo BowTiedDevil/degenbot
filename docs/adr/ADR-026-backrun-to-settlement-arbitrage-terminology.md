@@ -1,7 +1,7 @@
 # ADR-026: Retire the "backrun" label — "settlement arbitrage" (strategy) and "arbitrage" (umbrella layer)
 
 **Status: accepted.** Supersedes the "backrun" naming used by ADR-019, ADR-025,
-and the `degenbot-backrun-strategy` crate / `eth_backrun_*` example for all
+and the `degenbot-settlement-strategy` crate / `eth_backrun_*` example for all
 *forward-looking* writing. It does **not** rewrite those historical records —
 they keep "backrun" as it read at the time; this ADR is the canonical reference
 the codebase moves toward (tracked by ergo epic `R2BXPV`).
@@ -9,7 +9,7 @@ the codebase moves toward (tracked by ergo epic `R2BXPV`).
 ## Context
 
 The repository's strategy has been named "backrun" since ADR-019 (the crate
-`degenbot-backrun-strategy`, the example `examples/eth_backrun_v2_v3_v4_rust.py`,
+`degenbot-settlement-strategy`, the example `examples/eth_backrun_v2_v3_v4_rust.py`,
 and the ADR-019/025 bodies). That label is **architecturally misleading** and
 kept requiring re-explanation across sessions:
 
@@ -49,8 +49,8 @@ unabbreviated form.
 
 | Layer | Old | New |
 |---|---|---|
-| crate | `degenbot-backrun-strategy` | `degenbot-arbitrage` |
-| logger | `degenbot_backrun_strategy` | `degenbot_arbitrage` |
+| crate | `degenbot-settlement-strategy` | `degenbot-arbitrage` |
+| logger | `degenbot_settlement_strategy` | `degenbot_arbitrage` |
 | example | `examples/eth_backrun_v2_v3_v4_rust.py` | `examples/eth_settlement_arbitrage_v2_v3_v4_rust.py` |
 | public CLI fn | `build_backrun_arg_parser` | `build_arbitrage_arg_parser` |
 | internal fn | `_make_backrun_config` | `_make_arbitrage_config` |

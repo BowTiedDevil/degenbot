@@ -1,6 +1,6 @@
 //! `PyO3` wrappers for ABI decoding.
 //!
-//! Thin binding layer over [`degenbot_abi::abi_decoder`] (the pure-Rust core).
+//! Thin binding layer over [`degenbot_abi::decoder`] (the pure-Rust core).
 //! The core `decode_rust` / `decode_single_rust` / `decode_for_types` functions
 //! live in the `degenbot-abi` workspace member and have no `PyO3` dependency;
 //! this module adds the Python-object conversion (`AbiValue` → Python) and the
@@ -151,7 +151,7 @@ pub fn decode_single(
 }
 
 // =============================================================================
-// Python-touching tests (moved from the pre-split abi_decoder.rs)
+// Python-touching tests (moved from the pre-split decoder.rs)
 // =============================================================================
 
 #[cfg(test)]

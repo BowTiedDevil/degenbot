@@ -45,7 +45,7 @@ The `EnvFilter` is:
 Python `logging` base config lives in `src/degenbot/logging.py`. It wires the
 crate-root loggers (`degenbot_bot`, `degenbot_core`, `degenbot_rs`,
 `degenbot_rpc`, `degenbot_decoders`, `degenbot_uniswap`,
-`degenbot_simulation`, `degenbot_backrun_strategy`) to a stdout
+`degenbot_simulation`, `degenbot_settlement_strategy`) to a stdout
 `QueueHandler`/`QueueListener` pair. Rust records are forwarded to these
 loggers, so the Python side is the **second gate**.
 
@@ -57,7 +57,7 @@ loggers, so the Python side is the **second gate**.
 |---|---|
 | Raise the Rust core to `debug` everywhere | `RUST_LOG=debug` |
 | Raise the Rust core to `debug` **and** let Python loggers pass `debug` | `RUST_LOG=debug DEGENBOT_DEBUG=1` |
-| Keep `info` default but see the fine-grained solver/sim diagnostics | `RUST_LOG=info,degenbot_bot=debug,degenbot_backrun_strategy=debug` |
+| Keep `info` default but see the fine-grained solver/sim diagnostics | `RUST_LOG=info,degenbot_bot=debug,degenbot_settlement_strategy=debug` |
 | Silence third-party `alloy`/`tungstenite` entirely | `RUST_LOG=alloy=off,tungstenite=off` (or rely on the built-in `=warn` default) |
 | Get just `warn`/`error` (quietest useful run) | `RUST_LOG=warn` |
 | Disable ALL Rust core logs from the console | `RUST_LOG=off` |
@@ -74,7 +74,7 @@ most-specific-first. `level` is one of `trace`, `debug`, `info`, `warn`,
 
 The following noisy diagnostics are emitted at `debug` level, so they are
 **invisible under the default `info` filter**. Re-enable them by raising the
-relevant crate to `debug` (`RUST_LOG=degenbot_bot=debug,degenbot_backrun_strategy=debug`).
+relevant crate to `debug` (`RUST_LOG=degenbot_bot=debug,degenbot_settlement_strategy=debug`).
 They were historically `info`/`warn` and flooded `bot_run.log` — that spam is
 why they were demoted. They are intentionally **kept in the code**, just gated.
 
@@ -83,7 +83,7 @@ why they were demoted. They are intentionally **kept in the code**, just gated.
 | `[debug-v4-solve]` | `degenbot_bot` | per-V4-hop solver intermediates (tick, liquidity, sqrt price, …) |
 | `[solver-dbg]` | `degenbot_bot` | solve-entry debug trace (`rebuild_and_solve_affected`, `solve_all`) |
 | `[solver-st]` | `degenbot_bot` | per-path solver pool-state dump for cross-referencing against sim |
-| `[v2-calc-trace]` | `degenbot_backrun_strategy` | V2 reserves slot-8 read immediately before each path sim |
+| `[v2-calc-trace]` | `degenbot_settlement_strategy` | V2 reserves slot-8 read immediately before each path sim |
 
 These are all "leftover debug tracing" — useful when investigating a specific
 mismatch (e.g. the path-11354 / path-142603 fixes), but far too loud to print
@@ -91,14 +91,14 @@ every block by default. To debug one of them, run with the crate set to
 `debug`:
 
 ```bash
-RUST_LOG=info,degenbot_bot=debug,degenbot_backrun_strategy=debug DEGENBOT_DEBUG=1 \
+RUST_LOG=info,degenbot_bot=debug,degenbot_settlement_strategy=debug DEGENBOT_DEBUG=1 \
     uv run python examples/eth_backrun_v2_v3_v4_rust.py
 ```
 
 or, for just the V2 calc trace:
 
 ```bash
-RUST_LOG=info,degenbot_backrun_strategy=debug DEGENBOT_DEBUG=1 \
+RUST_LOG=info,degenbot_settlement_strategy=debug DEGENBOT_DEBUG=1 \
     uv run python examples/eth_backrun_v2_v3_v4_rust.py
 ```
 
@@ -168,6 +168,6 @@ RUST_LOG=debug DEGENBOT_DEBUG=1 \
 the rest at info:
 
 ```bash
-RUST_LOG=info,degenbot_bot=debug,degenbot_backrun_strategy=debug DEGENBOT_DEBUG=1 \
+RUST_LOG=info,degenbot_bot=debug,degenbot_settlement_strategy=debug DEGENBOT_DEBUG=1 \
     uv run python examples/eth_backrun_v2_v3_v4_rust.py
 ```

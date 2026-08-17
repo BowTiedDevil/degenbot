@@ -61,7 +61,7 @@
 /// types (`BlockEvm` / `ProductionBlockDb`) + the provider newtype. The
 /// **strategy** (the 7-call bundle, `SimResult`, `compute_priority_fee`,
 /// `dispatch_profitable_results`, `SimulateContext`, the calldata builders)
-/// relocated to `degenbot-backrun-strategy` (ADR-019 D4/D7, decision R).
+/// relocated to `degenbot-settlement-strategy` (ADR-019 D4/D7, decision R).
 pub mod simulator;
 
 /// Sim-scoped override application on a `CacheDB`.
@@ -96,7 +96,7 @@ pub mod serving;
 // fallback) — proven for V2/V3 by the `swap_capture_correctness.rs`
 // mainnet probe; V4 probe extension is the real V4 captured-amount proof.
 
-// 7-call vector calldata builders live in `degenbot-backrun-strategy::calldata`
+// 7-call vector calldata builders live in `degenbot-settlement-strategy::calldata`
 // (relocated with the backrun bundle — ADR-019 D4/D7, decision R).
 
 /// EIP-2930 access-list emission from the revm `State` journal — retires
@@ -125,9 +125,9 @@ pub use inspectors::{
     SimInspector, SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily,
 };
 /// Re-export the engine surface so `degenbot-simulation`'s crate root can
-/// surface it for the strategy crate (`degenbot-backrun-strategy`) + the
+/// surface it for the strategy crate (`degenbot-settlement-strategy`) + the
 /// PyO3 wrapper. The strategy types (`SimResult`, `SimulateContext`, …) now
-/// live in `degenbot-backrun-strategy`.
+/// live in `degenbot-settlement-strategy`.
 pub use simulator::{BlockEvm, BlockSimHandle, ProductionBlockDb};
 pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};
 pub use warm_code_cache::{WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS};

@@ -6,8 +6,8 @@
 //! # Modules
 //!
 //! - [`abi_types`] - Unified ABI type/value representation (`AbiType`, `AbiValue`, `CachedAbiTypes`)
-//! - [`abi_decoder`] - High-performance ABI decoding
-//! - [`abi_encoder`] - High-performance ABI encoding
+//! - [`decoder`] - High-performance ABI decoding
+//! - [`encoder`] - High-performance ABI encoding
 //! - [`conversion`] - Shared PyO3-dependent converters (U256/I256 ↔ Python `int`, cached refs, JSON/RPC type → Python)
 //! - [`address_utils`] - Ethereum address utilities (EIP-55 checksumming)
 //! - [`errors`] - Centralized error types with `thiserror`
@@ -90,7 +90,7 @@ pub use degenbot_concentrated_liquidity_math as cl_lib;
 
 // The ABI type/decode/encode + signature-parsing core lives in the
 // `degenbot-abi` workspace member. Re-exported as `crate::abi_types` /
-// `crate::abi_decoder` / `crate::abi_encoder` / `crate::signature_parser` so
+// `crate::decoder` / `crate::encoder` / `crate::signature_parser` so
 // every existing call site in the binding layer (`contract`, `rpc::contract`,
 // `conversion::alloy`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
 // wrappers (`decode`/`encode`) live in `abi::decoder` / `abi::encoder`.

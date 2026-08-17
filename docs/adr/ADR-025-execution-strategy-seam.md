@@ -53,7 +53,7 @@ types (the solve-result view, the gate protocol, `ExecutionResult`). It holds
   consequence forbids re-wedging strategy into the thin engine.
 - It **cannot** live in `degenbot-executor` — the executor is *the developer's
   `cmd_executor` adapter* (ADR-025-a), not a general execution layer.
-- It **cannot** live in `degenbot-backrun-strategy` — that crate is one example
+- It **cannot** live in `degenbot-settlement-strategy` — that crate is one example
   strategy; a foreign searcher's crate must not depend on it just to reach the
   interface.
 
@@ -87,7 +87,7 @@ orderable — it is folded into Assess.
 
 ### D3 — Default stays Rust-canonical; the canonical dispatch is a wall.
 
-`degenbot-backrun-strategy` implements `ExecutionStrategy` as the **default
+`degenbot-settlement-strategy` implements `ExecutionStrategy` as the **default
 adapter** (stays Rust-canonical, per ADR-019 decision R). The canonical
 `dispatch_profitable_results` / `dispatch_profitable_py` **never reads a Python
 transform** — it uses the Rust default adapter only and returns

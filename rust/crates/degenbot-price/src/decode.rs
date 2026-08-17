@@ -5,7 +5,7 @@
 //! return bytes) and the reader structs. Isolating them here keeps the decode
 //! logic pure + independently parity-testable without a live RPC: a test feeds
 //! recorded EVM return bytes through the shared
-//! `degenbot_abi::abi_decoder::decode_for_types` and then these extractors,
+//! `degenbot_abi::decoder::decode_for_types` and then these extractors,
 //! asserting value-exact results vs. the Python oracle's `abi_decode`.
 
 use crate::error::PriceError;

@@ -24,7 +24,7 @@
 //!   ordered; a built-in market-percentile default (TARGET_PROFIT_RATIO /
 //!   age-decay) is provided, overridable by a foreign searcher.
 //!
-//! `degenbot-backrun-strategy` implements [`ExecutionStrategy`] as the
+//! `degenbot-settlement-strategy` implements [`ExecutionStrategy`] as the
 //! **default adapter** (stays Rust-canonical, ADR-019 R). A foreign user's
 //! crate implements it directly, or supplies a Python callable via the PyO3
 //! lift — both meet this same seam.

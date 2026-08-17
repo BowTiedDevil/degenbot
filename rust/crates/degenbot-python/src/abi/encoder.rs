@@ -1,6 +1,6 @@
 //! `PyO3` wrappers for ABI encoding.
 //!
-//! Thin binding layer over [`degenbot_abi::abi_encoder`] (the pure-Rust core).
+//! Thin binding layer over [`degenbot_abi::encoder`] (the pure-Rust core).
 //! The core `encode_rust` / `encode_single_rust` / `encode_for_types` functions
 //! live in the `degenbot-abi` workspace member and have no `PyO3` dependency;
 //! this module adds the `#[pyfunction]` entry points registered in
@@ -158,4 +158,4 @@ pub fn encode_packed<'py>(
 
 // Note: the pure-Rust roundtrip proptests (uint256/address/bool/bytes32/int256
 // roundtrips, `test_encode_*`, `test_roundtrip`) live in `degenbot-abi`'s
-// `abi_encoder` module — no Python needed.
+// `encoder` module — no Python needed.
