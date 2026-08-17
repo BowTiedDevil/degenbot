@@ -36,7 +36,6 @@ degenbot-cl-math = { path = "../degenbot-cl-math", optional = true }
 degenbot-db = { path = "../degenbot-db", optional = true }
 degenbot-balancer-math = { path = "../degenbot-balancer-math", optional = true }
 degenbot-curve-math = { path = "../degenbot-curve-math", optional = true }
-degenbot-evm-math = { path = "../degenbot-evm-math" }
 degenbot-solidly-math = { path = "../degenbot-solidly-math", optional = true }
 degenbot-pathfinding = { path = "../degenbot-pathfinding", optional = true }
 degenbot-price = { path = "../degenbot-price", optional = true, features = ["pyo3"] }

@@ -141,7 +141,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;
 
-    // EVM math (next_base_fee) — always on (degenbot-evm-math is a non-optional,
+    // EVM math (next_base_fee) — always on (degenbot-core is a non-optional,
     // no-extra-feature dep).
     crate::evm_math::add_evm_math_module(m)?;
 

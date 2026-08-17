@@ -8,9 +8,7 @@
 //! - [`analysis`] — the pure position health-factor / LTV / eMode / isolation
 //!   math (port of `src/degenbot/aave/analysis/core.py`).
 //! - [`wad_ray_math`] + [`percentage_math`] — the Aave V3 fixed-point math
-//!   libraries (ports of `src/degenbot/aave/libraries/{wad_ray,percentage}_math.py`),
-//!   relocated here from `degenbot-evm-math`, whose only remaining math is the
-//!   chain-agnostic EIP-1559 base-fee formula.
+//!   libraries (ports of `src/degenbot/aave/libraries/{wad_ray,percentage}_math.py`)
 //!
 //! The updater is the apply half of the standalone-Rust `aave_update` core
 //! (mirroring `degenbot-pool-updater`'s `apply_chunk_writes_on_conn`).

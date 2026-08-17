@@ -2055,7 +2055,6 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
- "degenbot-evm-math",
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
@@ -2222,14 +2221,6 @@ name = "degenbot-decoders"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
-]
-
-[[package]]
-name = "degenbot-evm-math"
-version = "0.6.0-alpha.3"
-dependencies = [
- "alloy",
- "proptest",
 ]
 
 [[package]]
@@ -2463,7 +2454,6 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
- "degenbot-evm-math",
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",

@@ -1,5 +1,5 @@
 //! `degenbot._ffi.evm_math` — thin `PyO3` wrappers over the pure-Rust
-//! `degenbot-evm-math` core crate.
+//! `degenbot-core::evm_math` module.
 //!
 //! Exposes the EIP-1559 `next_base_fee` so the Python driver reads it from the
 //! Rust core (single source of truth) instead of re-implementing the formula in
@@ -14,7 +14,7 @@ use pyo3::types::PyModule;
 use pyo3::wrap_pyfunction;
 
 /// Compute the EIP-1559 next-block base fee, mirroring the pure-Rust
-/// `degenbot_evm_math::next_base_fee`.
+/// `degenbot_core::evm_math::next_base_fee`.
 ///
 /// Args mirror the Python oracle (`degenbot.calculations.evm_math.next_base_fee`):
 /// `parent_base_fee`, `parent_gas_used`, `parent_gas_limit`, optional
@@ -43,7 +43,7 @@ fn next_base_fee(
     if last_gas_target == 0 && parent_gas_used != last_gas_target {
         return Err(PyZeroDivisionError::new_err("division by zero"));
     }
-    Ok(degenbot_evm_math::next_base_fee(
+    Ok(degenbot_core::evm_math::next_base_fee(
         parent_base_fee,
         parent_gas_used,
         parent_gas_limit,

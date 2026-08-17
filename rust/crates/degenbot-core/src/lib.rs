@@ -16,9 +16,11 @@
 //! - [`hex_utils`] — pure-Rust hex encoding/decoding.
 //! - [`address_utils`] — EIP-55 checksummed Ethereum addresses.
 //! - [`runtime`] — shared Tokio runtime singleton.
+//! - [`evm_math`] — EIP-1559 `next_base_fee` (next-block base fee).
 
 pub mod address_utils;
 pub mod errors;
+pub mod evm_math;
 pub mod hex_utils;
 pub mod libzip;
 pub mod runtime;

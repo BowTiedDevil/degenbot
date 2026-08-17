@@ -345,7 +345,7 @@ This ensures chronological processing within each block.
 ## Token Revision Libraries
 
 The code supports multiple Aave V3 token revisions. The wad/ray math (scaled-balance
-multiplication with rounding) is **Rust-owned** (`degenbot-evm-math::wad_ray_math`,
+multiplication with rounding) is **Rust-owned** (`degenbot-aave::wad_ray_math`,
 exposed to the updater via `degenbot-aave::updater::processors`). The rounding
 modes mirror the Solidity `WadRayMathLibrary`:
 
@@ -406,13 +406,13 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 
 - **Database**: SQLAlchemy ORM (see [`src/degenbot/database/models/aave.py`](../../src/degenbot/database/models/aave.py))
 - **Blockchain**: Web3.py for RPC calls
-- **Math**: Rust `degenbot-evm-math::wad_ray_math` for scaled balance calculations with rounding mode support (the former Python `aave/libraries/` package was retired)
+- **Math**: Rust `degenbot-aave::wad_ray_math` for scaled balance calculations with rounding mode support (the former Python `aave/libraries/` package was retired)
 - **Logging**: Click for CLI output, tqdm for progress bars
 - **Writer**: Rust `degenbot-aave-updater` core crate (the Python enrichment/processing pipeline was retired)
 
 ## Solidity Reference
 
-The CLI interacts with Aave V3 contracts. Key implementation details in [`rust/crates/degenbot-aave/src/updater/`](../../rust/crates/degenbot-aave/src/updater/) + [`degenbot-evm-math`](../../rust/crates/degenbot-evm-math/src/wad_ray_math.rs):
+The CLI interacts with Aave V3 contracts. Key implementation details in [`rust/crates/degenbot-aave/src/updater/`](../../rust/crates/degenbot-aave/src/updater/) + [`degenbot-aave::wad_ray_math`](../../rust/crates/degenbot-aave/src/wad_ray_math.rs):
 
 ### Scaled Balance Pattern
 
@@ -431,7 +431,7 @@ Events are notifications only. Actual storage changes happen in `_mint()` and `_
 
 Solidity uses half-up rounding: `(a * b + HALF_RAY) / RAY`
 
-The Rust port (`degenbot-evm-math::wad_ray_math`) matches this exactly for correct balance synchronization. The `processors` module in `degenbot-aave` selects `FLOOR`, `CEIL`, or half-up rounding per token revision + operation.
+The Rust port (`degenbot-aave::wad_ray_math`) matches this exactly for correct balance synchronization. The `processors` module in `degenbot-aave` selects `FLOOR`, `CEIL`, or half-up rounding per token revision + operation.
 
 ### Event Structure
 

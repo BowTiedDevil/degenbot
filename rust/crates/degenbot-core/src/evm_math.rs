@@ -1,10 +1,11 @@
-//! Pure-Rust EVM arithmetic — gas math and value validation.
+//! EIP-1559 base-fee math (relocated from the retired single-function crate
+//! `degenbot-evm-math`, task `MYOUJ6`).
 //!
-//! A pyo3-free *core leaf* that ports pure-integer EVM math from the Python
-//! reference (`src/degenbot/calculations/evm_math.py`). The Python module is
-//! retained as the **parity oracle** (ADR-005 §4.2); this crate is the canonical
-//! Rust implementation consumed cross-epic by Submission (fee finalization) and
-//! Simulation (`base_fee_next` net-profit) via the umbrella re-export.
+//! Pure-integer EVM math ported from the Python reference
+//! (`src/degenbot/calculations/evm_math.py`), which is retained as the **parity
+//! oracle** (ADR-005 §4.2). This module is the canonical Rust implementation, exposed
+//! to the Python driver as `degenbot._ffi.evm_math` and to standalone consumers via
+//! the umbrella re-export (`degenbot::evm_math`).
 //!
 //! # Integer discipline
 //!

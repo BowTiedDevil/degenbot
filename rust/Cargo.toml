@@ -78,7 +78,6 @@ members = [
     "crates/degenbot-curve-math",
     "crates/degenbot-db",
     "crates/degenbot-decoders",
-    "crates/degenbot-evm-math",
     "crates/degenbot-execution",
     "crates/degenbot-execution-sample",
     "crates/degenbot-executor",
@@ -147,8 +146,6 @@ codegen-units = 16
 [profile.release.package.degenbot-balancer-math]
 codegen-units = 16
 [profile.release.package.degenbot-solidly-math]
-codegen-units = 16
-[profile.release.package.degenbot-evm-math]
 codegen-units = 16
 [profile.release.package.degenbot-pools]
 codegen-units = 16

@@ -2,7 +2,7 @@
 
 Created at runtime by ``add_evm_math_module`` in the PyO3 wrapper crate
 (``degenbot-python/src/evm_math/mod.rs``). Thin PyO3 wrapper over the pure-Rust
-``degenbot-evm-math`` core crate — the single source of truth for EIP-1559 math,
+``degenbot-core::evm_math`` Rust module — the single source of truth for EIP-1559 math,
 so the Python driver does NOT re-implement ``next_base_fee``.
 """
 
