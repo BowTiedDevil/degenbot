@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the Tier-3 PancakeSwap V2 pair swap oracle harness. Compiles
-# `src-pancake2/PancakeV2SwapOracleHarness.sol` with solc 0.5.16 (the mock
+# `src-pancake-v2/PancakeV2SwapOracleHarness.sol` with solc 0.5.16 (the mock
 # tokens + harness shell are `pragma =0.5.16`). The harness does NOT compile a
 # PancakePair: it deploys the PINNED on-chain creation bytecode (committed
 # under `artifacts/PancakeV2Pair/PancakeV2Pair.json`, Sourcify-verified
@@ -35,7 +35,7 @@ STD_JSON="$(mktemp)"
 cat > "${STD_JSON}" <<'JSON'
 {
   "language": "Solidity",
-  "sources": { "src-pancake2/PancakeV2SwapOracleHarness.sol": { "urls": ["src-pancake2/PancakeV2SwapOracleHarness.sol"] } },
+  "sources": { "src-pancake-v2/PancakeV2SwapOracleHarness.sol": { "urls": ["src-pancake-v2/PancakeV2SwapOracleHarness.sol"] } },
   "settings": {
     "optimizer": { "enabled": true, "runs": 200 },
     "outputSelection": { "*": { "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"] } },
@@ -60,7 +60,7 @@ if errs:
 for e in raw.get("errors", []):
     if e.get("severity") == "warning":
         print(f"solc warning: {e.get('formattedMessage','')}", file=sys.stderr)
-inner = raw["contracts"]["src-pancake2/PancakeV2SwapOracleHarness.sol"]["PancakeV2SwapOracleHarness"]
+inner = raw["contracts"]["src-pancake-v2/PancakeV2SwapOracleHarness.sol"]["PancakeV2SwapOracleHarness"]
 shaped = {
     "abi": inner["abi"],
     "bytecode": {"object": inner["evm"]["bytecode"]["object"]},
