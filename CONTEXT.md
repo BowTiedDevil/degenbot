@@ -556,15 +556,20 @@ like a skip.
 command stream: which ledgers a hop touches, credit/debit, direction, funding
 and capture role, and repayment obligation. The *data* half of ADR-029 D4
 ("coupling/ledger facts as data"); a new protocol adds one hop-facts descriptor
-+ one mechanics module, never per-family Plan bodies.
++ one mechanics module, never per-family Plan bodies (per-shape enclosure
+modules under `grammar_walker/shapes/` are the code half they feed).
 _Avoid_: conflating with "ledger" (a hop-facts entry is per protocol; a ledger
 is a location an operation reads/writes).
 
-**Enclosure (derived)** — the callback-nesting structure of a command stream —
-which `FlashSwap`/`V4Unlock` wraps which, and the repayment order — computed
-by the grammar from hop facts (ADR-029 D3 "derived, not chosen"), never
-hand-authored, so the take-before-credit / terminal-V2-draw classes are
-unrepresentable.
+**Enclosure** — the callback-nesting structure of a command stream —
+which `FlashSwap`/`V4Unlock` wraps which, and the repayment order. Per ADR-029
+D3 it is the grammar's output, never a user axis; per ADR-031 (as corrected
+2026-08, epic `PZBGP7`) it is computed in six per-shape modules under
+`grammar_walker/shapes/` behind a `(len, repay-sequence)` dispatcher — a
+genuine `Repay`/`OutDest`-tag partition covers the single-V4-middle residual
+only. The take-before-credit / terminal-V2-draw classes are caught by the
+`LedgerValidator` + revm contract matrix (ADR-029 D5), not made
+unrepresentable by construction.
 _Avoid_: "nesting"/"wrapping" as the canonical term.
 
 

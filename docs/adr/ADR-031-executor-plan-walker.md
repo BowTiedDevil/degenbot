@@ -2,20 +2,38 @@
 
 **Status: accepted; implemented (A1–A3 of epic `62V6Q5` complete) and D6 **realized** (epic `6SU5LM`).**
 
-> **D6 realization (VERIFIED, post re-drive + enclosure-derivation migration):**
-> every one of the 35 `build_*_walk` family producers is a thin delegate to
-> `derive_plan` — the sole facts-driven producer. All per-family
-> `derive_2hop_*`/`derive_3hop_*`/`derive_all_v2` bodies are eliminated
-> (count = 0, enforced by `tests/facts_driven_invariant.rs::remaining_per_family_derivers`).
-> A `DERIVE_PLAN_CALLS` counter asserts every family routes through the
-> generic deriver; a `FALLBACK_DISPATCH_CALLS` counter + a source-level
-> `match (facts[...].prot` arm count assert the enclosure is derived from
-> `Repay`/`OutDest` tags, NOT from prot-tuple match arms. Both are 0.
-> V4 hops carry `Repay::NetZero` (via `v4_hop_facts_netzero`), the tag
-> that routes to the tag-driven partition. Structural and behavioral parity
-> is pinned by the revm contract matrix + golden suites (209 tests green).
-> The combined D6 gate (`d6_enclosure_derived_from_facts` +
-> `d6_no_prot_tuple_match_arms`) is GREEN.
+> **D6 realization (post re-drive + enclosure-derivation migration), as
+> corrected 2026-08-16 (arch review epic `PZBGP7`, task `SCMSTK`):** all 35
+> `build_*_walk` family producers route to a single `derive_plan`
+> post-refactor, and the hand-written per-family `derive_2hop_*` /
+> `derive_3hop_*` / `derive_all_v2` *bodies* are eliminated. But the earlier
+> "enclosure is derived from `Repay`/`OutDest` tags, NOT prot-tuple match
+> arms" claim overstated what shipped. The *dispatch* is facts-keyed — a
+> `(len, repay-sequence)` partition — but the enclosure bodies are
+> hand-authored per shape: ≈24 `facts[i].prot == Prot::…` if-branches
+> dispatch between shapes' internal variants (including the 3-hop block's
+> ~17-arm per-family enumeration). Only the single-V4-middle residual is a
+> genuine `Repay`/`OutDest`-tag partition. V4 hops do carry
+> `Repay::NetZero` (via `v4_hop_facts_netzero`) and that fact *is* load-bearing
+> for the residual partition. The misreading came from the citation of a
+> source scan that counted literal `match` arms while the same dispatch
+> existed as if/else chains — a spelling check, not a structural one.
+>
+> Structural correction (same epic): the fused ≈3,849-line `derive_plan` is
+> now six shape modules under `grammar_walker/shapes/` (`all_v2_chain`,
+> `two_hop_seed_v4`, `two_hop_v4_led`, `three_hop`, `two_hop_uniswap_only`,
+> `tag_residual`) behind a ≈29-line dispatcher on `(len, repay-sequence)` —
+> one module per enclosure block, dispatcher keyed on exactly what the
+> blocks already key on.
+>
+> **Consequence of the correction:** enclosure ordering defects are
+> *caught*, not unrepresentable — correctness rests on the revm contract
+> matrix + golden suites (per ADR-029 D5, the designated source of truth)
+> plus `LedgerValidator`'s always-fatal Reject (ADR-030). Whether the
+> `Repay`/`OutDest` tag vocabulary can genuinely absorb the enumerated
+> shapes (i.e. make D6's "derived" claim literally true) is spike
+> `RQQIUK`; until it reports, treat "tag-derived enclosure" as aspiration
+> for the enumerated shapes, not fact.
 
 ## Context
 
@@ -65,8 +83,10 @@ exist), plus the golden-byte corpora and honesty invariant. A validator
 
 - A new protocol is one hop-facts descriptor + one mechanics module (D6
   additive proof), never a per-family body.
-- Enclosure derivation makes the take-before-credit / terminal-V2-draw classes
-  unrepresentable, not merely caught.
+- Enclosure ordering defects are caught, not unrepresentable: the
+  validator gate + revm matrix are the enforcement (see the header's
+  record correction — the per-shape bodies are hand-authored code; the
+  "derived" claim applies fully only to the residual tag partition).
 - `grammar_shape.rs` shrank from 7,013 lines to ~1,600 (the shared mechanics
   helpers + dispatch + derive seam + tests); the per-protocol facts table and
   walkers live in `grammar_walker.rs`.
