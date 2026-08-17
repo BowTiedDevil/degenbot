@@ -129,7 +129,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
     Ok(dict.unbind())
 }
 
-/// `degenbot_rs.run_aave_update(database_path, chain_id, market_id, to_block,
+/// `degenbot._ffi.aave.run_aave_update(database_path, chain_id, market_id, to_block,
 /// chunk_size, rpc_url, progress_callback, cancel_handle, verify_chunk,
 /// max_chunks) -> dict`
 ///
@@ -293,7 +293,7 @@ fn run_err_to_py(err: RunError) -> PyErr {
     }
 }
 
-/// `degenbot_rs.verify_touched_positions_on_chain(database_path, rpc_url,
+/// `degenbot._ffi.aave.verify_touched_positions_on_chain(database_path, rpc_url,
 /// market_id, chain_id, block_number, touched_users=None) -> list[dict]`
 ///
 /// Minimal-slice Rust port of Python's
@@ -428,7 +428,7 @@ fn verify_touched_positions_on_chain(
     Ok(out)
 }
 
-/// `degenbot_rs.verify_all_positions_on_chain(database_path, rpc_url,
+/// `degenbot._ffi.aave.verify_all_positions_on_chain(database_path, rpc_url,
 /// market_id, chain_id, block_number, touched_users=None) -> list[dict]`
 ///
 /// Full on-chain-truth verification — the Rust port of Python's
@@ -577,7 +577,7 @@ fn verify_all_positions_on_chain(
     Ok(out)
 }
 
-/// `degenbot_rs.cleanup_zero_balance_positions(database_path, market_id)`
+/// `degenbot._ffi.aave.cleanup_zero_balance_positions(database_path, market_id)`
 ///
 /// Delete all zero-balance collateral + debt positions for `market_id`.
 /// Mirrors the Python `cleanup_zero_balance_positions` (verification.py:19).
@@ -604,7 +604,7 @@ fn cleanup_zero_balance_positions(
     .map_err(run_err_to_py)
 }
 
-/// `degenbot_rs.activate_aave_market(database_path, chain_id,
+/// `degenbot._ffi.aave.activate_aave_market(database_path, chain_id,
 /// pool_address_provider, gho_token_address, rpc_url) -> dict`
 ///
 /// Seed (or re-activate) an Aave V3 market — the ONE-TIME setup the chunk
@@ -656,7 +656,7 @@ fn activate_aave_market(
     Ok(dict.unbind())
 }
 
-/// `degenbot_rs.deactivate_aave_market(database_path, market_id) -> None`
+/// `degenbot._ffi.aave.deactivate_aave_market(database_path, market_id) -> None`
 ///
 /// Set `active = False` for `market_id`. Rust-owned replacement for the
 /// Python `deactivate_mainnet_aave_v3` (commands.py). The GIL is released

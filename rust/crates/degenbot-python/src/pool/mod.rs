@@ -126,7 +126,7 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
     Ok(dict.unbind())
 }
 
-/// `degenbot_rs.run_pool_update(database_path, chain_id, to_block,
+/// `degenbot._ffi.pool.run_pool_update(database_path, chain_id, to_block,
 /// chunk_size, rpc_url, progress_callback, cancel_handle) -> dict`
 ///
 /// Drive the Rust-owned pool-updater chunk loop for `chain_id`, advancing
@@ -234,7 +234,7 @@ fn run_pool_update(
     update_report_to_dict(py, &report)
 }
 
-/// `degenbot_rs.verify_v3_liquidity_map(database_path, rpc_url, chain_id,
+/// `degenbot._ffi.pool.verify_v3_liquidity_map(database_path, rpc_url, chain_id,
 /// pool_address, block_number) -> list[dict]`
 ///
 /// Standalone on-chain-truth verification of a V3 pool's COMMITTED liquidity
@@ -318,7 +318,7 @@ fn verify_v3_liquidity_map(
     Ok(divergences_to_dicts(py, &divergences))
 }
 
-/// `degenbot_rs.verify_v4_liquidity_map(database_path, rpc_url, chain_id,
+/// `degenbot._ffi.pool.verify_v4_liquidity_map(database_path, rpc_url, chain_id,
 /// pool_hash, pool_manager_address, block_number) -> list[dict]`
 ///
 /// Standalone on-chain-truth verification of a V4 pool's COMMITTED liquidity

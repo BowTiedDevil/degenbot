@@ -7,7 +7,7 @@
 //! consumer; this seam exists so the standalone claim is testable from Python:
 //!
 //! ```python
-//! from degenbot_rs import dex_identity
+//! from degenbot._ffi.dex_identity import dex_identity
 //! ident = dex_identity("camelot-v2-stable")
 //! assert ident is not None
 //! ident.factory  # 0x6EcCab422D763aC031210895C81787E87B43A652
@@ -130,7 +130,7 @@ impl PyDexIdentity {
     /// # Examples
     ///
     /// ```python
-    /// from degenbot_rs import PyDexIdentity
+    /// from degenbot._ffi.dex_identity import PyDexIdentity
     /// ident = PyDexIdentity(
     ///     factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
     ///     init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
@@ -222,7 +222,7 @@ impl PyDexIdentity {
 /// # Examples
 ///
 /// ```python
-/// from degenbot_rs import dex_identity
+/// from degenbot._ffi.dex_identity import dex_identity
 /// ident = dex_identity("uniswap-v2")
 /// assert ident is not None
 /// assert ident.factory == "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
@@ -249,7 +249,7 @@ fn dex_identity(variant: &str) -> Option<PyDexIdentity> {
 }
 
 /// Register the `dex_identity` free function + the `PyDexIdentity` class on
-/// the top-level `degenbot_rs` module.
+/// the `degenbot._ffi.dex_identity` submodule.
 pub(crate) fn add_dex_identity(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.dex_identity")?;

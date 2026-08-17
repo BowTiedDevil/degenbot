@@ -82,7 +82,7 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
 /// # Example
 ///
 /// ```python
-/// from degenbot_rs import get_sqrt_ratio_at_tick
+/// from degenbot._ffi.concentrated_liquidity_math import get_sqrt_ratio_at_tick
 /// ratio = get_sqrt_ratio_at_tick(0)
 /// ```
 #[pyfunction(signature = (tick))]
@@ -122,7 +122,7 @@ pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, P
 /// # Example
 ///
 /// ```python
-/// from degenbot_rs import get_tick_at_sqrt_ratio
+/// from degenbot._ffi.concentrated_liquidity_math import get_tick_at_sqrt_ratio
 /// tick = get_tick_at_sqrt_ratio(79228162514264337593543950336)
 /// ```
 #[pyfunction(signature = (sqrt_price_x96))]

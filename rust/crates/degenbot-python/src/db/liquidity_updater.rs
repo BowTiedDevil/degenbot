@@ -85,7 +85,7 @@ impl PyLiquidityUpdateEvent {
     }
 }
 
-/// `degenbot_rs.db_apply_v3_liquidity_updates(database_path, chain_id, pool_address, events) -> bool`
+/// `degenbot._ffi.db.db_apply_v3_liquidity_updates(database_path, chain_id, pool_address, events) -> bool`
 ///
 /// Apply a sequence of [`PyLiquidityUpdateEvent`]s to the V3 pool identified by
 /// `(chain_id, pool_address)`: reconstitute the `LiquidityMap` from DB rows →
@@ -116,7 +116,7 @@ pub(crate) fn db_apply_v3_liquidity_updates(
     })
 }
 
-/// `degenbot_rs.db_apply_v4_liquidity_updates(database_path, pool_hash_hex, pool_manager_chain, events) -> bool`
+/// `degenbot._ffi.db.db_apply_v4_liquidity_updates(database_path, pool_hash_hex, pool_manager_chain, events) -> bool`
 ///
 /// Apply a sequence of [`PyLiquidityUpdateEvent`]s to the V4 pool identified by
 /// `(pool_hash, pool_manager_chain)`. Same semantics as

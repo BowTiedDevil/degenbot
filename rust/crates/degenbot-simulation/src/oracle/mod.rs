@@ -14,6 +14,9 @@
 //! revm `CacheDB` and assert the Rust math is byte-exact to it. This module is
 //! that oracle's landing zone relocated out of the test commons so it is real
 //! crate surface (`cargo add degenbot-simulation`) instead of test-only.
+//!
+//! Test/diagnostic driver only: deliberately has no FFI surface (not
+//! exposed through `degenbot._ffi`).
 
 use std::path::Path;
 

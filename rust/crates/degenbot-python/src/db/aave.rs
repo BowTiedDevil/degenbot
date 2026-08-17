@@ -241,7 +241,7 @@ fn debt_record_to_py<'py>(
 // dict keys 1:1 (the `ReserveConfiguration` field names), so the Python
 // driver + the parity test are unchanged.
 
-/// `degenbot_rs.db_get_or_create_e_mode_category(database_path, market_id, category_id) -> int`
+/// `degenbot._ffi.db.db_get_or_create_e_mode_category(database_path, market_id, category_id) -> int`
 ///
 /// Get-or-create an `aave_v3_emode_categories` row by `(market_id,
 /// category_id)`. On create, inserts the Python ORM defaults (`label=""`,
@@ -262,7 +262,7 @@ pub(crate) fn db_get_or_create_e_mode_category(
     })
 }
 
-/// `degenbot_rs.db_get_or_create_asset_config(database_path, asset_id) -> int`
+/// `degenbot._ffi.db.db_get_or_create_asset_config(database_path, asset_id) -> int`
 ///
 /// Get-or-create an `aave_v3_asset_configs` row by `asset_id`. On create,
 /// inserts the Python ORM defaults (all zero/`false`/`None`). Returns the
@@ -281,7 +281,7 @@ pub(crate) fn db_get_or_create_asset_config(
     })
 }
 
-/// `degenbot_rs.db_get_or_create_user_collateral_config(database_path, user_id, asset_id) -> int`
+/// `degenbot._ffi.db.db_get_or_create_user_collateral_config(database_path, user_id, asset_id) -> int`
 ///
 /// Get-or-create an `aave_v3_user_collateral_configs` row by `(user_id,
 /// asset_id)`. On create, inserts `enabled=False` (the Python default).
@@ -301,7 +301,7 @@ pub(crate) fn db_get_or_create_user_collateral_config(
     })
 }
 
-/// `degenbot_rs.db_get_or_create_user(database_path, market_id, address, gho_discount) -> int`
+/// `degenbot._ffi.db.db_get_or_create_user(database_path, market_id, address, gho_discount) -> int`
 ///
 /// Get-or-create an `aave_v3_users` row by `(market_id, address)`. On create,
 /// inserts the Python ORM defaults (`e_mode=0`, `gho_discount=<arg>`,
@@ -326,7 +326,7 @@ pub(crate) fn db_get_or_create_user(
     })
 }
 
-/// `degenbot_rs.db_get_or_create_erc20_token(database_path, chain, address, name=None, symbol=None, decimals=None) -> int`
+/// `degenbot._ffi.db.db_get_or_create_erc20_token(database_path, chain, address, name=None, symbol=None, decimals=None) -> int`
 ///
 /// Get-or-create an `erc20_tokens` row by `(chain, address)`. On create,
 /// inserts caller-supplied metadata (`name` / `symbol` / `decimals`); the
@@ -357,7 +357,7 @@ pub(crate) fn db_get_or_create_erc20_token(
     })
 }
 
-/// `degenbot_rs.db_get_or_create_collateral_position(database_path, user_id, asset_id) -> int`
+/// `degenbot._ffi.db.db_get_or_create_collateral_position(database_path, user_id, asset_id) -> int`
 ///
 /// Get-or-create an `aave_v3_collateral_positions` row by `(user_id,
 /// asset_id)`. On create, inserts `balance='0'`, `last_index=NULL`. Returns
@@ -377,7 +377,7 @@ pub(crate) fn db_get_or_create_collateral_position(
     })
 }
 
-/// `degenbot_rs.db_get_or_create_debt_position(database_path, user_id, asset_id) -> int`
+/// `degenbot._ffi.db.db_get_or_create_debt_position(database_path, user_id, asset_id) -> int`
 ///
 /// Get-or-create an `aave_v3_debt_positions` row by `(user_id, asset_id)`. On
 /// create, inserts `balance='0'`, `last_index=NULL`. Returns the row `id`.
@@ -399,7 +399,7 @@ pub(crate) fn db_get_or_create_debt_position(
 
 // ── the per-event apply fns ───────────────────────────────────────────────
 
-/// `degenbot_rs.db_apply_collateral_configuration_changed(database_path, asset_id, config_bitmap) -> int`
+/// `degenbot._ffi.db.db_apply_collateral_configuration_changed(database_path, asset_id, config_bitmap) -> int`
 ///
 /// Apply a `CollateralConfigurationChanged` event's decoded config bitmap to
 /// the asset's `aave_v3_asset_configs` row. `config_bitmap` is the raw
@@ -425,7 +425,7 @@ pub(crate) fn db_apply_collateral_configuration_changed(
     })
 }
 
-/// `degenbot_rs.db_apply_e_mode_category_added(database_path, market_id, category_id, ltv, liquidation_threshold, liquidation_bonus, price_source=None, label='') -> int`
+/// `degenbot._ffi.db.db_apply_e_mode_category_added(database_path, market_id, category_id, ltv, liquidation_threshold, liquidation_bonus, price_source=None, label='') -> int`
 ///
 /// Apply an `EModeCategoryAdded` event's decoded fields to the
 /// `aave_v3_emode_categories` row. On create, inserts `(label, ltv,
@@ -463,7 +463,7 @@ pub(crate) fn db_apply_e_mode_category_added(
     })
 }
 
-/// `degenbot_rs.db_apply_emode_asset_category_changed(database_path, asset_id, new_category_id) -> int`
+/// `degenbot._ffi.db.db_apply_emode_asset_category_changed(database_path, asset_id, new_category_id) -> int`
 ///
 /// Apply an `EModeAssetCategoryChanged` event's category assignment to the
 /// asset's `e_mode_category_id` (the older Aave variant). Unconditionally
@@ -484,7 +484,7 @@ pub(crate) fn db_apply_emode_asset_category_changed(
     })
 }
 
-/// `degenbot_rs.db_apply_asset_collateral_in_emode_changed(database_path, asset_id, category_id, is_collateral) -> int`
+/// `degenbot._ffi.db.db_apply_asset_collateral_in_emode_changed(database_path, asset_id, category_id, is_collateral) -> int`
 ///
 /// Apply an `AssetCollateralInEModeChanged` event's category assignment (the
 /// newer Aave v3.4+ variant). Sets `e_mode_category_id` to the category ONLY
@@ -507,7 +507,7 @@ pub(crate) fn db_apply_asset_collateral_in_emode_changed(
     })
 }
 
-/// `degenbot_rs.db_apply_reserve_used_as_collateral(database_path, user_id, asset_id, enabled) -> int`
+/// `degenbot._ffi.db.db_apply_reserve_used_as_collateral(database_path, user_id, asset_id, enabled) -> int`
 ///
 /// Apply a `ReserveUsedAsCollateralEnabled`/`Disabled` event: set the
 /// `aave_v3_user_collateral_configs.enabled` flag (`True` for enabled,
@@ -530,7 +530,7 @@ pub(crate) fn db_apply_reserve_used_as_collateral(
     })
 }
 
-/// `degenbot_rs.db_apply_user_e_mode_set(database_path, user_id, e_mode) -> int`
+/// `degenbot._ffi.db.db_apply_user_e_mode_set(database_path, user_id, e_mode) -> int`
 ///
 /// Apply a `UserEModeSet` event: set the user's `aave_v3_users.e_mode`
 /// column. The user row must already exist (the Python path
@@ -551,7 +551,7 @@ pub(crate) fn db_apply_user_e_mode_set(
     })
 }
 
-/// `degenbot_rs.db_apply_price_oracle_updated(database_path, market_id, new_oracle_address) -> int`
+/// `degenbot._ffi.db.db_apply_price_oracle_updated(database_path, market_id, new_oracle_address) -> int`
 ///
 /// Apply a `PriceOracleUpdated` event: register the new `PRICE_ORACLE`
 /// `aave_v3_contracts` row for `market_id`. Upserts — if a `PRICE_ORACLE` row
@@ -572,7 +572,7 @@ pub(crate) fn db_apply_price_oracle_updated(
     })
 }
 
-/// `degenbot_rs.db_apply_asset_source_updated(database_path, asset_id, source_address) -> int`
+/// `degenbot._ffi.db.db_apply_asset_source_updated(database_path, asset_id, source_address) -> int`
 ///
 /// Apply an `AssetSourceUpdated` event: set the asset's
 /// `aave_v3_assets.price_source` column. The `asset_id` must already exist
@@ -595,7 +595,7 @@ pub(crate) fn db_apply_asset_source_updated(
 
 // ── the pure CPU bit-decode (no I/O — `py.detach()` for consistency) ──────
 
-/// `degenbot_rs.db_decode_reserve_configuration_bitmap(config_bitmap) -> dict`
+/// `degenbot._ffi.db.db_decode_reserve_configuration_bitmap(config_bitmap) -> dict`
 ///
 /// Decode the Aave V3 reserve-configuration `uint256` bitmap into the typed
 /// dict. Pure CPU — `py.detach()` is used for consistency with the writer

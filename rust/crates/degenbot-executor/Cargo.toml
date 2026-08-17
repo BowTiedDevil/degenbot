@@ -17,12 +17,5 @@ degenbot-abi = { path = "../degenbot-abi" }
 degenbot-core = { path = "../degenbot-core" }
 thiserror = { version = "^2.0" }
 
-[features]
-# ADR-031 walker: the facts-driven Plan walker is the sole producer.
-# Kept as a named (default) feature for A3 compatibility; the dispatch no
-# longer branches on it (the reference build_*_plan producers are removed).
-default = ["walk"]
-walk = []
-
 [dev-dependencies]
 proptest = "^1.11"

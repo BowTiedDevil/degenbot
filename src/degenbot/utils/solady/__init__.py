@@ -1,7 +1,8 @@
 """Solady LibZip: flz compress/decompress for bytecode.
 
 Thin delegation shim over the Rust ``degenbot-core`` core, exposed via the
-``degenbot_rs`` extension. The pure-Python implementation has been retired
+``degenbot._ffi.solady`` extension module (Rust cdylib crate
+``degenbot_rs``). The pure-Python implementation has been retired
 (per ADR-005 sub-step C — ``docs/migration-guides/three-layer-transition.md``
 §3.3); the Rust core (``rust/crates/degenbot-core/src/libzip.rs``) is the
 single implementation, ``#[cfg(test)]`` corpus the regression set.

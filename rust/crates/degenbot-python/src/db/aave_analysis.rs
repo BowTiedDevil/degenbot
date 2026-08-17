@@ -457,7 +457,7 @@ fn missing_key(key: &str) -> PyErr {
 // the #[pyfunction]
 // =========================================================================
 
-/// `degenbot_rs.analyze_aave_user_position(user, collateral_positions,
+/// `degenbot._ffi.db.analyze_aave_user_position(user, collateral_positions,
 /// debt_positions, collateral_config_map, price_map=None) ->
 /// PyUserPositionSummary`
 ///

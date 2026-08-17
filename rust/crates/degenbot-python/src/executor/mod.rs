@@ -18,7 +18,7 @@
 //! via `PyArbitrageEngine::path_info_for_core` (NXM2BF). The `[profit]`
 //! hop-detail render reads `outcome.path_infos` as plain `dict`s (built in
 //! `simulation/outcome.rs`). The Python `hop_info` dataclasses are deleted.
-//! No Python caller reaches `encode_cmd_stream` / `v4_*` on `degenbot_rs`
+//! No Python caller reaches `encode_cmd_stream` / `v4_*` on `degenbot._ffi`
 //! anymore — the §4.5 `_DelegateSpy` test pinned them as Rust-bound builtins,
 //! but the example never invoked them post-A5.
 
@@ -72,7 +72,7 @@ fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
 // PyO3 wrapper functions
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// `degenbot_rs.compute_simulation_warmup_slots(executor_address,
+/// `degenbot._ffi.executor.compute_simulation_warmup_slots(executor_address,
 /// weth_address, pool_manager_address) -> dict`
 ///
 /// Compute the `eth_simulateV1` `stateDiff` overrides replicating
@@ -137,7 +137,7 @@ fn compute_simulation_warmup_slots<'py>(
     Ok(dict)
 }
 
-/// `degenbot_rs.pack_config(check_mode=0, expected_value=0, bribe_bips=0,
+/// `degenbot._ffi.executor.pack_config(check_mode=0, expected_value=0, bribe_bips=0,
 /// bribe_recipient_idx=0) -> int`
 ///
 /// Pack the `execute(commands, config)` ABI `config` `uint256`. Thin wrapper
@@ -158,7 +158,7 @@ fn pack_config<'py>(
     u256_to_py(py, &result)
 }
 
-/// `degenbot_rs.pack_expected_balance(check_mode, expected_value) -> int`
+/// `degenbot._ffi.executor.pack_expected_balance(check_mode, expected_value) -> int`
 ///
 /// Deprecated alias for [`pack_config`] with `bribe_bips=0` /
 /// `bribe_recipient_idx=0`. Thin wrapper over [`config::pack_expected_balance`].
@@ -175,7 +175,7 @@ fn pack_expected_balance<'py>(
     u256_to_py(py, &result)
 }
 
-/// `degenbot_rs.mapping_slot(base_slot, key) -> int`
+/// `degenbot._ffi.executor.mapping_slot(base_slot, key) -> int`
 ///
 /// Compute a Solidity mapping storage slot: `keccak256(pad(key,32) || pad(base,32))`.
 /// Thin wrapper over [`core_mapping_slot`] (the Rust warmup-slot leaf).
@@ -191,7 +191,7 @@ fn mapping_slot<'py>(
     u256_to_py(py, &result)
 }
 
-/// `degenbot_rs.nested_mapping_slot(base_slot, key1, key2) -> int`
+/// `degenbot._ffi.executor.nested_mapping_slot(base_slot, key1, key2) -> int`
 ///
 /// Compute a nested Solidity mapping storage slot:
 /// `keccak256(pad(key2,32) || keccak256(pad(key1,32) || pad(base,32)))`.

@@ -3,7 +3,7 @@
 This package re-exports the Rust-owned dispatch, simulation, and transaction
 signing symbols under stable, seam-agnostic names. Driver code (bot
 operators, example bots) imports from here — never from the PyO3 wrapper
-:mod:`degenbot_rs`.
+:mod:`degenbot._ffi`.
 
 The ``Py*`` prefix and ``*_py`` suffix on the FFI names are the seam naming
 itself: ``Py*`` marks a raw ``#[pyclass]``, ``*_py`` marks a
@@ -19,7 +19,7 @@ and should never leak into driver code. This package hides them.
     pyfunction that expects the exact ``PySimulateContext`` /
     ``PyTxSigner`` pyclass. A wrapper class would break type identity at the
     FFI boundary. The companion's only job is to give the symbols stable
-    names so driver code does not import ``degenbot_rs``.
+    names so driver code does not import ``degenbot._ffi``.
 
     If a future driver needs Python-side ergonomics over these types (block-tag
     resolution, ``__repr__``, context-manager protocol — the way

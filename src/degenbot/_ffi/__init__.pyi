@@ -1,7 +1,10 @@
-"""Type stubs for the degenbot Rust extension module (degenbot_rs).
+"""Type stubs for the degenbot Rust extension module.
 
-This module provides high-performance implementations of common operations
-used by the degenbot Python package.
+Python module: `degenbot._ffi`
+Rust cdylib crate `degenbot_rs`
+
+This module provides high-performance implementations of common operations used by the degenbot
+Python package.
 """
 
 from collections.abc import Callable, Coroutine

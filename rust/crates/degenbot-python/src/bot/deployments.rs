@@ -8,7 +8,7 @@
 //! the Python loader.
 //!
 //! ```python
-//! from degenbot.degenbot_rs import init_hash_for, deployer_for
+//! from degenbot._ffi.deployments import init_hash_for, deployer_for
 //! # Uniswap V2 mainnet — deployer=None → effective = factory.
 //! assert init_hash_for(1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
 //! assert deployer_for(1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f") == \
@@ -109,7 +109,7 @@ fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
 }
 
 /// Register the `init_hash_for` / `deployer_for` free functions on the
-/// top-level `degenbot_rs` module.
+/// `degenbot._ffi.deployments` submodule.
 pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.deployments")?;

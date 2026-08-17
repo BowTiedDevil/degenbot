@@ -184,7 +184,7 @@ impl PyV4PoolRowInput {
 // PyO3 wrapper functions
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// `degenbot_rs.db_upsert_v2_pools(database_path, chain_id, kind, exchange_id,
+/// `degenbot._ffi.db.db_upsert_v2_pools(database_path, chain_id, kind, exchange_id,
 /// fee_denominator, rows) -> None`
 ///
 /// Insert a batch of V2 pool rows. The `Rust` core get-or-create's the two
@@ -218,7 +218,7 @@ pub(crate) fn db_upsert_v2_pools(
     })
 }
 
-/// `degenbot_rs.db_upsert_v3_pools(database_path, chain_id, kind, exchange_id,
+/// `degenbot._ffi.db.db_upsert_v3_pools(database_path, chain_id, kind, exchange_id,
 /// fee_denominator, rows) -> None`
 ///
 /// Insert a batch of V3 pool rows. Same shape as [`db_upsert_v2_pools`];
@@ -248,7 +248,7 @@ pub(crate) fn db_upsert_v3_pools(
     })
 }
 
-/// `degenbot_rs.db_upsert_v4_pools(database_path, chain_id, pool_manager_address,
+/// `degenbot._ffi.db.db_upsert_v4_pools(database_path, chain_id, pool_manager_address,
 /// fee_denominator, rows) -> None`
 ///
 /// Insert a batch of V4 pool rows. The `Rust` core resolves the
@@ -280,7 +280,7 @@ pub(crate) fn db_upsert_v4_pools(
     })
 }
 
-/// `degenbot_rs.db_set_exchange_last_update_block(database_path, chain_id,
+/// `degenbot._ffi.db.db_set_exchange_last_update_block(database_path, chain_id,
 /// exchange_id, block) -> None`
 ///
 /// Stamp an `ExchangeTable.last_update_block`. Port of the
@@ -303,7 +303,7 @@ pub(crate) fn db_set_exchange_last_update_block(
     })
 }
 
-/// `degenbot_rs.db_upsert_exchange(database_path, chain_id, name, factory,
+/// `degenbot._ffi.db.db_upsert_exchange(database_path, chain_id, name, factory,
 /// deployer) -> ExchangeRow`
 ///
 /// Resolve an `exchanges` row by `(chain_id, name)`, inserting a new
@@ -343,7 +343,7 @@ pub(crate) fn db_upsert_exchange(
     Py::new(py, PyExchangeRow::from(row))
 }
 
-/// `degenbot_rs.db_set_exchange_active(database_path, exchange_id, active)
+/// `degenbot._ffi.db.db_set_exchange_active(database_path, exchange_id, active)
 /// -> None`
 ///
 /// Flip an `exchanges` row's `active` flag by id — the activate/deactivate
@@ -367,7 +367,7 @@ pub(crate) fn db_set_exchange_active(
     })
 }
 
-/// `degenbot_rs.db_upsert_pool_manager(database_path, address, chain, kind,
+/// `degenbot._ffi.db.db_upsert_pool_manager(database_path, address, chain, kind,
 /// state_view, exchange_id) -> PoolManagerRow`
 ///
 /// Upsert a `pool_managers` row by `(address, chain)` (the get-or-create

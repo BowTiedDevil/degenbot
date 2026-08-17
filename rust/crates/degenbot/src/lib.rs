@@ -92,6 +92,8 @@ pub use degenbot_submission;
 /// funding + warmup-slot integration + WETH9 `balanceOf` override
 /// (pure-Rust leaf). The in-process revm engine (the per-block shared-EVM
 /// handle, DB stack, overrides, AL collector, warm cache).
+/// The `degenbot_simulation::oracle` fixture driver (ADR-020 tier-3) is
+/// test/diagnostic Rust surface — deliberately no FFI exposure.
 pub use degenbot_simulation;
 
 /// The backrun searcher strategy — the 7-call pre/post-balance bundle,

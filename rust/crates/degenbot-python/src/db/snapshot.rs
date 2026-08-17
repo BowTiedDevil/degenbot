@@ -28,7 +28,7 @@ use crate::db::db_err_to_py;
 use degenbot_db::snapshot::{LiquidityMap, PoolKey};
 use degenbot_db::{DegenbotDb, ExchangeFamily};
 
-/// `degenbot_rs.PyDatabaseSnapshot` — a read-only V3/V4 snapshot handle over a
+/// `degenbot._ffi.db.PyDatabaseSnapshot` — a read-only V3/V4 snapshot handle over a
 /// degenbot `SQLite` DB file. Opens its own connection (WAL, `query_only=on`)
 /// from `database_path`; the Python `DatabaseSnapshot` shell constructs one
 /// per chain + delegates every read to it.

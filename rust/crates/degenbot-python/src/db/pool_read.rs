@@ -190,7 +190,7 @@ impl PyPoolManagerRow {
     }
 }
 
-/// `degenbot_rs.db_fetch_exchange(database_path, exchange_id) -> ExchangeRow | None`
+/// `degenbot._ffi.db.db_fetch_exchange(database_path, exchange_id) -> ExchangeRow | None`
 ///
 /// Module-level exchange-row read by FK id. The `cli/pool.py::pool_update`
 /// discovery loop reads `last_update_block` ground-truth here (a fresh
@@ -221,7 +221,7 @@ pub(crate) fn db_fetch_exchange(
     }
 }
 
-/// `degenbot_rs.db_fetch_exchange_by_name(database_path, chain_id, name)
+/// `degenbot._ffi.db.db_fetch_exchange_by_name(database_path, chain_id, name)
 /// -> ExchangeRow | None`
 ///
 /// The by-name companion to [`db_fetch_exchange`] — the `(chain_id, name)`

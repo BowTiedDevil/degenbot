@@ -51,7 +51,7 @@ create_exception!(
     "The database is stamped at a prior Alembic revision; run `degenbot database upgrade`."
 );
 
-/// `degenbot_rs.db_create_new_database(path: str) -> None`
+/// `degenbot._ffi.db.db_create_new_database(path: str) -> None`
 ///
 /// Create a fresh degenbot `SQLite` DB: WAL + head DDL + VACUUM + Alembic stamp.
 /// Raises `ValueError` on any failure.
@@ -62,7 +62,7 @@ fn db_create_new_database(py: Python<'_>, path: &str) -> PyResult<()> {
         .map_err(|e| db_err_to_py(&e))
 }
 
-/// `degenbot_rs.db_backup_database(src: str, dst: str) -> None`
+/// `degenbot._ffi.db.db_backup_database(src: str, dst: str) -> None`
 ///
 /// Online backup with `PRAGMA integrity_check` assertions on both source and
 /// destination. Raises `ValueError` on failure.
@@ -74,7 +74,7 @@ fn db_backup_database(py: Python<'_>, src: &str, dst: &str) -> PyResult<()> {
         .map_err(|e| db_err_to_py(&e))
 }
 
-/// `degenbot_rs.db_compact_database(path: str) -> None`
+/// `degenbot._ffi.db.db_compact_database(path: str) -> None`
 ///
 /// `VACUUM`. A no-op for `:memory:`. Raises `ValueError` on failure.
 #[pyfunction]
@@ -84,7 +84,7 @@ fn db_compact_database(py: Python<'_>, path: &str) -> PyResult<()> {
         .map_err(|e| db_err_to_py(&e))
 }
 
-/// `degenbot_rs.db_upgrade_database(path: str) -> str`
+/// `degenbot._ffi.db.db_upgrade_database(path: str) -> str`
 ///
 /// Ensure the DB is at the Alembic head. Returns `"already_at_head"` if it was
 /// current, or `"created_fresh"` if an empty file was brought up to head.
@@ -103,7 +103,7 @@ fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
     .to_string())
 }
 
-/// `degenbot_rs.db_inspect_schema_state(database_path: str) -> str`
+/// `degenbot._ffi.db.db_inspect_schema_state(database_path: str) -> str`
 ///
 /// The read-only dry-run companion to `db_convert_alembic_to_rust_owned`:
 /// reports the schema state WITHOUT writing. Never refuses (reports even
@@ -119,7 +119,7 @@ fn db_inspect_schema_state(py: Python<'_>, database_path: &str) -> PyResult<Stri
     Ok(schema_state_label(&state).to_string())
 }
 
-/// `degenbot_rs.db_convert_alembic_to_rust_owned(database_path: str) -> str`
+/// `degenbot._ffi.db.db_convert_alembic_to_rust_owned(database_path: str) -> str`
 ///
 /// The opt-in one-way cutover (ADR-010): flip an Alembic-stamped DB into Rust
 /// ownership — `DROP`s `alembic_version`, stamps `_degenbot_db_schema_version`.
@@ -149,7 +149,7 @@ fn db_convert_alembic_to_rust_owned(py: Python<'_>, database_path: &str) -> PyRe
     .to_string())
 }
 
-/// `degenbot_rs.db_heal_database(database_path: str) -> dict`
+/// `degenbot._ffi.db.db_heal_database(database_path: str) -> dict`
 ///
 /// Out-of-place dump-and-restore "heal" (ADR-011): builds a fresh DB at the
 /// Rust head schema, copies all user rows from the old DB (preserving PKs +

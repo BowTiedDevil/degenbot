@@ -3,7 +3,7 @@
 //! [`PyAnvilFork`] wraps the pure-Rust [`degenbot_fork::AnvilFork`]:
 //! lifecycle (subprocess spawn + IPC `DynProvider` connect) + the 12 anvil
 //! dev-RPC methods. The Python-visible class name is `AnvilFork`
-//! (registered as `degenbot_rs.AnvilFork`).
+//! (registered as `degenbot._ffi.fork.AnvilFork`).
 //!
 //! ## Layering
 //!
@@ -398,7 +398,7 @@ impl PyAnvilFork {
     }
 }
 
-/// Register the `AnvilFork` pyclass on the Python `degenbot_rs` module.
+/// Register the `AnvilFork` pyclass on the `degenbot._ffi.fork` submodule.
 ///
 /// # Errors
 /// Returns `PyErr` if `add_class` fails (e.g. name collision).
