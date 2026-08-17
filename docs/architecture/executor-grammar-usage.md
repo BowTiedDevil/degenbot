@@ -30,13 +30,18 @@ let cmd_bytes = encode_cmd_stream(
 
 `encode_cmd_stream` routes the path:
 
-- **all-V2 any-N** → the N-hop speedrail (`grammar::encode_all_v2`) — the
-  generic flash-borrow + chained `V2_SWAP_CALC` walk, regardless of arity.
-- **every other 2/3-hop family** → `grammar::encode_grammar`, which delegates to
-  `grammar_shape::derive_shape` (the Plan-tree deriver) — with **no
-  hand-written backstop**. The single exception is the all-V2 **3-hop** layout
-  (`v2_v2_v2`), a deliberate routing split reached only via the test-only
-  `encode_cmd_3_hop` entry.
+- **all-V2 any-N** → `grammar_shape::derive_all_v2` — the any-N flash-borrow +
+  chained `V2_SWAP_CALC` Plan layout (one producer: the `facts_of_all_v2` arm
+  of `build_walk`; the distinct all-V2 3-hop layout and the N-hop speedrail
+  were deleted in `4JOWO5`, collapsing onto this layout).
+- **every other 2/3-hop family** → `grammar::encode_grammar` →
+  `grammar_shape::derive_shape` — one `recognized_key` gate, then the single
+  facts-driven `build_walk` pipeline (`facts_for` → `derive_plan` → the shape
+  modules → `LedgerValidator` gate → `plan_to_bytes`). Again: **no
+  hand-written backstop.**
+
+`encode_cmd_3_hop` survives only as a `#[doc(hidden)]` test shim over
+`encode_grammar` — it produces no distinct byte layout.
 
 Returns `None` if the family is unknown or any `enc_*` step fails (e.g. a
 `u128` that does not fit the contract's `uint96`/`int128` range — guard with
@@ -197,8 +202,10 @@ if bridge.needs_bridge() {
 }
 ```
 
-`CurrencyBridge::None` (both sides agree) needs no bridge. The grammar handles
-this automatically inside the V4-involving Plan builders.
+`CurrencyBridge::None` (both sides agree) needs no bridge. The walker emits
+the bridge steps automatically at V4↔X boundaries from the facts' currency
+pairing (the `V4TakeCompact` + `WETH_DEPOSIT`/`WETH_WITHDRAW` sequence — see
+`grammar_shape::v4_bridge_steps`, used by the shape modules).
 
 ## Validating a Plan directly (the invariant gate)
 
@@ -244,24 +251,41 @@ let v = LedgerValidator::default()
     .with_external_ledgers(vec![ExternalLedger::default()]); // index 0 = a Balancer-shaped Vault
 ```
 
-## The Plan tree (advanced — authoring a new family)
+## The Plan tree (advanced — supporting a new family)
 
-A family's ledger decisions as an execution-ordered, callback-nested tree.
-Each leaf carries BOTH the resolved address-table index (for the byte encoder)
-and the currency/pool address (for the `LedgerOp` projection). The canonical
-`v2_v3` (InPathFlash) shape:
+A new family is **no longer authored as code per family**. The authoring
+surface is:
+
+1. **Add the facts row in `grammar_walker::facts_for`** — the per-hop
+   `HopFacts`: protocol variety, direction (`zfo`), pool/fee/spacing data,
+   the coupling axes the family exercises (`out_dest`, `repay`, and — only
+   where a consumer shape body reads it — `terminal_form` /
+   `repay_mechanism` / `seed_delivery`).
+2. **If the enclosure is new, teach a shape body.** The 3-hop topology rules
+   (`rule_walk_v2v3` / `rule_walk_v4_led` / `rule_walk_v2v3_v4_mixed` in
+   `grammar_walker/shapes/three_hop.rs`) derive the nesting from the facts'
+   debt-flow threading (rules 1–3 in
+   `docs/spikes/t6-topology-rules-analysis.md`). A genuinely new DEX
+   primitive lands as one constructor in `grammar_walker::mod mechanics`.
+3. **The validator is the gate.** `derive_shape_detailed` runs the
+   `LedgerValidator` on every produced Plan; an ordering defect is a fatal
+   `Rejected` (ADR-030), never silently dropped — so the new family either
+   produces an invariant-clean Plan or produces nothing. Byte-identity /
+   execution grounds come from the golden suites + the revm runtime matrix.
+
+The Plan tree is an execution-ordered, callback-nested tree whose leaves
+carry BOTH the resolved address-table index (for the byte encoder) and the
+currency/pool address (for the `LedgerOp` projection). Inspecting one
+directly:
 
 ```rust
-use degenbot_executor::grammar_shape::{build_v2v3_plan, plan_to_bytes, plan_to_ledger_ops, Plan, PlanStep, Prot};
-use degenbot_executor::encoders::{SENTINEL_SELF, SENTINEL_WETH};
+use degenbot_executor::grammar_plan::{plan_to_bytes, plan_to_ledger_ops};
+use degenbot_executor::grammar_walker::build_walk;
 
-let (preamble, plan, at) = build_v2v3_plan(&path, &inputs)?;
+let (preamble, plan, at) = build_walk(&path, &inputs)?;
 // Same Plan → two consumers, no drift:
-let bytes = {
-    let mut out = preamble;
-    out.extend_from_slice(&plan_to_bytes(&plan, &at));
-    out
-};
+let mut bytes = preamble;
+bytes.extend_from_slice(&plan_to_bytes(&plan, &at));
 let ops: Vec<_> = plan_to_ledger_ops(&plan);   // feed to LedgerValidator
 ```
 
@@ -271,15 +295,18 @@ empty-callback V2/V3 flash whose `in_currency` the contract auto-pays from the
 executor's balance at callback-end. `V4Unlock { inner, .. }` nests its unlock
 callback and emits `V4UnlockEnd` after it. Depth-first walk = execution order.
 
-See `rust/crates/degenbot-executor/src/grammar_shape.rs` for the full `PlanStep`
-variant set and the `build_v2v3_plan` / `build_v3v2_plan` / `build_v3v3_plan` /
-`build_v2v4_plan` authors (the pattern to follow for a new family).
+The full `PlanStep` variant set lives in
+`rust/crates/degenbot-executor/src/grammar_plan.rs`; the axis vocabulary a
+new family can consume is documented in
+`docs/plans/pzbgp7-terminal-form-axis-draft.md` §"The vocabulary axes
+(current — what the walker supports)".
 
 ## Where to look next
 
 - **The architecture doc:** [executor-command-grammar.md](executor-command-grammar.md) — the *why* and the invariant model.
-- **The decision record:** [ADR-029](../adr/ADR-029-executor-command-grammar-axes.md) — the axes, the hybrid, the additive proof.
+- **The decision records:** [ADR-029](../adr/ADR-029-executor-command-grammar-axes.md) (the axes, the hybrid, the additive proof), [ADR-030](../adr/ADR-030-derivation-outcome-tri-state.md) (the derive tri-state), [ADR-031](../adr/ADR-031-executor-plan-walker.md) (the facts-driven walker).
+- **The walker lineage:** [executor-walker-spike.md](executor-walker-spike.md) (the spike that de-risked the schema) and [../plans/pzbgp7-walker-decomposition.md](../plans/pzbgp7-walker-decomposition.md) (the T1–T6 decomposition ledger).
 - **The V4 ledger rules:** [../plans/executor-v4-ledger-rules.md](../plans/executor-v4-ledger-rules.md) — the PM net-zero-at-unlock-close invariant.
 - **The Plan-tree decision:** [../plans/executor-6ZIE5X-decision.md](../plans/executor-6ZIE5X-decision.md) — why the Plan tree (mechanism (iii)) over byte-decoding / `enc_*`-instrumentation.
 - **The model plan:** [../plans/executor-grammar-ledger-model.md](../plans/executor-grammar-ledger-model.md) — the dataflow model.
-- **The tests of record:** `tests/composers_parity.rs`, `tests/composers_3hop_parity.rs` (golden-master byte-parity) and `rust/crates/degenbot-simulation/tests/harness_declarative.rs` (the runtime matrix).
+- **The tests of record:** `tests/composers_parity.rs`, `tests/composers_3hop_parity.rs` (golden-master byte-parity), `rust/crates/degenbot-simulation/tests/harness_declarative.rs` (the runtime matrix), and the `rule_walker_shadows_*` unit tests in `grammar_walker/shapes/three_hop.rs` (post-cutover pinning of the current enclosure per topology-rule group).

@@ -1,16 +1,24 @@
 # Executor command grammar
 
-> **Status:** production (epic `463V2C`, ADR-029). The grammar is the sole
-> command-stream encoder for every 2/3-hop arbitrage path the bot executes.
+> **Status:** production (epic `463V2C`, ADR-029; the facts-driven Plan walker
+> from epic `62V6Q5`/ADR-031 is the sole producer, decomposed by arch-review
+> epic `PZBGP7`). The grammar is the sole command-stream encoder for every
+> 2/3-hop arbitrage path the bot executes — **every family routes through the
+> single `build_walk` pipeline; no hand-written per-family producer exists.**
 >
 > **Code:**
 > - `rust/crates/degenbot-executor/src/grammar.rs` — the production entry points.
-> - `rust/crates/degenbot-executor/src/grammar_shape.rs` — the per-family Plan builders + `derive_shape`.
+> - `rust/crates/degenbot-executor/src/grammar_shape.rs` — `derive_shape` / `derive_shape_detailed` (`recognized_key` gate → `build_walk` → `LedgerValidator` → bytes; the ADR-030 tri-state) + the shared Plan-building helpers (`v4_scaffold_table`, `v4_hop_currencies`, `v4_terminal_capture_steps`, `v4_bridge_steps`, `native_capture_declines`).
+> - `rust/crates/degenbot-executor/src/grammar_walker.rs` + `grammar_walker/shapes/` — the walker: `HopFacts` + the position-scoped axis enums (`terminal_form`, `repay_mechanism`, `seed_delivery`), `mod mechanics`, `facts_for` (the per-family classifier — the only per-family keyed data), and `derive_plan` (the `(len, repay-sequence)`-gated enclosure dispatch). Shapes: `three_hop.rs` (three topology rule walkers), `two_hop_uniswap_only.rs`, `two_hop_v4_led.rs`, `two_hop_seed_v4.rs`, `all_v2_chain.rs`, `tag_residual.rs`.
+> - `rust/crates/degenbot-executor/src/grammar_plan.rs` — the `Plan` IR (`PlanStep` variants) and its two consumers (`plan_to_bytes`, `plan_to_ledger_ops`).
 > - `rust/crates/degenbot-executor/src/grammar_ledger.rs` — the axis types + `LedgerValidator`.
 > - `rust/crates/degenbot-executor/src/composers.rs` — `PathInfo`/`HopInfo`, `EncodeOptions`, the top-level `encode_cmd_stream`, and the `config_for_options` axis→config builder.
 > - `rust/crates/degenbot-executor/src/config.rs` — the `execute(commands, config)` `uint256` config packing.
 >
-> **Decision record:** [ADR-029](../adr/ADR-029-executor-command-grammar-axes.md).
+> **Decision records:** [ADR-029](../adr/ADR-029-executor-command-grammar-axes.md)
+> (the axes + the validator), [ADR-030](../adr/ADR-030-derivation-outcome-tri-state.md)
+> (the derive tri-state), [ADR-031](../adr/ADR-031-executor-plan-walker.md)
+> (the facts-driven walker that retired the per-family authors).
 
 ## What the grammar is
 
@@ -115,9 +123,19 @@ already resolved): `FlashSwap`, `Erc20Transfer`, `V2SwapCalc`, `V4Unlock`,
 address-table index (for the byte encoder) AND the currency/pool address
 (for the `LedgerOp` projection) so the two consumers never diverge.
 
-Per-family `build_v2v3_plan` / `build_v3v2_plan` / `build_v3v3_plan` /
-`build_v2v4_plan` / … author the Plan tree for that family's shape class;
-`derive_shape` dispatches to them and returns the encoded bytes.
+No per-family producer functions remain on the path. `derive_shape` gates
+the family on `grammar_walker::recognized_key`, then hands the path to the
+**single producer** `build_walk`: `facts_for` classifies the family into
+per-hop `HopFacts` rows (the only data keyed per family), and `derive_plan`
+picks the enclosure via a `(len, repay-sequence)` partition — the three 3-hop
+topology rule walkers in `grammar_walker/shapes/three_hop.rs`
+(`rule_walk_v2v3`, `rule_walk_v4_led`, `rule_walk_v2v3_v4_mixed`), the 2-hop
+and all-V2 shape modules, and the `tag_residual` `Repay`/`OutDest` partition.
+The shape bodies read the position-scoped axes (`out_dest`, `repay`,
+`terminal_form`, `repay_mechanism`, `seed_delivery`) to nest the
+`FlashSwap`/`V4Unlock` enclosures and order the repay/settle sequencing;
+`mod mechanics` supplies the per-protocol step constructors. One Plan, two
+consumers, no drift.
 
 ### The ledger validator — where the invariants live
 
@@ -162,9 +180,9 @@ stream that:
 | **invariants enforced** | implicit, per-body — invisible | explicit, generic — the `LedgerValidator` over declarative facts |
 | **bug surface** | every adapter can re-introduce D0 / über-draw | the validator rejects them *before bytes exist* |
 | **testability of the ordering property** | per-family spot-checks only | one generic validator, exhaustively testable over every `(protocol × funding × capture × bribe)` combination |
-| **adding a DEX family** | a fresh adapter for every `(position × neighbor × funding × capture)` cell — combinatorial explosion | **one** axis value + one `BalanceLedger` impl + per-protocol mechanics — additive, no cross-matrix fan-out (ADR-029 D6) |
+| **adding a DEX family** | a fresh adapter for every `(position × neighbor × funding × capture)` cell — combinatorial explosion | a facts entry in `facts_for` + (only if its enclosure differs) one `mod mechanics` constructor + a topology-rule extension — additive, no cross-matrix fan-out (ADR-029 D6, ADR-031) |
 | **byte-parity's role** | the *only* gate — self-referential, blind to ordering | a weak cross-check; the runtime matrix (actual execution through the contract) is the source of truth (D5) |
-| **surface area** | ~35 bespoke `encode_cmd_*` bodies | one `derive_shape` dispatcher + `build_*_plan` authors + one encoder + one validator |
+| **surface area** | ~35 bespoke `encode_cmd_*` bodies | one `derive_shape` gate → the `build_walk` pipeline (`facts_for` classifier + `derive_plan` topology rules + per-protocol `mechanics`) + one encoder + one validator |
 
 ## The hybrid split (ADR-029 D4)
 
@@ -183,27 +201,34 @@ validator over declarative facts makes "bad command streams impossible to
 write" testable, while imperative mechanics stay where they belong (per-protocol
 code, testable in isolation).
 
-### What "derived" means here (clarified by the `6ZIE5X` decision)
+### What "derived" means here (the `6ZIE5X` decision, realized)
 
-The `derive_*` family emitters are **Plan-derived bytes**: each family's stream
-is produced by building a `Plan` then encoding it (`plan_to_bytes`), and the
-validator gates the Plan. They are **not** data-driven byte synthesis from a
-single `ShapeClass` descriptor over every family — the V2/V3 2-hop slice is
-genuinely `ShapeClass`-driven (`derive_2hop`), while the V4-involving families
-are authored per-family `build_*_plan` functions whose Plan is then validated
-by the same generic gate. The deliverable (D4) is the **generic validator
-proving ordering from declarative facts**; emitters are per-protocol mechanics.
+Every family's stream is produced by building a `Plan` then encoding it
+(`plan_to_bytes`), with the validator gating the Plan. The branch-(a)
+"future generic walker" this record deferred **is the current state**: the
+per-family `build_*_plan` authors are deleted (A3 of epic `62V6Q5`), and
+`facts_for` + `derive_plan` build the Plan from the per-hop facts — since
+epic `PZBGP7` (T5/T6) the 23 3-hop enclosure bodies are topology rule walkers
+derived from the facts' debt-flow threading, so even the internal enclosure
+decisions are data-driven. The deliverable (D4) remains the **generic
+validator proving ordering from declarative facts**; the hybrid split (facts
+as data, per-protocol mechanics as code) is unchanged.
 
 ### What was retired
 
 The cutover/`debug_assert` oracle and the ~32 proven adapter functions it
 guarded were retired in `WAYDTL` once `derive_shape` covered every family
-byte-identically. The single retained hand-written emitter is `v2_v2_v2` (the
-all-V2 3-hop layout — a deliberate routing split: `encode_cmd_stream` routes
-any-N all-V2 to the N-hop speedrail first; the 3-hop layout is structurally
-distinct, reached only via the test-only `encode_cmd_3_hop` entry). There is
-**no hand-written backstop**: a family either derives via `derive_shape` or it
-does not encode.
+byte-identically. The last hand-written emitters — the all-V2 N-hop speedrail
+and the distinct all-V2 3-hop layout — were deleted in `4JOWO5` (the 3-hop
+layout collapsing onto the any-N Plan layout the revm matrix always
+exercised). The per-family `build_*_plan` bodies followed under epic
+`62V6Q5` A3; the walker's internal dispatch tables (`build_for` /
+`AxisSupport` / `derive_2hop_*` / `derive_3hop_*`) under `PZBGP7` T3; and the
+23 hand-authored 3-hop enclosure bodies under `PZBGP7` T6. What remains as
+code is exactly: `facts_for` (data) + `derive_plan` (dispatch) + the shape
+modules + `mod mechanics`. There is **no hand-written backstop**: a family
+either derives via `build_walk` or it does not encode. (`encode_cmd_3_hop`
+survives only as a `#[doc(hidden)]` test shim over `encode_grammar`.)
 
 ## The runtime matrix is the source of truth (ADR-029 D5)
 
@@ -216,7 +241,9 @@ Plan through the ledger validator** (`Plan → LedgerOp` depth-first walk, then
 
 Byte-encoding is an implementation detail handled by the encoder methods the
 matrix calls, so a future executor revision (new commands, new byte layout) is
-absorbed by those methods without re-validating bytes. A future generic
-`ShapeClass`→Plan walker (`6ZIE5X` branch (a), deferred) may build on
-Plan-authored families; per-family Plan authoring is sufficient to deliver D4/D5
-today.
+absorbed by those methods without re-validating bytes. The `ShapeClass`-walker
+branch (a) is realized: the 2/3-hop surface is generic (`facts_for` entry +
+at most one mechanics constructor and a rule-walker arm per new DEX family),
+with byte-identity held by the golden suites + the revm matrix and the three
+`rule_walker_shadows_*` unit tests in `grammar_walker/shapes/three_hop.rs`
+pinning the current enclosure per topology-rule group.

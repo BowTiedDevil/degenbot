@@ -1,6 +1,14 @@
 # Executor facts-driven Plan walker — spike spec (`v3_v4_v3`)
 
 > ADR-031 · epic `62V6Q5`. Status: **superseded by A3** — the spike's prototype was generalized (A2) and made the sole producer (A3): the 30 `build_*_plan` bodies and the `build_for`/`AxisSupport` rows are deleted, and `family_axis_support` is facts-derived. The spike spec below records the A1 proof; see ADR-031 for the accepted end state.
+>
+> **Further supersession (arch-review epic `PZBGP7`):** the end state has since
+> deepened — the 3-hop bodies are topology *rule walkers* (not prot-keyed
+> arms), and the facts schema gained three position-scoped axes
+> (`terminal_form`, `repay_mechanism`, `seed_delivery`). See
+> `../plans/pzbgp7-walker-decomposition.md` (the ledger) and
+> `../spikes/t6-topology-rules-analysis.md` (the rule analysis). The frozen A1
+> schema below is historical.
 
 ## Why this spike
 

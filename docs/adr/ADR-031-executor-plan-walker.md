@@ -34,6 +34,20 @@
 > shapes (i.e. make D6's "derived" claim literally true) is spike
 > `RQQIUK`; until it reports, treat "tag-derived enclosure" as aspiration
 > for the enumerated shapes, not fact.
+>
+> **Resolution (same epic, tasks T5+T6 — the aspiration is now realized):**
+> tags alone could not absorb the shapes (spike `RQQIUK`, negative on the
+> merged-pair holdout), but the vocabulary could: the `terminal_form` axis
+> merged the "blocked" `v3v4` pair (see
+> `docs/plans/pzbgp7-terminal-form-axis-draft.md`), and the topology-rule
+> analysis (`docs/spikes/t6-topology-rules-analysis.md`) found 21/23 arms
+> derivable from a 3-rule debt-flow set, with the last 2 unlocked by the
+> `repay_mechanism` + `seed_delivery` facts. All 23 3-hop bodies are deleted;
+> three rule walkers (`rule_walk_v2v3`, `rule_walk_v4_led`,
+> `rule_walk_v2v3_v4_mixed` in `grammar_walker/shapes/three_hop.rs`) derive
+> the enclosures from the facts, byte-identical (golden suites + revm matrix
+> green; the shadow-walk pin tests caught three rule corrections pre-cutover).
+> D6's "enclosure is derived from facts, NOT chosen" claim is now literal.
 
 ## Context
 
