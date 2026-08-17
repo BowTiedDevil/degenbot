@@ -1,4 +1,4 @@
-//! CL-math `PyO3` wrappers over the `degenbot-concentrated-liquidity-math` pure core.
+//! `PyO3` wrappers over the `degenbot-concentrated-liquidity-math` pure core.
 //! Mirrors `crates/degenbot-concentrated-liquidity-math/`. (ergo UG6FKN task WXHGOH.)
 
 pub mod lib;
@@ -51,7 +51,7 @@ pub fn add_concentrated_liquidity_math_module(m: &Bound<'_, PyModule>) -> PyResu
     Ok(())
 }
 
-/// Register the four `TickMath` boundary constants on the CL-math submodule.
+/// Register the four `TickMath` boundary constants on the concentrated liquidity math submodule.
 ///
 /// ADR-005 single-source-of-truth: the canonical home is the
 /// `degenbot-concentrated-liquidity-math` core; the `PyO3` seam surfaces them so Python

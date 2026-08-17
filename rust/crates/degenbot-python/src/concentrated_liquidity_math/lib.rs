@@ -624,7 +624,7 @@ pub fn apply_liquidity_mapping_update(
 
 // ─── Register all CL math functions ────────────────────────────────────
 
-/// Register the 19 CL-math functions on the concentrated-liquidity submodule.
+/// Register the math functions on the concentrated-liquidity submodule.
 ///
 /// Called by `crate::concentrated_liquidity_math::add_concentrated_liquidity_math_module` (the single entry point that
 /// also registers the `tick_math.rs` entry points + boundary constants and

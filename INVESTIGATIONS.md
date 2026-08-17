@@ -120,8 +120,9 @@ fn probe() -> Result<(), String> {
 The driver is not speculative surface — the tier-3 V3 on-chain oracle
 (`rust/crates/degenbot-pools/tests/tier3_v3_common/mod.rs::run_onchain_swap`) now
 drives the real `UniswapV3Pool`/PancakeSwap bytecode through it, and all 9
-byte-exact tests still pass. When you add a new CL-math capability, extend the
-tier-3 oracle slice per [ADR-020](docs/adr/ADR-020-tier3-onchain-accuracy-oracle.md).
+byte-exact tests still pass. When you add a new concentrated liquidity math 
+capability, extend the tier-3 oracle slice per 
+[ADR-020](docs/adr/ADR-020-tier3-onchain-accuracy-oracle.md).
 
 ---
 
