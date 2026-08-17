@@ -24,7 +24,7 @@ MAP = {
     "CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json": "src-curve/CurveSwapOracleHarness.sol",
     "BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json": "src-balancer/BalancerSwapOracleHarness.sol",
     "PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json": "src-pancake-v3/PancakeV3SwapOracleHarness.sol",
-    "PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json": "src-pancake2/PancakeV2SwapOracleHarness.sol",
+    "PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json": "src-pancake-v2/PancakeV2SwapOracleHarness.sol",
 }
 
 manifest = {}
