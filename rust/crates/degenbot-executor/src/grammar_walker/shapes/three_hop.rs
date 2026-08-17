@@ -1,6 +1,6 @@
 //! 3-hop mega-block (block 4: no Offstream).
 
-use super::super::{fits_i128, mechanics, HopFacts};
+use super::super::{fits_i128, mechanics, HopFacts, TerminalForm};
 use crate::composers::{resolve_axes, ComposerInputs, CurrencyBridge, NATIVE_CURRENCY_ADDRESS};
 use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 use crate::grammar_ledger::Prot;
@@ -2036,9 +2036,13 @@ pub(crate) fn derive(
             Some((plan, at))
         } else if facts[0].prot == Prot::V3
             && facts[1].prot == Prot::V4
-            && facts[2].prot == Prot::V2
+            && matches!(facts[2].prot, Prot::V2 | Prot::V4)
         {
+            // ── v3v4{v2,v4} — MERGED on the terminal-form axis (T6 / PZBGP7).
+            // Same leading V3 flash + V4 mid unlock; the trailing hop reads
+            // `facts[2].terminal_form`.
             let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
+            let terminal_form = fc.terminal_form?;
             let optimal_input = inputs.optimal_input;
             let out_a = inputs.hop_outputs[0];
             let out_b = inputs.hop_outputs[1];
@@ -2053,22 +2057,47 @@ pub(crate) fn derive(
             if !fits_i128(b_swap_in) {
                 return None;
             }
+            let c_swap_in = match terminal_form {
+                TerminalForm::UnlockInternal => {
+                    let c = *inputs.consumed_inputs.get(2)?;
+                    if !fits_i128(c) {
+                        return None;
+                    }
+                    Some(c)
+                }
+                TerminalForm::DirectHandoff => None,
+            };
             let fwd_a = fa.out_currency;
             let forward_b_cur = fb.out_currency;
             let in_currency_b = fb.in_currency;
+            let weth = inputs.weth_address;
             let mut at = v4_scaffold_table(inputs);
             let pm_idx = at.add(inputs.pool_manager_address).ok()?;
             let v3a = at.add(fa.pool_address).ok()?;
-            let v2c = at.add(fc.pool_address).ok()?;
+            // AddressTable staging differs per terminal form (golden-ordered):
+            // v3v4v2 stages v2c + forward_b pre-forward_a; v3v4v4 stages c0_c/c1_c post-c1_b.
+            let v2c = match terminal_form {
+                TerminalForm::DirectHandoff => Some(at.add(fc.pool_address).ok()?),
+                TerminalForm::UnlockInternal => None,
+            };
             let forward_a = at.add(fwd_a).ok()?;
-            let forward_b = at.add(forward_b_cur).ok()?;
+            let forward_b = match terminal_form {
+                TerminalForm::DirectHandoff => Some(at.add(forward_b_cur).ok()?),
+                TerminalForm::UnlockInternal => None,
+            };
             let fee_b = fb.swap_fee;
             let ts_b = fb.tick_spacing;
             let c0_b = at.add(fb.currency0_address).ok()?;
             let c1_b = at.add(fb.currency1_address).ok()?;
-            let weth = inputs.weth_address;
+            let (c0_c, c1_c) = match terminal_form {
+                TerminalForm::UnlockInternal => (
+                    Some(at.add(fc.currency0_address).ok()?),
+                    Some(at.add(fc.currency1_address).ok()?),
+                ),
+                TerminalForm::DirectHandoff => (None, None),
+            };
 
-            let v4_inner: Plan = vec![
+            let v4_unlock_inner_start: Vec<PlanStep> = vec![
                 PlanStep::V4Settle {
                     currency_addr: fwd_a,
                     amount: b_swap_in,
@@ -2086,144 +2115,65 @@ pub(crate) fn derive(
                     out_currency: forward_b_cur,
                     out_amount: out_b,
                 },
-                PlanStep::V4TakeDelta {
-                    currency_idx: forward_b,
-                    currency_addr: forward_b_cur,
-                    recipient_idx: v2c,
-                    seeds_pool: Some(fc.pool_address),
-                },
-                PlanStep::V4SettleAll,
             ];
-            let c_step = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-            let cb: Plan = vec![
-                PlanStep::V4Unlock {
-                    inner: v4_inner,
-                    pool_manager_idx: pm_idx,
-                },
-                c_step,
-                PlanStep::Erc20Transfer {
-                    token_idx: SENTINEL_WETH,
-                    token_addr: weth,
-                    recipient_idx: v3a,
-                    amount: optimal_input,
-                    seeds_pool: None,
-                    repays_flash: Some(fa.pool_address),
-                },
-            ];
-            let plan: Plan = vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal_input,
-                },
-                PlanStep::V4Sync {
-                    currency_idx: forward_a,
-                    currency_addr: fwd_a,
-                },
-                mechanics::v3_flash_to(
-                    &mut at,
-                    fa,
-                    out_a,
-                    optimal_input,
-                    false,
-                    pm_idx,
-                    None,
-                    false,
-                    cb,
-                )?,
-            ];
-            Some((plan, at))
-        } else if facts[0].prot == Prot::V3
-            && facts[1].prot == Prot::V4
-            && facts[2].prot == Prot::V4
-        {
-            let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-            let optimal_input = inputs.optimal_input;
-            let out_a = inputs.hop_outputs[0];
-            let out_b = inputs.hop_outputs[1];
-            let out_c = inputs.hop_outputs[2];
-            if inputs.hop_outputs.contains(&0) {
-                return None;
-            }
-            if !fits_i128(optimal_input) {
-                return None;
-            }
-            let b_swap_in = *inputs.consumed_inputs.get(1)?;
-            let c_swap_in = *inputs.consumed_inputs.get(2)?;
-            if !fits_i128(b_swap_in) || !fits_i128(c_swap_in) {
-                return None;
-            }
-            let fwd_a = fa.out_currency;
-            let forward_b_cur = fb.out_currency;
-            let in_currency_b = fb.in_currency;
-            let output_c = fc.out_currency;
-            let in_currency_c = fc.in_currency;
-            let mut at = v4_scaffold_table(inputs);
-            let pm_idx = at.add(inputs.pool_manager_address).ok()?;
-            let v3a = at.add(fa.pool_address).ok()?;
-            let forward_a = at.add(fwd_a).ok()?;
-            let fee_b = fb.swap_fee;
-            let ts_b = fb.tick_spacing;
-            let fee_c = fc.swap_fee;
-            let ts_c = fc.tick_spacing;
-            let c0_b = at.add(fb.currency0_address).ok()?;
-            let c1_b = at.add(fb.currency1_address).ok()?;
-            let c0_c = at.add(fc.currency0_address).ok()?;
-            let c1_c = at.add(fc.currency1_address).ok()?;
-            let weth = inputs.weth_address;
-
-            let v4_inner: Plan = vec![
-                PlanStep::V4Settle {
-                    currency_addr: fwd_a,
-                    amount: b_swap_in,
-                },
-                PlanStep::V4Swap {
-                    c0_idx: c0_b,
-                    c1_idx: c1_b,
-                    fee: fee_b,
-                    tick_spacing: ts_b,
-                    hooks_idx: SENTINEL_NATIVE,
-                    zfo: fb.zfo,
-                    amount: b_swap_in,
-                    in_currency: in_currency_b,
-                    in_amount: b_swap_in,
-                    out_currency: forward_b_cur,
-                    out_amount: out_b,
-                },
-                PlanStep::V4Swap {
-                    c0_idx: c0_c,
-                    c1_idx: c1_c,
-                    fee: fee_c,
-                    tick_spacing: ts_c,
-                    hooks_idx: SENTINEL_NATIVE,
-                    zfo: fc.zfo,
-                    amount: c_swap_in,
-                    in_currency: in_currency_c,
-                    in_amount: c_swap_in,
-                    out_currency: output_c,
-                    out_amount: out_c,
-                },
-                PlanStep::V4TakeDelta {
-                    currency_idx: SENTINEL_WETH,
-                    currency_addr: weth,
-                    recipient_idx: SENTINEL_SELF,
-                    seeds_pool: None,
-                },
-                PlanStep::V4SettleAll,
-            ];
-            let cb: Plan = vec![
-                PlanStep::Erc20Transfer {
-                    token_idx: SENTINEL_WETH,
-                    token_addr: weth,
-                    recipient_idx: v3a,
-                    amount: optimal_input,
-                    seeds_pool: None,
-                    repays_flash: Some(fa.pool_address),
-                },
-                PlanStep::V4Unlock {
-                    inner: v4_inner,
-                    pool_manager_idx: pm_idx,
-                },
-            ];
+            let v4_inner: Plan = match terminal_form {
+                TerminalForm::DirectHandoff => {
+                    let mut inner = v4_unlock_inner_start;
+                    inner.push(PlanStep::V4TakeDelta {
+                        currency_idx: forward_b.unwrap_or_default(),
+                        currency_addr: forward_b_cur,
+                        recipient_idx: v2c.unwrap_or_default(),
+                        seeds_pool: Some(fc.pool_address),
+                    });
+                    inner.push(PlanStep::V4SettleAll);
+                    inner
+                }
+                TerminalForm::UnlockInternal => {
+                    let c_in = c_swap_in.unwrap_or_default();
+                    let mut inner = v4_unlock_inner_start;
+                    inner.push(PlanStep::V4Swap {
+                        c0_idx: c0_c.unwrap_or_default(),
+                        c1_idx: c1_c.unwrap_or_default(),
+                        fee: fc.swap_fee,
+                        tick_spacing: fc.tick_spacing,
+                        hooks_idx: SENTINEL_NATIVE,
+                        zfo: fc.zfo,
+                        amount: c_in,
+                        in_currency: fc.in_currency,
+                        in_amount: c_in,
+                        out_currency: fc.out_currency,
+                        out_amount: out_c,
+                    });
+                    inner.push(PlanStep::V4TakeDelta {
+                        currency_idx: SENTINEL_WETH,
+                        currency_addr: weth,
+                        recipient_idx: SENTINEL_SELF,
+                        seeds_pool: None,
+                    });
+                    inner.push(PlanStep::V4SettleAll);
+                    inner
+                }
+            };
+            let unlock_step = PlanStep::V4Unlock {
+                inner: v4_inner,
+                pool_manager_idx: pm_idx,
+            };
+            let repay_step = PlanStep::Erc20Transfer {
+                token_idx: SENTINEL_WETH,
+                token_addr: weth,
+                recipient_idx: v3a,
+                amount: optimal_input,
+                seeds_pool: None,
+                repays_flash: Some(fa.pool_address),
+            };
+            let cb: Plan = match terminal_form {
+                TerminalForm::DirectHandoff => {
+                    let c_step =
+                        mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
+                    vec![unlock_step, c_step, repay_step]
+                }
+                TerminalForm::UnlockInternal => vec![repay_step, unlock_step],
+            };
             let plan: Plan = vec![
                 PlanStep::SelfFund {
                     currency: weth,

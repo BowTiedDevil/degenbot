@@ -55,3 +55,16 @@ Core evidence:
 Epic outcome: T1 (split) + T2 (tripwire deletion) + T3 (facts_for/build_walk collapse) delivered.
 ADR-031 record now honest: dispatch is (len, repay-sequence) gated over per-shape modules; ordering
 defects are caught by the LedgerValidator + revm matrix. T4 documented the cost of going further.
+
+## T5 (AE4ZK2) — terminal-form axis: DELIVERED
+
+- Axis: `HopFacts.terminal_form: Option<TerminalForm>` (2 values), set once in `facts_for`
+  for the [V3, V4, V2|V4] terminal position; None everywhere else by construction.
+- Merged arm: three_hop.rs v3v4v2+v3v4v4 -> one body diverging only on trailing mechanics +
+  cb step ORDER (a derivation of mechanics, not an enumerated arm).
+- Discipline honored: exactly one axis; no second HopFacts field added; the brief's
+  "if it needs >2 values or a second axis, park" tripwires both unused.
+- Red->Green evidence: terminal_form_routes_the_v3v4_pair; goldens/parity/honesty/layout
+  + simulation/backrun matrices all green; clippy zero.
+- Remaining 21 three_hop arms consume None (compile-enforced default) — future absorption
+  opportunities documented in docs/spikes/rqgiuk-tag-row-walker.md §What IS extractable.

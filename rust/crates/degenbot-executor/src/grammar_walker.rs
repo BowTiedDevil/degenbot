@@ -56,6 +56,28 @@ pub enum Repay {
     NetZero,
 }
 
+/// The terminal-form axis (T5 / PZBGP7): how the trailing hop of a
+/// V4-containing 3-hop shape completes its stream. `DirectHandoff` — the
+/// trailing swap completes on its own pool and hands output to SELF (the
+/// v3v4v2 trailing `v2_swap`). `UnlockInternal` — the trailing swap is an op
+/// inside the enclosing V4Unlock's inner (the v3v4v4 trailing V4Swap); the
+/// unlock's ledger settlements are sequenced by the shape, not by the
+/// trailing hop alone.
+///
+/// `None` for every non-terminal hop and for terminal hops in shapes that
+/// don't consume the axis. Set exactly once per family, by the facts
+/// dispatcher's terminal-position override; consumed only by the merged
+/// v3v4[v2|v4] arm in [`shapes::three_hop`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TerminalForm {
+    /// The trailing swap is a direct pool swap; its output leaves the
+    /// unlock's accounting.
+    DirectHandoff,
+    /// The trailing swap lives inside the enclosing V4Unlock's inner; its
+    /// deltas settle through the unlock.
+    UnlockInternal,
+}
+
 /// Per-protocol **hop facts** — the ADR-031 D4 data half: ledgers a hop
 /// touches, direction, output slot, and repayment obligation. The walker
 /// derives the enclosure from these; the mechanics (the swap/callback step) is
@@ -76,6 +98,8 @@ pub struct HopFacts {
     /// V4 only — currency0 / currency1.
     pub currency0_address: Address,
     pub currency1_address: Address,
+    /// [`TerminalForm`] — set on the terminal hop only when a shape consumes it (see enum).
+    pub terminal_form: Option<TerminalForm>,
 }
 
 /// Per-protocol **mechanics** (ADR-031 D4 code half): how a protocol's hop
@@ -355,6 +379,7 @@ pub(crate) fn facts_of_v3v4v3(
         repay: Repay::SelfRefund,
         pool_address: a.pool_address,
         pool_id_hex: None,
+        terminal_form: None,
         currency0_address: a.token0_address,
         currency1_address: a.token1_address,
     };
@@ -369,6 +394,7 @@ pub(crate) fn facts_of_v3v4v3(
         repay: Repay::NetZero,
         pool_address: b.pool_manager_address,
         pool_id_hex: Some(b.pool_id_hex.clone()),
+        terminal_form: None,
         currency0_address: b.currency0_address,
         currency1_address: b.currency1_address,
     };
@@ -383,6 +409,7 @@ pub(crate) fn facts_of_v3v4v3(
         repay: Repay::Offstream,
         pool_address: c.pool_address,
         pool_id_hex: None,
+        terminal_form: None,
         currency0_address: c.token0_address,
         currency1_address: c.token1_address,
     };
@@ -416,6 +443,7 @@ pub(crate) fn facts_of_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             repay: Repay::SelfRefund,
             pool_address: a.pool_address,
             pool_id_hex: None,
+            terminal_form: None,
             currency0_address: a.token0_address,
             currency1_address: a.token1_address,
         },
@@ -430,6 +458,7 @@ pub(crate) fn facts_of_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             repay: Repay::Offstream,
             pool_address: b.pool_address,
             pool_id_hex: None,
+            terminal_form: None,
             currency0_address: b.token0_address,
             currency1_address: b.token1_address,
         },
@@ -461,6 +490,7 @@ pub(crate) fn facts_of_all_v2(
                 repay: Repay::SelfRefund,
                 pool_address: h.pool_address,
                 pool_id_hex: None,
+                terminal_form: None,
                 currency0_address: h.token0_address,
                 currency1_address: h.token1_address,
             }),
@@ -500,6 +530,7 @@ pub(crate) fn facts_of_v3v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             repay: Repay::SelfRefund,
             pool_address: a.pool_address,
             pool_id_hex: None,
+            terminal_form: None,
             currency0_address: a.token0_address,
             currency1_address: a.token1_address,
         },
@@ -514,6 +545,7 @@ pub(crate) fn facts_of_v3v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             repay: Repay::Offstream,
             pool_address: b.pool_address,
             pool_id_hex: None,
+            terminal_form: None,
             currency0_address: b.token0_address,
             currency1_address: b.token1_address,
         },
@@ -546,6 +578,7 @@ pub(crate) fn facts_of_v3v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             repay: Repay::SelfRefund,
             pool_address: a.pool_address,
             pool_id_hex: None,
+            terminal_form: None,
             currency0_address: a.token0_address,
             currency1_address: a.token1_address,
         },
@@ -560,6 +593,7 @@ pub(crate) fn facts_of_v3v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
             repay: Repay::Offstream,
             pool_address: b.pool_address,
             pool_id_hex: None,
+            terminal_form: None,
             currency0_address: b.token0_address,
             currency1_address: b.token1_address,
         },
@@ -583,6 +617,7 @@ pub(crate) fn v3_hop_facts(h: &V3HopInfo) -> HopFacts {
         repay: Repay::SelfRefund,
         pool_address: h.pool_address,
         pool_id_hex: None,
+        terminal_form: None,
         currency0_address: h.token0_address,
         currency1_address: h.token1_address,
     }
@@ -605,6 +640,7 @@ pub(crate) fn v2_hop_facts(h: &V2HopInfo) -> HopFacts {
         repay: Repay::SelfRefund,
         pool_address: h.pool_address,
         pool_id_hex: None,
+        terminal_form: None,
         currency0_address: h.token0_address,
         currency1_address: h.token1_address,
     }
@@ -624,6 +660,7 @@ pub(crate) fn v4_hop_facts(h: &V4HopInfo) -> HopFacts {
         repay: Repay::Offstream,
         pool_address: h.pool_manager_address,
         pool_id_hex: Some(h.pool_id_hex.clone()),
+        terminal_form: None,
         currency0_address: h.currency0_address,
         currency1_address: h.currency1_address,
     }
@@ -683,14 +720,29 @@ pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<
     if n >= 2 && prots.iter().all(|p| *p == Prot::V2) {
         return facts_of_all_v2(path, inputs);
     }
-    match prots.as_slice() {
-        [Prot::V3, Prot::V4, Prot::V3] => facts_of_v3v4v3(path, inputs),
-        [Prot::V2, Prot::V3] => facts_of_v2v3(path, inputs),
-        [Prot::V3, Prot::V3] => facts_of_v3v3(path, inputs),
-        [Prot::V3, Prot::V2] => facts_of_v3v2(path, inputs),
-        _ if (2..=3).contains(&n) => Some(path.hops.iter().map(hop_facts).collect()),
-        _ => None,
+    // The terminal hop's terminal_form is the axis the merged v3v4[v2|v4] arm
+    // routes on: a trailing V2 swap hands output to SELF directly (DirectHandoff),
+    // a trailing V4 swap settles inside the enclosing V4Unlock (UnlockInternal).
+    // Every other position carries None.
+    let mut facts = match prots.as_slice() {
+        [Prot::V3, Prot::V4, Prot::V3] => facts_of_v3v4v3(path, inputs)?,
+        [Prot::V2, Prot::V3] => facts_of_v2v3(path, inputs)?,
+        [Prot::V3, Prot::V3] => facts_of_v3v3(path, inputs)?,
+        [Prot::V3, Prot::V2] => facts_of_v3v2(path, inputs)?,
+        _ if (2..=3).contains(&n) => path.hops.iter().map(hop_facts).collect(),
+        _ => return None,
+    };
+    if prots.len() == 3 && prots[0] == Prot::V3 && prots[1] == Prot::V4 {
+        let form = match prots[2] {
+            Prot::V2 => Some(TerminalForm::DirectHandoff),
+            Prot::V4 => Some(TerminalForm::UnlockInternal),
+            Prot::V3 => None, // v3v4v3 stays with the residual tag partition
+        };
+        if let Some(form) = form {
+            facts[2].terminal_form = Some(form);
+        }
     }
+    Some(facts)
 }
 
 /// The single pipeline entry (ADR-031 D6): `facts_for` → `derive_plan` →
@@ -750,10 +802,12 @@ pub(crate) fn derive_plan(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::cast_possible_truncation)]
+    #![expect(clippy::cast_possible_truncation, clippy::panic)]
 
     use super::*;
-    use crate::composers::{EncodeOptions, V2HopInfo, V3HopInfo, V4HopInfo};
+    use crate::composers::{
+        ComposerInputs, EncodeOptions, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
+    };
     use alloy::primitives::{address, Address};
 
     const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
@@ -872,5 +926,36 @@ mod tests {
              the residual tag partition routes on):\n  {}",
             netzero_missing.join("\n  ")
         );
+    }
+    /// T5 (PZBGP7): the terminal-form axis — one is-terminal-only field on
+    /// `HopFacts`, driving the merge of the v3v4v2/v3v4v4 pair behind a
+    /// single three_hop arm body. Only the terminal hop carries Some; non-
+    /// terminal positions carry None.
+    #[test]
+    fn terminal_form_routes_the_v3v4_pair() {
+        let v2 = combo_hops(&[Prot::V3, Prot::V4, Prot::V2]);
+        let v4 = combo_hops(&[Prot::V3, Prot::V4, Prot::V4]);
+        let inputs = ComposerInputs {
+            executor_address: EXEC,
+            pool_manager_address: PM,
+            weth_address: WETH,
+            optimal_input: OPTIMAL,
+            hop_outputs: &OUTS,
+            consumed_inputs: &CONSUMED,
+            opts: EncodeOptions::default(),
+        };
+        for (hops, expect) in [(v2, "DirectHandoff"), (v4, "UnlockInternal")] {
+            let Some(facts) = facts_for(&PathInfo::new(hops), &inputs) else {
+                panic!("facts exist");
+            };
+            assert_eq!(facts.len(), 3);
+            assert!(facts[0].terminal_form.is_none());
+            assert!(facts[1].terminal_form.is_none());
+            let Some(tf) = facts[2].terminal_form else {
+                panic!("terminal_form set on terminal");
+            };
+            let kind = format!("{tf:?}");
+            assert!(kind.contains(expect), "got {kind}, want {expect}");
+        }
     }
 }
