@@ -1,10 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.fork`` submodule.
-
-Created at runtime by ``add_fork_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/fork/mod.rs``). The class is a thin PyO3 wrapper
-over the pure-Rust ``degenbot-fork`` core crate.
-"""
-
 from typing import Literal
 
 class AnvilFork:

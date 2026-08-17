@@ -1,11 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.provider`` submodule.
-
-Created at runtime by ``add_provider_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/rpc/provider.rs``). Holds the sync/async RPC provider
-classes + the log filter + the subscription handle — thin PyO3 wrappers over
-the pure-Rust ``degenbot-rpc`` core crate.
-"""
-
 from collections.abc import Coroutine
 from typing import Any
 

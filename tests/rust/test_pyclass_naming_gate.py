@@ -28,38 +28,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-# ADR-032 grandfather list (runtime census 2026-08-17). VD5MD5 retires
-# these to clean names step by step; each retirement removes the name here
-# in the same commit.
-GRANDFATHERED: frozenset[str] = frozenset({
-    "PyAavePriceOracle",
-    "PyBalanceVectorView",
-    "PyBot",
-    "PyBotIo",
-    "PyChainlinkPriceFeed",
-    "PyCollateralPositionData",
-    "PyConcentratedLiquidityView",
-    "PyDatabasePositionQuery",
-    "PyDatabaseSnapshot",
-    "PyDebtPositionData",
-    "PyDexIdentity",
-    "PyDispatchCandidate",
-    "PyDispatchOutcome",
-    "PyDispatcher",
-    "PyDivergentPool",
-    "PyErc20Token",
-    "PyLiquidityPool",
-    "PyPayloadComposer",
-    "PyPool",
-    "PyReservePairView",
-    "PySimulateContext",
-    "PySolveResult",
-    "PySubscription",
-    "PySubmitCandidate",
-    "PyTxParams",
-    "PyTxSigner",
-    "PyUserPositionSummary",
-})
+# ADR-032 grandfather list — EMPTY as of VD5MD5 (2026-08-17): all 27 census
+# names were renamed to clean Python-facing names (the collision set took
+# Rust-prefixed or role-specific clean names — see the ADR-032 post-adoption
+# note). Any new Py-prefixed registration now fails test 1 outright.
+GRANDFATHERED: frozenset[str] = frozenset()
 
 
 def _registered_classes() -> Mapping[str, type]:

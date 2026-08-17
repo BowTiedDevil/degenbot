@@ -1,10 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.contract`` submodule.
-
-Created at runtime by ``add_contract_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/rpc/contract.rs``). Holds the sync/async Contract
-class + the ABI encode/decode helper functions.
-"""
-
 from collections.abc import Coroutine
 from typing import Any
 

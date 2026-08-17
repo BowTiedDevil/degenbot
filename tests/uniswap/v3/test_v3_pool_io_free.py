@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import eth_abi.abi
 
-from degenbot.bot import Bot, PyBot
+from degenbot.bot import Bot, RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
@@ -20,7 +20,7 @@ from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -250,7 +250,7 @@ class TestBotBuildV3Pool:
             ),
         )
 
-        # Pre-register tokens (ADR-006: tokens must be in the same PyBot as the
+        # Pre-register tokens (ADR-006: tokens must be in the same RustBot as the
         # pool — _from_py_pool recovers them via py_pool.get_token0/get_token1).
         weth = _make_weth()
         usdc = _make_usdc()

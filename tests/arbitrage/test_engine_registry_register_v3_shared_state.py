@@ -20,7 +20,7 @@ import pytest
 
 from degenbot.arbitrage.engine_registry import EngineRegistry, ArbitrageEngine
 from degenbot.exceptions import VerificationRpcError
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 
@@ -29,10 +29,10 @@ from tests.helpers.v3_pool_factory import make_v3_pool
 class _FakeBot:
     """Minimal Bot double exposing ``_py_bot`` for the production path."""
 
-    _py_bot: PyBot
+    _py_bot: RustBot
 
 
-def _build_shared_v3_pool(py_bot: PyBot) -> object:
+def _build_shared_v3_pool(py_bot: RustBot) -> object:
     weth = make_erc20(
         py_bot,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -71,7 +71,7 @@ def test_register_v3_pool_resolves_shared_state_key_without_re_registering() -> 
     duplicate address (``pool already registered: …``). The registry must read
     the shared ``pool._py_pool.pool_id`` like the V2 path.
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
     pool = _build_shared_v3_pool(py_bot)
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot)
@@ -96,7 +96,7 @@ def test_register_tracked_v3_pool_without_provider_fails_fast() -> None:
     Rust unit test `bot_core::registration_lifecycle::tests::
     tracked_v3_lifecycle_drains_buffered_backfill`.
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
     engine = ArbitrageEngine(py_bot=py_bot)
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot, engine=engine)

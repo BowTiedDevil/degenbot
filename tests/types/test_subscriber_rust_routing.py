@@ -3,7 +3,7 @@
 The Rust pub/sub mechanism (`degenbot_bot::bot_core::log_dispatcher` — the
 `PoolStateSubscriber` trait + `LogDispatcher` `Weak`-fan-out) is the single
 notification path for Rust-owned ``BotState`` mutations. Worker_3's ZBD4MS seam
-(``degenbot._ffi.register_subscriber(bot, pool_id, callback) -> PySubscription``
+(``degenbot._ffi.register_subscriber(bot, pool_id, callback) -> PoolStateSubscription``
 + the ``PySubscriberAdapter``) is the bridge a Python callable uses to register
 against that SAME ``LogDispatcher`` path the engine ``EngineSubscriber`` uses.
 
@@ -17,7 +17,7 @@ subscribe methods:
 - ``subscribe_rust(bot, pool_id)`` — routes through the Rust
   ``register_subscriber`` seam (the consumer/test context that built the pool
   through the bot ALREADY has both arguments — ``pool._py_pool.pool_id`` — so
-  no pool-side bot stash is needed; the ``PyBot`` is Rust-owned state and is
+  no pool-side bot stash is needed; the ``RustBot`` is Rust-owned state and is
   NOT mirrored onto the pool object, per AGENTS.md's "do not introduce a
   Python mirror of Rust-owned state").
 - ``subscribe(publisher)`` — the legacy Python ``PublisherMixin`` path for
@@ -46,7 +46,7 @@ from __future__ import annotations
 import time
 from fractions import Fraction
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 
 
 _SUBSCRIBER_FLUSH_S = 0.15  # max seconds to wait for subscriber drainer flush
@@ -64,15 +64,15 @@ def _sync_data(reserve0: int, reserve1: int) -> str:
 
 
 def _make_v2_pool_with_subscriber(
-    py_bot: PyBot,
+    py_bot: RustBot,
 ) -> tuple[int, FakeSubscriber, str, object]:
-    """Build a V2 pool (token0/token1 registered in the same PyBot per ADR-006),
+    """Build a V2 pool (token0/token1 registered in the same RustBot per ADR-006),
     subscribe a ``FakeSubscriber`` to it via the Rust seam, return
     ``(pool_id, subscriber, address, pool)``.
 
     The caller (this helper) has BOTH the ``py_bot`` and the pool, so it passes
     them explicitly to ``FakeSubscriber.subscribe_rust(bot, pool_id)`` — no
-    pool-side ``_py_bot`` stash is needed (the ``PyBot`` is Rust-owned state;
+    pool-side ``_py_bot`` stash is needed (the ``RustBot`` is Rust-owned state;
     mirroring it onto the pool object would be the AGENTS.md anti-pattern).
     """
     token0 = make_erc20(
@@ -105,7 +105,7 @@ def _make_v2_pool_with_subscriber(
         py_bot=py_bot,
     )
     # The caller has BOTH the bot and the pool_id — pass them explicitly to the
-    # Rust seam. No pool-side _py_bot stash (the PyBot is Rust-owned state).
+    # Rust seam. No pool-side _py_bot stash (the RustBot is Rust-owned state).
     sub = FakeSubscriber()
     sub.subscribe_rust(py_bot, pool._py_pool.pool_id)
     return pool._py_pool.pool_id, sub, address, pool
@@ -120,7 +120,7 @@ class TestFakeSubscriberRustSeamRouting:
         to a Rust-owned V2 pool receives ``pool_id`` when ``dispatch_log``
         applies a V2 ``Sync`` event to that pool — routed through the Rust
         seam, NOT the legacy Python ``PublisherMixin`` path."""
-        py_bot = PyBot(1)
+        py_bot = RustBot(1)
         pool_id, sub, address, _pool = _make_v2_pool_with_subscriber(py_bot)
 
         assert sub.inbox == [], "no notifications before a dispatched log"
@@ -156,7 +156,7 @@ class TestFakeSubscriberRustSeamRouting:
         receive ``pool_id`` in REGISTRATION order (the Rust ``LogDispatcher``
         ``Vec<Weak>`` fan-out is registration-ordered + deterministic — STRONGER
         than the Python ``PublisherMixin`` ``WeakSet`` hash-order)."""
-        py_bot = PyBot(1)
+        py_bot = RustBot(1)
         token0 = make_erc20(
             py_bot=py_bot,
             address="0x" + "1" * 40,
@@ -205,7 +205,9 @@ class TestFakeSubscriberRustSeamRouting:
         # Wait for subscriber drainer to flush.
         deadline = time.monotonic() + _SUBSCRIBER_FLUSH_S
         while time.monotonic() < deadline:
-            if all(len(n) == 1 for n in [sub1.notifications, sub2.notifications, sub3.notifications]):
+            if all(
+                len(n) == 1 for n in [sub1.notifications, sub2.notifications, sub3.notifications]
+            ):
                 break
             time.sleep(0.01)
 
@@ -224,10 +226,10 @@ class TestFakeSubscriberRustSeamRouting:
 
     def test_unsubscribe_releases_the_rust_subscriber(self):
         """``FakeSubscriber.unsubscribe_rust`` releases the stored
-        ``PySubscription`` handle (anchor) → the dispatcher's ``Weak`` goes
+        ``PoolStateSubscription`` handle (anchor) → the dispatcher's ``Weak`` goes
         dead → subsequent dispatches silently skip this subscriber (mirrors
         ``PublisherMixin.unsubscribe`` + the engine-adapter Weak lifecycle)."""
-        py_bot = PyBot(1)
+        py_bot = RustBot(1)
         pool_id, sub, address, _pool = _make_v2_pool_with_subscriber(py_bot)
 
         py_bot.dispatch_log(
@@ -243,7 +245,7 @@ class TestFakeSubscriberRustSeamRouting:
             time.sleep(0.01)
         assert sub.notifications == [(None, pool_id)]
 
-        sub.unsubscribe_rust()  # release the PySubscription handles.
+        sub.unsubscribe_rust()  # release the PoolStateSubscription handles.
 
         py_bot.dispatch_log(
             address=address,
@@ -280,10 +282,10 @@ class TestFakeSubscriberRustSeamRouting:
         """§4.2 isolation: a ``FakeSubscriber`` subscribed to pool A is NOT
         notified when a ``Sync`` for a different pool B mutates (the Rust seam
         registers per-``pool_id``; a B dispatch fires B's subscribers only)."""
-        py_bot = PyBot(1)
+        py_bot = RustBot(1)
         _pool_id_a, sub_a, _address_a, _pool_a = _make_v2_pool_with_subscriber(py_bot)
-        # Register a SECOND V2 pool (different address) in the same PyBot.
-        # ``make_v2_pool`` constructs fresh PyLiquidityPool handles per the
+        # Register a SECOND V2 pool (different address) in the same RustBot.
+        # ``make_v2_pool`` constructs fresh LiquidityPool handles per the
         # token-registration convention — pool B uses different token bytes.
         token0_b = make_erc20(
             py_bot=py_bot,

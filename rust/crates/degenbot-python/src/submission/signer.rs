@@ -22,7 +22,7 @@ use pyo3::types::PyBytes;
 /// id. ``sign_eip1559`` builds + signs a type-2 ``TxEnvelope`` and returns the
 /// raw signed bytes ready for ``eth_sendRawTransaction``.
 #[pyclass(
-    name = "PyTxSigner",
+    name = "TxSigner",
     skip_from_py_object,
     module = "degenbot._ffi.submission"
 )]

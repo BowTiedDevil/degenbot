@@ -7,7 +7,7 @@ record (``path_id`` + ``bucket`` + the failing call index + the raw revert
 bytes) to the path's hop token summary so the operator can identify WHICH
 path reverted against WHICH pools.
 
-These tests stub the ``PyDispatchOutcome`` shape (the PyO3 pyclass is too
+These tests stub the ``DispatchOutcome`` shape (the PyO3 pyclass is too
 heavy to instantiate without a full simulate round-trip; the renderer only
 reads the two attributes — ``failures: list[dict]`` and ``path_infos:
 dict[int, dict]`` — so a ``SimpleNamespace`` is sufficient). WEFVGE:
@@ -58,7 +58,7 @@ def _hops() -> list[dict[str, Any]]:
 
 
 def _outcome(failures: list[dict[str, Any]]) -> Any:
-    """A stub ``PyDispatchOutcome`` exposing only the renderer-read attrs."""
+    """A stub ``DispatchOutcome`` exposing only the renderer-read attrs."""
     path_info = {"path_type": "V2-V2", "hops": _hops()}
     return SimpleNamespace(
         failures=failures,

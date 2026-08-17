@@ -1,8 +1,8 @@
 """Erc20Token direct construction is forbidden (ADR-005 Polars-style seam).
 
-An ``Erc20Token`` is a Python companion over a Rust-owned ``PyErc20Token``
+An ``Erc20Token`` is a Python companion over a Rust-owned ``RustErc20Token``
 handle. The handle can only be produced by registering token metadata in a
-``PyBot`` (production: ``Bot.get_token()``; tests: ``make_erc20``). Direct
+``RustBot`` (production: ``Bot.get_token()``; tests: ``make_erc20``). Direct
 constructor calls are rejected so the only paths to a token instance are the
 ones that wire the handle — mirroring Polars' ``_from_pydf`` pattern.
 """
@@ -27,7 +27,7 @@ class TestDirectConstructionForbidden:
         assert "make_erc20" in message
 
     def test_with_py_token_handle_raises_type_error(self) -> None:
-        """Passing a fake ``PyErc20Token`` handle (the old call shape) is rejected."""
+        """Passing a fake ``RustErc20Token`` handle (the old call shape) is rejected."""
         fake_handle = MagicMock()
         with pytest.raises(TypeError) as exc_info:
             Erc20Token(fake_handle, oracle_address="0x" + "1" * 40, state_cache_depth=4)

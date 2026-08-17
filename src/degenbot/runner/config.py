@@ -72,7 +72,7 @@ _DEFAULT_EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 
 # Dry-run operator placeholder: a VALID secp256k1 private key + its derived
 # address, used when `mainnet.env` omits `OPERATOR_*` in non-live mode.
-# The (now-eager) `PyTxSigner(key=operator_private_key, chain_id=1)` site
+# The (now-eager) `TxSigner(key=operator_private_key, chain_id=1)` site
 # rejects the former all-zero placeholder (zero is not a valid scalar) and
 # raised `ValueError: signature error`. The Anvil account-0 key is a
 # well-known valid throwaway that never signs in dry-run: the Rust submit
@@ -256,7 +256,7 @@ class BackrunConfig:
         if not live:
             # dry-run: allow missing operator → a valid throwaway key + its
             # derived address (must be a real secp256k1 scalar so the eagerly
-            # constructed `PyTxSigner` doesn't reject it — see the constants'
+            # constructed `TxSigner` doesn't reject it — see the constants'
             # docstring). The key never signs: the leaf's `dry_run` guard
             # skips every candidate before reaching `sign_eip1559`.
             if not operator_address:

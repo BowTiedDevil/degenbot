@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.bot import PyBotIo
+    from degenbot.bot import RustBotIo
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -47,7 +47,7 @@ FetchedTickData = dict[int, tuple[int, int, int]]
 
 def make_tick_data_fetcher(
     pool_lookup: Callable[[int], UniswapV3Pool | UniswapV4Pool | None],
-    io: PyBotIo,
+    io: RustBotIo,
     types: TickDataTypes,
     *,
     state_view_address: str | None = None,
@@ -136,7 +136,7 @@ def make_tick_data_fetcher(
 
 def _fetch_v3(
     *,
-    io: PyBotIo,
+    io: RustBotIo,
     pool_ref: _PoolRef,
     word_position: int,
     block_number: int,
@@ -151,8 +151,8 @@ def _fetch_v3(
         if the bitmap RPC failed (the caller treats this as a fetch failure).
 
     """
-    # ADR-005 slice 14j: when io is a PyBotIo, delegate tick RPC calls to Rust.
-    # ADR-005 slice 14j: delegate tick RPC calls to Rust (PyBotIo is the only
+    # ADR-005 slice 14j: when io is a RustBotIo, delegate tick RPC calls to Rust.
+    # ADR-005 slice 14j: delegate tick RPC calls to Rust (RustBotIo is the only
     # executor; the Python parity-gate fallback is retired).
     try:
         bitmap_value = io.fetch_tick_bitmap(pool_ref.address, word_position, block=block_number)
@@ -191,7 +191,7 @@ def _fetch_v3(
 
 def _fetch_v4(
     *,
-    io: PyBotIo,
+    io: RustBotIo,
     state_view_address: str,
     pool_id: bytes,
     pool_ref: _PoolRef,
@@ -206,7 +206,7 @@ def _fetch_v4(
         ``True`` if the bitmap RPC succeeded, ``False`` on failure.
 
     """
-    # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (PyBotIo is the only
+    # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (RustBotIo is the only
     # executor; the Python parity-gate fallback is retired).
     try:
         bitmap_value = io.fetch_v4_tick_bitmap(

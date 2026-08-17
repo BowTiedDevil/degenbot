@@ -1,10 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.concentrated_liquidity_math`` submodule.
-
-Created at runtime by ``add_concentrated_liquidity_math_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/concentrated_liquidity_math/mod.rs``). The functions are thin PyO3
-wrappers over the pure-Rust ``degenbot-concentrated-liquidity-math`` core crate.
-"""
-
 from typing import Any, overload
 
 def most_significant_bit(x: int) -> int:

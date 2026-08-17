@@ -1,10 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.solidly_math`` submodule.
-
-Created at runtime by ``add_solidly_math_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/solidly_math/lib.rs``). The functions are thin PyO3
-wrappers over the pure-Rust ``degenbot-solidly-math`` core crate.
-"""
-
 def calc_d(x0: int, y: int) -> int: ...
 def calc_k(balance_0: int, balance_1: int, decimals_0: int, decimals_1: int) -> int: ...
 def calc_f(x0: int, y: int) -> int: ...

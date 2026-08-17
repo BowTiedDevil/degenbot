@@ -45,7 +45,7 @@ use degenbot_db::aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, Aa
 /// Rust-backed mirror of the Python `UserPositionSummary` dataclass. The
 /// Step C cutover swaps the Python dataclass for this `#[pyclass]` — the CLI
 /// + the parity test read the same attribute names.
-#[pyclass(frozen, module = "degenbot._ffi.db")]
+#[pyclass(name = "UserPositionSummary", frozen, module = "degenbot._ffi.db")]
 pub struct PyUserPositionSummary {
     inner: UserPositionSummary,
 }
@@ -148,7 +148,7 @@ impl PyUserPositionSummary {
 }
 
 /// Collateral position with calculated values (Rust-backed).
-#[pyclass(frozen, module = "degenbot._ffi.db")]
+#[pyclass(name = "CollateralPositionData", frozen, module = "degenbot._ffi.db")]
 pub struct PyCollateralPositionData {
     inner: CollateralPositionData,
 }
@@ -212,7 +212,7 @@ impl PyCollateralPositionData {
 }
 
 /// Debt position with calculated values (Rust-backed).
-#[pyclass(frozen, module = "degenbot._ffi.db")]
+#[pyclass(name = "DebtPositionData", frozen, module = "degenbot._ffi.db")]
 pub struct PyDebtPositionData {
     inner: DebtPositionData,
 }

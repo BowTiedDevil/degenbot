@@ -1,6 +1,6 @@
-"""Parity + functional tests for the `PyBotIo` pool-builder DB seam (QVMWQC).
+"""Parity + functional tests for the `RustBotIo` pool-builder DB seam (QVMWQC).
 
-`PyBotIo.fetch_pool_row` / `fetch_exchange`
+`RustBotIo.fetch_pool_row` / `fetch_exchange`
 route the sync pool builders' construction-time DB reads through
 `degenbot-db`, replacing the `SQLAlchemy` ORM `session.scalar(select(...))`
 + lazy-loaded relationship traversal. These tests seed a temp DB + assert
@@ -19,7 +19,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import PyBotIo
+from degenbot.bot import RustBotIo
 from degenbot.database.models import Base
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.erc20 import Erc20TokenTable
@@ -110,8 +110,8 @@ def _seed_v3_pool(database_path: str) -> int:
     return pool_id
 
 
-def _io(database_path: str) -> PyBotIo:
-    return PyBotIo(provider=_offline_provider(), database_path=database_path)
+def _io(database_path: str) -> RustBotIo:
+    return RustBotIo(provider=_offline_provider(), database_path=database_path)
 
 
 def test_fetch_pool_row_parity(tmp_path):
@@ -162,6 +162,6 @@ def test_fetch_exchange(tmp_path):
 
 
 def test_no_database_path_skips_pool_reads():
-    io = PyBotIo(provider=_offline_provider(), database_path=None)
+    io = RustBotIo(provider=_offline_provider(), database_path=None)
     assert io.fetch_pool_row(CHAIN, POOL_ADDR) is None
     assert io.fetch_exchange(1) is None

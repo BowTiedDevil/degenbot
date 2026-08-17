@@ -7,7 +7,7 @@ Each builder owns:
 
 Builders do NOT own:
 - Pool type resolution (Bot's job)
-- I/O routing (received via PyBotIo — the single Rust-backed executor)
+- I/O routing (received via RustBotIo — the single Rust-backed executor)
 - Database lifecycle (received via DatabaseSessionManager)
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from degenbot.bot import PyBotIo
+    from degenbot.bot import RustBotIo
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
 
@@ -30,7 +30,7 @@ class PoolBuilder(Protocol):
     ``request: BuildPoolRequest`` — builders read the fields they recognize
     and ignore the rest.
 
-    The ``io`` argument is a :class:`~degenbot._ffi.PyBotIo` — the single
+    The ``io`` argument is a :class:`~degenbot._ffi.RustBotIo` — the single
     construction-I/O executor (Rust-backed, 65 methods). There is no
     sync/async fork; ``AsyncBot`` and the async builders are retired.
     """
@@ -40,7 +40,7 @@ class PoolBuilder(Protocol):
         address: str,
         *,
         chain_id: int | None = None,
-        io: PyBotIo,
+        io: RustBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Build a pool from on-chain data."""
@@ -50,7 +50,7 @@ class PoolBuilder(Protocol):
     def update(
         pool: AbstractLiquidityPool,
         *,
-        io: PyBotIo | None = None,
+        io: RustBotIo | None = None,
         block_number: int | None = None,
     ) -> bool:
         """Update the pool state from on-chain data."""

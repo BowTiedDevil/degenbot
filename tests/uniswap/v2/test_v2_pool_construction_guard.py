@@ -1,8 +1,8 @@
 """UniswapV2Pool direct construction is forbidden (ADR-005 Polars-style seam).
 
 A ``UniswapV2Pool`` is a Python companion over a Rust-owned
-``PyLiquidityPool`` handle. The handle can only be produced by registering a
-pool in a ``PyBot`` (production: ``Bot.build_pool()``; tests: ``make_v2_pool``).
+``LiquidityPool`` handle. The handle can only be produced by registering a
+pool in a ``RustBot`` (production: ``Bot.build_pool()``; tests: ``make_v2_pool``).
 Direct constructor calls are rejected so that the only paths to a pool instance
 are the ones that wire the handle — mirroring Polars' ``_from_pydf`` pattern.
 """
@@ -28,7 +28,7 @@ class TestDirectConstructionForbidden:
         assert "make_v2_pool" in message
 
     def test_with_py_pool_handle_raises_type_error(self) -> None:
-        """Passing a fake ``PyLiquidityPool`` handle (the old call shape) is rejected."""
+        """Passing a fake ``LiquidityPool`` handle (the old call shape) is rejected."""
         fake_handle = MagicMock()
         with pytest.raises(TypeError) as exc_info:
             UniswapV2Pool(

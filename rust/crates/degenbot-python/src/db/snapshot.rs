@@ -32,7 +32,7 @@ use degenbot_db::{DegenbotDb, ExchangeFamily};
 /// degenbot `SQLite` DB file. Opens its own connection (WAL, `query_only=on`)
 /// from `database_path`; the Python `DatabaseSnapshot` shell constructs one
 /// per chain + delegates every read to it.
-#[pyclass(name = "PyDatabaseSnapshot", module = "degenbot._ffi.db")]
+#[pyclass(name = "RustDatabaseSnapshot", module = "degenbot._ffi.db")]
 pub struct PyDatabaseSnapshot {
     db: DegenbotDb,
     chain_id: i64,

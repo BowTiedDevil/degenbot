@@ -59,7 +59,7 @@ from .db import (
     ExchangeRow,
     LiquidityPoolRow,
 )
-from .dex_identity import PyDexIdentity as PyDexIdentity
+from .dex_identity import DexIdentity
 from .provider import (
     AlloyProvider as AlloyProvider,
 )
@@ -73,7 +73,7 @@ from .provider import (
     LogFilter as LogFilter,
 )
 from .submission import (
-    PyTxParams as PyTxParams,
+    TxParams as TxParams,
 )
 
 # ── Curve StableSwap math (feature = "curve-math"). ──
@@ -215,11 +215,11 @@ from . import abi as abi  # ruff:ignore[module-import-not-at-top-of-file]
 
 # The AsyncContract class lives on the degenbot._ffi.contract submodule
 # (stub: contract.pyi) — do not define it at this top level.
-class PyErc20Token:
+class RustErc20Token:
     """Thin PyO3 handle to a token registered in the Rust `Bot`.
 
     All metadata lives in Rust; reads cross PyO3 on every access. Not directly
-    constructible — obtain one via `PyBot.register_token` / `PyBot.get_token`.
+    constructible — obtain one via `RustBot.register_token` / `RustBot.get_token`.
     """
 
     @property
@@ -233,12 +233,12 @@ class PyErc20Token:
     @property
     def chain_id(self) -> int: ...
 
-class PyLiquidityPool:
+class LiquidityPool:
     """Thin PyO3 handle to a pool registered in the Rust `Bot`.
 
     Owns no state — calculation/encoding calls cross PyO3 on every access,
     reading the shared Rust-owned `Bot` under a read guard. Not directly
-    constructible — obtain one via `PyBot.get_pool`.
+    constructible — obtain one via `RustBot.get_pool`.
     """
 
     @property
@@ -268,9 +268,9 @@ class PyLiquidityPool:
     @property
     def fee_denominator(self) -> int | None: ...
     @property
-    def dex(self) -> PyDexIdentity | None: ...
-    def get_token0(self) -> PyErc20Token | None: ...
-    def get_token1(self) -> PyErc20Token | None: ...
+    def dex(self) -> DexIdentity | None: ...
+    def get_token0(self) -> RustErc20Token | None: ...
+    def get_token1(self) -> RustErc20Token | None: ...
     @property
     def reserve0(self) -> int: ...
     @property
@@ -315,7 +315,7 @@ class PyLiquidityPool:
     def balancer_swap_fee(self) -> int: ...
     @property
     def balancer_pow_version(self) -> int: ...
-    def get_balancer_tokens(self) -> list[PyErc20Token] | None: ...
+    def get_balancer_tokens(self) -> list[RustErc20Token] | None: ...
     @property
     def dex_name(self) -> str | None: ...
     @property
@@ -452,13 +452,13 @@ class PyLiquidityPool:
     @property
     def curve_metapool_underlying_style(self) -> int: ...
     def curve_base_pool_address(self) -> str | None: ...
-    def get_curve_tokens(self) -> list[PyErc20Token] | None: ...
-    def get_curve_tokens_underlying(self) -> list[PyErc20Token] | None: ...
-    def get_curve_lp_token(self) -> PyErc20Token | None: ...
+    def get_curve_tokens(self) -> list[RustErc20Token] | None: ...
+    def get_curve_tokens_underlying(self) -> list[RustErc20Token] | None: ...
+    def get_curve_lp_token(self) -> RustErc20Token | None: ...
     def curve_token_addresses(self) -> list[str] | None: ...
     def curve_token_addresses_underlying(self) -> list[str] | None: ...
     def curve_lp_token_address(self) -> str | None: ...
-    def curve_base_pool(self) -> PyLiquidityPool | None: ...
+    def curve_base_pool(self) -> LiquidityPool | None: ...
     def curve_get_dy(
         self,
         i: int,
@@ -522,7 +522,7 @@ class PyLiquidityPool:
     def balancer_stable_pool_id_hex(self) -> str: ...
     @property
     def balancer_stable_token_addresses(self) -> list[str]: ...
-    def get_balancer_stable_tokens(self) -> list[PyErc20Token] | None: ...
+    def get_balancer_stable_tokens(self) -> list[RustErc20Token] | None: ...
     @property
     def balancer_stable_scaling_factors(self) -> list[int]: ...
     @property
@@ -545,7 +545,7 @@ class PyLiquidityPool:
 class Erc20TokenRow:
     """A typed `erc20_tokens` DB row (QVMWQC).
 
-    Returned by `PyBotIo.fetch_erc20_token`; mirrors the SQLAlchemy
+    Returned by `RustBotIo.fetch_erc20_token`; mirrors the SQLAlchemy
     `Erc20TokenTable` ORM attributes the builders read.
     """
 
@@ -562,8 +562,8 @@ class Erc20TokenRow:
     @property
     def decimals(self) -> int | None: ...
 
-class PyBotIo:
-    """PyO3 wrapper (exposed as `PyBotIo` in Python) holding an alloy provider + optional DB.
+class RustBotIo:
+    """PyO3 wrapper (exposed as `RustBotIo` in Python) holding an alloy provider + optional DB.
 
     The Rust I/O facade for pool builders (ADR-005 slice 14a). Builders receive
     this as the single construction-I/O executor (Rust-backed, 65 methods: the
@@ -577,7 +577,7 @@ class PyBotIo:
     def __init__(
         self, provider: object, db: object | None = None, database_path: str | None = None
     ) -> None: ...
-    def attach_construction_io(self, py_bot: PyBot) -> None:
+    def attach_construction_io(self, py_bot: RustBot) -> None:
         """Source the ``ConstructionIo`` handle from ``py_bot`` (slice A).
 
         After this call the 12 DB + 7 generic RPC methods delegate through
@@ -647,19 +647,19 @@ class PyBotIo:
     def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
     def get_balance(self, address: str, block: int | None = None) -> int: ...
 
-class PyBot:
-    """PyO3 wrapper (exposed as `PyBot` in Python) holding `Arc<RwLock<Bot>>`.
+class RustBot:
+    """PyO3 wrapper (exposed as `RustBot` in Python) holding `Arc<RwLock<Bot>>`.
 
     The Polars-style middle layer between the pure-Rust `Bot` and the Python
-    `Bot` session. The Python ``Bot.__init__`` constructs one; `PyLiquidityPool`/`PyErc20Token`
+    `Bot` session. The Python ``Bot.__init__`` constructs one; `LiquidityPool`/`RustErc20Token`
     handles share the same `Arc`. Queries/calcs take a read guard on the
     shared `Bot`; mutations take a write guard.
     """
 
     def __init__(self, chain_id: int = 0) -> None:
-        """Construct a ``PyBot`` for ``chain_id`` (ADR-006 D4).
+        """Construct a ``RustBot`` for ``chain_id`` (ADR-006 D4).
 
-        The default ``chain_id = 0`` keeps the bare ``PyBot()`` test fixtures
+        The default ``chain_id = 0`` keeps the bare ``RustBot()`` test fixtures
         (which only exercise the Rust core) working without a chain invariant.
         """
     def load_snapshot_from_db(self, db_path: str, chain_id: int) -> None:
@@ -734,7 +734,7 @@ class PyBot:
         tick: int = 0,
         tick_spacing: int = 0,
         block: int = 0,
-        io: PyBotIo | None = None,
+        io: RustBotIo | None = None,
     ) -> tuple[dict[int, tuple[int, int, int]], str] | None:
         """Assemble a V3 pool's tick map with `Store → Db → Chain` precedence.
 
@@ -767,7 +767,7 @@ class PyBot:
         tick: int = 0,
         tick_spacing: int = 0,
         block: int = 0,
-        io: PyBotIo | None = None,
+        io: RustBotIo | None = None,
     ) -> tuple[dict[int, tuple[int, int, int]], str] | None:
         """Assemble a V4 pool's tick map — V4 twin of `assemble_v3_tick_map`.
 
@@ -874,7 +874,7 @@ class PyBot:
         data: str,
         block_number: int = 0,
     ) -> None: ...
-    def get_pool(self, pool_id: int) -> PyLiquidityPool | None: ...
+    def get_pool(self, pool_id: int) -> LiquidityPool | None: ...
     def unregister_pool(self, address: str, pool_id: bytes | None = None) -> bool: ...
     def register_v3_pool(
         self,
@@ -1036,14 +1036,14 @@ class PyBot:
         symbol: str,
         decimals: int,
         chain_id: int,
-    ) -> PyErc20Token: ...
-    def get_token(self, address: str) -> PyErc20Token | None: ...
+    ) -> RustErc20Token: ...
+    def get_token(self, address: str) -> RustErc20Token | None: ...
     def build_erc20_token(
         self,
         address: str,
         chain_id: int,
         block: int | None = None,
-    ) -> PyErc20Token: ...
+    ) -> RustErc20Token: ...
     def encode_swap(
         self,
         pool_id: int,
@@ -1058,14 +1058,14 @@ class PyBot:
 class ArbitrageEngine:
     """Rust-side engine for Uniswap arbitrage path solving.
 
-    ADR-006 D1+D4: ``py_bot`` adopts a shared ``PyBot``'s ``BotState`` so the
-    engine reads/writes the SAME core that ``PyBot``/``PyLiquidityPool``/
-    ``PyErc20Token`` share — dissolving the dual-``BotState`` split (the
+    ADR-006 D1+D4: ``py_bot`` adopts a shared ``RustBot``'s ``BotState`` so the
+    engine reads/writes the SAME core that ``RustBot``/``LiquidityPool``/
+    ``RustErc20Token`` share — dissolving the dual-``BotState`` split (the
     ``rust-owned-bot.md`` §17 stale-state root cause). Omitted → a standalone
     core + fresh ``Bot`` (legacy / no-pyo3 path).
     """
 
-    def __init__(self, py_bot: PyBot | None = None) -> None: ...
+    def __init__(self, py_bot: RustBot | None = None) -> None: ...
 
     # ── Snapshot ingestion surface RETIRED (epic XEANMB). ──
     # The `load_*_from_py` / `clear_*_snapshot` methods are gone: the
@@ -1308,21 +1308,21 @@ class HighFeePoolRejectedError(PoolRegistrationError):
 # ------------------------------------------------------------------
 # Structural pool handle + read-only state views (feature = "bot").
 # Thin PyO3 handles over the Rust BotState pool entries; all state lives
-# in Rust. PyPool is the structural (not identity-based) handle that
+# in Rust. Pool is the structural (not identity-based) handle that
 # mirrors the Rust degenbot_pools::Pool handle.
 # ------------------------------------------------------------------
-class PyPool:
+class Pool:
     """Structural pool handle mirroring the Rust degenbot_pools::Pool."""
 
     def structure(self) -> str: ...
     def identity(self) -> tuple[str, str | None]: ...
     @property
     def dex_name(self) -> str | None: ...
-    def reserve_pair(self) -> PyReservePairView: ...
-    def concentrated_liquidity(self) -> PyConcentratedLiquidityView: ...
-    def balance_vector(self) -> PyBalanceVectorView: ...
+    def reserve_pair(self) -> ReservePairView: ...
+    def concentrated_liquidity(self) -> ConcentratedLiquidityView: ...
+    def balance_vector(self) -> BalanceVectorView: ...
 
-class PyReservePairView:
+class ReservePairView:
     """Read-only V2 reserve-pair view (token0/1 + reserve0/1)."""
 
     @property
@@ -1334,7 +1334,7 @@ class PyReservePairView:
     @property
     def reserve1(self) -> int: ...
 
-class PyConcentratedLiquidityView:
+class ConcentratedLiquidityView:
     """Read-only V3/V4 concentrated-liquidity slot0 view."""
 
     @property
@@ -1352,7 +1352,7 @@ class PyConcentratedLiquidityView:
     @property
     def tick(self) -> int: ...
 
-class PyBalanceVectorView:
+class BalanceVectorView:
     """Read-only multi-token balance vector (Balancer family)."""
 
     @property
@@ -1404,22 +1404,22 @@ def solve_balancer_weighted_basket(
 
 __all__ = [
     "ArbitrageEngine",
+    "BalanceVectorView",
     "BlockStream",
+    "ConcentratedLiquidityView",
     "DynamicFeePoolRejectedError",
     "Erc20TokenRow",
     "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
+    "LiquidityPool",
     "PathIterator",
+    "Pool",
     "PoolAlreadyRegisteredError",
     "PoolRegistrationError",
-    "PyBalanceVectorView",
-    "PyBot",
-    "PyBotIo",
-    "PyConcentratedLiquidityView",
-    "PyErc20Token",
-    "PyLiquidityPool",
-    "PyPool",
-    "PyReservePairView",
+    "ReservePairView",
+    "RustBot",
+    "RustBotIo",
+    "RustErc20Token",
     "SpecViolationError",
     "VerificationMismatchError",
     "VerificationRpcError",

@@ -1,5 +1,5 @@
 """§4.6 / ADR-025 DelegateSpy test: prove the execution-strategy PyO3 lift
-(``PyPayloadComposer`` / ``PySolveResult`` / ``abi_encode_call``) is exposed on
+(``PayloadComposer`` / ``SolveResult`` / ``abi_encode_call``) is exposed on
 the Rust seam ``degenbot._ffi.execution``.
 
 The lift adapts an arbitrary Python callable (``SolveResult -> bytes``) into the
@@ -32,8 +32,8 @@ class TestRustSeamPresent:
 
     def test_symbols_present(self) -> None:
         execution = _ffi_execution()
-        assert hasattr(execution, "PyPayloadComposer")
-        assert hasattr(execution, "PySolveResult")
+        assert hasattr(execution, "PayloadComposer")
+        assert hasattr(execution, "SolveResult")
         assert hasattr(execution, "abi_encode_call")
 
     def test_abi_encode_call_is_rust_bound(self) -> None:
@@ -49,12 +49,12 @@ class TestPyPayloadComposerConstruction:
     """The lift wraps a Python callable; non-callables are rejected early."""
 
     def test_accepts_callable(self) -> None:
-        composer = _ffi_execution().PyPayloadComposer(lambda result: b"\x00")
+        composer = _ffi_execution().PayloadComposer(lambda result: b"\x00")
         assert composer is not None
 
     def test_rejects_non_callable(self) -> None:
         with pytest.raises(TypeError, match="callable"):
-            _ffi_execution().PyPayloadComposer(42)
+            _ffi_execution().PayloadComposer(42)
 
 
 class TestAbiEncodeCallHelper:

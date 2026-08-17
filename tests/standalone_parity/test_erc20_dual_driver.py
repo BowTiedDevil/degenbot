@@ -2,7 +2,7 @@
 
 The behavioral companion to the Rust `rust/crates/degenbot/tests/parity_erc20.rs`
 test. Proves the **same** canonical ERC-20 fixture driven through the **Python
-consumer** (`PyBot.build_erc20_token`, the PyO3 binding) resolves the **same**
+consumer** (`RustBot.build_erc20_token`, the PyO3 binding) resolves the **same**
 `(name, symbol, decimals)` as the Rust consumer (`build_erc20_metadata` against
 a `ConstructionIo`).
 
@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.crypto import function_selector
 
 # ---- the shared canonical fixture (loaded, not copied) ----
@@ -78,21 +78,19 @@ def _offline_provider() -> RustAlloyProvider:
         f"0x{addr_no_x}:0x{function_selector('decimals()').hex()}": _abi_uint(_DECIMALS),
     }
     return RustAlloyProvider.offline_from_json_string(
-        json.dumps(
-            {
-                "chain_id": 1,
-                "block_number": 100,
-                "timestamp": 1_700_000_000,
-                "calls": calls,
-                "code": {f"0x{addr_no_x}": "6080"},
-            }
-        )
+        json.dumps({
+            "chain_id": 1,
+            "block_number": 100,
+            "timestamp": 1_700_000_000,
+            "calls": calls,
+            "code": {f"0x{addr_no_x}": "6080"},
+        })
     )
 
 
 def test_erc20_metadata_dual_driver_matches_rust() -> None:
     """The Python consumer resolves the SAME metadata as the Rust consumer."""
-    bot = PyBot(chain_id=1)
+    bot = RustBot(chain_id=1)
     bot.attach_construction_io(_offline_provider(), None)
 
     token = bot.build_erc20_token(_TOKEN, 1)

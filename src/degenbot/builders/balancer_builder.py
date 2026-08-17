@@ -30,7 +30,7 @@ from degenbot.exceptions.pool import BrokenPool
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from degenbot.bot import PyBotIo
+    from degenbot.bot import RustBotIo
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
@@ -71,7 +71,7 @@ class BalancerBuilder(BalancerBuilderBase):
         address: str,
         *,
         chain_id: ChainId | None = None,
-        io: PyBotIo,
+        io: RustBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free Balancer pool.
@@ -152,7 +152,7 @@ class BalancerBuilder(BalancerBuilderBase):
 
     def _build_weighted(
         self,
-        io: PyBotIo,
+        io: RustBotIo,
         ctx: _BuildContext,
         request: BuildRequest,
     ) -> BalancerV2Pool:
@@ -174,7 +174,7 @@ class BalancerBuilder(BalancerBuilderBase):
         pow_version = detect_pow_version(bytecode)
 
         # ADR-005 slice 12b: register the weighted pool in the Rust core +
-        # build the companion over the resulting PyLiquidityPool handle
+        # build the companion over the resulting LiquidityPool handle
         # (production-path twin of make_balancer_weighted_pool).
         scaling_factors = [_compute_scaling_factor(t) for t in tokens]
         fee_scaled_int = int(ctx.fee * BalancerV2Pool.FEE_DENOMINATOR)
@@ -202,7 +202,7 @@ class BalancerBuilder(BalancerBuilderBase):
 
     def _build_stable(
         self,
-        io: PyBotIo,
+        io: RustBotIo,
         ctx: _BuildContext,
         request: BuildRequest,
         specialization: int,
@@ -258,7 +258,7 @@ class BalancerBuilder(BalancerBuilderBase):
         )
 
         # ADR-005 slice 12d: register the stable pool in the Rust core +
-        # build the companion over the resulting PyLiquidityPool handle
+        # build the companion over the resulting LiquidityPool handle
         # (production-path twin of make_balancer_stable_pool). Registers
         # immutable config (amp, scaling_factors, swap_fee, bpt_idx,
         # invariant_version) + registration balances + genesis journal delta;
@@ -294,7 +294,7 @@ class BalancerBuilder(BalancerBuilderBase):
     def update(
         pool: AbstractLiquidityPool,
         *,
-        io: PyBotIo | None = None,
+        io: RustBotIo | None = None,
         block_number: int | None = None,
     ) -> bool:
         """Fetch new balances from Vault and update the pool.

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import eth_abi.abi
 
-from degenbot.bot import Bot, PyBot
+from degenbot.bot import Bot, RustBot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.operations import create_new_sqlite_database
 from degenbot.erc20 import Erc20Token
@@ -13,7 +13,7 @@ from degenbot.provider import OfflineProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -25,7 +25,7 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
 
 
 class TestErc20TokenDataOnlyConstructor:
-    """Erc20Token companion reads metadata through the PyErc20Token handle."""
+    """Erc20Token companion reads metadata through the RustErc20Token handle."""
 
     def test_constructor_with_data(self) -> None:
         token = make_erc20(
@@ -152,7 +152,7 @@ class TestBotBuildErc20Token:
 
 
 class TestEtherPlaceholderDataOnly:
-    """EtherPlaceholder delegates metadata through the PyErc20Token handle."""
+    """EtherPlaceholder delegates metadata through the RustErc20Token handle."""
 
     def test_constructor_with_data(self) -> None:
         placeholder = make_ether_placeholder(
@@ -220,21 +220,16 @@ class TestBotTokenIOMethods:
         # non-alloy MagicMock fallback is retired with the seam; ADR-005).
         # Record one block (200) returning the balanceOf for the holder.
         balance_of_calldata = (
-            bytes.fromhex("70a08231")
-            + eth_abi.abi.encode(types=["address"], args=[holder])
+            bytes.fromhex("70a08231") + eth_abi.abi.encode(types=["address"], args=[holder])
         ).hex()
-        encoded_balance = eth_abi.abi.encode(
-            types=["uint256"], args=[expected_balance]
-        )
+        encoded_balance = eth_abi.abi.encode(types=["uint256"], args=[expected_balance])
         offline = OfflineProvider(
             chain_id=1,
             blocks={
                 "200": {
                     "timestamp": 1776986723,
                     "calls": {
-                        f"{token.address.lower()}:0x{balance_of_calldata}": (
-                            encoded_balance.hex()
-                        ),
+                        f"{token.address.lower()}:0x{balance_of_calldata}": (encoded_balance.hex()),
                     },
                     "code": {},
                 }

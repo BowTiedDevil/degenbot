@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import PyBot
+from degenbot._ffi import RustBot
 
 
 @pytest.fixture
 def v3_pool():
-    bot = PyBot(1)
+    bot = RustBot(1)
     tick_data = {
         -60: (1_000_000, 1_000_000, 0),
         60: (1_000_000, -1_000_000, 0),
@@ -59,7 +59,7 @@ def test_calculate_tokens_out(v3_pool) -> None:
 
 def test_dex_name_resolved_from_known_uniswap_deployment() -> None:
     # Uniswap V3 mainnet factory (chain 1) → "uniswap".
-    bot = PyBot(1)
+    bot = RustBot(1)
     tick_data = {
         -60: (1_000_000, 1_000_000, 0),
         60: (1_000_000, -1_000_000, 0),
@@ -84,7 +84,7 @@ def test_dex_name_resolved_from_known_uniswap_deployment() -> None:
 
 
 def test_dex_name_unknown_deployment_is_none() -> None:
-    bot = PyBot(1)
+    bot = RustBot(1)
     tick_data = {
         -60: (1_000_000, 1_000_000, 0),
         60: (1_000_000, -1_000_000, 0),

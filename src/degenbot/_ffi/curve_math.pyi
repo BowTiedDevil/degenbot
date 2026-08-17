@@ -1,16 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.curve_math`` submodule.
-
-The submodule is created at runtime by ``add_curve_math_module`` in the
-PyO3 wrapper crate (``degenbot-python/src/curve_math/lib.rs``). This stub
-gives the type checker the function signatures.
-
-The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-curve-math``
-core crate. Vyper reverts (overflow / non-convergence / index / unsafe-value)
-surface as ``ValueError``. The variant discriminants (``d_variant`` /
-``y_variant`` / ``yd_variant``) are 1-based ``auto()`` enum ``.value`` s
-matching the Rust ``try_from_u8``.
-"""
-
 def stableswap_get_d(
     xp: list[int],
     amp: int,

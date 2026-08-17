@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Self
 import eth_abi.abi
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.crypto import function_selector, keccak256
 from degenbot.curve.strategies import (
     DVariant,
@@ -129,7 +129,7 @@ class _DataProvider(FakeCurveDataProvider):
         return self._lp_token_total_supply
 
 
-_PYBOT = PyBot()
+_PYBOT = RustBot()
 
 
 def _load_cassette(path: pathlib.Path) -> dict[str, Any]:
@@ -371,12 +371,12 @@ def _build_metapool_io_free(
     RAI redemption price + base_cache_updated are seeded via the data provider
     so ``get_dy``/``get_dy_underlying`` run fully offline.
 
-    The base pool + metapool share a single local ``PyBot`` so the metapool
+    The base pool + metapool share a single local ``RustBot`` so the metapool
     handle's go-between (``curve_base_pool()``) resolves the base pool within
     the same ``BotState`` (ADR-005 BQM2OA). A fresh bot per call keeps each
     build isolated (the multiblock parity test rebuilds per block).
     """
-    bot = PyBot()
+    bot = RustBot()
     bc = imm["base_pool"]
     btoks = [
         make_erc20(

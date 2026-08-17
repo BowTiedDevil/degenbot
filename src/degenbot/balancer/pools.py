@@ -35,7 +35,7 @@ from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.types import PyLiquidityPool
+from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.pool_protocols import SimulationResult
@@ -74,7 +74,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
     FEE_DENOMINATOR = 1 * 10**18
 
     # Instance attributes set in `_from_py_pool` (the only construction seam).
-    _py_pool: PyLiquidityPool
+    _py_pool: LiquidityPool
     address: ChecksumAddress
     pool_id: bytes
     pool_specialization: int
@@ -90,12 +90,12 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         """Direct construction is forbidden.
 
         ``BalancerV2Pool`` is a Python companion over a Rust-owned
-        ``PyLiquidityPool`` handle. Use the registered entry points instead:
+        ``LiquidityPool`` handle. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_balancer_weighted_pool(...)``
 
-        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        Both register the pool in Rust, obtain the ``LiquidityPool``
         handle, and wrap it via :meth:`_from_py_pool`.
 
         Raises:
@@ -106,13 +106,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or "
             "make_balancer_weighted_pool(...) (tests) to register the pool "
-            "in Rust and obtain the PyLiquidityPool handle to wrap."
+            "in Rust and obtain the LiquidityPool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
-        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
+        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
         identity field (vault, pool_id, tokens, weights, scaling_factors,
@@ -131,7 +131,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         if py_pool.pool_family != "balancer-weighted":
             msg = (
-                "PyLiquidityPool handle is not a Balancer weighted pool "
+                "LiquidityPool handle is not a Balancer weighted pool "
                 f"(got pool_family {py_pool.pool_family!r})"
             )
             raise DegenbotValueError(message=msg)
@@ -182,7 +182,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
     def balances(self) -> tuple[int, ...]:
         """Balances.
 
-        Read from the Rust core via the ``PyLiquidityPool`` handle
+        Read from the Rust core via the ``LiquidityPool`` handle
         (ADR-005 slice 12b). Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
@@ -371,7 +371,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         """Apply an external state update with new balances.
 
         Delegates to the Rust core
-        (``PyLiquidityPool.apply_balancer_weighted_balance_update``) which
+        (``LiquidityPool.apply_balancer_weighted_balance_update``) which
         journals the prior balances (genesis-anchor V2-style discipline) and
         lands the new balances + ``update_block`` atomically
         (ADR-005 slice 12b). The ``_state_lock`` + double-check-after-acquire

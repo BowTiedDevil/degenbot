@@ -1,10 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.deployments`` submodule.
-
-Created at runtime by ``add_deployments`` in the PyO3 wrapper crate
-(``degenbot-python/src/bot/deployments.rs``). Holds the deployment-identity
-lookup functions over the embedded deployments.json.
-"""
-
 def deployer_for(chain_id: int, factory: str) -> str | None:
     """JSON-sourced effective CREATE2 deployer for a `(chain_id, factory)` pair.
 

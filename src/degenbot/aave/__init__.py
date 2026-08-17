@@ -1,7 +1,7 @@
 """Aave V3 lending market models, operations, and updater.
 
 Bridges two Rust crates:
-- ``degenbot-price`` — the Aave price oracle (``PyAavePriceOracle``)
+- ``degenbot-price`` — the Aave price oracle (``AavePriceOracle``)
 - ``degenbot-aave-updater`` — the Aave V3 updater loop + verification
   (``run_aave_update``, ``activate_aave_market``, etc.)
 
@@ -28,7 +28,7 @@ from degenbot._ffi.aave import (
     deactivate_aave_market,
     run_aave_update,
 )
-from degenbot._ffi.price import PyAavePriceOracle as AavePriceOracle
+from degenbot._ffi.price import AavePriceOracle
 
 __all__ = [
     "AavePriceOracle",

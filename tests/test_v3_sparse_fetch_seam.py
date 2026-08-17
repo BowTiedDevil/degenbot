@@ -2,10 +2,10 @@
 
 End-to-end gate for the Rust→PyO3→Python fetcher bridge:
 
-* registering a V3 pool via ``PyBot`` always creates a *sparse* pool (empty
+* registering a V3 pool via ``RustBot`` always creates a *sparse* pool (empty
   ``tick_data`` → no tick-bitmap words known), so the very first
   ``calculate_tokens_out`` must miss on the starting word and return ``0``;
-* ``PyLiquidityPool.calculate_tokens_out_with_fetch`` drives the Rust
+* ``LiquidityPool.calculate_tokens_out_with_fetch`` drives the Rust
   fetch+retry loop: on the miss it calls the injected Python fetcher
   ``fetcher(word, block) -> dict | None`` for the missing word, merges the
   returned tick data into ``BotState``, and retries;
@@ -25,16 +25,16 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 
 _ZERO_ADDRESS = "0x" + "00" * 20
 _TOKEN1_ADDRESS = "0x" + "11" * 20
 
 
-def _register_sparse_v3_pool(bot: PyBot, *, tick_data_fetcher=None) -> int:
+def _register_sparse_v3_pool(bot: RustBot, *, tick_data_fetcher=None) -> int:
     """Register a sparse V3 pool at tick 0, ratio 1:1, 0.3% fee, with liquidity.
 
-    ``PyBot.register_v3_pool`` always registers sparse with empty ``tick_data``,
+    ``RustBot.register_v3_pool`` always registers sparse with empty ``tick_data``,
     so the starting tick-bitmap word (0) is unknown → the first calc misses.
     The optional ``tick_data_fetcher`` is stored Rust-side on ``V3PoolState``
     (ADR-006 I/O trait object) so the fetch+retry loop in
@@ -55,7 +55,7 @@ def _register_sparse_v3_pool(bot: PyBot, *, tick_data_fetcher=None) -> int:
 
 
 def test_sparse_pool_misses_without_fetcher() -> None:
-    bot = PyBot(chain_id=1)
+    bot = RustBot(chain_id=1)
     pool_id = _register_sparse_v3_pool(bot)
     pool = bot.get_pool(pool_id)
 
@@ -65,7 +65,7 @@ def test_sparse_pool_misses_without_fetcher() -> None:
 
 
 def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
-    bot = PyBot(chain_id=1)
+    bot = RustBot(chain_id=1)
     calls: list[tuple[int, int]] = []
 
     def fake_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
@@ -96,7 +96,7 @@ def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
 
 
 def test_calculate_tokens_out_with_fetch_failing_fetcher_returns_zero() -> None:
-    bot = PyBot(chain_id=1)
+    bot = RustBot(chain_id=1)
 
     def failing_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
         raise RuntimeError

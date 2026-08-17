@@ -9,7 +9,7 @@ The CL swap-step machinery (``compute_swap_step``,
 ``get_next_sqrt_price_from_*``, ``add_delta``, ``get_amount0/1_delta``,
 ``max/min_usable_tick``, ``div_rounding_up``) is intentionally **not**
 re-exported here: that machinery is the guts of the CL swap-step loop,
-which the Rust core owns and runs end-to-end inside ``PyLiquidityPool``.
+which the Rust core owns and runs end-to-end inside ``LiquidityPool``.
 Re-exporting it at the package surface would advertise a driver API that
 reaches below the abstraction and that no consumer uses. The underlying
 ``cl_*`` FFI pyfunctions remain available to internal callers; they are

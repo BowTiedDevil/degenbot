@@ -5,7 +5,7 @@ import pathlib
 import eth_abi.abi
 from hexbytes import HexBytes
 
-from degenbot.bot import Bot, PyBot
+from degenbot.bot import Bot, RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import ZERO_ADDRESS
@@ -22,7 +22,7 @@ from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
 
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -95,9 +95,7 @@ def _v4_offline_provider(
     liquidity_calldata = encode_function_calldata("getLiquidity(bytes32)", [pid])
     compressed = tick // V4_TICK_SPACING
     word = compressed >> 8
-    tick_bitmap_calldata = encode_function_calldata(
-        "getTickBitmap(bytes32,int16)", [pid, word]
-    )
+    tick_bitmap_calldata = encode_function_calldata("getTickBitmap(bytes32,int16)", [pid, word])
     slot0_encoded = eth_abi.abi.encode(
         types=["uint160", "int24", "uint24", "uint24"],
         args=[sqrt_price, tick, protocol_fee, lp_fee],

@@ -12,7 +12,7 @@ integration test exercises that dispatcher directly rather than a builder.
 Post ADR-005 slice-14 collapse: builders call ``io.fetch_X()`` directly
 (the Python ``io.call()`` parity-gate fallback is retired), so the
 behavioral fake is a duck-typed object exposing the ``fetch_*`` methods
-the tested path invokes — no ``PyBotIo`` subclass needed (Q4 alpha).
+the tested path invokes — no ``RustBotIo`` subclass needed (Q4 alpha).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.bot._bot import _update_pool
 from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
@@ -34,7 +34,7 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 # --- Helpers ---
 
 
-_TOKEN_BOT = PyBot()
+_TOKEN_BOT = RustBot()
 
 
 def _mock_token(address: str, *, symbol: str, decimals: int = 18) -> object:
@@ -50,11 +50,11 @@ def _mock_token(address: str, *, symbol: str, decimals: int = 18) -> object:
 
 
 class FakePyBotIo:
-    """Duck-typed PyBotIo stand-in for V2 update() behavior tests.
+    """Duck-typed RustBotIo stand-in for V2 update() behavior tests.
 
     Exposes only the seam methods ``_update_pool`` actually invokes for V2
     (``get_block_number`` + ``fetch_v2_reserves``). The dispatcher never
-    ``isinstance(io, PyBotIo)`` — it duck-types the ``fetch_*`` calls.
+    ``isinstance(io, RustBotIo)`` — it duck-types the ``fetch_*`` calls.
     """
 
     def __init__(self, *, reserves0: int = 5000, reserves1: int = 6000) -> None:

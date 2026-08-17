@@ -12,7 +12,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -36,7 +36,7 @@ class TestFromPyPoolSlimSeam:
 
     def test_recovered_identity_matches_registration(self) -> None:
         """Address, factory, fees, tokens, chain_id all read off the handle."""
-        py_bot = PyBot()
+        py_bot = RustBot()
 
         token0 = make_erc20(
             py_bot=py_bot,
@@ -85,7 +85,7 @@ class TestFromPyPoolSlimSeam:
         ``ZeroDivisionError`` on ``Fraction(denom - gamma, denom)``. The
         ``pool_family`` assertion fails fast with a clear message instead.
         """
-        py_bot = PyBot()
+        py_bot = RustBot()
 
         token0 = make_erc20(
             py_bot=py_bot,
@@ -118,7 +118,7 @@ class TestFromPyPoolSlimSeam:
             py_bot=py_bot,
         )
 
-        # ``_py_pool`` is the shared ``PyLiquidityPool`` handle type; the V3
+        # ``_py_pool`` is the shared ``LiquidityPool`` handle type; the V3
         # companion holds the same handle shape, so passing it to the V2 seam
         # is the misuse the ``pool_family`` assertion must catch.
         with pytest.raises(DegenbotValueError, match="V2-family"):
@@ -126,7 +126,7 @@ class TestFromPyPoolSlimSeam:
 
     def test_tokens_recovered_from_same_bot(self) -> None:
         """token0/token1 companions are rebuilt off the pool's handle."""
-        py_bot = PyBot()
+        py_bot = RustBot()
 
         token0 = make_erc20(
             py_bot=py_bot,
@@ -166,14 +166,14 @@ class TestFromPyPoolSlimSeam:
         assert pool.token1.address == token1.address
 
     def test_cross_bot_token_recovery_fix(self) -> None:
-        """Tokens built against a DIFFERENT PyBot are re-registered in the pool's Bot.
+        """Tokens built against a DIFFERENT RustBot are re-registered in the pool's Bot.
 
         The D1 invariant (ADR-006): the test factory's cross-Bot convenience is
-        fixed, not preserved. Tokens passed in from a separate ``PyBot`` get
-        re-registered in the pool's ``PyBot`` so the handle is self-describing.
+        fixed, not preserved. Tokens passed in from a separate ``RustBot`` get
+        re-registered in the pool's ``RustBot`` so the handle is self-describing.
         """
-        other_bot = PyBot()  # tokens live here
-        pool_bot = PyBot()  # pool lives here
+        other_bot = RustBot()  # tokens live here
+        pool_bot = RustBot()  # pool lives here
 
         token0 = make_erc20(
             py_bot=other_bot,

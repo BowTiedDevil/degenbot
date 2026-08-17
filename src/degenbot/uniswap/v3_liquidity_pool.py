@@ -1,6 +1,6 @@
-"""UniswapV3Pool: concentrated liquidity AMM companion over a PyLiquidityPool handle.
+"""UniswapV3Pool: concentrated liquidity AMM companion over a LiquidityPool handle.
 
-ADR-005 slice 8b — the V3 companion rewritten over the same `PyLiquidityPool`
+ADR-005 slice 8b — the V3 companion rewritten over the same `LiquidityPool`
 handle topology as the V2 `UniswapV2Pool`. Rust `BotState` is the single
 source of truth for V3 mutable state (scalars, tick data, reorg journal);
 this companion reads it through `self._py_pool` (the atomic `snapshot_v3()`
@@ -38,7 +38,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.types import PyLiquidityPool
+from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -85,7 +85,7 @@ class UniswapV3Pool(
     UniswapV3PoolCalc,
     AbstractLiquidityPool,
 ):
-    """A Uniswap V3 concentrated-liquidity pool companion over a ``PyLiquidityPool`` handle.
+    """A Uniswap V3 concentrated-liquidity pool companion over a ``LiquidityPool`` handle.
 
     Rust owns the mutable state (scalars + tick data + reorg journal) as
     ``V3PoolState``; this companion reads it through ``self._py_pool`` (one
@@ -107,7 +107,7 @@ class UniswapV3Pool(
     # Instance attributes set in `_from_py_pool` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body.
-    _py_pool: PyLiquidityPool
+    _py_pool: LiquidityPool
     address: ChecksumAddress
     factory: ChecksumAddress
     _fee: int
@@ -147,14 +147,14 @@ class UniswapV3Pool(
         """Direct construction is forbidden.
 
         ``UniswapV3Pool`` is a Python companion over a Rust-owned
-        ``PyLiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``PyBot`` — there is no way for a caller to
+        ``LiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``RustBot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_v3_pool(...)``
 
-        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        Both register the pool in Rust, obtain the ``LiquidityPool``
         handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
         ``_from_pydf`` seam).
 
@@ -166,13 +166,13 @@ class UniswapV3Pool(
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or make_v3_pool(...) "
             "(tests) to register the pool in Rust and obtain the "
-            "PyLiquidityPool handle to wrap."
+            "LiquidityPool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
-        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
+        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
         handle is self-describing: every identity field (address, factory,
@@ -202,7 +202,7 @@ class UniswapV3Pool(
         # Variant-family guard (uniform precondition every seam uses).
         if py_pool.pool_family != "v3":
             msg = (
-                "PyLiquidityPool handle is not a V3-family pool "
+                "LiquidityPool handle is not a V3-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
                 "UniswapV3Pool._from_py_pool requires a handle "
                 "registered via register_v3_pool"
@@ -419,7 +419,7 @@ class UniswapV3Pool(
     ) -> None:
         """Apply updated tick bitmap and data from the tick data fetcher.
 
-        Delegates to ``PyLiquidityPool.update_tick_data`` (replaces the
+        Delegates to ``LiquidityPool.update_tick_data`` (replaces the
         Rust-side ``tick_data`` HashMap; scalars unchanged; ``update_block``
         advances when newer). Records every word in ``tick_bitmap`` into
         ``_bitmap_override`` so the verbatim on-chain bitmap is preserved
@@ -510,7 +510,7 @@ class UniswapV3Pool(
     ) -> bool:
         """Process a `UniswapV3PoolExternalUpdate` (Swap event).
 
-        Delegates the scalar write to ``PyLiquidityPool.apply_swap`` (journals
+        Delegates the scalar write to ``LiquidityPool.apply_swap`` (journals
         the priors then lands the new ``sqrt_price_x96``/``liquidity``/``tick``
         at ``block_number`` in one write guard).
 
@@ -549,7 +549,7 @@ class UniswapV3Pool(
     ) -> None:
         """Apply an update to the liquidity map (Mint/Burn).
 
-        Delegates the tick mutation to ``PyLiquidityPool.apply_liquidity_update``
+        Delegates the tick mutation to ``LiquidityPool.apply_liquidity_update``
         (Rust does the tick bitmap + tick_data mutation under one write guard,
         matching ``BotState::apply_v3_liquidity_update``). The active
         ``liquidity`` scalar adjustment (when ``current_tick`` is in range)
@@ -612,7 +612,7 @@ class UniswapV3Pool(
     def restore_state_before_block(self, block: BlockNumber) -> None:
         """Restore the last pool state recorded prior to a target block.
 
-        Delegates to ``PyLiquidityPool.restore_v3_before_block`` (Rust pops
+        Delegates to ``LiquidityPool.restore_v3_before_block`` (Rust pops
         journal deltas at/after the target + reverse-applies tick priors +
         writes back pre-target scalars in one write guard). The journal's
         ``update_block`` lands at the oldest popped delta's block (the target

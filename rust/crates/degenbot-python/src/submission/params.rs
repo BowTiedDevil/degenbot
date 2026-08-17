@@ -27,7 +27,7 @@ use pyo3::types::{PyBytes, PyList};
 /// raw = signer.sign_eip1559(params)
 /// ```
 #[pyclass(
-    name = "PyTxParams",
+    name = "TxParams",
     skip_from_py_object,
     module = "degenbot._ffi.submission"
 )]

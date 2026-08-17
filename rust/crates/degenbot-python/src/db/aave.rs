@@ -48,7 +48,11 @@ use degenbot_db::DegenbotDb;
 /// Opens its own connection (WAL, `query_only=on`) from `database_path`; the
 /// Python `DatabasePositionQuery` shell constructs one per query and delegates
 /// every read to it.
-#[pyclass(frozen, module = "degenbot._ffi.db")]
+#[pyclass(
+    name = "RustDatabasePositionQuery",
+    frozen,
+    module = "degenbot._ffi.db"
+)]
 pub struct PyDatabasePositionQuery {
     db: DegenbotDb,
 }

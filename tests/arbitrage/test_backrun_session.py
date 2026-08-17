@@ -146,7 +146,7 @@ class _FakeBot:
 
 
 class _RecordingPyBot:
-    """A stand-in for the Rust ``PyBot._py_bot`` whose ``close_snapshot_tx``
+    """A stand-in for the Rust ``RustBot._py_bot`` whose ``close_snapshot_tx``
     records invocation (and optionally trips the XEANMB canary RuntimeError,
     as the real one does when in-flight build workers hold an ``Arc`` clone)."""
 
@@ -379,7 +379,7 @@ class TestBackrunSessionRun:
         await session.start()
         await session.run()
 
-        # bot released + dropped; engine_registry survives (holds its own PyBot ref)
+        # bot released + dropped; engine_registry survives (holds its own RustBot ref)
         assert bot.released is True
         assert session.bot is None
         assert session.engine_registry is engine_registry
@@ -505,9 +505,7 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
         )
         assert registry.engine.resumed is True
         # The single consumer received every block.
-        assert seen_by_consumer == [500, 550, 600], (
-            "result-consumer must receive every block"
-        )
+        assert seen_by_consumer == [500, 550, 600], "result-consumer must receive every block"
 
 
 class TestBackrunSessionShutdown:
@@ -1564,9 +1562,7 @@ class TestSessionOperatorSurface:
                 if n == 7:
                     # Operator adds a path + triggers discovery mid-run while
                     # the hot loop keeps solving previously-added hops.
-                    await session.enqueue_path(
-                        ["hop-a", "hop-b"], directions=[True, False]
-                    )
+                    await session.enqueue_path(["hop-a", "hop-b"], directions=[True, False])
                     await session.trigger_discovery(bound=3)
                 await asyncio.sleep(0)
 

@@ -32,7 +32,7 @@ from fractions import Fraction
 import pytest
 
 import degenbot.aerodrome.v2_pool_calc as calc_mod
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 
@@ -51,7 +51,7 @@ class _Spy:
 
 @pytest.fixture
 def stable_pool():
-    bot = PyBot()
+    bot = RustBot()
     t0 = make_erc20(
         bot,
         address="0x" + "a1" * 20,
@@ -81,7 +81,7 @@ def stable_pool():
 
 @pytest.fixture
 def volatile_pool():
-    bot = PyBot()
+    bot = RustBot()
     t0 = make_erc20(
         bot,
         address="0x" + "d4" * 20,

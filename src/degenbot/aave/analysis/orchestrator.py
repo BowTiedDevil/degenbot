@@ -21,13 +21,13 @@ from sqlalchemy.orm import Session
 
 from degenbot.aave import AavePriceOracle
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.db import PyDatabasePositionQuery, PyUserPositionSummary, analyze_aave_user_position
+from degenbot.db import RustDatabasePositionQuery, UserPositionSummary, analyze_aave_user_position
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider
 
 
 class DatabasePositionQuery:
-    """PositionQuery backed by the Rust ``PyDatabasePositionQuery`` reader.
+    """PositionQuery backed by the Rust ``RustDatabasePositionQuery`` reader.
 
     Routes every read through the PyO3 seam (ADR-005). The ``session`` is
     retained for resolving the DB file path + the ``AaveV3Market`` lookup at
@@ -43,7 +43,7 @@ class DatabasePositionQuery:
 
         """
         self._session = session
-        self._rust: PyDatabasePositionQuery | None = None
+        self._rust: RustDatabasePositionQuery | None = None
 
     def _db_path(self) -> str:
         """Resolve the SQLite file path the Rust reader opens.
@@ -63,9 +63,9 @@ class DatabasePositionQuery:
         msg = "a file-backed database is required for Rust-backed position reads"
         raise ValueError(msg)
 
-    def _handle(self) -> PyDatabasePositionQuery:
+    def _handle(self) -> RustDatabasePositionQuery:
         if self._rust is None:
-            self._rust = PyDatabasePositionQuery(self._db_path())
+            self._rust = RustDatabasePositionQuery(self._db_path())
         return self._rust
 
     def get_users_with_debt(self, market_id: int, limit: int | None = None) -> list[dict[str, Any]]:
@@ -128,7 +128,7 @@ class DatabasePositionQuery:
 class OraclePriceFetcher:
     """PriceFetcher using the Aave oracle contract.
 
-    Delegating shell over the Rust ``PyAavePriceOracle`` reader (the
+    Delegating shell over the Rust ``AavePriceOracle`` reader (the
     ``degenbot-price`` core crate, ADR-005). ``getAssetPrice(address)``
     ``eth_call`` + ``uint256`` decode run in Rust, with the same tolerant
     per-asset skip-on-error behavior.
@@ -159,16 +159,16 @@ class OraclePriceFetcher:
 class PositionAnalysisResult:
     """Result of analyzing positions for liquidation risk.
 
-    Bucket-sorter only (no math) — the per-user ``PyUserPositionSummary``
+    Bucket-sorter only (no math) — the per-user ``UserPositionSummary``
     objects (Rust-built via the analysis seam) are categorized by health factor
     into safe / at-risk / liquidatable lists.
     """
 
     def __init__(self) -> None:
         """Initialize empty buckets."""
-        self.safe_users: list[PyUserPositionSummary] = []
-        self.at_risk_users: list[PyUserPositionSummary] = []
-        self.liquidatable_users: list[PyUserPositionSummary] = []
+        self.safe_users: list[UserPositionSummary] = []
+        self.at_risk_users: list[UserPositionSummary] = []
+        self.liquidatable_users: list[UserPositionSummary] = []
 
     @property
     def total_users(self) -> int:
@@ -186,12 +186,12 @@ class PositionAnalysisResult:
         return len(self.liquidatable_users)
 
     def categorize(
-        self, summary: PyUserPositionSummary, health_factor_threshold: float = 1.1
+        self, summary: UserPositionSummary, health_factor_threshold: float = 1.1
     ) -> None:
         """Categorize a user summary by health factor.
 
         Args:
-            summary: A ``PyUserPositionSummary`` (Rust-built).
+            summary: A ``UserPositionSummary`` (Rust-built).
             health_factor_threshold: The at-risk threshold (default 1.1).
 
         """

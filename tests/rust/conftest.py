@@ -6,7 +6,7 @@ from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.constants import ZERO_ADDRESS
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -22,12 +22,12 @@ def checksummed_random_addresses(random_addresses) -> list[ChecksumAddress]:
     return [to_checksum_address(addr) for addr in random_addresses]
 
 
-# NXM2BF: `PyDispatchCandidate.__new__` resolves its `composers::PathInfo` from
+# NXM2BF: `DispatchCandidate.__new__` resolves its `composers::PathInfo` from
 # a registered `path_id` via `PyArbitrageEngine::path_info_for_core` (no Python
 # `PathInfo` dataclass round-trip). Seam tests must hand the candidate a real
 # engine + a registered path_id. The engine's `register_and_solve_path`
 # requires a ≥2-hop cycle, so this fixture builds a 2-hop V2 WETH→USDC→WETH
-# cycle offline (PyBot + make_erc20 + make_v2_pool, no RPC / no DB).
+# cycle offline (RustBot + make_erc20 + make_v2_pool, no RPC / no DB).
 #
 # Constants chosen to mirror `tests/arbitrage/test_synthetic_v2_round_trip.py`
 # (the proven offline 2-hop V2 cycle topology) so the path registers +
@@ -48,7 +48,7 @@ def nxm2bf_v2_engine_and_path() -> tuple[ArbitrageEngine, int]:
     `path_info_for_core(path_id)` projects a 2-hop `PathInfo` (both V2,
     `fee=30`, `zfo=(True, False)`).
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
     weth = make_erc20(
         py_bot, _NXM2BF_WETH, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
     )

@@ -1,6 +1,6 @@
-"""UniswapV4Pool: concentrated liquidity AMM companion over a PyLiquidityPool handle.
+"""UniswapV4Pool: concentrated liquidity AMM companion over a LiquidityPool handle.
 
-ADR-005 slice 9b — the V4 companion rewritten over the same `PyLiquidityPool`
+ADR-005 slice 9b — the V4 companion rewritten over the same `LiquidityPool`
 handle topology as the V3 companion. Rust `BotState` is the single source of
 truth for V4 mutable state (scalars, tick data, reorg journal); this companion
 reads it through `self._py_pool` (atomic `snapshot_v3()` for scalars — already
@@ -17,7 +17,7 @@ V4-specific identity (pool_id, pool_manager_address, pool_key, hook_address,
 protocol_fee, lp_fee, state_view_address) stays Python-side — matches V3
 keeping tokens/factory/fee Python-side. The hook admission floor (reject
 amount-modifying hooks + dynamic fees) lives in Rust
-(`BotState::register_v4_pool`), surfaced at `PyBot.register_v4_pool` (ADR-005
+(`BotState::register_v4_pool`), surfaced at `RustBot.register_v4_pool` (ADR-005
 slice 9a) so the companion never holds a hooked pool.
 
 `_bitmap_override` mirrors V3: the verbatim tick_bitmap words the
@@ -47,7 +47,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.types import PyLiquidityPool
+from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -146,7 +146,7 @@ class UniswapV4Pool(
     UniswapV4PoolCalc,
     AbstractLiquidityPool,
 ):
-    """A Uniswap V4 concentrated-liquidity pool companion over a ``PyLiquidityPool`` handle.
+    """A Uniswap V4 concentrated-liquidity pool companion over a ``LiquidityPool`` handle.
 
     Rust owns the mutable state (scalars + tick data + reorg journal) as
     ``V4PoolState``; this companion reads it through ``self._py_pool`` (one
@@ -163,7 +163,7 @@ class UniswapV4Pool(
 
     Hook admission floor: pools with amount-modifying hooks (`hook_flags & 0xCC
     != 0`) or dynamic fees (`fee == 0x100000`) are rejected in Rust
-    (`BotState::register_v4_pool`), surfaced at `PyBot.register_v4_pool` as
+    (`BotState::register_v4_pool`), surfaced at `RustBot.register_v4_pool` as
     typed exceptions — so this companion never holds a hooked/dynamic-fee pool.
     """
 
@@ -181,7 +181,7 @@ class UniswapV4Pool(
     )
 
     # Instance attributes set in `_from_py_pool` (the only construction seam).
-    _py_pool: PyLiquidityPool
+    _py_pool: LiquidityPool
     _pool_id: HexBytes
     _pool_manager_address: ChecksumAddress
     hook_address: ChecksumAddress
@@ -203,14 +203,14 @@ class UniswapV4Pool(
         """Direct construction is forbidden.
 
         ``UniswapV4Pool`` is a Python companion over a Rust-owned
-        ``PyLiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``PyBot`` — there is no way for a caller to
+        ``LiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``RustBot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_v4_pool(...)``
 
-        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        Both register the pool in Rust, obtain the ``LiquidityPool``
         handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
         ``_from_pydf`` seam).
 
@@ -222,13 +222,13 @@ class UniswapV4Pool(
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or make_v4_pool(...) "
             "(tests) to register the pool in Rust and obtain the "
-            "PyLiquidityPool handle to wrap."
+            "LiquidityPool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
-        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
+        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
         handle is self-describing: every identity field (pool_manager,
@@ -255,7 +255,7 @@ class UniswapV4Pool(
         # Variant-family guard.
         if py_pool.pool_family != "v4":
             msg = (
-                "PyLiquidityPool handle is not a V4-family pool "
+                "LiquidityPool handle is not a V4-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
                 "UniswapV4Pool._from_py_pool requires a handle "
                 "registered via register_v4_pool"
@@ -785,7 +785,7 @@ class UniswapV4Pool(
     ) -> None:
         """Apply updated tick bitmap and data from the tick data fetcher.
 
-        Delegates to ``PyLiquidityPool.update_tick_data`` (replaces the
+        Delegates to ``LiquidityPool.update_tick_data`` (replaces the
         Rust-side ``tick_data`` HashMap; scalars unchanged; ``update_block``
         advances when newer). Records every word in ``tick_bitmap`` into
         ``_bitmap_override``. Mirrors the V3 companion.
@@ -855,7 +855,7 @@ class UniswapV4Pool(
     ) -> bool:
         """Process a `UniswapV4PoolExternalUpdate` (Swap event).
 
-        Delegates the scalar write to ``PyLiquidityPool.apply_swap``. Mirrors
+        Delegates the scalar write to ``LiquidityPool.apply_swap``. Mirrors
         the V3 companion.
 
         Returns:
@@ -893,7 +893,7 @@ class UniswapV4Pool(
     ) -> None:
         """Apply an update to the liquidity map (ModifyLiquidity event).
 
-        Delegates the tick mutation to ``PyLiquidityPool.apply_liquidity_update``
+        Delegates the tick mutation to ``LiquidityPool.apply_liquidity_update``
         (Rust does the tick bitmap + tick_data mutation under one write guard).
         The active ``liquidity`` scalar adjustment (when ``current_tick`` is in
         range) is landed via a separate ``apply_swap``. Mirrors the V3 companion.
@@ -950,7 +950,7 @@ class UniswapV4Pool(
     def restore_state_before_block(self, block: BlockNumber) -> None:
         """Restore the last pool state recorded prior to a target block.
 
-        Delegates to ``PyLiquidityPool.restore_v3_before_block`` (V3/V4-generic).
+        Delegates to ``LiquidityPool.restore_v3_before_block`` (V3/V4-generic).
         Mirrors the V3 companion.
 
         Raises:

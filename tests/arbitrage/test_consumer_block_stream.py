@@ -178,7 +178,7 @@ async def _run(
             executor_address="0x" + "0" * 40,
             operator_address="0x" + "0" * 40,
             # dry-run placeholder must be a valid secp256k1 scalar (the real
-            # `dispatch_profitable_results` would construct a `PyTxSigner` from
+            # `dispatch_profitable_results` would construct a `TxSigner` from
             # it; all-zero is rejected by the curve). Here `dispatch_*` is
             # stubbed so the value is cosmetic, but it mirrors the real config.
             operator_private_key="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
@@ -232,7 +232,9 @@ class TestBlockClockFromStream:
         # expected under asyncio.wait; the load-bearing claim is that the
         # batch's solve_block is never used as the clock).
         batch = dict(_empty_batch(999))
-        batch["fresh"] = [(1, 100, 50, (1, 2), (3,), (0,))]  # one profitable result (state_nonces=(0,) — AV42C7)
+        batch["fresh"] = [
+            (1, 100, 50, (1, 2), (3,), (0,))
+        ]  # one profitable result (state_nonces=(0,) — AV42C7)
         dispatcher, _w3, dispatched = await _run(
             blocks=[_block(301), _block(302)],
             batches=[batch],
@@ -244,4 +246,3 @@ class TestBlockClockFromStream:
         assert dispatched[0] != 999, (
             "dispatch must key off the block-stream clock, never the batch's stale solve_block"
         )
-

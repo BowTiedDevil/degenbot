@@ -1,15 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.curve_dy`` submodule.
-
-The submodule is created at runtime by ``add_curve_dy_module`` in the PyO3
-wrapper crate (``degenbot-python/src/curve_dy/lib.rs``). This stub gives the
-type checker the class + function signatures.
-
-``DyCalculationInputs`` is a mutable builder the Python companion
-(``CurveStableswapPool._calculate_dy_via_rust``) fills; the calculator is the
-pure Rust ``degenbot-curve-math`` core (task ``CNEP47``). Variant discriminants
-are 1-based ``auto()`` enum ``.value`` s.
-"""
-
 class DyCalculationInputs:
     precision: int
     fee_denominator: int

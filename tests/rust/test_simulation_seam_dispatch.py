@@ -4,8 +4,8 @@ These are orchestrations-shape tests, not parity tests — A6
 (``[sim] A6 — Sim-seam parity tests``) covers behavioral parity against the
 Python oracle over the anvil mock corpus. The goal here is to pin the
 ``#[pyfunction]`` registration + the GIL-release + ``future_into_py`` async
-wiring + the empty-candidate short-circuit + the ``PyDispatchOutcome`` join
-shape (the join itself, ``SimResult → PySubmitCandidate``, is exercised by
+wiring + the empty-candidate short-circuit + the ``DispatchOutcome`` join
+shape (the join itself, ``SimResult → SubmitCandidate``, is exercised by
 the simulation-core mock-transport tests in
 ``rust/crates/degenbot-settlement-strategy/src/dispatch.rs`` — A4 only wires
 it through the seam).
@@ -21,12 +21,12 @@ import pytest
 
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot._ffi.simulation import (
-    PyDispatchCandidate,
-    PyDispatchOutcome,
-    PySimulateContext,
+    DispatchCandidate,
+    DispatchOutcome,
+    SimulateContext,
     dispatch_profitable_py,
 )
-from degenbot._ffi.submission import PyDispatcher, PySubmitCandidate
+from degenbot._ffi.submission import Dispatcher, SubmitCandidate
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
 # Canonical mainnet addresses (parity corpus constants — match the A2 test
@@ -47,8 +47,8 @@ def _make_async_provider() -> AsyncAlloyProvider:
     return AsyncAlloyProvider(sync)
 
 
-def _make_ctx(*, inject_code: bool = False) -> PySimulateContext:
-    return PySimulateContext(
+def _make_ctx(*, inject_code: bool = False) -> SimulateContext:
+    return SimulateContext(
         provider=_make_async_provider(),
         executor_owner=OWNER,
         executor_address=EXECUTOR,
@@ -72,12 +72,12 @@ class TestDispatchProfitablePyRegistration:
 
 class TestDispatchEmptyInput:
     """The empty-candidate short-circuit — proves the GIL release +
-    ``future_into_py`` async wiring + the ``PyDispatchOutcome`` join shape
+    ``future_into_py`` async wiring + the ``DispatchOutcome`` join shape
     end-to-end (no RPC dispatched; the dead-URL provider never dials)."""
 
     async def test_empty_candidates_returns_empty_outcome(self) -> None:
         ctx = _make_ctx()
-        dispatcher = PyDispatcher.for_block(100)
+        dispatcher = Dispatcher.for_block(100)
         outcome = await dispatch_profitable_py(
             candidates=[],
             context=ctx,
@@ -88,7 +88,7 @@ class TestDispatchEmptyInput:
             min_profit_net=1,
             min_profit_margin_bps=0,
         )
-        assert isinstance(outcome, PyDispatchOutcome)
+        assert isinstance(outcome, DispatchOutcome)
         # The join ran (over zero survivors) → empty gas_profitable.
         assert outcome.gas_profitable == []
         # The core's empty-input short-circuit (the
@@ -117,7 +117,7 @@ class TestDispatchEmptyInput:
         # `RuntimeError: no running event loop` or a tokio-init failure) proves
         # the GIL-release + async-runtime wiring.
         ctx = _make_ctx()
-        dispatcher = PyDispatcher.for_block(100)
+        dispatcher = Dispatcher.for_block(100)
         coro = dispatch_profitable_py(
             candidates=[],
             context=ctx,
@@ -130,21 +130,21 @@ class TestDispatchEmptyInput:
         )
         assert hasattr(coro, "__await__")
         outcome = await coro
-        assert isinstance(outcome, PyDispatchOutcome)
+        assert isinstance(outcome, DispatchOutcome)
 
 
 class TestDispatchArgumentValidation:
     """GIL-held arg extraction — the candidate-list must hold
-    ``PyDispatchCandidate`` instances (the rejection raises synchronously
+    ``DispatchCandidate`` instances (the rejection raises synchronously
     BEFORE ``future_into_py``, proving the validation lives in the GIL-held
     arg-extraction phase, not the async block)."""
 
     async def test_non_candidate_list_element_raises_value_error(self) -> None:
         ctx = _make_ctx()
-        dispatcher = PyDispatcher.for_block(100)
-        # A bare int is not a PyDispatchCandidate → the extract fails →
+        dispatcher = Dispatcher.for_block(100)
+        # A bare int is not a DispatchCandidate → the extract fails →
         # ValueError (synchronous, before the future is created).
-        with pytest.raises(ValueError, match="PyDispatchCandidate instances"):
+        with pytest.raises(ValueError, match="DispatchCandidate instances"):
             await dispatch_profitable_py(
                 candidates=[42],  # type: ignore[list-item]
                 context=ctx,
@@ -158,7 +158,7 @@ class TestDispatchArgumentValidation:
 
     async def test_non_list_candidates_raises_type_error(self) -> None:
         ctx = _make_ctx()
-        dispatcher = PyDispatcher.for_block(100)
+        dispatcher = Dispatcher.for_block(100)
         # PyO3's `&Bound<PyList>` extraction rejects a non-list at the FFI
         # boundary (before the body runs) — a TypeError, not our ValueError.
         with pytest.raises(TypeError):
@@ -175,8 +175,8 @@ class TestDispatchArgumentValidation:
 
 
 class TestDispatchJoinShape:
-    """The ``PyDispatchOutcome.gas_profitable`` getter returns
-    ``list[PySubmitCandidate]`` (the submission seam's input shape): the
+    """The ``DispatchOutcome.gas_profitable`` getter returns
+    ``list[SubmitCandidate]`` (the submission seam's input shape): the
     cockpit chains ``dispatch_profitable_py → dispatch_and_submit_py``
     straight through that list. The empty case exercises the getter's list
     construction (it returns an empty list, not None / a dict /
@@ -184,7 +184,7 @@ class TestDispatchJoinShape:
 
     async def test_gas_profitable_is_a_list(self) -> None:
         ctx = _make_ctx()
-        dispatcher = PyDispatcher.for_block(100)
+        dispatcher = Dispatcher.for_block(100)
         outcome = await dispatch_profitable_py(
             candidates=[],
             context=ctx,
@@ -199,13 +199,13 @@ class TestDispatchJoinShape:
 
 
 class TestPySubmitCandidateGetters:
-    """Read-only getters on ``PySubmitCandidate`` — the rewired ``[dispatch]``
+    """Read-only getters on ``SubmitCandidate`` — the rewired ``[dispatch]``
     per-path log reads ``path_id``/``gross_profit``/``net_profit``/
     ``gas_used``/``priority_fee`` from each survivor, so the pyclass must
     expose them (it previously exposed only ``#[new]``)."""
 
     def test_money_and_gas_getters_round_trip(self) -> None:
-        cand = PySubmitCandidate(
+        cand = SubmitCandidate(
             path_id=42,
             gross_profit=2_000_000_000_000_000_000,
             net_profit=1_500_000_000_000_000_000,
@@ -236,11 +236,11 @@ class TestDispatchWithCandidateButNoRpc:
     ) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
         ctx = _make_ctx()
-        dispatcher = PyDispatcher.for_block(100)
+        dispatcher = Dispatcher.for_block(100)
         # Manually suppress this path past the threshold (10 failures).
         for _ in range(10):
             dispatcher.record_failure(path_id)
-        candidate = PyDispatchCandidate(
+        candidate = DispatchCandidate(
             engine=engine,
             path_id=path_id,
             optimal_input=1_000_000_000_000_000_000,
@@ -260,7 +260,7 @@ class TestDispatchWithCandidateButNoRpc:
             min_profit_net=1,
             min_profit_margin_bps=0,
         )
-        assert isinstance(outcome, PyDispatchOutcome)
+        assert isinstance(outcome, DispatchOutcome)
         # The suppressed candidate is dropped pre-sim — no RPC, no survivors.
         assert outcome.suppressed_count == 1
         assert outcome.candidate_count == 0
@@ -298,7 +298,7 @@ class TestDispatchWithCandidateButNoRpc:
 
 
 class TestPoolDivergenceFfiGetters:
-    """The PyDispatcher divergence getters (ergo GMWYIU) — the persistent
+    """The Dispatcher divergence getters (ergo GMWYIU) — the persistent
     cross-block memo's read surface. A fresh dispatcher has no divergent
     pools + a zero lifetime drop tally; the getters return the right types
     (the action layer's skip + feedback behavior is proven at the Rust-core
@@ -310,17 +310,17 @@ class TestPoolDivergenceFfiGetters:
     """
 
     def test_fresh_dispatcher_has_no_divergent_pools(self) -> None:
-        dispatcher = PyDispatcher.for_block(100)
+        dispatcher = Dispatcher.for_block(100)
         assert dispatcher.total_divergent_dropped == 0
         assert dispatcher.divergent_pools(100) == []
 
     def test_divergent_pools_returns_pydivergentpool_instances(self) -> None:
-        # The getter's return type is `list[PyDivergentPool]` — an empty list
+        # The getter's return type is `list[DivergentPool]` — an empty list
         # on a fresh dispatcher, but the type is registered (importable).
-        from degenbot._ffi.submission import PyDivergentPool
+        from degenbot._ffi.submission import DivergentPool
 
-        dispatcher = PyDispatcher.for_block(100)
+        dispatcher = Dispatcher.for_block(100)
         pools = dispatcher.divergent_pools(100)
         assert isinstance(pools, list)
-        # PyDivergentPool is registered on the submission submodule.
-        assert PyDivergentPool is not None
+        # DivergentPool is registered on the submission submodule.
+        assert DivergentPool is not None

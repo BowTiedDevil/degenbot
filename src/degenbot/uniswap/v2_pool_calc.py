@@ -27,7 +27,7 @@ from degenbot.uniswap.v2_functions import (
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
-    from degenbot.types import PyLiquidityPool
+    from degenbot.types import LiquidityPool
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
@@ -53,10 +53,10 @@ class UniswapV2PoolCalc:
     reserves_token1: int
     state: UniswapV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
-    # PyLiquidityPool handle (set by the concrete UniswapV2Pool companion
+    # LiquidityPool handle (set by the concrete UniswapV2Pool companion
     # in MRO — ADR-005 slice 4). Calc delegation (slice 5) routes the
     # constant-product math through it on the non-override path.
-    _py_pool: PyLiquidityPool
+    _py_pool: LiquidityPool
 
     # These can be overridden by subclasses (e.g., PancakeSwap uses different fee)
     FEE: Fraction = Fraction(3, 1000)

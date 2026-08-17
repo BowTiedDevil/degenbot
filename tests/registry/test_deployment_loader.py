@@ -271,7 +271,7 @@ class TestRegisterFromDeployments:
         assert desc.family == PoolFamily.WEIGHTED
 
     def test_dex_identity_resolved_for_uniswap_v2(self) -> None:
-        """The uniswap-v2 dex_variant resolves to a non-None PyDexIdentity."""
+        """The uniswap-v2 dex_variant resolves to a non-None DexIdentity."""
         from degenbot.registry.pool_type import PoolTypeRegistry
 
         reg = PoolTypeRegistry()

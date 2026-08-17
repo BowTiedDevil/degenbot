@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.types import BasePoolPort, DyCalculationInputs
@@ -59,7 +59,7 @@ class TestWrongFamilyHandle:
     """``_from_py_pool`` rejects a non-Curve handle."""
 
     def test_v2_handle_raises_degenbot_value_error(self) -> None:
-        bot = PyBot()
+        bot = RustBot()
         t0 = make_erc20(bot, address="0x" + "a1" * 20, name="T0", symbol="T0", decimals=18)
         t1 = make_erc20(bot, address="0x" + "b2" * 20, name="T1", symbol="T1", decimals=18)
         v2_pool = make_v2_pool(
@@ -82,7 +82,7 @@ class TestSingleArgReadsIdentityOffHandle:
     """The companion reads every field off the handle (single-arg end state)."""
 
     def test_plain_pool_identity_round_trips(self) -> None:
-        bot = PyBot()
+        bot = RustBot()
         t0 = make_erc20(bot, address="0x" + "d4" * 20, name="DAI", symbol="DAI", decimals=18)
         t1 = make_erc20(bot, address="0x" + "e5" * 20, name="USDC", symbol="USDC", decimals=6)
         pool = make_curve_pool(
@@ -109,7 +109,7 @@ class TestGoBetweenResolvesBasePool:
         # The base + metapool share a bot; the metapool's handle resolves the
         # base pool's address → pool_id → base handle (Rust go-between), and
         # _LazyBasePool memoises the wrapped companion.
-        bot = PyBot()
+        bot = RustBot()
         bt0 = make_erc20(bot, address="0x" + "11" * 20, name="B0", symbol="B0", decimals=18)
         bt1 = make_erc20(bot, address="0x" + "22" * 20, name="B1", symbol="B1", decimals=18)
         blp = make_erc20(bot, address="0x" + "33" * 20, name="BLP", symbol="BLP", decimals=18)

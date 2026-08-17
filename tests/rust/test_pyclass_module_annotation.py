@@ -89,8 +89,8 @@ def test_db_classes_on_db_submodule() -> None:
         "V2PoolRowInput",
         "V3PoolRowInput",
         "V4PoolRowInput",
-        "PyDatabaseSnapshot",
-        "PyDatabasePositionQuery",
+        "RustDatabaseSnapshot",
+        "RustDatabasePositionQuery",
         "DatabaseSchemaStale",
     }
     missing = [n for n in expected if not hasattr(db, n)]

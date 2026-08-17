@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi.dex_identity import PyDexIdentity, dex_identity
+from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -30,7 +30,7 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 
 def _make_token(addr: str, *, symbol: str, decimals: int, name: str = "") -> Erc20Token:
@@ -202,7 +202,7 @@ class TestLiquidityPoolDexIdentity:
     """
 
     @property
-    def _uniswap_preset(self) -> PyDexIdentity:
+    def _uniswap_preset(self) -> DexIdentity:
         ident = dex_identity("uniswap-v2")
         assert ident is not None
         return ident
@@ -223,7 +223,7 @@ class TestLiquidityPoolDexIdentity:
             reserves_token1=2_000_000,
             # NO factory, fee_token0/1, init_hash — all resolved from `dex`.
         )
-        # dex is resolved off the handle (a fresh PyDexIdentity from the
+        # dex is resolved off the handle (a fresh DexIdentity from the
         # variant preset) — equal by value, not the same object.
         assert pool.dex.variant == uniswap.variant
         assert pool.dex.factory == uniswap.factory

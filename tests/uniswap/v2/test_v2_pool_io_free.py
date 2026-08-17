@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import eth_abi.abi
 import pytest
 
-from degenbot.bot import Bot, PyBot
+from degenbot.bot import Bot, RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
@@ -25,7 +25,7 @@ from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -329,11 +329,11 @@ class TestV2PoolTrackerWithBot:
 
 
 class _DelegateSpy:
-    """Wraps a ``PyLiquidityPool`` to record ``calculate_tokens_out/in`` calls.
+    """Wraps a ``LiquidityPool`` to record ``calculate_tokens_out/in`` calls.
 
     ADR-005 slice 5 delegation-test for the V2 constant-product calc path:
     ``UniswapV2Pool.calculate_tokens_out_from_tokens_in`` (no override) routes
-    through ``PyLiquidityPool.calculate_tokens_out``. Pass-through for all other
+    through ``LiquidityPool.calculate_tokens_out``. Pass-through for all other
     handle methods via ``__getattr__``.
     """
 
@@ -355,10 +355,10 @@ class _DelegateSpy:
 
 
 class TestV2CalcDelegation:
-    """ADR-005 slice 5 — V2 calc delegation to ``PyLiquidityPool``.
+    """ADR-005 slice 5 — V2 calc delegation to ``LiquidityPool``.
 
     The constant-product calc math delegates to Rust's
-    ``PyLiquidityPool.calculate_tokens_out/in`` when no ``override_state`` is
+    ``LiquidityPool.calculate_tokens_out/in`` when no ``override_state`` is
     given (single read guard — no separate Python state read before the calc,
     so no pump-interleave risk). The override path stays Python
     (``constant_product_calc_exact_in/out`` against the override reserves) so
@@ -384,7 +384,7 @@ class TestV2CalcDelegation:
         )
 
     def test_calculate_tokens_out_delegates_to_rust_no_override(self) -> None:
-        """No override_state: calc delegates to PyLiquidityPool.calculate_tokens_out."""
+        """No override_state: calc delegates to LiquidityPool.calculate_tokens_out."""
         pool = self._make_pool()
         weth = pool.token0
         spy = _DelegateSpy(pool._py_pool)
@@ -439,7 +439,7 @@ class TestV2CalcDelegation:
         )
 
     def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
-        """No override_state: calc delegates to PyLiquidityPool.calculate_tokens_in."""
+        """No override_state: calc delegates to LiquidityPool.calculate_tokens_in."""
         pool = self._make_pool()
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)

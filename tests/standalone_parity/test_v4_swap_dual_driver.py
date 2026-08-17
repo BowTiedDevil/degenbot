@@ -1,7 +1,7 @@
 """Tier-2 behavioral dual-driver parity — V4 concentrated-liquidity swap.
 
 The behavioral companion to the Rust `parity_v4_swap.rs` test. Proves the
-**same** canonical V4 fixture driven through the **Python consumer** (`PyBot`,
+**same** canonical V4 fixture driven through the **Python consumer** (`RustBot`,
 the PyO3 binding) produces the **same** `amount_out` as the Rust consumer
 (`BotState` directly). The V4 path is the sign-flipped twin of V3
 (`calculate_tokens_out` inverts `zero_for_one` before delegating to
@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 
 # ---- the shared canonical fixture (loaded, not copied) ----
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "v4_swap.json"
@@ -57,7 +57,7 @@ _ZERO_FOR_ONE = _P["zero_for_one"]
 _EXPECTED_AMOUNT_OUT_ZFO = int(_E["amount_out_zfo"])
 
 
-def _register_canonical_v4_pool(py_bot: PyBot) -> int:
+def _register_canonical_v4_pool(py_bot: RustBot) -> int:
     """Register the canonical V4 pool through the Python consumer path.
 
     Mirrors the Rust test's inline registration — same fixture (loaded from the
@@ -83,7 +83,7 @@ def _register_canonical_v4_pool(py_bot: PyBot) -> int:
 
 
 def test_python_consumer_v4_swap_matches_recorded_constant() -> None:
-    """The PyBot Python driver reproduces the recorded V4 swap constant.
+    """The RustBot Python driver reproduces the recorded V4 swap constant.
 
     Python side of the Tier-2 dual-driver gate (V4 CL path). The Rust side
     (`rust/crates/degenbot/tests/parity_v4_swap.rs`) loads the same fixture file
@@ -91,7 +91,7 @@ def test_python_consumer_v4_swap_matches_recorded_constant() -> None:
     `_EXPECTED_AMOUNT_OUT_ZFO`. Catches a lossy FFI seam on the V4 sign-flipped
     path.
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
     pool_id = _register_canonical_v4_pool(py_bot)
     assert pool_id == 1, "first registered pool gets id 1 (parity contract)"
 

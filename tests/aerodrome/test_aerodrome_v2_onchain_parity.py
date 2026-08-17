@@ -42,7 +42,7 @@ import pytest
 
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
@@ -77,7 +77,7 @@ _TOKEN_AMOUNT_MULTIPLIERS = (
     0.75,
 )
 
-_PYBOT = PyBot()
+_PYBOT = RustBot()
 
 
 def _load_cassette(path: pathlib.Path) -> dict[str, Any]:

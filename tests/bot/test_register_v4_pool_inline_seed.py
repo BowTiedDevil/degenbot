@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-from degenbot.bot import Bot, PyBot
+from degenbot.bot import Bot, RustBot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.provider import AlloyProvider
 from tests.helpers.erc20_factory import make_erc20
@@ -80,7 +80,7 @@ def test_register_v4_pool_seeds_tick_data_inline_without_update_tick_data(
     closing the window.
     """
 
-    py_bot = PyBot()
+    py_bot = RustBot()
     weth, usdc = _make_tokens(py_bot)
 
     pool = make_v4_pool(

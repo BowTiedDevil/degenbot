@@ -16,7 +16,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from tests.helpers.erc20_factory import make_erc20
@@ -28,7 +28,7 @@ class TestStateRaisesAfterUnregister:
 
     def test_state_raises_after_unregister(self) -> None:
         """A deregistered pool's ``state`` raises, not unpack-NoneType."""
-        py_bot = PyBot()
+        py_bot = RustBot()
 
         token0 = make_erc20(
             py_bot=py_bot,
@@ -82,7 +82,7 @@ class TestStateRaisesAfterUnregister:
         ``None``-check would raise on the happy path — this test would surface
         that regression independently of the unregister path.
         """
-        py_bot = PyBot()
+        py_bot = RustBot()
 
         token0 = make_erc20(
             py_bot=py_bot,
@@ -128,7 +128,7 @@ class TestStateRaisesAfterUnregister:
         we assert there is meaningful, not vacuous — unregister distinguishes
         removed-vs-never-registered.
         """
-        py_bot = PyBot()
+        py_bot = RustBot()
         removed = py_bot.unregister_pool(address=get_checksum_address("0x" + "9" * 40))
         assert removed is False
 
@@ -143,7 +143,7 @@ def test_from_py_pool_still_usable_after_unregister() -> None:
     /``update_block``) raises. This is the contract the ``state`` ``None``
     -check enforces at runtime.
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
 
     token0 = make_erc20(
         py_bot=py_bot,

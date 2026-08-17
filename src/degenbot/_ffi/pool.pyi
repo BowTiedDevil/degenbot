@@ -1,10 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.pool`` submodule.
-
-Created at runtime by ``add_pool_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/pool/mod.rs``). Holds the pool-updater chunk-loop
-seam functions over the ``degenbot-pool-updater`` core crate.
-"""
-
 from collections.abc import Callable
 from typing import Any
 

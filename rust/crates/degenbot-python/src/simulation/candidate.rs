@@ -33,7 +33,7 @@ use pyo3::exceptions::PyValueError;
 /// hop_outputs, solve_block)` + the `engine_registry.paths.get(path_id)`
 /// `PathInfo` resolve. Construct one per solved path, per block.
 #[pyclass(
-    name = "PyDispatchCandidate",
+    name = "DispatchCandidate",
     skip_from_py_object,
     module = "degenbot._ffi.simulation"
 )]

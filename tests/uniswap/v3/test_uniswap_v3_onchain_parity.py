@@ -49,7 +49,7 @@ from typing import Any, Self
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
 from degenbot.exceptions.pool import IncompleteSwap
@@ -117,7 +117,7 @@ _CURATED_AMOUNTS = (
     MAX_INT256,
 )
 
-_PYBOT = PyBot()
+_PYBOT = RustBot()
 
 
 def _load_cassette() -> dict[str, Any]:

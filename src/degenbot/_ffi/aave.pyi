@@ -1,11 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.aave`` submodule.
-
-Created at runtime by ``add_aave_updater_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/aave_updater.rs``). Holds the Aave V3 updater
-loop + on-chain verification functions over the ``degenbot-aave-updater``
-core crate.
-"""
-
 from collections.abc import Callable
 from typing import Any
 

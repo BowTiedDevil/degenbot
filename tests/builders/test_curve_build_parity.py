@@ -1,6 +1,6 @@
 """WKKMJM step-1: recorded-RPC parity harness for the Rust Curve builder.
 
-Drives the Rust ``PyBot.build_curve_pool`` (the FFI adapter over core
+Drives the Rust ``RustBot.build_curve_pool`` (the FFI adapter over core
 ``builder::build_curve_pool`` + ``RpcCurveDataProvider``) through a
 byte-accurate ``OfflineProvider`` cassette (recorded ``eth_call`` reads, no
 network), then asserts the registered pool params against the same pinned
@@ -8,10 +8,10 @@ values the Rust test ``build_curve_pool_assembles_plain_pool_params``
 (pool_builder/tests.rs) checks byte-for-byte.
 
 This is the Python twin of that Rust `ConstructionIo` double. It validates the
-full seam no I/O-free test covers: `PyBot` → `attach_construction_io`
+full seam no I/O-free test covers: `RustBot` → `attach_construction_io`
 (AlloyRpcConstruction) → core detection choreography (coin discovery, A/fee/
 admin_fee, per-coin decimals, ramping/crypto/lending/lp/metapool probes) →
-`register_curve_pool` → `struct PyLiquidityPool` handle.
+`register_curve_pool` → `struct LiquidityPool` handle.
 
 Cassette semantics that differ from the Rust `FakeRpc` (selector stubs): the
 `OfflineProvider` keys `eth_call` by full `(to, calldata)` and treats an
@@ -26,7 +26,7 @@ from __future__ import annotations
 from eth_utils import keccak
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 
 # 20-byte (40 hex) addresses matching the Rust plain-pool test.
@@ -210,7 +210,7 @@ def _plain_full_cassette_json() -> str:
     `CurvePoolBuilder.build` issues (including ERC20 name/symbol and the
     ramping/crypto/lending/lp/metapool probes against the real registry
     addresses). The Python builder cannot tolerate an offline revert via
-    `PyBotIo.call_raw` (it raises a non-catchable `RuntimeError`), so every
+    `RustBotIo.call_raw` (it raises a non-catchable `RuntimeError`), so every
     optional probe must return an explicit "not present" value. The same
     cassette drives both the Rust `build_curve_pool` and the Python builder,
     so the two paths can be compared on identical recorded data.
@@ -266,20 +266,20 @@ def _plain_full_cassette_json() -> str:
 
 def _make_curve_builder(
     provider: RustAlloyProvider,
-) -> tuple[CurvePoolBuilder, PyBot]:
-    """A real `CurvePoolBuilder` wired over an offline provider + the shared PyBot.
+) -> tuple[CurvePoolBuilder, RustBot]:
+    """A real `CurvePoolBuilder` wired over an offline provider + the shared RustBot.
 
     Mirrors `Bot.__init__` wiring (Erc20Builder → BuilderContext →
     CurvePoolBuilder) so `build` runs the full production I/O choreography:
     detection, ERC20 token building, `register_curve_pool`, `_from_py_pool`.
-    Returns the builder and the shared `PyBot`.
+    Returns the builder and the shared `RustBot`.
     """
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.erc20_builder import Erc20Builder
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import PoolRegistry, TokenRegistry
 
-    py_bot = PyBot(chain_id=1)
+    py_bot = RustBot(chain_id=1)
     py_bot.attach_construction_io(provider, None)
     fake_db = object.__new__(DatabaseSessionManager)
     tokens = TokenRegistry()
@@ -311,7 +311,7 @@ def test_build_curve_pool_plain_over_offline_cassette() -> None:
     Rust `data_provider` attached).
     """
     provider = RustAlloyProvider.offline_from_json_string(_plain_cassette_json())
-    py_bot = PyBot(chain_id=1)
+    py_bot = RustBot(chain_id=1)
     py_bot.attach_construction_io(provider, None)
 
     pool_id = py_bot.build_curve_pool(POOL, [], _BLOCK)
@@ -348,7 +348,7 @@ def test_build_curve_pool_metapool_over_offline_cassette() -> None:
     decoded zero-stopped, and the LP token from the registry.
     """
     provider = RustAlloyProvider.offline_from_json_string(_metapool_cassette_json())
-    py_bot = PyBot(chain_id=1)
+    py_bot = RustBot(chain_id=1)
     py_bot.attach_construction_io(provider, None)
 
     pool_id = py_bot.build_curve_pool(META, [REGISTRY], _BLOCK)
@@ -373,7 +373,7 @@ def test_build_curve_pool_lending_ctoken_over_offline_cassette() -> None:
     default 10^0 / 10^18 — and `use_lending` is [True, False].
     """
     provider = RustAlloyProvider.offline_from_json_string(_lending_cassette_json())
-    py_bot = PyBot(chain_id=1)
+    py_bot = RustBot(chain_id=1)
     py_bot.attach_construction_io(provider, None)
 
     pool_id = py_bot.build_curve_pool(LPOOL, [], _BLOCK)
@@ -400,13 +400,13 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     both sides — the parity gate that lets `build` be retargeted to the Rust
     path without a silent behavior change.
     """
-    from degenbot.bot import PyBotIo
+    from degenbot.bot import RustBotIo
     from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
     from degenbot.builders.request import BuildPoolRequest
 
     # Path A — Rust `build_curve_pool` + handle.
     provider_a = RustAlloyProvider.offline_from_json_string(_plain_full_cassette_json())
-    bot_a = PyBot(chain_id=1)
+    bot_a = RustBot(chain_id=1)
     bot_a.attach_construction_io(provider_a, None)
     handle_a = bot_a.get_pool(bot_a.build_curve_pool(POOL, list(_REGISTRY_ADDRESSES), _BLOCK))
     assert handle_a is not None
@@ -414,7 +414,7 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     # Path B — current Python `CurvePoolBuilder.build` over the same cassette.
     provider_b = RustAlloyProvider.offline_from_json_string(_plain_full_cassette_json())
     builder, bot_b = _make_curve_builder(provider_b)
-    pybot_io = PyBotIo(provider=provider_b)
+    pybot_io = RustBotIo(provider=provider_b)
     pybot_io.attach_construction_io(bot_b)
     pool = builder.build(
         POOL,
@@ -519,17 +519,17 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
     Drives the builder on a metapool whose second coin is the 3Crv LP. The
     Rust `build_curve_pool` detects the metapool + underlying coins, then the
     builder's `_resolve_metapool_base` recursively builds the tripool base pool
-    in the SAME `PyBot`, so the metapool handle's `curve_base_pool()` go-between
+    in the SAME `RustBot`, so the metapool handle's `curve_base_pool()` go-between
     resolves. Asserts the metapool companion's base pool + underlying coins are
     recovered, and its identity params equal the direct Rust path.
     """
-    from degenbot.bot import PyBotIo
+    from degenbot.bot import RustBotIo
     from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
     from degenbot.builders.request import BuildPoolRequest
 
     # Path A — direct Rust build_curve_pool (oracle for M's identity params).
     provider_a = RustAlloyProvider.offline_from_json_string(_metapool_build_cassette_json())
-    bot_a = PyBot(chain_id=1)
+    bot_a = RustBot(chain_id=1)
     bot_a.attach_construction_io(provider_a, None)
     handle_a = bot_a.get_pool(bot_a.build_curve_pool(META, list(_REGISTRY_ADDRESSES), _BLOCK))
     assert handle_a is not None
@@ -538,7 +538,7 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
     # Path B — the retargeted builder, over the same cassette.
     provider_b = RustAlloyProvider.offline_from_json_string(_metapool_build_cassette_json())
     builder, bot_b = _make_curve_builder(provider_b)
-    pybot_io = PyBotIo(provider=provider_b)
+    pybot_io = RustBotIo(provider=provider_b)
     pybot_io.attach_construction_io(bot_b)
     pool = builder.build(
         META,
@@ -547,7 +547,7 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
         request=BuildPoolRequest(state_block=_BLOCK, silent=True),
     )
 
-    # The base pool was recursively built + registered in the same PyBot, so
+    # The base pool was recursively built + registered in the same RustBot, so
     # the metapool companion's base_pool go-between resolves (a lazy proxy over
     # the tripool handle; `.tokens` delegates to the resolved companion).
     assert pool.base_pool is not None

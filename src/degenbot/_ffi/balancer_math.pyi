@@ -1,16 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.balancer_math`` submodule.
-
-The submodule is created at runtime by ``add_balancer_math_module`` in the
-PyO3 wrapper crate (``degenbot-python/src/balancer_math/lib.rs``) — it calls
-``PyModule::new`` + ``sys.modules`` registration. This stub gives the type
-checker the function signatures.
-
-The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-balancer-math``
-core crate. The ``version`` discriminant (1=V1, 2=V2) is the bytecode-detected
-PowVersion; ``round_up`` is the stable-invariant V1(always-roundDown)/V2(roundUp)
-axis. Reverts surface as ValueError/OverflowError carrying the Solidity revert tag.
-"""
-
 def weighted_calculate_invariant(
     normalized_weights: list[int],
     balances: list[int],

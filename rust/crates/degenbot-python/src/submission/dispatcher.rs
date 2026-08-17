@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex};
 /// pool flagged `SolverCalc` within the decay window. Carries the `family`
 /// discriminator, the pool's chain identity (`address` for V2/V3, `pool_id`
 /// bytes32 hex for V4), + `last_flagged_block`.
-#[pyclass(name = "PyDivergentPool", module = "degenbot._ffi.submission")]
+#[pyclass(name = "DivergentPool", module = "degenbot._ffi.submission")]
 pub struct PyDivergentPool {
     pub(crate) family: &'static str,
     pub(crate) address: Option<String>,
@@ -114,7 +114,7 @@ impl PyDivergentPool {
 /// `dispatch_and_submit` / `fetch_fee_history` / `monitor_pending_transaction`
 /// receive the SAME `Arc<Mutex<Dispatcher>>` + lock it themselves).
 #[pyclass(
-    name = "PyDispatcher",
+    name = "Dispatcher",
     skip_from_py_object,
     module = "degenbot._ffi.submission"
 )]

@@ -1,14 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.abi`` submodule.
-
-Created at runtime by ``add_abi_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/abi/mod.rs``). The functions are thin PyO3 wrappers
-over the pure-Rust ``degenbot-abi`` core crate.
-
-``ValueError`` on invalid data / insufficient data; ``NotImplementedError``
-for unsupported types (e.g., fixed-point). ``checksum=True`` (default)
-returns checksummed addresses.
-"""
-
 from typing import Any, Literal, overload
 
 def decode(

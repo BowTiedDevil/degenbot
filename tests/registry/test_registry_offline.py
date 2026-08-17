@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider
@@ -18,7 +18,7 @@ from tests.fakes.pools import FakeUniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 CHAIN_DATA_PATH = Path(__file__).parent.parent / "fixtures" / "chain_data"
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")

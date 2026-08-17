@@ -1,11 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.eip_1559`` submodule.
-
-Created at runtime by ``add_eip_1559_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/eip_1559/lib.rs``). Thin PyO3 wrapper over the pure-Rust
-``degenbot-core::eip_1559`` Rust module — the single source of truth for EIP-1559 math,
-so the Python driver does NOT re-implement ``next_base_fee``.
-"""
-
 def next_base_fee(
     parent_base_fee: int,
     parent_gas_used: int,

@@ -32,7 +32,7 @@ from degenbot.database.models.aave import (
     AaveV3User,
 )
 from degenbot.database.operations import backup_sqlite_database
-from degenbot.db import PyUserPositionSummary
+from degenbot.db import UserPositionSummary
 from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
@@ -826,7 +826,7 @@ def position_risk(  # ruff:ignore[too-many-positional-arguments]
 
 
 def _display_user_risk(
-    user_summary: PyUserPositionSummary,
+    user_summary: UserPositionSummary,
     *,
     show_positions: bool,
 ) -> None:

@@ -435,7 +435,7 @@ impl PyCurveDataProvider {
 /// A thin Python handle to a pool registered in `BotState`.
 ///
 /// Does not own any state — all data lives in Rust inside `BotState`.
-#[pyclass(skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(name = "LiquidityPool", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyLiquidityPool {
     core: Arc<parking_lot::RwLock<BotState>>,
     pool_id: u64,
@@ -3173,7 +3173,7 @@ fn extract_tick_data(
 
 /// Thin Python handle to a pool, exposing a structural (not identity-based)
 /// interface that mirrors the Rust [`degenbot_pools::Pool`] handle.
-#[pyclass(skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(name = "Pool", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyPool {
     core: Arc<parking_lot::RwLock<BotState>>,
     pool_id: u64,
@@ -3345,7 +3345,7 @@ impl PyPool {
 }
 
 /// Read-only reserve-pair view exposed to Python.
-#[pyclass(module = "degenbot._ffi")]
+#[pyclass(name = "ReservePairView", module = "degenbot._ffi")]
 pub struct PyReservePairView {
     token0: String,
     token1: String,
@@ -3377,7 +3377,7 @@ impl PyReservePairView {
 }
 
 /// Read-only concentrated-liquidity view exposed to Python.
-#[pyclass(module = "degenbot._ffi")]
+#[pyclass(name = "ConcentratedLiquidityView", module = "degenbot._ffi")]
 pub struct PyConcentratedLiquidityView {
     token0: String,
     token1: String,
@@ -3427,7 +3427,7 @@ impl PyConcentratedLiquidityView {
 }
 
 /// Read-only balance-vector view exposed to Python.
-#[pyclass(module = "degenbot._ffi")]
+#[pyclass(name = "BalanceVectorView", module = "degenbot._ffi")]
 pub struct PyBalanceVectorView {
     tokens: Vec<String>,
     balances: Vec<U256>,

@@ -14,7 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError, RpcError
 
 if TYPE_CHECKING:
-    from degenbot.bot import PyBotIo
+    from degenbot.bot import RustBotIo
 
 
 class _BalancerPoolType(IntEnum):
@@ -51,7 +51,7 @@ class BalancerBuilderBase:
 
     Sync and async builders call these @staticmethod helpers
     without duplicating decode/extract logic. I/O helpers take
-    a PyBotIo parameter — callers pass the io they receive.
+    a RustBotIo parameter — callers pass the io they receive.
     """
 
     INVARIANT_V1 = 1
@@ -158,12 +158,12 @@ class BalancerBuilderBase:
     # --- I/O helpers ---
 
     @staticmethod
-    def _fetch_pool_id(io: PyBotIo, address: str, block: int) -> bytes:
+    def _fetch_pool_id(io: RustBotIo, address: str, block: int) -> bytes:
         return bytes(io.fetch_balancer_pool_id(address, block=block))
 
     @staticmethod
     def _fetch_vault_tokens(
-        io: PyBotIo,
+        io: RustBotIo,
         pool_id: bytes,
         block: int | None,
     ) -> tuple[list[str], list[int]]:
@@ -175,20 +175,20 @@ class BalancerBuilderBase:
         return list(tokens), [int(b) for b in balances]
 
     @staticmethod
-    def _fetch_swap_fee(io: PyBotIo, address: str, block: int) -> Fraction:
+    def _fetch_swap_fee(io: RustBotIo, address: str, block: int) -> Fraction:
         return Fraction(io.fetch_balancer_swap_fee(address, block=block), 10**18)
 
     @staticmethod
-    def _fetch_weights(io: PyBotIo, address: str, block: int) -> list[int]:
+    def _fetch_weights(io: RustBotIo, address: str, block: int) -> list[int]:
         return list(io.fetch_balancer_weights(address, block=block))
 
     @staticmethod
-    def _fetch_amp(io: PyBotIo, address: str, block: int) -> int:
+    def _fetch_amp(io: RustBotIo, address: str, block: int) -> int:
         return io.fetch_balancer_amp(address, block=block)
 
     @staticmethod
     def _fetch_rate_providers(
-        io: PyBotIo,
+        io: RustBotIo,
         address: str,
         block: int,
     ) -> list[str]:
@@ -202,7 +202,7 @@ class BalancerBuilderBase:
 
     @staticmethod
     def _fetch_rates(
-        io: PyBotIo,
+        io: RustBotIo,
         rate_providers: list[str],
         block: int,
     ) -> list[int]:
@@ -218,7 +218,7 @@ class BalancerBuilderBase:
 
     @staticmethod
     def _detect_pool_type(
-        io: PyBotIo,
+        io: RustBotIo,
         address: str,
         block: int,
     ) -> _BalancerPoolType:
@@ -237,7 +237,7 @@ class BalancerBuilderBase:
 
         """
         # ADR-005 slice 14n: delegate both probes to Rust
-        # (``PyBotIo.probe_balancer_pool_type``). PyBotIo is the only executor;
+        # (``RustBotIo.probe_balancer_pool_type``). RustBotIo is the only executor;
         # the Python getNormalizedWeights/getAmplificationParameter probing
         # fallback is retired.
         try:

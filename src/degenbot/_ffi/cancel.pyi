@@ -1,10 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.cancel`` submodule.
-
-Created at runtime by ``register_cancel`` in the PyO3 wrapper crate
-(``degenbot-python/src/cancel.rs``). Holds the shared cooperative cancel
-flag for the pool + aave updater loops.
-"""
-
 class CancelHandle:
     """Cooperative cancel flag for the updater loops.
 

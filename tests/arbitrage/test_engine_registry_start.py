@@ -169,21 +169,21 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
 
 
 def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
-    """T4 (ADR-006 D4): PyBot exposes the verify CONFIG + per-pool two-step
+    """T4 (ADR-006 D4): RustBot exposes the verify CONFIG + per-pool two-step
     lifecycle entry points once an ArbitrageEngine is constructed against it.
     The whole-batch `verify_liquidity_maps` (and V3/V4 twins) was REMOVED as
     redundant + racy (the per-pool two-step lifecycle is the verify authority),
     so those must NOT be present."""
     from degenbot.arbitrage.engine_registry import ArbitrageEngine
-    from degenbot.bot import PyBot
+    from degenbot.bot import RustBot
 
-    bot = PyBot()
+    bot = RustBot()
     ArbitrageEngine(py_bot=bot)  # attaches shared PumpState
     for method in (
         "set_verify_rpc_url",
         "set_verify_state_view",
     ):
-        assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
+        assert hasattr(bot, method), f"RustBot must expose {method} after engine attach"
     for method in (
         "verify_liquidity_maps",
         "verify_v3_liquidity_maps",
@@ -193,7 +193,7 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
 
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
-    """T3 (ADR-006 D4): PyBot exposes subscribe/resume as delegating entry
+    """T3 (ADR-006 D4): RustBot exposes subscribe/resume as delegating entry
     points once a ArbitrageEngine is constructed against it (which attaches
     the shared PumpState). The Bot is the D4 pump owner; these methods drive
     the SAME PumpState the engine reads.
@@ -204,16 +204,16 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     `S` so the core auto-backfill picks it up.
     """
     from degenbot.arbitrage.engine_registry import ArbitrageEngine
-    from degenbot.bot import PyBot
+    from degenbot.bot import RustBot
 
-    bot = PyBot()
+    bot = RustBot()
     # Constructing the engine against the bot attaches the shared PumpState.
     engine = ArbitrageEngine(py_bot=bot)
     for method in ("subscribe", "resume"):
-        assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
+        assert hasattr(bot, method), f"RustBot must expose {method} after engine attach"
     # 2SM4Y7: backfill_from_snapshot is retired.
     assert not hasattr(bot, "backfill_from_snapshot"), (
-        "PyBot::backfill_from_snapshot retired (2SM4Y7)"
+        "RustBot::backfill_from_snapshot retired (2SM4Y7)"
     )
     # The engine still exposes subscribe/resume too (reads the same shared state).
     for method in ("subscribe", "resume"):

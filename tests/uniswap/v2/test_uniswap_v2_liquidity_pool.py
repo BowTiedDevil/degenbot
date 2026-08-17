@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.bot import Bot, PyBot
+from degenbot.bot import Bot, RustBot
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -57,7 +57,7 @@ def _make_bot(fork: AnvilFork) -> Bot:
 
 
 _V2_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v2/wbtc_weth/17600000.json")
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 
 def _load_wbtc_weth_v2_pool() -> UniswapV2Pool:

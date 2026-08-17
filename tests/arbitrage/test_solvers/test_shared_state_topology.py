@@ -5,10 +5,10 @@ closure of the ``rust-owned-bot.md`` §17 stale-state caveat:
 
 - ``ArbitrageEngine(py_bot=core)`` adopts ``core``'s shared ``BotState`` (one
   state, not the engine's private copy).
-- Pools register ONCE — via ``PyBot.register_v2_pool`` (the same path
+- Pools register ONCE — via ``RustBot.register_v2_pool`` (the same path
   ``Bot.build_pool`` takes). The engine does NOT re-register them; it reads
   them through the shared state via ``register_and_solve_path``.
-- A live-state write through the ``PyLiquidityPool`` handle
+- A live-state write through the ``LiquidityPool`` handle
   (``sync_reserves``) is immediately visible to a subsequent engine re-solve
   (``solve_all_paths``) — the engine reads the *current* shared state, not a
   stale copy. The dual-``BotState`` split (the §17 root cause) is gone.
@@ -21,7 +21,7 @@ import threading
 import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 
 USDC = 10**6
 WETH = 10**18
@@ -48,7 +48,7 @@ V3_LIQUIDITY = 1_234_567_890
 
 # ─── V4 topology round-trip fixtures (RAJ3PP public-interface regression) ─
 # A V4 pool registered via ArbitrageEngine.register_v4_pool (with its core
-# shared from a PyBot) and read back through a PyLiquidityPool handle. The
+# shared from a RustBot) and read back through a LiquidityPool handle. The
 # handle is family-agnostic — the same getters/apply methods used for V3.
 V4_POOL_MANAGER = "0x" + "ee" * 20
 V4_POOL_ID_HEX = "0x" + "01" * 32
@@ -64,7 +64,7 @@ def _v2_sync_log_data(reserve0: int, reserve1: int) -> str:
     return "0x" + (reserve0.to_bytes(32, "big") + reserve1.to_bytes(32, "big")).hex()
 
 
-def _register_balanced_v2_pair(core: PyBot) -> tuple[int, int]:
+def _register_balanced_v2_pair(core: RustBot) -> tuple[int, int]:
     """Register two balanced V2 pools (A: USDC→WETH, B: WETH→USDC) at ~1:1875.
 
     Returns the (pool_id_a, pool_id_b) pair. The cycle is initially ~balanced.
@@ -100,8 +100,8 @@ class TestSharedStateTopology:
     """``ArbitrageEngine(py_bot=)`` shares the bot's ``BotState`` (ADR-006 D1+D4)."""
 
     def test_engine_adopts_shared_bot_state(self) -> None:
-        """The engine reads pools registered on the shared PyBot — no re-registration."""
-        core = PyBot()
+        """The engine reads pools registered on the shared RustBot — no re-registration."""
+        core = RustBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
         engine = ArbitrageEngine(py_bot=core)
 
@@ -113,13 +113,13 @@ class TestSharedStateTopology:
         assert engine.path_count() == 1
 
     def test_live_state_write_is_visible_to_engine_re_solve(self) -> None:
-        """A ``PyLiquidityPool`` write is immediately read by the next engine solve.
+        """A ``LiquidityPool`` write is immediately read by the next engine solve.
 
         This is the §17 stale-state root cause's structural closure: with one
         shared ``BotState``, the engine re-solve reads the *current* state the
         handle just wrote — not a stale copy.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
         engine = ArbitrageEngine(py_bot=core)
         engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
@@ -146,9 +146,9 @@ class TestSharedStateTopology:
         )
 
     def test_dispatch_log_drives_full_pump_to_solve_loop(self) -> None:
-        """A synthetic WS Sync log via `PyBot.dispatch_log` reaches the engine.
+        """A synthetic WS Sync log via `RustBot.dispatch_log` reaches the engine.
 
-        This is the *full* §17 closure: not just that a `PyLiquidityPool` write
+        This is the *full* §17 closure: not just that a `LiquidityPool` write
         is visible to the engine (the prior test), but that the WS pump's own
         path — `dispatch_log` → `LogDispatcher` decode/apply → notify
         `EngineSubscriber` → engine dirties the pool → `solve_all_paths`
@@ -157,7 +157,7 @@ class TestSharedStateTopology:
         decoder/notify wiring, proving the hot loop (not just the eager entry)
         reads live state.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
         engine = ArbitrageEngine(py_bot=core)
         engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
@@ -196,23 +196,23 @@ class TestSharedStateTopology:
 
 
 class TestSharedStateTopologyV3:
-    """UniswapV3Pool over PyLiquidityPool — V3-specific §17 closure (plan-101 slice 8a).
+    """UniswapV3Pool over LiquidityPool — V3-specific §17 closure (plan-101 slice 8a).
 
     Mirrors the V2 topology tests but for the V3 family: a pool registered via
-    ``PyBot.register_v3_pool`` is read through a ``PyLiquidityPool`` handle the
+    ``RustBot.register_v3_pool`` is read through a ``LiquidityPool`` handle the
     engine shares — the V3 scalar state (sqrt_price_x96/liquidity/tick/update_block)
     lives in ``BotState``, not a Python-side state manager.
     """
 
     def test_v3_handle_reads_registered_scalars(self) -> None:
-        """A V3 pool registered on the shared PyBot is read back via a PyLiquidityPool handle.
+        """A V3 pool registered on the shared RustBot is read back via a LiquidityPool handle.
 
         The handle's V3 getters (``sqrt_price_x96``/``liquidity``/``tick``/
         ``update_block``/``fee``/``tick_spacing``) read the authoritative
         ``BotState`` scalars set at registration — structural mirror of V2's
         ``reserve0``/``reserve1`` getters.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -225,7 +225,7 @@ class TestSharedStateTopologyV3:
             tick=V3_TICK,
         )
 
-        # The handle is family-agnostic — get_pool returns a PyLiquidityPool
+        # The handle is family-agnostic — get_pool returns a LiquidityPool
         # for a V3 pool_id the same way it does for V2.
         handle = core.get_pool(pool_id)
         assert handle is not None
@@ -243,11 +243,11 @@ class TestSharedStateTopologyV3:
         """A V3 ``apply_swap`` write through the handle is immediately readable.
 
         This is the deepest assertion of slice 8a: a write through
-        ``PyLiquidityPool.apply_swap`` lands on the shared ``BotState`` and the
+        ``LiquidityPool.apply_swap`` lands on the shared ``BotState`` and the
         next getter read sees the new scalars — the V3 family of the V2
         ``sync_reserves → reserve0`` visibility contract.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -287,7 +287,7 @@ class TestSharedStateTopologyV3:
         from one snapshot tuple — all four fields are coherent (read under one
         ``BotState`` guard). Matches the V2 ``snapshot()`` atomicity contract.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -312,7 +312,7 @@ class TestSharedStateTopologyV3:
 
     def test_v3_handle_snapshot_returns_none_for_v2_pool(self) -> None:
         """snapshot_v3() returns None on non-V3/V4 pools (no false data)."""
-        core = PyBot()
+        core = RustBot()
         v2_pool_id = core.register_v2_pool(
             address=V2_POOL_A,
             token0=TOKEN0,
@@ -337,7 +337,7 @@ class TestSharedStateTopologyV3:
         the swap reverts the scalars in-place. The reader immediately sees the
         rolled-back values.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -374,7 +374,7 @@ class TestSharedStateTopologyV3:
         current tick with a lower/upper tick pair to set up a bounded liquidity
         range.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -438,7 +438,7 @@ class TestSharedStateTopologyV3:
         is tick-only (a wholesale replace from a fetched snapshot, not a
         journalled event delta).
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -515,7 +515,6 @@ class TestSharedStateTopologyV3:
         # + `_does_not_rewind_block` Rust unit tests), and a background-thread Rust
         # panic is not a catchable Python exception.
 
-
         # A V2 apply returns False silently (don't corrupt) — mirrors the
         # apply_liquidity_update V2-rejection contract (a V2 pool has no ticks).
         v2_pool_id = core.register_v2_pool(
@@ -547,7 +546,7 @@ class TestSharedStateTopologyV3:
         this Rust-side snapshot — the structured mirror of V2 ``reserve0``/
         ``reserve1`` scalar reads, lifted to the tick_data HashMap.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -596,7 +595,7 @@ class TestSharedStateTopologyV3:
         has a bit set for each tick (within the 256-tick word) initialized at
         that word. Uninitialized words are absent.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -641,10 +640,10 @@ class TestSharedStateTopologyV3:
 
 
 class TestSharedStateTopologyV4:
-    """Uniswap V4 over PyLiquidityPool — V4-specific RAJ3PP closure.
+    """Uniswap V4 over LiquidityPool — V4-specific RAJ3PP closure.
 
     Mirrors ``TestSharedStateTopologyV3`` for the V4 family. The headline
-    regression: before RAJ3PP, ``PyLiquidityPool.apply_swap``/
+    regression: before RAJ3PP, ``LiquidityPool.apply_swap``/
     ``apply_liquidity_update`` routed unconditionally into V3-only
     ``apply_v3_*_by_pool_id`` methods that match ``PoolEntry::V3`` only and
     return ``None`` for ``PoolEntry::V4`` — so every Python-side V4 update
@@ -656,11 +655,11 @@ class TestSharedStateTopologyV4:
     """
 
     @staticmethod
-    def _register_v4(core: PyBot, engine: ArbitrageEngine) -> int:
+    def _register_v4(core: RustBot, engine: ArbitrageEngine) -> int:
         """Register a V4 pool via the shared core; return its handle key.
 
         ADR-006 D3 (T5): deleted the unreachable ``engine.register_v4_pool``
-        pyo3 surface — pools enter BotState via the bot's ``PyBot.register_*``
+        pyo3 surface — pools enter BotState via the bot's ``RustBot.register_*``
         (the engine shares the bot's BotState, so registering via ``core`` is
         equivalent and is the live builder path).
         """
@@ -683,14 +682,14 @@ class TestSharedStateTopologyV4:
         """A V4 ``apply_swap`` through the handle lands on the shared BotState.
 
         RAJ3PP headline regression via the public interface: pre-fix,
-        ``PyLiquidityPool.apply_swap`` called ``apply_v3_swap_by_pool_id``
+        ``LiquidityPool.apply_swap`` called ``apply_v3_swap_by_pool_id``
         unconditionally, which no-op'd on a ``PoolEntry::V4`` and silently left
         the V4 scalars at their registration values. After the family-dispatch
         fix, the write is visible to the next handle read — the V4 family of
         the V3 ``apply_swap → sqrt_price_x96`` visibility contract
         (``test_v3_handle_apply_swap_is_visible_to_handle_reads``).
         """
-        core = PyBot()
+        core = RustBot()
         engine = ArbitrageEngine(py_bot=core)
         pool_id = self._register_v4(core, engine)
         handle = core.get_pool(pool_id)
@@ -716,7 +715,7 @@ class TestSharedStateTopologyV4:
     def test_v4_handle_apply_liquidity_update_inits_ticks(self) -> None:
         """A V4 ``apply_liquidity_update`` through the handle inits tick entries.
 
-        The other half of RAJ3PP: pre-fix ``PyLiquidityPool.apply_liquidity_update``
+        The other half of RAJ3PP: pre-fix ``LiquidityPool.apply_liquidity_update``
         routed to ``apply_v3_liquidity_update_by_pool_id`` unconditionally, which
         no-op'd on ``PoolEntry::V4`` and silently dropped the ModifyLiquidity
         tick mutation. After the fix the dispatch reaches the V4 path and the
@@ -724,7 +723,7 @@ class TestSharedStateTopologyV4:
         ``apply_liquidity_update`` contract
         (``test_v3_handle_apply_liquidity_update_inits_ticks``).
         """
-        core = PyBot()
+        core = RustBot()
         engine = ArbitrageEngine(py_bot=core)
         pool_id = self._register_v4(core, engine)
         handle = core.get_pool(pool_id)
@@ -764,7 +763,7 @@ class TestSharedStateTopologyV4:
         a V4 pool (a future maintainer narrowing it to V3-only would re-open
         the RAJ3PP silent-drop footgun shape).
         """
-        core = PyBot()
+        core = RustBot()
         engine = ArbitrageEngine(py_bot=core)
         pool_id = self._register_v4(core, engine)
         handle = core.get_pool(pool_id)
@@ -820,7 +819,7 @@ class TestSharedStateTopologyConcurrency:
 
     The lock-ordering invariant is **engine-then-core**: every pump path holds
     the engine ``Mutex<ArbitrageEngine>`` and nests ``core.write()``/``core.read()``
-    inside; ``PyBot``/``PyLiquidityPool`` methods take ``core`` alone and never
+    inside; ``RustBot``/``LiquidityPool`` methods take ``core`` alone and never
     call into the engine (ADR-003's rule keeping the deadlock surface empty).
     These tests characterize that invariant under concurrent writer/reader
     threads — the pump-side write (``apply_swap``) interleaved with companion
@@ -843,7 +842,7 @@ class TestSharedStateTopologyConcurrency:
         ever nested core-then-engine, the writer (which takes ``core.write()``
         via the handle) would block the pump and the join would time out.
         """
-        core = PyBot()
+        core = RustBot()
         core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -894,7 +893,7 @@ class TestSharedStateTopologyConcurrency:
         iteration N+1 with the old ``block`` from N) would fail this — proving
         the single-``core.read()`` guard around the snapshot tuple.
         """
-        core = PyBot()
+        core = RustBot()
         core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -964,7 +963,7 @@ class TestSharedStateTopologyConcurrency:
         if the engine ever tried to re-enter ``core`` while holding a
         reader-held core guard (or vice versa), this would deadlock or panic.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
         engine = ArbitrageEngine(py_bot=core)
         engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
@@ -1007,8 +1006,8 @@ class TestSharedStateTopologyConcurrency:
 
 
 # ─── Curve topology round-trip fixtures (ADR-005 slice 11a state port) ────
-# A 3-coin Curve StableSwap pool registered via PyBot.register_curve_pool
-# and read back through a PyLiquidityPool handle. This is the third family
+# A 3-coin Curve StableSwap pool registered via RustBot.register_curve_pool
+# and read back through a LiquidityPool handle. This is the third family
 # ported into PoolEntry — the ADR-003 "third family ports, now's the moment"
 # decision point. The slice-11a state-port foundation; the Python companion
 # rewrite + Rust math port follow in 11b/11c.
@@ -1024,8 +1023,8 @@ CURVE_BALANCES = [1_500_000 * 10**18, 1_500_000 * 10**18, 1_500_000 * 10**18]
 class TestSharedStateTopologyCurve:
     """Curve — the third ``PoolEntry`` family (ADR-005 slice 11a state port).
 
-    Mirrors the V3/V4 topology class: register via ``PyBot.register_curve_pool``,
-    read independently via a ``PyLiquidityPool`` handle, and prove a live
+    Mirrors the V3/V4 topology class: register via ``RustBot.register_curve_pool``,
+    read independently via a ``LiquidityPool`` handle, and prove a live
     balance write (``apply_curve_balance_update``) is immediately visible to
     handle reads (the §17 live-read payoff, now extended to Curve).
 
@@ -1036,8 +1035,8 @@ class TestSharedStateTopologyCurve:
     """
 
     def test_curve_handle_reads_registered_balances(self) -> None:
-        """``PyLiquidityPool`` reads the registration balances + n_coins."""
-        core = PyBot()
+        """``LiquidityPool`` reads the registration balances + n_coins."""
+        core = RustBot()
         pool_id = core.register_curve_pool(
             address=CURVE_POOL_A,
             tokens=CURVE_TOKENS,
@@ -1062,7 +1061,7 @@ class TestSharedStateTopologyCurve:
         the new balances — the Curve family of the V3
         ``apply_swap → sqrt_price_x96`` visibility contract.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_curve_pool(
             address=CURVE_POOL_A,
             tokens=CURVE_TOKENS,
@@ -1097,7 +1096,7 @@ class TestSharedStateTopologyCurve:
         write, some from after). The Python companion (slice 11b) will build
         its ``CurveStableswapPoolState`` from this snapshot — coherent.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_curve_pool(
             address=CURVE_POOL_A,
             tokens=CURVE_TOKENS,
@@ -1124,7 +1123,7 @@ class TestSharedStateTopologyCurve:
         The family-dispatching apply is a silent no-op on non-Curve pools — it
         must NOT corrupt a V3/V4/V2 pool's state. Mirrors the V4-on-V3 contract.
         """
-        core = PyBot()
+        core = RustBot()
         v3_pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -1146,7 +1145,7 @@ class TestSharedStateTopologyCurve:
 
     def test_curve_snapshot_returns_none_for_v3_pool(self) -> None:
         """``snapshot_curve()`` returns ``None`` on non-Curve pools."""
-        core = PyBot()
+        core = RustBot()
         v3_pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -1171,8 +1170,8 @@ class TestSharedStateTopologyCurve:
 # ─── Balancer weighted topology round-trip fixtures
 #                   (ADR-005 slice 12a weighted state port) ──────────────
 # A 2-token Balancer V2 weighted pool registered via
-# PyBot.register_balancer_weighted_pool and read back through a
-# PyLiquidityPool handle — the **fourth** ``PoolEntry`` family (alongside
+# RustBot.register_balancer_weighted_pool and read back through a
+# LiquidityPool handle — the **fourth** ``PoolEntry`` family (alongside
 # V2/V3/V4/Curve). Mirrors the V3/V4/Curve topology class: register →
 # handle → live-write → atomic-snapshot visibility contract.
 BALANCER_VAULT = "0x" + "ba" * 20
@@ -1195,8 +1194,8 @@ class TestSharedStateTopologyBalancerWeighted:
     """Balancer weighted — the fourth ``PoolEntry`` family (ADR-005 slice 12a).
 
     Mirrors the V3/V4/Curve topology class: register via
-    ``PyBot.register_balancer_weighted_pool``, read independently via a
-    ``PyLiquidityPool`` handle, and prove a live balance write
+    ``RustBot.register_balancer_weighted_pool``, read independently via a
+    ``LiquidityPool`` handle, and prove a live balance write
     (``apply_balancer_weighted_balance_update``) is immediately visible to
     handle reads (the §17 live-read payoff, extended to the Balancer weighted
     family). The mutable slot is ``balances`` (one U256 per token);
@@ -1213,8 +1212,8 @@ class TestSharedStateTopologyBalancerWeighted:
     """
 
     def test_balancer_weighted_handle_reads_registered_balances(self) -> None:
-        """``PyLiquidityPool`` reads the registration balances + n_tokens."""
-        core = PyBot()
+        """``LiquidityPool`` reads the registration balances + n_tokens."""
+        core = RustBot()
         pool_id = core.register_balancer_weighted_pool(
             address=BALANCER_WEIGHTED_POOL_A,
             vault=BALANCER_VAULT,
@@ -1245,7 +1244,7 @@ class TestSharedStateTopologyBalancerWeighted:
         the new balances — the Balancer weighted family of the V3
         ``apply_swap → sqrt_price_x96`` visibility contract.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_balancer_weighted_pool(
             address=BALANCER_WEIGHTED_POOL_A,
             vault=BALANCER_VAULT,
@@ -1272,7 +1271,7 @@ class TestSharedStateTopologyBalancerWeighted:
         atomically — one read-guard over both handoffs (same guarantee as
         ``snapshot_v3`` / ``snapshot_curve``).
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_balancer_weighted_pool(
             address=BALANCER_WEIGHTED_POOL_A,
             vault=BALANCER_VAULT,
@@ -1301,7 +1300,7 @@ class TestSharedStateTopologyBalancerWeighted:
         non-balance-vector pool. A V3 pool registered under the CL family must
         NOT be mutated by a balance-vector companion.
         """
-        core = PyBot()
+        core = RustBot()
         v3_pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -1327,7 +1326,7 @@ class TestSharedStateTopologyBalancerWeighted:
     def test_balancer_weighted_snapshot_returns_none_for_curve_pool(self) -> None:
         """``snapshot_balancer_weighted()`` returns ``None`` on non-Balancer-
         weighted pools (family-dispatching reader analogue)."""
-        core = PyBot()
+        core = RustBot()
         curve_pool_id = core.register_curve_pool(
             address=CURVE_POOL_A,
             tokens=CURVE_TOKENS,
@@ -1353,8 +1352,8 @@ class TestSharedStateTopologyBalancerWeighted:
 # ─── Balancer stable topology round-trip fixtures
 #                   (ADR-005 slice 12c stable state port) ───────────────
 # A 3-token ComposableStablePool registered via
-# PyBot.register_balancer_stable_pool and read back through a
-# PyLiquidityPool handle — the **fifth** ``PoolEntry`` family (alongside
+# RustBot.register_balancer_stable_pool and read back through a
+# LiquidityPool handle — the **fifth** ``PoolEntry`` family (alongside
 # V2/V3/V4/Curve/BalancerWeighted). Mirrors the V3/V4/Curve/Weighted
 # topology class: register → handle → live-write → atomic-snapshot visibility
 # contract; plus the BPT-index + invariant_version round-trip tests (the
@@ -1382,8 +1381,8 @@ class TestSharedStateTopologyBalancerStable:
     """Balancer stable — the fifth ``PoolEntry`` family (ADR-005 slice 12c).
 
     Mirrors the V3/V4/Curve/BalancerWeighted topology class: register via
-    ``PyBot.register_balancer_stable_pool``, read independently via a
-    ``PyLiquidityPool`` handle, and prove a live balance write
+    ``RustBot.register_balancer_stable_pool``, read independently via a
+    ``LiquidityPool`` handle, and prove a live balance write
     (``apply_balancer_stable_balance_update``) is immediately visible to
     handle reads (the §17 live-read payoff, extended to the Balancer stable
     family). The mutable slot is ``balances`` (one U256 per token, including
@@ -1402,8 +1401,8 @@ class TestSharedStateTopologyBalancerStable:
     """
 
     def test_balancer_stable_handle_reads_registered_balances(self) -> None:
-        """``PyLiquidityPool`` reads the registration balances + stable seams."""
-        core = PyBot()
+        """``LiquidityPool`` reads the registration balances + stable seams."""
+        core = RustBot()
         pool_id = core.register_balancer_stable_pool(
             address=BALANCER_STABLE_POOL_A,
             vault=BALANCER_VAULT,
@@ -1437,7 +1436,7 @@ class TestSharedStateTopologyBalancerStable:
         Variant round-trip: the BPT-index + invariant_version discriminators
         must round-trip None → None and V2 → V2 (the MetaStablePool seam).
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_balancer_stable_pool(
             address=BALANCER_STABLE_POOL_A,
             vault=BALANCER_VAULT,
@@ -1465,7 +1464,7 @@ class TestSharedStateTopologyBalancerStable:
         sees the new balances — the Balancer stable family of the V3
         ``apply_swap → sqrt_price_x96`` visibility contract.
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_balancer_stable_pool(
             address=BALANCER_STABLE_POOL_A,
             vault=BALANCER_VAULT,
@@ -1493,7 +1492,7 @@ class TestSharedStateTopologyBalancerStable:
         atomically — one read-guard over both handoffs (same guarantee as
         ``snapshot_v3`` / ``snapshot_curve`` / ``snapshot_balancer_weighted``).
         """
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_balancer_stable_pool(
             address=BALANCER_STABLE_POOL_A,
             vault=BALANCER_VAULT,
@@ -1523,7 +1522,7 @@ class TestSharedStateTopologyBalancerStable:
         non-balance-vector pool. A V3 pool registered under the CL family must
         NOT be mutated by a balance-vector companion.
         """
-        core = PyBot()
+        core = RustBot()
         v3_pool_id = core.register_v3_pool(
             address=V3_POOL_A,
             token0=TOKEN0,
@@ -1546,7 +1545,7 @@ class TestSharedStateTopologyBalancerStable:
     def test_balancer_stable_snapshot_returns_none_for_curve_pool(self) -> None:
         """``snapshot_balancer_stable()`` returns ``None`` on non-Balancer-
         stable pools (family-dispatching reader analogue)."""
-        core = PyBot()
+        core = RustBot()
         curve_pool_id = core.register_curve_pool(
             address=CURVE_POOL_A,
             tokens=CURVE_TOKENS,

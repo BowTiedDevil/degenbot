@@ -84,13 +84,13 @@ class TestDryRunDefaults:
     ) -> None:
         # Regression: the dry-run placeholder private key must be a VALID
         # secp256k1 scalar. `dispatch_profitable_results` constructs a
-        # `PyTxSigner(key=cfg.operator_private_key)` unconditionally — the
+        # `TxSigner(key=cfg.operator_private_key)` unconditionally — the
         # former all-zero placeholder (0x00..00) is rejected by the curve (zero
         # is not a valid scalar), raising `ValueError: signature error` and
         # killing the result-consumer task on the very first result batch. The
         # Anvil account-0 key is a well-known valid throwaway that never signs
         # (the Rust submit leaf's `dry_run` guard skips `sign_eip1559`).
-        from degenbot._ffi.submission import PyTxSigner
+        from degenbot._ffi.submission import TxSigner
 
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}
@@ -100,9 +100,9 @@ class TestDryRunDefaults:
         assert cfg.operator_address == self._DRY_RUN_ADDR
         assert cfg.operator_private_key == self._DRY_RUN_KEY
         # The placeholder must actually load as a signer (the crash surface).
-        # `PyTxSigner.address` renders lowercase (not EIP-55), so compare
+        # `TxSigner.address` renders lowercase (not EIP-55), so compare
         # case-insensitively against the config's checksummed address.
-        signer = PyTxSigner(key=cfg.operator_private_key, chain_id=1)
+        signer = TxSigner(key=cfg.operator_private_key, chain_id=1)
         assert signer.address.lower() == cfg.operator_address.lower()
 
 

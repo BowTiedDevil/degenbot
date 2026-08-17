@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.types import PyLiquidityPool
+    from degenbot.types import LiquidityPool
     from degenbot.types.abstract import AbstractPoolState
 
 # Enum for deployed StableMath invariant versions.
@@ -108,7 +108,7 @@ class _HandleRateProviderAdapter:
     is ``_resolve_scaling_factors`` (which calls the handle directly).
     """
 
-    def __init__(self, py_pool: PyLiquidityPool) -> None:
+    def __init__(self, py_pool: LiquidityPool) -> None:
         self._py_pool = py_pool
 
     def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
@@ -168,7 +168,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     pool_id: bytes
     pool_specialization: int
     vault: ChecksumAddress
-    _py_pool: PyLiquidityPool
+    _py_pool: LiquidityPool
     _tokens: tuple[Erc20Token, ...]
     scaling_factors: tuple[int, ...]
     fee: Fraction
@@ -184,13 +184,13 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         """Direct construction is forbidden.
 
         ``BalancerV2StablePool`` is a Python companion over a Rust-owned
-        ``PyLiquidityPool`` handle. Use the registered entry points instead:
+        ``LiquidityPool`` handle. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_balancer_stable_pool(...)``
 
         Both register the pool in Rust (including the optional rate provider
-        as the stored I/O trait object), obtain the ``PyLiquidityPool``
+        as the stored I/O trait object), obtain the ``LiquidityPool``
         handle, and wrap it via :meth:`_from_py_pool`.
 
         Raises:
@@ -201,13 +201,13 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or "
             "make_balancer_stable_pool(...) (tests) to register the pool in "
-            "Rust and obtain the PyLiquidityPool handle to wrap."
+            "Rust and obtain the LiquidityPool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
-        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
+        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
         identity field (vault, pool_id, tokens, amp, scaling_factors,
@@ -229,7 +229,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
         if py_pool.pool_family != "balancer-stable":
             msg = (
-                "PyLiquidityPool handle is not a Balancer stable pool "
+                "LiquidityPool handle is not a Balancer stable pool "
                 f"(got pool_family {py_pool.pool_family!r})"
             )
             raise DegenbotValueError(message=msg)
@@ -317,7 +317,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     def balances(self) -> tuple[int, ...]:
         """Balances.
 
-        Read from the Rust core via the ``PyLiquidityPool`` handle
+        Read from the Rust core via the ``LiquidityPool`` handle
         (ADR-005 slice 12d). Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple
         (one U256 per token, including BPT for Composable pools).
@@ -731,7 +731,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         """Apply an external state update with new balances.
 
         Delegates to the Rust core
-        (``PyLiquidityPool.apply_balancer_stable_balance_update``) which
+        (``LiquidityPool.apply_balancer_stable_balance_update``) which
         journals the prior balances (genesis-anchor V2-style discipline) and
         lands the new balances + ``update_block`` atomically
         (ADR-005 slice 12d). The ``_state_lock`` + double-check-after-acquire

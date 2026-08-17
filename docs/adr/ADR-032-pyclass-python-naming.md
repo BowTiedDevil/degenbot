@@ -65,3 +65,33 @@ a convention by drift, not by policy.
 - The gate is a runtime test over the built extension: it runs in the same
   `tests/rust` suite as the registration↔stub drift gate (task `DSWX6Z`),
   so a renamed class that skips its stub update fails both gates.
+
+## Post-adoption: VD5MD5 rename complete (2026-08-17)
+
+The grandfather list is **empty**: all 27 census names were renamed
+(task `VD5MD5`, direct rename, no backward-compat aliases, per the ADR-026
+precedent). Mapping:
+
+| Python name before | Python name after | Note |
+| --- | --- | --- |
+| `PyBot` | `RustBot` | the Python session class `degenbot.bot.Bot` keeps the clean name; the Rust engine handle is origin-descriptive |
+| `PyBotIo` | `RustBotIo` | same collision reasoning |
+| `PyErc20Token` | `RustErc20Token` | the Python model class `degenbot.erc20.Erc20Token` keeps the clean name |
+| `PySubscription` | `PoolStateSubscription` | distinct from the Python `provider.Subscription` wrapper; role-specific name (pool-state-change subscription handle) |
+| `PyDatabaseSnapshot` | `RustDatabaseSnapshot` | the Python `uniswap.{v3,v4}_snapshot.DatabaseSnapshot` sources keep the clean name |
+| `PyDatabasePositionQuery` | `RustDatabasePositionQuery` | the Python `aave.analysis.orchestrator.DatabasePositionQuery` shell keeps the clean name |
+| `PyLiquidityPool` | `LiquidityPool` | mechanical |
+| `PyPool` | `Pool` | mechanical (structural handle mirroring `degenbot_pools::Pool`) |
+| `PyDexIdentity` | `DexIdentity` | mechanical; `degenbot.types` already exported this alias — now a direct import |
+| `PyDispatcher`, `PyTxSigner`, `PyDivergentPool`, `PySubmitCandidate`, `PyTxParams` | `Dispatcher`, `TxSigner`, `DivergentPool`, `SubmitCandidate`, `TxParams` | mechanical; companion aliases in `degenbot.dispatch` became direct imports |
+| `PySimulateContext`, `PyDispatchCandidate`, `PyDispatchOutcome`, `PySolveResult`, `PyPayloadComposer` | `SimulateContext`, `DispatchCandidate`, `DispatchOutcome`, `SolveResult`, `PayloadComposer` | mechanical |
+| `PyChainlinkPriceFeed`, `PyAavePriceOracle` | `ChainlinkPriceFeed`, `AavePriceOracle` | mechanical; `degenbot.chainlink` / `degenbot.aave` alias imports became direct |
+| `PyUserPositionSummary`, `PyCollateralPositionData`, `PyDebtPositionData` | `UserPositionSummary`, `CollateralPositionData`, `DebtPositionData` | mechanical (db analysis trio) |
+| `PyReservePairView`, `PyConcentratedLiquidityView`, `PyBalanceVectorView` | `ReservePairView`, `ConcentratedLiquidityView`, `BalanceVectorView` | mechanical (state views) |
+
+Mechanically: the 15 pyclasses with explicit `name = "PyX"` attributes took
+the new value; the 12 struct-default pyclasses gained an explicit
+`name = "X"` (Rust struct names keep the `Py` qualifier — Rust-internal,
+per D1). All Python import sites, companion alias imports (collapsed to
+direct imports), `.pyi` stubs, tests, and examples were updated in the same
+change; Python-visible repr/error-message strings in Rust were aligned.

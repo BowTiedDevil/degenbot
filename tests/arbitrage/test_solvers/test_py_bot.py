@@ -1,14 +1,14 @@
-"""Tests for PyBot — Rust-owned state with thin Python handles."""
+"""Tests for RustBot — Rust-owned state with thin Python handles."""
 
 from __future__ import annotations
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 
 
 class TestPyBotV2Pool:
-    """Test V2 pool registration, update, and calculation through PyBot."""
+    """Test V2 pool registration, update, and calculation through RustBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -16,7 +16,7 @@ class TestPyBotV2Pool:
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
     def test_register_v2_pool(self):
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -34,7 +34,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_out(self):
         """Verify V2 constant product calculation matches Python reference."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -54,7 +54,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_out_reverse(self):
         """Verify reverse direction calculation."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -75,7 +75,7 @@ class TestPyBotV2Pool:
 
     def test_update_v2_pool_changes_result(self):
         """Verify that updating reserves changes calculation results."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -107,7 +107,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_in(self):
         """Verify V2 exact-out calculation matches Python reference."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -132,7 +132,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_out_large_values(self):
         """Verify calculation with realistic on-chain amounts (uint256 scale)."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -157,7 +157,7 @@ class TestPyBotV2Pool:
 
     def test_zero_amount_in_returns_zero(self):
         """Zero input should return zero output."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -176,21 +176,21 @@ class TestPyBotV2Pool:
 
     def test_unknown_pool_id_returns_zero(self):
         """Unknown pool ID should return zero (not raise)."""
-        core = PyBot()
+        core = RustBot()
         result = core.calculate_tokens_out(999, zero_for_one=True, amount_in=100)
         assert result == 0
 
 
 class TestPoolHandle:
-    """Test the thin Pool handle over PyBot."""
+    """Test the thin Pool handle over RustBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[PyBot, int]:
-        core = PyBot()
+    def _make_core_with_pool(self) -> tuple[RustBot, int]:
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -206,7 +206,7 @@ class TestPoolHandle:
         return core, pool_id
 
     def test_get_pool_returns_handle(self):
-        """get_pool() returns a PyLiquidityPool handle for a registered pool."""
+        """get_pool() returns a LiquidityPool handle for a registered pool."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -214,11 +214,11 @@ class TestPoolHandle:
 
     def test_get_pool_unknown_returns_none(self):
         """get_pool() returns None for unknown pool ID."""
-        core = PyBot()
+        core = RustBot()
         assert core.get_pool(999) is None
 
     def test_pool_calculate_tokens_out(self):
-        """Pool handle delegates calculation to PyBot."""
+        """Pool handle delegates calculation to RustBot."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -228,7 +228,7 @@ class TestPoolHandle:
         assert result == 181
 
     def test_pool_calculate_tokens_in(self):
-        """Pool handle delegates exact-out calculation to PyBot."""
+        """Pool handle delegates exact-out calculation to RustBot."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -260,15 +260,15 @@ class TestPoolHandle:
 
 
 class TestPoolHandleState:
-    """PyLiquidityPool state read getters + per-handle mutations (ADR-005 slice 4 step 2)."""
+    """LiquidityPool state read getters + per-handle mutations (ADR-005 slice 4 step 2)."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[PyBot, int]:
-        core = PyBot()
+    def _make_core_with_pool(self) -> tuple[RustBot, int]:
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -309,7 +309,7 @@ class TestPoolHandleState:
 
     def test_pool_snapshot_returns_none_for_v3(self):
         """snapshot() returns None for non-V2 pools (no V2 state to read)."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -339,13 +339,13 @@ class TestPoolHandleState:
         assert pool.journal_len() == 2  # genesis + block-10 transition
 
     def test_pool_handle_sync_is_equivalent_to_pybot_update(self):
-        """sync_reserves and PyBot.update_v2_pool land the same state."""
+        """sync_reserves and RustBot.update_v2_pool land the same state."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
         pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
 
-        core2 = PyBot()
+        core2 = RustBot()
         pool_id2 = core2.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -428,13 +428,13 @@ class TestPoolHandleState:
 
 
 class TestTokenHandle:
-    """Test the thin Token handle over PyBot."""
+    """Test the thin Token handle over RustBot."""
 
     TOKEN_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
     def test_register_and_get_token(self):
         """Can register and retrieve a token handle."""
-        core = PyBot()
+        core = RustBot()
         token = core.register_token(
             address=self.TOKEN_ADDR,
             name="Wrapped Ether",
@@ -442,8 +442,8 @@ class TestTokenHandle:
             decimals=18,
             chain_id=1,
         )
-        # ADR-003 Slice 5: register_token returns the PyErc20Token handle; the
-        # getters read Rust-owned metadata back through PyBot's token map.
+        # ADR-003 Slice 5: register_token returns the RustErc20Token handle; the
+        # getters read Rust-owned metadata back through RustBot's token map.
         assert token is not None
         assert token.address == self.TOKEN_ADDR  # alloy preserves checksum case
         assert token.symbol == "WETH"
@@ -457,12 +457,12 @@ class TestTokenHandle:
 
     def test_get_unknown_token_returns_none(self):
         """get_token() returns None for unregistered address."""
-        core = PyBot()
+        core = RustBot()
         assert core.get_token(self.TOKEN_ADDR) is None
 
 
 class TestV2SwapEncoding:
-    """Test V2 swap calldata encoding through PyBot."""
+    """Test V2 swap calldata encoding through RustBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -470,8 +470,8 @@ class TestV2SwapEncoding:
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
     RECIPIENT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-    def _make_core_with_pool(self) -> tuple[PyBot, int]:
-        core = PyBot()
+    def _make_core_with_pool(self) -> tuple[RustBot, int]:
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -550,7 +550,7 @@ class TestV2SwapEncoding:
 
     def test_encode_swap_unknown_pool_returns_none(self):
         """encode_swap returns None for unknown pool ID."""
-        core = PyBot()
+        core = RustBot()
         result = core.encode_swap(999, zero_for_one=True, amount_out=100, recipient=self.RECIPIENT)
         assert result is None
 
@@ -580,15 +580,15 @@ class TestV2SwapEncoding:
 
 
 class TestV2ReorgJournal:
-    """Test V2 pool state history through PyBot."""
+    """Test V2 pool state history through RustBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[PyBot, int]:
-        core = PyBot()
+    def _make_core_with_pool(self) -> tuple[RustBot, int]:
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -716,17 +716,17 @@ class TestV2ReorgJournal:
 
     def test_journal_len_unknown_pool_returns_zero(self):
         """v2_journal_len returns 0 for unknown pool ID."""
-        core = PyBot()
+        core = RustBot()
         assert core.v2_journal_len(999) == 0
 
     def test_restore_unknown_pool_returns_none(self):
         """v2_restore_before_block returns None for unknown pool ID."""
-        core = PyBot()
+        core = RustBot()
         assert core.v2_restore_before_block(999, 10) is None
 
 
 class TestV3PoolState:
-    """Test V3 pool registration, update, and reorg journal through PyBot."""
+    """Test V3 pool registration, update, and reorg journal through RustBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -736,8 +736,8 @@ class TestV3PoolState:
     # sqrt(1.0) * 2^96 ≈ 79228162514264337593543950336
     SQRT_PRICE_X96 = 79228162514264337593543950336
 
-    def _make_core_with_v3_pool(self) -> tuple[PyBot, int]:
-        core = PyBot()
+    def _make_core_with_v3_pool(self) -> tuple[RustBot, int]:
+        core = RustBot()
         pool_id = core.register_v3_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -758,8 +758,8 @@ class TestV3PoolState:
         assert core.pool_count() == 1
 
     def test_register_v3_and_v2_coexist(self):
-        """V2 and V3 pools can coexist in the same PyBot."""
-        core = PyBot()
+        """V2 and V3 pools can coexist in the same RustBot."""
+        core = RustBot()
         v2_id = core.register_v2_pool(
             address="0x1111111111111111111111111111111111111111",
             token0=self.TOKEN0_ADDR,
@@ -813,7 +813,7 @@ class TestV3PoolState:
         the pool is never visible to the pump in an unseeded state, so pump
         events always land on top of the seed, never to be overwritten.
         """
-        core = PyBot()
+        core = RustBot()
         seed_tick = -60
         seed_rows: dict[int, tuple[int, int, int]] = {
             seed_tick: (1_000_000, 1_000_000, 100),
@@ -852,7 +852,7 @@ class TestV3PoolState:
         pump burn landing during build_paths) survives — there is no later
         ``update_tick_data`` overwrite to discard it.
         """
-        core = PyBot()
+        core = RustBot()
         seed_rows: dict[int, tuple[int, int, int]] = {
             0: (1_000_000, 0, 100),
         }
@@ -943,12 +943,12 @@ class TestV3PoolState:
 
     def test_v3_journal_len_unknown_pool_returns_zero(self):
         """v3_journal_len returns 0 for unknown pool ID."""
-        core = PyBot()
+        core = RustBot()
         assert core.v3_journal_len(999) == 0
 
     def test_v3_restore_unknown_pool_returns_none(self):
         """v3_restore_before_block returns None for unknown pool ID."""
-        core = PyBot()
+        core = RustBot()
         assert core.v3_restore_before_block(999, 10) is None
 
     def test_v2_journal_methods_on_v3_pool_return_zero(self):
@@ -958,7 +958,7 @@ class TestV3PoolState:
 
     def test_v3_journal_methods_on_v2_pool_return_zero(self):
         """V3 journal methods correctly return 0/None for V2 pools."""
-        core = PyBot()
+        core = RustBot()
         pool_id = core.register_v2_pool(
             address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             token0=self.TOKEN0_ADDR,
@@ -978,7 +978,7 @@ class TestV3PoolState:
 class TestDexIdentityPresets:
     """ADR-005 slice 6 — DEX identity presets exposed via the Rust extension.
 
-    The Python seam (`dex_identity(variant)` → `PyDexIdentity`) exposes the
+    The Python seam (`dex_identity(variant)` → `DexIdentity`) exposes the
     Rust-core `DexIdentity` preset registry so a slice-7 Python builder can
     resolve a DEX's canonical-chain deployment data (factory, deployer, init
     hash, default fees, reserve ABI shape) without a Python-side preset table.
@@ -1089,12 +1089,12 @@ class TestDexIdentityPresets:
             assert len(ident.init_hash) == 66
 
     def test_view_is_frozen(self) -> None:
-        """The PyDexIdentity view is read-only (frozen pyclass)."""
-        from degenbot._ffi.dex_identity import PyDexIdentity, dex_identity
+        """The DexIdentity view is read-only (frozen pyclass)."""
+        from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 
         ident = dex_identity("uniswap-v2")
         assert ident is not None
-        assert isinstance(ident, PyDexIdentity)
+        assert isinstance(ident, DexIdentity)
         with pytest.raises(AttributeError):
             ident.factory = "0x0"  # type: ignore[misc]
 
@@ -1105,14 +1105,14 @@ class TestDexIdentityPresets:
         assert ident is not None
         assert (
             repr(ident)
-            == 'PyDexIdentity(variant="uniswap-v2", factory=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f)'
+            == 'DexIdentity(variant="uniswap-v2", factory=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f)'
         )
 
     def test_pyconstructor_builds_custom_identity(self) -> None:
-        """The PyDexIdentity #[new] constructor builds a custom identity view."""
-        from degenbot._ffi.dex_identity import PyDexIdentity
+        """The DexIdentity #[new] constructor builds a custom identity view."""
+        from degenbot._ffi.dex_identity import DexIdentity
 
-        ident = PyDexIdentity(
+        ident = DexIdentity(
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
             fee_token0=(997, 1000),
@@ -1128,9 +1128,9 @@ class TestDexIdentityPresets:
 
     def test_pyconstructor_pancakeswap_reserves_abi_and_unknown_variant(self) -> None:
         """PancakeStyle 3-tuple + unknown-variant ValueError paths."""
-        from degenbot._ffi.dex_identity import PyDexIdentity
+        from degenbot._ffi.dex_identity import DexIdentity
 
-        ident = PyDexIdentity(
+        ident = DexIdentity(
             factory="0x1097053Fd2ea711dad45caCcc45EfF7548fCB362",
             init_hash="0x" + "ab" * 32,
             fee_token0=(9975, 10000),
@@ -1143,7 +1143,7 @@ class TestDexIdentityPresets:
 
         # Unknown variant → ValueError (no PanicException).
         with pytest.raises(ValueError):
-            PyDexIdentity(
+            DexIdentity(
                 factory="0x" + "aa" * 20,
                 init_hash="0x" + "00" * 32,
                 fee_token0=(1, 2),

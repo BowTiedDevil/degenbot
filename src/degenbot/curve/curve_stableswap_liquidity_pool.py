@@ -49,7 +49,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
-from degenbot.types import PyLiquidityPool
+from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
@@ -69,7 +69,7 @@ def _compute_rate_and_precision_multipliers(
 
     Single source of truth — shared by ``CurveStableswapPool.__init__`` and
     ``make_curve_pool`` (the factory passes the derived ``rate_multipliers`` to
-    ``PyBot.register_curve_pool`` so the Rust core stores the same values the
+    ``RustBot.register_curve_pool`` so the Rust core stores the same values the
     companion keeps; they're consumed by the future Rust ``get_dy``, ADR-005
     slice 11c). Mirrors the pre-companion derivation exactly.
 
@@ -87,7 +87,7 @@ def _compute_rate_and_precision_multipliers(
 
 
 class _HandleCurveDataProviderAdapter:
-    """Adapts a ``PyLiquidityPool`` handle as a stored ``CurveDataProvider``.
+    """Adapts a ``LiquidityPool`` handle as a stored ``CurveDataProvider``.
 
     The (BQM2OA) companion holds no Python data-provider object — the
     provider is the stored Rust trait object (ADR-005 JFGCHJ). This shim
@@ -98,7 +98,7 @@ class _HandleCurveDataProviderAdapter:
     handling applies unchanged.
     """
 
-    def __init__(self, py_pool: PyLiquidityPool) -> None:
+    def __init__(self, py_pool: LiquidityPool) -> None:
         self._py_pool = py_pool
 
     def block_number(self) -> int:
@@ -216,7 +216,7 @@ class CurveStableswapPool(
     # assigns these on `Self`; declare them at class scope so attribute reads
     # in helper/calc methods resolve (mirrors the Balancer/Aerodrome seams).
     address: ChecksumAddress
-    _py_pool: PyLiquidityPool
+    _py_pool: LiquidityPool
     _tokens: tuple[Erc20Token, ...]
     _a_coefficient: int
     _fee: int
@@ -252,8 +252,8 @@ class CurveStableswapPool(
         """Direct construction is forbidden.
 
         A ``CurveStableswapPool`` is a companion over a Rust-owned
-        ``PyLiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``PyBot`` (production: ``Bot.build_pool()``;
+        ``LiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``RustBot`` (production: ``Bot.build_pool()``;
         tests: ``make_curve_pool``), then wrapping via
         :meth:`_from_py_pool`. Direct constructor calls are rejected so that
         the only paths to a pool instance are the ones that wire the handle —
@@ -268,7 +268,7 @@ class CurveStableswapPool(
         """
         msg = (
             f"{type(self).__name__} cannot be constructed directly. "
-            "A PyLiquidityPool handle is wired by Bot.build_pool() "
+            "A LiquidityPool handle is wired by Bot.build_pool() "
             "(production) or make_curve_pool (tests); call "
             f"{type(self).__name__}._from_py_pool(handle) to wrap a "
             "registered handle."
@@ -276,8 +276,8 @@ class CurveStableswapPool(
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
-        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
+        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
 
         Single-arg seam (ADR-005 BQM2OA): reads *every* identity field + the
         stored data-provider trait object off the handle. The cross-pool
@@ -300,8 +300,7 @@ class CurveStableswapPool(
         family = py_pool.pool_family
         if family != "curve":
             msg = (
-                f"PyLiquidityPool handle is not a Curve stableswap pool "
-                f"(got pool_family {family!r})"
+                f"LiquidityPool handle is not a Curve stableswap pool (got pool_family {family!r})"
             )
             raise DegenbotValueError(message=msg)
 
@@ -439,7 +438,7 @@ class CurveStableswapPool(
     def balances(self) -> tuple[int, ...]:
         """Balances.
 
-        Read from the Rust core via the ``PyLiquidityPool`` handle
+        Read from the Rust core via the ``LiquidityPool`` handle
         (ADR-005 slice 11b). Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
@@ -507,7 +506,7 @@ class CurveStableswapPool(
     def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
         """Apply an external state update with new balances.
 
-        Delegates to the Rust core (``PyLiquidityPool.apply_curve_balance_update``)
+        Delegates to the Rust core (``LiquidityPool.apply_curve_balance_update``)
         which journals the prior balances (genesis-anchor V2-style discipline)
         and lands the new balances + ``update_block`` atomically
         (ADR-005 slice 11b). The ``StateCache`` temporal-navigation layer it
@@ -707,7 +706,7 @@ class CurveStableswapPool(
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
 
-        Delegates to the Rust-owned `PyLiquidityPool.curve_get_dy` (task
+        Delegates to the Rust-owned `LiquidityPool.curve_get_dy` (task
         `V5X2YP`): the I/O orchestration (amp/rates/xp + provider fetches) and
         the pure dy math both run in the Rust core, so this is a single handle
         call with no Python provider / cache / calculator on the swap path.
@@ -736,7 +735,7 @@ class CurveStableswapPool(
     ) -> int:
         """Metapool underlying `dy` — Rust-owned base-pool delegation.
 
-        Delegates to `PyLiquidityPool.curve_get_dy_underlying` (task
+        Delegates to `LiquidityPool.curve_get_dy_underlying` (task
         `V5X2YP`): the metapool snapshot + the base-pool `calc_token_amount` /
         `get_dy` / `calc_withdraw_one_coin` ops run through the Rust
         `BotCurveBasePoolPort`, retiring the Python `_LazyBasePool` go-between
@@ -1094,7 +1093,7 @@ class CurveStableswapPool(
 class _LazyBasePool:
     """Production adapter satisfying ``BasePoolPort`` for a metapool's base pool.
 
-    Holds the base pool's ``PyLiquidityPool`` handle (resolved by the Rust
+    Holds the base pool's ``LiquidityPool`` handle (resolved by the Rust
     go-between ``curve_base_pool()`` — same shared ``BotState`` core, no
     Python registry lookup) and memoises the base companion on first use.
     Defers construction so a metapool that never takes the base swap path
@@ -1108,7 +1107,7 @@ class _LazyBasePool:
 
     __slots__ = ("_built", "_handle")
 
-    def __init__(self, handle: PyLiquidityPool) -> None:
+    def __init__(self, handle: LiquidityPool) -> None:
         self._handle = handle
         self._built = None
 

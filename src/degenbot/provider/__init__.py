@@ -530,7 +530,7 @@ class AlloyProvider:
     def to_alloy_provider(self) -> RustAlloyProvider:
         """Return the inner Rust ``AlloyProvider`` pyclass over this provider's transport.
 
-        Rust pyclasses (e.g. ``PyChainlinkPriceFeed``, ``PyAavePriceOracle``)
+        Rust pyclasses (e.g. ``ChainlinkPriceFeed``, ``AavePriceOracle``)
         expect the Rust ``AlloyProvider`` pyclass, not this Python wrapper.
         This shim unwraps to the inner provider so those call sites work
         unchanged.
@@ -559,7 +559,7 @@ class AlloyProvider:
     def as_alloy(self) -> RustAlloyProvider:
         """Return the inner Rust ``AlloyProvider`` pyclass.
 
-        Rust pyclasses (e.g. ``PyChainlinkPriceFeed``, ``PyAavePriceOracle``)
+        Rust pyclasses (e.g. ``ChainlinkPriceFeed``, ``AavePriceOracle``)
         expect the Rust ``AlloyProvider`` pyclass, not this Python wrapper.
 
         Returns:
@@ -1011,7 +1011,7 @@ class AsyncAlloyProvider:
     def as_async_alloy(self) -> RustAsyncAlloyProvider:
         """Return the inner Rust ``AsyncAlloyProvider`` pyclass.
 
-        Rust pyclasses (e.g. ``PySimulateContext``, ``dispatch_and_submit_py``)
+        Rust pyclasses (e.g. ``SimulateContext``, ``dispatch_and_submit_py``)
         expect the Rust ``AsyncAlloyProvider`` pyclass, not this Python wrapper.
 
         Returns:

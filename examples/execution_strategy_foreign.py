@@ -3,7 +3,7 @@
 Mirror of the standalone-Rust sample (`degenbot-execution-sample`,
 `SimpleExecutor` foreign strategy) at the PYTHON layer, using the ADR-025 PyO3
 lift. The driver supplies the **Encode blob** (a Python callable
-`PySolveResult -> bytes`) via `degenbot._ffi.execution.PyPayloadComposer`
+`SolveResult -> bytes`) via `degenbot._ffi.execution.PayloadComposer`
 (Polars `map_elements` model — Rust holds the callable and invokes it under the
 GIL), and builds the foreign payload through `degenbot.abi`.
 
@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from degenbot._ffi.execution import PyPayloadComposer, abi_encode_call
+from degenbot._ffi.execution import PayloadComposer, abi_encode_call
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ SIMPLE_EXECUTOR_SIGNATURE = "execute(uint256,uint256,uint256[])"
 def compose_simple_executor(result: Any) -> bytes:
     """**Encode blob** (ADR-025 D2) — solve result → payload for OUR contract.
 
-    Reads the typed `PySolveResult` view (integer fixed-point u256 amounts) and
+    Reads the typed `SolveResult` view (integer fixed-point u256 amounts) and
     ABI-encodes a `execute(optimal_input, final_output, hop_outputs[])` call via
     the `degenbot.abi`-backed helper. Distinct ABI shape from `cmd_executor`.
     """
@@ -59,16 +59,16 @@ PROBES: list[tuple[str, str, bytes]] = [
 ]
 
 
-def build_strategy() -> PyPayloadComposer:
+def build_strategy() -> PayloadComposer:
     """Wrap the Python Encode blob into the core `PayloadComposer` seam.
 
-    The constructed `PyPayloadComposer` is a valid core `PayloadComposer` (and,
+    The constructed `PayloadComposer` is a valid core `PayloadComposer` (and,
     via the seam's blanket impl, a full `ExecutionStrategy` with the built-in
     Probe/Assess/Fee defaults) — the foreign-contract path a Python user adopts.
     `PROBES` here is the declared-probe data a full driver hands the engine;
     nothing threads into the canonical dispatch fan-out.
     """
-    return PyPayloadComposer(compose_simple_executor)
+    return PayloadComposer(compose_simple_executor)
 
 
 def demo() -> None:
@@ -77,7 +77,7 @@ def demo() -> None:
 
     composer = build_strategy()
 
-    # A solved path's per-hop amounts, sealed into the Python `PySolveResult`
+    # A solved path's per-hop amounts, sealed into the Python `SolveResult`
     # shape (here a stand-in with the same integer attributes the view exposes).
     result = SimpleNamespace(
         optimal_input=1_000_000_000_000_000_000,

@@ -1,16 +1,9 @@
-"""Stub for the dynamically-created ``degenbot._ffi.submission`` submodule.
-
-Created at runtime by ``add_submission_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/submission/mod.rs``). Holds the dispatcher + signer +
-tx-params + submit-candidate classes + the dispatch/submit functions.
-"""
-
 from collections.abc import Coroutine
 from typing import Any
 
 from degenbot._ffi.provider import AsyncAlloyProvider
 
-class PyDispatcher:
+class Dispatcher:
     """Coordination-state value object for the dispatch loop.
 
     Holds the Rust-owned ``Dispatcher`` behind ``Arc<Mutex<...>>`` so the
@@ -20,7 +13,7 @@ class PyDispatcher:
 
     def __init__(self) -> None: ...
     @staticmethod
-    def for_block(current_block: int) -> PyDispatcher: ...
+    def for_block(current_block: int) -> Dispatcher: ...
     # ── nonce coordination ──
     def claim_nonce(self, start: int) -> int: ...
     def release_nonce(self, nonce: int) -> None: ...
@@ -67,7 +60,7 @@ class PyDispatcher:
     def fot_tokens(self, current_block: int) -> list[str]: ...
     def set_fot_verified_non_fot(self, tokens: list[str]) -> None: ...
 
-class PyDivergentPool:
+class DivergentPool:
     """Per-pool divergence flag (sim vs solve mismatch) — FoT / divergence monitor.
 
     Key shape depends on family: V2/V3 set ``address`` (and leave
@@ -83,7 +76,7 @@ class PyDivergentPool:
     @property
     def last_flagged_block(self) -> int: ...
 
-class PyTxSigner:
+class TxSigner:
     """EIP-1559 transaction signer holding the operator key once.
 
     The private key (hex string or 32 raw bytes) crosses into Rust at
@@ -95,16 +88,16 @@ class PyTxSigner:
     def address(self) -> str: ...
     @property
     def chain_id(self) -> int: ...
-    def sign_eip1559(self, tx_params: PyTxParams) -> bytes: ...
+    def sign_eip1559(self, tx_params: TxParams) -> bytes: ...
     @staticmethod
     def recover_sender(raw_signed: bytes) -> str: ...
 
-class PyTxParams:
-    """EIP-1559 transaction field set (minus ``chain_id``, owned by ``PyTxSigner``).
+class TxParams:
+    """EIP-1559 transaction field set (minus ``chain_id``, owned by ``TxSigner``).
 
     Constructed with the recipient/calldata/gas/nonce/value/access-list, then
     fees are set by :func:`finalize_fees`, then signed by
-    :meth:`PyTxSigner.sign_eip1559`.
+    :meth:`TxSigner.sign_eip1559`.
     """
 
     def __init__(
@@ -121,7 +114,7 @@ class PyTxParams:
     @property
     def max_priority_fee_per_gas(self) -> int: ...
 
-class PySubmitCandidate:
+class SubmitCandidate:
     """Per-path builder constructed from ``gas_profitable`` before the submit leaf."""
 
     def __init__(
@@ -150,10 +143,10 @@ class PySubmitCandidate:
     def priority_fee(self) -> int: ...
 
 def dispatch_and_submit_py(
-    candidates: list[PySubmitCandidate],
-    dispatcher: PyDispatcher,
+    candidates: list[SubmitCandidate],
+    dispatcher: Dispatcher,
     provider: AsyncAlloyProvider,
-    signer: PyTxSigner,
+    signer: TxSigner,
     operator_nonce: int,
     current_block: int,
     dry_run: bool,
@@ -161,23 +154,23 @@ def dispatch_and_submit_py(
 ) -> Coroutine[Any, Any, list[dict[str, Any]]]: ...
 def fetch_fee_history_py(
     provider: AsyncAlloyProvider,
-    dispatcher: PyDispatcher,
+    dispatcher: Dispatcher,
     block_count: int,
     last_block: int,
     reward_percentiles: list[float],
 ) -> Coroutine[Any, Any, bool]: ...
 def finalize_fees(
-    params: PyTxParams,
+    params: TxParams,
     base_fee_next: int,
     priority_fee: int,
 ) -> None: ...
 
 __all__ = [
-    "PyDispatcher",
-    "PyDivergentPool",
-    "PySubmitCandidate",
-    "PyTxParams",
-    "PyTxSigner",
+    "Dispatcher",
+    "DivergentPool",
+    "SubmitCandidate",
+    "TxParams",
+    "TxSigner",
     "dispatch_and_submit_py",
     "fetch_fee_history_py",
     "finalize_fees",

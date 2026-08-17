@@ -1,7 +1,7 @@
 """Snapshot → Python-dict converters for the non-DB path.
 
 The DB→ ``SnapshotStore`` transfer is Rust-owned: the DB snapshot is loaded
-inside ``Bot::load_snapshot_from_db`` (task B3OROH) at ``PyBot`` construction
+inside ``Bot::load_snapshot_from_db`` (task B3OROH) at ``RustBot`` construction
 — zero tick-data dicts cross PyO3. The DB-source branch that used to live
 here (SQLAlchemy ``yield_per`` loops calling ``engine.insert_*_pool_snapshot``
 per pool) is retired (DADWUP): the per-pool PyO3 ingestion surface

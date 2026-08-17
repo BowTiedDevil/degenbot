@@ -21,7 +21,7 @@ use std::collections::HashMap;
 /// `fetch` issues one `getAssetPrice(address)` `eth_call` per asset through
 /// the Rust path, tolerantly skipping assets that revert or fail to decode.
 #[pyclass(
-    name = "PyAavePriceOracle",
+    name = "AavePriceOracle",
     skip_from_py_object,
     module = "degenbot._ffi.price"
 )]

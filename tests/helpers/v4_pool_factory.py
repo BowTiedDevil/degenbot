@@ -1,9 +1,9 @@
 """I/O-free `UniswapV4Pool` construction helper for tests (ADR-005 slice 9b).
 
-Mirror of `make_v3_pool` — registers the V4 pool in Rust (PyBot) and wraps the
-returned `PyLiquidityPool` handle in the V4 companion. The companion owns NO
+Mirror of `make_v3_pool` — registers the V4 pool in Rust (RustBot) and wraps the
+returned `LiquidityPool` handle in the V4 companion. The companion owns NO
 mutable state (Rust is the source of truth); it carries the V4 identity
-(pool_id, pool_manager, pool_key, hook_address, fees) + the `PyLiquidityPool`
+(pool_id, pool_manager, pool_key, hook_address, fees) + the `LiquidityPool`
 handle. Construct via this helper; do NOT call `UniswapV4Pool(...)` directly in
 tests (the constructor takes a handle, not scalars).
 """
@@ -12,14 +12,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 
-# No shared PyBot — V4 tests frequently reuse the same pool_id (V4 pool_id is
+# No shared RustBot — V4 tests frequently reuse the same pool_id (V4 pool_id is
 # derived from the pool_key, so tests sharing a pool_key collide on a shared
 # bot's `(pool_manager, pool_id)` registry). Each `make_v4_pool` call gets a
 # fresh bot (the token objects are independent Python wrappers; their Rust bot
@@ -45,7 +45,7 @@ def make_v4_pool(
     tick_data: dict[int, Any] | None = None,
     tick_bitmap: dict[int, Any] | None = None,
     state_block: int | None = None,
-    py_bot: PyBot | None = None,
+    py_bot: RustBot | None = None,
     coverage: str | None = None,
     tick_data_fetcher: Any | None = None,
 ) -> UniswapV4Pool:
@@ -61,9 +61,9 @@ def make_v4_pool(
     Rust coverage flag (it is set at registration), so the sparse contract
     must be established at construction.
 
-    Returns the V4 companion over the `PyLiquidityPool` handle.
+    Returns the V4 companion over the `LiquidityPool` handle.
     """
-    bot = py_bot or PyBot()
+    bot = py_bot or RustBot()
     hook_flags = int(hook_address, 16) if hook_address else 0
     blk = state_block if state_block is not None else 0
 

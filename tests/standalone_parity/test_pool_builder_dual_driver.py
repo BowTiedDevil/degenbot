@@ -2,7 +2,7 @@
 
 The behavioral companion to `rust/crates/degenbot/tests/parity_pool_builder.rs`.
 Proves the **same** canonical V3 identity+state fixture, driven through the
-**Python consumer** (`PyBot`/`register_v3_pool` — the PyO3 binding, the same
+**Python consumer** (`RustBot`/`register_v3_pool` — the PyO3 binding, the same
 `RegisterV3PoolParams` the Rust `PoolBuilder.build_v3` emits after its I/O),
 registers the **same deterministic pool id** and reports IDENTICAL identity +
 state as the **Rust consumer** (`BotState` directly).
@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 
 # ---- the shared canonical fixture (loaded, not copied) ----
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "pool_builder.json"
@@ -40,7 +40,7 @@ _EXPECTED_POOL_ID = _E["pool_id"]
 
 
 def test_python_consumer_pool_builder_identity_state_matches_fixture() -> None:
-    """The PyBot Python driver reproduces the recorded pool identity+state.
+    """The RustBot Python driver reproduces the recorded pool identity+state.
 
     Python side of the Tier-2 dual-driver gate (pool builder identity+state).
     The Rust side (`parity_pool_builder.rs`) loads the same fixture file and
@@ -49,16 +49,12 @@ def test_python_consumer_pool_builder_identity_state_matches_fixture() -> None:
     (sqrt_price_x96/liquidity/tick) + Tracked coverage. Divergence = a lossy
     FFI seam on the registration/identity path.
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
     # ADR-006: pool tokens must be registered in the same Bot as the pool for
     # `get_token0/get_token1` to resolve (names/symbols/decimals are not part
     # of the parity assertion — only the addresses are).
-    py_bot.register_token(
-        address=_TOKEN0, name="Token0", symbol="TK0", decimals=18, chain_id=1
-    )
-    py_bot.register_token(
-        address=_TOKEN1, name="Token1", symbol="TK1", decimals=18, chain_id=1
-    )
+    py_bot.register_token(address=_TOKEN0, name="Token0", symbol="TK0", decimals=18, chain_id=1)
+    py_bot.register_token(address=_TOKEN1, name="Token1", symbol="TK1", decimals=18, chain_id=1)
     pool_id = py_bot.register_v3_pool(
         address=_POOL,
         token0=_TOKEN0,

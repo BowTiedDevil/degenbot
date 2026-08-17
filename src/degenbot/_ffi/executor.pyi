@@ -1,16 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.executor`` submodule.
-
-Created at runtime by ``add_executor_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/executor/mod.rs``). Holds the command-stream encoding
-+ storage-slot helper functions over the ``degenbot-executor`` core crate.
-
-The encode path lives in the Rust core (ADR-005):
-``dispatch_profitable_py`` calls ``composers::encode_cmd_stream``, and the
-candidate resolves its ``composers::PathInfo`` from a registered ``path_id``
-via ``PyArbitrageEngine.path_info_for_core``. No Python ``PathInfo``
-dataclass crosses this seam — ``path_infos`` returns plain dicts.
-"""
-
 from typing import Any
 
 type WarmupDict = dict[str, dict[str, Any]]

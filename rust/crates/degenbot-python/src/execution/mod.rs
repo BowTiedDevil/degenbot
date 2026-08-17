@@ -52,7 +52,7 @@ use crate::conversion::alloy::u256_to_py;
 /// all u256 integers — never floats), and the per-hop descriptors. Constructed
 /// by [`PyPayloadComposer`] from the core seam's inputs; a Python callable
 /// reads it (attribute access) to build calldata for its own contract.
-#[pyclass(name = "PySolveResult", module = "degenbot._ffi.execution")]
+#[pyclass(name = "SolveResult", module = "degenbot._ffi.execution")]
 pub struct PySolveResult {
     inner: SolveResult,
 }
@@ -197,11 +197,7 @@ fn hop_descriptor_to_dict<'py>(py: Python<'py>, d: &HopDescriptor) -> PyResult<B
 ///
 /// The callable's return must be `bytes`/`bytearray` (the payload to submit to
 /// the composer's own contract).
-#[pyclass(
-    name = "PyPayloadComposer",
-    module = "degenbot._ffi.execution",
-    subclass
-)]
+#[pyclass(name = "PayloadComposer", module = "degenbot._ffi.execution", subclass)]
 #[derive(Debug)]
 pub struct PyPayloadComposer {
     /// The held Python callable. Rust re-enters the GIL (`Python::attach`)
@@ -224,7 +220,7 @@ impl PyPayloadComposer {
         Python::attach(|py| {
             if !callback.bind(py).is_callable() {
                 return Err(PyTypeError::new_err(
-                    "PyPayloadComposer expects a callable `result -> bytes`",
+                    "PayloadComposer expects a callable `result -> bytes`",
                 ));
             }
             Ok(())

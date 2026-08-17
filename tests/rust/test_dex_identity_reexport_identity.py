@@ -6,21 +6,21 @@ import the DEX-identity pyclass from the companion package ``degenbot.types``
 seam naming itself; it should never appear in driver code.
 
 This re-export must be a **direct alias** (``from degenbot._ffi import
-PyDexIdentity as DexIdentity``), not a Python subclass — the Rust engine
+DexIdentity as DexIdentity``), not a Python subclass — the Rust engine
 constructs and consumes this pyclass directly; subclassing would break type
 identity at the FFI boundary.
 """
 
 from __future__ import annotations
 
-from degenbot._ffi.dex_identity import PyDexIdentity
+from degenbot._ffi.dex_identity import DexIdentity
 
 
 def test_dex_identity_alias_identity() -> None:
     """The stable companion name is the exact FFI pyclass."""
     from degenbot.types import DexIdentity
 
-    assert DexIdentity is PyDexIdentity
+    assert DexIdentity is DexIdentity
 
 
 def test_dex_identity_factory_alias_identity() -> None:

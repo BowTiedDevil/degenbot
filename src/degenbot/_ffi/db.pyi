@@ -1,15 +1,3 @@
-"""Stub for the dynamically-created ``degenbot._ffi.db`` submodule.
-
-Created at runtime by ``add_db_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/db/mod.rs``). The functions are thin PyO3 wrappers
-over the pure-Rust ``degenbot-db`` core crate; the classes are ADR-005
-``Py*``/``*Row``/``*RowInput`` types; ``DatabaseSchemaStale`` is the typed
-``ValueError`` subclass for the stale-Alembic-rejection.
-
-The ``db_`` prefix is retained on the submodule names (unlike the math
-submodules) because ``db_`` is a clear functional namespace marker.
-"""
-
 from typing import Any
 
 def db_create_new_database(path: str) -> None:
@@ -217,7 +205,7 @@ def db_get_or_create_erc20_token(
     ``decimals``; the Python driver RPC-fetches them — `stays-python`). Pass
     ``None`` to leave a column NULL. A second call returns the existing row
     id without overwriting metadata. Metadata write-back
-    (``update_erc20_token_metadata``) already lives on ``PyBotIo``. Raises
+    (``update_erc20_token_metadata``) already lives on ``RustBotIo``. Raises
     ``ValueError`` on a DB failure.
     """
 
@@ -515,7 +503,7 @@ def db_upsert_pool_manager(
 ) -> PoolManagerRow:
     """Upsert a `pool_managers` row by `(address, chain)` (V4 manager get-or-create)."""
 
-class PyDatabaseSnapshot:
+class RustDatabaseSnapshot:
     """Read-only V3/V4 snapshot handle over a degenbot SQLite DB file.
 
     Opens its own connection (WAL, ``query_only=on``) from ``database_path``;
@@ -538,7 +526,7 @@ class PyDatabaseSnapshot:
     def get_pools_v3(self) -> set[str]: ...
     def get_pools_v4(self) -> set[str]: ...
 
-class PyDatabasePositionQuery:
+class RustDatabasePositionQuery:
     """Read-only Aave V3 position-query handle over a degenbot SQLite DB file.
 
     Opens its own connection (WAL, ``query_only=on``) from ``database_path``;
@@ -563,13 +551,13 @@ def analyze_aave_user_position(
     debt_positions: list[dict[str, Any]],
     collateral_config_map: dict[int, bool],
     price_map: dict[str, int] | None = None,
-) -> PyUserPositionSummary:
+) -> UserPositionSummary:
     """Analyze a single user's Aave V3 position for liquidation risk.
 
     Pure math (no I/O) over the Rust ``degenbot-aave::analysis`` core. Takes
-    the plain ``dict`` records ``PyDatabasePositionQuery.get_*`` returns + a
+    the plain ``dict`` records ``RustDatabasePositionQuery.get_*`` returns + a
     config map + an optional price map, and returns a
-    :class:`PyUserPositionSummary` with attribute access matching the Python
+    :class:`UserPositionSummary` with attribute access matching the Python
     ``UserPositionSummary`` dataclass.
 
     Args:
@@ -594,7 +582,7 @@ def analyze_aave_user_position(
 
     """
 
-class PyCollateralPositionData:
+class CollateralPositionData:
     """Collateral position with calculated values (Rust-backed)."""
 
     @property
@@ -618,7 +606,7 @@ class PyCollateralPositionData:
     @property
     def price(self) -> int | None: ...
 
-class PyDebtPositionData:
+class DebtPositionData:
     """Debt position with calculated values (Rust-backed)."""
 
     @property
@@ -638,7 +626,7 @@ class PyDebtPositionData:
     @property
     def price(self) -> int | None: ...
 
-class PyUserPositionSummary:
+class UserPositionSummary:
     """A user's Aave V3 position summary (Rust-backed).
 
     Rust-backed mirror of the Python ``UserPositionSummary`` dataclass. The
@@ -655,9 +643,9 @@ class PyUserPositionSummary:
     @property
     def is_isolation_mode(self) -> bool: ...
     @property
-    def collateral_positions(self) -> list[PyCollateralPositionData]: ...
+    def collateral_positions(self) -> list[CollateralPositionData]: ...
     @property
-    def debt_positions(self) -> list[PyDebtPositionData]: ...
+    def debt_positions(self) -> list[DebtPositionData]: ...
     @property
     def total_collateral_value(self) -> int: ...
     @property
@@ -758,16 +746,16 @@ class DatabaseSchemaStale(ValueError):
     """
 
 __all__ = [
+    "CollateralPositionData",
     "DatabaseSchemaStale",
+    "DebtPositionData",
     "ExchangeRow",
     "LiquidityPoolRow",
     "LiquidityUpdateEvent",
     "PoolManagerRow",
-    "PyCollateralPositionData",
-    "PyDatabasePositionQuery",
-    "PyDatabaseSnapshot",
-    "PyDebtPositionData",
-    "PyUserPositionSummary",
+    "RustDatabasePositionQuery",
+    "RustDatabaseSnapshot",
+    "UserPositionSummary",
     "V2PoolRowInput",
     "V3PoolRowInput",
     "V4PoolRowInput",

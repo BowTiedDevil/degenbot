@@ -40,7 +40,7 @@ use std::sync::Arc;
 /// the inject flag + the executor runtime bytecode. Hands to
 /// `dispatch_profitable_py` (A4) each block alongside the per-block args.
 #[pyclass(
-    name = "PySimulateContext",
+    name = "SimulateContext",
     skip_from_py_object,
     module = "degenbot._ffi.simulation"
 )]

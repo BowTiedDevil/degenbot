@@ -64,7 +64,7 @@ class EngineRegistry:
         path_predicate: PathCompositionPredicate | None = None,
     ) -> None:
         # ADR-006 D1+D4: the engine adopts the Bot's shared BotState, so the
-        # engine reads/writes the SAME core that V2 PyLiquidityPool handles
+        # engine reads/writes the SAME core that V2 LiquidityPool handles
         # share — no dual-BotState split (rust-owned-bot.md §17 closure). The
         # registry takes the Bot directly (Python-side expression of ADR-006 D4:
         # Bot owns the engine; the user drives Bot) — never `bot._py_bot`.
@@ -94,7 +94,7 @@ class EngineRegistry:
         self._v3_inflight: dict[str, asyncio.Future[int]] = {}
         self._v4_inflight: dict[str, asyncio.Future[int]] = {}
         # NXM2BF: the Python `PathInfo` relay is retired. `register_path`
-        # returns the Rust `path_id`; `PyDispatchCandidate` resolves the
+        # returns the Rust `path_id`; `DispatchCandidate` resolves the
         # encoder's `composers::PathInfo` from that `path_id` via
         # `PyArbitrageEngine.path_info_for_core`. The `[profit]` hop-detail
         # render reads `outcome.path_infos` (Rust→Py), not a stored Python copy.
@@ -141,7 +141,7 @@ class EngineRegistry:
 
         DB snapshot (JUCFCB, Shape 2): the V3+V4 DB snapshot is eagerly loaded
         into the core ``BotState`` at ``Bot.__init__`` time via
-        ``PyBot.load_snapshot_from_db`` — so the DB path needs NO snapshot
+        ``RustBot.load_snapshot_from_db`` — so the DB path needs NO snapshot
         kwargs here. The snapshot seed block ``S`` stays on the shared
         ``BotState``; the per-pool two-step verify (step-1) reads the stashed
         ``_verify_snapshot_block`` (set below from the same source), and the
@@ -210,7 +210,7 @@ class EngineRegistry:
             return self._v2_keys[pool.address]
         # ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
         # pool is ALREADY registered there by `bot.build_pool` (the V2 builder
-        # calls `py_bot.register_v2_pool` + hands back the PyLiquidityPool
+        # calls `py_bot.register_v2_pool` + hands back the LiquidityPool
         # handle). Re-registering via `engine.register_v2_pool` would panic on
         # the duplicate address. Cache the shared pool_id for path-building;
         # orient via zero_for_one at register_path time (no `fwd_key + 1` shim).
@@ -266,7 +266,7 @@ class EngineRegistry:
 
         # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V3
         # pool is ALREADY registered there by `bot.build_pool` (the V3 builder
-        # calls `py_bot.register_v3_pool` + hands back the PyLiquidityPool
+        # calls `py_bot.register_v3_pool` + hands back the LiquidityPool
         # handle). Re-registering via `engine.register_v3_pool` would PANIC the
         # Rust core on the duplicate address — taking the process down. Mirror
         # the V2 path: read the shared-core pool_id off the handle and cache it
@@ -334,7 +334,7 @@ class EngineRegistry:
         # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V4
         # pool is ALREADY registered there by `bot.build_managed_pool` (the V4
         # builder calls `py_bot.register_v4_pool` + hands back the
-        # PyLiquidityPool handle). Re-registering via `engine.register_v4_pool`
+        # LiquidityPool handle). Re-registering via `engine.register_v4_pool`
         # would raise ValueError("V4 pool already registered") for every V4 hop
         # in every discovered path — and, since the cache below is only set on
         # success, the same pool would trip it repeatedly. Mirror the V2 path:
@@ -398,7 +398,7 @@ class EngineRegistry:
         dispatched as a ``(key, zero_for_one)`` tuple to the engine's
         ``register_and_solve_path`` (eager solve — the path is immediately
         included in the next result batch). NXM2BF: the Python ``PathInfo``
-        relay is retired — ``PyDispatchCandidate`` resolves the encoder's
+        relay is retired — ``DispatchCandidate`` resolves the encoder's
         ``composers::PathInfo`` from the returned ``path_id`` via
         ``PyArbitrageEngine.path_info_for_core`` (no Python hop build, no
         stored copy).

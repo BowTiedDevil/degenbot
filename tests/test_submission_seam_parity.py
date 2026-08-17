@@ -1,6 +1,6 @@
 """Offline §4.2 parity tests for the submission signing PyO3 seam.
 
-Drives the full ``PyTxSigner`` / ``PyTxParams`` pyclasses + the
+Drives the full ``TxSigner`` / ``TxParams`` pyclasses + the
 ``finalize_fees`` pyfunction through the Rust core signing path and asserts
 **byte-exact parity vs `eth_account.Account.sign_transaction`** — the Python
 oracle (`examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2640).
@@ -16,7 +16,7 @@ from __future__ import annotations
 import eth_account
 from eth_account import Account
 
-from degenbot._ffi.submission import PyTxParams, PyTxSigner
+from degenbot._ffi.submission import TxParams, TxSigner
 from degenbot._ffi.submission import finalize_fees as rs_finalize_fees
 
 # Anvil account 0 — canonical well-known test private key + address.
@@ -51,19 +51,19 @@ ZERO_ADDR = "0x0000000000000000000000000000000000000000"
 
 
 def test_py_tx_signer_address_from_hex() -> None:
-    signer = PyTxSigner(ANVIL_KEY_HEX, 1)
+    signer = TxSigner(ANVIL_KEY_HEX, 1)
     assert signer.address.lower() == ANVIL_ADDR.lower()
     assert signer.chain_id == 1
 
 
 def test_py_tx_signer_address_from_bytes() -> None:
     key_bytes = bytes.fromhex(ANVIL_KEY_HEX.removeprefix("0x"))
-    signer = PyTxSigner(key_bytes, 1)
+    signer = TxSigner(key_bytes, 1)
     assert signer.address.lower() == ANVIL_ADDR.lower()
 
 
 def test_py_tx_signer_address_from_hex_without_prefix() -> None:
-    signer = PyTxSigner(ANVIL_KEY_HEX.removeprefix("0x"), 1)
+    signer = TxSigner(ANVIL_KEY_HEX.removeprefix("0x"), 1)
     assert signer.address.lower() == ANVIL_ADDR.lower()
 
 
@@ -72,11 +72,11 @@ def test_py_tx_signer_rejects_bad_key() -> None:
 
     zero_key = (0).to_bytes(32, "big")
     with pytest.raises(ValueError):
-        PyTxSigner(zero_key, 1)
+        TxSigner(zero_key, 1)
     with pytest.raises(ValueError):
-        PyTxSigner("nothex", 1)
+        TxSigner("nothex", 1)
     with pytest.raises(ValueError):
-        PyTxSigner("0xdeadbeef", 1)  # too short
+        TxSigner("0xdeadbeef", 1)  # too short
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def test_py_tx_signer_rejects_bad_key() -> None:
 
 
 def test_signed_bytes_match_eth_account_oracle_byte_for_byte() -> None:
-    """PyTxSigner.sign_eip1559 must produce eth_account's exact raw bytes.
+    """TxSigner.sign_eip1559 must produce eth_account's exact raw bytes.
 
     Pinned fixture: anvil key 0, chain 1, nonce 7, gas 250_000,
     maxFeePerGas 30 gwei, maxPriorityFeePerGas 2 gwei, to=zero, value=0,
@@ -94,8 +94,8 @@ def test_signed_bytes_match_eth_account_oracle_byte_for_byte() -> None:
     30 gwei) so the test exercises the full finalize_fees + sign path, not
     just signing.
     """
-    signer = PyTxSigner(ANVIL_KEY_HEX, 1)
-    params = PyTxParams(
+    signer = TxSigner(ANVIL_KEY_HEX, 1)
+    params = TxParams(
         to=ZERO_ADDR,
         data=bytes([0x12, 0x34, 0x56, 0x78]),
         gas_limit=250_000,
@@ -118,8 +118,8 @@ def test_signed_bytes_match_eth_account_oracle_byte_for_byte() -> None:
 
 
 def test_signed_tx_recovers_to_signer_address() -> None:
-    signer = PyTxSigner(ANVIL_KEY_HEX, 1)
-    params = PyTxParams(
+    signer = TxSigner(ANVIL_KEY_HEX, 1)
+    params = TxParams(
         to=ZERO_ADDR,
         data=bytes([0xDE, 0xAD, 0xBE, 0xEF]),
         gas_limit=100_000,
@@ -130,7 +130,7 @@ def test_signed_tx_recovers_to_signer_address() -> None:
     rs_finalize_fees(params, 10_000_000_000, 1_000_000_000)
     raw = signer.sign_eip1559(params)
     assert raw[0] == 0x02  # type-2 EIP-1559 prefix
-    recovered = PyTxSigner.recover_sender(bytes(raw))
+    recovered = TxSigner.recover_sender(bytes(raw))
     assert recovered.lower() == signer.address.lower()
 
 
@@ -147,7 +147,7 @@ def test_finalize_fees_matches_python_int_truncate() -> None:
         (1, 0),  # int(1.5)+0 = 1+0 = 1
         (0, 5),  # 0+5
     ]:
-        params = PyTxParams(
+        params = TxParams(
             to=ZERO_ADDR,
             data=b"\x01",
             gas_limit=21_000,
@@ -171,10 +171,10 @@ def test_finalize_fees_matches_python_int_truncate() -> None:
 
 
 def test_chain_id_replay_protection() -> None:
-    signer_mainnet = PyTxSigner(ANVIL_KEY_HEX, 1)
-    signer_sepolia = PyTxSigner(ANVIL_KEY_HEX, 11_155_111)
+    signer_mainnet = TxSigner(ANVIL_KEY_HEX, 1)
+    signer_sepolia = TxSigner(ANVIL_KEY_HEX, 11_155_111)
 
-    params = PyTxParams(
+    params = TxParams(
         to=ZERO_ADDR,
         data=bytes([0x01]),
         gas_limit=210_000,
@@ -189,8 +189,8 @@ def test_chain_id_replay_protection() -> None:
     assert raw_mainnet != raw_sepolia
     # Same key → same recovered address
     assert (
-        PyTxSigner.recover_sender(bytes(raw_mainnet)).lower()
-        == PyTxSigner.recover_sender(bytes(raw_sepolia)).lower()
+        TxSigner.recover_sender(bytes(raw_mainnet)).lower()
+        == TxSigner.recover_sender(bytes(raw_sepolia)).lower()
     )
 
 

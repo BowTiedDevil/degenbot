@@ -16,7 +16,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import event_topic
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.db import PyDatabaseSnapshot
+from degenbot.db import RustDatabaseSnapshot
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
@@ -234,7 +234,7 @@ class DatabaseSnapshot:
     """Snapshot source backed by built-in SQLite database.
 
     Routes every read through the Rust `degenbot-db` core crate via the
-    `PyDatabaseSnapshot` PyO3 seam (ADR-005 three-layer architecture). The
+    `RustDatabaseSnapshot` PyO3 seam (ADR-005 three-layer architecture). The
     `session` / `database_path` are retained for explicit-deps construction +
     migration tooling; reads no longer use the SQLAlchemy session.
     """
@@ -269,7 +269,7 @@ class DatabaseSnapshot:
         # Lazily-constructed Rust read handle (opened on first read so a
         # `db=-only` construction with no resolvable path doesn't fail until
         # a read is actually attempted).
-        self._rust_snapshot: PyDatabaseSnapshot | None = None
+        self._rust_snapshot: RustDatabaseSnapshot | None = None
 
     def _rust_db_path(self) -> pathlib.Path:
         """Resolve the SQLite file path the Rust reader will open.
@@ -294,9 +294,9 @@ class DatabaseSnapshot:
         msg = "database_path is required for Rust-backed snapshot reads"
         raise ValueError(msg)
 
-    def _rust(self) -> PyDatabaseSnapshot:
+    def _rust(self) -> RustDatabaseSnapshot:
         if self._rust_snapshot is None:
-            self._rust_snapshot = PyDatabaseSnapshot(
+            self._rust_snapshot = RustDatabaseSnapshot(
                 chain_id=self.chain_id,
                 database_path=str(self._rust_db_path()),
             )

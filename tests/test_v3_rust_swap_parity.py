@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_libraries import MIN_SQRT_RATIO
 from tests.helpers.erc20_factory import make_erc20
@@ -29,7 +29,7 @@ _ADDRESS = "0x" + "11" * 20
 _FACTORY = "0x" + "22" * 20
 
 
-def _make_tokens(py_bot: PyBot, tag: str):
+def _make_tokens(py_bot: RustBot, tag: str):
     """Build a fresh token pair in the given Bot (distinct hex addresses)."""
     token0 = make_erc20(
         py_bot,
@@ -49,7 +49,7 @@ def _make_tokens(py_bot: PyBot, tag: str):
 
 
 def _build_v3_pool(
-    py_bot: PyBot,
+    py_bot: RustBot,
     *,
     dense: bool,
     address: str,
@@ -99,7 +99,7 @@ def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
     result matches a dense pool (same position) computed via the dense Rust
     seam — i.e. the routed sparse path is correct end-to-end.
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
 
     # Dense oracle: same position, dense Rust seam (full tick_data → no miss).
     dense = _build_v3_pool(py_bot, dense=True, address="0x" + "11" * 20)
@@ -162,7 +162,7 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words():
     swap through empty words must drive the price down to MIN, fetching each
     empty word, matching the dense-Rust oracle (full tick_data, no miss).
     """
-    py_bot = PyBot()
+    py_bot = RustBot()
     token0, token1 = _make_tokens(py_bot, tag="e")
     # Dense oracle: a single dummy init tick ABOVE the start (opposite the zfo
     # walk direction) makes tick_data non-empty → coverage=tracked, but the zfo

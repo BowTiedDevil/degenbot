@@ -21,7 +21,7 @@ use runtime::get_runtime;
 /// `decimals()` / `latestRoundData()` through the Rust `eth_call` + ABI decode
 /// path (no Python `abi_decode` / `provider.call_raw` round-trip).
 #[pyclass(
-    name = "PyChainlinkPriceFeed",
+    name = "ChainlinkPriceFeed",
     skip_from_py_object,
     module = "degenbot._ffi.price"
 )]

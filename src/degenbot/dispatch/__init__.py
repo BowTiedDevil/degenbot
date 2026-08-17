@@ -16,8 +16,8 @@ and should never leak into driver code. This package hides them.
     X``), not Python wrapper classes. The Rust engine constructs and
     consumes these pyclasses / pyfunctions directly — driver code constructs
     a ``SimulateContext`` / ``TxSigner`` in Python and passes it to a Rust
-    pyfunction that expects the exact ``PySimulateContext`` /
-    ``PyTxSigner`` pyclass. A wrapper class would break type identity at the
+    pyfunction that expects the exact ``SimulateContext`` /
+    ``TxSigner`` pyclass. A wrapper class would break type identity at the
     FFI boundary. The companion's only job is to give the symbols stable
     names so driver code does not import ``degenbot._ffi``.
 
@@ -29,22 +29,22 @@ and should never leak into driver code. This package hides them.
 
 Symbol map (FFI name → stable companion name):
 
-- ``PyDispatchCandidate`` → :class:`DispatchCandidate`
-- ``PyDispatchOutcome``   → :class:`DispatchOutcome`
-- ``PyDispatcher``        → :class:`Dispatcher`
-- ``PySimulateContext``   → :class:`SimulateContext`
-- ``PyTxSigner``          → :class:`TxSigner`
+- ``DispatchCandidate`` → :class:`DispatchCandidate`
+- ``DispatchOutcome``   → :class:`DispatchOutcome`
+- ``Dispatcher``        → :class:`Dispatcher`
+- ``SimulateContext``   → :class:`SimulateContext`
+- ``TxSigner``          → :class:`TxSigner`
 - ``dispatch_profitable_py`` → :func:`dispatch_profitable`
 - ``dispatch_and_submit_py`` → :func:`dispatch_and_submit`
 - ``fetch_fee_history_py``   → :func:`fetch_fee_history`
 """
 
-from degenbot._ffi.simulation import PyDispatchCandidate as DispatchCandidate
-from degenbot._ffi.simulation import PyDispatchOutcome as DispatchOutcome
-from degenbot._ffi.simulation import PySimulateContext as SimulateContext
+from degenbot._ffi.simulation import DispatchCandidate
+from degenbot._ffi.simulation import DispatchOutcome
+from degenbot._ffi.simulation import SimulateContext
 from degenbot._ffi.simulation import dispatch_profitable_py as dispatch_profitable
-from degenbot._ffi.submission import PyDispatcher as Dispatcher
-from degenbot._ffi.submission import PyTxSigner as TxSigner
+from degenbot._ffi.submission import Dispatcher
+from degenbot._ffi.submission import TxSigner
 from degenbot._ffi.submission import dispatch_and_submit_py as dispatch_and_submit
 from degenbot._ffi.submission import fetch_fee_history_py as fetch_fee_history
 

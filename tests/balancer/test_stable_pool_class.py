@@ -26,7 +26,7 @@ from degenbot.balancer.stable_pools import (
     BalancerRateProvider,
     BalancerV2StablePool,
 )
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import StaleRateResult
@@ -40,7 +40,7 @@ pytestmark = pytest.mark.online_rpc
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 
 # ---------- ABIs ----------
 

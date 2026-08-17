@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions.pool import IncompleteSwap
@@ -102,7 +102,7 @@ _FIXED_AMOUNTS = (
     MAX_INT128,
 )
 
-_PYBOT = PyBot()
+_PYBOT = RustBot()
 
 
 def _load_cassette() -> dict[str, Any]:

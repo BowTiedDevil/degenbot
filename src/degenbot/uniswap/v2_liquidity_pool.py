@@ -14,7 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import ExternalUpdateError, NoPoolStateAvailable
-from degenbot.types import DexIdentity, PyLiquidityPool
+from degenbot.types import DexIdentity, LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
@@ -35,7 +35,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     variant: ClassVar[str | None] = None
 
     # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). The
-    # companion sets these as INSTANCE attrs off the `PyLiquidityPool` handle's
+    # companion sets these as INSTANCE attrs off the `LiquidityPool` handle's
     # `V2PoolDescriptor` (see `_from_py_pool`) — `stable_swap` selects the
     # stable calc branch for Camelot stable pools; False
     # otherwise. ``fee_denominator`` carries Camelot's integer fee scaling
@@ -48,7 +48,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     # Instance attributes set in `_from_py_pool` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body
-    _py_pool: PyLiquidityPool
+    _py_pool: LiquidityPool
     dex: DexIdentity
     address: ChecksumAddress
     factory: ChecksumAddress
@@ -67,14 +67,14 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         """Direct construction is forbidden.
 
         ``UniswapV2Pool`` is a Python companion over a Rust-owned
-        ``PyLiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``PyBot`` — there is no way for a caller to
+        ``LiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``RustBot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
         - Tests: ``make_v2_pool(...)``
 
-        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        Both register the pool in Rust, obtain the ``LiquidityPool``
         handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
         ``_from_pydf`` seam).
 
@@ -86,13 +86,13 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.build_pool(address) (production) or make_v2_pool(...) "
             "(tests) to register the pool in Rust and obtain the "
-            "PyLiquidityPool handle to wrap."
+            "LiquidityPool handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
-        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+    def _from_py_pool(cls, py_pool: LiquidityPool) -> Self:
+        """Wrap a Rust-owned ``LiquidityPool`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
         handle is self-describing: every identity field (address, factory,
@@ -138,7 +138,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         # non-V2 and can't serve as a cross-family guard).
         if py_pool.pool_family != "v2":
             msg = (
-                "PyLiquidityPool handle is not a V2-family pool "
+                "LiquidityPool handle is not a V2-family pool "
                 f"(got pool_family {py_pool.pool_family!r}); "
                 "UniswapV2Pool._from_py_pool requires a handle registered via "
                 "register_v2_pool"
@@ -151,14 +151,14 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         dex = py_pool.dex
         if dex is None:  # pragma: no cover
             msg = (
-                "PyLiquidityPool handle has no DexIdentity preset; the pool "
+                "LiquidityPool handle has no DexIdentity preset; the pool "
                 "must be registered with a variant via register_v2_pool"
             )
             raise DegenbotValueError(message=msg)
         self.dex = dex
 
         # Recover token companions from the SAME shared BotState (ADR-006):
-        # ``get_token0``/``get_token1`` return ``PyErc20Token`` handles for
+        # ``get_token0``/``get_token1`` return ``RustErc20Token`` handles for
         # tokens registered in the same ``Bot`` as the pool. Production
         # builders register tokens via the shared ``Erc20Builder`` (same
         # ``_py_bot``); the test factory registers them explicitly.
@@ -301,7 +301,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached V2 reorg journal deltas earlier than the given block.
 
-        Delegates to ``PyLiquidityPool.discard_before_block`` (Rust pops
+        Delegates to ``LiquidityPool.discard_before_block`` (Rust pops
         journal deltas strictly earlier than the target, keeping the genesis
         delta + everything at/after the target). The current state is
         unchanged when the target is at/after the newest delta.
@@ -319,7 +319,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     def restore_state_before_block(self, block: BlockNumber) -> None:
         """Restore the V2 pool to the landed-at state just before the target block.
 
-        Delegates to ``PyLiquidityPool.restore_before_block`` (Rust pops
+        Delegates to ``LiquidityPool.restore_before_block`` (Rust pops
         journal deltas at/after the target + reverse-applies them, writing
         back the pre-target reserves in one write guard). The journal's
         ``update_block`` lands at the oldest popped delta's block (the target

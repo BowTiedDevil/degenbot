@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from tests.helpers.erc20_factory import make_erc20
 
 if TYPE_CHECKING:
@@ -158,7 +158,7 @@ def extract_pool_state(pool: Any, *, block: int) -> dict[str, Any]:
 
 def _make_token(tok: dict[str, Any]) -> Any:
     return make_erc20(
-        PyBot(),
+        RustBot(),
         tok["address"],
         name=tok["name"],
         symbol=tok["symbol"],

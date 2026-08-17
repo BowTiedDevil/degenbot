@@ -2,12 +2,12 @@
 
 Mirrors ``tests/helpers/v2_pool_factory.py`` (ADR-005 slice 4): every direct
 ``UniswapV3Pool(...)`` construction in the test suite routes through
-``make_v3_pool`` so the ``PyLiquidityPool`` handle is wired through
+``make_v3_pool`` so the ``LiquidityPool`` handle is wired through
 ``Bot::register_v3_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow (ADR-005 slice 8b).
 
-Each call creates its own short-lived ``PyBot`` (the returned handle holds an
-``Arc`` clone of the underlying ``Bot``, so it outlives the ``PyBot``) — so
+Each call creates its own short-lived ``RustBot`` (the returned handle holds an
+``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) — so
 each test pool is fully isolated (no shared mutable state across tests, which
 matters because pools are mutable, unlike slice-3's tokens).
 """
@@ -16,14 +16,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from degenbot.types import PyLiquidityPool
+    from degenbot.types import LiquidityPool
     from degenbot.types.aliases import BlockNumber
 
 
@@ -32,7 +32,7 @@ def _tick_data_to_rust_rows(
 ) -> dict[int, tuple[int, int, int]]:
     """Convert ``{tick: LiquidityAtTick | tuple}`` to the Rust write shape.
 
-    Rust's ``PyLiquidityPool.update_tick_data`` expects
+    Rust's ``LiquidityPool.update_tick_data`` expects
     ``{tick: (liquidity_gross, liquidity_net, block)}`` (symmetric with
     ``tick_data_snapshot``'s read shape). The Python companion carries
     ``LiquidityAtTick(liquidity_net, liquidity_gross, block)`` — net before
@@ -83,17 +83,17 @@ def make_v3_pool(
     tick_bitmap: dict[int, Any] | None = None,
     tick_data: dict[int, Any] | None = None,
     tick_data_fetcher: Any = None,
-    py_bot: PyBot | None = None,
+    py_bot: RustBot | None = None,
     pool_class: type[UniswapV3Pool] = UniswapV3Pool,
 ) -> UniswapV3Pool:
-    """Construct an I/O-free V3 companion over a fresh ``PyLiquidityPool`` handle.
+    """Construct an I/O-free V3 companion over a fresh ``LiquidityPool`` handle.
 
-    Registers the pool in a short-lived ``PyBot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``PyBot``) —
+    Registers the pool in a short-lived ``RustBot`` (the returned handle holds an
+    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) —
     so each test pool is fully isolated (no shared mutable state across tests,
     which matters because pools are mutable, unlike slice-3's tokens).
     The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``PyBot``); that's fine — the pool reads scalars from its
+    ``make_erc20`` ``RustBot``); that's fine — the pool reads scalars from its
     own ``Bot`` and token metadata from the token's handle, independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
@@ -103,12 +103,12 @@ def make_v3_pool(
     common test case for the I/O-free scalar-only construction), the companion
     is built sparse (the fetcher backfills on demand, mirroring the engine's
     authority over tick data per plan-101). When ``tick_data`` is provided it
-    is seeded into Rust via ``PyLiquidityPool.update_tick_data`` and the
+    is seeded into Rust via ``LiquidityPool.update_tick_data`` and the
     companion is built non-sparse.
     """
     address_checksum = get_checksum_address(address)
 
-    bot = py_bot if py_bot is not None else PyBot()
+    bot = py_bot if py_bot is not None else RustBot()
     # ADR-006 rolling-start race closure: seed tick_data INLINE in
     # ``register_v3_pool`` (one BotState write lock) so a pump Mint/Burn
     # landing after registration applies on top of the seed and is never
@@ -131,7 +131,7 @@ def make_v3_pool(
         coverage=coverage,
         tick_data_fetcher=tick_data_fetcher,
     )
-    handle: PyLiquidityPool | None = bot.get_pool(pool_id)
+    handle: LiquidityPool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_v3_pool returned a pool_id with no handle"
 
     # ``apply_swap`` anchors the reorg genesis delta at state_block (mirrors
@@ -151,7 +151,7 @@ def make_v3_pool(
     # the pool — ``_from_py_pool`` recovers them via ``py_pool.get_token0``/
     # ``get_token1``, which look up ``token0_address``/``token1_address`` in
     # the pool's own ``BotState``. The token companions passed in may have been
-    # built against a different ``PyBot``; re-register their metadata here.
+    # built against a different ``RustBot``; re-register their metadata here.
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)

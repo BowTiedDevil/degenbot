@@ -1,22 +1,9 @@
-"""Stub for the dynamically-created ``degenbot._ffi.execution`` submodule.
-
-Created at runtime by ``add_execution_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/execution/mod.rs``). ADR-025 lift: adapt an arbitrary
-Python callable (``SolveResult -> bytes``) into the core
-``PayloadComposer`` / ``ExecutionStrategy`` seam (Polars ``map_elements``
-model — Rust holds the ``Py<PyAny>`` and calls back under the GIL).
-
-This is the foreign-contract path (a user's own execution contract); nothing
-here is threaded into the canonical ``dispatch_profitable_*`` fan-out
-(ADR-025 D3).
-"""
-
 from collections.abc import Callable
 from typing import Any, Self
 
-__all__ = ["PyPayloadComposer", "PySolveResult", "abi_encode_call"]
+__all__ = ["PayloadComposer", "SolveResult", "abi_encode_call"]
 
-class PySolveResult:
+class SolveResult:
     """The typed solve-result view passed to a compose callable (ADR-025 D4)."""
 
     @property
@@ -47,13 +34,13 @@ class PySolveResult:
     def hop_descriptors(self) -> list[dict[str, Any]]:
         """Per-hop descriptors: ``{family, pool_address, token0, token1, zfo, v4_pool_id}``."""
 
-class PyPayloadComposer:
-    """Wrap a Python callable (``result: PySolveResult -> bytes``) into the execution seam.
+class PayloadComposer:
+    """Wrap a Python callable (``result: SolveResult -> bytes``) into the execution seam.
 
     Implements the core ``PayloadComposer`` / ``ExecutionStrategy`` trait.
 
     Args:
-        callback: A callable taking a ``PySolveResult`` and returning the
+        callback: A callable taking a ``SolveResult`` and returning the
             ``bytes`` payload for the composer's own execution contract.
 
     Raises:
@@ -61,7 +48,7 @@ class PyPayloadComposer:
 
     """
 
-    def __new__(cls, callback: Callable[[PySolveResult], bytes]) -> Self: ...
+    def __new__(cls, callback: Callable[[SolveResult], bytes]) -> Self: ...
 
 def abi_encode_call(signature: str, values: list[Any]) -> bytes:
     """ABI-encode a call against the caller's own contract.

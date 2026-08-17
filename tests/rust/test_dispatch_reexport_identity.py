@@ -19,14 +19,14 @@ from __future__ import annotations
 
 import degenbot.dispatch as d
 from degenbot._ffi.simulation import (
-    PyDispatchCandidate,
-    PyDispatchOutcome,
-    PySimulateContext,
+    DispatchCandidate,
+    DispatchOutcome,
+    SimulateContext,
     dispatch_profitable_py,
 )
 from degenbot._ffi.submission import (
-    PyDispatcher,
-    PyTxSigner,
+    Dispatcher,
+    TxSigner,
     dispatch_and_submit_py,
     fetch_fee_history_py,
 )
@@ -34,27 +34,27 @@ from degenbot._ffi.submission import (
 
 def test_dispatch_candidate_is_identity_alias() -> None:
     """``degenbot.dispatch.DispatchCandidate`` is the Rust pyclass itself."""
-    assert d.DispatchCandidate is PyDispatchCandidate
+    assert d.DispatchCandidate is DispatchCandidate
 
 
 def test_dispatch_outcome_is_identity_alias() -> None:
     """``degenbot.dispatch.DispatchOutcome`` is the Rust pyclass itself."""
-    assert d.DispatchOutcome is PyDispatchOutcome
+    assert d.DispatchOutcome is DispatchOutcome
 
 
 def test_dispatcher_is_identity_alias() -> None:
     """``degenbot.dispatch.Dispatcher`` is the Rust pyclass itself."""
-    assert d.Dispatcher is PyDispatcher
+    assert d.Dispatcher is Dispatcher
 
 
 def test_simulate_context_is_identity_alias() -> None:
     """``degenbot.dispatch.SimulateContext`` is the Rust pyclass itself."""
-    assert d.SimulateContext is PySimulateContext
+    assert d.SimulateContext is SimulateContext
 
 
 def test_tx_signer_is_identity_alias() -> None:
     """``degenbot.dispatch.TxSigner`` is the Rust pyclass itself."""
-    assert d.TxSigner is PyTxSigner
+    assert d.TxSigner is TxSigner
 
 
 def test_dispatch_and_submit_is_identity_alias() -> None:

@@ -1,9 +1,9 @@
-"""PyBot pool-admission exceptions through the Python seam (F2EVV6).
+"""RustBot pool-admission exceptions through the Python seam (F2EVV6).
 
 Companion to ``test_v4_admission_exceptions.py`` (which pins the class
 hierarchy shape) — this file exercises the *actual* PyO3 seam so a typed
 ``PoolRegistrationError`` subclass surfaces when a caller registers an
-out-of-spec or duplicate pool via ``PyBot.register_v{2,3,4}_pool``.
+out-of-spec or duplicate pool via ``RustBot.register_v{2,3,4}_pool``.
 
 The WOYYS2 epic (MSTAT2 / 24KNGF / K3IICB) made every
 ``register_vx_pool`` a typed ``Result<u64, RegisterVxPoolError>`` and gave
@@ -37,7 +37,7 @@ from __future__ import annotations
 import pytest
 
 import degenbot.exceptions
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
@@ -113,14 +113,14 @@ def test_admission_errors_catchable_as_value_error(exc_name: str) -> None:
 
 
 # -----------------------------------------------------------------------
-# Seam-triggered tests — exercise the actual PyBot.register_v{2,3,4}_pool
+# Seam-triggered tests — exercise the actual RustBot.register_v{2,3,4}_pool
 # path so the F2EVV6 typed mappers surface the right subclass at the boundary.
 # -----------------------------------------------------------------------
 
 
 class TestV2SeamAdmission:
     def test_duplicate_address_raises_pool_already_registered(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         bot.register_v2_pool(
             address=V2_DAI_WETH_ADDR,
             token0=WETH,
@@ -155,7 +155,7 @@ class TestV2SeamAdmission:
     def test_overlarge_reserve0_raises_spec_violation_error(self) -> None:
         """V2 reserves are `uint112` on-chain; > `uint112(-1)` is rejected up
         front (MSTAT2 admission floor)."""
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         with pytest.raises(SpecViolationError) as exc_info:
             bot.register_v2_pool(
                 address=V2_DAI_WETH_ADDR,
@@ -189,13 +189,13 @@ class TestV3SeamAdmission:
         }
 
     def test_duplicate_address_raises_pool_already_registered(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         bot.register_v3_pool(**self._in_spec_kwargs())
         with pytest.raises(PoolAlreadyRegisteredError):
             bot.register_v3_pool(**self._in_spec_kwargs())
 
     def test_out_of_spec_sqrt_price_raises_spec_violation_error(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs()
         kw["sqrt_price_x96"] = 1  # below MIN_SQRT_RATIO = 4_295_128_740
         with pytest.raises(SpecViolationError) as exc_info:
@@ -203,7 +203,7 @@ class TestV3SeamAdmission:
         assert "sqrtPriceX96" in str(exc_info.value)
 
     def test_out_of_range_tick_raises_spec_violation_error(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs()
         kw["tick"] = -887_273  # one below MIN_TICK = -887_272
         with pytest.raises(SpecViolationError) as exc_info:
@@ -211,7 +211,7 @@ class TestV3SeamAdmission:
         assert "tick" in str(exc_info.value)
 
     def test_sqrt_price_at_max_raises_spec_violation_error(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs()
         # MAX_SQRT_RATIO is the strict upper bound (TickMath rejects `>= MAX`).
         # `sqrt_price_x96` is snapshot state, not part of CREATE2 — so verify_v3
@@ -223,7 +223,7 @@ class TestV3SeamAdmission:
         assert "sqrtPriceX96" in str(exc_info.value)
 
     def test_out_of_range_tick_spacing_raises_spec_violation_error(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs()
         kw["tick_spacing"] = 32_768  # one above MAX_TICK_SPACING = 32_767
         with pytest.raises(SpecViolationError) as exc_info:
@@ -256,13 +256,13 @@ class TestV4SeamAdmission:
         }
 
     def test_duplicate_raises_pool_already_registered(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         bot.register_v4_pool(**self._in_spec_kwargs())
         with pytest.raises(PoolAlreadyRegisteredError):
             bot.register_v4_pool(**self._in_spec_kwargs())
 
     def test_out_of_spec_sqrt_price_raises_spec_violation_error(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e1" * 32)
         kw["sqrt_price_x96"] = 1
         with pytest.raises(SpecViolationError) as exc_info:
@@ -276,7 +276,7 @@ class TestV4SeamAdmission:
         NOT as `DynamicFeePoolRejectedError` — the `0x800000` high bit is the
         dynamic-fee flag (handled as a separate, more-specific rejection);
         `fee >= 1 << 24` is a different and more primitive kind of out-of-spec."""
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e2" * 32)
         kw["fee"] = 1 << 24  # V4_FEE_MAX
         with pytest.raises(SpecViolationError) as exc_info:
@@ -289,7 +289,7 @@ class TestV4SeamAdmission:
         typed V4 variant as before (now also a PoolRegistrationError). The
         hooked check runs AFTER the spec validators, so the in-spec sqrt/fee/
         tick/spacing must pass first for the hooked variant to fire."""
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e3" * 32)
         kw["hook_flags"] = 0x80  # BEFORE_SWAP — amount-modifying
         with pytest.raises(HookedPoolRejectedError):
@@ -306,7 +306,7 @@ class TestV4SeamAdmission:
         static fee of 320_000 (a real mainnet 32%-fee pool) reaches this
         variant and is refused with a typed message naming the fee.
         """
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e9" * 32)
         kw["fee"] = 320_000  # > u16::MAX (65_535), < 1 << 24, not 0x800000
         with pytest.raises(HighFeePoolRejectedError) as exc_info:
@@ -317,12 +317,12 @@ class TestV4SeamAdmission:
     def test_fee_at_u16_boundary_is_admitted_or_rejected_correctly(self) -> None:
         """fee = 65_535 (u16::MAX) is the last encodable value (admitted);
         fee = 65_536 is the first un-encodable (rejected as HighFee)."""
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw_admit = self._in_spec_kwargs("0x" + "ea" * 32)
         kw_admit["fee"] = 65_535
         bot.register_v4_pool(**kw_admit)  # must not raise
 
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         kw_reject = self._in_spec_kwargs("0x" + "eb" * 32)
         kw_reject["fee"] = 65_536
         with pytest.raises(HighFeePoolRejectedError):

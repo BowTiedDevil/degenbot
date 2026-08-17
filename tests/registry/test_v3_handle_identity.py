@@ -1,7 +1,7 @@
 """Rust handle exposes verified V3 identity (Fork A, P62DKO).
 
 `register_v3_pool` now resolves the JSON-sourced deployer + init_hash at
-registration and stores them on the pool identity. The `PyLiquidityPool`
+registration and stores them on the pool identity. The `LiquidityPool`
 handle exposes them via `init_hash` / `deployer` getters -- the source the
 V3 companion reads instead of the retired `UNISWAP_V3_MAINNET_POOL_INIT_HASH`
 ClassVar.
@@ -12,7 +12,7 @@ PancakeSwap V3 (separate deployer) is the load-bearing case: the handle's
 
 from __future__ import annotations
 
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 
 UNISWAP_V3_FACTORY = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 PANCAKESWAP_V3_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
@@ -28,7 +28,7 @@ V3_UNI_USDC_WETH_500 = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
 V3_PCS_USDC_WETH_500_SEPARATE = "0x1ac1A8FEaAEa1900C4166dEeed0C11cC10669D36"
 
 
-def _register_v3(bot: PyBot, address: str, factory: str) -> int:
+def _register_v3(bot: RustBot, address: str, factory: str) -> int:
     return bot.register_v3_pool(
         address=address,
         token0=USDC,
@@ -48,7 +48,7 @@ UNISWAP_V2_INIT_HASH = "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e
 V2_UNI_WETH_USDC = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
 
 
-def _register_v2(bot: PyBot, address: str, factory: str) -> int:
+def _register_v2(bot: RustBot, address: str, factory: str) -> int:
     return bot.register_v2_pool(
         address=address,
         token0=USDC,
@@ -64,17 +64,17 @@ def _register_v2(bot: PyBot, address: str, factory: str) -> int:
     )
 
 
-def _py_pool(bot: PyBot, pool_id: int):
+def _py_pool(bot: RustBot, pool_id: int):
     pool = bot.get_pool(pool_id)
     assert pool is not None, "pool must be registered to build a handle"
     return pool
 
 
 class TestV3HandleIdentity:
-    """`PyLiquidityPool` exposes the verified V3 deployer + init_hash."""
+    """`LiquidityPool` exposes the verified V3 deployer + init_hash."""
 
     def test_uniswap_v3_init_hash_off_handle(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         pid = _register_v3(bot, V3_UNI_USDC_WETH_500, UNISWAP_V3_FACTORY)
         pool = _py_pool(bot, pid)
         assert pool.init_hash == UNISWAP_V3_INIT_HASH
@@ -82,7 +82,7 @@ class TestV3HandleIdentity:
         assert pool.deployer == UNISWAP_V3_FACTORY
 
     def test_pancakeswap_v3_separate_deployer_off_handle(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         pid = _register_v3(bot, V3_PCS_USDC_WETH_500_SEPARATE, PANCAKESWAP_V3_FACTORY)
         pool = _py_pool(bot, pid)
         # The load-bearing case: separate deployer, NOT the factory.
@@ -92,7 +92,7 @@ class TestV3HandleIdentity:
 
     def test_non_json_pool_falls_back_to_mainnet_init_hash(self) -> None:
         """A non-JSON V3 factory defaults to the mainnet fallback init_hash."""
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         ad_hoc_factory = "0x" + "77" * 20
         pid = _register_v3(bot, "0x" + "88" * 20, ad_hoc_factory)
         pool = _py_pool(bot, pid)
@@ -102,11 +102,11 @@ class TestV3HandleIdentity:
 
 
 class TestV2HandleIdentity:
-    """`PyLiquidityPool` exposes the verified V2 deployer + init_hash, and the
+    """`LiquidityPool` exposes the verified V2 deployer + init_hash, and the
     `dex` getter merges the per-(chain,factory) JSON identity."""
 
     def test_uniswap_v2_init_hash_off_handle(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         pid = _register_v2(bot, V2_UNI_WETH_USDC, UNISWAP_V2_FACTORY)
         pool = _py_pool(bot, pid)
         assert pool.init_hash == UNISWAP_V2_INIT_HASH
@@ -116,7 +116,7 @@ class TestV2HandleIdentity:
     def test_dex_getter_merges_json_identity(self) -> None:
         """`dex` carries the per-(chain,factory) deployer/init_hash, not the
         canonical-mainnet preset values."""
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         pid = _register_v2(bot, V2_UNI_WETH_USDC, UNISWAP_V2_FACTORY)
         pool = _py_pool(bot, pid)
         dex = pool.dex
@@ -127,7 +127,7 @@ class TestV2HandleIdentity:
         assert dex.factory == UNISWAP_V2_FACTORY
 
     def test_non_json_v2_pool_falls_back_to_mainnet_init_hash(self) -> None:
-        bot = PyBot(chain_id=1)
+        bot = RustBot(chain_id=1)
         ad_hoc_factory = "0x" + "77" * 20
         pid = _register_v2(bot, "0x" + "88" * 20, ad_hoc_factory)
         pool = _py_pool(bot, pid)

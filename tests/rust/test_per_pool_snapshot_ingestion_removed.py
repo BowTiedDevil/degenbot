@@ -1,7 +1,7 @@
 """Contract: per-pool PyO3 snapshot ingestion is gone (DADWUP).
 
 The DB→store snapshot transfer is owned by Rust: the DB path loads the whole
-snapshot inside ``Bot::load_snapshot_from_db`` at ``PyBot`` construction (zero
+snapshot inside ``Bot::load_snapshot_from_db`` at ``RustBot`` construction (zero
 tick dicts cross PyO3); the non-DB path crosses the boundary ONCE via
 ``load_v3_snapshot_from_py`` / ``load_v4_snapshot_from_py`` with the whole dict.
 

@@ -1,13 +1,6 @@
-"""Stub for the dynamically-created ``degenbot._ffi.subscriber`` submodule.
+from degenbot._ffi import RustBot
 
-Created at runtime by ``add_subscriber_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/bot/subscriber.rs``). Holds the pub/sub subscriber
-registration function + the ``PySubscription`` handle.
-"""
-
-from degenbot._ffi import PyBot
-
-class PySubscription:
+class PoolStateSubscription:
     """Handle to a registered pub/sub subscription.
 
     Hold the instance for as long as the subscriber should stay active.
@@ -20,10 +13,10 @@ class PySubscription:
         """Release the strong anchor — idempotent."""
 
 def register_subscriber(
-    bot: PyBot,
+    bot: RustBot,
     pool_id: int,
     callback: object,
-) -> PySubscription:
+) -> PoolStateSubscription:
     """Register a Python callback as a ``PoolStateSubscriber`` for ``pool_id``.
 
     The callback is invoked as ``callback(pool_id)`` each time the bot's
@@ -36,4 +29,4 @@ def register_subscriber(
 
     """
 
-__all__ = ["PySubscription", "register_subscriber"]
+__all__ = ["PoolStateSubscription", "register_subscriber"]

@@ -3,7 +3,7 @@
 Driven by the frozen `aave_parity_expected.json` oracle (dumped from the
 pre-cutover SQLAlchemy `DatabasePositionQuery`) + a freshly-regenerated
 `aave_parity.db` fixture: the Rust-backed `DatabasePositionQuery` (delegating
-through `PyDatabasePositionQuery`) produces identical results to the frozen
+through `RustDatabasePositionQuery`) produces identical results to the frozen
 SQLAlchemy oracle. Plus a §4.5 delegation spy proving the Python reader hits
 Rust with the right args, and an end-to-end `analyze_positions_for_market`
 smoke test (the Rust analysis seam consumes the Rust-backed records).
@@ -125,12 +125,12 @@ class TestParity:
 
 
 class TestDelegation:
-    """§4.5: the Python DatabasePositionQuery delegates to the Rust PyDatabasePositionQuery."""
+    """§4.5: the Python DatabasePositionQuery delegates to the Rust RustDatabasePositionQuery."""
 
     def test_get_users_with_debt_hits_rust(
         self, query: DatabasePositionQuery, market_id: int
     ) -> None:
-        """get_users_with_debt calls PyDatabasePositionQuery.get_users_with_debt."""
+        """get_users_with_debt calls RustDatabasePositionQuery.get_users_with_debt."""
         calls: list[str] = []
         real_handle = query._handle()
 
@@ -146,7 +146,7 @@ class TestDelegation:
     def test_get_oracle_address_hits_rust(
         self, query: DatabasePositionQuery, market_id: int
     ) -> None:
-        """get_oracle_address calls PyDatabasePositionQuery.get_oracle_address."""
+        """get_oracle_address calls RustDatabasePositionQuery.get_oracle_address."""
         calls: list[str] = []
         real_handle = query._handle()
 
@@ -188,7 +188,7 @@ class TestEndToEndAnalysis:
             result.categorize(summary)
         result.sort_by_risk()
         assert result.total_users == len(users)
-        # Every bucketed summary is a Rust PyUserPositionSummary with a HF.
+        # Every bucketed summary is a Rust UserPositionSummary with a HF.
         for bucket in (result.safe_users, result.at_risk_users, result.liquidatable_users):
             for s in bucket:
                 assert s.health_factor is not None or not s.has_debt

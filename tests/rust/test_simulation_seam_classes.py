@@ -5,9 +5,9 @@ These are constructor-shape tests, not behavioral parity tests — A4
 to pin the ``#[new]`` arg extraction + the getter shapes so a follow-up
 session cannot silently break the cockpit's construction sites.
 
-Note: ``PySimulateContext`` constructs an ``AsyncAlloyProvider`` against a
+Note: ``SimulateContext`` constructs an ``AsyncAlloyProvider`` against a
 localhost URL that is never dialed (no RPC call is made at construction — only
-the provider arc is cloned). ``PyDispatchOutcome`` has no ``#[new]``: it is
+the provider arc is cloned). ``DispatchOutcome`` has no ``#[new]``: it is
 built internally by ``dispatch_profitable_py`` (A4) via ``from_join``; this
 test only asserts it is registered + introspectable.
 """
@@ -18,9 +18,9 @@ import pytest
 
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot._ffi.simulation import (
-    PyDispatchCandidate,
-    PyDispatchOutcome,
-    PySimulateContext,
+    DispatchCandidate,
+    DispatchOutcome,
+    SimulateContext,
 )
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
@@ -58,7 +58,7 @@ class TestPyDispatchCandidate:
         self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
     ) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
-        candidate = PyDispatchCandidate(
+        candidate = DispatchCandidate(
             engine=engine,
             path_id=path_id,
             optimal_input=1_000_000_000_000_000_000,
@@ -71,14 +71,14 @@ class TestPyDispatchCandidate:
         # No public fields yet (A4 reads `inner`); construction-not-erroring
         # is the contract. The instance confirms the projection resolved the
         # 2-hop V2 path's `PathInfo` without raising.
-        assert isinstance(candidate, PyDispatchCandidate)
+        assert isinstance(candidate, DispatchCandidate)
 
     def test_encode_options_default_to_false(
         self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
     ) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
         # Both flags default False; construction must accept no kwargs.
-        candidate = PyDispatchCandidate(
+        candidate = DispatchCandidate(
             engine=engine,
             path_id=path_id,
             optimal_input=1,
@@ -88,13 +88,13 @@ class TestPyDispatchCandidate:
             solve_block=0,
             state_nonces=[0, 0],
         )
-        assert isinstance(candidate, PyDispatchCandidate)
+        assert isinstance(candidate, DispatchCandidate)
 
     def test_encode_options_kw_flags_accepted(
         self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
     ) -> None:
         engine, path_id = nxm2bf_v2_engine_and_path
-        candidate = PyDispatchCandidate(
+        candidate = DispatchCandidate(
             engine=engine,
             path_id=path_id,
             optimal_input=1,
@@ -106,14 +106,14 @@ class TestPyDispatchCandidate:
             erc6909_profit=True,
             use_v4_batch=True,
         )
-        assert isinstance(candidate, PyDispatchCandidate)
+        assert isinstance(candidate, DispatchCandidate)
 
     def test_unregistered_path_id_raises_value_error(
         self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
     ) -> None:
         engine, _path_id = nxm2bf_v2_engine_and_path
         with pytest.raises(ValueError, match="not registered"):
-            PyDispatchCandidate(
+            DispatchCandidate(
                 engine=engine,
                 path_id=999_999,  # never registered
                 optimal_input=1,
@@ -130,7 +130,7 @@ class TestPyDispatchCandidate:
         engine, path_id = nxm2bf_v2_engine_and_path
         # The path is 2-hop; passing 1 hop_output is a solver/stale-path_id defect.
         with pytest.raises(ValueError, match="hop_outputs length"):
-            PyDispatchCandidate(
+            DispatchCandidate(
                 engine=engine,
                 path_id=path_id,
                 optimal_input=1,
@@ -147,7 +147,7 @@ class TestPySimulateContext:
 
     def test_constructs_with_inject_code_false(self) -> None:
         provider = _make_async_provider()
-        ctx = PySimulateContext(
+        ctx = SimulateContext(
             provider=provider,
             executor_owner=OWNER,
             executor_address=EXECUTOR,
@@ -157,13 +157,13 @@ class TestPySimulateContext:
             inject_code=False,
             executor_runtime_bytecode=b"\xde\xad\xbe\xef",
         )
-        assert isinstance(ctx, PySimulateContext)
+        assert isinstance(ctx, SimulateContext)
         assert ctx.rpc_url == _RPC_URL
 
     def test_inject_code_true_without_injected_address_raises(self) -> None:
         provider = _make_async_provider()
         with pytest.raises(ValueError, match="injected_address is None"):
-            PySimulateContext(
+            SimulateContext(
                 provider=provider,
                 executor_owner=OWNER,
                 executor_address=EXECUTOR,
@@ -176,7 +176,7 @@ class TestPySimulateContext:
 
     def test_inject_code_true_with_injected_address_constructs(self) -> None:
         provider = _make_async_provider()
-        ctx = PySimulateContext(
+        ctx = SimulateContext(
             provider=provider,
             executor_owner=OWNER,
             executor_address=EXECUTOR,
@@ -187,16 +187,16 @@ class TestPySimulateContext:
             executor_runtime_bytecode=b"\xde\xad\xbe\xef",
             injected_address=EXECUTOR,
         )
-        assert isinstance(ctx, PySimulateContext)
+        assert isinstance(ctx, SimulateContext)
 
 
 class TestPyDispatchOutcome:
-    """``PyDispatchOutcome`` is registered but built only by A4's ``from_join``."""
+    """``DispatchOutcome`` is registered but built only by A4's ``from_join``."""
 
     def test_class_is_registered(self) -> None:
         # No #[new]; the cockpit cannot construct one directly. Asserting the
         # class is reachable (the registration in add_simulation_module ran).
-        assert PyDispatchOutcome is not None
+        assert DispatchOutcome is not None
         # The getters exist as descriptors on the type.
         for getter in (
             "gas_profitable",
@@ -208,4 +208,4 @@ class TestPyDispatchOutcome:
             "thin_dropped",
             "fail_buckets",
         ):
-            assert hasattr(PyDispatchOutcome, getter), f"missing getter {getter}"
+            assert hasattr(DispatchOutcome, getter), f"missing getter {getter}"

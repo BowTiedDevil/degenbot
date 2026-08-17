@@ -1,18 +1,11 @@
-"""Stub for the dynamically-created ``degenbot._ffi.simulation`` submodule.
-
-Created at runtime by ``add_simulation_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/simulation/mod.rs``). Holds the per-block profitability
-simulation + dispatch classes over the ``degenbot-simulation`` core crate.
-"""
-
 from collections.abc import Coroutine
 from typing import Any
 
 from degenbot._ffi.provider import AsyncAlloyProvider
-from degenbot._ffi.submission import PyDispatcher, PySubmitCandidate
+from degenbot._ffi.submission import Dispatcher, SubmitCandidate
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
-class PySimulateContext:
+class SimulateContext:
     """Session-static config bag for :func:`dispatch_profitable_py`.
 
     Construct once per session from the :class:`AsyncAlloyProvider` + the
@@ -36,7 +29,7 @@ class PySimulateContext:
     @property
     def rpc_url(self) -> str: ...
 
-class PyDispatchCandidate:
+class DispatchCandidate:
     """Pre-simulation candidate builder (engine result + resolved ``PathInfo``).
 
     NXM2BF: the candidate resolves its ``composers::PathInfo`` from a
@@ -61,11 +54,11 @@ class PyDispatchCandidate:
         use_v4_batch: bool = False,
     ) -> None: ...
 
-class PyDispatchOutcome:
+class DispatchOutcome:
     """Read-only outcome of a block's profitable-dispatch fan-out."""
 
     @property
-    def gas_profitable(self) -> list[PySubmitCandidate]: ...
+    def gas_profitable(self) -> list[SubmitCandidate]: ...
     @property
     def gas_unprofitable_count(self) -> int: ...
     @property
@@ -90,9 +83,9 @@ class PyDispatchOutcome:
     def path_infos(self) -> dict[int, dict[str, Any]]: ...
 
 def dispatch_profitable_py(
-    candidates: list[PyDispatchCandidate],
-    context: PySimulateContext,
-    dispatcher: PyDispatcher,
+    candidates: list[DispatchCandidate],
+    context: SimulateContext,
+    dispatcher: Dispatcher,
     base_fee_next: int,
     current_block: int,
     block_timestamp: int,
@@ -100,7 +93,7 @@ def dispatch_profitable_py(
     min_profit_margin_bps: int,
     *,
     engine: ArbitrageEngine | None = None,
-) -> Coroutine[Any, Any, PyDispatchOutcome]: ...
+) -> Coroutine[Any, Any, DispatchOutcome]: ...
 def simulate_in_process_revert_probe(
     path_id: int,
     runtime_bytecode: bytes,
@@ -123,9 +116,9 @@ def simulate_in_process_success_probe(path_id: int) -> dict[str, Any]:
     """
 
 __all__ = [
-    "PyDispatchCandidate",
-    "PyDispatchOutcome",
-    "PySimulateContext",
+    "DispatchCandidate",
+    "DispatchOutcome",
+    "SimulateContext",
     "dispatch_profitable_py",
     "simulate_in_process_revert_probe",
     "simulate_in_process_success_probe",

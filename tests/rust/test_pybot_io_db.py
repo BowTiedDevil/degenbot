@@ -1,6 +1,6 @@
-"""Parity + functional tests for the `PyBotIo` construction-time DB seam (QVMWQC).
+"""Parity + functional tests for the `RustBotIo` construction-time DB seam (QVMWQC).
 
-`PyBotIo.fetch_erc20_token` / `update_erc20_token_metadata` route the erc20
+`RustBotIo.fetch_erc20_token` / `update_erc20_token_metadata` route the erc20
 builder's construction-time DB read + write-back through `degenbot-db` (the
 `database_path`-per-call pattern, matching `db_apply_v3_liquidity_updates`).
 These tests drive the seam against a temp DB and assert §4.2 parity vs the
@@ -22,7 +22,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import PyBotIo
+from degenbot.bot import RustBotIo
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Base
 from degenbot.database.models.erc20 import Erc20TokenTable
@@ -33,7 +33,7 @@ CHAIN = 1
 # the Rust seam queries with `to_checksum(None)`, so the test seed must match.
 ADDR = get_checksum_address("0x" + "ab" * 20)
 
-# A trivial real provider for the DB seam. After B1, `PyBotIo` extracts a
+# A trivial real provider for the DB seam. After B1, `RustBotIo` extracts a
 # native `Arc<AlloyProvider>` when the provider is `PyAlloyProvider`-backed;
 # the DB methods never touch the provider, but a valid provider keeps the seam
 # honest (no Python `object()` double — see O3).
@@ -79,12 +79,12 @@ def _read_token_row(database_path: str) -> Erc20TokenTable:
 
 
 def test_fetch_erc20_token_parity(tmp_path):
-    """`PyBotIo.fetch_erc20_token` returns a row matching the ORM read."""
+    """`RustBotIo.fetch_erc20_token` returns a row matching the ORM read."""
     database_path = str(tmp_path / "erc20_seam.db")
     db_create_new_database(database_path)
     expected_id = _seed_token_row(database_path)
 
-    io = PyBotIo(provider=_offline_provider(), database_path=database_path)
+    io = RustBotIo(provider=_offline_provider(), database_path=database_path)
     row = io.fetch_erc20_token(chain_id=CHAIN, address=ADDR)
 
     assert row is not None
@@ -111,7 +111,7 @@ def test_fetch_erc20_token_missing_row_returns_none(tmp_path):
     database_path = str(tmp_path / "erc20_seam_missing.db")
     db_create_new_database(database_path)
 
-    io = PyBotIo(provider=_offline_provider(), database_path=database_path)
+    io = RustBotIo(provider=_offline_provider(), database_path=database_path)
     assert io.fetch_erc20_token(chain_id=CHAIN, address="0x" + "00" * 20) is None
 
 
@@ -121,7 +121,7 @@ def test_update_erc20_token_metadata_lands_update(tmp_path):
     db_create_new_database(database_path)
     _seed_token_row(database_path)
 
-    io = PyBotIo(provider=_offline_provider(), database_path=database_path)
+    io = RustBotIo(provider=_offline_provider(), database_path=database_path)
     # The builder's write-back: row existed with NULL metadata, now populated.
     result = io.update_erc20_token_metadata(
         chain_id=CHAIN, address=ADDR, name="Test", symbol="TST", decimals=6
@@ -137,7 +137,7 @@ def test_update_erc20_token_metadata_lands_update(tmp_path):
 
 def test_no_database_path_skips_db_read():
     """No `database_path` → `fetch_erc20_token` returns None (the skip path)."""
-    io = PyBotIo(provider=_offline_provider(), database_path=None)
+    io = RustBotIo(provider=_offline_provider(), database_path=None)
     assert io.database_path is None
     assert io.fetch_erc20_token(chain_id=CHAIN, address=ADDR) is None
     # And the write-back is a no-op.

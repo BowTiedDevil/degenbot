@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import PyBot
+from degenbot.bot import RustBot
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.registry import TokenRegistry
@@ -43,9 +43,7 @@ class _RecFakeIo:
     ) -> None:
         return None
 
-    def fetch_erc20_metadata_batch(
-        self, addresses: list[str]
-    ) -> list[tuple[str, str, int] | None]:
+    def fetch_erc20_metadata_batch(self, addresses: list[str]) -> list[tuple[str, str, int] | None]:
         self.metadata_batch_calls.append(list(addresses))
         return [("Alpha", "ALPHA", 6), ("Beta", "BETA", 18)]
 
@@ -65,7 +63,7 @@ class _RecFakeIo:
 
 def test_build_many_issues_single_batched_fetch() -> None:
     """Two DB/registry-missing tokens resolve via ONE batched metadata fetch."""
-    py_bot = PyBot(chain_id=1)
+    py_bot = RustBot(chain_id=1)
     fake_db = object.__new__(DatabaseSessionManager)
     tokens = TokenRegistry()
     io = _RecFakeIo()
@@ -83,23 +81,21 @@ def test_build_many_issues_single_batched_fetch() -> None:
 def test_build_many_falls_back_per_token_for_none_meta() -> None:
     """A token whose batched metadata is `None` falls back to a per-token build
     (contract-deployed check + alternate-prototype fallback preserved)."""
-    py_bot = PyBot(chain_id=1)
-    # The fallback routes through the Rust core (`PyBot.build_erc20_token` /
-    # `build_erc20_metadata`), so the PyBot must hold a ConstructionIo. Attach
+    py_bot = RustBot(chain_id=1)
+    # The fallback routes through the Rust core (`RustBot.build_erc20_token` /
+    # `build_erc20_metadata`), so the RustBot must hold a ConstructionIo. Attach
     # an offline provider with non-empty code for TOKEN_B but NO
     # name()/symbol()/decimals() responses — the core resolves the alternate
     # prototype fallback -> UNKNOWN (same observable result as the old Python
     # path's missing-metadata fallback).
     provider = RustAlloyProvider.offline_from_json_string(
-        json.dumps(
-            {
-                "chain_id": 1,
-                "block_number": 100,
-                "timestamp": 1_700_000_000,
-                "calls": {},
-                "code": {TOKEN_B.lower(): "6080"},
-            }
-        )
+        json.dumps({
+            "chain_id": 1,
+            "block_number": 100,
+            "timestamp": 1_700_000_000,
+            "calls": {},
+            "code": {TOKEN_B.lower(): "6080"},
+        })
     )
     py_bot.attach_construction_io(provider, None)
     fake_db = object.__new__(DatabaseSessionManager)
