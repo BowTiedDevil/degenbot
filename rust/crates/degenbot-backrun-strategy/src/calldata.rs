@@ -20,8 +20,8 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{Address, Bytes};
-use degenbot_abi::abi_encoder::encode_rust;
 use degenbot_abi::abi_types::AbiValue;
+use degenbot_abi::encoder::encode_rust;
 use degenbot_core::errors::AbiDecodeError;
 use degenbot_executor::erc6909_id;
 

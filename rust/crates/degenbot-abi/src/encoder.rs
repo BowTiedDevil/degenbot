@@ -225,7 +225,7 @@ pub fn encode_packed_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>
 mod tests {
 
     use super::*;
-    use crate::abi_decoder::decode_single_rust;
+    use crate::decoder::decode_single_rust;
     use alloy::hex;
     use alloy::primitives::{Address, I256, U256};
     use std::str::FromStr;
@@ -460,7 +460,7 @@ mod tests {
         let encoded = encode_single_rust("uint256", &value).unwrap();
 
         // Decode using the decoder module
-        let decoded = crate::abi_decoder::decode_single_rust("uint256", &encoded).unwrap();
+        let decoded = crate::decoder::decode_single_rust("uint256", &encoded).unwrap();
         match decoded {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, original);
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_encode_roundtrip_with_decode() {
-        use crate::abi_decoder::decode_single_rust;
+        use crate::decoder::decode_single_rust;
 
         // Test uint256
         let original = U256::from(12_345_678_901_234_567_890_u128);
@@ -602,7 +602,7 @@ mod proptests {
     #![expect(clippy::unwrap_used)]
 
     use super::*;
-    use crate::abi_decoder::decode_single_rust;
+    use crate::decoder::decode_single_rust;
     use alloy::primitives::{Address, I256, U256};
     use proptest::prelude::*;
 

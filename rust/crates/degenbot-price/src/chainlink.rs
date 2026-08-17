@@ -233,8 +233,8 @@ const LATEST_ROUND_TYPES: [AbiType; 5] = [
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use degenbot_abi::abi_decoder::decode_for_types;
-    use degenbot_abi::abi_encoder::encode_for_types;
+    use degenbot_abi::decoder::decode_for_types;
+    use degenbot_abi::encoder::encode_for_types;
 
     // Pinned reference feed: Chainlink ETH/USD aggregator
     // `0x5f4eC3Df9cbd43714FE274015522933F4461f15A` on mainnet, which reports

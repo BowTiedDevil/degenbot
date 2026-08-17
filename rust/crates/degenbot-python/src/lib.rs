@@ -95,7 +95,7 @@ pub use degenbot_concentrated_liquidity_math as cl_lib;
 // `conversion::alloy`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
 // wrappers (`decode`/`encode`) live in `abi::decoder` / `abi::encoder`.
 #[cfg(feature = "abi")]
-pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
+pub use degenbot_abi::{abi_types, decoder, encoder, signature_parser};
 
 // The RPC provider / contract / subscription core lives in the
 // `degenbot-rpc` workspace member. Re-exported as `crate::provider` /

@@ -16,7 +16,7 @@
 //! crate's `abi_decoder_py` / `abi_encoder_py` modules (they need
 //! `conversion::alloy` and `conversion::cache`, which are binding-layer concerns).
 
-pub mod abi_decoder;
-pub mod abi_encoder;
 pub mod abi_types;
+pub mod decoder;
+pub mod encoder;
 pub mod signature_parser;

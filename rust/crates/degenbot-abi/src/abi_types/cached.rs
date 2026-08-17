@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_cached_abi_types_matches_decode_rust() {
-        use crate::abi_decoder::decode_rust;
+        use crate::decoder::decode_rust;
 
         let type_strings = ["address", "uint256", "bool"];
         let cached = CachedAbiTypes::new(&type_strings).unwrap();

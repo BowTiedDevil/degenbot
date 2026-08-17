@@ -126,9 +126,9 @@ impl AavePriceOracle {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use degenbot_abi::abi_decoder::decode_for_types;
-    use degenbot_abi::abi_encoder::encode_for_types;
     use degenbot_abi::abi_types::{AbiType, AbiValue};
+    use degenbot_abi::decoder::decode_for_types;
+    use degenbot_abi::encoder::encode_for_types;
 
     // Pinned reference: Aave V3 `AavePriceOracle` on Ethereum mainnet.
     // The return bytes below are canonical ABI encodings of representative

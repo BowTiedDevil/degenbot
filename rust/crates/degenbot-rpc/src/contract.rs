@@ -157,7 +157,7 @@ pub fn encode_arguments(types: &[AbiType], args: &[String]) -> ContractResult<By
         .collect::<Result<Vec<_>, _>>()?;
 
     // Use encode_for_types to avoid string parsing
-    let encoded = degenbot_abi::abi_encoder::encode_for_types(types, &values)?;
+    let encoded = degenbot_abi::encoder::encode_for_types(types, &values)?;
 
     Ok(Bytes::from(encoded))
 }
@@ -218,7 +218,7 @@ pub fn decode_return_data(data: &[u8], types: &[AbiType]) -> ContractResult<Vec<
     }
 
     // Use decode_for_types to avoid string parsing
-    let decoded = degenbot_abi::abi_decoder::decode_for_types(types, data)?;
+    let decoded = degenbot_abi::decoder::decode_for_types(types, data)?;
 
     // Convert AbiValues back to strings
     Ok(decoded.iter().map(AbiValue::to_contract_string).collect())
@@ -274,7 +274,7 @@ pub fn decode_return_data_typed(types: &[AbiType], data: &[u8]) -> ContractResul
         });
     }
 
-    degenbot_abi::abi_decoder::decode_for_types(types, data).map_err(Into::into)
+    degenbot_abi::decoder::decode_for_types(types, data).map_err(Into::into)
 }
 
 /// Contract interface for calling contract functions.

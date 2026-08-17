@@ -28,8 +28,8 @@
 #[cfg(test)]
 use crate::encoders::{self, SENTINEL_SELF};
 use alloy::primitives::{Address, U256};
-use degenbot_abi::abi_encoder::encode_rust;
 use degenbot_abi::abi_types::AbiValue;
+use degenbot_abi::encoder::encode_rust;
 
 /// `NATIVE_CURRENCY_ADDRESS` — V4's native-ETH currency is `address(0)`.
 ///
