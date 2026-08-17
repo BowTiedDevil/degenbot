@@ -20,7 +20,7 @@ through the *same* `_consume` body (build → register + verify → per-path
 release → dedup → `register_path`), so an operator-added path is treated
 identically to a discovered one.
 
-The pipeline is **long-lived** and owned by the session (`BackrunSession`),
+The pipeline is **long-lived** and owned by the session (`BotRunner`),
 not created and dropped inside `build_paths`. That is the key structural
 change that makes mid-run adds possible:
 
@@ -35,7 +35,7 @@ change that makes mid-run adds possible:
 
 ### Programmatic API
 
-`BackrunSession` exposes two coroutines that route into the live pipeline. Both
+`BotRunner` exposes two coroutines that route into the live pipeline. Both
 **never await the pump**, so a mid-run command cannot stall solve/dispatch:
 
 ```python

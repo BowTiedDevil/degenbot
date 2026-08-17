@@ -1,6 +1,6 @@
-"""Tests for BackrunSession — the orchestrator that collapses main()'s startup ritual.
+"""Tests for BotRunner — the orchestrator that collapses main()'s startup ritual.
 
-`BackrunSession` owns the config + the three actors (bot, engine_registry,
+`BotRunner` owns the config + the three actors (bot, engine_registry,
 async_w3) + the Dispatcher + scalar block/nonce state, and is the ONE place
 that enforces the phase ordering: subscribe→backfill→verify
 (``EngineRegistry.start``, stops pre-resume) → [``run``:] attach consumer →
@@ -21,8 +21,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from degenbot.runner import BotRunner as BackrunSession
-from degenbot.runner.config import BackrunConfig
+from degenbot.runner import BotRunner as BotRunner
+from degenbot.runner.config import ArbitrageConfig
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,7 @@ def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The session tests inject fakes for bot/engine_registry/async_w3, so the RPC
     URIs are never connected — they only need to be *present* on the config so
-    ``BackrunConfig.from_env`` does not raise ``RpcNotConfiguredError``. Keeping
+    ``ArbitrageConfig.from_env`` does not raise ``RpcNotConfiguredError``. Keeping
     them ``http://localhost:8545`` / ``ws://localhost:8546`` preserves the legacy
     assertions in ``test_start_orchestrates_pre_resume_ritual``.
     """
@@ -43,7 +43,7 @@ def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _restore_sigint() -> None:
     """Restore the default SIGINT handler after each test.
 
-    ``BackrunSession.start()`` binds a SIGINT→``engine.stop()`` handler on the
+    ``BotRunner.start()`` binds a SIGINT→``engine.stop()`` handler on the
     production path (``install_sigint=True``). Tests that call ``start()`` then
     ``run()`` directly (without ``async with``) never reach ``__aexit__``, so
     the handler would leak across tests and pollute ``signal.getsignal``
@@ -55,7 +55,7 @@ def _restore_sigint() -> None:
     _signal.signal(_signal.SIGINT, _signal.SIG_DFL)
 
 
-def _cfg(**overrides) -> BackrunConfig:
+def _cfg(**overrides) -> ArbitrageConfig:
     base = {
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
         "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
@@ -63,7 +63,7 @@ def _cfg(**overrides) -> BackrunConfig:
         "INJECT_EXECUTOR_CODE": "0",
     }
     base.update(overrides)
-    return BackrunConfig.from_env(base, live=True, permutation=None)
+    return ArbitrageConfig.from_env(base, live=True, permutation=None)
 
 
 class _FakeEngine:
@@ -187,7 +187,7 @@ class _FakeEth:
 
 
 class _FakeAsyncW3:
-    """Fake ``AsyncAlloyProvider`` for BackrunSession tests (PAGQCK).
+    """Fake ``AsyncAlloyProvider`` for BotRunner tests (PAGQCK).
 
     The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
     ``AsyncAlloyProvider`` — this fake exposes the SAME flat surface
@@ -279,7 +279,7 @@ class _Recorder:
         return _noop_coro()
 
 
-class TestBackrunSessionStart:
+class TestBotRunnerStart:
     async def test_start_orchestrates_pre_resume_ritual(self) -> None:
         events: list[str] = []
         bot = _FakeBot()
@@ -288,7 +288,7 @@ class TestBackrunSessionStart:
         v3_snap, v4_snap = object(), object()
         snapshots = (v3_snap, v4_snap, None, None)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -321,7 +321,7 @@ class TestBackrunSessionStart:
         engine_registry = _FakeEngineRegistry(backfill_target=13_000)  # ahead of latest 12_345
         async_w3 = _FakeAsyncW3()
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -335,7 +335,7 @@ class TestBackrunSessionStart:
         assert session.dispatcher.current_block == 13_000
 
 
-class TestBackrunSessionRun:
+class TestBotRunnerRun:
     async def test_run_enforces_phase_ordering(self) -> None:
         events: list[str] = []
         bot = _FakeBot(events=events)
@@ -343,7 +343,7 @@ class TestBackrunSessionRun:
         async_w3 = _FakeAsyncW3()
         v3_snap, v4_snap = object(), object()
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -367,7 +367,7 @@ class TestBackrunSessionRun:
         engine_registry = _FakeEngineRegistry()
         async_w3 = _FakeAsyncW3()
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -397,7 +397,7 @@ class TestBackrunSessionRun:
             boom = "build_paths failed"
             raise RuntimeError(boom)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -418,7 +418,7 @@ class TestBackrunSessionRun:
         assert session._result_consumer_task.cancelled()
 
 
-class TestBackrunSessionRunBlockStreamAcquiredOnce:
+class TestBotRunnerRunBlockStreamAcquiredOnce:
     """Regression: `run()` must acquire the once-only `engine.block_stream()`
     exactly ONCE and feed it DIRECTLY to the single result consumer (the tee and
     the redundant Python recurring-verify branch were removed).
@@ -487,7 +487,7 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
             async for b in block_stream:
                 seen_by_consumer.append(b["number"])  # ruff: ignore[manual-list-comprehension]  (async iter)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=registry,  # type: ignore[arg-type]
@@ -508,8 +508,8 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
         assert seen_by_consumer == [500, 550, 600], "result-consumer must receive every block"
 
 
-class TestBackrunSessionShutdown:
-    """``BackrunSession.shutdown()`` is the clean-shutdown seam that hands a
+class TestBotRunnerShutdown:
+    """``BotRunner.shutdown()`` is the clean-shutdown seam that hands a
     Ctrl-C to the Rust core before the process exits.
 
     The pump task runs on the shared tokio runtime (decoupled from the asyncio
@@ -525,7 +525,7 @@ class TestBackrunSessionShutdown:
     async def test_shutdown_calls_engine_stop_once(self) -> None:
         bot = _FakeBot()
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -548,7 +548,7 @@ class TestBackrunSessionShutdown:
         # matters because __aexit__ calls shutdown() and a KeyboardInterrupt
         # handler might too.
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -572,7 +572,7 @@ class TestBackrunSessionShutdown:
         # swallows + logs any error from stop().
         engine_registry = _FakeEngineRegistry()
         engine_registry.engine.stop_raises = RuntimeError("engine torn down")
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -594,7 +594,7 @@ class TestBackrunSessionShutdown:
         # Callable at any lifecycle point — before start() ran,
         # engine_registry is None, so shutdown() is a quiet no-op (no
         # AttributeError). Let a Ctrl-C during startup still exit cleanly.
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=None,
             engine_registry=None,
@@ -619,7 +619,7 @@ class TestBackrunSessionShutdown:
         async def hanging_consumer(**_kw):
             await asyncio.Event().wait()
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -640,7 +640,7 @@ class TestBackrunSessionShutdown:
         assert "stop" in events
 
 
-class TestBackrunSessionSigintHandler:
+class TestBotRunnerSigintHandler:
     """The SIGINT→``engine.stop()`` handler closes the "first Ctrl-C swallowed"
     gap.
 
@@ -660,7 +660,7 @@ class TestBackrunSessionSigintHandler:
 
         prev = signal.getsignal(signal.SIGINT)
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -681,7 +681,7 @@ class TestBackrunSessionSigintHandler:
 
         baseline = signal.getsignal(signal.SIGINT)
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -708,7 +708,7 @@ class TestBackrunSessionSigintHandler:
 
         baseline = signal.getsignal(signal.SIGINT)
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -733,7 +733,7 @@ class TestBackrunSessionSigintHandler:
         import signal
 
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -816,7 +816,7 @@ class TestConstructionContext:
             await asyncio.sleep(0)
             seen["kwargs"] = dict(kwargs)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -836,7 +836,7 @@ class TestConstructionContext:
         assert seen["kwargs"]["engine_registry"] is engine_registry
 
 
-async def _drive_run(session: BackrunSession) -> None:
+async def _drive_run(session: BotRunner) -> None:
     await session.start()
     await session.run()
 
@@ -864,7 +864,7 @@ class TestSubBBackgroundRegistration:
             boom = "tick data mismatch"
             raise VerificationMismatchError(boom)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -889,7 +889,7 @@ class TestSubBBackgroundRegistration:
         the still-running registration reads)."""
         bot = _FakeBot()
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -924,7 +924,7 @@ class TestSubBBackgroundRegistration:
         calls: list[str] = []
         bot = _FakeBot(events=calls)
         bot._py_bot = _RecordingPyBot(calls)  # records `close_snapshot_tx`
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=_FakeEngineRegistry(),
@@ -965,7 +965,7 @@ class TestSubBBackgroundRegistration:
         # Simulate the in-flight-worker-clone scenario: the held `_py_bot`
         # would trip the canary if `close_snapshot_tx` were invoked mid-cancel.
         bot._py_bot = _RecordingPyBot(calls, raise_on_close=True)
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=_FakeEngineRegistry(),
@@ -1034,7 +1034,7 @@ class TestSubCBgRegistrationConcurrency:
                 dispatch_work.append(n)
                 await asyncio.sleep(0)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -1081,7 +1081,7 @@ class TestSubCBgRegistrationConcurrency:
             assert registration_task is not None
             await registration_task  # returns once the drain is done
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -1118,7 +1118,7 @@ class TestSubCBgRegistrationConcurrency:
             boom = "provider transport failure after bounded retry"
             raise VerificationRpcError(boom)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -1202,7 +1202,7 @@ class TestSubCBgRegistrationConcurrency:
                 await asyncio.sleep(0)
 
         registry = _Registry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=registry,  # type: ignore[arg-type]
@@ -1249,7 +1249,7 @@ class Test6VZN7HOngoingDiscovery:
             for _ in range(3):
                 await asyncio.sleep(0)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=bot,
             engine_registry=engine_registry,
@@ -1506,7 +1506,7 @@ class TestPathRegistrationPipeline:
 
 class TestSessionOperatorSurface:
     """NWTUM3: the programmatic add-a-path-at-any-time surface exposed on the
-    session (`BackrunSession.enqueue_path` / `trigger_discovery`), which routes
+    session (`BotRunner.enqueue_path` / `trigger_discovery`), which routes
     into the long-lived `PathRegistrationPipeline`. These inject a fake pipeline
     (consistent with the suite's fake-injection pattern); the pipeline-level
     `_consume` registration/isolation behaviour is covered by
@@ -1516,7 +1516,7 @@ class TestSessionOperatorSurface:
         """With an injected (fake) run there is no live pipeline — the operator
         surface must raise loudly, never fail silently or touch a None."""
         engine_registry = _FakeEngineRegistry()
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,
@@ -1566,7 +1566,7 @@ class TestSessionOperatorSurface:
                     await session.trigger_discovery(bound=3)
                 await asyncio.sleep(0)
 
-        session = BackrunSession(
+        session = BotRunner(
             _cfg(),
             bot=_FakeBot(),
             engine_registry=engine_registry,

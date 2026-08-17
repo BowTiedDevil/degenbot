@@ -140,7 +140,7 @@ class TestVerificationRetryPolicy:
     def test_defaults_are_sensible_for_edge_node_recovery(self) -> None:
         """The default policy bounds a single ``eth_call`` round-trip + node GC
         pause without stalling ``build_paths`` startup: 4 attempts, ~0.5s base,
-        capped at 4s, jittered. These are the values wired into ``BackrunConfig``
+        capped at 4s, jittered. These are the values wired into ``ArbitrageConfig``
         when the user sets no ``VERIFICATION_RETRY_*`` env vars.
         """
         from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
@@ -153,7 +153,7 @@ class TestVerificationRetryPolicy:
 
     def test_policy_is_frozen(self) -> None:
         """A policy shared across registration calls must be immutable (a mid-run
-        mutation would silently change retry semantics). Mirrors ``BackrunConfig``'s
+        mutation would silently change retry semantics). Mirrors ``ArbitrageConfig``'s
         frozen contract (test_backrun_config.py::TestImmutability).
         """
         import dataclasses

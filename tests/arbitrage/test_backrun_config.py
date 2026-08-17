@@ -1,6 +1,6 @@
-"""Tests for BackrunConfig — the unified backrun configuration value object.
+"""Tests for ArbitrageConfig — the unified backrun configuration value object.
 
-`BackrunConfig` bundles the ~20 scattered backrun tunables (operator identity,
+`ArbitrageConfig` bundles the ~20 scattered backrun tunables (operator identity,
 node endpoints, executor contract, dispatch knobs, path filters, dry-run)
 that `main()` currently reads ad-hoc from three sources: a `mainnet.env`
 dotenv dict, module-top constants, and CLI args. `from_env` is the factory
@@ -22,7 +22,7 @@ import pytest
 
 from degenbot import config as config_module
 from degenbot.config import RpcNotConfiguredError
-from degenbot.runner.config import BackrunConfig
+from degenbot.runner.config import ArbitrageConfig
 
 _HTTP_ENV = "DEGENBOT_RPC_HTTP_CHAINID_1"
 _WS_ENV = "DEGENBOT_RPC_WS_CHAINID_1"
@@ -49,7 +49,7 @@ def _full_env() -> dict[str, str]:
 class TestFromEnvFull:
     def test_full_env_populates_all_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = BackrunConfig.from_env(_full_env(), live=True, permutation=None)
+        cfg = ArbitrageConfig.from_env(_full_env(), live=True, permutation=None)
 
         assert cfg.dry_run is False
         assert cfg.operator_address == "0x9C56a29c7231974c269E24F9FB3c29203039089E"
@@ -68,7 +68,7 @@ class TestFromEnvFull:
     ) -> None:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"INJECT_EXECUTOR_CODE": "1"}
-        cfg = BackrunConfig.from_env(env, live=True, permutation=None)
+        cfg = ArbitrageConfig.from_env(env, live=True, permutation=None)
 
         assert cfg.inject_executor_code is True
         # main() behavior: when INJECT_EXECUTOR_CODE, executor_address = injected_address
@@ -94,7 +94,7 @@ class TestDryRunDefaults:
 
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}
-        cfg = BackrunConfig.from_env(env, live=False, permutation=None)
+        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
 
         assert cfg.dry_run is True
         assert cfg.operator_address == self._DRY_RUN_ADDR
@@ -112,7 +112,7 @@ class TestLiveModeRequiresOperator:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}
         with pytest.raises(ValueError, match="OPERATOR"):
-            BackrunConfig.from_env(env, live=True, permutation=None)
+            ArbitrageConfig.from_env(env, live=True, permutation=None)
 
 
 class TestRpcCascade:
@@ -130,7 +130,7 @@ class TestRpcCascade:
         )
 
         with pytest.raises(RpcNotConfiguredError) as exc_info:
-            BackrunConfig.from_env({}, live=False, permutation=None)
+            ArbitrageConfig.from_env({}, live=False, permutation=None)
 
         msg = str(exc_info.value)
         assert _HTTP_ENV in msg
@@ -138,7 +138,7 @@ class TestRpcCascade:
 
     def test_cli_override_beats_os_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_rpc_env(monkeypatch, http="https://from-env.example", ws="wss://ws-env.example")
-        cfg = BackrunConfig.from_env(
+        cfg = ArbitrageConfig.from_env(
             _full_env(),
             live=False,
             permutation=None,
@@ -150,7 +150,7 @@ class TestRpcCascade:
 
     def test_cli_http_only_ws_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_rpc_env(monkeypatch, http="https://from-env.example", ws="wss://ws-env.example")
-        cfg = BackrunConfig.from_env(
+        cfg = ArbitrageConfig.from_env(
             _full_env(),
             live=False,
             permutation=None,
@@ -181,7 +181,7 @@ class TestLegacyNodeHostDeprecation:
             pytest.warns(DeprecationWarning, match="DEGENBOT_RPC_HTTP_CHAINID"),
             pytest.warns(DeprecationWarning, match="DEGENBOT_RPC_WS_CHAINID"),
         ):
-            cfg = BackrunConfig.from_env(env, live=False, permutation=None)
+            cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
 
         assert cfg.node_http == "https://legacy.example:8545"
         assert cfg.node_ws == "wss://legacy.example:8546"
@@ -194,7 +194,7 @@ class TestLegacyNodeHostDeprecation:
             "NODE_PORT_HTTP": "8545",
         }
         with pytest.warns(DeprecationWarning, match="DEGENBOT_RPC"):
-            cfg = BackrunConfig.from_env(env, live=False, permutation=None)
+            cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
 
         assert cfg.node_http == "https://from-env.example"
 
@@ -214,7 +214,7 @@ class TestLegacyNodeHostDeprecation:
             pytest.raises(RpcNotConfiguredError),
             pytest.warns(DeprecationWarning, match="DEGENBOT_RPC_HTTP_CHAINID"),
         ):
-            BackrunConfig.from_env(env, live=False, permutation=None)
+            ArbitrageConfig.from_env(env, live=False, permutation=None)
 
 
 class TestPermutationOverride:
@@ -222,12 +222,12 @@ class TestPermutationOverride:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = BackrunConfig.from_env(_full_env(), live=False, permutation="V3-V4-V3")
+        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation="V3-V4-V3")
         assert cfg.permutation_filter == frozenset({"V3-V4-V3"})
 
     def test_no_permutation_is_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = BackrunConfig.from_env(_full_env(), live=False, permutation=None)
+        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation=None)
         assert cfg.permutation_filter is None
 
 
@@ -236,12 +236,12 @@ class TestExecutorZeroAddress:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
         env = _full_env() | {"EXECUTOR_CONTRACT_ADDRESS": "0x" + "0" * 40}
         with pytest.raises(ValueError, match=r"zero address|EXECUTOR_CONTRACT_ADDRESS"):
-            BackrunConfig.from_env(env, live=False, permutation=None)
+            ArbitrageConfig.from_env(env, live=False, permutation=None)
 
 
 class TestImmutability:
     def test_config_is_frozen(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _set_rpc_env(monkeypatch, http="https://eth.example.com", ws="wss://ws.eth.example.com")
-        cfg = BackrunConfig.from_env(_full_env(), live=False, permutation=None)
+        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation=None)
         with pytest.raises(dataclasses.FrozenInstanceError):
             cfg.operator_address = "0x" + "1" * 40  # type: ignore[misc]

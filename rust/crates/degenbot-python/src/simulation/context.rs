@@ -1,5 +1,5 @@
 //! `PySimulateContext` — the session-static config bag the cockpit constructs
-//! once per `BackrunSession` and reuses across every block's
+//! once per `BotRunner` and reuses across every block's
 //! `dispatch_profitable_py` call.
 //!
 //! Mirrors `PyDispatcher::for_block`'s "construct once, drive many" shape, but

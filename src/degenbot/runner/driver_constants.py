@@ -6,7 +6,7 @@ extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN). Each
 example, so the example can be thinned to an entrypoint.
 
 Note: the *canonical defaults* for the same tunables live in
-:class:`degenbot.runner.config.BackrunConfig` (the frozen config value object
+:class:`degenbot.runner.config.ArbitrageConfig` (the frozen config value object
 ``main()`` builds). These module-level values are the driver's live operating
 values — several are read directly by the hot-path modules (e.g.
 ``FEE_PERCENTILES`` by :mod:`~degenbot.runner.consume`, ``MIN_PROFIT_NET`` by

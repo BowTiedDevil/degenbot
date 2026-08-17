@@ -1,6 +1,6 @@
 """VP42BP (AC item 4): runtime-configurable verification retry policy.
 
-``BackrunConfig`` exposes the bounded retry-with-backoff policy (see
+``ArbitrageConfig`` exposes the bounded retry-with-backoff policy (see
 ``degenbot.arbitrage.verification_retry``) as read-from-env knobs
 (``VERIFICATION_RETRY_MAX_ATTEMPTS`` / ``_BASE_DELAY`` / ``_MAX_DELAY`` /
 ``_JITTER``) with the same sane defaults as ``VerificationRetryPolicy()``.
@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
-from degenbot.runner.config import BackrunConfig
+from degenbot.runner.config import ArbitrageConfig
 
 
 @pytest.fixture(autouse=True)
@@ -41,13 +41,13 @@ def _full_env() -> dict[str, str]:
 
 
 class TestVerificationRetryConfig:
-    """``BackrunConfig.from_env`` resolves a ``VerificationRetryPolicy``."""
+    """``ArbitrageConfig.from_env`` resolves a ``VerificationRetryPolicy``."""
 
     def test_defaults_match_verification_retry_policy_defaults(self) -> None:
         """When no ``VERIFICATION_RETRY_*`` env vars are set, the resolved policy
         equals ``VerificationRetryPolicy()`` — the documented sane defaults.
         """
-        cfg = BackrunConfig.from_env(_full_env(), live=False, permutation=None)
+        cfg = ArbitrageConfig.from_env(_full_env(), live=False, permutation=None)
         assert cfg.verification_retry_policy == VerificationRetryPolicy()
 
     def test_env_overrides_each_knob(self) -> None:
@@ -58,7 +58,7 @@ class TestVerificationRetryConfig:
             "VERIFICATION_RETRY_MAX_DELAY": "8.0",
             "VERIFICATION_RETRY_JITTER": "0.3",
         }
-        cfg = BackrunConfig.from_env(env, live=False, permutation=None)
+        cfg = ArbitrageConfig.from_env(env, live=False, permutation=None)
         assert cfg.verification_retry_policy == VerificationRetryPolicy(
             max_attempts=6,
             base_delay=0.25,
@@ -72,7 +72,7 @@ class TestVerificationRetryConfig:
         """
         env = _full_env() | {"VERIFICATION_RETRY_MAX_ATTEMPTS": "not-an-int"}
         with pytest.raises(ValueError, match="VERIFICATION_RETRY_MAX_ATTEMPTS"):
-            BackrunConfig.from_env(env, live=False, permutation=None)
+            ArbitrageConfig.from_env(env, live=False, permutation=None)
 
     def test_below_one_attempts_raises(self) -> None:
         """``max_attempts < 1`` is rejected by ``VerificationRetryPolicy``'s
@@ -81,4 +81,4 @@ class TestVerificationRetryConfig:
         """
         env = _full_env() | {"VERIFICATION_RETRY_MAX_ATTEMPTS": "0"}
         with pytest.raises(ValueError, match="max_attempts"):
-            BackrunConfig.from_env(env, live=False, permutation=None)
+            ArbitrageConfig.from_env(env, live=False, permutation=None)

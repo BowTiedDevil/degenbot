@@ -42,7 +42,7 @@ from degenbot.dispatch import Dispatcher, SimulateContext
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot.runner.build_paths import ConstructionContext, PathRegistrationPipeline, build_paths
-from degenbot.runner.config import BackrunConfig
+from degenbot.runner.config import ArbitrageConfig
 from degenbot.runner.consume import consume_result_batches
 from degenbot.runner.dispatch import _load_executor_runtime_bytecode
 from degenbot.runner.driver_constants import (
@@ -59,10 +59,10 @@ from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
-# _make_backrun_config
+# _make_arbitrage_config
 
 
-def _make_backrun_config(node_http: str) -> DegenbotConfig:
+def _make_arbitrage_config(node_http: str) -> DegenbotConfig:
     """Build a single-chain DegenbotConfig for the arbitrage session (ADR-006 D5).
 
     The chain identity is Ethereum mainnet (1); the RPC is the caller's
@@ -120,7 +120,7 @@ class BotRunner:
 
     Usage (production)::
 
-        cfg = BackrunConfig.from_env(
+        cfg = ArbitrageConfig.from_env(
             dotenv_values("examples/mainnet.env"), live=not dry_run, permutation=args.permutation
         )
         async with BotRunner(cfg) as session:
@@ -145,7 +145,7 @@ class BotRunner:
 
     def __init__(
         self,
-        cfg: BackrunConfig,
+        cfg: ArbitrageConfig,
         *,
         bot: Bot | None = None,
         engine_registry: EngineRegistry | None = None,
@@ -648,8 +648,8 @@ class BotRunner:
 
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod
-    def _build_bot(cfg: BackrunConfig) -> Bot:
-        config_obj = _make_backrun_config(cfg.node_http)
+    def _build_bot(cfg: ArbitrageConfig) -> Bot:
+        config_obj = _make_arbitrage_config(cfg.node_http)
         # ADR-005: the Bot's build path (ERC20 + V2/V3/V4 pool construction)
         # issues many `eth_call`s via `BotIo` → `provider.call`. A web3.py
         # sync backend (`from_web3`) holds the GIL through every
@@ -662,7 +662,7 @@ class BotRunner:
         return Bot(config_obj, provider=alloy)
 
     @staticmethod
-    async def _build_async_w3(cfg: BackrunConfig) -> AsyncAlloyProvider:
+    async def _build_async_w3(cfg: ArbitrageConfig) -> AsyncAlloyProvider:
         """Build the dispatch-path RPC provider (PAGQCK).
 
         Returns an ``AsyncAlloyProvider`` wrapping a Rust

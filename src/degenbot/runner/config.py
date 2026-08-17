@@ -4,8 +4,8 @@ Extracted from ``examples/eth_backrun_helpers.py`` (epic 5TSYKN, task RVSYWB).
 This module owns the Python-companion, ``stays-python`` surface that the
 runtime driver (``BotRunner``) and its tests consume:
 
-- :class:`BackrunConfig` — the unified frozen config value object (built from a
-  dotenv mapping + CLI flags via :meth:`BackrunConfig.from_env`).
+- :class:`ArbitrageConfig` — the unified frozen config value object (built from a
+  dotenv mapping + CLI flags via :meth:`ArbitrageConfig.from_env`).
 - :func:`classify_revert` + :func:`format_failure_breakdown` — simulation
   revert taxonomy / tallies (display-only).
 - :func:`filter_thin_margin_results` — display-only thinning of solver results.
@@ -29,7 +29,7 @@ from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 # ──────────────────────────────────────────────────────────────────
 
 # Default dispatch tunables — match the example's current operational values
-# (eth_backrun_v2_v3_v4_rust.py module-top constants) so the BackrunSession
+# (eth_backrun_v2_v3_v4_rust.py module-top constants) so the BotRunner
 # bridge (slice 5b) is behavior-preserving. Canonical home for the defaults
 # is the config object; the example's constants are its current deployment.
 _MIN_PROFIT_NET = 1
@@ -164,7 +164,7 @@ def _checksum_or_empty(addr: str | None) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
-class BackrunConfig:
+class ArbitrageConfig:
     """Unified settlement-arbitrage configuration — one object for the ~20 tunables `main()` reads.
 
     Replaces the three scattered config sources (a ``mainnet.env`` dotenv
@@ -217,8 +217,8 @@ class BackrunConfig:
         chain_id: int = 1,
         cli_http: str | None = None,
         cli_ws: str | None = None,
-    ) -> "BackrunConfig":
-        """Build a BackrunConfig from a dotenv-style env mapping + CLI flags.
+    ) -> "ArbitrageConfig":
+        """Build a ArbitrageConfig from a dotenv-style env mapping + CLI flags.
 
         Behavior:
         - operator: live mode requires both OPERATOR_ADDRESS/PRIVATE_KEY
@@ -241,7 +241,7 @@ class BackrunConfig:
         to ``DEGENBOT_RPC_HTTP_CHAINID_{chain_id}`` / ``..._WS_CHAINID_{cid}``.
 
         Returns:
-            A frozen ``BackrunConfig`` with cascade-resolved ``node_http``/``node_ws``.
+            A frozen ``ArbitrageConfig`` with cascade-resolved ``node_http``/``node_ws``.
 
         Raises:
             ValueError: missing operator in live mode, zero-address executor,

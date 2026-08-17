@@ -1,4 +1,4 @@
-"""Ethereum mainnet backrun bot: Uniswap V2/V3/V4 arbitrage using the Rust engine.
+"""Ethereum mainnet settlement-arbitrage bot: Uniswap V2/V3/V4 arbitrage using the Rust engine.
 
 A thin Python entrypoint over the Rust-owned ArbitrageEngine and the
 ``degenbot.runner`` driver (epic 5TSYKN). The runtime driver — config,
@@ -31,18 +31,13 @@ from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.logging import logger as bot_logger
 from degenbot.runner import BotRunner
 from degenbot.runner import driver_constants as _driver_constants
-from degenbot.runner.cli import build_backrun_arg_parser
-from degenbot.runner.config import BackrunConfig
-
-
-def _build_arg_parser() -> argparse.ArgumentParser:
-    """Backward-compatible alias for :func:`build_backrun_arg_parser`."""
-    return build_backrun_arg_parser()
+from degenbot.runner.cli import build_arbitrage_arg_parser
+from degenbot.runner.config import ArbitrageConfig
 
 
 async def main() -> None:
     """Parse CLI args, build + run the BotRunner, and await the pump loop."""
-    parser = _build_arg_parser()
+    parser = build_arbitrage_arg_parser()
     args = parser.parse_args()
     dry_run = not args.live
 
@@ -61,7 +56,7 @@ async def main() -> None:
 
     env = dotenv.dotenv_values("examples/mainnet.env")
     try:
-        cfg = BackrunConfig.from_env(
+        cfg = ArbitrageConfig.from_env(
             env,
             live=not dry_run,
             permutation=args.permutation,

@@ -67,7 +67,7 @@ class VerificationRetryPolicy:
 
     Defaults (``max_attempts=4``, ``base_delay=0.5s``, ``max_delay=4.0s``,
     ``jitter=0.5``) suit a local/edge node recovering from a transient
-    transport blip; override via the constructor or ``BackrunConfig.from_env``
+    transport blip; override via the constructor or ``ArbitrageConfig.from_env``
     (``VERIFICATION_RETRY_*`` env vars) to tune for production node latency.
     """
 

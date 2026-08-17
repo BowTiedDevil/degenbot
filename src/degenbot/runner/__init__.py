@@ -9,9 +9,8 @@ package is its deployment cockpit).
 
 Public surface (re-exported here):
 - :class:`BotRunner` — the runtime driver facade (the ``start/build_paths/
-  consume/dispatch`` seams). ``BackrunSession`` is a backward-compatible alias
-  for the historical name (tests re-pointed away from it in epic 5TSYKN).
-- :class:`BackrunConfig` + config/display helpers (:mod:`degenbot.runner.config`)
+  consume/dispatch`` seams).
+- :class:`ArbitrageConfig` + config/display helpers (:mod:`degenbot.runner.config`)
 - Discovery + registration (:mod:`degenbot.runner.build_paths`)
 - The permanent main loop (:mod:`degenbot.runner.consume`)
 """
@@ -26,7 +25,7 @@ from degenbot.runner.build_paths import (
 )
 from degenbot.runner.config import (
     BPS_DENOM,
-    BackrunConfig,
+    ArbitrageConfig,
     EngineResult,
     classify_revert,
     filter_thin_margin_results,
@@ -35,13 +34,9 @@ from degenbot.runner.config import (
 )
 from degenbot.runner.consume import consume_result_batches
 
-# Backward-compatible alias for the historical driver name.
-BackrunSession = BotRunner
-
 __all__ = [
     "BPS_DENOM",
-    "BackrunConfig",
-    "BackrunSession",
+    "ArbitrageConfig",
     "BotRunner",
     "ConstructionContext",
     "EngineResult",

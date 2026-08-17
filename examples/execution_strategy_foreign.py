@@ -10,7 +10,7 @@ GIL), and builds the foreign payload through `degenbot.abi`.
 This exercises the seam end-to-end at the Python layer for a **foreign**
 contract (`SimpleExecutor`) whose `execute(uint256,uint256,uint256[])` calldata
 is deliberately distinct from the default `cmd_executor` adapter — never a
-re-derivation of the canonical backrun 7-call bundle (ADR-019 R / ADR-025 D3,
+re-derivation of the canonical settlement-arbitrage 7-call bundle (ADR-019 R / ADR-025 D3,
 "driver shell, not a co-implementation").
 
 Guardrails:

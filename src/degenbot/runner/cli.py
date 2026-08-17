@@ -2,7 +2,7 @@
 
 The ``argv -> BotRunner`` entrypoint's argument parser (epic 5TSYKN). The
 example ``examples/eth_backrun_v2_v3_v4_rust.py`` is a thin wrapper that calls
-:func:`build_backrun_arg_parser`; keeping the parser in the package makes the
+:func:`build_arbitrage_arg_parser`; keeping the parser in the package makes the
 CLI surface (notably the ``--node-http`` / ``--node-ws`` cascade overrides)
 directly testable without importing from ``examples/``.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 
 
-def build_backrun_arg_parser() -> argparse.ArgumentParser:
+def build_arbitrage_arg_parser() -> argparse.ArgumentParser:
     """Build the settlement-arbitrage example's argument parser.
 
     Extracted so the CLI surface (especially the ``--node-http`` / ``--node-ws``
