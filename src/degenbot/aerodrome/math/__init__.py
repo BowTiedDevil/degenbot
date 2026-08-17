@@ -36,7 +36,6 @@ from degenbot._ffi.solidly_math import (
 )
 from degenbot._ffi.v2_math import calc_exact_out_v2
 
-
 __all__ = [
     "calc_d",
     "calc_exact_in_stable_camelot",

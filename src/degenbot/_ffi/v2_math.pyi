@@ -8,14 +8,12 @@ Aerodrome volatile) delegate here so Python and the Rust solver round
 identically (RH3L24).
 """
 
-from __future__ import annotations
-
 def calc_exact_in_v2(
     reserves_in: int, reserves_out: int, amount_in: int, fee_numer: int, fee_denom: int
-) -> int: ...  # noqa: E501
+) -> int: ...
 def calc_exact_out_v2(
     reserves_in: int, reserves_out: int, amount_out: int, fee_numer: int, fee_denom: int
-) -> int: ...  # noqa: E501
+) -> int: ...
 
 __all__ = [
     "calc_exact_in_v2",

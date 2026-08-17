@@ -32,7 +32,6 @@ from degenbot._ffi.concentrated_liquidity_math import (
 )
 from degenbot._ffi.v2_math import calc_exact_in_v2, calc_exact_out_v2
 
-
 __all__ = [
     "MAX_SQRT_RATIO",
     "MAX_TICK",

@@ -215,6 +215,10 @@ def resolve_token_ids(
     stays free of SQLAlchemy (ZNWXNC). Addresses not present in the
     database are omitted from the mapping.
 
+    Returns:
+        ``{address: row_id}`` for the found tokens; empty for an
+        empty input.
+
     """
     addresses = set(addresses)
     if not addresses:

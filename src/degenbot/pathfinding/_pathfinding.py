@@ -132,6 +132,11 @@ def _prepare_graph(
     Returns:
         A ``_PreparedGraph`` with flat edges + address lookup dicts.
 
+    Raises:
+        DegenbotValueError: The session is not file-backed
+            (``:memory:`` is not supported - the Rust seam opens its
+            own connection on the database path).
+
     """
     engine = session.bind
     db_path = getattr(getattr(engine, "url", None), "database", None) if engine else None

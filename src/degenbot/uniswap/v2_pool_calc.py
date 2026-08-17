@@ -22,7 +22,6 @@ from degenbot.exceptions.pool import (
 )
 from degenbot.uniswap.math import calc_exact_in_v2, calc_exact_out_v2
 
-
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.types import LiquidityPool

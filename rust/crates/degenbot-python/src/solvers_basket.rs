@@ -1,4 +1,4 @@
-//! QuantAMM solver bindings (feature = "bot").
+//! `QuantAMM` solver bindings (feature = "bot").
 //!
 //! Domain `#[pyfunction]` surface over `degenbot-solvers`; registration stays
 //! centralized in `c_api::register`.

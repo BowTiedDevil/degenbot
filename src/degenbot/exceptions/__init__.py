@@ -18,7 +18,7 @@ from degenbot._ffi import (
     PoolRegistrationError,
     SpecViolationError,
 )
-from degenbot._ffi.db import DatabaseSchemaStale  # noqa: E402
+from degenbot._ffi.db import DatabaseSchemaStale
 from degenbot.exceptions.arbitrage import (
     ArbCalculationError,
     ArbitrageError,

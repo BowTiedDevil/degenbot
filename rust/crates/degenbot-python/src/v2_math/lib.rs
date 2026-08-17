@@ -91,7 +91,7 @@ pub fn calc_exact_in_v2(
 ///
 /// # Errors
 ///
-/// Returns `ValueError` on overdraw (amount_out >= reserves_out), invalid
+/// Returns `ValueError` on overdraw (`amount_out` >= `reserves_out`), invalid
 /// fee parameters, or uint256 overflow.
 #[pyfunction(signature = (reserves_in, reserves_out, amount_out, fee_numer, fee_denom))]
 pub fn calc_exact_out_v2(
@@ -115,6 +115,15 @@ pub fn calc_exact_out_v2(
     u256_to_py_obj(py, result)
 }
 
+/// Creates `degenbot._ffi.v2_math` and registers the two V2
+/// constant-product calcs on it with un-prefixed names. The Python
+/// companions `degenbot.uniswap.math` / `degenbot.aerodrome.math`
+/// re-export these as the stable import path, decoupling consumers
+/// from `degenbot._ffi` (RH3L24).
+///
+/// # Errors
+///
+/// Returns `PyErr` if any function fails to register.
 pub fn add_v2_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
     let submod = PyModule::new(py, "degenbot._ffi.v2_math")?;

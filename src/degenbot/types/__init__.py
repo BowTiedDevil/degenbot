@@ -1,8 +1,7 @@
 """Shared types: AddressComparable, state caches, pool enums, and aliases."""
 
 from degenbot._ffi import LiquidityPool
-from degenbot._ffi.dex_identity import DexIdentity
-from degenbot._ffi.dex_identity import dex_identity
+from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 
 from .address_comparable import AddressComparable
 from .concrete import BoundedCache, KeyedDefaultDict
@@ -20,9 +19,9 @@ __all__ = (
     "BoundedCache",
     "DexIdentity",
     "KeyedDefaultDict",
+    "LiquidityPool",
     "MultiTokenSwapCalculation",
     "PoolSimulation",
-    "LiquidityPool",
     "ReverseSimulatablePool",
     "SimulationResult",
     "StateManageablePool",

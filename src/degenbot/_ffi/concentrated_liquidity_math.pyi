@@ -1,4 +1,4 @@
-from typing import Any, overload
+from typing import overload
 
 def most_significant_bit(x: int) -> int:
     """Find the index of the most significant bit set in x.
