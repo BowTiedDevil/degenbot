@@ -34,7 +34,6 @@ from degenbot.database.operations import (
     upgrade_existing_sqlite_database,
 )
 from degenbot.db import (
-    DatabaseSchemaStale,
     db_backup_database,
     db_create_new_database,
     db_fetch_exchange_by_name,
@@ -42,6 +41,7 @@ from degenbot.db import (
     db_upgrade_database,
     db_upsert_exchange,
 )
+from degenbot.exceptions import DatabaseSchemaStale
 
 
 def _alembic_head_expected() -> str:

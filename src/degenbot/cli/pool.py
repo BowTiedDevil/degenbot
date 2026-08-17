@@ -29,14 +29,14 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from degenbot.cli import cli
 from degenbot.config import resolve_http_rpc_uri
 from degenbot.logging import logger
-from degenbot.pool import (
+from degenbot.provider.block_helpers import get_number_for_block_identifier
+from degenbot.provider.factory import get_provider_from_config
+from degenbot.updater import (
+    CancelHandle,
     run_pool_update,
     verify_v3_liquidity_map,
     verify_v4_liquidity_map,
 )
-from degenbot.provider.block_helpers import get_number_for_block_identifier
-from degenbot.provider.factory import get_provider_from_config
-from degenbot.updater import CancelHandle
 
 if TYPE_CHECKING:
     from degenbot.bot import Bot

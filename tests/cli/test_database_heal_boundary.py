@@ -31,7 +31,6 @@ from degenbot.database.operations import (
 )
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.db import (
-    V2PoolRowInput,
     db_create_new_database,
     db_fetch_exchange_by_name,
     db_inspect_schema_state,
@@ -39,6 +38,7 @@ from degenbot.db import (
     db_upsert_pool_manager,
     db_upsert_v2_pools,
 )
+from degenbot.updater import V2PoolRowInput
 
 # Real mainnet factory addresses — distinct rows + realistic FK targets.
 _UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"

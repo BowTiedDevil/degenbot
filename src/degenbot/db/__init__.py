@@ -3,7 +3,10 @@
 Re-exports the Rust-backed database surface from the ``degenbot._ffi.db``
 submodule. Importers should use::
 
-    from degenbot.db import db_backup_database, V2PoolRowInput
+    from degenbot.db import db_backup_database
+
+    (the pool-updater row-input/event types now live exclusively in
+    ``degenbot.updater`` — I4H7EH)
 
 rather than reaching into ``degenbot._ffi`` directly — this path is stable
 across future Rust reshuffles, and lets the Rust crate structure
@@ -27,18 +30,14 @@ untouched until the 0.7 cutover.
 """
 
 from degenbot._ffi.db import (
+    CollateralPositionData,
+    DebtPositionData,
     ExchangeRow,
     LiquidityPoolRow,
-    LiquidityUpdateEvent,
     PoolManagerRow,
-    CollateralPositionData,
     RustDatabasePositionQuery,
     RustDatabaseSnapshot,
-    DebtPositionData,
     UserPositionSummary,
-    V2PoolRowInput,
-    V3PoolRowInput,
-    V4PoolRowInput,
     analyze_aave_user_position,
     db_apply_v3_liquidity_updates,
     db_apply_v4_liquidity_updates,
@@ -64,16 +63,12 @@ from degenbot._ffi.db import (
 __all__ = [
     "ExchangeRow",
     "LiquidityPoolRow",
-    "LiquidityUpdateEvent",
     "PoolManagerRow",
     "CollateralPositionData",
     "RustDatabasePositionQuery",
     "RustDatabaseSnapshot",
     "DebtPositionData",
     "UserPositionSummary",
-    "V2PoolRowInput",
-    "V3PoolRowInput",
-    "V4PoolRowInput",
     "analyze_aave_user_position",
     "db_apply_v3_liquidity_updates",
     "db_apply_v4_liquidity_updates",
