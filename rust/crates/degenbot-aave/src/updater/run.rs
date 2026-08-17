@@ -2784,9 +2784,9 @@ mod tests {
 
     // ── 5Z3QQ2: ScaledToken (aToken/vToken) apply fns ────────────────────
 
+    use crate::RAY;
     use alloy::primitives::{I256, U256};
     use degenbot_db::ScaledTokenPosition;
-    use degenbot_evm_math::RAY;
 
     /// Seed a collateral position row (balance='0', `last_index=NULL`) + the
     /// FK parents it needs (market, `erc20_tokens`, asset, user). Returns the

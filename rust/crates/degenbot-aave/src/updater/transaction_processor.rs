@@ -50,11 +50,11 @@ use crate::processors::{
     enricher_collateral_burn, enricher_collateral_mint, enricher_debt_burn, enricher_debt_mint,
     ProcessorError, ScaledTokenEventData, ScaledTokenProcessor,
 };
+use crate::ray_div;
 use crate::run::AaveChunkEvent;
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
-use degenbot_evm_math::ray_div;
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -77,7 +77,7 @@ pub enum ProcessTxError {
     GhoProcessor(#[from] GhoProcessorError),
     /// A ray-math failure from the enrichment's `ray_div`.
     #[error("ray-math error: {0}")]
-    RayMath(#[from] degenbot_evm_math::WadRayError),
+    RayMath(#[from] crate::WadRayError),
     /// A deferred path (HQF5NQ-C2 — the liquidation apply / GHO discount
     /// machinery / `DeficitCoverage` / `MintToTreasury`). The orchestrator may
     /// split these into sub-tasks rather than rush the edge-branch
@@ -1914,13 +1914,9 @@ pub(crate) fn dispatch_mint_to_treasury(
         let balance_increase = ev.balance_increase.unwrap_or_default();
         // The revision split: rev >= 9 → CEIL, rev <= 8 → HALF_UP.
         let scaled_amount = if op.pool_revision >= 9 {
-            degenbot_evm_math::ray_div_ceil(minted_amount, index)?
+            crate::ray_div_ceil(minted_amount, index)?
         } else {
-            ray_div(
-                minted_amount,
-                index,
-                Some(degenbot_evm_math::RayRounding::HalfUp),
-            )?
+            ray_div(minted_amount, index, Some(crate::RayRounding::HalfUp))?
         };
         let processor = ScaledTokenProcessor::collateral(asset.a_token_revision);
         let event_data = ScaledTokenEventData {
@@ -2153,13 +2149,13 @@ mod tests {
     /// `pool_math.py::underlying_to_scaled_collateral`.
     #[test]
     fn mint_to_treasury_scaled_amount_revision_split() {
-        use degenbot_evm_math::RAY;
+        use crate::RAY;
         // amountMinted = 1000 (underlying), liquidity_index = 3 RAY.
         // rev 9+: ray_div_ceil(1000, 3*RAY) — 1000/3 rounds up.
         let minted = U256::from(1_000u64);
         let index = U256::from(3u64) * RAY;
-        let v9 = degenbot_evm_math::ray_div_ceil(minted, index).unwrap();
-        let v8 = ray_div(minted, index, Some(degenbot_evm_math::RayRounding::HalfUp)).unwrap();
+        let v9 = crate::ray_div_ceil(minted, index).unwrap();
+        let v8 = ray_div(minted, index, Some(crate::RayRounding::HalfUp)).unwrap();
         // 1000/3 = 333.33... → ceil = 334, half_up = 333.
         assert_eq!(v9, U256::from(334u64));
         assert_eq!(v8, U256::from(333u64));
@@ -2458,10 +2454,10 @@ mod tests {
     /// `AToken.rev_1.sol:1712`).
     #[test]
     fn dispatch_deficit_coverage_pairs_erc20_transfer_with_paired_balance_transfer() {
+        use crate::RAY;
         use degenbot_core::address_utils::address_to_checksum_string;
         use degenbot_decoders::aave_event_decoder::AAVE_BALANCE_TRANSFER_TOPIC;
         use degenbot_decoders::aave_event_decoder::AAVE_BURN_TOPIC;
-        use degenbot_evm_math::RAY;
         use rusqlite::params;
         let db = fresh_db_with_asset();
         let a_token = Address::from([0x98; 20]);
@@ -2846,8 +2842,8 @@ mod tests {
     /// the `262_371_189_504` divergence (`rayDiv(292_538_129_344, idx)`).
     #[test]
     fn dispatch_liquidation_combined_burn_aggregates_debt_and_skips_mint() {
+        use crate::{ray_div, RayRounding};
         use degenbot_core::address_utils::address_to_checksum_string;
-        use degenbot_evm_math::{ray_div, RayRounding};
         use rusqlite::params;
 
         let db = fresh_db_with_asset();

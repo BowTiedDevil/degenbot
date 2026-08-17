@@ -1,12 +1,16 @@
 //! `degenbot-aave` — the Aave V3 domain crate: the updater chunk-loop + the
 //! position-analysis math.
 //!
-//! Two sibling concerns live here, each in its own submodule:
+//! Three sibling concerns live here, each in its own submodule:
 //! - [`updater`] — the transactional apply core (epic `AZGJUN`, task
 //!   `CXRGX4`): pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO
 //!   `database_path`, NO `open_for_writes`.
 //! - [`analysis`] — the pure position health-factor / LTV / eMode / isolation
 //!   math (port of `src/degenbot/aave/analysis/core.py`).
+//! - [`wad_ray_math`] + [`percentage_math`] — the Aave V3 fixed-point math
+//!   libraries (ports of `src/degenbot/aave/libraries/{wad_ray,percentage}_math.py`),
+//!   relocated here from `degenbot-evm-math`, whose only remaining math is the
+//!   chain-agnostic EIP-1559 base-fee formula.
 //!
 //! The updater is the apply half of the standalone-Rust `aave_update` core
 //! (mirroring `degenbot-pool-updater`'s `apply_chunk_writes_on_conn`).
@@ -64,7 +68,23 @@
 //! in `degenbot-python`.
 
 pub mod analysis;
+pub mod percentage_math;
 pub mod updater;
+pub mod wad_ray_math;
+
+// Re-export the Aave V3 math libraries at the crate root so in-crate +
+// standalone consumers resolve `degenbot_aave::ray_mul` etc. without the
+// module prefix (the same symbol surface `degenbot-evm-math` re-exported
+// before the relocation).
+pub use percentage_math::{
+    percent_div, percent_div_ceil, percent_mul, percent_mul_ceil, percent_mul_floor, PercentError,
+    HALF_PERCENTAGE_FACTOR, PERCENTAGE_FACTOR,
+};
+pub use wad_ray_math::{
+    ray_div, ray_div_ceil, ray_div_floor, ray_mul, ray_mul_ceil, ray_mul_floor, ray_to_wad,
+    wad_div, wad_mul, wad_to_ray, RayRounding, WadRayError, HALF_RAY, HALF_WAD, MAX_UINT256, RAY,
+    WAD, WAD_RAY_RATIO,
+};
 
 // Re-export the updater surface at the crate root so the PyO3 seam +
 // standalone consumers resolve `degenbot_aave::run_aave_update` etc. without

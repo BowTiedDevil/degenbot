@@ -56,11 +56,11 @@
 
 use std::collections::HashMap;
 
+use crate::ray_mul;
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::{DbError, DebtPositionRefreshContext, DegenbotDb};
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
-use degenbot_evm_math::ray_mul;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;

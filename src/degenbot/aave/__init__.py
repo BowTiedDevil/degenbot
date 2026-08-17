@@ -18,7 +18,7 @@ The former Python in-memory enrichment/processing pipeline
 decode + apply + verify loop end-to-end). The ``analysis/`` read-back
 package is a thin driver shell over the same Rust core's position-analysis
 math. The former Python ``libraries/`` math primitives package was retired
-once ``degenbot-evm-math::wad_ray_math`` owned the equivalents and the
+once ``degenbot-aave::wad_ray_math`` owned the equivalents and the
 analysis cutover removed the last Python importer.
 """
 

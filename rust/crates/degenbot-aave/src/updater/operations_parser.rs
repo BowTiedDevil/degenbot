@@ -140,7 +140,7 @@ pub enum ParseError {
     /// An RPC-style `ray_div` math error from the `MintToTreasury` v8 branch
     /// (DP3).
     #[error("ray-div math error: {0}")]
-    RayMath(#[from] degenbot_evm_math::WadRayError),
+    RayMath(#[from] crate::WadRayError),
 }
 
 // ── the entry-point types ─────────────────────────────────────────────────

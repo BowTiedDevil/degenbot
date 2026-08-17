@@ -40,8 +40,8 @@
 //! V1: `supports_discount=true, has_discounted_balance_method=false`;
 //! V2/V3: both `true`; V4+: both `false`.
 
+use crate::{percent_mul, ray_div, ray_mul, wad_mul, WadRayError};
 use alloy::primitives::{I256, U256};
-use degenbot_evm_math::{percent_mul, ray_div, ray_mul, wad_mul, WadRayError};
 
 use crate::processors::{RayDivMode, RoundingStrategy, ScaledTokenEventData};
 
@@ -199,7 +199,7 @@ pub enum GhoProcessorError {
     RayMath(#[from] WadRayError),
     /// A `PercentageMath` overflow / division by zero.
     #[error("percentage math error: {0}")]
-    PercentMath(#[from] degenbot_evm_math::PercentError),
+    PercentMath(#[from] crate::PercentError),
     /// The computed `balance_delta` doesn't fit in `I256` (overflow).
     #[error("balance_delta overflow: {0}")]
     DeltaOverflow(String),
@@ -697,7 +697,7 @@ pub fn calculate_gho_discount_rate(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use degenbot_evm_math::RAY;
+    use crate::RAY;
 
     // ── to_signed_neg boundary (the 2^255 → I256::MIN mapping) ───────────────
 

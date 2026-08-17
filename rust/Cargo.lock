@@ -2085,7 +2085,6 @@ dependencies = [
  "degenbot-core",
  "degenbot-db",
  "degenbot-decoders",
- "degenbot-evm-math",
  "degenbot-rpc",
  "rusqlite",
  "thiserror 2.0.20",
@@ -2231,7 +2230,6 @@ version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "proptest",
- "thiserror 2.0.20",
 ]
 
 [[package]]

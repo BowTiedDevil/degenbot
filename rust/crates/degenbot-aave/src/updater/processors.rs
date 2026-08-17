@@ -31,12 +31,12 @@
 //! `process_burn_event` branch logic are byte-for-byte ports of the Python
 //! (the §4.2 cross-check compares Rust-written rows vs the Python oracle, so
 //! any deviation bites there). The ray-math primitives (`ray_div` with
-//! floor/ceil/half-up) come from `degenbot-evm-math::wad_ray_math`.
+//! floor/ceil/half-up) come from `crate::wad_ray_math`.
 
 #![expect(clippy::doc_lazy_continuation)] // multi-line rustdoc phrasing
 
+use crate::{RayRounding, WadRayError};
 use alloy::primitives::{I256, U256};
-use degenbot_evm_math::{RayRounding, WadRayError};
 
 // ── the revision strategies (ports `processors/strategies.py`) ────────────
 
@@ -244,7 +244,7 @@ pub struct ScaledTokenBurnResult {
 /// Errors from the scaled-token processors.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ProcessorError {
-    /// A ray-math overflow or division by zero (from `degenbot-evm-math`).
+    /// A ray-math overflow or division by zero (from this crate's `wad_ray_math`).
     #[error("ray-math error: {0}")]
     RayMath(#[from] WadRayError),
     /// The computed `balance_delta` doesn't fit in `I256` (overflow). This
@@ -305,11 +305,7 @@ impl ScaledTokenProcessor {
             // withdrawal). Net effect: a burn of (balance_increase - value).
             let requested_amount = event.balance_increase - event.value;
             // Withdrawal-interest path uses HALF_UP (same for all revisions).
-            let raw = degenbot_evm_math::ray_div(
-                requested_amount,
-                event.index,
-                Some(RayRounding::HalfUp),
-            )?;
+            let raw = crate::ray_div(requested_amount, event.index, Some(RayRounding::HalfUp))?;
             let balance_delta = negate_to_i256(raw)?;
             Ok(ScaledTokenMintResult {
                 balance_delta,
@@ -323,11 +319,7 @@ impl ScaledTokenProcessor {
                 to_i256(scaled)?
             } else {
                 let requested_amount = event.value - event.balance_increase;
-                let raw = degenbot_evm_math::ray_div(
-                    requested_amount,
-                    event.index,
-                    self.strategy.mint.into(),
-                )?;
+                let raw = crate::ray_div(requested_amount, event.index, self.strategy.mint.into())?;
                 to_i256(raw)?
             };
             Ok(ScaledTokenMintResult {
@@ -383,8 +375,7 @@ impl ScaledTokenProcessor {
         // Fallback: calculate from event data. `amountToBurn = amount +
         // balanceIncrease`; `amountScaled = amountToBurn.rayDiv(index)`.
         let requested_amount = event.value + event.balance_increase;
-        let raw =
-            degenbot_evm_math::ray_div(requested_amount, event.index, self.strategy.burn.into())?;
+        let raw = crate::ray_div(requested_amount, event.index, self.strategy.burn.into())?;
         Ok(ScaledTokenBurnResult {
             balance_delta: negate_to_i256(raw)?,
             new_index: event.index,
@@ -410,11 +401,7 @@ impl ScaledTokenProcessor {
             } else {
                 // Solidity: amountToMint = amount - balanceIncrease.
                 let requested_amount = event.value - event.balance_increase;
-                let raw = degenbot_evm_math::ray_div(
-                    requested_amount,
-                    event.index,
-                    self.strategy.mint.into(),
-                )?;
+                let raw = crate::ray_div(requested_amount, event.index, self.strategy.mint.into())?;
                 to_i256(raw)?
             };
             Ok(ScaledTokenMintResult {
@@ -427,8 +414,7 @@ impl ScaledTokenProcessor {
             // interest > repayment amount; the net balance change is burning
             // the scaled repayment amount. `amount = balanceIncrease - value`.
             let amount_repaid = event.balance_increase - event.value;
-            let raw =
-                degenbot_evm_math::ray_div(amount_repaid, event.index, self.strategy.burn.into())?;
+            let raw = crate::ray_div(amount_repaid, event.index, self.strategy.burn.into())?;
             Ok(ScaledTokenMintResult {
                 balance_delta: negate_to_i256(raw)?,
                 new_index: event.index,
@@ -457,8 +443,7 @@ impl ScaledTokenProcessor {
         }
         // Fallback: `amountToBurn = amount + balanceIncrease`.
         let requested_amount = event.value + event.balance_increase;
-        let raw =
-            degenbot_evm_math::ray_div(requested_amount, event.index, self.strategy.burn.into())?;
+        let raw = crate::ray_div(requested_amount, event.index, self.strategy.burn.into())?;
         Ok(ScaledTokenBurnResult {
             balance_delta: negate_to_i256(raw)?,
             new_index: event.index,
@@ -489,7 +474,7 @@ fn negate_to_i256(value: U256) -> Result<I256, ProcessorError> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use degenbot_evm_math::RAY;
+    use crate::RAY;
 
     /// V1 collateral mint, standard deposit: value=2 RAY, `balance_increase=0`,
     /// index=1 RAY → `balance_delta` = ray_div(2-0, 1, `HalfUp`) = 2 RAY.
@@ -526,7 +511,7 @@ mod tests {
         let result = proc.process_collateral_burn(&event, None).unwrap();
         // ray_div_ceil(10*RAY, 3*RAY) — let me compute via the primitives.
         let expected_raw =
-            degenbot_evm_math::ray_div_ceil(U256::from(10u8) * RAY, U256::from(3u8) * RAY).unwrap();
+            crate::ray_div_ceil(U256::from(10u8) * RAY, U256::from(3u8) * RAY).unwrap();
         assert_eq!(
             result.balance_delta,
             -I256::try_from(expected_raw).unwrap(),
@@ -590,7 +575,7 @@ mod tests {
         };
         let result = proc.process_debt_mint(&event).unwrap();
         let expected_raw =
-            degenbot_evm_math::ray_div_ceil(U256::from(10u8) * RAY, U256::from(3u8) * RAY).unwrap();
+            crate::ray_div_ceil(U256::from(10u8) * RAY, U256::from(3u8) * RAY).unwrap();
         assert_eq!(result.balance_delta, I256::try_from(expected_raw).unwrap());
         assert!(!result.is_repay);
     }

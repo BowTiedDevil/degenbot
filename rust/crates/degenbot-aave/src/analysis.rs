@@ -6,7 +6,7 @@
 //! [`AaveDebtPositionRecord`]) + builds the derived [`CollateralPositionData`]
 //! / [`DebtPositionData`] / [`UserPositionSummary`] the CLI risk display
 //! reads. The scaled→actual balance math routes through
-//! [`degenbot_evm_math::wad_ray_math`] (`ray_mul_floor` for collateral,
+//! [`crate::wad_ray_math`] (`ray_mul_floor` for collateral,
 //! `ray_mul_ceil` for debt) — the §4.2 byte-identical Rust oracle.
 //!
 //! # Float discipline
@@ -19,9 +19,9 @@
 
 use std::collections::HashMap;
 
+use crate::{ray_mul_ceil, ray_mul_floor, WadRayError};
 use alloy::primitives::U256;
 use degenbot_db::aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
-use degenbot_evm_math::{ray_mul_ceil, ray_mul_floor, WadRayError};
 
 /// Basis points: `10_000` = 100% (mirrors Python `BASIS_POINTS`).
 pub const BASIS_POINTS: i64 = 10_000;
