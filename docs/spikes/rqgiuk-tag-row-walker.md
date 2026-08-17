@@ -1,6 +1,13 @@
 # Spike RQQIUK: can the Repay/OutDest tag vocabulary absorb the 3-hop 17-arm enumeration?
 
-**Verdict: PARK (negative).** The two subtrees are disjoint algebraically; a
+**Verdict: PARK (negative) — SUPERSEDED.**
+**POST-EPIC NOTE (epic PZBGP7 complete, 2026-08-17):** The T4 PARK verdict
+was overturned on input direction. T5 (terminal_form axis) collapsed the
+v3v4 pair; T6 (topology rules + 2 new facts) collapsed all remaining 3-hop
+arms. Read docs/plans/pzbgp7-walker-decomposition.md sections T5/T6 for
+the delivered design. This document retained as the group-A foundational
+analysis; the hand-authored-arms world it describes no longer exists.
+ The two subtrees are disjoint algebraically; a
 tag-row walker for all 23 3-hop arms would require two plus three new axes —
 the exact bespoke-shape vocabulary ADR-029 D4 exists to kill.
 

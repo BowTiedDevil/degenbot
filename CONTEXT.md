@@ -572,4 +572,31 @@ only. The take-before-credit / terminal-V2-draw classes are caught by the
 unrepresentable by construction.
 _Avoid_: "nesting"/"wrapping" as the canonical term.
 
+**Walker shape family (ADR-031, realized by epic `PZBGP7`)** — the 3-hop
+families are no longer hand-authored bodies: `facts_for` sets per-variant
+facts plus position-scoped axes (below), `derive_plan` routes on
+`(len, repay-sequence)` gates to three topology rule-walkers
+(`rule_walk_v2v3`, `rule_walk_v4_led`, `rule_walk_v2v3_v4_mixed`) +
+`tag_residual`; byte-identity is proven by goldens + the revm matrix,
+current-shape parity by the three `rule_walker_shadows_*` tests.
+
+**Terminal form** (`HopFacts.terminal_form`, epic T5) — how the trailing
+hop of a V4-mid 3-hop shape completes: `DirectHandoff` (swap completes on
+its own pool, output to SELF) vs `UnlockInternal` (trailing swap is an op
+inside the enclosing V4Unlock's inner). Set on the terminal hop only,
+consumed only by the merged `v3v4{v2,v4}` arm.
+
+**Repay mechanism** (`HopFacts.repay_mechanism`, epic T6c) — the *physical*
+across-hops repayment transport, distinct from the `repay` category:
+AutoFromExecutor / TransferInCallback / V4TakeInUnlock (unlock-delta) /
+DownstreamFlashDelivery / DownstreamTakeSeeds. Currently only
+`AutoFromExecutor` is set (v3v2v4's leading V3 flash) — the vocabulary
+exists as data so future plans set it, not as prose.
+
+**Seed delivery** (`HopFacts.seed_delivery`, epic T6c) — how the WETH seed
+reaches the pool that needs it: `Erc20Transfer` (callback prefund) vs
+`V4TakeCompact` (in-unlock delta claim). Currently set only on v2v3v4's
+hop0 (`V4TakeCompact`).
+
+
 
