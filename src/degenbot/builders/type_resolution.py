@@ -9,7 +9,7 @@ Pure functions (no I/O):
 - _build_descriptor_from_db_result()
 - _descriptor_from_probing_result()
 
-Sync functions (accept RustBotIo):
+Sync functions (accept BotIo):
 - fetch_factory_from_chain()
 - resolve_pool_type_by_probing()
 - resolve_pool_type()
@@ -31,7 +31,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.bot import RustBotIo
+    from degenbot._ffi import BotIo
     from degenbot.database.models.pools import LiquidityPoolTable
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -129,7 +129,7 @@ def _build_descriptor_from_seam_rows(
 
     The seam version of [`_build_descriptor_from_db_result`]: instead of a
     hydrated ORM row, takes the two fields the builder reads (`pool.kind` +
-    `pool.exchange.factory`) fetched via `RustBotIo.fetch_pool_row` /
+    `pool.exchange.factory`) fetched via `BotIo.fetch_pool_row` /
     `fetch_exchange`.
 
     Returns:
@@ -195,12 +195,12 @@ def fetch_factory_from_chain(
     address: ChecksumAddress,
     *,
     chain_id: ChainId,  # ruff:ignore[unused-function-argument] — kept for API consistency with resolve_pool_type
-    io: RustBotIo,
+    io: BotIo,
 ) -> ChecksumAddress | None:
     """Fetch the factory address from the pool contract's factory() method.
 
     The encode → call → decode → checksum choreography is Rust-owned
-    (``RustBotIo.fetch_factory_address``, ADR-005 slice 14b). RustBotIo is the
+    (``BotIo.fetch_factory_address``, ADR-005 slice 14b). BotIo is the
     only executor; the Python parity-gate fallback is retired.
 
     Returns:
@@ -215,7 +215,7 @@ def resolve_pool_type_by_probing(
     *,
     chain_id: ChainId,
     factory: ChecksumAddress,
-    io: RustBotIo,
+    io: BotIo,
 ) -> PoolTypeDescriptor:
     """Determine pool type by probing the contract on-chain.
 
@@ -228,7 +228,7 @@ def resolve_pool_type_by_probing(
 
     """
     # ADR-005 slice 14i: delegate the 4-call probing choreography to Rust
-    # (``RustBotIo.probe_pool_type``). RustBotIo is the only executor; the
+    # (``BotIo.probe_pool_type``). BotIo is the only executor; the
     # Python slot0/getReserves/getPoolId probing fallback is retired.
     result = io.probe_pool_type(address)
     if result == "slot0":
@@ -269,7 +269,7 @@ def resolve_pool_type(
     address: ChecksumAddress,
     *,
     chain_id: ChainId,
-    io: RustBotIo,
+    io: BotIo,
 ) -> PoolTypeDescriptor:
     """Resolve the pool type for the given address.
 
@@ -288,7 +288,7 @@ def resolve_pool_type(
 
     """
     # Step 1: DB lookup — the `kind` column is the most direct signal.
-    # Route through the Rust `RustBotIo` seam (QVMWQC): `fetch_pool_row`
+    # Route through the Rust `BotIo` seam (QVMWQC): `fetch_pool_row`
     # carries `kind` + `exchange_id`; `fetch_exchange` hydrates the factory.
     # The `contextlib.suppress` makes a missing/empty DB a skip, not an error.
     with contextlib.suppress(Exception):

@@ -13,7 +13,7 @@ test_path variant.
 A ``FakeSubscriber`` may subscribe to EITHER a Python-only ``Publisher`` (a
 ``PublisherMixin`` publisher with no Rust backing) OR a **Rust-owned** pool
 companion (a ``UniswapV2Pool`` / ``UniswapV3Pool`` / ``UniswapV4Pool`` etc.
-built via a builder, whose owning ``RustBot`` + ``pool_id`` the caller has).
+built via a builder, whose owning ``Bot`` + ``pool_id`` the caller has).
 
 Two EXPLICIT subscribe methods — the caller passes the path, instead of the
 subscriber trying to auto-detect it from the publisher object (the earlier
@@ -52,17 +52,17 @@ is surfaced by the seam's current ``pool_id``-only payload).
 
 ## Architectural note on the pool-side bot stash (why this is explicit API)
 
-The earlier draft stashed the owning ``RustBot`` on every pool companion via
+The earlier draft stashed the owning ``Bot`` on every pool companion via
 ``_py_bot`` (set in ``PoolRegistry.add`` / ``ManagedPoolRegistry.add`` / the
 7 ``make_*`` factory helpers) so ``subscribe`` could auto-detect the Rust path
 from the publisher object + extract the bot from the pool. That was a Python
 mirror of a Rust-owned reference across 7 pool classes + 2 registries —
 exactly the anti-pattern AGENTS.md prohibits ("do not introduce a Python
-mirror of Rust-owned state"). The ``RustBot`` is Rust-owned state; a Python
+mirror of Rust-owned state"). The ``Bot`` is Rust-owned state; a Python
 side-channel duplicating it on every pool is the wrong layering. The clean
 fix is the explicit ``subscribe_rust(bot, pool_id)`` API here: the consumer /
 test context that wants to subscribe to a Rust-owned pool ALREADY has the
-``RustBot`` (it built the pool through it) — pass it explicitly rather than
+``Bot`` (it built the pool through it) — pass it explicitly rather than
 extracting it from the pool.
 
 If a FUTURE real (non-test) consumer callsite is found that only has the
@@ -79,7 +79,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from degenbot._ffi.subscriber import PoolStateSubscription
-    from degenbot.bot import RustBot
+    from degenbot._ffi import Bot
     from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 
 
@@ -127,7 +127,7 @@ class FakeSubscriber:
         self.inbox.append({"pool_id": pool_id})
         self.notifications.append((None, pool_id))
 
-    def subscribe_rust(self, bot: RustBot, pool_id: int) -> None:
+    def subscribe_rust(self, bot: Bot, pool_id: int) -> None:
         """Subscribe to a Rust-owned pool through the Rust pub/sub seam.
 
         Routes the subscription through ``degenbot._ffi.register_subscriber``
@@ -139,7 +139,7 @@ class FakeSubscriber:
         The caller passes BOTH the ``bot`` and the ``pool_id`` it already has
         (the builder/test context that built the pool through the bot exposes
         ``pool._py_pool.pool_id``). No pool-side bot stash is needed — the
-        ``RustBot`` is Rust-owned state and is NOT mirrored onto the pool object
+        ``Bot`` is Rust-owned state and is NOT mirrored onto the pool object
         (AGENTS.md: "do not introduce a Python mirror of Rust-owned state").
 
         ``register_subscriber`` invokes the callback as ``callback(pool_id)``
@@ -148,7 +148,7 @@ class FakeSubscriber:
         depends on — see ``unsubscribe_rust`` / GC).
 
         Args:
-            bot: The owning ``RustBot`` (Rust ``BotState`` handle).
+            bot: The owning ``Bot`` (Rust ``BotState`` handle).
             pool_id: The Rust pool id (from ``pool._py_pool.pool_id``).
 
         """
@@ -163,7 +163,7 @@ class FakeSubscriber:
         The legacy Python path: ``publisher.subscribe(self)`` so the
         ``PublisherMixin._notify_subscribers`` delivers the full
         ``notify(publisher, message)``. For Python-only publishers (no Rust
-        ``RustBot`` backing) — keeps ``test_publisher_mixin.py`` +
+        ``Bot`` backing) — keeps ``test_publisher_mixin.py`` +
         ``test_pool_protocols.py`` parity (they exercise the Python
         ``PublisherMixin`` protocol against Python-only fakes, which stay
         Python per the 73UJL6 non-goals).

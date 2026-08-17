@@ -27,7 +27,7 @@ import degenbot.balancer.stable_pools as sp_mod
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V2
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from tests.helpers.balancer_pool_factory import (
     make_balancer_stable_pool,
     make_balancer_weighted_pool,
@@ -37,7 +37,7 @@ from tests.helpers.erc20_factory import make_erc20
 
 @pytest.fixture
 def weighted_pool() -> BalancerV2Pool:
-    bot = RustBot()
+    bot = Bot()
     t0 = make_erc20(bot, address="0x" + "a1" * 20, name="T0", symbol="T0", decimals=18)
     t1 = make_erc20(bot, address="0x" + "b2" * 20, name="T1", symbol="T1", decimals=18)
     return make_balancer_weighted_pool(
@@ -54,7 +54,7 @@ def weighted_pool() -> BalancerV2Pool:
 
 @pytest.fixture
 def stable_pool() -> BalancerV2Pool:
-    bot = RustBot()
+    bot = Bot()
     t0 = make_erc20(bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
     t1 = make_erc20(bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
     return make_balancer_stable_pool(

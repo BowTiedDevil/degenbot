@@ -132,3 +132,17 @@ gated, documented surface, and the prefix there would be noise.
 clean names remain the default (D1); the prefix is reserved for names
 where the clean form is already occupied by a Python type. The Mapping
 table above lists each such case and why.
+
+## Post-adoption, round 2 (2026-08-17): the Rust prefix is retired
+
+The five collision names kept their origin prefix under the D3 escape hatch. The fork decision retires the prefix entirely: the disambiguator is the module path, not the prefix.
+
+| Python name before | after | collision resolved by |
+| --- | --- | --- |
+| `RustBot` | `Bot` (on `degenbot._ffi`) | module path vs. `degenbot.bot.Bot` |
+| `RustBotIo` | `BotIo` (on `degenbot._ffi`) | no driver-side homonym |
+| `RustErc20Token` | `Erc20Token` (on `degenbot._ffi`) | module path vs. `degenbot.erc20.Erc20Token` |
+| `RustDatabaseSnapshot` | `DatabaseSnapshot` (on `degenbot._ffi.db`) | module path vs. the `uniswap.{v3,v4}_snapshot` shells |
+| `RustDatabasePositionQuery` | `DatabasePositionQuery` (on `degenbot._ffi.db`) | module path vs. `aave.analysis.orchestrator` |
+
+D3's collision escape (origin prefix on collision) is superseded. First-party code imports the handles directly from `_ffi` (the ADR-013 amendment); files that also bind a same-named Python class alias the import locally (e.g. `_TokenHandle`, `_EngineSnapshot`). The naming gate now asserts both the `Py*` and the `Rust*` registered-name sets are empty: no origin prefix of any kind, full stop.

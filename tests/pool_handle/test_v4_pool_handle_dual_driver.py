@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import RustBot
+from degenbot._ffi import Bot
 
 
 @pytest.fixture
 def v4_pool():
-    bot = RustBot(1)
+    bot = Bot(1)
     tick_data = {
         -60: (1_000_000, 1_000_000, 0),
         60: (1_000_000, -1_000_000, 0),

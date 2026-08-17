@@ -15,7 +15,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -27,10 +27,10 @@ if TYPE_CHECKING:
 class _FakeBot:
     """Minimal Bot double exposing ``_py_bot`` for the production path."""
 
-    _py_bot: RustBot
+    _py_bot: Bot
 
 
-def _build_shared_v2_pool(py_bot: RustBot) -> tuple[Erc20Token, Erc20Token, object]:
+def _build_shared_v2_pool(py_bot: Bot) -> tuple[Erc20Token, Erc20Token, object]:
     weth = make_erc20(
         py_bot,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -69,7 +69,7 @@ def test_register_v2_pool_resolves_shared_state_key_without_re_registering() -> 
     panics ``BotCore::register_v2_pool`` on the duplicate address); it reads
     ``pool._py_pool.pool_id`` — the canonical shared-state pattern.
     """
-    py_bot = RustBot()
+    py_bot = Bot()
     _weth, _usdc, pool = _build_shared_v2_pool(py_bot)
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot)
@@ -83,7 +83,7 @@ def test_register_v2_pool_resolves_shared_state_key_without_re_registering() -> 
 def test_register_v2_pool_idempotent_across_paths() -> None:
     """The same V2 pool registered twice (two discovered paths share a hop)
     returns the same key both times and never re-enters the engine."""
-    py_bot = RustBot()
+    py_bot = Bot()
     _weth, _usdc, pool = _build_shared_v2_pool(py_bot)
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot)

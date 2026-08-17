@@ -141,7 +141,7 @@ class EngineRegistry:
 
         DB snapshot (JUCFCB, Shape 2): the V3+V4 DB snapshot is eagerly loaded
         into the core ``BotState`` at ``Bot.__init__`` time via
-        ``RustBot.load_snapshot_from_db`` — so the DB path needs NO snapshot
+        ``Bot.load_snapshot_from_db`` — so the DB path needs NO snapshot
         kwargs here. The snapshot seed block ``S`` stays on the shared
         ``BotState``; the per-pool two-step verify (step-1) reads the stashed
         ``_verify_snapshot_block`` (set below from the same source), and the

@@ -26,7 +26,7 @@ from __future__ import annotations
 import pytest
 
 from degenbot._ffi.dex_identity import dex_identity
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
@@ -55,7 +55,7 @@ _RESERVES_USDC = 66_259_753_282
 _AMOUNT_IN_USDC = 1000 * 10**6
 _ORACLE_KEY = f"{CAMELOT_WETH_USDC_LP_ADDRESS}|getAmountOut|USDC->WETH|{_AMOUNT_IN_USDC}"
 
-_PYBOT = RustBot()
+_PYBOT = Bot()
 
 
 def _build_camelot_weth_usdc_io_free() -> object:

@@ -7,8 +7,8 @@ I/O-dependent ``resolve``/``fetch``/``probe`` functions in
 Post ADR-005 slice-14 collapse: the resolve/fetch/probe functions call
 ``io.fetch_X()`` / ``io.probe_pool_type()`` directly (the Python ``io.call()``
 parity-gate fallback is retired). The fakes here are duck-typed objects
-exposing those ``fetch_*`` methods — no ``RustBotIo`` subclass needed (Q4 alpha):
-builders never ``isinstance(io, RustBotIo)``.
+exposing those ``fetch_*`` methods — no ``BotIo`` subclass needed (Q4 alpha):
+builders never ``isinstance(io, BotIo)``.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ class TestPoolClassForDescriptor:
 
 
 class FakePyBotIo:
-    """Duck-typed RustBotIo stand-in for type-resolution tests.
+    """Duck-typed BotIo stand-in for type-resolution tests.
 
     Each seam method returns a configurable canned value; theresolve/fetch/
     probe functions only ever call ``fetch_factory_address`` /

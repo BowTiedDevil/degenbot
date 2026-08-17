@@ -20,7 +20,7 @@ import pytest
 
 from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -30,7 +30,7 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
-_PY_BOT = RustBot()
+_PY_BOT = Bot()
 
 
 def _make_token(addr: str, *, symbol: str, decimals: int, name: str = "") -> Erc20Token:

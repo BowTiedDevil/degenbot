@@ -41,7 +41,7 @@ from degenbot.balancer.deployments import (
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
 from degenbot.balancer.libraries.constants import PowVersion
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
@@ -135,13 +135,13 @@ def _load_cassette(path: pathlib.Path) -> dict[str, Any]:
 def _build_weighted_pool(cassette: dict[str, Any]) -> BalancerV2Pool:
     """Build a Balancer V2 weighted pool I/O-free from a recorded cassette.
 
-    A fresh ``RustBot`` is created per call (the factory's documented isolation
+    A fresh ``Bot`` is created per call (the factory's documented isolation
     model) so the 19 parametrized tests don't share mutable registration state
     across the same ``Bot`` — registering overlapping token addresses
-    (WETH/USDC appear in multiple pools) into one shared ``RustBot`` collides and
+    (WETH/USDC appear in multiple pools) into one shared ``Bot`` collides and
     corrupts later tests' handles.
     """
-    pybot = RustBot()
+    pybot = Bot()
     tokens = [
         make_erc20(
             pybot,

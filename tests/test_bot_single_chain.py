@@ -4,7 +4,7 @@ One Bot per chain. ``Bot(config, provider=)`` enforces the connected RPC's
 ``chain_id`` matches ``config.default_chain_id`` (fail-fast on a
 misconfigured endpoint). All per-method ``chain_id=`` params are gone — the
 Bot has exactly one chain. Two ``Bot`` instances in one process are fully
-independent (separate ``RustBot``s, separate providers, no shared registry).
+independent (separate ``Bot``s, separate providers, no shared registry).
 """
 
 import pathlib

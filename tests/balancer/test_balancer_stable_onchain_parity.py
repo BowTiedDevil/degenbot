@@ -55,7 +55,7 @@ from degenbot.balancer.deployments import (
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
 from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
@@ -160,9 +160,9 @@ def _load_cassette(path: pathlib.Path) -> dict[str, Any]:
 def _build_stable_pool(cassette: dict[str, Any]) -> BalancerV2StablePool:
     """Build a Balancer V2 stable pool I/O-free from a recorded cassette.
 
-    A fresh ``RustBot`` per call (isolation across parametrized tests).
+    A fresh ``Bot`` per call (isolation across parametrized tests).
     """
-    pybot = RustBot()
+    pybot = Bot()
     tokens = [
         make_erc20(
             pybot,

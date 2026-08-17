@@ -295,7 +295,7 @@ def db_upsert_pool_manager(
 ) -> PoolManagerRow:
     """Upsert a `pool_managers` row by `(address, chain)` (V4 manager get-or-create)."""
 
-class RustDatabaseSnapshot:
+class DatabaseSnapshot:
     """Read-only V3/V4 snapshot handle over a degenbot SQLite DB file.
 
     Opens its own connection (WAL, ``query_only=on``) from ``database_path``;
@@ -318,7 +318,7 @@ class RustDatabaseSnapshot:
     def get_pools_v3(self) -> set[str]: ...
     def get_pools_v4(self) -> set[str]: ...
 
-class RustDatabasePositionQuery:
+class DatabasePositionQuery:
     """Read-only Aave V3 position-query handle over a degenbot SQLite DB file.
 
     Opens its own connection (WAL, ``query_only=on``) from ``database_path``;
@@ -347,7 +347,7 @@ def analyze_aave_user_position(
     """Analyze a single user's Aave V3 position for liquidation risk.
 
     Pure math (no I/O) over the Rust ``degenbot-aave::analysis`` core. Takes
-    the plain ``dict`` records ``RustDatabasePositionQuery.get_*`` returns + a
+    the plain ``dict`` records ``DatabasePositionQuery.get_*`` returns + a
     config map + an optional price map, and returns a
     :class:`UserPositionSummary` with attribute access matching the Python
     ``UserPositionSummary`` dataclass.
@@ -539,14 +539,14 @@ class DatabaseSchemaStale(ValueError):
 
 __all__ = [
     "CollateralPositionData",
+    "DatabasePositionQuery",
     "DatabaseSchemaStale",
+    "DatabaseSnapshot",
     "DebtPositionData",
     "ExchangeRow",
     "LiquidityPoolRow",
     "LiquidityUpdateEvent",
     "PoolManagerRow",
-    "RustDatabasePositionQuery",
-    "RustDatabaseSnapshot",
     "UserPositionSummary",
     "V2PoolRowInput",
     "V3PoolRowInput",

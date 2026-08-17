@@ -71,21 +71,21 @@ def test_python_consumer_curve_dy_matches_recorded_constant() -> None:
 
 
 def test_python_consumer_curve_get_dy_matches_recorded_constant() -> None:
-    """The Python consumer drives the Rust-owned `RustBot.curve_get_dy`.
+    """The Python consumer drives the Rust-owned `Bot.curve_get_dy`.
 
     The orchestration-layer complement of the pure-calc parity test above: the
-    Python consumer registers the shared `standard_plain` pool into a `RustBot`
-    and calls `RustBot.curve_get_dy` (identity + balances + provider →
+    Python consumer registers the shared `standard_plain` pool into a `Bot`
+    and calls `Bot.curve_get_dy` (identity + balances + provider →
     `resolve_dy_inputs` → `calculate_dy`), which must reproduce the same
     recorded dy as the Rust `BotState::curve_get_dy` dual-driver test. Both
     sides read the `standard_plain` expected constant from the shared fixture.
     """
-    from degenbot.bot import RustBot
+    from degenbot._ffi import Bot
 
     plain = next(p for p in _FIXTURE["probes"] if p["name"] == "standard_plain")
     inputs = plain["inputs"]
 
-    py_bot = RustBot()
+    py_bot = Bot()
     pool_id = py_bot.register_curve_pool(
         address="0x" + "cc" * 20,
         tokens=["0x" + "00" * 20, "0x" + "01" * 20],

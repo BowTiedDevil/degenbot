@@ -273,7 +273,7 @@ class BotRunner:
             )
 
         # ── Snapshots (V3 pool tracker pre-population only; the engine's DB
-        # snapshot is loaded eagerly at RustBot construction via
+        # snapshot is loaded eagerly at Bot construction via
         # `Bot::load_snapshot_from_db` — JUCFCB, Shape 2 — and the
         # snapshot→WS gap closes in `resume_from_subscribe` — J3FMDO).
         # `engine_registry.start()` takes `v3_snapshot`/`v4_snapshot` kwargs
@@ -552,7 +552,7 @@ class BotRunner:
             # real teardown reason (EZOKDR). We're tearing the process down
             # anyway — the WAL snapshot is a process-lifetime concern that
             # becomes moot at exit, so skip the read-tx commit/canary and let
-            # the `Arc<SnapshotDb>` drop naturally with `RustBot`. The rest of the
+            # the `Arc<SnapshotDb>` drop naturally with `Bot`. The rest of the
             # state trim (release Python registries + drop the bot ref) still
             # runs. The normal-path `_trim_python_state()` directly below keeps
             # the canary fully active for healthy registrations.
@@ -570,7 +570,7 @@ class BotRunner:
         XEANMB canary fires and the read tx is committed to reclaim WAL space.
         On the mid-registration cancel/teardown branch it is ``False`` — build-
         worker ``Arc<SnapshotDb>`` clones may still be live, so the canary
-        would false-positive (EZOKDR); the tx is instead dropped with ``RustBot``
+        would false-positive (EZOKDR); the tx is instead dropped with ``Bot``
         at process teardown. Callers must keep the canary active whenever
         registration actually finished.
         """
@@ -597,7 +597,7 @@ class BotRunner:
         self.bot.release_python_state()
         self.v3_snapshot = None
         self.v4_snapshot = None
-        self.bot = None  # drop the only Python ref; engine keeps its own RustBot ref
+        self.bot = None  # drop the only Python ref; engine keeps its own Bot ref
         gc.collect()
         self._injected_bot = None  # release the injected ref too
 
@@ -651,7 +651,7 @@ class BotRunner:
     def _build_bot(cfg: BackrunConfig) -> Bot:
         config_obj = _make_backrun_config(cfg.node_http)
         # ADR-005: the Bot's build path (ERC20 + V2/V3/V4 pool construction)
-        # issues many `eth_call`s via `RustBotIo` → `provider.call`. A web3.py
+        # issues many `eth_call`s via `BotIo` → `provider.call`. A web3.py
         # sync backend (`from_web3`) holds the GIL through every
         # `requests.post` on the event-loop thread, starving the asyncio loop
         # during `build_paths`. Use the Rust `AlloyProvider` instead —
@@ -818,7 +818,7 @@ def get_snapshots(
     Historically the snapshot also fed `engine_registry.start()` via
     `stream_v3_snapshot_to_engine`/`stream_v4_snapshot_to_engine` SQLAlchemy
     forwarding — that path is retired (JUCFCB/2SM4Y7/DADWUP: the engine's DB
-    snapshot is loaded eagerly at `RustBot` construction by
+    snapshot is loaded eagerly at `Bot` construction by
     `Bot::load_snapshot_from_db`, and the snapshot→WS gap is closed
     automatically inside `BlockPump::resume_from_subscribe` — J3FMDO; the
     per-pool `insert_*_pool_snapshot` pyo3 surface + the SQLAlchemy

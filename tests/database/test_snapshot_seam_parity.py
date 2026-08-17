@@ -3,7 +3,7 @@
 Driven by SLHSM4's frozen `parity_expected.json` oracle (dumped from the
 prior SQLAlchemy-backed `DatabaseSnapshot`) + a freshly-regenerated
 `parity.db` fixture: the Rust-backed `DatabaseSnapshot` (delegating through
-`RustDatabaseSnapshot`) produces identical results to the frozen SQLAlchemy
+`DatabaseSnapshot`) produces identical results to the frozen SQLAlchemy
 oracle. Plus a §4.5 delegation spy proving the Python reader hits Rust with
 the right args.
 """
@@ -103,10 +103,10 @@ class TestV4SnapshotParity:
 
 
 class TestSnapshotDelegation:
-    """§4.5: the Python DatabaseSnapshot delegates to the Rust RustDatabaseSnapshot."""
+    """§4.5: the Python DatabaseSnapshot delegates to the Rust DatabaseSnapshot."""
 
     def test_get_newest_block_delegates_to_rust(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_newest_block calls RustDatabaseSnapshot.get_newest_block_v3.
+        """get_newest_block calls DatabaseSnapshot.get_newest_block_v3.
 
         Patches the lazily-cached `_rust` handle to a recording wrapper so the
         pyclass (whose methods are read-only) need not be monkeypatched.
@@ -125,7 +125,7 @@ class TestSnapshotDelegation:
         assert calls == ["get_newest_block_v3"]
 
     def test_get_pools_delegates_to_rust(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_pools calls RustDatabaseSnapshot.get_pools_v3."""
+        """get_pools calls DatabaseSnapshot.get_pools_v3."""
         calls: list[str] = []
         snap = V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH)
         real_rust = snap._rust()

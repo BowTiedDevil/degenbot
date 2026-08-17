@@ -137,8 +137,8 @@ impl PyErc20TokenRow {
 /// The Rust `#[pyclass]` I/O façade pool builders receive in place of the
 /// Python `SyncPoolIO` adapter — delegates the 7-method `PoolIO` surface to
 /// the held Python `provider` (see module docs). Exposed to Python as
-/// `degenbot._ffi.PyBotIo`.
-#[pyclass(name = "RustBotIo", module = "degenbot._ffi")]
+/// `degenbot._ffi.BotIo`.
+#[pyclass(name = "BotIo", module = "degenbot._ffi")]
 pub struct PyBotIo {
     /// Native Rust `AlloyProvider` extracted from the held Python provider
     /// when it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
@@ -1427,7 +1427,7 @@ impl PyBotIo {
 
     fn __repr__(&self) -> String {
         let has_db = self.db.is_some();
-        format!("RustBotIo(alloy={}, db={has_db})", self.alloy.is_some())
+        format!("BotIo(alloy={}, db={has_db})", self.alloy.is_some())
     }
 }
 

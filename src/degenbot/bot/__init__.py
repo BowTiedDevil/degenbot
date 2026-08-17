@@ -1,16 +1,12 @@
 """Bot: central session manager for pool/token construction and registries.
 
-Barrier module (ADR-013: the Pydantic barrier): bridges the Rust ``RustBot`` /
-``RustBotIo`` pyclasses from ``_ffi`` and re-exports the deep ``Bot`` lifecycle
-logic from :mod:`._bot`. Importers should use::
-
-    from degenbot.bot import Bot, RustBot, RustBotIo
-
-rather than reaching into ``degenbot._ffi`` directly.
+Re-exports the driver ``Bot`` session class from :mod:`._bot`. The Rust
+engine handles — the same-named ``degenbot._ffi.Bot`` / ``BotIo`` pyclasses
+— are imported directly from ``degenbot._ffi`` by first-party code: the
+module path disambiguates the driver class from the engine handle
+(ADR-032; the ADR-013 init-only rule exempts the engine-handle types).
 """
-
-from degenbot._ffi import RustBot, RustBotIo
 
 from ._bot import Bot
 
-__all__ = ["Bot", "RustBot", "RustBotIo"]
+__all__ = ["Bot"]

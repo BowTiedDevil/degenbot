@@ -30,7 +30,7 @@ from degenbot.exceptions.pool import BrokenPool
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from degenbot.bot import RustBotIo
+    from degenbot._ffi import BotIo
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
@@ -71,7 +71,7 @@ class BalancerBuilder(BalancerBuilderBase):
         address: str,
         *,
         chain_id: ChainId | None = None,
-        io: RustBotIo,
+        io: BotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Fetch pool data from RPC and construct an I/O-free Balancer pool.
@@ -152,7 +152,7 @@ class BalancerBuilder(BalancerBuilderBase):
 
     def _build_weighted(
         self,
-        io: RustBotIo,
+        io: BotIo,
         ctx: _BuildContext,
         request: BuildRequest,
     ) -> BalancerV2Pool:
@@ -202,7 +202,7 @@ class BalancerBuilder(BalancerBuilderBase):
 
     def _build_stable(
         self,
-        io: RustBotIo,
+        io: BotIo,
         ctx: _BuildContext,
         request: BuildRequest,
         specialization: int,
@@ -294,7 +294,7 @@ class BalancerBuilder(BalancerBuilderBase):
     def update(
         pool: AbstractLiquidityPool,
         *,
-        io: RustBotIo | None = None,
+        io: BotIo | None = None,
         block_number: int | None = None,
     ) -> bool:
         """Fetch new balances from Vault and update the pool.

@@ -68,7 +68,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
         ``UniswapV2Pool`` is a Python companion over a Rust-owned
         ``LiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``RustBot`` — there is no way for a caller to
+        registering a pool in a ``Bot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``
@@ -158,7 +158,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         self.dex = dex
 
         # Recover token companions from the SAME shared BotState (ADR-006):
-        # ``get_token0``/``get_token1`` return ``RustErc20Token`` handles for
+        # ``get_token0``/``get_token1`` return ``Erc20Token`` handles for
         # tokens registered in the same ``Bot`` as the pool. Production
         # builders register tokens via the shared ``Erc20Builder`` (same
         # ``_py_bot``); the test factory registers them explicitly.

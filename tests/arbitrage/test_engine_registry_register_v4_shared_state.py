@@ -15,7 +15,7 @@ registered pool, raising ``ValueError("V4 pool already registered: …")`` for
 every V4 hop in every discovered path. Because the Python ``_v4_keys`` cache
 was only set on success, the same pool tripped the error repeatedly.
 
-These tests pin the shared-state contract against a real ``RustBot`` + real
+These tests pin the shared-state contract against a real ``Bot`` + real
 ``ArbitrageEngine`` (no RPC/anvil — same offline topology
 ``test_shared_state_topology`` proves).
 """
@@ -27,7 +27,7 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.constants import ZERO_ADDRESS
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -42,10 +42,10 @@ V4_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90"
 class _FakeBot:
     """Minimal Bot double exposing ``_py_bot`` for the production path."""
 
-    _py_bot: RustBot
+    _py_bot: Bot
 
 
-def _build_shared_v4_pool(py_bot: RustBot) -> tuple[Erc20Token, Erc20Token, object]:
+def _build_shared_v4_pool(py_bot: Bot) -> tuple[Erc20Token, Erc20Token, object]:
     weth = make_erc20(
         py_bot,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -89,7 +89,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
     raise ``ValueError("V4 pool already registered")``); it reads the shared
     ``pool._py_pool.pool_id`` like the V2 path.
     """
-    py_bot = RustBot()
+    py_bot = Bot()
     _weth, _usdc, pool = _build_shared_v4_pool(py_bot)
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot)
@@ -107,7 +107,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
 def test_register_v4_pool_idempotent_across_paths() -> None:
     """The same V4 pool registered twice (two discovered paths share a hop)
     returns the same key both times and never re-enters the engine."""
-    py_bot = RustBot()
+    py_bot = Bot()
     _weth, _usdc, pool = _build_shared_v4_pool(py_bot)
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot)

@@ -5,12 +5,12 @@ Mirrors ``tests/helpers/curve_pool_factory.py`` (and ``v3_pool_factory.py``
 every direct ``BalancerV2Pool(...)`` / ``BalancerV2StablePool(...)``
 construction in the test suite routes through ``make_balancer_weighted_pool``
 / ``make_balancer_stable_pool`` so the ``LiquidityPool`` handle is wired
-through ``RustBot::register_balancer_weighted_pool`` /
+through ``Bot::register_balancer_weighted_pool`` /
 ``register_balancer_stable_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow (ADR-005).
 
-Each call creates its own short-lived ``RustBot`` (the returned handle holds
-an ``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) — so
+Each call creates its own short-lived ``Bot`` (the returned handle holds
+an ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
 each test pool is fully isolated (no shared mutable state across tests).
 """
 
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V2, BalancerV2StablePool
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 
@@ -48,16 +48,16 @@ def make_balancer_weighted_pool(
     weights: list[int] | tuple[int, ...],
     pow_version: int = 1,
     state_block: BlockNumber | None = None,
-    py_bot: RustBot | None = None,
+    py_bot: Bot | None = None,
     pool_class: type[BalancerV2Pool] = BalancerV2Pool,
 ) -> BalancerV2Pool:
     """Construct an I/O-free Balancer V2 weighted companion over a fresh LiquidityPool handle.
 
-    Registers the pool in a short-lived ``RustBot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) — so
+    Registers the pool in a short-lived ``Bot`` (the returned handle holds an
+    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
     each test pool is fully isolated (no shared mutable state across tests).
     The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``RustBot``); that's fine — the pool reads balances from its
+    ``make_erc20`` ``Bot``); that's fine — the pool reads balances from its
     own ``Bot`` and token metadata from the token handle, independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
@@ -74,7 +74,7 @@ def make_balancer_weighted_pool(
     address_checksum = get_checksum_address(address)
     state_block_int = state_block if state_block is not None else 0
 
-    bot = py_bot if py_bot is not None else RustBot()
+    bot = py_bot if py_bot is not None else Bot()
 
     scaling_factors = [_compute_scaling_factor(token) for token in tokens]
     # encode the Fraction fee the Python-side companion keeps target-perfect as
@@ -120,15 +120,15 @@ def make_balancer_stable_pool(
     rate_provider: BalancerRateProvider | None = None,
     invariant_version: int = INVARIANT_V2,
     state_block: BlockNumber | None = None,
-    py_bot: RustBot | None = None,
+    py_bot: Bot | None = None,
     pool_class: type[BalancerV2StablePool] = BalancerV2StablePool,
 ) -> BalancerV2StablePool:
     """Construct an I/O-free Balancer V2 stable companion over a fresh LiquidityPool handle.
 
     Production-path twin of ``BalancerBuilder._build_stable`` (ADR-005
-    slice 12d): registers the pool in a short-lived ``RustBot`` (the returned
+    slice 12d): registers the pool in a short-lived ``Bot`` (the returned
     handle holds an ``Arc`` clone of the underlying ``Bot``, so it outlives
-    the ``RustBot``) — so each test pool is fully isolated. The token
+    the ``Bot``) — so each test pool is fully isolated. The token
     companions may live in a different ``Bot``; that's fine — the pool reads
     balances from its own ``Bot`` and token metadata from the token handle.
 
@@ -144,7 +144,7 @@ def make_balancer_stable_pool(
     address_checksum = get_checksum_address(address)
     state_block_int = state_block if state_block is not None else 0
 
-    bot = py_bot if py_bot is not None else RustBot()
+    bot = py_bot if py_bot is not None else Bot()
 
     # The sealed seam ignores ``base_scaling_factors`` (the companion derives
     # base SF from token decimals in ``_from_py_pool``); retained on the
@@ -158,7 +158,7 @@ def make_balancer_stable_pool(
     fee_scaled_int = int(fee * BalancerV2StablePool.FEE_DENOMINATOR)
 
     # ADR-006: tokens must be in the same Bot as the pool (the sealed seam
-    # resolves RustErc20Token companions off the handle via
+    # resolves Erc20Token companions off the handle via
     # get_balancer_stable_tokens, which requires registered tokens).
     for tok in tokens:
         if bot.get_token(tok.address) is None:

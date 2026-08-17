@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import RustBot
+from degenbot._ffi import Bot
 
 
 @pytest.fixture
 def aerodrome_pool():
-    bot = RustBot(1)
+    bot = Bot(1)
     pool_id = bot.register_aerodrome_pool(
         address="0x1111111111111111111111111111111111111111",
         token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -61,7 +61,7 @@ def aerodrome_stable_pool():
     Mirrors the Rust `pool_handle_aerodrome.rs` `aerodrome_stable_swap_*`
     fixtures: equal 1e18 reserves, both 18 decimals, fee (3, 10000) = 0.03%.
     """
-    bot = RustBot(1)
+    bot = Bot(1)
     pool_id = bot.register_aerodrome_pool(
         address="0x3333333333333333333333333333333333333333",
         token0="0xcccccccccccccccccccccccccccccccccccccccc",

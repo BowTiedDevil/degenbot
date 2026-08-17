@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import RustBot
+from degenbot._ffi import Bot
 
 ONE = 10**18
 
 
 @pytest.fixture
 def curve_pool():
-    bot = RustBot(1)
+    bot = Bot(1)
     pool_id = bot.register_curve_pool(
         address="0x1111111111111111111111111111111111111111",
         tokens=[
@@ -35,7 +35,7 @@ def curve_pool():
 
 @pytest.fixture
 def balancer_weighted_pool():
-    bot = RustBot(1)
+    bot = Bot(1)
     pool_id = bot.register_balancer_weighted_pool(
         address="0x2222222222222222222222222222222222222222",
         vault="0x3333333333333333333333333333333333333333",
@@ -110,7 +110,7 @@ def test_balancer_weighted_swap_matches_closed_form(balancer_weighted_pool) -> N
 
 @pytest.fixture
 def balancer_stable_pool():
-    bot = RustBot(1)
+    bot = Bot(1)
     bot.register_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "A", "A", 18, 1)
     bot.register_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "B", "B", 18, 1)
     pool_id = bot.register_balancer_stable_pool(

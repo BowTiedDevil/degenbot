@@ -2,7 +2,7 @@
 
 End-to-end gate for the Rust→PyO3→Python fetcher bridge:
 
-* registering a V3 pool via ``RustBot`` always creates a *sparse* pool (empty
+* registering a V3 pool via ``Bot`` always creates a *sparse* pool (empty
   ``tick_data`` → no tick-bitmap words known), so the very first
   ``calculate_tokens_out`` must miss on the starting word and return ``0``;
 * ``LiquidityPool.calculate_tokens_out_with_fetch`` drives the Rust
@@ -25,16 +25,16 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 
 _ZERO_ADDRESS = "0x" + "00" * 20
 _TOKEN1_ADDRESS = "0x" + "11" * 20
 
 
-def _register_sparse_v3_pool(bot: RustBot, *, tick_data_fetcher=None) -> int:
+def _register_sparse_v3_pool(bot: Bot, *, tick_data_fetcher=None) -> int:
     """Register a sparse V3 pool at tick 0, ratio 1:1, 0.3% fee, with liquidity.
 
-    ``RustBot.register_v3_pool`` always registers sparse with empty ``tick_data``,
+    ``Bot.register_v3_pool`` always registers sparse with empty ``tick_data``,
     so the starting tick-bitmap word (0) is unknown → the first calc misses.
     The optional ``tick_data_fetcher`` is stored Rust-side on ``V3PoolState``
     (ADR-006 I/O trait object) so the fetch+retry loop in
@@ -55,7 +55,7 @@ def _register_sparse_v3_pool(bot: RustBot, *, tick_data_fetcher=None) -> int:
 
 
 def test_sparse_pool_misses_without_fetcher() -> None:
-    bot = RustBot(chain_id=1)
+    bot = Bot(chain_id=1)
     pool_id = _register_sparse_v3_pool(bot)
     pool = bot.get_pool(pool_id)
 
@@ -65,7 +65,7 @@ def test_sparse_pool_misses_without_fetcher() -> None:
 
 
 def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
-    bot = RustBot(chain_id=1)
+    bot = Bot(chain_id=1)
     calls: list[tuple[int, int]] = []
 
     def fake_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
@@ -96,7 +96,7 @@ def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
 
 
 def test_calculate_tokens_out_with_fetch_failing_fetcher_returns_zero() -> None:
-    bot = RustBot(chain_id=1)
+    bot = Bot(chain_id=1)
 
     def failing_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
         raise RuntimeError

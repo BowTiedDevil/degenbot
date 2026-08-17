@@ -1,6 +1,6 @@
 """Rust-builder CREATE2 verification at registration (Fork A, JC6OFG).
 
-The `register_v2_pool` / `register_v3_pool` RustBot seams now recompute the
+The `register_v2_pool` / `register_v3_pool` Bot seams now recompute the
 CREATE2 address from the JSON-sourced deployer + init hash and reject a
 mismatch before registering. This is the load-bearing correctness guard:
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 
 # Cross-checked vectors (Python generate_v2/v3_pool_address + on-chain).
 UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
@@ -41,7 +41,7 @@ class TestV2RegistrationVerify:
     """``register_v2_pool`` verifies the address against JSON CREATE2."""
 
     def test_uniswap_v2_mainnet_correct_address_registers(self) -> None:
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         pool_id = bot.register_v2_pool(
             address=V2_DAI_WETH_ADDR,
             token0=WETH,
@@ -57,7 +57,7 @@ class TestV2RegistrationVerify:
         assert pool_id == 1
 
     def test_uniswap_v2_mainnet_wrong_address_rejected(self) -> None:
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         wrong = "0x" + "ab" * 20
         with pytest.raises(ValueError, match="CREATE2"):
             bot.register_v2_pool(
@@ -75,7 +75,7 @@ class TestV2RegistrationVerify:
 
     def test_ad_hoc_factory_skips_verification(self) -> None:
         """A (chain, factory) not in the shipped JSON → verification skipped."""
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         # chain 1 mainnet but an unrecognized factory + a fabricated address.
         ad_hoc_factory = "0x" + "12" * 20
         pool_id = bot.register_v2_pool(
@@ -97,7 +97,7 @@ class TestV3RegistrationVerify:
     """``register_v3_pool`` verifies the address against JSON CREATE2."""
 
     def test_uniswap_v3_mainnet_correct_address_registers(self) -> None:
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         pool_id = bot.register_v3_pool(
             address=V3_UNI_USDC_WETH_500_ADDR,
             token0=USDC,
@@ -113,7 +113,7 @@ class TestV3RegistrationVerify:
 
     def test_pancakeswap_v3_separate_deployer_correct_address_registers(self) -> None:
         """The load-bearing case: the separate-deployer address verifies."""
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         pool_id = bot.register_v3_pool(
             address=V3_PCS_USDC_WETH_500_SEPARATE_ADDR,
             token0=USDC,
@@ -134,7 +134,7 @@ class TestV3RegistrationVerify:
         must FAIL verification — proving the per-(chain, factory) deployer is
         enforced, not the variant's canonical mainnet factory.
         """
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         with pytest.raises(ValueError, match="CREATE2"):
             bot.register_v3_pool(
                 address=V3_PCS_USDC_WETH_500_FACTORY_ADDR_WRONG,
@@ -149,7 +149,7 @@ class TestV3RegistrationVerify:
             )
 
     def test_uniswap_v3_wrong_address_rejected_with_chain_context(self) -> None:
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         wrong = "0x" + "ef" * 20
         with pytest.raises(ValueError, match="chain 1"):
             bot.register_v3_pool(
@@ -165,7 +165,7 @@ class TestV3RegistrationVerify:
             )
 
     def test_ad_hoc_factory_skips_verification(self) -> None:
-        bot = RustBot(chain_id=1)
+        bot = Bot(chain_id=1)
         ad_hoc_factory = "0x" + "34" * 20
         pool_id = bot.register_v3_pool(
             address="0x" + "56" * 20,
@@ -185,7 +185,7 @@ class TestAdHocChainSkipsVerification:
     """chain_id=0 (the bare fixture default) is not in the JSON → skipped."""
 
     def test_chain_zero_does_not_verify(self) -> None:
-        bot = RustBot()  # chain_id=0 default
+        bot = Bot()  # chain_id=0 default
         # A fabricated address that would fail on any known chain, but chain 0
         # isn't a shipped deployment → verification skipped → registers fine.
         pool_id = bot.register_v2_pool(

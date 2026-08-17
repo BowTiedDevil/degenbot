@@ -3,7 +3,7 @@
 Driven by the frozen `aave_parity_expected.json` oracle (dumped from the
 pre-cutover SQLAlchemy `DatabasePositionQuery`) + a freshly-regenerated
 `aave_parity.db` fixture: the Rust-backed `DatabasePositionQuery` (delegating
-through `RustDatabasePositionQuery`) produces identical results to the frozen
+through `DatabasePositionQuery`) produces identical results to the frozen
 SQLAlchemy oracle. Plus a §4.5 delegation spy proving the Python reader hits
 Rust with the right args, and an end-to-end `analyze_positions_for_market`
 smoke test (the Rust analysis seam consumes the Rust-backed records).
@@ -125,12 +125,12 @@ class TestParity:
 
 
 class TestDelegation:
-    """§4.5: the Python DatabasePositionQuery delegates to the Rust RustDatabasePositionQuery."""
+    """§4.5: the Python DatabasePositionQuery delegates to the Rust DatabasePositionQuery."""
 
     def test_get_users_with_debt_hits_rust(
         self, query: DatabasePositionQuery, market_id: int
     ) -> None:
-        """get_users_with_debt calls RustDatabasePositionQuery.get_users_with_debt."""
+        """get_users_with_debt calls DatabasePositionQuery.get_users_with_debt."""
         calls: list[str] = []
         real_handle = query._handle()
 
@@ -146,7 +146,7 @@ class TestDelegation:
     def test_get_oracle_address_hits_rust(
         self, query: DatabasePositionQuery, market_id: int
     ) -> None:
-        """get_oracle_address calls RustDatabasePositionQuery.get_oracle_address."""
+        """get_oracle_address calls DatabasePositionQuery.get_oracle_address."""
         calls: list[str] = []
         real_handle = query._handle()
 

@@ -18,7 +18,7 @@ import pathlib
 import eth_abi.abi
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
@@ -53,7 +53,7 @@ def _compute_v4_pool_id(
     )
 
 
-def _build_dense_v4_pool(py_bot: RustBot, address_tag: str, *, coverage: str = "tracked"):
+def _build_dense_v4_pool(py_bot: Bot, address_tag: str, *, coverage: str = "tracked"):
     """Build a dense V4 companion (1:1 price, position [-60, +60], no hooks)."""
     token0 = make_erc20(
         py_bot,
@@ -121,7 +121,7 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
     fetch-callback return-data contract + V4 sparse-loop helper stay wired +
     validated here.)
     """
-    py_bot = RustBot()
+    py_bot = Bot()
 
     # Dense oracle (dense Rust seam — full tick_data, no miss).
     dense = _build_dense_v4_pool(py_bot, address_tag="a")
@@ -226,7 +226,7 @@ def _load_corpus_fixture() -> dict:
 
 
 def _build_pool_from_corpus(
-    py_bot: RustBot,
+    py_bot: Bot,
     state: dict,
     *,
     td: dict[int, LiquidityAtTick],
@@ -293,7 +293,7 @@ def test_rust_v4_dense_corpus_matches_on_chain_quoter():
         int(t): LiquidityAtTick(liquidity_net=int(r[1]), liquidity_gross=int(r[0]), block=int(r[2]))
         for t, r in state["tick_data"].items()
     }
-    py_bot = RustBot()
+    py_bot = Bot()
     pool = _build_pool_from_corpus(py_bot, state, td=td, sparse=False, fetcher=None)
     py_out = pool.calculate_tokens_out_from_tokens_in(
         token_in=pool.token1,
@@ -339,11 +339,11 @@ def test_rust_v4_sparse_fetch_corpus_matches_dense():
     def full_fetcher(word: int, block: int) -> dict:
         return corpus_by_word.get(word, {})
 
-    # Each pool gets its OWN RustBot + token pair (distinct addresses) so the
+    # Each pool gets its OWN Bot + token pair (distinct addresses) so the
     # second registration doesn't collide as a duplicate pool_id.
     # dense-Rust mainline (sparse, full-fetch) — the oracle (== quoter).
     py_pool = _build_pool_from_corpus(
-        RustBot(),
+        Bot(),
         state,
         td=td_minus76,
         sparse=True,
@@ -358,7 +358,7 @@ def test_rust_v4_sparse_fetch_corpus_matches_dense():
     )
     # Rust seam (sparse, full-fetch) — the path under fix.
     rust_pool = _build_pool_from_corpus(
-        RustBot(),
+        Bot(),
         state,
         td=td_minus76,
         sparse=True,
@@ -390,7 +390,7 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
     price limit. After the clamp fix, the V4 sparse+fetch path must match the
     dense-Rust oracle (full tick_data → no miss) down to MIN_TICK.
     """
-    py_bot = RustBot()
+    py_bot = Bot()
     # Dense oracle: a dummy init tick ABOVE the start (opposite the zfo walk)
     # makes tick_data non-empty → coverage=tracked, but the zfo path (tick ≤
     # start=0) has NO initialized ticks — liq stays constant to MIN.
@@ -435,7 +435,7 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
     )
 
     # Sparse pool — identical scalars, NO tick_data seeded. Distinct tokens so
-    # the pool_id differs (same RustBot). The fetcher returns {} for every word
+    # the pool_id differs (same Bot). The fetcher returns {} for every word
     # (no initialized ticks anywhere); Rust marks each fetched-empty word known
     # + continues, but must reach MIN (not strand at the last word above
     # MIN_TICK).

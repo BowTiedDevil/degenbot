@@ -148,7 +148,7 @@ class UniswapV3Pool(
 
         ``UniswapV3Pool`` is a Python companion over a Rust-owned
         ``LiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``RustBot`` — there is no way for a caller to
+        registering a pool in a ``Bot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``

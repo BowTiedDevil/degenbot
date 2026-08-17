@@ -89,3 +89,27 @@ def test_prefixed_census_is_complete() -> None:
         f"walk missed {len(GRANDFATHERED) - len(visible)} grandfathered names — "
         "check the __module__ predicate in _registered_classes"
     )
+
+
+# ADR-032 fork: the five Rust-prefixed collision names were retired into
+# pure clean names (module path is the disambiguator). No origin prefix -
+# neither Py nor Rust - is permitted on a Python-visible pyclass.
+GRANDFATHERED_RUST: frozenset[str] = frozenset()
+
+
+def test_no_rust_prefixed_class_names() -> None:
+    """ADR-032 fork: no Rust-prefixed Python-visible pyclass may exist."""
+    classes = _registered_classes()
+    rust_prefixed = {n for n in classes if n.startswith("Rust") and len(n) > 4}
+    new = sorted(rust_prefixed - GRANDFATHERED_RUST)
+    assert not new, (
+        "Rust-prefixed pyclass names violate ADR-032 (the module path is the"
+        f" disambiguator; use the clean name): {new}"
+    )
+
+
+def test_rust_list_has_no_dead_names() -> None:
+    """The Rust-prefixed list tracks runtime truth (no un-retired entries)."""
+    classes = _registered_classes()
+    dead = sorted(GRANDFATHERED_RUST - set(classes))
+    assert not dead, f"dead Rust grandfather entries: {dead}"

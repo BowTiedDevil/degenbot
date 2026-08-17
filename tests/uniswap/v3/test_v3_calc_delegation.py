@@ -22,7 +22,7 @@ Mirrors ``tests/uniswap/v2/test_v2_pool_io_free.py::TestV2CalcDelegation``.
 
 from __future__ import annotations
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
@@ -36,7 +36,7 @@ _ADDRESS = "0x" + "33" * 20
 _FACTORY = "0x" + "44" * 20
 
 
-def _make_tokens(py_bot: RustBot, tag: str):
+def _make_tokens(py_bot: Bot, tag: str):
     token0 = make_erc20(
         py_bot,
         address=f"0x{(tag * 40)[:40]}".ljust(42, "0"),
@@ -87,7 +87,7 @@ class _DelegateSpy:
         return getattr(self._real, name)
 
 
-def _make_dense_pool(py_bot: RustBot):
+def _make_dense_pool(py_bot: Bot):
     token0, token1 = _make_tokens(py_bot, tag="c")
     tick_data = {
         -60: LiquidityAtTick(
@@ -122,7 +122,7 @@ class TestV3CalcDelegation:
     def test_calculate_tokens_out_delegates_to_rust_no_override(self) -> None:
         """No override_state: ``calculate_tokens_out_from_tokens_in`` routes
         to ``LiquidityPool.simulate_swap_with_fetch`` (token0 in → zfo=True)."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool = _make_dense_pool(py_bot)
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -138,7 +138,7 @@ class TestV3CalcDelegation:
 
     def test_calculate_tokens_out_reverse_delegates_to_rust(self) -> None:
         """token1 in → zero_for_one=False, still delegates to the Rust seam."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool = _make_dense_pool(py_bot)
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -155,7 +155,7 @@ class TestV3CalcDelegation:
         """No override_state: ``calculate_tokens_in_from_tokens_out`` routes
         to ``LiquidityPool.simulate_exact_output_swap_with_fetch``
         (token1 out → zfo=True)."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool = _make_dense_pool(py_bot)
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -171,7 +171,7 @@ class TestV3CalcDelegation:
 
     def test_calculate_tokens_in_reverse_delegates_to_rust(self) -> None:
         """token0 out → zero_for_one=False, still delegates to the Rust seam."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool = _make_dense_pool(py_bot)
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy

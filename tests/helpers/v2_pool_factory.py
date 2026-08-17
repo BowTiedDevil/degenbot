@@ -6,8 +6,8 @@ through ``make_v2_pool`` so the ``LiquidityPool`` handle is wired through
 ``Bot::register_v2_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow.
 
-Each call creates its own short-lived ``RustBot`` (the returned handle holds an
-``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) — so
+Each call creates its own short-lived ``Bot`` (the returned handle holds an
+``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
 each test pool is fully isolated (no shared mutable state across tests, which
 matters because pools are mutable, unlike slice-3's tokens).
 """
@@ -18,7 +18,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot._ffi.dex_identity import DexIdentity
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types import LiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -56,19 +56,19 @@ def make_v2_pool(
     state_block: int = 0,
     pool_class: type[UniswapV2Pool] = UniswapV2Pool,
     dex: DexIdentity | None = None,
-    py_bot: RustBot | None = None,
+    py_bot: Bot | None = None,
     variant: str | None = None,
     stable_swap: bool = False,
     fee_denominator: int | None = None,
 ) -> UniswapV2Pool:
     """Construct an I/O-free V2-style pool companion over a fresh ``LiquidityPool`` handle.
 
-    Each call creates its own short-lived ``RustBot`` (the returned handle holds
-    an ``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``)
+    Each call creates its own short-lived ``Bot`` (the returned handle holds
+    an ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``)
     — so each test pool is fully isolated (no shared mutable state across
     tests, which matters because pools are mutable, unlike slice-3's tokens).
     The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``RustBot``); that's fine — the pool reads reserves from its
+    ``make_erc20`` ``Bot``); that's fine — the pool reads reserves from its
     own ``Bot`` and token metadata from the token's handle, independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
@@ -116,7 +116,7 @@ def make_v2_pool(
         gamma_numer0, fee_denom0 = _gamma_complement(fee_token0)
         gamma_numer1, fee_denom1 = _gamma_complement(fee_token1)
 
-    py_bot = py_bot if py_bot is not None else RustBot()
+    py_bot = py_bot if py_bot is not None else Bot()
 
     # Descriptor params (ADR-005 / FMO2GE): ``variant`` defaults from the dex
     # preset (if provided) or "uniswap-v2". ``stable_swap``/``fee_denominator``
@@ -147,7 +147,7 @@ def make_v2_pool(
     # the pool — ``_from_py_pool`` recovers them via ``py_pool.get_token0``/
     # ``get_token1``, which look up ``token0_address``/``token1_address`` in
     # the pool's own ``BotState``. The token companions passed in may have been
-    # built against a different ``RustBot``; re-register their metadata here so
+    # built against a different ``Bot``; re-register their metadata here so
     # the handle is self-describing. ``register_token`` asserts on duplicates,
     # so guard with ``get_token``.
     for tok in (token0, token1):

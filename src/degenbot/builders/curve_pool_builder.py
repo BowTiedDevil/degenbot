@@ -15,7 +15,7 @@ from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
-    from degenbot.bot import RustBotIo
+    from degenbot._ffi import BotIo
     from degenbot.builders.context import BuilderContext
     from degenbot.types import LiquidityPool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
@@ -49,12 +49,12 @@ class CurvePoolBuilder:
         address: str,
         *,
         chain_id: ChainId | None = None,
-        io: RustBotIo,
+        io: BotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Construct an I/O-free CurveStableswapPool via the Rust core.
 
-        Delegates the full detection + registration to ``RustBot.build_curve_pool``
+        Delegates the full detection + registration to ``Bot.build_curve_pool``
         (which attaches a native ``RpcCurveDataProvider`` and stores the complete
         identity in Rust state), builds the ERC20 token/LP companions so the
         handle's registration-gated getters resolve, then wraps the handle via
@@ -145,13 +145,13 @@ class CurvePoolBuilder:
         chain_id: ChainId,
         state_block: int,
         request: BuildRequest,
-        io: RustBotIo,
+        io: BotIo,
     ) -> None:
         """Build + register a metapool's base pool (recursion over the Rust path).
 
         The metapool handle already stores the base-pool address (Rust
         detection). Building the base pool recursively registers it in the same
-        ``RustBot``, so the metapool handle's ``curve_base_pool()`` go-between
+        ``Bot``, so the metapool handle's ``curve_base_pool()`` go-between
         resolves during ``_from_py_pool``.
         """
         base_address = handle.curve_base_pool_address()
@@ -173,7 +173,7 @@ class CurvePoolBuilder:
         pool: AbstractLiquidityPool,
         *,
         block_number: BlockIdentifier | None = None,
-        io: RustBotIo | None = None,
+        io: BotIo | None = None,
     ) -> bool:
         """Fetch current state from chain and push update to the pool.
 
@@ -195,7 +195,7 @@ class CurvePoolBuilder:
         )
 
         # Fetch balances for each token in the pool
-        # ADR-005 slice 14s: delegate the full loop to Rust (RustBotIo is the
+        # ADR-005 slice 14s: delegate the full loop to Rust (BotIo is the
         # only executor; the Python parity-gate fallback is retired).
         balances_result = io.fetch_curve_balances(
             pool.address,

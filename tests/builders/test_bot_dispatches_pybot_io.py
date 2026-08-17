@@ -1,11 +1,11 @@
-"""Tests documenting the RustBotIo wiring in `Bot.build_pool`.
+"""Tests documenting the BotIo wiring in `Bot.build_pool`.
 
-ADR-005 slice 14a: `Bot.build_pool` hands builders a `RustBotIo` (the Rust
+ADR-005 slice 14a: `Bot.build_pool` hands builders a `BotIo` (the Rust
 executor). The Python `SyncPoolIO` adapter + its parity gate are retired
-(slice 14 collapse) — `RustBotIo` is the sole executor, so there is no longer
+(slice 14 collapse) — `BotIo` is the sole executor, so there is no longer
 a second implementation to parity-check against.
 
-These tests pin the wiring (the `io` handed to builders is a `RustBotIo`),
+These tests pin the wiring (the `io` handed to builders is a `BotIo`),
 mirroring `test_bot_pool_io.py`'s mocked-io shape without requiring a live
 RPC node.
 """
@@ -17,7 +17,8 @@ from unittest.mock import MagicMock
 
 from hexbytes import HexBytes
 
-from degenbot.bot import Bot, RustBotIo
+from degenbot._ffi import BotIo
+from degenbot.bot import Bot
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 
@@ -54,16 +55,16 @@ class _RecordingProvider:
 
 
 class TestBotDispatchesPyBotIo:
-    """Bot.build_pool hands builders a RustBotIo."""
+    """Bot.build_pool hands builders a BotIo."""
 
     def test_dispatch_build_forwards_pybot_io(self) -> None:
-        """_dispatch_build forwards a RustBotIo io= to the builder untouched."""
+        """_dispatch_build forwards a BotIo io= to the builder untouched."""
         builder = MagicMock()
         builder.build.return_value = MagicMock()
 
         address = get_checksum_address("0x" + "01" * 20)
         provider = _RecordingProvider()
-        io = RustBotIo(provider=provider)
+        io = BotIo(provider=provider)
         request = BuildPoolRequest()
 
         Bot._dispatch_build(

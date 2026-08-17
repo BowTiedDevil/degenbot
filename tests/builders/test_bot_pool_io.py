@@ -1,16 +1,17 @@
-"""Tests for Bot passing RustBotIo to builders (Plan 048, Slice 2)."""
+"""Tests for Bot passing BotIo to builders (Plan 048, Slice 2)."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from degenbot.bot import Bot, RustBotIo
+from degenbot._ffi import BotIo
+from degenbot.bot import Bot
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 
 
 class TestBotPassesPyBotIo:
-    """Bot.build_pool() creates a RustBotIo and passes it to builders."""
+    """Bot.build_pool() creates a BotIo and passes it to builders."""
 
     def test_dispatch_build_passes_io(self) -> None:
         """_dispatch_build forwards io= and request= to the builder."""
@@ -18,7 +19,7 @@ class TestBotPassesPyBotIo:
         builder.build.return_value = MagicMock()
 
         address = get_checksum_address("0x0000000000000000000000000000000000000001")
-        io = MagicMock(spec=RustBotIo)
+        io = MagicMock(spec=BotIo)
         request = BuildPoolRequest()
 
         Bot._dispatch_build(

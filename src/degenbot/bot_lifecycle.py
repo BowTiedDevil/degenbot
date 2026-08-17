@@ -16,7 +16,7 @@ Two entry points:
   (``db.remove()``, ``provider.close()``) plus reference drops. Idempotent
   via a per-instance ``_closed`` flag.
 
-The Rust ``RustBot`` is reference-counted; closing a Python wrapper only drops
+The Rust ``Bot`` is reference-counted; closing a Python wrapper only drops
 that wrapper's ref. A running engine that took its own ref (via
 ``EngineRegistry(bot=bot)`` → ``ArbitrageEngine(py_bot=...)``) is unaffected.
 """
@@ -108,11 +108,11 @@ def close(bot: _BotLike) -> None:
     if hasattr(bot._provider, "close"):  # ruff:ignore[private-member-access]
         bot._provider.close()  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
 
-    # 5. Drop our own references (engine keeps its own RustBot ref)
+    # 5. Drop our own references (engine keeps its own Bot ref)
     bot._py_bot = None  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
     bot._provider = None  # type: ignore[attr-defined]  # ruff:ignore[private-member-access]
 
-    # 6. Drop the I/O seam (`RustBotIo`) and the on-demand async adapter. Both
+    # 6. Drop the I/O seam (`BotIo`) and the on-demand async adapter. Both
     #    hold a strong reference to the shared provider's `Arc<dyn Provider>`;
     #    leaving them live pins that Arc — and if the provider's backing
     #    endpoint is a locally-owned anvil fork that is torn down next, alloy's
@@ -124,11 +124,11 @@ def close(bot: _BotLike) -> None:
     bot._async_adapter = None  # ruff:ignore[private-member-access]
 
     # 7. Drop the registries + builders + ctx that each hold a strong ref to
-    #    `_py_bot` (PoolRegistry → RustBot, Tokens/Trackers, BuilderContext →
-    #    RustBot). Rust `RustBot` is refcounted; until EVERY Python holder is
+    #    `_py_bot` (PoolRegistry → Bot, Tokens/Trackers, BuilderContext →
+    #    Bot). Rust `Bot` is refcounted; until EVERY Python holder is
     #    dropped the rust core stays alive and keeps its `ConstructionIo`'s
     #    `Arc<dyn Provider>` — the same reconnect-into-a-dead-socket hazard as
-    #    `_io`. Dropping all of them lets the rust `RustBot`/`BotState` release
+    #    `_io`. Dropping all of them lets the rust `Bot`/`BotState` release
     #    the provider when the last one goes.
     bot.pools = None
     bot.tokens = None

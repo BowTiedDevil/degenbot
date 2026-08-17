@@ -46,7 +46,7 @@ import weakref
 import pytest
 
 from degenbot._ffi.subscriber import register_subscriber
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 
 _SUBSCRIBER_FLUSH_S = (
     0.15  # max seconds to wait for subscriber drainer flush (2x interval + margin)
@@ -61,7 +61,7 @@ def _sync_data(reserve0: int, reserve1: int) -> str:
     return "0x" + (reserve0.to_bytes(32, "big") + reserve1.to_bytes(32, "big")).hex()
 
 
-def _register_v2_pool(py_bot: RustBot, address: str = "0x" + "11" * 20) -> int:
+def _register_v2_pool(py_bot: Bot, address: str = "0x" + "11" * 20) -> int:
     """Register a minimal V2 pool against ``py_bot``; return its pool_id."""
     return py_bot.register_v2_pool(
         address=address,
@@ -143,7 +143,7 @@ class TestPySubscriberAdapterParity:
     def test_register_subscriber_receives_pool_id_on_dispatch(self):
         """A Python callback registered via `register_subscriber` receives
         `pool_id` when `dispatch_log` applies a decoded event to that pool."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool_id = _register_v2_pool(py_bot)
         record: list[int] = []
         # Hold the handle — the strong Arc anchors the Weak the dispatcher holds.
@@ -170,7 +170,7 @@ class TestPySubscriberAdapterParity:
         subscriber set. Register three Python callbacks against the Rust seam
         + the same three against the Python `WeakSet` oracle; dispatch one
         log; assert both paths produced the same notify sequence."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool_id_a = _register_v2_pool(py_bot, address="0x" + "11" * 20)
 
         names = ["alpha", "beta", "gamma"]
@@ -218,7 +218,7 @@ class TestPySubscriberAdapterParity:
         `notify` calls silently skip that subscriber, while the live one keeps
         firing. Mirrors the engine-adapter Weak lifecycle + `PublisherMixin.unsubscribe`.
         """
-        py_bot = RustBot()
+        py_bot = Bot()
         pool_id = _register_v2_pool(py_bot)
 
         live_record: list[str] = []
@@ -258,7 +258,7 @@ class TestPySubscriberAdapterParity:
     def test_unsubscribe_method_releases_the_weak(self):
         """`.unsubscribe()` on the handle is the explicit form of dropping it:
         the strong Arc releases, the Weak goes dead, subsequent dispatches skip."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool_id = _register_v2_pool(py_bot)
         record: list[int] = []
         handle = register_subscriber(py_bot, pool_id, record.append)
@@ -288,7 +288,7 @@ class TestPySubscriberAdapterParity:
     def test_wrong_pool_subscriber_is_not_notified(self):
         """§4.2 isolation: a subscriber registered for `pool_id=A` is NOT
         notified when `pool_id=B` mutates."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool_id_a = _register_v2_pool(py_bot, address="0x" + "11" * 20)
         pool_id_b = _register_v2_pool(py_bot, address="0x" + "22" * 20)
         assert pool_id_a != pool_id_b
@@ -311,7 +311,7 @@ class TestPySubscriberAdapterParity:
     def test_non_callable_callback_is_rejected(self):
         """The seam rejects a non-callable callback up front (RuntimeError)
         rather than failing at notify time."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool_id = _register_v2_pool(py_bot)
         with pytest.raises(RuntimeError, match="callable"):
             register_subscriber(py_bot, pool_id, 42)  # type: ignore[arg-type]
@@ -319,7 +319,7 @@ class TestPySubscriberAdapterParity:
     def test_unregistered_pool_dispatch_is_no_op(self):
         """A Sync for an unregistered pool address is a silent no-op — the
         subscriber registered for a different pool is not notified."""
-        py_bot = RustBot()
+        py_bot = Bot()
         pool_id = _register_v2_pool(py_bot, address="0x" + "11" * 20)
         record: list[str] = []
         handle = register_subscriber(py_bot, pool_id, _Recorder("A", record))

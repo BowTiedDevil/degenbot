@@ -157,9 +157,9 @@ class TestRegisterTimeVerification:
     """
 
     def test_correct_address_accepts(self) -> None:
-        from degenbot._ffi import RustBot
+        from degenbot._ffi import Bot
 
-        bot = RustBot(chain_id=8453)  # Base — where the Aerodrome factory lives
+        bot = Bot(chain_id=8453)  # Base — where the Aerodrome factory lives
         # The real on-chain BASE_AERO_WETH_V2 volatile pool — recomputed by the
         # Rust verify path from the JSON deployer + implementation.
         pool_id = bot.register_aerodrome_pool(
@@ -182,9 +182,9 @@ class TestRegisterTimeVerification:
     def test_wrong_address_is_rejected(self) -> None:
         import pytest
 
-        from degenbot._ffi import RustBot
+        from degenbot._ffi import Bot
 
-        bot = RustBot(chain_id=8453)
+        bot = Bot(chain_id=8453)
         with pytest.raises(ValueError, match="CREATE2"):
             bot.register_aerodrome_pool(
                 address="0x0000000000000000000000000000000000000001",  # wrong
@@ -205,9 +205,9 @@ class TestRegisterTimeVerification:
     def test_non_json_factory_skips_verification(self) -> None:
         # An ad-hoc factory not in deployments.json must skip verification
         # (manual/ad-hoc registration path preserved).
-        from degenbot._ffi import RustBot
+        from degenbot._ffi import Bot
 
-        bot = RustBot(chain_id=8453)
+        bot = Bot(chain_id=8453)
         ad_hoc_factory = "0x" + "ab" * 20
         pool_id = bot.register_aerodrome_pool(
             address="0x0000000000000000000000000000000000000001",

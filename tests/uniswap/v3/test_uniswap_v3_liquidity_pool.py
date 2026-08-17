@@ -9,7 +9,8 @@ import pytest
 from eth_typing import ChainId
 from hexbytes import HexBytes
 
-from degenbot.bot import Bot, RustBot
+from degenbot._ffi import Bot as _Engine
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT256
 from degenbot.erc20.erc20 import Erc20Token
@@ -91,7 +92,7 @@ TOKEN_AMOUNT_MULTIPLIERS = [
 
 
 _V3_WBTC_WETH_GOLDEN = Path("tests/golden/data/uniswap/v3/wbtc_weth/17600000.json")
-_PY_BOT = RustBot()
+_PY_BOT = _Engine()
 
 
 @pytest.fixture

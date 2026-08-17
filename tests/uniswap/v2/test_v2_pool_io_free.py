@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 import eth_abi.abi
 import pytest
 
-from degenbot.bot import Bot, RustBot
+from degenbot._ffi import Bot as _Engine
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.erc20.erc20 import Erc20Token
@@ -25,7 +26,7 @@ from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_PY_BOT = RustBot()
+_PY_BOT = _Engine()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:

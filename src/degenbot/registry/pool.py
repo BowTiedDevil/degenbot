@@ -10,7 +10,7 @@ from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
-    from degenbot.bot import RustBot
+    from degenbot._ffi import Bot
     from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -106,13 +106,13 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         self,
         managed_pool_registry: ManagedPoolRegistry | None = None,
         *,
-        py_bot: RustBot | None = None,
+        py_bot: Bot | None = None,
     ) -> None:
         """Initialize the instance.
 
         Args:
             managed_pool_registry: Optional managed (V4) pool sub-registry.
-            py_bot: Optional ``RustBot`` handle for Rust-state propagation.
+            py_bot: Optional ``Bot`` handle for Rust-state propagation.
                 When set, ``remove`` and ``_reset`` propagate to the Rust
                 ``BotState`` via ``py_bot.unregister_pool`` (ADR-007). When
                 ``None`` (e.g. tests that construct ``PoolRegistry()``

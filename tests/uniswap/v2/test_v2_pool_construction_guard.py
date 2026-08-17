@@ -2,7 +2,7 @@
 
 A ``UniswapV2Pool`` is a Python companion over a Rust-owned
 ``LiquidityPool`` handle. The handle can only be produced by registering a
-pool in a ``RustBot`` (production: ``Bot.build_pool()``; tests: ``make_v2_pool``).
+pool in a ``Bot`` (production: ``Bot.build_pool()``; tests: ``make_v2_pool``).
 Direct constructor calls are rejected so that the only paths to a pool instance
 are the ones that wire the handle — mirroring Polars' ``_from_pydf`` pattern.
 """

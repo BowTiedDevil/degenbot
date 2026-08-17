@@ -1,14 +1,14 @@
-"""Tests for RustBot — Rust-owned state with thin Python handles."""
+"""Tests for Bot — Rust-owned state with thin Python handles."""
 
 from __future__ import annotations
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 
 
 class TestPyBotV2Pool:
-    """Test V2 pool registration, update, and calculation through RustBot."""
+    """Test V2 pool registration, update, and calculation through Bot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -16,7 +16,7 @@ class TestPyBotV2Pool:
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
     def test_register_v2_pool(self):
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -34,7 +34,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_out(self):
         """Verify V2 constant product calculation matches Python reference."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -54,7 +54,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_out_reverse(self):
         """Verify reverse direction calculation."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -75,7 +75,7 @@ class TestPyBotV2Pool:
 
     def test_update_v2_pool_changes_result(self):
         """Verify that updating reserves changes calculation results."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -107,7 +107,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_in(self):
         """Verify V2 exact-out calculation matches Python reference."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -132,7 +132,7 @@ class TestPyBotV2Pool:
 
     def test_calculate_tokens_out_large_values(self):
         """Verify calculation with realistic on-chain amounts (uint256 scale)."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -157,7 +157,7 @@ class TestPyBotV2Pool:
 
     def test_zero_amount_in_returns_zero(self):
         """Zero input should return zero output."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -176,21 +176,21 @@ class TestPyBotV2Pool:
 
     def test_unknown_pool_id_returns_zero(self):
         """Unknown pool ID should return zero (not raise)."""
-        core = RustBot()
+        core = Bot()
         result = core.calculate_tokens_out(999, zero_for_one=True, amount_in=100)
         assert result == 0
 
 
 class TestPoolHandle:
-    """Test the thin Pool handle over RustBot."""
+    """Test the thin Pool handle over Bot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[RustBot, int]:
-        core = RustBot()
+    def _make_core_with_pool(self) -> tuple[Bot, int]:
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -214,11 +214,11 @@ class TestPoolHandle:
 
     def test_get_pool_unknown_returns_none(self):
         """get_pool() returns None for unknown pool ID."""
-        core = RustBot()
+        core = Bot()
         assert core.get_pool(999) is None
 
     def test_pool_calculate_tokens_out(self):
-        """Pool handle delegates calculation to RustBot."""
+        """Pool handle delegates calculation to Bot."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -228,7 +228,7 @@ class TestPoolHandle:
         assert result == 181
 
     def test_pool_calculate_tokens_in(self):
-        """Pool handle delegates exact-out calculation to RustBot."""
+        """Pool handle delegates exact-out calculation to Bot."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -267,8 +267,8 @@ class TestPoolHandleState:
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[RustBot, int]:
-        core = RustBot()
+    def _make_core_with_pool(self) -> tuple[Bot, int]:
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -309,7 +309,7 @@ class TestPoolHandleState:
 
     def test_pool_snapshot_returns_none_for_v3(self):
         """snapshot() returns None for non-V2 pools (no V2 state to read)."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v3_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -339,13 +339,13 @@ class TestPoolHandleState:
         assert pool.journal_len() == 2  # genesis + block-10 transition
 
     def test_pool_handle_sync_is_equivalent_to_pybot_update(self):
-        """sync_reserves and RustBot.update_v2_pool land the same state."""
+        """sync_reserves and Bot.update_v2_pool land the same state."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
         pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
 
-        core2 = RustBot()
+        core2 = Bot()
         pool_id2 = core2.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -428,13 +428,13 @@ class TestPoolHandleState:
 
 
 class TestTokenHandle:
-    """Test the thin Token handle over RustBot."""
+    """Test the thin Token handle over Bot."""
 
     TOKEN_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
     def test_register_and_get_token(self):
         """Can register and retrieve a token handle."""
-        core = RustBot()
+        core = Bot()
         token = core.register_token(
             address=self.TOKEN_ADDR,
             name="Wrapped Ether",
@@ -442,8 +442,8 @@ class TestTokenHandle:
             decimals=18,
             chain_id=1,
         )
-        # ADR-003 Slice 5: register_token returns the RustErc20Token handle; the
-        # getters read Rust-owned metadata back through RustBot's token map.
+        # ADR-003 Slice 5: register_token returns the Erc20Token handle; the
+        # getters read Rust-owned metadata back through Bot's token map.
         assert token is not None
         assert token.address == self.TOKEN_ADDR  # alloy preserves checksum case
         assert token.symbol == "WETH"
@@ -457,12 +457,12 @@ class TestTokenHandle:
 
     def test_get_unknown_token_returns_none(self):
         """get_token() returns None for unregistered address."""
-        core = RustBot()
+        core = Bot()
         assert core.get_token(self.TOKEN_ADDR) is None
 
 
 class TestV2SwapEncoding:
-    """Test V2 swap calldata encoding through RustBot."""
+    """Test V2 swap calldata encoding through Bot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -470,8 +470,8 @@ class TestV2SwapEncoding:
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
     RECIPIENT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-    def _make_core_with_pool(self) -> tuple[RustBot, int]:
-        core = RustBot()
+    def _make_core_with_pool(self) -> tuple[Bot, int]:
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -550,7 +550,7 @@ class TestV2SwapEncoding:
 
     def test_encode_swap_unknown_pool_returns_none(self):
         """encode_swap returns None for unknown pool ID."""
-        core = RustBot()
+        core = Bot()
         result = core.encode_swap(999, zero_for_one=True, amount_out=100, recipient=self.RECIPIENT)
         assert result is None
 
@@ -580,15 +580,15 @@ class TestV2SwapEncoding:
 
 
 class TestV2ReorgJournal:
-    """Test V2 pool state history through RustBot."""
+    """Test V2 pool state history through Bot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[RustBot, int]:
-        core = RustBot()
+    def _make_core_with_pool(self) -> tuple[Bot, int]:
+        core = Bot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -716,17 +716,17 @@ class TestV2ReorgJournal:
 
     def test_journal_len_unknown_pool_returns_zero(self):
         """v2_journal_len returns 0 for unknown pool ID."""
-        core = RustBot()
+        core = Bot()
         assert core.v2_journal_len(999) == 0
 
     def test_restore_unknown_pool_returns_none(self):
         """v2_restore_before_block returns None for unknown pool ID."""
-        core = RustBot()
+        core = Bot()
         assert core.v2_restore_before_block(999, 10) is None
 
 
 class TestV3PoolState:
-    """Test V3 pool registration, update, and reorg journal through RustBot."""
+    """Test V3 pool registration, update, and reorg journal through Bot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -736,8 +736,8 @@ class TestV3PoolState:
     # sqrt(1.0) * 2^96 ≈ 79228162514264337593543950336
     SQRT_PRICE_X96 = 79228162514264337593543950336
 
-    def _make_core_with_v3_pool(self) -> tuple[RustBot, int]:
-        core = RustBot()
+    def _make_core_with_v3_pool(self) -> tuple[Bot, int]:
+        core = Bot()
         pool_id = core.register_v3_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -758,8 +758,8 @@ class TestV3PoolState:
         assert core.pool_count() == 1
 
     def test_register_v3_and_v2_coexist(self):
-        """V2 and V3 pools can coexist in the same RustBot."""
-        core = RustBot()
+        """V2 and V3 pools can coexist in the same Bot."""
+        core = Bot()
         v2_id = core.register_v2_pool(
             address="0x1111111111111111111111111111111111111111",
             token0=self.TOKEN0_ADDR,
@@ -813,7 +813,7 @@ class TestV3PoolState:
         the pool is never visible to the pump in an unseeded state, so pump
         events always land on top of the seed, never to be overwritten.
         """
-        core = RustBot()
+        core = Bot()
         seed_tick = -60
         seed_rows: dict[int, tuple[int, int, int]] = {
             seed_tick: (1_000_000, 1_000_000, 100),
@@ -852,7 +852,7 @@ class TestV3PoolState:
         pump burn landing during build_paths) survives — there is no later
         ``update_tick_data`` overwrite to discard it.
         """
-        core = RustBot()
+        core = Bot()
         seed_rows: dict[int, tuple[int, int, int]] = {
             0: (1_000_000, 0, 100),
         }
@@ -943,12 +943,12 @@ class TestV3PoolState:
 
     def test_v3_journal_len_unknown_pool_returns_zero(self):
         """v3_journal_len returns 0 for unknown pool ID."""
-        core = RustBot()
+        core = Bot()
         assert core.v3_journal_len(999) == 0
 
     def test_v3_restore_unknown_pool_returns_none(self):
         """v3_restore_before_block returns None for unknown pool ID."""
-        core = RustBot()
+        core = Bot()
         assert core.v3_restore_before_block(999, 10) is None
 
     def test_v2_journal_methods_on_v3_pool_return_zero(self):
@@ -958,7 +958,7 @@ class TestV3PoolState:
 
     def test_v3_journal_methods_on_v2_pool_return_zero(self):
         """V3 journal methods correctly return 0/None for V2 pools."""
-        core = RustBot()
+        core = Bot()
         pool_id = core.register_v2_pool(
             address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             token0=self.TOKEN0_ADDR,

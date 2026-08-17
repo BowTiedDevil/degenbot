@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.registry import TokenRegistry
@@ -63,7 +63,7 @@ class _RecFakeIo:
 
 def test_build_many_issues_single_batched_fetch() -> None:
     """Two DB/registry-missing tokens resolve via ONE batched metadata fetch."""
-    py_bot = RustBot(chain_id=1)
+    py_bot = Bot(chain_id=1)
     fake_db = object.__new__(DatabaseSessionManager)
     tokens = TokenRegistry()
     io = _RecFakeIo()
@@ -83,9 +83,9 @@ def test_build_many_issues_single_batched_fetch() -> None:
 def test_build_many_falls_back_per_token_for_none_meta() -> None:
     """A token whose batched metadata is `None` falls back to a per-token build
     (contract-deployed check + alternate-prototype fallback preserved)."""
-    py_bot = RustBot(chain_id=1)
-    # The fallback routes through the Rust core (`RustBot.build_erc20_token` /
-    # `build_erc20_metadata`), so the RustBot must hold a ConstructionIo. Attach
+    py_bot = Bot(chain_id=1)
+    # The fallback routes through the Rust core (`Bot.build_erc20_token` /
+    # `build_erc20_metadata`), so the Bot must hold a ConstructionIo. Attach
     # an offline provider with non-empty code for TOKEN_B but NO
     # name()/symbol()/decimals() responses — the core resolves the alternate
     # prototype fallback -> UNKNOWN (same observable result as the old Python

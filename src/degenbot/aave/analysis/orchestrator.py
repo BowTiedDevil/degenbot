@@ -19,15 +19,16 @@ from eth_typing import ChecksumAddress
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from degenbot._ffi.db import DatabasePositionQuery as _EnginePositionQuery
 from degenbot.aave import AavePriceOracle
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.db import RustDatabasePositionQuery, UserPositionSummary, analyze_aave_user_position
+from degenbot.db import UserPositionSummary, analyze_aave_user_position
 from degenbot.logging import logger
 from degenbot.provider import AlloyProvider
 
 
 class DatabasePositionQuery:
-    """PositionQuery backed by the Rust ``RustDatabasePositionQuery`` reader.
+    """PositionQuery backed by the Rust ``_EnginePositionQuery`` reader.
 
     Routes every read through the PyO3 seam (ADR-005). The ``session`` is
     retained for resolving the DB file path + the ``AaveV3Market`` lookup at
@@ -43,7 +44,7 @@ class DatabasePositionQuery:
 
         """
         self._session = session
-        self._rust: RustDatabasePositionQuery | None = None
+        self._rust: _EnginePositionQuery | None = None
 
     def _db_path(self) -> str:
         """Resolve the SQLite file path the Rust reader opens.
@@ -63,9 +64,9 @@ class DatabasePositionQuery:
         msg = "a file-backed database is required for Rust-backed position reads"
         raise ValueError(msg)
 
-    def _handle(self) -> RustDatabasePositionQuery:
+    def _handle(self) -> _EnginePositionQuery:
         if self._rust is None:
-            self._rust = RustDatabasePositionQuery(self._db_path())
+            self._rust = _EnginePositionQuery(self._db_path())
         return self._rust
 
     def get_users_with_debt(self, market_id: int, limit: int | None = None) -> list[dict[str, Any]]:

@@ -1,4 +1,4 @@
-from degenbot._ffi import RustBot
+from degenbot._ffi import Bot
 
 class PoolStateSubscription:
     """Handle to a registered pub/sub subscription.
@@ -13,7 +13,7 @@ class PoolStateSubscription:
         """Release the strong anchor — idempotent."""
 
 def register_subscriber(
-    bot: RustBot,
+    bot: Bot,
     pool_id: int,
     callback: object,
 ) -> PoolStateSubscription:

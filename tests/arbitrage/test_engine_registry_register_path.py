@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,
@@ -79,13 +79,13 @@ class _FakeBot:
     """Minimal Bot double exposing ``_py_bot`` for the production construction path.
 
     ``EngineRegistry(bot=...)`` dereferences ``bot._py_bot`` to build the real
-    engine against the bot's shared BotState (ADR-006 D1). A bare ``RustBot()`` is
+    engine against the bot's shared BotState (ADR-006 D1). A bare ``Bot()`` is
     the offline stand-in — ``test_shared_state_topology`` proves the shared-core
     topology with this exact pair, no RPC/anvil needed.
     """
 
     def __init__(self) -> None:
-        self._py_bot = RustBot()
+        self._py_bot = Bot()
 
 
 def test_bot_none_without_engine_raises() -> None:
@@ -98,7 +98,7 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
     """EngineRegistry(bot=bot) constructs the real engine against bot._py_bot.
 
     ADR-006 D1: the engine shares the bot's BotState. The live registration path
-    is ``RustBot.register_v*`` (ADR-006 D3 deleted the unreachable pyo3 engine
+    is ``Bot.register_v*`` (ADR-006 D3 deleted the unreachable pyo3 engine
     ``register_*`` surface); registering a V2 pool against the bot's py_bot must
     be visible to the engine's ``v2_pool_count``.
     """

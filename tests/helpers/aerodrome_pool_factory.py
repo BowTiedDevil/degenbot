@@ -2,7 +2,7 @@
 
 Every direct ``AerodromeV2Pool(...)`` construction in the test suite routes
 through ``make_aerodrome_v2_pool`` so the ``LiquidityPool`` handle is wired
-through ``RustBot.register_aerodrome_pool`` → ``get_pool`` → companion, matching
+through ``Bot.register_aerodrome_pool`` → ``get_pool`` → companion, matching
 the ``Bot.build_pool()`` flow (ADR-005 Aerodrome state port).
 """
 
@@ -12,7 +12,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 
 if TYPE_CHECKING:
@@ -31,17 +31,17 @@ def make_aerodrome_v2_pool(
     reserves_token1: int,
     deployer_address: str | None = None,
     state_block: int = 0,
-    py_bot: RustBot | None = None,
+    py_bot: Bot | None = None,
     pool_class: type[AerodromeV2Pool] = AerodromeV2Pool,
 ) -> AerodromeV2Pool:
     """Construct an I/O-free Aerodrome V2 companion over a fresh LiquidityPool handle.
 
-    Registers the pool in a short-lived ``RustBot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``),
+    Registers the pool in a short-lived ``Bot`` (the returned handle holds an
+    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``),
     then wraps via ``_from_py_pool``. Tokens must be registered in the same
-    ``RustBot`` (ADR-006).
+    ``Bot`` (ADR-006).
     """
-    bot = py_bot or RustBot()
+    bot = py_bot or Bot()
     address = get_checksum_address(address)
 
     # ADR-006: tokens must be in the same Bot as the pool.

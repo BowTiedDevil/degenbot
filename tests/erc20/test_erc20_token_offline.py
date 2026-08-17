@@ -6,11 +6,11 @@ Uses I/O-free token construction without requiring a live RPC.
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from tests.helpers.erc20_factory import make_erc20
 
-_PY_BOT = RustBot()
+_PY_BOT = Bot()
 
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")

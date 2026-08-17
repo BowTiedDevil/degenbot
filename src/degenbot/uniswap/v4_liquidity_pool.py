@@ -17,7 +17,7 @@ V4-specific identity (pool_id, pool_manager_address, pool_key, hook_address,
 protocol_fee, lp_fee, state_view_address) stays Python-side — matches V3
 keeping tokens/factory/fee Python-side. The hook admission floor (reject
 amount-modifying hooks + dynamic fees) lives in Rust
-(`BotState::register_v4_pool`), surfaced at `RustBot.register_v4_pool` (ADR-005
+(`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool` (ADR-005
 slice 9a) so the companion never holds a hooked pool.
 
 `_bitmap_override` mirrors V3: the verbatim tick_bitmap words the
@@ -163,7 +163,7 @@ class UniswapV4Pool(
 
     Hook admission floor: pools with amount-modifying hooks (`hook_flags & 0xCC
     != 0`) or dynamic fees (`fee == 0x100000`) are rejected in Rust
-    (`BotState::register_v4_pool`), surfaced at `RustBot.register_v4_pool` as
+    (`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool` as
     typed exceptions — so this companion never holds a hooked/dynamic-fee pool.
     """
 
@@ -204,7 +204,7 @@ class UniswapV4Pool(
 
         ``UniswapV4Pool`` is a Python companion over a Rust-owned
         ``LiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``RustBot`` — there is no way for a caller to
+        registering a pool in a ``Bot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.build_pool(address)``

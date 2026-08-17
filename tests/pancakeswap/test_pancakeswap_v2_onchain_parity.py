@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from tests.helpers.erc20_factory import make_erc20
@@ -96,7 +96,7 @@ _TOKEN_AMOUNT_MULTIPLIERS = (
     0.75,
 )
 
-_PYBOT = RustBot()
+_PYBOT = Bot()
 
 
 def _load_cassette() -> dict[str, Any]:

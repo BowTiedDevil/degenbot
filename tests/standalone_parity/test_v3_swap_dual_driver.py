@@ -1,7 +1,7 @@
 """Tier-2 behavioral dual-driver parity — V3 concentrated-liquidity swap.
 
 The behavioral companion to the Rust `parity_v3_swap.rs` test. Proves the
-**same** canonical V3 fixture driven through the **Python consumer** (`RustBot`,
+**same** canonical V3 fixture driven through the **Python consumer** (`Bot`,
 the PyO3 binding) produces the **same** `amount_out` as the Rust consumer
 (`BotState` directly).
 
@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 
 # ---- the shared canonical fixture (loaded, not copied) ----
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "v3_swap.json"
@@ -55,7 +55,7 @@ _ZERO_FOR_ONE = _P["zero_for_one"]
 _EXPECTED_AMOUNT_OUT_ZFO = int(_E["amount_out_zfo"])
 
 
-def _register_canonical_v3_pool(py_bot: RustBot) -> int:
+def _register_canonical_v3_pool(py_bot: Bot) -> int:
     """Register the canonical V3 pool through the Python consumer path.
 
     Mirrors the Rust test's inline registration — same fixture (loaded from the
@@ -81,7 +81,7 @@ def _register_canonical_v3_pool(py_bot: RustBot) -> int:
 
 
 def test_python_consumer_v3_swap_matches_recorded_constant() -> None:
-    """The RustBot Python driver reproduces the recorded V3 swap constant.
+    """The Bot Python driver reproduces the recorded V3 swap constant.
 
     Python side of the Tier-2 dual-driver gate (V3 CL path). The Rust side
     (`rust/crates/degenbot/tests/parity_v3_swap.rs`) loads the same fixture
@@ -89,7 +89,7 @@ def test_python_consumer_v3_swap_matches_recorded_constant() -> None:
     `_EXPECTED_AMOUNT_OUT_ZFO`. Divergence = a lossy FFI seam on the CL swap
     path.
     """
-    py_bot = RustBot()
+    py_bot = Bot()
     pool_id = _register_canonical_v3_pool(py_bot)
     assert pool_id == 1, "first registered pool gets id 1 (parity contract)"
 

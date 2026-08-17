@@ -1,7 +1,7 @@
 """Tests for the shared-py_bot option on make_v2_pool (ADR-006 D1 shared-core).
 
 When `py_bot` is supplied, the pool registers against that bot's shared
-BotState (mirrors `Bot.build_pool`), rather than a fresh per-call RustBot. This
+BotState (mirrors `Bot.build_pool`), rather than a fresh per-call Bot. This
 lets synthetic V2 pools register against the SAME core the engine adopts —
 enabling offline integration tests of EngineRegistry.register_path.
 """
@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from fractions import Fraction
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_SHARED = RustBot()
+_SHARED = Bot()
 
 
-def _make_tokens(py_bot: RustBot):
+def _make_tokens(py_bot: Bot):
     weth = make_erc20(
         py_bot,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -39,7 +39,7 @@ def _make_tokens(py_bot: RustBot):
 
 def test_make_v2_pool_with_py_bot_registers_against_that_bot() -> None:
     """A pool built with py_bot=shared registers against that bot's BotState,
-    so its pool_id resolves there. A fresh RustBot does NOT see it — proving the
+    so its pool_id resolves there. A fresh Bot does NOT see it — proving the
     shared bot (not a per-call one) owns the registration."""
     weth, usdc = _make_tokens(_SHARED)
 
@@ -59,7 +59,7 @@ def test_make_v2_pool_with_py_bot_registers_against_that_bot() -> None:
     # The shared bot holds the pool — pool_id resolves there.
     assert _SHARED.get_pool(pool._py_pool.pool_id) is not None
 
-    # A different, fresh RustBot does NOT — proving the registration is scoped to
+    # A different, fresh Bot does NOT — proving the registration is scoped to
     # the supplied bot, mirroring Bot.build_pool's shared-core wiring.
-    other = RustBot()
+    other = Bot()
     assert other.get_pool(pool._py_pool.pool_id) is None

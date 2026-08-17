@@ -3,11 +3,11 @@
 Mirrors ``tests/helpers/v3_pool_factory.py`` and ``v4_pool_factory.py``
 (ADR-005 slice 11b): every direct ``CurveStableswapPool(...)`` construction in
 the test suite routes through ``make_curve_pool`` so the ``LiquidityPool``
-handle is wired through ``RustBot::register_curve_pool`` → ``get_pool`` →
+handle is wired through ``Bot::register_curve_pool`` → ``get_pool`` →
 companion, matching the ``Bot.build_pool()`` flow (ADR-005).
 
-Each call creates its own short-lived ``RustBot`` (the returned handle holds an
-``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) — so
+Each call creates its own short-lived ``Bot`` (the returned handle holds an
+``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
 each test pool is fully isolated (no shared mutable state across tests).
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import (
     CurveStableswapPool,
@@ -75,16 +75,16 @@ def make_curve_pool(
     gamma: int | None = None,
     offpeg_fee_multiplier: int | None = None,
     strategies: PoolStrategies | None = None,
-    py_bot: RustBot | None = None,
+    py_bot: Bot | None = None,
     pool_class: type[CurveStableswapPool] = CurveStableswapPool,
 ) -> CurveStableswapPool:
     """Construct an I/O-free Curve companion over a fresh ``LiquidityPool`` handle.
 
-    Registers the pool in a short-lived ``RustBot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) —
+    Registers the pool in a short-lived ``Bot`` (the returned handle holds an
+    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) —
     so each test pool is fully isolated (no shared mutable state across tests).
     The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``RustBot``); that's fine — the pool reads balances from its
+    ``make_erc20`` ``Bot``); that's fine — the pool reads balances from its
     own ``Bot`` and token metadata from the token handle, independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
@@ -100,7 +100,7 @@ def make_curve_pool(
     address_checksum = get_checksum_address(address)
     state_block_int = state_block if state_block is not None else 0
 
-    bot = py_bot if py_bot is not None else RustBot()
+    bot = py_bot if py_bot is not None else Bot()
 
     rate_multipliers, precision_mults = _compute_rate_and_precision_multipliers(
         tokens, precision_multipliers, CurveStableswapPool.PRECISION_DECIMALS
@@ -112,7 +112,7 @@ def make_curve_pool(
     )
 
     # Pre-register the pool's tokens (and underlying / LP tokens) in the
-    # factory's bot so the handle resolves RustErc20Token companions off them
+    # factory's bot so the handle resolves Erc20Token companions off them
     # via get_curve_tokens / get_curve_tokens_underlying / get_curve_lp_token
     # (mirror of the Balancer stable factory + ADR-006).
     def _ensure_token(tok: Erc20Token) -> None:

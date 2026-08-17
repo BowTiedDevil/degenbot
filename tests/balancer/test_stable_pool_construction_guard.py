@@ -2,7 +2,7 @@
 
 A ``BalancerV2StablePool`` is a Python companion over a Rust-owned
 ``LiquidityPool`` handle. The handle can only be produced by registering a
-pool in a ``RustBot`` (production: ``BalancerBuilder``; tests:
+pool in a ``Bot`` (production: ``BalancerBuilder``; tests:
 ``make_balancer_stable_pool``). Direct constructor calls are rejected so that
 the only paths to a pool instance are the ones that wire the handle —
 mirroring Polars' ``_from_pydf`` pattern. The seam also asserts the handle is
@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from degenbot.balancer.stable_pools import BalancerV2StablePool
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.exceptions import DegenbotValueError
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -54,7 +54,7 @@ class TestWrongFamilyHandle:
 
     def test_v2_handle_raises_degenbot_value_error(self) -> None:
         """A V2-family handle is not a Balancer stable pool."""
-        bot = RustBot()
+        bot = Bot()
         t0 = make_erc20(bot, address="0x" + "a1" * 20, name="T0", symbol="T0", decimals=18)
         t1 = make_erc20(bot, address="0x" + "b2" * 20, name="T1", symbol="T1", decimals=18)
         v2_pool = make_v2_pool(
@@ -85,7 +85,7 @@ class TestRateProviderIsStored:
         """A pool with no injected provider reports the static fallback."""
         from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 
-        bot = RustBot()
+        bot = Bot()
         t0 = make_erc20(bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
         t1 = make_erc20(bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
         pool = make_balancer_stable_pool(
@@ -118,7 +118,7 @@ class TestRateProviderIsStored:
 
         from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 
-        bot = RustBot()
+        bot = Bot()
         t0 = make_erc20(bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
         t1 = make_erc20(bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
         # ComposableStablePool (bpt_idx=0) + dynamic provider.

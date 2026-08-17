@@ -51,7 +51,7 @@ covered by a direct unit test on `skip_bpt` in
 
 from __future__ import annotations
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
 
@@ -97,8 +97,8 @@ class _CapturedRateProvider:
 
 
 def _build_composable_stable_pool() -> object:
-    """Build the shared ComposableStable fixture on a fresh short-lived RustBot."""
-    bot = RustBot(chain_id=1)
+    """Build the shared ComposableStable fixture on a fresh short-lived Bot."""
+    bot = Bot(chain_id=1)
     t0 = make_erc20(bot, "0x" + "0" * 38 + "aa", name="A", symbol="A", decimals=18)
     t1 = make_erc20(bot, "0x" + "0" * 38 + "bb", name="B", symbol="B", decimals=18)
     tbpt = make_erc20(bot, "0x" + "0" * 38 + "cc", name="BPT", symbol="BPT", decimals=18)

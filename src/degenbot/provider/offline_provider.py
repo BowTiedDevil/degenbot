@@ -10,7 +10,7 @@ delegating shell: it parses the recorded JSON for metadata (``chain_id``,
 ``block_numbers``) and holds a real Rust :class:`AlloyProvider` (``PyAlloyProvider``)
 that answers ``call``/``get_code``/``get_block``/``get_block_number`` via the
 offline transport — so a consumer cannot distinguish an ``OfflineProvider`` from
-a live provider. ``RustBotIo`` can hold it natively (O2/B1).
+a live provider. ``BotIo`` can hold it natively (O2/B1).
 
 Example:
     >>> from degenbot.provider import OfflineProvider
@@ -46,7 +46,7 @@ class OfflineProvider:
     ``get_block``, ``get_block_number``, ``get_block_timestamp``) to a real
     Rust :class:`AlloyProvider` built over an in-memory offline transport, so it is
     indistinguishable from a live provider to any consumer (including
-    :class:`RustBotIo`). Recorded-JSON metadata (``chain_id``, ``block_numbers``)
+    :class:`BotIo`). Recorded-JSON metadata (``chain_id``, ``block_numbers``)
     is parsed in Python for the convenience accessors.
 
     Attributes:

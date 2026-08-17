@@ -4,12 +4,12 @@ This demonstrates how the I/O-free pattern eliminates the need for mocks
 when testing pool logic. All on-chain data is injected via a CurveDataProvider.
 """
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 
-_PY_BOT = RustBot()
+_PY_BOT = Bot()
 
 
 def test_curve_plain_pool_with_data_provider():

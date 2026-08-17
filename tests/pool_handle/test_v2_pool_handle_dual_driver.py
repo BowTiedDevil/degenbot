@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import RustBot
+from degenbot._ffi import Bot
 
 
 @pytest.fixture
 def v2_pool():
-    bot = RustBot(1)
+    bot = Bot(1)
     pool_id = bot.register_v2_pool_test_only(
         address="0x1111111111111111111111111111111111111111",
         token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -54,7 +54,7 @@ def test_calculate_tokens_out(v2_pool) -> None:
 
 def test_dex_name_resolved_from_known_sushiswap_deployment() -> None:
     # SushiSwap V2 mainnet factory (chain 1) → "sushiswap".
-    bot = RustBot(1)
+    bot = Bot(1)
     pool_id = bot.register_v2_pool_test_only(
         address="0x3333333333333333333333333333333333333333",
         token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -78,7 +78,7 @@ def test_dex_name_resolved_from_known_sushiswap_deployment() -> None:
 
 def test_dex_name_unknown_deployment_is_none() -> None:
     # Synthetic factory absent from deployments.json → None (generic, no error).
-    bot = RustBot(1)
+    bot = Bot(1)
     pool_id = bot.register_v2_pool_test_only(
         address="0x4444444444444444444444444444444444444444",
         token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

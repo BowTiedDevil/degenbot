@@ -10,7 +10,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.address_comparable import AddressComparable
 from tests.fakes.tokens import FakeToken
@@ -20,7 +20,7 @@ from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 
-_PY_BOT = RustBot()
+_PY_BOT = Bot()
 
 # ── Addresses used across tests ──
 

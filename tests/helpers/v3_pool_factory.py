@@ -6,8 +6,8 @@ Mirrors ``tests/helpers/v2_pool_factory.py`` (ADR-005 slice 4): every direct
 ``Bot::register_v3_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow (ADR-005 slice 8b).
 
-Each call creates its own short-lived ``RustBot`` (the returned handle holds an
-``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) — so
+Each call creates its own short-lived ``Bot`` (the returned handle holds an
+``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) — so
 each test pool is fully isolated (no shared mutable state across tests, which
 matters because pools are mutable, unlike slice-3's tokens).
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
@@ -83,17 +83,17 @@ def make_v3_pool(
     tick_bitmap: dict[int, Any] | None = None,
     tick_data: dict[int, Any] | None = None,
     tick_data_fetcher: Any = None,
-    py_bot: RustBot | None = None,
+    py_bot: Bot | None = None,
     pool_class: type[UniswapV3Pool] = UniswapV3Pool,
 ) -> UniswapV3Pool:
     """Construct an I/O-free V3 companion over a fresh ``LiquidityPool`` handle.
 
-    Registers the pool in a short-lived ``RustBot`` (the returned handle holds an
-    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``RustBot``) —
+    Registers the pool in a short-lived ``Bot`` (the returned handle holds an
+    ``Arc`` clone of the underlying ``Bot``, so it outlives the ``Bot``) —
     so each test pool is fully isolated (no shared mutable state across tests,
     which matters because pools are mutable, unlike slice-3's tokens).
     The token companions passed in may live in a different ``Bot`` (their own
-    ``make_erc20`` ``RustBot``); that's fine — the pool reads scalars from its
+    ``make_erc20`` ``Bot``); that's fine — the pool reads scalars from its
     own ``Bot`` and token metadata from the token's handle, independently.
 
     ``Bot.build_pool()`` is the production path (registers in the session's
@@ -108,7 +108,7 @@ def make_v3_pool(
     """
     address_checksum = get_checksum_address(address)
 
-    bot = py_bot if py_bot is not None else RustBot()
+    bot = py_bot if py_bot is not None else Bot()
     # ADR-006 rolling-start race closure: seed tick_data INLINE in
     # ``register_v3_pool`` (one BotState write lock) so a pump Mint/Burn
     # landing after registration applies on top of the seed and is never
@@ -151,7 +151,7 @@ def make_v3_pool(
     # the pool — ``_from_py_pool`` recovers them via ``py_pool.get_token0``/
     # ``get_token1``, which look up ``token0_address``/``token1_address`` in
     # the pool's own ``BotState``. The token companions passed in may have been
-    # built against a different ``RustBot``; re-register their metadata here.
+    # built against a different ``Bot``; re-register their metadata here.
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)

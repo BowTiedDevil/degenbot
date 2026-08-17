@@ -14,7 +14,7 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot.bot import RustBot, RustBotIo
+    from degenbot._ffi import Bot, BotIo
     from degenbot.database import Erc20TokenRow
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.registry import TokenRegistry
@@ -35,7 +35,7 @@ class Erc20Builder:
         default_chain_id: ChainId | None = None,
         db: DatabaseSessionManager,
         tokens: TokenRegistry,
-        py_bot: RustBot,
+        py_bot: Bot,
     ) -> None:
         """Initialize the instance."""
         self._default_chain_id = default_chain_id
@@ -49,18 +49,18 @@ class Erc20Builder:
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
-        io: RustBotIo | None = None,  # ruff:ignore[unused-method-argument] - ignored compat shim (S5 strips it)
+        io: BotIo | None = None,  # ruff:ignore[unused-method-argument] - ignored compat shim (S5 strips it)
     ) -> Erc20Token:
         """Construct an ERC-20 token, delegating metadata resolution to the Rust core.
 
         The DB-first + on-chain resolution, write-back and `BotState`
-        registration are Rust-owned (VK3YDM-S2): `RustBot.build_erc20_token`
+        registration are Rust-owned (VK3YDM-S2): `Bot.build_erc20_token`
         runs `build_erc20_metadata` over the attached `ConstructionIo`. This
         Python shell keeps only the *companion* concerns: the `TokenRegistry`
         idempotent short-circuit (35NMBX Guard 1), the `EtherPlaceholder`
         special case, and the `Erc20Token._from_py_token` display wrapper.
-        The `io` argument is a retained compat shim (ignored — the RustBot owns
-        the `ConstructionIo`); it is stripped when `RustBotIo` retires
+        The `io` argument is a retained compat shim (ignored — the Bot owns
+        the `ConstructionIo`); it is stripped when `BotIo` retires
         (VK3YDM-S5).
 
         Returns:
@@ -77,9 +77,9 @@ class Erc20Builder:
 
         # Check registry first
         if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
-            # ADR-006: ensure the token is registered in the shared RustBot
+            # ADR-006: ensure the token is registered in the shared Bot
             # (Rust BotState.tokens) — a token pre-registered in the Python
-            # registry might not be in the RustBot yet. Pool companions recover
+            # registry might not be in the Bot yet. Pool companions recover
             # tokens via py_pool.get_token0/get_token1, which look up the
             # identity's token address in the Rust BotState.tokens registry.
             if self._py_bot.get_token(address) is None:
@@ -110,11 +110,11 @@ class Erc20Builder:
             return token
 
         # DB-first + on-chain + write-back + register: Rust-owned (VK3YDM-S2).
-        # `RustBot.build_erc20_token` resolves name/symbol/decimals (DB row -> on-
+        # `Bot.build_erc20_token` resolves name/symbol/decimals (DB row -> on-
         # chain batched read -> alternate-prototype fallback -> UNKNOWN, with a
         # blank-row write-back) and registers into the shared Rust
         # `BotState.tokens` (ADR-006) in one core call over the attached
-        # `ConstructionIo`. Returns a thin `RustErc20Token` handle.
+        # `ConstructionIo`. Returns a thin `Erc20Token` handle.
         try:
             py_token = self._py_bot.build_erc20_token(address, chain_id)
         except RuntimeError as exc:
@@ -166,7 +166,7 @@ class Erc20Builder:
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
-        io: RustBotIo | None = None,
+        io: BotIo | None = None,
     ) -> list[Erc20Token]:
         """Build MANY tokens, batching metadata reads into ONE Multicall3 read.
 
@@ -192,7 +192,7 @@ class Erc20Builder:
         for raw_address in addresses:
             address = get_checksum_address(raw_address)
             if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
-                # ADR-006: ensure the token is registered in the shared RustBot.
+                # ADR-006: ensure the token is registered in the shared Bot.
                 if self._py_bot.get_token(address) is None:
                     self._py_bot.register_token(
                         address,
@@ -277,7 +277,7 @@ class Erc20Builder:
         address: str,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: RustBotIo | None = None,
+        io: BotIo | None = None,
     ) -> int:
         """Retrieve the ERC-20 balance for the given address.
 
@@ -296,7 +296,7 @@ class Erc20Builder:
             return balance
 
         # ADR-005 slice 14d: delegate the balanceOf choreography to Rust
-        # (RustBotIo is the only executor; the Python parity-gate fallback is retired).
+        # (BotIo is the only executor; the Python parity-gate fallback is retired).
         balance = io.fetch_token_balance(token.address, address, block=block_number)
 
         token.set_cached_balance(address, block_number, balance)
@@ -309,7 +309,7 @@ class Erc20Builder:
         spender: str,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: RustBotIo | None = None,
+        io: BotIo | None = None,
     ) -> int:
         """Retrieve the amount that can be spent by `spender` on behalf of `owner`.
 
@@ -339,7 +339,7 @@ class Erc20Builder:
         token: Erc20Token,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: RustBotIo | None = None,
+        io: BotIo | None = None,
     ) -> int:
         """Retrieve the total supply for this token.
 
@@ -368,7 +368,7 @@ class Erc20Builder:
         address: str,
         block_identifier: BlockIdentifier | None = None,
         *,
-        io: RustBotIo | None = None,
+        io: BotIo | None = None,
     ) -> int:
         """Retrieve the native ETH balance for the given address.
 
@@ -383,10 +383,10 @@ class Erc20Builder:
         return io.get_balance(address, block=block_number)
 
 
-# --- Package-level helpers (RustBotIo equivalents of Erc20Token.fetch_*) ---
+# --- Package-level helpers (BotIo equivalents of Erc20Token.fetch_*) ---
 
 
-def _resolve_block_number(io: RustBotIo, block_identifier: BlockIdentifier | None) -> int:
+def _resolve_block_number(io: BotIo, block_identifier: BlockIdentifier | None) -> int:
     """Resolve a block identifier to a block number.
 
     Returns:

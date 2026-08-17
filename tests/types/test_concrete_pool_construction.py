@@ -9,7 +9,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
@@ -23,7 +23,7 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
 
-_PY_BOT = RustBot()
+_PY_BOT = Bot()
 
 # ---------------------------------------------------------------------------
 # Shared tokens (Ethereum mainnet)

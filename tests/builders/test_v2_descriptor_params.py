@@ -12,7 +12,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot._ffi.dex_identity import dex_identity
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.types import LiquidityPool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -20,7 +20,7 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
-_PY_BOT = RustBot()
+_PY_BOT = Bot()
 
 
 def _make_token(addr: str, *, symbol: str, decimals: int) -> Erc20Token:
@@ -28,9 +28,9 @@ def _make_token(addr: str, *, symbol: str, decimals: int) -> Erc20Token:
 
 
 class _RegisterSpy:
-    """Wraps a RustBot, capturing register_v2_pool kwargs before delegating."""
+    """Wraps a Bot, capturing register_v2_pool kwargs before delegating."""
 
-    def __init__(self, py_bot: RustBot) -> None:
+    def __init__(self, py_bot: Bot) -> None:
         self._py_bot = py_bot
         self.captured_kwargs: dict | None = None
 
@@ -57,7 +57,7 @@ class TestMakeV2PoolPassesDescriptorParams:
         """Without dex, register_v2_pool receives variant='uniswap-v2'."""
         token0 = _make_token("0x" + "1a" * 20, symbol="T0", decimals=18)
         token1 = _make_token("0x" + "1b" * 20, symbol="T1", decimals=18)
-        spy = _RegisterSpy(RustBot())
+        spy = _RegisterSpy(Bot())
 
         make_v2_pool(
             "0x" + "2c" * 20,
@@ -80,7 +80,7 @@ class TestMakeV2PoolPassesDescriptorParams:
         """With dex, variant comes from dex.variant."""
         token0 = _make_token("0x" + "3a" * 20, symbol="T0", decimals=18)
         token1 = _make_token("0x" + "3b" * 20, symbol="T1", decimals=18)
-        spy = _RegisterSpy(RustBot())
+        spy = _RegisterSpy(Bot())
         dex = dex_identity("sushiswap-v2")
         assert dex is not None
 
@@ -101,7 +101,7 @@ class TestMakeV2PoolPassesDescriptorParams:
         """Explicit stable_swap + fee_denominator are forwarded."""
         token0 = _make_token("0x" + "5a" * 20, symbol="T0", decimals=18)
         token1 = _make_token("0x" + "5b" * 20, symbol="T1", decimals=18)
-        spy = _RegisterSpy(RustBot())
+        spy = _RegisterSpy(Bot())
 
         make_v2_pool(
             "0x" + "6c" * 20,

@@ -2,7 +2,7 @@
 
 The behavioral companion to the Rust `rust/crates/degenbot/tests/parity_erc20.rs`
 test. Proves the **same** canonical ERC-20 fixture driven through the **Python
-consumer** (`RustBot.build_erc20_token`, the PyO3 binding) resolves the **same**
+consumer** (`Bot.build_erc20_token`, the PyO3 binding) resolves the **same**
 `(name, symbol, decimals)` as the Rust consumer (`build_erc20_metadata` against
 a `ConstructionIo`).
 
@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.crypto import function_selector
 
 # ---- the shared canonical fixture (loaded, not copied) ----
@@ -90,7 +90,7 @@ def _offline_provider() -> RustAlloyProvider:
 
 def test_erc20_metadata_dual_driver_matches_rust() -> None:
     """The Python consumer resolves the SAME metadata as the Rust consumer."""
-    bot = RustBot(chain_id=1)
+    bot = Bot(chain_id=1)
     bot.attach_construction_io(_offline_provider(), None)
 
     token = bot.build_erc20_token(_TOKEN, 1)

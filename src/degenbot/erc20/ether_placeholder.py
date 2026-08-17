@@ -11,12 +11,12 @@ class EtherPlaceholder(Erc20Token):
     Used by pools to represent native Ether. Under ADR-005, metadata
     (name="Ether Placeholder", symbol="ETH", decimals=18) is registered in the
     Rust ``Bot`` when an ``EtherPlaceholder`` is built; the inherited
-    delegating properties read it back through the ``RustErc20Token`` handle.
+    delegating properties read it back through the Rust ``Erc20Token`` handle.
 
     Direct construction is forbidden (inherited from :class:`Erc20Token`). Use
     :meth:`Erc20Token._from_py_token` — which produces an ``EtherPlaceholder``
     instance when called on the subclass — after registering the metadata in a
-    ``RustBot``.
+    ``Bot``.
     """
 
     addresses = (

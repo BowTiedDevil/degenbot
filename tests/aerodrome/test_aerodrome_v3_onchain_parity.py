@@ -37,7 +37,7 @@ from typing import Any, Self
 import pytest
 
 from degenbot.aerodrome.pools import AerodromeV3Pool
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -85,7 +85,7 @@ _TOKEN_AMOUNT_MULTIPLIERS = (
     0.75,
 )
 
-_PYBOT = RustBot()
+_PYBOT = Bot()
 
 
 def _load_cassette() -> dict[str, Any]:

@@ -169,3 +169,9 @@ out.)
   companion) is the foundation this seam sits on. This ADR specializes
   ADR-005's "Python companion" layer by pinning where the FFI seam lives
   (the `degenbot.<domain>` home) and what it hides (`_ffi`).
+
+## Amendment (2026-08-17): engine-handle exception
+
+The blanket leaf-import ban takes one structural exception, made permanent by the ADR-032 fork: the five engine-handle pyclasses (``degenbot._ffi.Bot``, ``BotIo``, ``Erc20Token``,``DatabaseSnapshot``, ``DatabasePositionQuery``). These handles ARE the objects first-party code drives to run the Rust engine, and their clean names collide with same-named Python driver/model classes (``degenbot.bot.Bot``, ``degenbot.erc20.Erc20Token``, the snapshot/query shells). Since ADR-032 makes the module path the disambiguator, the companion-re-export route these five names previously required (the route that forced the ``Rust*`` collision prefixes) is unnecessary: first-party code imports them directly from ``_ffi``.
+
+Mechanically, ``tests/test_ffi_boundary.py`` permits an ``_ffi`` (or ``_ffi.db``) import in a non-``__init__`` file ONLY when every imported name is one of the five ENGINE_HANDLES; every other ``_ffi`` symbol still requires a domain home. The handles are deliberately un-homed: engine plumbing, not a pydantic domain surface — the raw-internal category of the pydantic-core model.

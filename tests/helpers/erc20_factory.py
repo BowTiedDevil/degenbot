@@ -1,11 +1,11 @@
 """Test helpers for constructing Erc20Token/EtherPlaceholder companions.
 
-Under ADR-005, ``Erc20Token`` is a Python companion over a ``RustErc20Token``
+Under ADR-005, ``Erc20Token`` is a Python companion over a ``Erc20Token``
 handle (token metadata is owned by the Rust ``Bot``). These helpers register
 the metadata and wrap the handle, mirroring what ``Erc20Builder`` does in
 production. They are idempotent (``Bot::register_token`` asserts on a
 duplicate address) so they're safe to call with a shared module-level
-``RustBot`` across test functions.
+``Bot`` across test functions.
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from typing import TYPE_CHECKING
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 
 if TYPE_CHECKING:
-    from degenbot.bot import RustBot
+    from degenbot._ffi import Bot
 
 
 def make_erc20(
-    py_bot: RustBot,
+    py_bot: Bot,
     address: str,
     *,
     name: str,
@@ -29,10 +29,10 @@ def make_erc20(
     oracle_address: str | None = None,
     state_cache_depth: int = 8,
 ) -> Erc20Token:
-    """Register token metadata in the Rust ``Bot`` and wrap the ``RustErc20Token`` handle.
+    """Register token metadata in the Rust ``Bot`` and wrap the ``Erc20Token`` handle.
 
     Idempotent: if the address is already registered, reuses the existing
-    ``RustErc20Token`` (``Bot::register_token`` asserts on duplicates).
+    ``Erc20Token`` (``Bot::register_token`` asserts on duplicates).
     """
     py_token = py_bot.get_token(address)
     if py_token is None:
@@ -45,7 +45,7 @@ def make_erc20(
 
 
 def make_ether_placeholder(
-    py_bot: RustBot,
+    py_bot: Bot,
     address: str,
     *,
     chain_id: int = 1,

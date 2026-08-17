@@ -6,11 +6,11 @@ from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
 
+from degenbot._ffi import Erc20Token as _TokenHandle
 from degenbot.abi import AbiDecodeError, decode
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Erc20TokenTable
-from degenbot.erc20 import RustErc20Token
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.provider import AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
@@ -58,7 +58,7 @@ class Erc20Token(AbstractErc20Token):
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body (red-knot rejects
     # `self.x: T = ...` as `invalid-type-form`).
-    _py_token: RustErc20Token
+    _py_token: _TokenHandle
     _state_cache_depth: int
     _cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int]
     _cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]]
@@ -69,14 +69,14 @@ class Erc20Token(AbstractErc20Token):
         """Direct construction is forbidden.
 
         ``Erc20Token`` is a Python companion over a Rust-owned
-        ``RustErc20Token`` handle. The handle can only be produced by
-        registering token metadata in a ``RustBot`` — there is no way for a
+        ``_TokenHandle`` handle. The handle can only be produced by
+        registering token metadata in a ``Bot`` — there is no way for a
         caller to hand-build one. Use the registered entry points instead:
 
         - Production: ``Bot.get_token(address)``
         - Tests: ``make_erc20(...)``
 
-        Both register the token metadata in Rust, obtain the ``RustErc20Token``
+        Both register the token metadata in Rust, obtain the ``_TokenHandle``
         handle, and wrap it via :meth:`_from_py_token` (mirroring Polars'
         ``_from_pydf`` seam).
 
@@ -88,19 +88,19 @@ class Erc20Token(AbstractErc20Token):
             f"{type(self).__name__} cannot be constructed directly. "
             "Use Bot.get_token(address) (production) or make_erc20(...) "
             "(tests) to register the token metadata in Rust and obtain the "
-            "RustErc20Token handle to wrap."
+            "_TokenHandle handle to wrap."
         )
         raise TypeError(msg)
 
     @classmethod
     def _from_py_token(
         cls,
-        py_token: RustErc20Token,
+        py_token: _TokenHandle,
         *,
         oracle_address: str | None = None,
         state_cache_depth: int = 8,
     ) -> Self:
-        """Wrap a Rust-owned ``RustErc20Token`` handle as a Python companion.
+        """Wrap a Rust-owned ``_TokenHandle`` handle as a Python companion.
 
         Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Rust
         owns the token metadata (address, name, symbol, decimals, chain_id)
@@ -111,7 +111,7 @@ class Erc20Token(AbstractErc20Token):
 
         Only ``Bot.get_token()`` / ``Bot.build_erc20token()`` (production)
         and ``make_erc20`` (tests) should call this — they have already
-        registered the token metadata in a ``RustBot`` and obtained the handle.
+        registered the token metadata in a ``Bot`` and obtained the handle.
         ``cls`` is used so subclasses that only set ClassVars inherit this
         seam and produce instances of the subclass.
 

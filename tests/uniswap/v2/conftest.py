@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import AlloyProvider, OfflineProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
@@ -22,7 +22,7 @@ from tests.constants import (
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-_PY_BOT = RustBot()
+_PY_BOT = Bot()
 
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"

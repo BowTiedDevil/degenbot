@@ -1,7 +1,8 @@
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.bot import Bot, RustBot
+from degenbot._ffi import Bot as _Engine
+from degenbot.bot import Bot
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -13,7 +14,7 @@ from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 from tests.standalone_anvil import seed as seed_catalog
 
-_PY_BOT = RustBot()
+_PY_BOT = _Engine()
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

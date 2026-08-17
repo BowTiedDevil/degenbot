@@ -146,7 +146,7 @@ class _FakeBot:
 
 
 class _RecordingPyBot:
-    """A stand-in for the Rust ``RustBot._py_bot`` whose ``close_snapshot_tx``
+    """A stand-in for the Rust ``Bot._py_bot`` whose ``close_snapshot_tx``
     records invocation (and optionally trips the XEANMB canary RuntimeError,
     as the real one does when in-flight build workers hold an ``Arc`` clone)."""
 
@@ -379,7 +379,7 @@ class TestBackrunSessionRun:
         await session.start()
         await session.run()
 
-        # bot released + dropped; engine_registry survives (holds its own RustBot ref)
+        # bot released + dropped; engine_registry survives (holds its own Bot ref)
         assert bot.released is True
         assert session.bot is None
         assert session.engine_registry is engine_registry

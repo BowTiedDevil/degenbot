@@ -4,7 +4,7 @@ py_bot → EngineRegistry.register_path → real engine eager-solve.
 Offline integration test of the registration surface. In-memory SQLite seeded
 with synthetic V2 pools (topology only — reserves live in a side dict so we
 can hand-craft a profitable cycle deterministically), fed to find_paths_async.
-The returned pools are built against a single shared RustBot (ADR-006 D1 shared
+The returned pools are built against a single shared Bot (ADR-006 D1 shared
 core), registered with a real ArbitrageEngine, and a 2-hop WETH-A-WETH cycle
 is registered via register_path. The engine eager-solves it and surfaces the
 profitable result via latest_results.
@@ -23,7 +23,7 @@ import pytest
 from eth_typing import ChainId
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
 from degenbot.database.models.base import ExchangeTable
@@ -129,7 +129,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     shared bot, directions resolved, register_path + eager solve via the real
     engine adopting the shared BotState (ADR-006 D1).
     """
-    shared_py_bot = RustBot()
+    shared_py_bot = Bot()
     weth = make_erc20(
         shared_py_bot,
         WETH_ADDR,
@@ -202,7 +202,7 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
 
     # The engine adopts the shared core (ADR-006 D1). The synthetic test's job
     # is registration/solve, not the bot= production path (covered by VQURUB's
-    # FakeBot test) — use the engine seam directly with a bare shared RustBot.
+    # FakeBot test) — use the engine seam directly with a bare shared Bot.
     registry = EngineRegistry(
         bot=None,
         engine=ArbitrageEngine(py_bot=shared_py_bot),

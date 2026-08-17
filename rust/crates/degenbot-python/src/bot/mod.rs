@@ -123,7 +123,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// Rust-owned `BotState`; `BlockPump` clones the same `Arc<Bot>` so its
 /// `dispatch_log` writes flow through to the engine's reads (N handles → one
 /// state — the Polars three-layer invariant, preserved + generalized by D4).
-#[pyclass(name = "RustBot", skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(name = "Bot", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyBot {
     bot: Arc<Bot>,
     /// ADR-006 D4 (T3): the pump lifecycle state, shared with the
@@ -1316,7 +1316,7 @@ impl PyBot {
         // would be a caller bug — surface it rather than silently no-op.
         if pool_id.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "RustBot.unregister_pool does not handle V4 (pool_id set); \
+                "Bot.unregister_pool does not handle V4 (pool_id set); \
                  V4 unregister is engine-side — use the engine’s unregister path.",
             ));
         }

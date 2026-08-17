@@ -2,7 +2,7 @@
 
 The behavioral companion to the Rust `parity_v2_swap.rs` test. Proves the
 **same** canonical fixture driven through the **Python consumer** path
-(`RustBot`, the PyO3 binding) produces the **same** `amount_out` as the
+(`Bot`, the PyO3 binding) produces the **same** `amount_out` as the
 closed-form Uniswap V2 `getAmountOut` reference — which the Rust consumer
 test (`rust/crates/degenbot/tests/parity_v2_swap.rs`) independently also
 asserts.
@@ -29,14 +29,14 @@ parity_v2_swap.rs` exactly. The expected output is the closed-form V2
 
 from __future__ import annotations
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 
 # ---- the shared canonical fixture (mirror in the Rust parity test) ----
 _TOKEN0 = "0x" + "0" * 39 + "A"
 _TOKEN1 = "0x" + "0" * 39 + "B"
 _POOL = "0x" + "0" * 39 + "C"
 # The Uniswap V2 mainnet factory (the `UNISWAP_V2` preset's `factory`). With
-# `RustBot(chain_id=0)` the (chain, factory) pair is not in the deployments
+# `Bot(chain_id=0)` the (chain, factory) pair is not in the deployments
 # JSON, so the CREATE2 verification is skipped — ad-hoc registration with the
 # arbitrary pool address above is preserved. This matches the Rust consumer
 # path, where the core's `register_v2_pool` does no CREATE2 check.
@@ -63,7 +63,7 @@ _EXPECTED_AMOUNT_OUT = 498_003_490_519_951
 _EXPECTED_AMOUNT_IN = 1_000_000_000
 
 
-def _register_canonical_v2_pool(py_bot: RustBot) -> int:
+def _register_canonical_v2_pool(py_bot: Bot) -> int:
     """Register the canonical V2 pool through the Python consumer path.
 
     Mirrors the Rust test's `register_canonical_v2_pool` helper — same
@@ -85,7 +85,7 @@ def _register_canonical_v2_pool(py_bot: RustBot) -> int:
 
 
 def test_python_consumer_matches_closed_form() -> None:
-    """The RustBot Python driver reproduces the closed-form V2 getAmountOut.
+    """The Bot Python driver reproduces the closed-form V2 getAmountOut.
 
     This is the Python side of the Tier-2 dual-driver gate. The Rust side
     (`rust/crates/degenbot/tests/parity_v2_swap.rs`) drives the same fixture
@@ -93,7 +93,7 @@ def test_python_consumer_matches_closed_form() -> None:
     Divergence = a lossy FFI seam (arg extraction, rounding, or direction
     flag), which the static reachability gate cannot detect.
     """
-    py_bot = RustBot()  # chain_id=0 → no CREATE2 verification (ad-hoc path).
+    py_bot = Bot()  # chain_id=0 → no CREATE2 verification (ad-hoc path).
     pool_id = _register_canonical_v2_pool(py_bot)
     assert pool_id == 1, "first registered pool gets id 1 (parity contract)"
 
@@ -101,14 +101,14 @@ def test_python_consumer_matches_closed_form() -> None:
         pool_id, zero_for_one=_ZERO_FOR_ONE, amount_in=_AMOUNT_IN
     )
     assert amount_out == _EXPECTED_AMOUNT_OUT, (
-        "Python consumer (RustBot FFI seam) must match the closed-form V2 "
+        "Python consumer (Bot FFI seam) must match the closed-form V2 "
         "getAmountOut — divergence from the Rust consumer test means the "
         f"PyO3 delegation is lossy (got {amount_out}, want {_EXPECTED_AMOUNT_OUT})"
     )
 
 
 def test_python_consumer_reverse_matches_closed_form() -> None:
-    """The RustBot Python driver reproduces the closed-form V2 getAmountIn.
+    """The Bot Python driver reproduces the closed-form V2 getAmountIn.
 
     Mirror of the Rust test's
     `standalone_rust_consumer_reverse_matches_closed_form`. The same canonical
@@ -116,7 +116,7 @@ def test_python_consumer_reverse_matches_closed_form() -> None:
     forward test derived. The `amount_in` recovered MUST round-trip back to
     `_AMOUNT_IN`. Proves the FFI seam is lossless in both directions.
     """
-    py_bot = RustBot()
+    py_bot = Bot()
     pool_id = _register_canonical_v2_pool(py_bot)
     assert pool_id == 1, "first registered pool gets id 1 (parity contract)"
 

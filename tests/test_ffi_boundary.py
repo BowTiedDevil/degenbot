@@ -23,6 +23,20 @@ SCAN_DIR = REPO_ROOT / "src" / "degenbot"
 # (flat root or typed submodule). Does NOT match docstring/comment mentions.
 _FFI_IMPORT_RE = re.compile(r"(?:^|\s)(?:from|import)\s+degenbot\._ffi")
 
+# ADR-032 fork (module-path disambiguation): the engine-handle pyclasses
+# may be imported directly from _ffi by first-party code. Their clean names
+# collide with same-named Python driver/model classes, and the module path
+# (degenbot._ffi vs the domain home) is the disambiguator.
+ENGINE_HANDLES: frozenset[str] = frozenset({
+    "Bot",
+    "BotIo",
+    "Erc20Token",
+    "DatabasePositionQuery",
+    "DatabaseSnapshot",
+})
+
+_FFI_NAMES_RE = re.compile(r"^\s*from\s+degenbot\._ffi(?:\.[a-z_]+)?\s+import\s+(.+)$")
+
 
 def _iter_python_files() -> list[Path]:
     """Yield every .py file under src/degenbot/ (excluding __pycache__)."""
@@ -43,8 +57,15 @@ def test_no_ffi_imports_outside_init_files() -> None:
         rel = str(f.relative_to(REPO_ROOT))
         source = f.read_text()
         for lineno, line in enumerate(source.splitlines(), 1):
-            if _FFI_IMPORT_RE.search(line):
-                violations.append(f"{rel}:{lineno}: {line.strip()}")
+            if not _FFI_IMPORT_RE.search(line):
+                continue
+            m = _FFI_NAMES_RE.match(line)
+            if m:
+                names = {n.split(" as ")[0].strip()
+                         for n in m.group(1).split(",") if n.strip()}
+                if names and names <= ENGINE_HANDLES:
+                    continue  # exempt: engine-handle types (ADR-032 fork)
+            violations.append(f"{rel}:{lineno}: {line.strip()}")
     if violations:
         msg = (
             f"\nFound {len(violations)} `degenbot._ffi` import(s) in "

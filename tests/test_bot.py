@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from degenbot.bot import Bot, RustBot
+from degenbot._ffi import Bot as _Engine
+from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.session_manager import DatabaseSessionManager
@@ -81,22 +82,22 @@ class TestBotInit:
 
 
 class TestBotPyBotHandle:
-    """Bot constructs and owns a PyO3 RustBot handle (ADR-005)."""
+    """Bot constructs and owns a PyO3 _Engine handle (ADR-005)."""
 
     def test_bot_constructs_py_bot(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         bot = Bot(config, provider=_fake_provider(1))
-        assert isinstance(bot._py_bot, RustBot)
+        assert isinstance(bot._py_bot, _Engine)
 
     def test_each_bot_has_independent_py_bot(self, tmp_path: pathlib.Path) -> None:
         bot1 = Bot(_make_test_config(tmp_path / "bot1"), provider=_fake_provider(1))
         bot2 = Bot(_make_test_config(tmp_path / "bot2"), provider=_fake_provider(1))
-        assert isinstance(bot1._py_bot, RustBot)
-        assert isinstance(bot2._py_bot, RustBot)
+        assert isinstance(bot1._py_bot, _Engine)
+        assert isinstance(bot2._py_bot, _Engine)
         assert bot1._py_bot is not bot2._py_bot
 
     def test_py_bot_carries_configured_chain_id(self, tmp_path: pathlib.Path) -> None:
-        """The Bot facade wires its ``default_chain_id`` into the Rust ``RustBot``
+        """The Bot facade wires its ``default_chain_id`` into the Rust ``_Engine``
         (ADR-006 D4: ``Bot::new(chain_id)``). No more ``chain_id = 0`` placeholder.
         """
         config = _make_test_config(tmp_path, chain_id=1)
@@ -104,7 +105,7 @@ class TestBotPyBotHandle:
         assert bot._py_bot.chain_id == 1
 
     def test_py_bot_chain_id_follows_config(self, tmp_path: pathlib.Path) -> None:
-        """A non-default ``default_chain_id`` propagates to the ``RustBot`` (the
+        """A non-default ``default_chain_id`` propagates to the ``_Engine`` (the
         wiring is real, not a hard-coded constant).
         """
         config = _make_test_config(tmp_path, chain_id=10)

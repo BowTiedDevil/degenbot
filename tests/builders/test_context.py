@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from degenbot.bot import RustBot
+from degenbot._ffi import Bot
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
@@ -23,7 +23,7 @@ def _make_ctx(**overrides) -> BuilderContext:
         "pools": fake_pools,
         "tokens": fake_tokens,
         "erc20_builder": fake_erc20,
-        "py_bot": RustBot(),
+        "py_bot": Bot(),
         "default_chain_id": 1,
     }
     defaults.update(overrides)
@@ -39,7 +39,7 @@ class TestBuilderContextConstruction:
         assert ctx.pools is not None
         assert ctx.tokens is not None
         assert ctx.erc20_builder is not None
-        assert isinstance(ctx.py_bot, RustBot)
+        assert isinstance(ctx.py_bot, Bot)
         assert ctx.default_chain_id == 1
 
     def test_frozen(self) -> None:

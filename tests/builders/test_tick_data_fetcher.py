@@ -28,7 +28,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
 class FakePoolIO:
-    """Duck-typed RustBotIo stand-in for tick data fetcher tests.
+    """Duck-typed BotIo stand-in for tick data fetcher tests.
 
     Exposes the two seam methods ``_fetch_v3`` invokes
     (``fetch_tick_bitmap`` + ``fetch_tick_data``) with canned returns keyed

@@ -250,8 +250,8 @@ When `build_pool` is called, type resolution proceeds in order: (1) pool registr
 Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. The builder handles all I/O (fetching reserves, slot0, etc. from RPC), constructs an `ExternalUpdate` message, and pushes it to the pool:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import RustBot
-_PY_BOT = RustBot()
+from degenbot._ffi import Bot
+_BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
@@ -259,14 +259,14 @@ from degenbot.erc20.erc20 import Erc20Token
 from tests.helpers.v2_pool_factory import make_v2_pool
 from fractions import Fraction
 
-_wbtc = make_erc20(_PY_BOT,
+_wbtc = make_erc20(_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     name='Wrapped BTC',
     symbol='WBTC',
     decimals=8,
     chain_id=1,
 )
-_weth = make_erc20(_PY_BOT,
+_weth = make_erc20(_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
@@ -404,8 +404,8 @@ pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 V2 pools use the constant-product invariant (x·y=k) with directional fees:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import RustBot
-_PY_BOT = RustBot()
+from degenbot._ffi import Bot
+_BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
@@ -413,14 +413,14 @@ from degenbot.erc20.erc20 import Erc20Token
 from tests.helpers.v2_pool_factory import make_v2_pool
 from fractions import Fraction
 
-_wbtc = make_erc20(_PY_BOT,
+_wbtc = make_erc20(_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     name='Wrapped BTC',
     symbol='WBTC',
     decimals=8,
     chain_id=1,
 )
-_weth = make_erc20(_PY_BOT,
+_weth = make_erc20(_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
@@ -482,8 +482,8 @@ assert lp.reserves_token1 == 2056841643098872755548
 V3 pools use concentrated liquidity with tick-based positions. The V3 pool uses a **sparse tick data fetcher** for on-demand liquidity loading:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import RustBot
-_PY_BOT = RustBot()
+from degenbot._ffi import Bot
+_BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 import json
 from pathlib import Path
@@ -491,14 +491,14 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
-_wbtc = make_erc20(_PY_BOT,
+_wbtc = make_erc20(_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     name='Wrapped BTC',
     symbol='WBTC',
     decimals=8,
     chain_id=1,
 )
-_weth = make_erc20(_PY_BOT,
+_weth = make_erc20(_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
@@ -555,20 +555,20 @@ assert 0 in lp.tick_data
 V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` instead of address:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import RustBot
-_PY_BOT = RustBot()
+from degenbot._ffi import Bot
+_BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, UniswapV4PoolKey
 from degenbot.erc20.erc20 import Erc20Token
 
-_eth = make_erc20(_PY_BOT,
+_eth = make_erc20(_BOT,
     address='0x0000000000000000000000000000000000000000',
     name='Ether',
     symbol='ETH',
     decimals=18,
     chain_id=8453,
 )
-_usdc = make_erc20(_PY_BOT,
+_usdc = make_erc20(_BOT,
     address='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     name='USD Coin',
     symbol='USDC',
@@ -722,34 +722,34 @@ Users wanting fine-grained control over **all** client options may pass them thr
 Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import RustBot
-_PY_BOT = RustBot()
+from degenbot._ffi import Bot
+_BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20.erc20 import Erc20Token
 
-_dai = make_erc20(_PY_BOT,
+_dai = make_erc20(_BOT,
     address='0x6B175474E89094C44Da98b954EedeAC495271d0F',
     name='Dai Stablecoin',
     symbol='DAI',
     decimals=18,
     chain_id=1,
 )
-_usdc = make_erc20(_PY_BOT,
+_usdc = make_erc20(_BOT,
     address='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     name='USD Coin',
     symbol='USDC',
     decimals=6,
     chain_id=1,
 )
-_usdt = make_erc20(_PY_BOT,
+_usdt = make_erc20(_BOT,
     address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
     name='Tether USD',
     symbol='USDT',
     decimals=6,
     chain_id=1,
 )
-_3crv = make_erc20(_PY_BOT,
+_3crv = make_erc20(_BOT,
     address='0x6c3F90f043a72FA6529E0151d6e9a6e37df9E3e5',
     name='Curve 3Pool Token',
     symbol='3Crv',
@@ -792,20 +792,20 @@ Key design points:
 - **Scaling**: Tokens with non-18 decimals are normalized via scaling factors computed as `ONE * 10**(18 - decimals)`.
 
 <!-- invisible-code-block: python
-from degenbot._ffi import RustBot
-_PY_BOT = RustBot()
+from degenbot._ffi import Bot
+_BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from fractions import Fraction
 
-_bal = make_erc20(_PY_BOT,
+_bal = make_erc20(_BOT,
     address='0xba100000625a3754423978a60c9317c58a424e3D',
     name='Balancer',
     symbol='BAL',
     decimals=18,
     chain_id=1,
 )
-_weth = make_erc20(_PY_BOT,
+_weth = make_erc20(_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
@@ -903,22 +903,22 @@ Key design points:
 - **BPT handling**: ComposableStablePools include their own BPT token in the token list. The `bpt_idx` parameter identifies the BPT position so it can be dropped from invariant and swap calculations. `bpt_idx=None` (MetaStable) vs `bpt_idx=int` (Composable).
 
 <!-- invisible-code-block: python
-from degenbot._ffi import RustBot
+from degenbot._ffi import Bot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2
 
 # --- MetaStablePool (2-token, no BPT, V2 invariant, wstETH/WETH 1.1 rate) ---
-_PY_BOT = RustBot()
-_wsteth = make_erc20(_PY_BOT,
+_BOT = Bot()
+_wsteth = make_erc20(_BOT,
     address='0x7f39C581F595B53c5Cb19bD0b3f8dA6c935E2Ca0',
     name='Wrapped liquid staked Ether 2.0',
     symbol='wstETH',
     decimals=18,
     chain_id=1,
 )
-_weth = make_erc20(_PY_BOT,
+_weth = make_erc20(_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
@@ -940,23 +940,23 @@ meta_pool = make_balancer_stable_pool(
 )
 
 # --- ComposableStablePool (3-token incl BPT, V1 invariant, static rates) ---
-_PY_BOT2 = RustBot()
+_BOT2 = Bot()
 _bpt_addr = '0x53BC3cBa3832ebeCBFa002c12023F8ab1AA3a3a0'
-_tusd = make_erc20(_PY_BOT2,
+_tusd = make_erc20(_BOT2,
     address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
     name='TrueUSD',
     symbol='TUSD',
     decimals=18,
     chain_id=1,
 )
-_bpt = make_erc20(_PY_BOT2,
+_bpt = make_erc20(_BOT2,
     address=_bpt_addr,
     name='Balancer 50TUSD 50USDC',
     symbol='50TUSD50USDC',
     decimals=18,
     chain_id=1,
 )
-_usdc = make_erc20(_PY_BOT2,
+_usdc = make_erc20(_BOT2,
     address='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     name='USD Coin',
     symbol='USDC',

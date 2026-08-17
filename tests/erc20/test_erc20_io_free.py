@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 import eth_abi.abi
 
-from degenbot.bot import Bot, RustBot
+from degenbot._ffi import Bot as _Engine
+from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.operations import create_new_sqlite_database
 from degenbot.erc20 import Erc20Token
@@ -13,7 +14,7 @@ from degenbot.provider import OfflineProvider
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 
-_PY_BOT = RustBot()
+_PY_BOT = _Engine()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -25,7 +26,7 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
 
 
 class TestErc20TokenDataOnlyConstructor:
-    """Erc20Token companion reads metadata through the RustErc20Token handle."""
+    """Erc20Token companion reads metadata through the Erc20Token handle."""
 
     def test_constructor_with_data(self) -> None:
         token = make_erc20(
@@ -152,7 +153,7 @@ class TestBotBuildErc20Token:
 
 
 class TestEtherPlaceholderDataOnly:
-    """EtherPlaceholder delegates metadata through the RustErc20Token handle."""
+    """EtherPlaceholder delegates metadata through the Erc20Token handle."""
 
     def test_constructor_with_data(self) -> None:
         placeholder = make_ether_placeholder(

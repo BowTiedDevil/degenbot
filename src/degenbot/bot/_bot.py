@@ -9,11 +9,12 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from hexbytes import HexBytes
 
+from degenbot._ffi import Bot as _Engine
+from degenbot._ffi import BotIo
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
-from degenbot.bot import RustBot, RustBotIo
 from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,
@@ -78,14 +79,14 @@ def _update_pool(
     pool: AbstractLiquidityPool,
     *,
     block_number: BlockIdentifier | None,
-    io: RustBotIo,
+    io: BotIo,
 ) -> bool:
     """Fetch the current chain state and push an update to a V2/V3/V4 pool.
 
     T4 / 4GQWZ4 (builder-deletion blocker): the per-family refresh that
     previously lived on the `V2PoolBuilder` / `V3PoolBuilder` /
     `V4PoolBuilder` `update()` methods now lives in this single dispatcher in
-    the `Bot` delegating shell — all I/O flows through the `RustBotIo` Rust seam
+    the `Bot` delegating shell — all I/O flows through the `BotIo` Rust seam
     (`fetch_v2_reserves` / `fetch_v3_slot0_liquidity` /
     `fetch_v4_slot0_liquidity`), matching the archival behavior. The builders'
     `update()` therefore become orphaned and can be retired with the builders.
@@ -218,14 +219,14 @@ class Bot:
             # Build from config — the factory enforces the chain match itself.
             self._provider = get_provider_from_config(chain_id=self._chain_id, config=config)
 
-        # Polars-inspired three-layer architecture (ADR-005): a ``RustBot``
+        # Polars-inspired three-layer architecture (ADR-005): a the Rust ``Bot`` engine
         # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.
         # Multiple Python handles (this session, plus any ``Pool``/``Token``
         # handles it vends) share the same Rust-owned ``Bot`` thread-safely.
         #
         # ADR-006 slice 8b: the facade is single-chain, so the configured
         # ``default_chain_id`` is wired into the Rust ``Bot`` here (D4).
-        self._py_bot = RustBot(self._chain_id)
+        self._py_bot = _Engine(self._chain_id)
 
         # JUCFCB (epic P73ER6): eagerly load the V3+V4 DB snapshot into the
         # core ``BotState`` at construction time (Shape 2). This makes the DB
@@ -255,10 +256,10 @@ class Bot:
             get_scoped_sqlite_session(database_path=config.database.path),
         )
         # Architecture review 2025-07-18 / candidate 1: attach the core
-        # `ConstructionIo` handle to `RustBot` (built from the extracted
+        # `ConstructionIo` handle to the `Bot` engine (built from the extracted
         # `AlloyProvider` + an optional held `DegenbotDb`). The 7 generic RPC
-        # + 12 DB atomic methods on `RustBotIo` delegate through this; the 27
-        # choreography wrappers stay on `RustBotIo` for now (deleted with the
+        # + 12 DB atomic methods on `BotIo` delegate through this; the 27
+        # choreography wrappers stay on `BotIo` for now (deleted with the
         # builder-choreography port). Alloy-only — a non-alloy provider raises
         # `RuntimeError`.
         self._py_bot.attach_construction_io(
@@ -267,14 +268,14 @@ class Bot:
         )
         # The single I/O seam for this Bot (architecture review candidate #2):
         # built once here and reused by every build/update/balance method instead
-        # of reconstructing RustBotIo per call. Swapping the I/O seam (fork tests,
+        # of reconstructing BotIo per call. Swapping the I/O seam (fork tests,
         # a different executor) changes one site, not eight.
-        self._io = RustBotIo(
+        self._io = BotIo(
             provider=self._provider,
             db=self.db,
             database_path=str(config.database.path),
         )
-        # Wire the `ConstructionIo` handle attached above onto `RustBotIo` so its
+        # Wire the `ConstructionIo` handle attached above onto `BotIo` so its
         # 12 DB + 7 generic RPC methods delegate through the core trait objects.
         self._io.attach_construction_io(self._py_bot)
         self.pools = PoolRegistry(py_bot=self._py_bot)
@@ -443,10 +444,10 @@ class Bot:
         End-of-life teardown that composes :meth:`release_python_state` and
         adds the connection teardown the Bot was previously missing: the
         provider connection is closed, the scoped DB session is removed,
-        and the ``RustBot`` / provider references are dropped. Idempotent —
+        and the the Rust ``Bot`` engine / provider references are dropped. Idempotent —
         safe to call directly and again from a ``with`` block's ``__exit__``.
 
-        The Rust ``RustBot`` is reference-counted; closing this Python wrapper
+        The Rust the Rust ``Bot`` engine is reference-counted; closing this Python wrapper
         only drops *this* Bot's ref. A running engine that took its own ref
         (via ``EngineRegistry(bot=bot)`` → ``ArbitrageEngine(py_bot=...)``)
         is unaffected.
@@ -694,7 +695,7 @@ class Bot:
         builder: PoolBuilder,
         address: ChecksumAddress,
         chain_id: ChainId,
-        io: RustBotIo,
+        io: BotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Dispatch to the builder with a typed request.
@@ -714,7 +715,7 @@ class Bot:
     ) -> AbstractLiquidityPool:
         """Build a V2/V3/Balancer/Aerodrome pool via the Rust PoolBuilder.
 
-        Thin delegating shell over `RustBot.build_v2_pool`/`build_v3_pool`: the
+        Thin delegating shell over `the `Bot` engine.build_v2_pool`/`build_v3_pool`: the
         core builder runs the full io choreography + registers into `BotState`
         and returns the pool id. This shell then registers the pool's two
         Erc20Tokens in the same `Bot` (ADR-006 — the companion's
@@ -934,7 +935,7 @@ class Bot:
         address: str,
         *,
         chain_id: ChainId,
-        io: RustBotIo,
+        io: BotIo,
         request: BuildManagedPoolRequest,
     ) -> UniswapV4Pool:
         """Build a V4 managed pool via the Rust `PoolBuilder` (T4 / 4GQWZ4).
@@ -945,7 +946,7 @@ class Bot:
         (`protocol_fee`/`lp_fee`/`state_view`/`_sparse_liquidity_map`, which
         the Rust handle does not expose), then delegates the actual build
         (live scalars + Db→Chain tick assembly + admission + registration)
-        to `RustBot.build_v4_pool`.
+        to `the `Bot` engine.build_v4_pool`.
 
         Returns:
             A `UniswapV4Pool` companion wrapping the Rust-registered pool.

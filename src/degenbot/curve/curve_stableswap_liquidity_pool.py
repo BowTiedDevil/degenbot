@@ -69,7 +69,7 @@ def _compute_rate_and_precision_multipliers(
 
     Single source of truth — shared by ``CurveStableswapPool.__init__`` and
     ``make_curve_pool`` (the factory passes the derived ``rate_multipliers`` to
-    ``RustBot.register_curve_pool`` so the Rust core stores the same values the
+    ``Bot.register_curve_pool`` so the Rust core stores the same values the
     companion keeps; they're consumed by the future Rust ``get_dy``, ADR-005
     slice 11c). Mirrors the pre-companion derivation exactly.
 
@@ -253,7 +253,7 @@ class CurveStableswapPool(
 
         A ``CurveStableswapPool`` is a companion over a Rust-owned
         ``LiquidityPool`` handle. The handle can only be produced by
-        registering a pool in a ``RustBot`` (production: ``Bot.build_pool()``;
+        registering a pool in a ``Bot`` (production: ``Bot.build_pool()``;
         tests: ``make_curve_pool``), then wrapping via
         :meth:`_from_py_pool`. Direct constructor calls are rejected so that
         the only paths to a pool instance are the ones that wire the handle —
