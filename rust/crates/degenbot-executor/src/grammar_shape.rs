@@ -1,19 +1,17 @@
-//! Builders — the **wide, per-family transcription surface** + dispatch
+//! Builders — the **per-family dispatch surface** + validator gate
 //! (`grammar_shape.rs` split, ERP6ES / candidate 2 of
 //! `architecture-review-1786663110.html`).
 //!
-//! The ~35 `build_*_plan` functions author the execution-ordered, callback-
-//! nested [`Plan`]/[`PlanStep`] tree (the vocabulary + the two walkers live in
-//! [`crate::grammar_plan`]), then [`build_plan_bytes`] runs builder →
+//! [`derive_shape`] dispatches every well-formed family through
+//! [`crate::grammar_walker::build_walk`] (the single facts → derive_plan →
+//! enc_preamble pipeline), then runs the
 //! [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate →
-//! [`plan_to_bytes`]. [`derive_shape`] dispatches every well-formed family to
-//! its builder via a `(Prot, Prot, Option<Prot>) → BuildPlan` table (a new
-//! family is a new row); all-V2 any-N routes through [`derive_all_v2`].
+//! [`plan_to_bytes`]. all-V2 any-N routes through [`derive_all_v2`].
 //! Returns `None` on decline or gate rejection.
 //!
-//! This is the **churning** half — a family addition is a new builder + a
-//! table row + builder tests, and it stops touching the deep, stable walker
-//! (`Plan → LedgerOp`, `Plan → bytes`) isolated in `grammar_plan`.
+//! This is the **churning** half — the dispatch table + validator gate live
+//! here, while the deep, stable walker (`Plan → LedgerOp`, `Plan → bytes`)
+//! is isolated in `grammar_plan`.
 //!
 //! ---
 //! **Status after RVNIPD / EYQ6UF (epic MNF6VU):** the hand-written
@@ -23,10 +21,11 @@
 //! `harness_declarative` full-matrix, exact delta) is the ADR-029 D5 source of
 //! truth; the primitive wire format is pinned by `tests/encoders_parity.rs`
 //! and the native bridge by `tests/native_eth_3hop_bridge.rs`. N4TJSZ
-//! (SPVEIE + KO5NNB + 4JOWO5): the all-V2 family (2-hop, 3-hop, any-N) now
-//! routes through [`build_all_v2_chain`] + the [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
-//! gate — the sole all-V2 producer. PPPHES: the 35-arm dispatch collapsed to
-//! the `(Prot,Prot,Option<Prot>) → BuildPlan` table.
+//! (SPVEIE + KO5NNB + 4JOWO5): the all-V2 family (2-hop, 3-hop, any-N) routes
+//! through the single pipeline + the
+//! [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate — the
+//! sole all-V2 producer. PPPHES: the 35-arm dispatch collapsed to the single
+//! `build_walk` pipeline.
 
 use alloy::primitives::Address;
 
@@ -191,9 +190,10 @@ pub(crate) fn v4_bridge_steps(
     )
 }
 
-/// A Plan builder: every `build_*_plan` returns the full payload's
-/// preamble bytes, the [`Plan`] tree, and the resolved [`AddressTable`].
-/// (Also used by the 3-hop pilots — the signature is family-agnostic.)
+/// A Plan builder: returns the full payload's preamble bytes, the [`Plan`]
+/// tree, and the resolved [`AddressTable`]. Used only by tests that inject a
+/// custom build fn (production routes through [`crate::grammar_walker::build_walk`]).
+#[cfg(test)]
 pub(crate) type BuildPlan =
     fn(&PathInfo, &ComposerInputs<'_>) -> Option<(Vec<u8>, Plan, AddressTable)>;
 
@@ -233,16 +233,17 @@ pub(crate) fn derive_option(d: Derive) -> Option<Vec<u8>> {
     }
 }
 
-/// Build a family's Plan through its `build_*_plan` builder, run the
+/// Build a Plan through a `BuildPlan` fn pointer, run the
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate on the
 /// projected ledger trace, and fold `preamble + plan_to_bytes(&plan, &at)`
 /// into the full payload.
 ///
-/// Returns a [`Derive`]: `Declined` when the builder declines (no bytes for
-/// this shape), `Rejected` when a *built* Plan fails validation — a stream
-/// that violates credit-before-debit / terminal-V2 pre-fund /
-/// flash-debt-net-zero / PM-net-zero must NOT produce bytes. This is the first
+/// Returns a [`Derive`]: `Declined` when the build declines (no bytes for
+/// this shape), `Rejected` when a *built* Plan fails validation. Used only by
+/// tests that inject a `bad_build` fn to assert the Reject path; production
+/// routing is inlined in [`derive_shape_detailed`].
 /// time the validator gates real production bytes (ADR-029 D4/D5).
+#[cfg(test)]
 #[must_use]
 fn build_plan_bytes(path: &PathInfo, build: BuildPlan, inputs: &ComposerInputs<'_>) -> Derive {
     let Some((preamble, plan, at)) = build(path, inputs) else {
@@ -259,7 +260,7 @@ fn build_plan_bytes(path: &PathInfo, build: BuildPlan, inputs: &ComposerInputs<'
 }
 
 /// Public all-V2 entry (KO5NNB cutover): the any-N (≥2) all-V2 family through
-/// the walker + validator gate — `build_all_v2_walk` → the
+/// the single pipeline + validator gate — `build_walk` → the
 /// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] → `plan_to_bytes`
 /// (A3 routes it through the shared [`derive_shape_detailed`] dispatch).
 /// Returns `None` on a routine decline; a validator `Reject` is **fatal**
@@ -290,8 +291,8 @@ fn prot_of(h: Option<&HopInfo>) -> Option<Prot> {
     }
 }
 
-/// Public entry: derive a family's command bytes from its Plan builder
-/// (`build_*_plan` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
+/// Public entry: derive a family's command bytes through the single pipeline
+/// (`build_walk` → [`LedgerValidator`][crate::grammar_ledger::LedgerValidator]
 /// gate → `plan_to_bytes`) — the sole production producer since RVNIPD removed
 /// the hand-written emitters. Returns `None` on a routine decline (an unsupported
 /// family → the strategy skips); a validator `Reject` is **fatal** (panics,
@@ -303,7 +304,9 @@ pub fn derive_shape(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<
 
 /// The tri-state form of [`derive_shape`] (ADR-030): a routine `Declined` is
 /// distinguished from a would-be-bug `Rejected`, instead of both collapsing to
-/// `None`.
+/// `None`. Routed through [`crate::grammar_walker::build_walk`] (the single
+/// facts → derive_plan → enc_preamble pipeline) then the shared
+/// [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate.
 #[must_use]
 pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Derive {
     let key = (
@@ -311,10 +314,20 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
         prot_of(path.hops.get(1)),
         prot_of(path.hops.get(2)),
     );
-    let Some(build) = crate::grammar_walker::build_for_walk(key) else {
+    if !crate::grammar_walker::recognized_key(key) {
+        return Derive::Declined;
+    }
+    let Some((preamble, plan, at)) = crate::grammar_walker::build_walk(path, inputs) else {
         return Derive::Declined;
     };
-    build_plan_bytes(path, build, inputs)
+    let ops = plan_to_ledger_ops(&plan);
+    let mut v = crate::grammar_ledger::LedgerValidator::default();
+    if let Err(e) = v.validate_full(&ops) {
+        return Derive::Rejected(e);
+    }
+    let mut out = preamble;
+    out.extend_from_slice(&plan_to_bytes(&plan, &at));
+    Derive::Encoded(out)
 }
 
 /// Public accessor (candidate 4, `3BTR22`): the declared stream-varying axes
@@ -322,8 +335,10 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
 /// per-row table) — the family's walker branches `FundingSource` only for the
 /// `v2_v3` / any-N all-V2 families, and `ProfitCapture` only for the pure-V4
 /// families. `None` for a shape with no producer (1-hop, >3-hop non-all-V2,
-/// unknown). The recognized-family check reuses [`build_for_walk`][crate::grammar_walker::build_for_walk] so the axis
-/// surface can't drift from what actually produces bytes.
+/// unknown). The recognized-family check is key-based via
+/// [`crate::grammar_walker::recognized_key`] (len-agnostic — a `len ≥ 4` path
+/// whose first 3 prots match a 3-hop arm still yields `Some` even though the
+/// facts dispatcher may decline on arity).
 ///
 /// E.g. `v2_v3` and any-N all-V2 → `{funding}` (the two families that branch
 /// `FundingSource`); the pure-V4 families `v4_v4`/`v4_v4_v4` → `{capture}`
@@ -339,7 +354,9 @@ pub fn family_axis_support(path: &PathInfo) -> Option<AxisSupport> {
         prot_of(path.hops.get(2)),
     );
     // Recognized family? If not, there is no axis surface.
-    crate::grammar_walker::build_for_walk(key)?;
+    if !crate::grammar_walker::recognized_key(key) {
+        return None;
+    }
     // capture: the pure-V4 families (every hop is V4).
     let capture = matches!(key, (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4) | None));
     // funding: `v2_v3` (2-hop V2→V3) and the any-N all-V2 family.
@@ -368,15 +385,47 @@ mod tests {
     )]
     use super::*;
     // A3: the reference producers are deleted; these aliases re-point the
-    // structure-inspection tests at the walkers (byte-identical, A2-proven).
+    // structure-inspection tests at the single `build_walk` pipeline
+    // (byte-identical, A2-proven).
     use crate::composers::{EncodeOptions, V2HopInfo, V3HopInfo};
     use crate::encoders::enc_preamble;
-    use crate::grammar_walker::{
-        build_all_v2_walk as build_all_v2_chain, build_v2v3_walk as build_v2v3_plan,
-        build_v3v2_walk as build_v3v2_plan, build_v3v3_walk as build_v3v3_plan,
-        build_v4v4_walk as build_v4v4_plan,
-    };
+    use crate::grammar_walker::build_walk;
     use alloy::primitives::{address, Address, U256};
+
+    // Per-family aliases — every former `build_*_walk` delegate is now the
+    // single `build_walk` (facts_for dispatches internally). Kept as local
+    // wrappers so the test bodies that reference the per-family name are
+    // unchanged.
+    fn build_all_v2_chain(
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Option<(Vec<u8>, Plan, AddressTable)> {
+        build_walk(path, inputs)
+    }
+    fn build_v2v3_plan(
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Option<(Vec<u8>, Plan, AddressTable)> {
+        build_walk(path, inputs)
+    }
+    fn build_v3v2_plan(
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Option<(Vec<u8>, Plan, AddressTable)> {
+        build_walk(path, inputs)
+    }
+    fn build_v3v3_plan(
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Option<(Vec<u8>, Plan, AddressTable)> {
+        build_walk(path, inputs)
+    }
+    fn build_v4v4_plan(
+        path: &PathInfo,
+        inputs: &ComposerInputs<'_>,
+    ) -> Option<(Vec<u8>, Plan, AddressTable)> {
+        build_walk(path, inputs)
+    }
 
     // ── Derive tri-state (ADR-030) ──
 

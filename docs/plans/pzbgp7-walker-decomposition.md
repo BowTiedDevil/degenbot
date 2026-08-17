@@ -24,3 +24,16 @@
   re-documented accordingly.
 - Gates: clippy 0; executor (111 tests incl. layout pin + tag invariant) +
   simulation (78) + backrun-strategy (100) all green.
+
+## T3 (UPBUE6) — twin-table/delegate collapse: DONE
+
+- grammar_walker.rs 3,537 → 872 (-927); grammar_shape.rs +49 (inline validator gate).
+- facts_for: all-V2 fast-path → 5 explicit override arms → per-variant hop_facts fallback.
+- build_walk: the single Plan pipeline (public — degenbot-simulation tests import it).
+- build_plan_bytes/BuildPlan kept #[cfg(test)] for the Reject-path test.
+- VERIFIED DEVIATION (recorded): facts_of_v3v4v3's missing arity guard is a semantic
+  compression — a 4+-hop [V3,V4,V3,X] path previously produced 3-hop facts (dropping a
+  hop, uncaught); it now Declines. Siblings all had the guard; drop was unreachable from
+  production (2/3-hop paths) and the old behavior was a bug per ADR-030.
+- All pure facts fns uniform; cleanest case — quote: "None. All 30 matched the pattern."
+- Gates: 122 executor + 186 (sim+backrun) green; clippy 0 across the three crates.

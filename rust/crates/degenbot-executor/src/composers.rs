@@ -417,7 +417,7 @@ pub fn encode_cmd_stream(
     // Facet A (T2TCJM): a generic per-shape-class hop-grammar walk replaces the
     // former 8 two-hop + 27 three-hop bespoke permutation bodies, producing
     // byte-identical output (validated by the golden corpus). All-V2 any-N uses
-    // the Plan + validator path (`derive_all_v2` → `build_all_v2_chain` → gate
+    // the Plan + validator path (`derive_all_v2` → `build_walk` → gate
     // → `plan_to_bytes`, KO5NNB); other 2/3-hop paths use the combo grammar walk.
     if num_hops >= 2 && path_info.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
         crate::grammar_shape::derive_all_v2(path_info, &inputs)

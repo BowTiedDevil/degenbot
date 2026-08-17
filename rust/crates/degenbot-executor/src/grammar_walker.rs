@@ -1,24 +1,31 @@
 //! ADR-031 D6 — the sole facts-driven Plan producer (epic `6SU5LM`).
 //!
-//! Every one of the 35 `build_*_walk` family producers is a **thin delegate**
-//! to this module: it produces the per-hop `facts_of_<family>` descriptor
-//! (protocol metadata: direction, fees, currencies, tick spacing) and hands
-//! them to `derive_plan`, which **derives the enclosure** (which
-//! `FlashSwap`/`V4Unlock` wraps which, the repayment order, and the
-//! barrier/batch/capture arms) from those facts + `inputs.opts`. No
-//! `build_*_walk` body emits a `PlanStep` directly — the D6 invariant the
-//! `facts_driven_tests` probe enforces.
+//! The pipeline has three stages:
 //!
-//! `plan_to_bytes` and the `LedgerValidator` gate are reused unchanged (one
-//! representation): the walker emits exactly one `Plan`, and the encoder +
-//! validator are pure functions of it. Structural + behavioral parity with
-//! the pre-refactor reference producer is pinned by the revm contract matrix
-//! + the `spike_derivation` golden suite.
+//! 1. **Hop facts** (data): per-protocol [`HopFacts`] descriptors produced by
+//!    [`hop_facts`] (the default per-hop mapping) or one of five per-position
+//!    override fns (`facts_of_*`). [`facts_for`] is the single dispatcher that
+//!    routes each path to the right facts source.
+//! 2. **Mechanics** (code): [`derive_plan`] is the shape dispatcher over the
+//!    per-enclosure-block modules in `grammar_walker/shapes/*.rs` — it reads
+//!    the `Repay`/`OutDest` facts tags to determine which `FlashSwap`/
+//!    `V4Unlock` wraps which, the repayment order, and the capture arms.
+//! 3. **Validator gate**: lives in `grammar_shape` (`derive_shape_detailed`):
+//!    build → `plan_to_ledger_ops` → `LedgerValidator::validate_full` →
+//!    `preamble + plan_to_bytes`.
+//!
+//! [`build_walk`] is the single pipeline entry: `facts_for` → `derive_plan`
+//! → `enc_preamble`, returning `(preamble, plan, at)`. The
+//! `LedgerValidator` gate (one representation) is reused unchanged: the
+//! walker emits exactly one `Plan`, and the encoder + validator are pure
+//! functions of it. Structural + behavioral parity with the pre-refactor
+//! reference producer is pinned by the revm contract matrix + the
+//! `spike_derivation` golden suite.
 
 use crate::composers::{ComposerInputs, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
 use crate::encoders::AddressTable;
 use crate::grammar_ledger::Prot;
-use crate::grammar_plan::{plan_to_ledger_ops, v2_forward, v3_forward, v3_input, Plan};
+use crate::grammar_plan::{v2_forward, v3_forward, v3_input, Plan};
 use crate::grammar_shape::v4_hop_currencies;
 use alloy::primitives::Address;
 
@@ -581,22 +588,6 @@ pub(crate) fn v3_hop_facts(h: &V3HopInfo) -> HopFacts {
     }
 }
 
-/// The 3-hop V3→V3→V3 facts (`v3v3v3`).
-pub(crate) fn facts_of_v3v3v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![v3_hop_facts(a), v3_hop_facts(b), v3_hop_facts(c)])
-}
-
 /// A V2 hop's facts (shared by the V2-involving shape derivers).
 pub(crate) fn v2_hop_facts(h: &V2HopInfo) -> HopFacts {
     HopFacts {
@@ -617,102 +608,6 @@ pub(crate) fn v2_hop_facts(h: &V2HopInfo) -> HopFacts {
         currency0_address: h.token0_address,
         currency1_address: h.token1_address,
     }
-}
-
-/// The 3-hop V3→V3→V2 facts (`v3v3v2`).
-pub(crate) fn facts_of_v3v3v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![v3_hop_facts(a), v3_hop_facts(b), v2_hop_facts(c)])
-}
-
-/// The 3-hop V3→V2→V3 facts (`v3v2v3`).
-pub(crate) fn facts_of_v3v2v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![v3_hop_facts(a), v2_hop_facts(b), v3_hop_facts(c)])
-}
-
-/// The 3-hop V3→V2→V2 facts (`v3v2v2`).
-pub(crate) fn facts_of_v3v2v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![v3_hop_facts(a), v2_hop_facts(b), v2_hop_facts(c)])
-}
-
-/// The 3-hop V2→V2→V3 facts (`v2v2v3`).
-pub(crate) fn facts_of_v2v2v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![v2_hop_facts(a), v2_hop_facts(b), v3_hop_facts(c)])
-}
-
-/// The 3-hop V2→V3→V3 facts (`v2v3v3`).
-pub(crate) fn facts_of_v2v3v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![v2_hop_facts(a), v3_hop_facts(b), v3_hop_facts(c)])
-}
-
-/// The 3-hop V2→V3→V2 facts (`v2v3v2`).
-pub(crate) fn facts_of_v2v3v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![v2_hop_facts(a), v3_hop_facts(b), v2_hop_facts(c)])
 }
 
 /// A V4 hop's facts (shared by the V4-crossing shape derivers).
@@ -742,1018 +637,76 @@ pub(crate) fn v4_hop_facts_netzero(h: &V4HopInfo) -> HopFacts {
     f
 }
 
-/// The 2-hop V4→V4 facts (`v4v4`).
-pub(crate) fn facts_of_v4v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 2 {
-        return None;
+/// Map a [`HopInfo`] to its [`HopFacts`] using the default per-protocol
+/// mapping: V2→[`v2_hop_facts`], V3→[`v3_hop_facts`], V4→[`v4_hop_facts_netzero`].
+/// Used by [`facts_for`] for families without per-position overrides.
+fn hop_facts(h: &HopInfo) -> HopFacts {
+    match h {
+        HopInfo::V2(a) => v2_hop_facts(a),
+        HopInfo::V3(a) => v3_hop_facts(a),
+        HopInfo::V4(a) => v4_hop_facts_netzero(a),
     }
-    let (HopInfo::V4(a), HopInfo::V4(b)) = (&path.hops[0], &path.hops[1]) else {
-        return None;
-    };
-    Some(vec![v4_hop_facts_netzero(a), v4_hop_facts_netzero(b)])
 }
 
-/// The 2-hop V4→V4 shape: a single `V4Unlock` whose inner ledger is the
-/// native-bridge (gap) / individual-swap / batch / capture slaughterhouse
-/// shared by every pure-V4 cross. As with the gold, all opts-driven branches
-/// are reproduced from `inputs.opts`; the facts carry only per-hop V4 metadata.
-/// The 2-hop V4→V2 facts (`v4v2`).
-pub(crate) fn facts_of_v4v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 2 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V2(b)) = (&path.hops[0], &path.hops[1]) else {
-        return None;
-    };
-    Some(vec![v4_hop_facts_netzero(a), v2_hop_facts(b)])
+/// Whether the 3-tuple key `(Option<Prot>, Option<Prot>, Option<Prot>)`
+/// corresponds to a recognized family shape. Membership is **key-based and
+/// len-agnostic** — a `len ≥ 4` path whose first 3 prots match a 3-hop arm
+/// still yields `true` (preserving the `family_axis_support` presence check:
+/// the axis surface is declared even though the facts dispatcher may decline
+/// on arity). This mirrors the old `build_for_walk` table: every listed arm
+/// has `Some` in slots 1–2.
+pub(crate) fn recognized_key(key: (Option<Prot>, Option<Prot>, Option<Prot>)) -> bool {
+    matches!(key, (Some(_), Some(_), _))
 }
 
-/// The 2-hop V4→V2 shape (boundary-seed): a `V4Unlock` that runs the V4 swap,
-/// seeds the V2 pool (prefund style), and runs a `V2SwapCalc` to SELF. The
-/// outer `SelfFund`/`V4Unlock` wrap depends on the terminal output currency.
-/// The 3-hop V4→V4→V4 facts (`v4v4v4`).
-pub(crate) fn facts_of_v4v4v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
+/// The protocol of a hop. (Local mirror of `grammar_shape::prot_of`'s
+/// single-hop form, kept here so `facts_for` is self-contained.)
+fn hop_prot(h: &HopInfo) -> Prot {
+    match h {
+        HopInfo::V2(_) => Prot::V2,
+        HopInfo::V3(_) => Prot::V3,
+        HopInfo::V4(_) => Prot::V4,
     }
-    let (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v4_hop_facts_netzero(b),
-        v4_hop_facts_netzero(c),
-    ])
 }
 
-/// The 2-hop V2→V4 facts (`v2v4`).
-pub(crate) fn facts_of_v2v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 2 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V4(b)) = (&path.hops[0], &path.hops[1]) else {
-        return None;
-    };
-    Some(vec![v2_hop_facts(a), v4_hop_facts_netzero(b)])
-}
-
-/// The 2-hop V3→V4 facts (`v3v4`).
-pub(crate) fn facts_of_v3v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 2 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V4(b)) = (&path.hops[0], &path.hops[1]) else {
-        return None;
-    };
-    Some(vec![v3_hop_facts(a), v4_hop_facts_netzero(b)])
-}
-
-/// The 2-hop V4→V3 facts (`v4v3`).
-pub(crate) fn facts_of_v4v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 2 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V3(b)) = (&path.hops[0], &path.hops[1]) else {
-        return None;
-    };
-    Some(vec![v4_hop_facts_netzero(a), v3_hop_facts(b)])
-}
-
-/// The 3-hop V4-crossing shape dispatcher: routes the 18 T7 families to their
-/// per-shape derivers by the exact (a,b,c) protocol triple.
-/// The 3-hop V4→V2→V2 facts (`v4v2v2`).
-pub(crate) fn facts_of_v4v2v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v2_hop_facts(b),
-        v2_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V4→V2→V4 facts (`v4v2v4`).
-pub(crate) fn facts_of_v4v2v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v2_hop_facts(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// The 3-hop V4→V3→V3 facts (`v4v3v3`).
-pub(crate) fn facts_of_v4v3v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v3_hop_facts(b),
-        v3_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V4→V3→V4 facts (`v4v3v4`).
-pub(crate) fn facts_of_v4v3v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v3_hop_facts(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// The 3-hop V4→V4→V2 facts (`v4v4v2`).
-pub(crate) fn facts_of_v4v4v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v4_hop_facts_netzero(b),
-        v2_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V4→V4→V3 facts (`v4v4v3`).
-pub(crate) fn facts_of_v4v4v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v4_hop_facts_netzero(b),
-        v3_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V4→V2→V3 facts (`v4v2v3`).
-pub(crate) fn facts_of_v4v2v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v2_hop_facts(b),
-        v3_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V4→V3→V2 facts (`v4v3v2`).
-pub(crate) fn facts_of_v4v3v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v4_hop_facts_netzero(a),
-        v3_hop_facts(b),
-        v2_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V2→V2→V4 facts (`v2v2v4`).
-pub(crate) fn facts_of_v2v2v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v2_hop_facts(a),
-        v2_hop_facts(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// The 3-hop V2→V4→V4 facts (`v2v4v4`).
-pub(crate) fn facts_of_v2v4v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v2_hop_facts(a),
-        v4_hop_facts_netzero(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// The 3-hop V2→V3→V4 facts (`v2v3v4`).
-pub(crate) fn facts_of_v2v3v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v2_hop_facts(a),
-        v3_hop_facts(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// The 3-hop V3→V2→V4 facts (`v3v2v4`).
-pub(crate) fn facts_of_v3v2v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v3_hop_facts(a),
-        v2_hop_facts(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// The 3-hop V3→V3→V4 facts (`v3v3v4`).
-pub(crate) fn facts_of_v3v3v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v3_hop_facts(a),
-        v3_hop_facts(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// The 3-hop V2→V4→V2 facts (`v2v4v2`).
-pub(crate) fn facts_of_v2v4v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v2_hop_facts(a),
-        v4_hop_facts_netzero(b),
-        v2_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V2→V4→V2 shape: a WETH-funded terminal V2 flash whose callback seeds
-/// V2 pool a and V4-unlocks the middle V4 swap (the V4 forward repaying the V2
-/// flash).
-/// The 3-hop V2→V4→V3 facts (`v2v4v3`).
-pub(crate) fn facts_of_v2v4v3(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V3(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v2_hop_facts(a),
-        v4_hop_facts_netzero(b),
-        v3_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V3→V4→V2 facts (`v3v4v2`).
-pub(crate) fn facts_of_v3v4v2(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V2(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v3_hop_facts(a),
-        v4_hop_facts_netzero(b),
-        v2_hop_facts(c),
-    ])
-}
-
-/// The 3-hop V3→V4→V4 facts (`v3v4v4`).
-pub(crate) fn facts_of_v3v4v4(
-    path: &PathInfo,
-    _inputs: &ComposerInputs<'_>,
-) -> Option<Vec<HopFacts>> {
-    if path.hops.len() != 3 {
-        return None;
-    }
-    let (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V4(c)) =
-        (&path.hops[0], &path.hops[1], &path.hops[2])
-    else {
-        return None;
-    };
-    Some(vec![
-        v3_hop_facts(a),
-        v4_hop_facts_netzero(b),
-        v4_hop_facts_netzero(c),
-    ])
-}
-
-/// Build the `v3_v4_v3` Plan from hop facts + inputs, deriving the enclosure
-/// (which flash wraps which, the V4 unlock, the repayment order).
+/// The single facts dispatcher (ADR-031 D6). Routes a path to its hop facts:
 ///
-/// Returns `None` on a decline; a produced Plan is guaranteed validator-safe by
-/// the shared `LedgerValidator` gate (ADR-030 Reject path).
-#[must_use]
-/// The `v3_v4_v3` family — a thin delegate to the generic facts-driven
-/// deriver (ADR-031 D3/D6). The enclosure (which FlashSwap/V4Unlock wraps
-/// which, the repayment order) is DERIVED from the `Repay`/`OutDest` facts by
-/// [`derive_plan`], not authored here.
-pub fn build_v3v4v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    // 3 hops, exactly one NetZero V4 middle, exactly one SelfRefund leading
-    // + one Offstream terminal — the single-V4-middle enclosure shape.
-    let facts = facts_of_v3v4v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
+/// - All-V2 (≥2 hops) → [`facts_of_all_v2`] (the funding-branched any-N family).
+/// - The five per-position override families (`v3v4v3`, `v2v3`, `v3v3`, `v3v2`)
+///   → their explicit facts fn.
+/// - All other 2-hop and 3-hop families → per-hop [`hop_facts`] (the default
+///   mapping: V4 hops tagged `Repay::NetZero`).
+/// - `len < 2` or `len > 3` (non-all-V2) → `None` (no producer).
+pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<HopFacts>> {
+    let n = path.hops.len();
+    let prots: Vec<Prot> = path.hops.iter().map(hop_prot).collect();
+    if n >= 2 && prots.iter().all(|p| *p == Prot::V2) {
+        return facts_of_all_v2(path, inputs);
+    }
+    match prots.as_slice() {
+        [Prot::V3, Prot::V4, Prot::V3] => facts_of_v3v4v3(path, inputs),
+        [Prot::V2, Prot::V3] => facts_of_v2v3(path, inputs),
+        [Prot::V3, Prot::V3] => facts_of_v3v3(path, inputs),
+        [Prot::V3, Prot::V2] => facts_of_v3v2(path, inputs),
+        _ if (2..=3).contains(&n) => Some(path.hops.iter().map(hop_facts).collect()),
+        _ => None,
+    }
 }
 
-/// The facts-driven walker wired through the shared validator gate (one
-/// representation): build the `v3_v4_v3` Plan from facts, gate it, fold
-/// `preamble + plan_to_bytes`. `None` on a routine decline.
+/// The single pipeline entry (ADR-031 D6): `facts_for` → `derive_plan` →
+/// `enc_preamble`. Returns `(preamble, plan, address_table)` or `None` on a
+/// routine decline. The `LedgerValidator` gate (build → `plan_to_ledger_ops`
+/// → `LedgerValidator::validate_full` → `plan_to_bytes`) stays in
+/// `grammar_shape::derive_shape_detailed`.
 #[must_use]
-pub fn derive_v3v4v3_walk(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<u8>> {
-    let (preamble, plan, at) = build_v3v4v3_walk(path, inputs)?;
-    let ops = plan_to_ledger_ops(&plan);
-    let mut v = crate::grammar_ledger::LedgerValidator::default();
-    v.validate_full(&ops).ok()?;
-    let mut out = preamble;
-    out.extend_from_slice(&crate::grammar_plan::plan_to_bytes(&plan, &at));
-    Some(out)
-}
-
-/// The funding-axis dispatch (a V2/V3 stream-varying axis), matching
-/// `funding_branch` in `grammar_shape`. The walker derives the funding branch
-/// from the funding axis value rather than hand-authoring it per family.
-/// Build the any-N (≥2) all-V2 chain Plan from hop facts + inputs, deriving
-/// the enclosure (the funding branch + the `V2SwapCalc` walk) — byte-identical
-/// to `build_all_v2_chain` (ADR-031; the `walk` feature).
-// The `guard_arity` helper was decommissioned by the facts-driven T4–T7
-// migration (epic 6SU5LM): every pure + V4-crossing family now delegates to
-// `derive_plan`, whose per-shape derivers inline the arity checks.
-/// The any-N all-V2 family — a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_all_v2_walk(
+pub fn build_walk(
     path: &PathInfo,
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_all_v2(path, inputs)?;
+    let facts = facts_for(path, inputs)?;
     let (plan, at) = derive_plan(&facts, inputs)?;
     let preamble = crate::encoders::enc_preamble(&at);
     Some((preamble, plan, at))
-}
-#[must_use]
-pub fn build_v2v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-#[must_use]
-pub fn build_v3v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 2-hop V3→V3 Plan (SelfFund), byte-identical to `build_v3v3_plan`.
-#[must_use]
-/// The 2-hop V3→V3 family — a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-pub fn build_v3v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 2-hop V4→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 2-hop V4→V3 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 2-hop V4→V2 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V4→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v4v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v4v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V2→V2 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v2v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v2v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V2→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v2v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v2v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V3→V3 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v3v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v3v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V3→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v3v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v3v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-#[must_use]
-pub fn build_v3v2v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v2v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-#[must_use]
-pub fn build_v3v3v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v3v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-#[must_use]
-pub fn build_v3v3v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v3v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V2→V2→V3 family — a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v2v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v2v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 2-hop V3→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v3v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 2-hop V2→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V4→V2 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v4v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v4v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V4→V3 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v4v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v4v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V2→V3 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v2v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v2v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V4→V3→V2 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v4v3v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v4v3v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V2→V2→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v2v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v2v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V2→V4→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v4v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v4v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-#[must_use]
-pub fn build_v2v3v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v3v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-/// The 3-hop V2→V3→V3 family — a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v3v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v3v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V2→V3→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v3v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v3v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-#[must_use]
-pub fn build_v3v2v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v2v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V3→V2→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v3v2v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v2v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V3→V3→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v3v3v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v3v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V2→V4→V2 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v4v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v4v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V2→V4→V3 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v2v4v3_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v2v4v3(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V3→V4→V2 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v3v4v2_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v4v2(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-
-/// The 3-hop V3→V4→V4 family - a thin delegate to the facts-driven deriver
-/// (ADR-031 D3/D6).
-#[must_use]
-pub fn build_v3v4v4_walk(
-    path: &PathInfo,
-    inputs: &ComposerInputs<'_>,
-) -> Option<(Vec<u8>, Plan, AddressTable)> {
-    let facts = facts_of_v3v4v4(path, inputs)?;
-    let (plan, at) = derive_plan(&facts, inputs)?;
-    let preamble = crate::encoders::enc_preamble(&at);
-    Some((preamble, plan, at))
-}
-/// A facts-descriptor function pointer (the same signature as `facts_of_*`).
-pub type FactsFn = fn(&PathInfo, &ComposerInputs<'_>) -> Option<Vec<HopFacts>>;
-
-/// The per-family facts descriptor for the given key. This match is the
-/// future single facts dispatcher (T3 collapses the twin `build_for_walk`
-/// match into it); the D6 enclosure invariant in
-/// `tests/facts_driven_invariant.rs` reads facts through it.
-#[must_use]
-pub fn family_facts(key: (Option<Prot>, Option<Prot>, Option<Prot>)) -> Option<FactsFn> {
-    Some(match key {
-        // ── 3-hop families (27) ──
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4)) => facts_of_v4v4v4,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V2)) => facts_of_v4v2v2,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V4)) => facts_of_v2v2v4,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V4)) => facts_of_v2v3v4,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V4)) => facts_of_v3v2v4,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V4)) => facts_of_v3v3v4,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V2)) => facts_of_v2v4v2,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V3)) => facts_of_v2v4v3,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V2)) => facts_of_v3v4v2,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V3)) => facts_of_v3v4v3,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V4)) => facts_of_v2v4v4,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V4)) => facts_of_v3v4v4,
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V2)) => facts_of_v4v4v2,
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V3)) => facts_of_v4v4v3,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V3)) => facts_of_v4v2v3,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V4)) => facts_of_v4v2v4,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V2)) => facts_of_v4v3v2,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V3)) => facts_of_v4v3v3,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V4)) => facts_of_v4v3v4,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V2) | None) => facts_of_all_v2,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V3)) => facts_of_v2v2v3,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V2)) => facts_of_v2v3v2,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V3)) => facts_of_v2v3v3,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V2)) => facts_of_v3v2v2,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V3)) => facts_of_v3v2v3,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V2)) => facts_of_v3v3v2,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V3)) => facts_of_v3v3v3,
-        // ── 2-hop families (8; third slot `None`) ──
-        (Some(Prot::V4), Some(Prot::V4), None) => facts_of_v4v4,
-        (Some(Prot::V4), Some(Prot::V3), None) => facts_of_v4v3,
-        (Some(Prot::V3), Some(Prot::V4), None) => facts_of_v3v4,
-        (Some(Prot::V4), Some(Prot::V2), None) => facts_of_v4v2,
-        (Some(Prot::V2), Some(Prot::V4), None) => facts_of_v2v4,
-        (Some(Prot::V2), Some(Prot::V3), None) => facts_of_v2v3,
-        (Some(Prot::V3), Some(Prot::V2), None) => facts_of_v3v2,
-        (Some(Prot::V3), Some(Prot::V3), None) => facts_of_v3v3,
-        _ => return None,
-    })
-}
-
-/// The walk feature-flag dispatch: the same `(Prot, Prot, Option<Prot>)`
-/// family keys as the reference producer, but every row routes to the
-/// facts-driven walker builder (`build_*_walk`) instead of the hand-written
-/// reference producer. Axes mirror the reference exactly (the walker itself
-/// derives funding/capture from hop facts inside the build; the axes here keep
-/// `family_axis_support` bit-identical to the reference so the walk/off
-/// streams can't drift on the declared axis surface). When `walk` is on, both
-/// `derive_shape_detailed` and `family_axis_support` inline `build_for_walk`
-/// directly — no private re-export shell — with byte-parity to the reference
-/// already pinned by the walker test suite.
-#[must_use]
-pub(crate) fn build_for_walk(
-    key: (Option<Prot>, Option<Prot>, Option<Prot>),
-) -> Option<crate::grammar_shape::BuildPlan> {
-    Some(match key {
-        // ── 3-hop families (27) ──
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V4)) => build_v4v4v4_walk,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V2)) => build_v4v2v2_walk,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V4)) => build_v2v2v4_walk,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V4)) => build_v2v3v4_walk,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V4)) => build_v3v2v4_walk,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V4)) => build_v3v3v4_walk,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V2)) => build_v2v4v2_walk,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V3)) => build_v2v4v3_walk,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V2)) => build_v3v4v2_walk,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V3)) => build_v3v4v3_walk,
-        (Some(Prot::V2), Some(Prot::V4), Some(Prot::V4)) => build_v2v4v4_walk,
-        (Some(Prot::V3), Some(Prot::V4), Some(Prot::V4)) => build_v3v4v4_walk,
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V2)) => build_v4v4v2_walk,
-        (Some(Prot::V4), Some(Prot::V4), Some(Prot::V3)) => build_v4v4v3_walk,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V3)) => build_v4v2v3_walk,
-        (Some(Prot::V4), Some(Prot::V2), Some(Prot::V4)) => build_v4v2v4_walk,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V2)) => build_v4v3v2_walk,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V3)) => build_v4v3v3_walk,
-        (Some(Prot::V4), Some(Prot::V3), Some(Prot::V4)) => build_v4v3v4_walk,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V2) | None) => build_all_v2_walk,
-        (Some(Prot::V2), Some(Prot::V2), Some(Prot::V3)) => build_v2v2v3_walk,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V2)) => build_v2v3v2_walk,
-        (Some(Prot::V2), Some(Prot::V3), Some(Prot::V3)) => build_v2v3v3_walk,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V2)) => build_v3v2v2_walk,
-        (Some(Prot::V3), Some(Prot::V2), Some(Prot::V3)) => build_v3v2v3_walk,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V2)) => build_v3v3v2_walk,
-        (Some(Prot::V3), Some(Prot::V3), Some(Prot::V3)) => build_v3v3v3_walk,
-        // ── 2-hop families (8; third slot `None`) ──
-        (Some(Prot::V4), Some(Prot::V4), None) => build_v4v4_walk,
-        (Some(Prot::V4), Some(Prot::V3), None) => build_v4v3_walk,
-        (Some(Prot::V3), Some(Prot::V4), None) => build_v3v4_walk,
-        (Some(Prot::V4), Some(Prot::V2), None) => build_v4v2_walk,
-        (Some(Prot::V2), Some(Prot::V4), None) => build_v2v4_walk,
-        (Some(Prot::V2), Some(Prot::V3), None) => build_v2v3_walk,
-        (Some(Prot::V3), Some(Prot::V2), None) => build_v3v2_walk,
-        (Some(Prot::V3), Some(Prot::V3), None) => build_v3v3_walk,
-        _ => return None,
-    })
 }
 
 /// The enclosure-deriving walker (ADR-031 D3/D6).
@@ -1793,4 +746,131 @@ pub(crate) fn derive_plan(
         return shapes::two_hop_uniswap_only::derive(facts, inputs);
     }
     shapes::tag_residual::derive(facts, inputs)
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::cast_possible_truncation)]
+
+    use super::*;
+    use crate::composers::{EncodeOptions, V2HopInfo, V3HopInfo, V4HopInfo};
+    use alloy::primitives::{address, Address};
+
+    const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    const WBTC: Address = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    const PM: Address = address!("000000000004444c5dc75cB358380D2e3dE08A90");
+    const EXEC: Address = address!("DeAd0000000000000000000000000000000000Be");
+    const OPTIMAL: u128 = 1_000_000_000_000_000_000;
+    static OUTS: [u128; 3] = [1_000_000_000_000_000_000; 3];
+    static CONSUMED: [u128; 3] = [999_999_999_999_999_999; 3];
+
+    fn combo_hops(prots: &[Prot]) -> Vec<HopInfo> {
+        (0..prots.len())
+            .map(|i| {
+                let in_t = match i % 3 {
+                    0 => WETH,
+                    1 => USDC,
+                    _ => WBTC,
+                };
+                let out_t = match (i + 1) % 3 {
+                    0 => WETH,
+                    1 => USDC,
+                    _ => WBTC,
+                };
+                match prots[i] {
+                    Prot::V2 => HopInfo::V2(V2HopInfo {
+                        pool_address: Address::from([0xA0 + i as u8; 20]),
+                        token0_address: in_t,
+                        token1_address: out_t,
+                        fee: 30,
+                        zfo: true,
+                    }),
+                    Prot::V3 => HopInfo::V3(V3HopInfo {
+                        pool_address: Address::from([0xB0 + i as u8; 20]),
+                        token0_address: in_t,
+                        token1_address: out_t,
+                        fee: 3000,
+                        zfo: true,
+                    }),
+                    Prot::V4 => HopInfo::V4(V4HopInfo {
+                        pool_manager_address: PM,
+                        pool_id_hex: format!("0x{i:02x}"),
+                        currency0_address: in_t,
+                        currency1_address: out_t,
+                        fee: 500,
+                        tick_spacing: 10,
+                        hook_address: Address::ZERO,
+                        zfo: true,
+                    }),
+                }
+            })
+            .collect()
+    }
+
+    fn family_name(prots: &[Prot]) -> String {
+        prots
+            .iter()
+            .map(|p| match p {
+                Prot::V2 => "v2",
+                Prot::V3 => "v3",
+                Prot::V4 => "v4",
+            })
+            .collect()
+    }
+
+    /// Every supported family's hop facts tag its V4 hops `Repay::NetZero` —
+    /// the tag the residual tag-driven partition genuinely routes on. Facts
+    /// are fetched through `facts_for`, the same dispatcher the production
+    /// path uses (the single facts route).
+    #[test]
+    fn d6_enclosure_derived_from_facts() {
+        let fams = [Prot::V2, Prot::V3, Prot::V4];
+        let mut netzero_missing: Vec<String> = Vec::new();
+
+        for n in [2usize, 3] {
+            for fidx in 0..fams.len().pow(n as u32) {
+                let prots: Vec<Prot> = (0..n)
+                    .map(|i| fams[(fidx / fams.len().pow(i as u32)) % fams.len()])
+                    .collect();
+                // (v2,v2) 2-hop and (v2,v2,v2) both resolve to all_v2.
+                if prots == vec![Prot::V2, Prot::V2] {
+                    continue;
+                }
+                let name = family_name(&prots);
+                let path = PathInfo::new(combo_hops(&prots));
+                let inputs = ComposerInputs {
+                    executor_address: EXEC,
+                    pool_manager_address: PM,
+                    weth_address: WETH,
+                    optimal_input: OPTIMAL,
+                    hop_outputs: &OUTS[..n],
+                    consumed_inputs: &CONSUMED[..n],
+                    opts: EncodeOptions::default(),
+                };
+                let Some(tags) = facts_for(&path, &inputs)
+                    .map(|fs| fs.iter().map(|f| f.repay).collect::<Vec<_>>())
+                else {
+                    continue;
+                };
+
+                let has_v4 = prots.contains(&Prot::V4);
+                let v4_has_netzero = prots
+                    .iter()
+                    .zip(tags.iter())
+                    .any(|(p, r)| *p == Prot::V4 && *r == Repay::NetZero);
+                if has_v4 && !v4_has_netzero {
+                    let tag_strs: Vec<String> = tags.iter().map(|r| format!("{r:?}")).collect();
+                    netzero_missing.push(format!("{name} (tags=[{}])", tag_strs.join(", ")));
+                }
+            }
+        }
+
+        assert!(
+            netzero_missing.is_empty(),
+            "D6 violation — families whose V4 hops lack Repay::NetZero (the tag \
+             the residual tag partition routes on):\n  {}",
+            netzero_missing.join("\n  ")
+        );
+    }
 }

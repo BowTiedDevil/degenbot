@@ -12,15 +12,15 @@
 //!
 //! The `PlanStep` vocabulary + the two walkers are the **deep, stable**
 //! interface (`Plan → LedgerOp`, `Plan → bytes`) the grammar exists to serve —
-//! ~770 lines, churned rarely. The wide, churning surface — the ~35
-//! `build_*_plan` per-family transcriptions, the `BuildPlan` pipeline, the
-//! `derive_shape` dispatch — lives in [`crate::grammar_shape`], so a family
-//! addition stops churning this file and its tests.
+//! ~770 lines, churned rarely. The wide, churning surface — the `build_walk`
+//! pipeline + the `derive_shape` dispatch — lives in
+//! [`crate::grammar_shape`], so a family addition stops churning this file
+//! and its tests.
 //!
 //! One representation, no drift, no reordering, no per-family trace
 //! duplication. [`crate::grammar_shape::derive_shape`] dispatches every
-//! well-formed family to its `build_*_plan` + `build_plan_bytes`, returning
-//! `None` on decline or gate rejection.
+//! well-formed family through `build_walk` + the `LedgerValidator` gate,
+//! returning `None` on decline or gate rejection.
 //!
 //! ---
 //! **Parity sources of truth:** the revm runtime matrix (`degenbot-simulation`

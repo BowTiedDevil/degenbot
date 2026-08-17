@@ -17,14 +17,14 @@
 //! (`tests/native_eth_3hop_bridge.rs`).
 //!
 //! **N4TJSZ (SPVEIE + KO5NNB + 4JOWO5):** the all-V2 family (2-hop, 3-hop,
-//! any-N) routes through [`crate::grammar_shape::build_all_v2_chain`] + the
+//! any-N) routes through the single `build_walk` pipeline + the
 //! [`LedgerValidator`][crate::grammar_ledger::LedgerValidator] gate — D4's "the
 //! validator gates the Plan for every family" is literal for all-V2, and the
 //! terminal-V2 exact-draw invariant is enforced on the streams the bot actually
-//! ships. There is exactly ONE all-V2 producer (`build_all_v2_chain`); the
-//! former distinct all-V2 **3-hop** layout is collapsed to the any-N Plan
-//! layout (top-swap-on-pool-A), which is what the revm full_matrix always
-//! exercised.
+//! ships. There is exactly ONE all-V2 producer (the `facts_of_all_v2` arm in
+//! `build_walk`); the former distinct all-V2 **3-hop** layout is collapsed to
+//! the any-N Plan layout (top-swap-on-pool-A), which is what the revm
+//! full_matrix always exercised.
 //!
 //! The CL-clamp swap-in rule (`V2 → full output; CL → consumed_inputs[i]` +
 //! `fits_int128`) is applied directly in the retained builders.

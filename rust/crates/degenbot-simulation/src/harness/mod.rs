@@ -516,7 +516,7 @@ impl Harness {
     /// and execute it. Each hop is `(pool index into [`Self::pools`],
     /// `zero_for_one`); `hop_outputs[i]` are the per-hop solver outputs. This
     /// routes all-V2 through the Plan + validator path
-    /// (`grammar_shape::derive_all_v2` → `build_all_v2_chain`) exactly like
+    /// (`grammar_shape::derive_all_v2` → `build_walk`) exactly like
     /// production. Returns the classified outcome.
     pub fn run_v2_path(
         &mut self,
