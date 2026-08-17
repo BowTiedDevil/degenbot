@@ -47,7 +47,7 @@ CBOR) so no storage overrides are needed.
 
 | Slot | Immutable | Value | Notes |
 |------|-----------|-------|-------|
-| 0 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Must match `EXECUTOR_OWNER` in the backrun script. `execute()` checks `msg.sender == OWNER_ADDR`, so the simulation's `from` address must equal this |
+| 0 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Must match `EXECUTOR_OWNER` in the settlement-arbitrage script. `execute()` checks `msg.sender == OWNER_ADDR`, so the simulation's `from` address must equal this |
 | 1 | `WETH_ADDR` | `0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2` | WETH on mainnet |
 | 2 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations. If wrong, V4-hybrid paths revert at ~38K gas |
 | 3 | `WETH_DELTA_SLOT` | `keccak256(self, WETH)` | V4 CurrencyDelta precomputed slot |

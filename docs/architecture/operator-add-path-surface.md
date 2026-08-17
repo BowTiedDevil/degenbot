@@ -114,6 +114,6 @@ is a tiny versioned protocol a client of any vintage can talk to.
   request, `wrap_handler` normalization.
 - `tests/cli/test_path_cli.py` — hop parsing, `--direction` mapping, live
   round-trip + error exit against a threaded `OperatorServer`.
-- `tests/arbitrage/test_backrun_session.py` — programmatic surface raises
+- `tests/arbitrage/test_arbitrage_session.py` — programmatic surface raises
   without a live pipeline; a mid-run add during an advancing consumer does not
   stall or abort dispatch.

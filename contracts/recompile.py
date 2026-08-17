@@ -71,7 +71,7 @@ POOL_MANAGER_ADDR = "0x000000000004444c5dc75cB358380D2e3De08A90"
 NATIVE_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 # The injected executor address — used as `self` for delta slot precomputation.
-# Must match INJECTED_EXECUTOR_ADDRESS in the backrun bot.
+# Must match INJECTED_EXECUTOR_ADDRESS in the settlement-arbitrage bot.
 INJECTED_EXECUTOR_ADDRESS = "0x0D6d4C3CF3bD3b769De1821F2Be0D7d99913e4F1"
 
 
