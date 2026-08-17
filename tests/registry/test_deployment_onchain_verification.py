@@ -69,7 +69,7 @@ on a machine with only a local Ethereum node, the Base/Arbitrum rows skip).
 from __future__ import annotations
 
 import os
-import subprocess  # noqa: S404
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 from functools import cache
 
 import pytest
@@ -120,8 +120,8 @@ def _rpc_reachable(rpc_url: str) -> bool:
     check per *chain*, not per row.
     """
     try:
-        subprocess.run(  # noqa: S603 — trusted binary, no shell
-            ["cast", "block-number", "--rpc-url", rpc_url],  # noqa: S607
+        subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted binary, no shell
+            ["cast", "block-number", "--rpc-url", rpc_url],  # ruff: ignore[start-process-with-partial-path]
             check=True,
             capture_output=True,
             text=True,
@@ -149,8 +149,8 @@ def _skip_if_unreachable(chain_id: int) -> str | None:
 
 def _cast(*args: str, timeout: int = 30) -> str:
     """Run ``cast`` with the given args, return stdout, raising on failure."""
-    result = subprocess.run(  # noqa: S603 — trusted binary, args list, no shell
-        ["cast", *args],  # noqa: S607
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted binary, args list, no shell
+        ["cast", *args],  # ruff: ignore[start-process-with-partial-path]
         check=True,
         capture_output=True,
         text=True,

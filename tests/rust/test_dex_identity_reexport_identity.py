@@ -13,8 +13,6 @@ identity at the FFI boundary.
 
 from __future__ import annotations
 
-from degenbot._ffi.dex_identity import DexIdentity
-
 
 def test_dex_identity_alias_identity() -> None:
     """The stable companion name is the exact FFI pyclass."""

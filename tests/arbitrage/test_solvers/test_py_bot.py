@@ -1052,7 +1052,9 @@ class TestDexIdentityPresets:
         lower = dex_identity("uniswap-v2")
         upper = dex_identity("UNISWAP-V2")
         mixed = dex_identity("Uniswap-V2")
-        assert lower is not None and upper is not None and mixed is not None
+        assert lower is not None
+        assert upper is not None
+        assert mixed is not None
         assert lower.factory == upper.factory == mixed.factory
 
     def test_unknown_variant_returns_none(self) -> None:

@@ -14,7 +14,7 @@ itself, make those Rust records visible at INFO without any caller wiring.
 import logging
 import logging.handlers
 
-import degenbot  # noqa: F401  (import triggers base config)
+import degenbot  # ruff: ignore[unused-import]  (import triggers base config)
 
 #: The Rust crate-root logger names that ``pyo3-log`` forwards ``log::`` records
 #: into (each Rust target ``degenbot_<crate>::...`` maps to the Python logger

@@ -108,7 +108,7 @@ def test_admission_errors_catchable_as_value_error(exc_name: str) -> None:
     broad `except ValueError:` net in `build_paths`)."""
     exc_type = getattr(degenbot.exceptions, exc_name)
     msg = "rejected"
-    with pytest.raises(ValueError):  # noqa: PT011 — broad catch is the contract
+    with pytest.raises(ValueError):  # ruff: ignore[pytest-raises-too-broad] — broad catch is the contract
         raise exc_type(msg)
 
 

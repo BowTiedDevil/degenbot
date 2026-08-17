@@ -41,8 +41,8 @@ from degenbot.pathfinding import find_paths, find_paths_async
 CHAIN = ChainId.ETH  # value 1; arbitrary but conventional
 
 WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-TOKEN_A_ADDR = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # noqa: S105
-TOKEN_B_ADDR = "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"  # noqa: S105
+TOKEN_A_ADDR = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # ruff: ignore[hardcoded-password-string]
+TOKEN_B_ADDR = "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"  # ruff: ignore[hardcoded-password-string]
 
 # Two DISTINCT V2 pools pairing WETH<->A, so a 2-hop cycle WETH->A->WETH
 # exists using parallel edges (a multi-graph). On the buggy code with the

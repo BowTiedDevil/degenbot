@@ -96,6 +96,8 @@ def test_companion_reexports_are_identity_aliases() -> None:
     from degenbot.aerodrome.math import calc_exact_out_v2 as aero_out
     from degenbot.uniswap.math import (
         calc_exact_in_v2 as uni_in,
+    )
+    from degenbot.uniswap.math import (
         calc_exact_out_v2 as uni_out,
     )
 

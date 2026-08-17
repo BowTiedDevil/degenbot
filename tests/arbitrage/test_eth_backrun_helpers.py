@@ -19,6 +19,7 @@ from degenbot.runner.config import (
     format_sim_diag_line,
 )
 
+
 def _failure(**overrides: object) -> dict[str, object]:
     """A minimal failure-record dict (the shape outcome.failures() emits)."""
     base: dict[str, object] = {

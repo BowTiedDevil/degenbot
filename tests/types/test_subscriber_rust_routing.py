@@ -48,7 +48,6 @@ from fractions import Fraction
 
 from degenbot.bot import RustBot
 
-
 _SUBSCRIBER_FLUSH_S = 0.15  # max seconds to wait for subscriber drainer flush
 from tests.fakes.subscribers import FakeSubscriber
 from tests.helpers.erc20_factory import make_erc20

@@ -192,7 +192,7 @@ def _row_counts(db_path: str) -> dict[str, int]:
             ).fetchall()
         ]
         return {
-            t: conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]  # noqa: S608 - table name from sqlite_master (trusted)
+            t: conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]  # ruff: ignore[hardcoded-sql-expression] - table name from sqlite_master (trusted)
             for t in tables
         }
     finally:

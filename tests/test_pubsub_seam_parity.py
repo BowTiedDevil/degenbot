@@ -48,7 +48,6 @@ import pytest
 from degenbot._ffi.subscriber import register_subscriber
 from degenbot.bot import RustBot
 
-
 _SUBSCRIBER_FLUSH_S = (
     0.15  # max seconds to wait for subscriber drainer flush (2x interval + margin)
 )

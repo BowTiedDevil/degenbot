@@ -27,7 +27,6 @@ from degenbot._ffi.simulation import (
     dispatch_profitable_py,
 )
 from degenbot._ffi.submission import Dispatcher, SubmitCandidate
-from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
 # Canonical mainnet addresses (parity corpus constants — match the A2 test
 # scaffolding in tests/rust/test_simulation_seam_classes.py).

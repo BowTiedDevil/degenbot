@@ -196,7 +196,7 @@ class GoldenOracle:
         if self._recording:
             try:
                 value = contract()
-            except Exception as exc:  # noqa: BLE001 — capture any revert
+            except Exception as exc:  # ruff: ignore[blind-except] — capture any revert
                 result = GoldenResult(
                     value=None,
                     reverted=True,

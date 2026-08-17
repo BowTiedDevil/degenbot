@@ -225,7 +225,7 @@ GET_CONFIGURATION_SELECTOR = "0xc44b11f7"
 POOL_REVISION_SELECTOR = "0x0148170e"
 CONFIGURATOR_REVISION_SELECTOR = "0x7af635a6"
 ATOKEN_REVISION_SELECTOR = "0x0bd7ad3b"
-DEBT_TOKEN_REVISION_SELECTOR = "0xb9a7b622"  # noqa: S105
+DEBT_TOKEN_REVISION_SELECTOR = "0xb9a7b622"  # ruff: ignore[hardcoded-password-string]
 # `getSourceOfAsset(address)` — the PriceOracle RPC the ReserveInitialized
 # handler calls to set the asset's initial price_source (keyed by selector).
 GET_SOURCE_OF_ASSET_SELECTOR = "0x92bf2be0"
@@ -564,7 +564,7 @@ def make_upgraded_log(
 
 # newDiscountToken)` — emitted by the GHO variable-debt token. The Python
 # validates the emitter == the GHO vToken address; emit from GHO_VTOKEN_ADDRESS.
-_DISCOUNT_TOKEN_UPDATED_TOPIC = "0x6b489e1dbfbe36f55c511c098bcc9d92fec7f04f74ceb75018697ab68f7d3529"  # noqa: S105
+_DISCOUNT_TOKEN_UPDATED_TOPIC = "0x6b489e1dbfbe36f55c511c098bcc9d92fec7f04f74ceb75018697ab68f7d3529"  # ruff: ignore[hardcoded-password-string]
 
 
 def make_discount_token_updated_log(
@@ -1276,7 +1276,7 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             out.append(log)
         return out
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: object) -> None:  # ruff: ignore[builtin-argument-shadowing]
         return
 
 

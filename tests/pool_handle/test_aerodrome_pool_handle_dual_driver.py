@@ -98,6 +98,7 @@ def test_aerodrome_stable_swap_matches_recorded_constant(aerodrome_stable_pool) 
 def test_aerodrome_stable_swap_is_monotonic(aerodrome_stable_pool) -> None:
     small = aerodrome_stable_pool.calculate_tokens_out(True, 1_000_000_000_000_000_000)
     large = aerodrome_stable_pool.calculate_tokens_out(True, 2_000_000_000_000_000_000)
-    assert small is not None and large is not None
+    assert small is not None
+    assert large is not None
     assert large > small, "output must increase with input"
     assert large < 2_000_000_000_000_000_000, "output bounded below input (fee + slippage)"

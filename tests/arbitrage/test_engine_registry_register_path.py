@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.bot import RustBot
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,

@@ -53,7 +53,7 @@ class FakePoolIO:
         self.bitmap_fetches += 1
         if self.raise_on_fetch:
             msg = "RPC error"
-            raise Exception(msg)  # noqa: TRY002
+            raise Exception(msg)  # ruff: ignore[raise-vanilla-class]
         return self.bitmap_at_word.get(word_position, 0)
 
     def fetch_tick_data(

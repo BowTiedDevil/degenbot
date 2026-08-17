@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
-
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import RustBot
 
@@ -868,7 +866,7 @@ class TestSharedStateTopologyConcurrency:
                         tick=V3_TICK + (i % 7),
                         block_number=i + 1,
                     )
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
 
         thread = threading.Thread(target=writer)
@@ -977,7 +975,7 @@ class TestSharedStateTopologyConcurrency:
                     if done.is_set():
                         return
                     engine.solve_all_paths(i)
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
 
         def reader() -> None:
@@ -988,7 +986,7 @@ class TestSharedStateTopologyConcurrency:
                     _ = handle_a.reserve0
                     _ = handle_a.reserve1
                     _ = handle_a.update_block
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
 
         solver_thread = threading.Thread(target=solver)

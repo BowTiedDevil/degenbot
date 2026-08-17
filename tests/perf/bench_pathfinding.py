@@ -338,7 +338,7 @@ if __name__ == "__main__":
     # The old implementation uses NetworkX, which was removed from deps.
     # We try a best-effort import; if not available, skip the old benchmark.
     try:
-        import networkx  # noqa: F401 -- availability check
+        import networkx  # ruff: ignore[unused-import] -- availability check
 
         has_networkx = True
     except ImportError:

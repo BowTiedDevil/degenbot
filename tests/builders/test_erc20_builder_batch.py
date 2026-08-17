@@ -38,7 +38,7 @@ class _RecFakeIo:
     def fetch_erc20_token(self, chain_id: int, address: str) -> None:
         return None
 
-    def update_erc20_token_metadata(  # noqa: D102 - delegated seam, unused here
+    def update_erc20_token_metadata(
         self, *args: object, **kwargs: object
     ) -> None:
         return None
@@ -52,7 +52,7 @@ class _RecFakeIo:
 
     def fetch_erc20_metadata(self, address: str) -> None:
         self.single_metadata_calls += 1
-        return None
+        return
 
     def fetch_erc20_string_field(self, address: str, prototype: str) -> str:
         raise ValueError("revert")
@@ -74,8 +74,10 @@ def test_build_many_issues_single_batched_fetch() -> None:
     # ONE batched network fetch covering both tokens — no per-token fetches.
     assert io.metadata_batch_calls == [[TOKEN_A, TOKEN_B]]
     assert io.single_metadata_calls == 0
-    assert t_a.symbol == "ALPHA" and t_a.decimals == 6
-    assert t_b.symbol == "BETA" and t_b.decimals == 18
+    assert t_a.symbol == "ALPHA"
+    assert t_a.decimals == 6
+    assert t_b.symbol == "BETA"
+    assert t_b.decimals == 18
 
 
 def test_build_many_falls_back_per_token_for_none_meta() -> None:

@@ -103,7 +103,7 @@ def test_managed_pool_registry_get_or_add_concurrent_no_raise() -> None:
         try:
             barrier.wait(timeout=5)
             reg.get_or_add(FakeManagedPool(MANAGER, POOL_ID), CHAIN, MANAGER, POOL_ID)
-        except BaseException as exc:  # ruff:ignore[BLE001] - test harness collect-all
+        except BaseException as exc:  # ruff:ignore[blind-except] - test harness collect-all
             errors.append(exc)
 
     threads = [threading.Thread(target=worker) for _ in range(n_threads)]

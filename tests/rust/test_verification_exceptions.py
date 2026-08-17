@@ -75,7 +75,7 @@ def test_both_exceptions_caught_by_runtime_error_handler() -> None:
         VerificationRpcError,
     ):
         try:
-            raise exc_type("boom")  # noqa: EM101
+            raise exc_type("boom")  # ruff: ignore[raw-string-in-exception]
         except RuntimeError as exc:
             assert isinstance(exc, exc_type)
 

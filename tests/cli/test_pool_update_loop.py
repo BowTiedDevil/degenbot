@@ -94,7 +94,7 @@ def test_pool_update_handoff_calls_run_pool_update_once_per_chain(
     (c) a fresh ``CancelHandle`` is passed (the SIGINT bridge), (d) the
     progress callback is a callable, (e) the returned report is echoed.
     """
-    stub_bot  # noqa: B018 -- fixture seeds the DB + bot
+    stub_bot  # ruff: ignore[useless-expression] -- fixture seeds the DB + bot
 
     captured: dict[str, object] = {}
 
@@ -206,7 +206,7 @@ def test_pool_update_cancel_shows_friendly_message(
     traceback, no nonzero exit. Non-cancel ``RuntimeError``s still propagate
     (untouched by the guard).
     """
-    stub_bot  # noqa: B018 -- fixture seeds the DB + bot
+    stub_bot  # ruff: ignore[useless-expression] -- fixture seeds the DB + bot
     cancel_error = RuntimeError("run_pool_update cancelled by cancel flag")
 
     def _fake_run_pool_update(
