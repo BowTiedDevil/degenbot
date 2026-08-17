@@ -312,67 +312,6 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         liquidity_updater::db_apply_v4_liquidity_updates,
         &submod
     )?)?;
-    // Aave V3 writer seam (Sub-step B of AZGJUN/RQXEKH) — mirror the
-    // liquidity_updater registration. 14 pyfunctions: 7 `get_or_create_*` + 7
-    // `apply_*` + `decode_reserve_configuration_bitmap`.
-    submod.add_function(wrap_pyfunction!(
-        aave::db_get_or_create_e_mode_category,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_get_or_create_asset_config,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_get_or_create_user_collateral_config,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(aave::db_get_or_create_user, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_get_or_create_erc20_token,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_get_or_create_collateral_position,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_get_or_create_debt_position,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_apply_collateral_configuration_changed,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_apply_e_mode_category_added,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_apply_emode_asset_category_changed,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_apply_asset_collateral_in_emode_changed,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_apply_reserve_used_as_collateral,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(aave::db_apply_user_e_mode_set, &submod)?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_apply_price_oracle_updated,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_apply_asset_source_updated,
-        &submod
-    )?)?;
-    submod.add_function(wrap_pyfunction!(
-        aave::db_decode_reserve_configuration_bitmap,
-        &submod
-    )?)?;
     submod.add_function(wrap_pyfunction!(pool_read::db_fetch_pool_row, &submod)?)?;
     submod.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange, &submod)?)?;
     submod.add_function(wrap_pyfunction!(

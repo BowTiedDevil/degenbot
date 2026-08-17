@@ -148,21 +148,6 @@ def find_paths_rust(
 # boundary (`degenbot-db` is pure I/O+math, no ABI decode).
 
 # ------------------------------------------------------------------
-# Aave V3 DB-aware writer seam (feature = "db").
-# ------------------------------------------------------------------
-# Thin PyO3 wrappers over `degenbot-db`'s `write` core (Sub-step B of
-# AZGJUN/RQXEKH — the Aave V3 lending-market DB writers). The Python
-# `cli/aave/db_*.py` / `event_handlers.py` callers (the driver loop + RPC
-# event fetch stay Python) delegate the per-event upsert + apply here. Each
-# call opens its OWN write handle on `database_path` via `open_for_writes`
-# (NOT held across calls), releases the GIL across the SQLite I/O, and raises
-# ``ValueError`` on a DB failure. No business logic.
-#
-# RPC-coupling carve-out: `db_get_or_create_erc20_token` + `db_get_or_create_user`
-# take caller-supplied metadata / GHO-discount `Option` params; the Python
-# driver stays the RPC authority (`degenbot-db` has no `degenbot-rpc` dep).
-
-# ------------------------------------------------------------------
 # Pool discovery writers (WR7EA6 — split out of QJSCA5).
 # Thin PyO3 wrappers over `degenbot-db`'s `discovery` substrate
 # (`upsert_v2/v3/v4_pools` + `set_exchange_last_update_block`). The Python
