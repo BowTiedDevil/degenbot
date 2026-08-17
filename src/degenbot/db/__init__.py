@@ -14,9 +14,10 @@ core crate; the ``db_`` prefix is retained on the submodule names (unlike
 the math submodules which dropped their prefix) because ``db_`` is a clear
 functional namespace marker for the ~45 database operations.
 
-The classes are ADR-005 ``Py*`` aliases / ``*Row``/``*RowInput`` types;
-``DatabaseSchemaStale`` is the typed ``ValueError`` subclass for the
-"DB is stamped at a prior Alembic revision" rejection.
+The classes are ADR-005 ``Py*`` aliases / ``*Row``/``*RowInput`` types.
+The ``DatabaseSchemaStale`` exception is raised by these seams; its
+single public import home is ``degenbot.exceptions`` (4JASRW) — import
+it from there, not from this module.
 
 Split from ``degenbot.database`` (ADR-013): ``degenbot.db`` owns the
 Rust-backed row types + operations; ``degenbot.database`` keeps the
@@ -26,7 +27,6 @@ untouched until the 0.7 cutover.
 """
 
 from degenbot._ffi.db import (
-    DatabaseSchemaStale,
     ExchangeRow,
     LiquidityPoolRow,
     LiquidityUpdateEvent,
@@ -62,7 +62,6 @@ from degenbot._ffi.db import (
 )
 
 __all__ = [
-    "DatabaseSchemaStale",
     "ExchangeRow",
     "LiquidityPoolRow",
     "LiquidityUpdateEvent",

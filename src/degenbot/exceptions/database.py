@@ -8,7 +8,7 @@ the caller must upgrade before the core can open it. It subclasses
 .. note::
 
     This is a **direct alias re-export** of the Rust ``#[pyclass]`` type
-    (``from degenbot.db import DatabaseSchemaStale``), not a Python
+    (``from degenbot._ffi.db import DatabaseSchemaStale``), not a Python
     subclass. The Rust engine *raises* the ``degenbot._ffi.db`` pyclass
     instance, so Python-side ``except DatabaseSchemaStale:`` matching must
     hit the exact type the Rust side raises. A subclass re-export would
@@ -17,7 +17,7 @@ the caller must upgrade before the core can open it. It subclasses
     import ``degenbot._ffi``.
 """
 
-from degenbot.db import DatabaseSchemaStale
+from degenbot._ffi.db import DatabaseSchemaStale
 
 __all__ = [
     "DatabaseSchemaStale",

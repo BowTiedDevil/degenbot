@@ -52,7 +52,11 @@ def test_v4_pool_row_input_alias() -> None:
 
 
 def test_database_schema_stale_alias() -> None:
-    """DatabaseSchemaStale is re-exported from degenbot.exceptions, identity-preserved."""
-    from degenbot.db import DatabaseSchemaStale as FfiDatabaseSchemaStale
+    """DatabaseSchemaStale is the exact Rust-raised type under degenbot.exceptions.
+
+    ``degenbot.db`` no longer re-exports it (4JASRW) — identity is asserted
+    against the physical ``degenbot._ffi.db`` home.
+    """
+    from degenbot._ffi.db import DatabaseSchemaStale as FfiDatabaseSchemaStale
 
     assert DatabaseSchemaStale is FfiDatabaseSchemaStale
