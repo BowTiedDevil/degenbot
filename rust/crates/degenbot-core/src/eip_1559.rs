@@ -4,8 +4,8 @@
 //! Pure-integer EVM math ported from the Python reference
 //! (`src/degenbot/calculations/evm_math.py`), which is retained as the **parity
 //! oracle** (ADR-005 §4.2). This module is the canonical Rust implementation, exposed
-//! to the Python driver as `degenbot._ffi.evm_math` and to standalone consumers via
-//! the umbrella re-export (`degenbot::evm_math`).
+//! to the Python driver as `degenbot._ffi.eip_1559` and to standalone consumers via
+//! the umbrella re-export (`degenbot::eip_1559`).
 //!
 //! # Integer discipline
 //!

@@ -1,8 +1,8 @@
-"""Stub for the dynamically-created ``degenbot._ffi.evm_math`` submodule.
+"""Stub for the dynamically-created ``degenbot._ffi.eip_1559`` submodule.
 
-Created at runtime by ``add_evm_math_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/evm_math/mod.rs``). Thin PyO3 wrapper over the pure-Rust
-``degenbot-core::evm_math`` Rust module — the single source of truth for EIP-1559 math,
+Created at runtime by ``add_eip_1559_module`` in the PyO3 wrapper crate
+(``degenbot-python/src/eip_1559/lib.rs``). Thin PyO3 wrapper over the pure-Rust
+``degenbot-core::eip_1559`` Rust module — the single source of truth for EIP-1559 math,
 so the Python driver does NOT re-implement ``next_base_fee``.
 """
 

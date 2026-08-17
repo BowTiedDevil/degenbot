@@ -16,7 +16,7 @@
 //! It is the V2-family sibling of the other pure-math leaf crates:
 //! `degenbot-concentrated-liquidity-math` (concentrated liquidity), `degenbot-curve-math`
 //! (stableswap), `degenbot-balancer-math` (weighted/stable),
-//! `degenbot-solidly-math` (Solidly stable), and `degenbot-core::evm_math`
+//! `degenbot-solidly-math` (Solidly stable), and `degenbot-core::eip_1559`
 //! (EIP-1559 base fee).
 //!
 //! ## Why this is a standalone crate (ADR-005 "standalone constraint")

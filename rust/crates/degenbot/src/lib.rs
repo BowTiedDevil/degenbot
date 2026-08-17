@@ -69,8 +69,8 @@ pub use degenbot_balancer_math;
 /// Solidly / Aerodrome / Camelot stable-pool invariant math (pure-Rust leaf).
 pub use degenbot_solidly_math;
 
-/// EVM arithmetic — EIP-1559 base-fee math (pure-Rust; now in `degenbot-core`).
-pub use degenbot_core::evm_math;
+/// EIP-1559 base-fee math.
+pub use degenbot_core::eip_1559;
 
 /// On-chain price readers — Chainlink aggregator + Aave oracle over
 /// `degenbot-rpc` `eth_call` (pyo3-free leaf).

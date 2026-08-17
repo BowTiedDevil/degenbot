@@ -141,9 +141,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;
 
-    // EVM math (next_base_fee) — always on (degenbot-core is a non-optional,
+    // EIP-1559 base fee (next_base_fee) — always on (degenbot-core is a non-optional,
     // no-extra-feature dep).
-    crate::evm_math::add_evm_math_module(m)?;
+    crate::eip_1559::add_eip_1559_module(m)?;
 
     // `CancelHandle` — the cooperative cancel flag for the updater loops
     // (`run_pool_update`, `run_aave_update`). Gated on either updater feature

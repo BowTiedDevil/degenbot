@@ -1,5 +1,5 @@
-//! `degenbot._ffi.evm_math` — thin `PyO3` wrappers over the pure-Rust
-//! `degenbot-core::evm_math` module.
+//! `degenbot._ffi.eip_1559` — thin `PyO3` wrappers over the pure-Rust
+//! `degenbot-core::eip_1559` module.
 //!
 //! Exposes the EIP-1559 `next_base_fee` so the Python driver reads it from the
 //! Rust core (single source of truth) instead of re-implementing the formula in
@@ -14,7 +14,7 @@ use pyo3::types::PyModule;
 use pyo3::wrap_pyfunction;
 
 /// Compute the EIP-1559 next-block base fee, mirroring the pure-Rust
-/// `degenbot_core::evm_math::next_base_fee`.
+/// `degenbot_core::eip_1559::next_base_fee`.
 ///
 /// Args mirror the Python oracle (`degenbot.calculations.evm_math.next_base_fee`):
 /// `parent_base_fee`, `parent_gas_used`, `parent_gas_limit`, optional
@@ -43,7 +43,7 @@ fn next_base_fee(
     if last_gas_target == 0 && parent_gas_used != last_gas_target {
         return Err(PyZeroDivisionError::new_err("division by zero"));
     }
-    Ok(degenbot_core::evm_math::next_base_fee(
+    Ok(degenbot_core::eip_1559::next_base_fee(
         parent_base_fee,
         parent_gas_used,
         parent_gas_limit,
@@ -53,21 +53,21 @@ fn next_base_fee(
     ))
 }
 
-/// Register the `degenbot._ffi.evm_math` submodule.
+/// Register the `degenbot._ffi.eip_1559` submodule.
 ///
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
-pub fn add_evm_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn add_eip_1559_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
-    let submod = PyModule::new(py, "degenbot._ffi.evm_math")?;
+    let submod = PyModule::new(py, "degenbot._ffi.eip_1559")?;
 
     submod.add_function(wrap_pyfunction!(next_base_fee, &submod)?)?;
 
     m.add_submodule(&submod)?;
     py.import("sys")?
         .getattr("modules")?
-        .set_item("degenbot._ffi.evm_math", &submod)?;
+        .set_item("degenbot._ffi.eip_1559", &submod)?;
 
     Ok(())
 }
