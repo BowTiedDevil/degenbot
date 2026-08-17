@@ -27,6 +27,9 @@ use alloy::primitives::{address, aliases::U112, Address, Bytes, I256, U128, U256
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
+use degenbot::degenbot_arbitrage::{
+    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
+};
 use degenbot::degenbot_balancer_math::{mul_down, ONE};
 use degenbot::degenbot_curve_math::{
     calculate_dy, stableswap_get_d, DVariant, DyCalculationInputs, YVariant,
@@ -34,9 +37,6 @@ use degenbot::degenbot_curve_math::{
 use degenbot::degenbot_db::snapshot_db::SnapshotDb;
 use degenbot::degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot::degenbot_executor::compute_simulation_warmup_slots;
-use degenbot::degenbot_settlement_strategy::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
-};
 use degenbot::degenbot_simulation::apply_simulation_overrides;
 use degenbot::degenbot_solidly_math::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
 use degenbot::dex_identity::UNISWAP_V2;

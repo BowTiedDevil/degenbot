@@ -21,7 +21,7 @@
 //!
 //! The live halt was `[sim-fail] path=5000 … bucket=empty` with the deepest
 //! PoolManager frame spending ~4.46M gas under the then-hard-coded
-//! `INITIAL_EXECUTE_GAS = 5_000_000` execute ceiling (`degenbot-settlement-strategy/
+//! `INITIAL_EXECUTE_GAS = 5_000_000` execute ceiling (`degenbot-arbitrage/
 //! simulator.rs`). The question is whether that halt is (a) a **genuine
 //! liquidity / range-exhaustion verdict** on the real pool (v4_simulate_swap
 //! fills the band 98% and any excess tips past tick 35067 into zero liquidity)

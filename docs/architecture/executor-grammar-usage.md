@@ -130,7 +130,7 @@ let call: EncodedCall = encode_execute_call(
 
 ## Putting it together — the production call site
 
-This is exactly what `degenbot-settlement-strategy::simulator` does (task
+This is exactly what `degenbot-arbitrage::simulator` does (task
 `Q35IJN`):
 
 ```rust
@@ -151,7 +151,7 @@ let execute_config = config_for_options(path.opts, U256::ZERO);
 let execute_calldata = encode_execute_call(ctx.executor_address, &cmd_bytes, execute_config)?;
 ```
 
-See `rust/crates/degenbot-settlement-strategy/src/simulator.rs` (~`build_execute_tx`)
+See `rust/crates/degenbot-arbitrage/src/simulator.rs` (~`build_execute_tx`)
 for the full production path, including the pre/post balance reads that prove
 profitability.
 
@@ -264,8 +264,8 @@ surface is:
 2. **If the enclosure is new, teach a shape body.** The 3-hop topology rules
    (`rule_walk_v2v3` / `rule_walk_v4_led` / `rule_walk_v2v3_v4_mixed` in
    `grammar_walker/shapes/three_hop.rs`) derive the nesting from the facts'
-   debt-flow threading (rules 1–3 in
-   `docs/spikes/t6-topology-rules-analysis.md`). A genuinely new DEX
+   debt-flow threading (rules 1–3, stated on the walker fns in
+   `grammar_walker/shapes/three_hop.rs`). A genuinely new DEX
    primitive lands as one constructor in `grammar_walker::mod mechanics`.
 3. **The validator is the gate.** `derive_shape_detailed` runs the
    `LedgerValidator` on every produced Plan; an ordering defect is a fatal
@@ -297,16 +297,17 @@ callback and emits `V4UnlockEnd` after it. Depth-first walk = execution order.
 
 The full `PlanStep` variant set lives in
 `rust/crates/degenbot-executor/src/grammar_plan.rs`; the axis vocabulary a
-new family can consume is documented in
-`docs/plans/pzbgp7-terminal-form-axis-draft.md` §"The vocabulary axes
-(current — what the walker supports)".
+new family can consume is documented on the axis enums in
+`rust/crates/degenbot-executor/src/grammar_walker.rs` (`TerminalForm`,
+`RepayMechanism`, `SeedDelivery` — each field's doc comment states when it is
+set and who consumes it) and in the `CONTEXT.md` walker glossary.
 
 ## Where to look next
 
 - **The architecture doc:** [executor-command-grammar.md](executor-command-grammar.md) — the *why* and the invariant model.
 - **The decision records:** [ADR-029](../adr/ADR-029-executor-command-grammar-axes.md) (the axes, the hybrid, the additive proof), [ADR-030](../adr/ADR-030-derivation-outcome-tri-state.md) (the derive tri-state), [ADR-031](../adr/ADR-031-executor-plan-walker.md) (the facts-driven walker).
-- **The walker lineage:** [executor-walker-spike.md](executor-walker-spike.md) (the spike that de-risked the schema) and [../plans/pzbgp7-walker-decomposition.md](../plans/pzbgp7-walker-decomposition.md) (the T1–T6 decomposition ledger).
-- **The V4 ledger rules:** [../plans/executor-v4-ledger-rules.md](../plans/executor-v4-ledger-rules.md) — the PM net-zero-at-unlock-close invariant.
-- **The Plan-tree decision:** [../plans/executor-6ZIE5X-decision.md](../plans/executor-6ZIE5X-decision.md) — why the Plan tree (mechanism (iii)) over byte-decoding / `enc_*`-instrumentation.
-- **The model plan:** [../plans/executor-grammar-ledger-model.md](../plans/executor-grammar-ledger-model.md) — the dataflow model.
+- **The walker lineage:** [executor-walker-spike.md](executor-walker-spike.md) (the spike that de-risked the schema) and ADR-031's Resolution paragraph (the T1–T6 decomposition record; the standalone ledger doc was removed in the stale-docs cleanup `71ec78b2`).
+- **The V4 ledger rules:** [`grammar_ledger.rs`](../../rust/crates/degenbot-executor/src/grammar_ledger.rs) — the PM net-zero-at-unlock-close invariant (the V4 master rule, stated on the V4 ledger ops).
+- **The Plan-tree decision:** [executor-command-grammar.md](executor-command-grammar.md) §"What 'derived' means here (the `6ZIE5X` decision, realized)" — why the Plan tree (mechanism (iii)) over byte-decoding / `enc_*`-instrumentation.
+- **The model record:** [ADR-029](../adr/ADR-029-executor-command-grammar-axes.md) (the axes + open-ledger model) and [executor-command-grammar.md](executor-command-grammar.md) (the realized architecture that the model plan doc preceded).
 - **The tests of record:** `tests/composers_parity.rs`, `tests/composers_3hop_parity.rs` (golden-master byte-parity), `rust/crates/degenbot-simulation/tests/harness_declarative.rs` (the runtime matrix), and the `rule_walker_shadows_*` unit tests in `grammar_walker/shapes/three_hop.rs` (post-cutover pinning of the current enclosure per topology-rule group).

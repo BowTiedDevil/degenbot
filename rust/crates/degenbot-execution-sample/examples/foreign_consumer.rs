@@ -7,7 +7,7 @@
 //! Constructs a `SimpleExecutor` strategy, projects a solved path into the
 //! sealed `SolveResult` view, and composes the foreign payload — the four-part
 //! seam wiring (Encode blob + Probe declared reads + Assess gate + Fee default)
-//! with no `degenbot-settlement-strategy` and no pyo3.
+//! with no `degenbot-arbitrage` and no pyo3.
 
 use alloy::primitives::{address, Address, U256};
 use degenbot_execution::solve_result::SolveResult;

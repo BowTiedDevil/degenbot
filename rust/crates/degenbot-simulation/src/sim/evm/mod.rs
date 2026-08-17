@@ -40,11 +40,10 @@
 //!
 //! ## References
 //!
-//! - Spike: `docs/spikes/revm-composition-api-and-cold-miss-latency.md`
-//!   (version/feature pin, composition API, cold-miss latency, `code_by_hash`
-//!   panic safety, access-list emission API).
-//! - Feasibility: `docs/spikes/in-process-evm-execution-revm-reth-ethrex-feasibility.md`
-//!   (the "Design option B" section).
+//! - ADR-019 (in-process revm as sole simulation executor) — revm
+//!   composition API, version/feature pin, `code_by_hash` panic safety,
+//!   cold-miss latency, access-list emission (the two supporting spike docs
+//!   were removed in the stale-docs cleanup `71ec78b2`).
 //! - ADR-003 (Bot as state owner), ADR-005 (three-layer FFI),
 //! - ADR-013 (FFI seam private), ADR-014/016 (pool-state deepening, reorg),
 //! - ADR-019 (in-process revm sole simulation executor; strategy-vs-engine
@@ -61,7 +60,7 @@
 /// types (`BlockEvm` / `ProductionBlockDb`) + the provider newtype. The
 /// **strategy** (the 7-call bundle, `SimResult`, `compute_priority_fee`,
 /// `dispatch_profitable_results`, `SimulateContext`, the calldata builders)
-/// relocated to `degenbot-settlement-strategy` (ADR-019 D4/D7, decision R).
+/// relocated to `degenbot-arbitrage` (ADR-019 D4/D7, decision R).
 pub mod simulator;
 
 /// Sim-scoped override application on a `CacheDB`.
@@ -96,7 +95,7 @@ pub mod serving;
 // fallback) — proven for V2/V3 by the `swap_capture_correctness.rs`
 // mainnet probe; V4 probe extension is the real V4 captured-amount proof.
 
-// 7-call vector calldata builders live in `degenbot-settlement-strategy::calldata`
+// 7-call vector calldata builders live in `degenbot-arbitrage::calldata`
 // (relocated with the settlement-arbitrage bundle — ADR-019 D4/D7, decision R).
 
 /// EIP-2930 access-list emission from the revm `State` journal — retires
@@ -125,9 +124,9 @@ pub use inspectors::{
     SimInspector, SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily,
 };
 /// Re-export the engine surface so `degenbot-simulation`'s crate root can
-/// surface it for the strategy crate (`degenbot-settlement-strategy`) + the
+/// surface it for the strategy crate (`degenbot-arbitrage`) + the
 /// PyO3 wrapper. The strategy types (`SimResult`, `SimulateContext`, …) now
-/// live in `degenbot-settlement-strategy`.
+/// live in `degenbot-arbitrage`.
 pub use simulator::{BlockEvm, BlockSimHandle, ProductionBlockDb};
 pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};
 pub use warm_code_cache::{WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS};

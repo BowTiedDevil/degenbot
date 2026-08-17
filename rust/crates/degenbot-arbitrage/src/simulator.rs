@@ -21,10 +21,10 @@
 //!
 //! Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
 //! revm `transact_one`, returning the `SimResult` shape the dispatch leaf
-//! consumes. See `docs/spikes/revm-composition-api-and-cold-miss-latency.md`
-//! §3 for the measured latency profile (cold 8374 µs / 9 RPCs; warm 442 µs / 0
-//! RPC; 18.9× speedup vs cold) + §5 for the `ResultAndState.state`
-//! access-list emission API.
+//! consumes. Measured latency profile (cold 8374 µs / 9 RPCs; warm 442 µs /
+//! 0 RPC; 18.9× speedup vs cold; standing record: ADR-019) + the
+//! `ResultAndState.state` access-list emission API. (The detailing spike doc
+//! was removed in the stale-docs cleanup `71ec78b2`.)
 
 // Solidity/EVM identifiers (execute(bytes,uint256), int128, V4 BalanceDelta,
 // WETH9, PoolManager, Multicall3, balanceOf, getEthBalance, ERC6909, etc.) are

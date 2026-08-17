@@ -123,7 +123,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # WARNING default and the records are dropped at the logger-level gate
     # before reaching a handler (silent even with the env var on).
     "degenbot_simulation",
-    "degenbot_settlement_strategy",
+    "degenbot_arbitrage",
 )
 
 #: The Python package-tree root whose descendants include Python-side modules

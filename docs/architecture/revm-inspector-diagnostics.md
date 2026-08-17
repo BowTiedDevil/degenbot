@@ -1,8 +1,9 @@
 # RevM Inspector-native simulation diagnostics — implementation spec
 
-Ergo epic **63I7WJ** (task **JHPW5W**). Converts the spike
-([`docs/spikes/revm-inspector-diagnostics.md`](../spikes/revm-inspector-diagnostics.md),
-task KCKGP4) + prototype (committed `c59151ea`, task 2LMT7A) into a
+Ergo epic **63I7WJ** (task **JHPW5W**). Converts the spike (task KCKGP4; its
+doc `docs/spikes/revm-inspector-diagnostics.md` was removed in the stale-docs
+cleanup `71ec78b2`, its framing carried into this doc) + prototype (committed
+`c59151ea`, task 2LMT7A) into a
 decision-resolved implementation plan. This is the gate for the implementation
 tasks; it is approved before any production wiring lands.
 
@@ -96,7 +97,7 @@ implementation task, not a prototype re-spin.
 
 ## 3. The `SimFailure` deepening (revert attribution)
 
-`rust/crates/degenbot-settlement-strategy/src/simulator.rs::SimFailure` today:
+`rust/crates/degenbot-arbitrage/src/simulator.rs::SimFailure` today:
 
 ```rust
 pub struct SimFailure {

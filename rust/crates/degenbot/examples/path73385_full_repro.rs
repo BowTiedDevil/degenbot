@@ -33,14 +33,14 @@
 
 use alloy::primitives::{utils::keccak256, Address, Bytes, B256, I256, U256};
 use degenbot::bot_core::BotState;
+use degenbot::degenbot_arbitrage::{
+    simulate_path_on_evm, FailBuckets, SimulateContext, SimulatePath,
+};
 use degenbot::degenbot_executor::composers::{
     EncodeOptions, HopInfo, PathInfo, V3HopInfo, V4HopInfo,
 };
 use degenbot::degenbot_executor::compute_simulation_warmup_slots;
 use degenbot::degenbot_rpc::provider::AlloyProvider;
-use degenbot::degenbot_settlement_strategy::{
-    simulate_path_on_evm, FailBuckets, SimulateContext, SimulatePath,
-};
 use degenbot::degenbot_simulation::sim::evm::BlockSimHandle;
 use degenbot::degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
 

@@ -89,7 +89,7 @@ members = [
     "crates/degenbot-python",
     "crates/degenbot-rpc",
     "crates/degenbot-simulation",
-    "crates/degenbot-settlement-strategy",
+    "crates/degenbot-arbitrage",
     "crates/degenbot-solidly-math",
     "crates/degenbot-solvers",
     "crates/degenbot-submission",

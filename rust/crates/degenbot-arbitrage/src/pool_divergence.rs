@@ -8,7 +8,7 @@
 //! pool — stopping the "every path through stale pool X fails, each
 //! independently, each burning an N-count" waste.
 //!
-//! # Location decision (spike `docs/spikes/pool-divergence-memo-location.md`)
+//! # Location decision (the spike doc was removed in the stale-docs cleanup `71ec78b2`)
 //!
 //! Rust-core (option b), not Python-side. Stands on the precedent of
 //! `PathSuppression` (`degenbot_submission::PathSuppression`) — a stateful

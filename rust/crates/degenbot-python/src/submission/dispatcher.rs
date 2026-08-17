@@ -28,7 +28,7 @@
 //! DOES release the GIL across RPC is `dispatch_and_submit_py` (separate file).
 
 use crate::prelude::*;
-use degenbot_settlement_strategy::{FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey};
+use degenbot_arbitrage::{FeeOnTransferRegistry, PoolDivergence, PoolDivergenceKey};
 use degenbot_submission::{CommittedTx, Dispatcher, PathSuppression, PoolKey};
 use pyo3::types::PyTuple;
 use std::collections::HashSet;

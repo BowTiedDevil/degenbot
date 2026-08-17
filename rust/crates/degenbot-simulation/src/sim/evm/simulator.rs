@@ -8,7 +8,7 @@
 //! bundle, `compute_priority_fee`, `decode_balance`, `SimResult`,
 //! `dispatch_profitable_results`, `SimulateContext`, `SimulatePath`,
 //! `FailBuckets`, the calldata builders) relocated to the
-//! `degenbot-settlement-strategy` crate, which drives the borrowed `&mut evm`
+//! `degenbot-arbitrage` crate, which drives the borrowed `&mut evm`
 //! the engine exposes via [`BlockSimHandle::evm_mut`].
 //!
 //! The engine stays generic + thin: it never names `SimulateContext` (a

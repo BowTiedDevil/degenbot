@@ -38,7 +38,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
     # (``[bridge-probe]``) emit ``log::info!`` from these crates; the base
     # config in ``degenbot.logging`` lowers them so the records are visible.
     "degenbot_simulation",
-    "degenbot_settlement_strategy",
+    "degenbot_arbitrage",
 )
 
 #: The same contract is exported by ``degenbot.logging`` so other code (e.g. the

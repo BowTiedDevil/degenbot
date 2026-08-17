@@ -42,7 +42,7 @@ degenbot-pools = { path = "../degenbot-pools" }
 degenbot-price = { path = "../degenbot-price" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-simulation = { path = "../degenbot-simulation" }
-degenbot-settlement-strategy = { path = "../degenbot-settlement-strategy" }
+degenbot-arbitrage = { path = "../degenbot-arbitrage" }
 degenbot-solidly-math = { path = "../degenbot-solidly-math" }
 degenbot-solvers = { path = "../degenbot-solvers" }
 degenbot-submission = { path = "../degenbot-submission" }
