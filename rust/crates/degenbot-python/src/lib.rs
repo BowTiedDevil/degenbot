@@ -75,6 +75,8 @@ pub mod solvers_basket;
 pub mod submission;
 #[cfg(feature = "uniswap")]
 pub mod uniswap;
+#[cfg(feature = "v2-math")]
+pub mod v2_math;
 
 // The foundational core modules live in the `degenbot-core` workspace member.
 // Re-exported here as `crate::errors` / `crate::hex_utils` / etc. so every

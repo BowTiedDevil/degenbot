@@ -17,6 +17,8 @@ same crate.
 The functions are thin PyO3 wrappers over the pure-Rust
 ``degenbot-solidly-math`` core crate; see that crate's docs for math
 semantics.
+The volatile V2 exact-out (`calc_exact_out_v2`) comes from the
+`degenbot-v2-math` core crate via `degenbot._ffi.v2_math`.
 """
 
 from degenbot._ffi.solidly_math import (
@@ -32,6 +34,8 @@ from degenbot._ffi.solidly_math import (
     camelot_k,
     get_y_solidly,
 )
+from degenbot._ffi.v2_math import calc_exact_out_v2
+
 
 __all__ = [
     "calc_d",
@@ -39,6 +43,7 @@ __all__ = [
     "calc_exact_in_stable_solidly",
     "calc_exact_in_volatile",
     "calc_exact_out_stable_solidly",
+    "calc_exact_out_v2",
     "calc_f",
     "calc_k",
     "camelot_f",

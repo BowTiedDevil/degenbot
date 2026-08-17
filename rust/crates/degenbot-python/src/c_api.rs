@@ -85,6 +85,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "solidly-math")]
     crate::solidly_math::lib::add_solidly_math_module(m)?;
 
+    // V2 constant-product (x*y=k) swap math (feature = "v2-math")
+    #[cfg(feature = "v2-math")]
+    crate::v2_math::lib::add_v2_math_module(m)?;
+
     // SQLite file operations (feature = "db")
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;

@@ -11,7 +11,7 @@
 //! (`compute_int_mobius_coefficients`, `exact_mobius_solve`), which stay in
 //! the solver crate — only the primitive swap surface lives here.
 
-use alloy::primitives::U256;
+use alloy::primitives::{U256, U512};
 
 // -----------------------------------------------------------------------
 // SimulationResult
@@ -56,6 +56,12 @@ pub enum HopSwapError {
     /// reserveOut`, `reserveIn * feeDenom`, or their sum) overflowed — the
     /// on-chain `getAmountOut` reverts here via `SafeMath`.
     Overflow,
+    /// The requested exact output `y` is `>= reserve_out` (or the
+    /// denominator of the exact-in inverse is degenerate) — a pool can never
+    /// hand out more than it holds, so the inverse is undefined.
+    InsufficientReserves,
+    /// `fee_numer >= fee_denom` — degenerate fee parameters.
+    InvalidFee,
 }
 
 // -----------------------------------------------------------------------
@@ -166,6 +172,40 @@ impl IntHopState {
 
         // Floor division — EVM `DIV` semantics.
         Ok(numerator / denom)
+    }
+
+    /// Compute the input `x` such that swapping `x` through this hop yields
+    /// at least `y` output — the algebraic inverse of `getAmountOut` with the
+    /// `+1` floor-division compensation, as the routers/keep-side Python
+    /// reference implements it:
+    ///
+    /// `x = 1 + reserve_in * y * fee_denom / ((reserve_out - y) * gamma_numer)`
+    ///
+    /// Router-side math (no on-chain `getAmountIn` exists), so intermediates
+    /// use `U512` — mirroring the arbitrary-precision Python reference — and
+    /// the result is narrowed to `U256`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HopSwapError::InsufficientReserves`] when `y >= reserve_out`
+    /// or the denominator is zero, and [`HopSwapError::Overflow`] when the
+    /// result does not fit `uint256`.
+    pub fn swap_exact_out(&self, y: U256) -> Result<U256, HopSwapError> {
+        if y >= self.reserve_out {
+            return Err(HopSwapError::InsufficientReserves);
+        }
+        let numerator = U512::from(self.reserve_in) * U512::from(y) * U512::from(self.fee_denom);
+        let denom = (U512::from(self.reserve_out - y)) * U512::from(self.gamma_numer);
+        if denom.is_zero() {
+            return Err(HopSwapError::InsufficientReserves);
+        }
+        let x = (numerator / denom) + U512::ONE;
+        if x > U512::from(U256::MAX) {
+            return Err(HopSwapError::Overflow);
+        }
+        let limbs = x.as_limbs();
+        // Guarded above: the top four limbs (bits 256..512) are zero.
+        Ok(U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]]))
     }
 }
 
@@ -318,6 +358,39 @@ mod tests {
         assert_eq!(
             int_simulate_path(U256::MAX, &hops),
             Err(HopSwapError::Overflow),
+        );
+    }
+
+    /// The exact-in / exact-out pair is an inverse up to floor-division:
+    /// `swap_exact_out(swap(x)) <= x` and the exact-out `+1` compensation
+    /// guarantees `swap(swap_exact_out(y)) >= y`.
+    #[test]
+    fn swap_exact_out_is_inverse_of_swap() {
+        let hop = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
+        let x = u256(12_345);
+        let y = hop.swap(x).unwrap();
+        assert!(!y.is_zero());
+        let x2 = hop.swap_exact_out(y).unwrap();
+        assert!(x2 <= x);
+        assert!(hop.swap(x2).unwrap() >= y);
+
+        // Mirrors the Python reference
+        // `1 + r_in*y*fee_denom // ((r_out - y) * (fee_denom - fee_numer))`.
+        let r_in: u128 = 1_000_000;
+        let r_out: u128 = 2_000_000;
+        let yy: u128 = 500;
+        let expect: U256 = U256::from(r_in * yy * 1000u128 / ((r_out - yy) * 997u128) + 1);
+        assert_eq!(hop.swap_exact_out(u256(500)).unwrap(), expect);
+    }
+
+    /// `y >= reserve_out` is undefined — the pool cannot hand out more than
+    /// it holds.
+    #[test]
+    fn swap_exact_out_rejects_overdraw() {
+        let hop = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
+        assert_eq!(
+            hop.swap_exact_out(U256::from(2_000_000u64)),
+            Err(HopSwapError::InsufficientReserves),
         );
     }
 }

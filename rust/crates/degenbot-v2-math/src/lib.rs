@@ -43,5 +43,49 @@
 //! The primitive surface lives in the [`hop_state`] submodule: [`IntHopState`]
 //! (+ `new` / `swap`), [`SimulationResult`], and [`int_simulate_path`].
 
+use alloy::primitives::U256;
+
 pub mod hop_state;
 pub use hop_state::{int_simulate_path, HopSwapError, IntHopState, SimulationResult};
+
+/// V2 (pure constant-product) exact-in — the on-chain `getAmountOut`:
+/// `y = (fee_denom - fee_numer) * reserve_out * amount_in / (fee_denom * reserve_in + (fee_denom - fee_numer) * amount_in)`,
+/// floor-divided. `fee_numer` / `fee_denom` are the raw fee rate (e.g. 3 / 1000).
+///
+/// # Errors
+///
+/// [`HopSwapError::InvalidFee`] when `fee_numer >= fee_denom`.
+pub fn v2_swap_exact_in(
+    reserve_in: U256,
+    reserve_out: U256,
+    amount_in: U256,
+    fee_numer: u64,
+    fee_denom: u64,
+) -> Result<U256, HopSwapError> {
+    if fee_numer > fee_denom {
+        return Err(HopSwapError::InvalidFee);
+    }
+    let gamma = fee_denom - fee_numer;
+    IntHopState::new(reserve_in, reserve_out, gamma, fee_denom).swap(amount_in)
+}
+
+/// V2 (pure constant-product) exact-out — the `getAmountOut` inverse with
+/// `+1` floor-division compensation (router-side math, `U512` intermediates):
+/// `x = 1 + reserve_in * amount_out * fee_denom / ((reserve_out - amount_out) * (fee_denom - fee_numer))`.
+///
+/// # Errors
+///
+/// [`HopSwapError::InvalidFee`] when `fee_numer >= fee_denom`.
+pub fn v2_swap_exact_out(
+    reserve_in: U256,
+    reserve_out: U256,
+    amount_out: U256,
+    fee_numer: u64,
+    fee_denom: u64,
+) -> Result<U256, HopSwapError> {
+    if fee_numer > fee_denom {
+        return Err(HopSwapError::InvalidFee);
+    }
+    let gamma = fee_denom - fee_numer;
+    IntHopState::new(reserve_in, reserve_out, gamma, fee_denom).swap_exact_out(amount_out)
+}

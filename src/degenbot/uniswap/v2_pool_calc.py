@@ -20,10 +20,8 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.uniswap.v2_functions import (
-    constant_product_calc_exact_in,
-    constant_product_calc_exact_out,
-)
+from degenbot.uniswap.math import calc_exact_in_v2, calc_exact_out_v2
+
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
@@ -124,11 +122,12 @@ class UniswapV2PoolCalc:
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
             )
 
-        return constant_product_calc_exact_out(
-            amount_out=token_out_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=fee,
+        return calc_exact_out_v2(
+            reserves_in,
+            reserves_out,
+            token_out_quantity,
+            fee.numerator,
+            fee.denominator,
         )
 
     def calculate_tokens_out_from_tokens_in(
@@ -197,11 +196,12 @@ class UniswapV2PoolCalc:
             reserves_out = override_state.reserves_token0
             fee = self._fee_token1
 
-        return constant_product_calc_exact_in(
-            amount_in=token_in_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=fee,
+        return calc_exact_in_v2(
+            reserves_in,
+            reserves_out,
+            token_in_quantity,
+            fee.numerator,
+            fee.denominator,
         )
 
     def get_absolute_price(

@@ -30,12 +30,16 @@ from degenbot._ffi.concentrated_liquidity_math import (
     muldiv,
     muldiv_rounding_up,
 )
+from degenbot._ffi.v2_math import calc_exact_in_v2, calc_exact_out_v2
+
 
 __all__ = [
     "MAX_SQRT_RATIO",
     "MAX_TICK",
     "MIN_SQRT_RATIO",
     "MIN_TICK",
+    "calc_exact_in_v2",
+    "calc_exact_out_v2",
     "compute_swap_step_v3",
     "compute_swap_step_v4",
     "get_sqrt_ratio_at_tick",

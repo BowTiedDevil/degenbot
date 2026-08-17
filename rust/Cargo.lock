@@ -2467,6 +2467,7 @@ dependencies = [
  "degenbot-solvers",
  "degenbot-submission",
  "degenbot-uniswap",
+ "degenbot-v2-math",
  "futures-util",
  "log",
  "lru",

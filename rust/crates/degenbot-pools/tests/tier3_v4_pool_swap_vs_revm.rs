@@ -40,7 +40,7 @@
 //!
 //! ## Shared fixture (H5)
 //!
-//! The Tier-2 dual-driver concentrated liqudity math fixture `v4_swap.json` is a SINGLE shared
+//! The Tier-2 dual-driver concentrated liquidity math fixture `v4_swap.json` is a SINGLE shared
 //! file (HRT356) consumed by BOTH consumers — `rust/crates/degenbot/tests/
 //! parity_v4_swap.rs` (Rust) and `tests/standalone_parity/test_v4_swap_
 //! dual_driver.py` (Python) — so the V4 math constant is never independently

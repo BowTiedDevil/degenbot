@@ -55,6 +55,7 @@ from . import solady as solady
 from . import solidly_math as solidly_math
 from . import submission as submission
 from . import subscriber as subscriber
+from . import v2_math as v2_math
 from .db import (
     ExchangeRow,
     LiquidityPoolRow,

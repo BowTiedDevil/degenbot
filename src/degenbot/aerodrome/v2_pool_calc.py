@@ -23,12 +23,12 @@ from degenbot.aerodrome.math import (
 from degenbot.aerodrome.math import (
     calc_exact_out_stable_solidly as _rs_calc_exact_out_stable_solidly,
 )
+from degenbot.aerodrome.math import calc_exact_out_v2 as _rs_calc_exact_out_volatile
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.uniswap.v2_functions import constant_product_calc_exact_out
 
 if TYPE_CHECKING:
     from degenbot.aerodrome.types import AerodromeV2PoolState
@@ -331,11 +331,12 @@ class AerodromeV2PoolCalc:
             The computed integer value.
 
         """
-        return constant_product_calc_exact_out(
-            amount_out=token_out_quantity,
-            reserves_in=reserves_in,
-            reserves_out=reserves_out,
-            fee=fee,
+        return _rs_calc_exact_out_volatile(
+            reserves_in,
+            reserves_out,
+            token_out_quantity,
+            fee.numerator,
+            fee.denominator,
         )
 
     @staticmethod
