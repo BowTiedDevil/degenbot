@@ -18,7 +18,7 @@ Unless directed otherwise, design standalone features without a backwards compat
 Use `ergo` for all feature planning. Discover usage with `ergo --help` and `ergo quickstart`. Include detailed implementation and planning notes in the body of each task.
 
 ## Refactoring & Feature Development
-Use Red/Green TDD while refactoring and implementing new features.
+Use red/green test-driven development per the `tdd` skill when refactoring and adding new features.
 
 ## Commands
 See the justfile.
