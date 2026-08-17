@@ -2819,7 +2819,7 @@ mod tests {
 
         // Mint at block 6: adds liquidity at [+60, +120] — in-range because the
         // swap moved the tick to 60, so the active `liquidity` scalar also gets
-        // +500 (parity with on-chain + the cl-math pure reference).
+        // +500 (parity with on-chain + the concentrated-liquidity-math pure reference).
         engine
             .core
             .write()

@@ -396,7 +396,7 @@ green; clippy `-D warnings` clean.
   `rust/crates/degenbot-pools/src/tick_bitmap.rs`,
   `rust/crates/degenbot-pools/src/v3_state.rs`
   (`build_int_v3_sequence`, `v3_simulate_swap`),
-  `rust/crates/degenbot-cl-math/src/cl_lib/swap_math.rs`.
+  `rust/crates/degenbot-concentrated-liquidity-math/src/swap_math.rs`.
 - Prior diagnosis doc: `docs/architecture/sim_v4_swap_step_rounding.md`
   (the `int_simulate_v3_swap` 2-range approximation finding — `PXSY47`
   retires exactly that seam).

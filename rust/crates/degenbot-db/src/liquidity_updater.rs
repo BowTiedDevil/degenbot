@@ -53,7 +53,7 @@ use crate::schema::table::{
 };
 
 /// The reconstituted liquidity map (tick bitmap + tick data) the apply loop
-/// mutates — the cl-math types directly.
+/// mutates — the concentrated-liquidity-math types directly.
 type LiquidityMap = (HashMap<i32, BitmapAtWord>, HashMap<i32, LiquidityAtTick>);
 
 /// One liquidity event decoded into the (`tick_lower`, `tick_upper`, `delta`,
@@ -297,7 +297,7 @@ impl DegenbotDb {
     /// Reconstitute the V3 [`LiquidityMap`] (snapshot's `tick_bitmap` +
     /// `tick_data`) from the `liquidity_positions` + `initialization_maps`
     /// rows for `pool_id`. Mirrors the Python `pool_liquidity_map.model_construct`
-    /// reconstitution; produces the cl-math types directly (no `U256`-bridge
+    /// reconstitution; produces the concentrated-liquidity-math types directly (no `U256`-bridge
     /// round-trip — `liquidity_net` is decoded as `I256`, `liquidity_gross` as
     /// low-128 `U128`).
     ///
@@ -1380,7 +1380,7 @@ fn encode_i256(v: &I256) -> String {
     v.to_string()
 }
 
-/// Narrow a [`U256`] to its low-128-bits [`U128`] (the cl-math gross-liquidity
+/// Narrow a [`U256`] to its low-128-bits [`U128`] (the concentrated-liquidity-math gross-liquidity
 /// type). Matches the `PyO3` wrapper's `gross_bytes[16..32]` slice: V3/V4 gross
 /// liquidity fits in 128 bits, but the DB column is the full 256-bit
 /// `VARCHAR(78)` form (Python arbitrary-precision `int`).

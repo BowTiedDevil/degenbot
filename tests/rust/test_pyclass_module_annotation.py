@@ -21,7 +21,7 @@ import degenbot._ffi as ffi
 _SUBMODULES = (
     "abi",
     "balancer_math",
-    "cl_math",
+    "concentrated_liquidity_math",
     "curve_math",
     "solidly_math",
     "db",

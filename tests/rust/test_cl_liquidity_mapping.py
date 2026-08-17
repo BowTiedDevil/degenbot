@@ -11,7 +11,7 @@ through this seam, + the pure-Python ``apply_liquidity_mapping_update`` /
 ``flip_tick`` / ``get_tick_word_and_bit_position`` mirrors were RETIRED with
 their parity oracle (§4.3) once the callsite cutover + the Rust
 self-contained ``#[cfg(test)]`` suite in
-``degenbot-concentrated-liquidity-math/src/cl_lib/liquidity_mapping.rs`` (68 tests) stayed green.
+``degenbot-concentrated-liquidity-math/src/liquidity_mapping.rs`` (68 tests) stayed green.
 The Python-side parity test below asserts against HARDCODED expectations
 derived from the Solidity ``TickBitmap.position`` spec — it no longer depends on
 the retired Python oracle, so it remains a valid regression guard that the seam

@@ -34,12 +34,12 @@ from . import cancel as cancel
 # ------------------------------------------------------------------
 # ABI encoding / decoding
 # ------------------------------------------------------------------
-# Concentrated-liquidity math (feature = "cl-math").
-# Registered on a real Python submodule (`degenbot._ffi.cl_math`) with
+# Concentrated-liquidity math (feature = "concentrated-liquidity-math").
+# Registered on a real Python submodule (`degenbot._ffi.concentrated_liquidity_math`) with
 # un-prefixed names — the `cl_` prefix was an artifact of the flat root
-# registration. See `cl_math.pyi` for the 21 function signatures + the 4
+# registration. See `concentrated_liquidity_math.pyi` for the 21 function signatures + the 4
 # tick-boundary constants (MIN_TICK/MAX_TICK/MIN_SQRT_RATIO/MAX_SQRT_RATIO).
-from . import cl_math as cl_math
+from . import concentrated_liquidity_math as concentrated_liquidity_math
 from . import contract as contract
 from . import curve_math as curve_math
 from . import db as db
@@ -1394,7 +1394,7 @@ __all__ = [
     "balancer_math",
     "build_path_graph",
     "cancel",
-    "cl_math",
+    "concentrated_liquidity_math",
     "compute_aerodrome_v2_pool_address",
     "compute_aerodrome_v3_pool_address",
     "contract",

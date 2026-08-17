@@ -82,11 +82,11 @@ pub fn solve_balancer_weighted_basket(
 /// `#[pymodule]` caller in `lib.rs` converts them into the module-init failure.
 #[expect(clippy::too_many_lines)]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Concentrated-liquidity math (feature = "cl-math") — registered on a real
-    // Python submodule `degenbot._ffi.cl_math` (21 fns + 4 tick-boundary
-    // constants, un-prefixed). See `crate::cl_math::add_cl_math_module`.
-    #[cfg(feature = "cl-math")]
-    crate::cl_math::add_cl_math_module(m)?;
+    // Concentrated-liquidity math (feature = "concentrated-liquidity-math") — registered on a real
+    // Python submodule `degenbot._ffi.concentrated_liquidity_math` (21 fns + 4 tick-boundary
+    // constants, un-prefixed). See `crate::concentrated_liquidity_math::add_concentrated_liquidity_math_module`.
+    #[cfg(feature = "concentrated-liquidity-math")]
+    crate::concentrated_liquidity_math::add_concentrated_liquidity_math_module(m)?;
 
     // Address utilities (feature = "uniswap")
     #[cfg(feature = "uniswap")]

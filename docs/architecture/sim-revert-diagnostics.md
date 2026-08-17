@@ -86,7 +86,7 @@ Per the [V3/V4 recompute feasibility spike](../spikes/v3-v4-recompute-feasibilit
   This is the only family that populates `expected_out_engine` +
   `expected_out_onchain` + `matches_solver`.
 
-- **V3/V4** — engine-state recompute is **identity**: only `degenbot-cl-math`
+- **V3/V4** — engine-state recompute is **identity**: only `degenbot-concentrated-liquidity-math`
   exists, which is what the solver ran, so re-simulating the engine state
   reproduces `solver_out` (an internal-consistency check, not an independent
   calc check). Furthermore, a genuine on-chain recompute needs the **full tick

@@ -14,15 +14,17 @@ use pyo3::{exceptions::PyValueError, types::PyAny, PyTypeInfo};
 // PyObject alias for pyo3 0.28+
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
-use crate::cl_lib::bit_math;
-use crate::cl_lib::full_math;
-use crate::cl_lib::liquidity_mapping::{self, BitmapAtWord, LiquidityAtTick};
-use crate::cl_lib::liquidity_math;
-use crate::cl_lib::sqrt_price_math;
-use crate::cl_lib::swap_math;
-use crate::cl_lib::tick_math;
-use crate::cl_lib::unsafe_math;
 use crate::conversion::alloy as alloy_py;
+use degenbot_concentrated_liquidity_math::bit_math;
+use degenbot_concentrated_liquidity_math::full_math;
+use degenbot_concentrated_liquidity_math::liquidity_mapping::{
+    self, BitmapAtWord, LiquidityAtTick,
+};
+use degenbot_concentrated_liquidity_math::liquidity_math;
+use degenbot_concentrated_liquidity_math::sqrt_price_math;
+use degenbot_concentrated_liquidity_math::swap_math;
+use degenbot_concentrated_liquidity_math::tick_math;
+use degenbot_concentrated_liquidity_math::unsafe_math;
 
 /// Convert a Python int/bytes to U256.
 fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
@@ -445,7 +447,7 @@ pub fn compute_swap_step_v4(
 
 // ─── TickMath (additional helpers) ─────────────────────────────────────
 
-/// Maximum usable tick for the given spacing (delegates to the cl-math core).
+/// Maximum usable tick for the given spacing (delegates to the pure-Rust core).
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
 #[expect(clippy::missing_const_for_fn)]
@@ -453,7 +455,7 @@ pub fn max_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::max_usable_tick(tick_spacing)
 }
 
-/// Minimum usable tick for the given spacing (delegates to the cl-math core).
+/// Minimum usable tick for the given spacing (delegates to the pure-Rust core).
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
 #[expect(clippy::missing_const_for_fn)]
@@ -622,18 +624,18 @@ pub fn apply_liquidity_mapping_update(
 
 // ─── Register all CL math functions ────────────────────────────────────
 
-/// Register the 19 `cl_lib` math functions on the CL-math submodule.
+/// Register the 19 CL-math functions on the concentrated-liquidity submodule.
 ///
-/// Called by `crate::cl_math::add_cl_math_module` (the single entry point that
+/// Called by `crate::concentrated_liquidity_math::add_concentrated_liquidity_math_module` (the single entry point that
 /// also registers the `tick_math.rs` entry points + boundary constants and
-/// wires up `sys.modules`). This helper registers only the `cl_lib.rs` fns
+/// wires up `sys.modules`). This helper registers only the `lib.rs` fns
 /// (`BitMath` / `FullMath` / `UnsafeMath` / `LiquidityMath` / `SqrtPriceMath` /
 /// `SwapMath` / `TickMath` helpers / `LiquidityMapping`), un-prefixed.
 ///
 /// # Errors
 ///
 /// Returns `PyErr` if any function fails to register.
-pub fn add_cl_lib_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn add_lib_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // BitMath
     m.add_function(wrap_pyfunction!(most_significant_bit, m)?)?;
     m.add_function(wrap_pyfunction!(least_significant_bit, m)?)?;

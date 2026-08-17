@@ -809,7 +809,7 @@ pub fn v4_simulate_swap(
     // (opposite to V3). Matches Solidity V4 `Pool.sol:295`
     // `bool exactInput = params.amountSpecified < 0;` and `compute_swap_step_v4`'s
     // internal `amount_remaining < I256::ZERO` check. Verified against the
-    // integer-exact oracle suite in `cl_lib::swap_math::tests`.
+    // integer-exact oracle suite in `degenbot_concentrated_liquidity_math::swap_math::tests`.
     let exact_in = amount_specified.is_negative();
 
     // V4 `computeSwapStep` charges the COMBINED `swapFee =

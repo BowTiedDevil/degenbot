@@ -23,7 +23,7 @@ use crate::conversion::alloy as alloy_py;
 
 /// Extract a Python `int` (or `bytes`) into a `U256`.
 ///
-/// Mirrors `balancer_math::lib::extract_u256` / `cl_math::cl_lib::extract_u256`
+/// Mirrors `balancer_math::lib::extract_u256` / `concentrated_liquidity_math::lib::extract_u256`
 /// — small ints fast-path through `u64`/`u128`; arbitrary-precision Python ints
 /// round-trip via `to_bytes`.
 fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {

@@ -1,6 +1,6 @@
 """Stable companion home for concentrated-liquidity math functions.
 
-Re-exports the Rust-backed math from the ``degenbot._ffi.cl_math`` submodule
+Re-exports the Rust-backed math from the ``degenbot._ffi.concentrated_liquidity_math`` submodule
 with un-prefixed names. Importers should use::
 
     from degenbot.uniswap.math import muldiv, compute_swap_step_v3
@@ -15,7 +15,7 @@ lives at ``degenbot.uniswap.math`` (variant-neutral), not under
 ``v3_libraries``.
 """
 
-from degenbot._ffi.cl_math import (
+from degenbot._ffi.concentrated_liquidity_math import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,

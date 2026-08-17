@@ -6,9 +6,9 @@
 //! making it the highest-frequency code in the workspace, isolatable from the
 //! `PyO3` layer, and independently testable without a Python interpreter.
 //!
-//! The Python binding layer lives in the `degenbot_rs` crate's `cl_math`
-//! module (`rust/crates/degenbot-python/src/cl_math/`), which re-exports this
-//! crate at the binding layer's module root as `cl_lib`.
+//! The Python binding layer lives in the `degenbot_rs` crate's
+//! `concentrated_liquidity_math` module (`rust/crates/degenbot-python/src/concentrated_liquidity_math/`),
+//! which imports this crate directly (no re-export alias).
 //!
 //! # Architecture
 //!

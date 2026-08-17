@@ -1,7 +1,7 @@
-"""Stub for the dynamically-created ``degenbot._ffi.cl_math`` submodule.
+"""Stub for the dynamically-created ``degenbot._ffi.concentrated_liquidity_math`` submodule.
 
-Created at runtime by ``add_cl_math_module`` in the PyO3 wrapper crate
-(``degenbot-python/src/cl_math/mod.rs``). The functions are thin PyO3
+Created at runtime by ``add_concentrated_liquidity_math_module`` in the PyO3 wrapper crate
+(``degenbot-python/src/concentrated_liquidity_math/mod.rs``). The functions are thin PyO3
 wrappers over the pure-Rust ``degenbot-concentrated-liquidity-math`` core crate.
 """
 

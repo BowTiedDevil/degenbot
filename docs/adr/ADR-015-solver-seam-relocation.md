@@ -114,7 +114,7 @@ must survive the relocation unchanged.
 
 ### D4 — Dependency graph stays a DAG; no-pyo3 invariant preserved.
 
-`degenbot-solvers` already depends on `degenbot-v2-math`, `degenbot-cl-math`,
+`degenbot-solvers` already depends on `degenbot-v2-math`, `degenbot-concentrated-liquidity-math`,
 `degenbot-pools` (and transitively, via `pools`, on all the math leaves).
 To absorb the new solve arms + hop types it adds direct deps on
 `degenbot-balancer-math` (for `PowVersion` + `weighted_math` leaf),

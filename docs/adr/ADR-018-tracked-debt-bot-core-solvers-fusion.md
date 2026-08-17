@@ -32,7 +32,7 @@ SQLite schema + snapshot readers), `tokio` (the pump's async runtime),
 `rayon` (the parallel solve fan-out), and `dashmap` (the concurrent
 registry). This violates the spirit of ADR-005's standalone-Rust-core
 constraint for the **solve** surface specifically — though the pure
-swap-math leaves (`degenbot-v2-math`, `degenbot-cl-math`,
+swap-math leaves (`degenbot-v2-math`, `degenbot-concentrated-liquidity-math`,
 `degenbot-balancer-math`, `degenbot-curve-math`, `degenbot-solidly-math`)
 **are** already standalone and reachable without `degenbot-bot`. The gap is
 the `ArbitrageEngine` composition layer that sits between the pure math

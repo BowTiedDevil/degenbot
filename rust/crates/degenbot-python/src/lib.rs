@@ -37,8 +37,8 @@ pub mod c_api;
 /// Gated on `any(pool, aave-updater)` (whichever seam needs it).
 #[cfg(any(feature = "pool", feature = "aave-updater"))]
 pub mod cancel;
-#[cfg(feature = "cl-math")]
-pub mod cl_math;
+#[cfg(feature = "concentrated-liquidity-math")]
+pub mod concentrated_liquidity_math;
 pub mod conversion;
 #[cfg(feature = "curve-math")]
 pub mod curve_dy;
@@ -80,13 +80,6 @@ pub mod uniswap;
 // through the re-export, with zero edits to call sites. Pure-Rust consumers
 // depend on `degenbot-core` directly (default features, no pyo3).
 pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
-
-// The concentrated-liquidity math library lives in the `degenbot-concentrated-liquidity-math`
-// workspace member. Re-exported as `crate::cl_lib` so every existing
-// `crate::cl_lib::` call site in the binding layer keeps resolving through the
-// re-export. Pure-Rust consumers depend on `degenbot-concentrated-liquidity-math` directly.
-#[cfg(feature = "cl-math")]
-pub use degenbot_concentrated_liquidity_math as cl_lib;
 
 // The ABI type/decode/encode + signature-parsing core lives in the
 // `degenbot-abi` workspace member. Re-exported as `crate::abi_types` /
@@ -140,17 +133,17 @@ pub use hex_utils::{decode_hex, encode_hex, HexError};
 #[cfg(feature = "uniswap")]
 pub use uniswap::address::to_checksum_address;
 
-#[cfg(feature = "cl-math")]
-pub use cl_lib::tick_math::{
+#[cfg(feature = "concentrated-liquidity-math")]
+pub use concentrated_liquidity_math::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
+#[cfg(feature = "concentrated-liquidity-math")]
+pub use degenbot_concentrated_liquidity_math::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 };
-#[cfg(feature = "cl-math")]
-pub use cl_lib::{
+#[cfg(feature = "concentrated-liquidity-math")]
+pub use degenbot_concentrated_liquidity_math::{
     bit_math, full_math, functions, liquidity_math, sqrt_price_math, swap_math, unsafe_math,
 };
-#[cfg(feature = "cl-math")]
-pub use cl_math::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 pub use errors::{AbiDecodeError, AddressError, ClMathError, ProviderError, TickMathError};
 
 /// Ensure Python is initialized before the test harness spawns threads.

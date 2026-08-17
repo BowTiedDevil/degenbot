@@ -50,7 +50,7 @@ pub use aave::{
     AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveGhoAsset, AaveUserRecord,
 };
 pub use connection::DegenbotDb;
-/// Re-export the cl-math in-memory liquidity types (`liquidity_gross: U128`,
+/// Re-export the concentrated-liquidity-math in-memory liquidity types (`liquidity_gross: U128`,
 /// `liquidity_net: I256`, plus `bitmap: U256`) the liquidity updater applies
 /// against — aliased so they don't collide with the snapshot batch-read `U256`
 /// flavor above. These are the field types of `ComputedLiquidityUpdate` + the

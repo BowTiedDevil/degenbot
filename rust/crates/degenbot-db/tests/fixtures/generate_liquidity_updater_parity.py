@@ -110,13 +110,18 @@ V4_HOOKS = "0x" + "0" * 40
 # Seed ticks: a pre-existing initial state (tick -10, tick 10) carrying gross
 # liquidity, PLUS a STALE tick (tick 12345) that no event touches — its
 # presence verifies the Rust `delete_stale_*_positions` path drops it.
-SEED_TICKS: list[tuple[int, int, int]] = [
-    # (tick, liquidity_net, liquidity_gross)
+SEED_TICKS: list[
+    tuple[
+        int,  # tick
+        int,  # liquidity_net
+        int,  # liquidity_gross
+    ]
+] = [
     (-10, 1_000_000, 1_000_000),  # touched by events
     (10, -1_000_000, 1_000_000),  # touched by events
     (12345, 500, 500),  # STALE — no event touches it; must be dropped
 ]
-# Seed init-map words. The cl-math `get_tick_word_and_bit_position` uses EVM
+# Seed init-map words. The concentrated-liquidity-math `get_tick_word_and_bit_position` uses EVM
 # truncated division: word = (tick // tick_spacing) // 256, with the bit set at
 # (tick // tick_spacing) % 256. For tick_spacing=10:
 #   tick -10 → word -1, bit_pos = (-1) % 256 = 255  ⟹ bitmap word = 1 << 255

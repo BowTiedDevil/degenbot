@@ -75,7 +75,7 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "s
 # (the engine wrapper references degenbot_rpc::provider::AlloyProvider + degenbot_decoders::PoolId
 # + degenbot_uniswap::dex_identity directly), and `rpc` implies `abi` (rpc/contract wraps
 # crate::abi_types). `async` gates the rpc/ async submodules (no new dep).
-default = ["auto-initialize", "bot", "rpc", "price", "submission", "simulation", "abi", "cl-math", "balancer-math", "curve-math", "solidly-math", "uniswap", "pathfinding", "async", "db", "executor", "execution", "pool", "aave-updater", "fork"]
+default = ["auto-initialize", "bot", "rpc", "price", "submission", "simulation", "abi", "concentrated-liquidity-math", "balancer-math", "curve-math", "solidly-math", "uniswap", "pathfinding", "async", "db", "executor", "execution", "pool", "aave-updater", "fork"]
 extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
 bot = ["dep:degenbot-bot", "dep:degenbot-solvers", "rpc", "decoders", "uniswap"]
@@ -87,7 +87,7 @@ execution = ["dep:degenbot-execution", "executor"]
 fork = ["dep:degenbot-fork"]
 rpc = ["dep:degenbot-rpc", "abi"]
 abi = ["dep:degenbot-abi"]
-cl-math = ["dep:degenbot-concentrated-liquidity-math"]
+concentrated-liquidity-math = ["dep:degenbot-concentrated-liquidity-math"]
 db = ["dep:degenbot-db"]
 pool = ["dep:degenbot-pool-updater", "db", "rpc"]
 aave-updater = ["dep:degenbot-aave", "db", "rpc"]

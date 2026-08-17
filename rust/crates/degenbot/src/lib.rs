@@ -102,7 +102,7 @@ pub use degenbot_simulation;
 /// co-implementation).
 pub use degenbot_settlement_strategy;
 
-/// Concentrated-liquidity math (`cl_lib`, `tick_math`).
+/// Concentrated-liquidity math (`tick_math`, `swap_math`, `liquidity_mapping`).
 pub use degenbot_concentrated_liquidity_math;
 /// Uniswap V2 constant-product (`x·y=k`) single-hop swap math (`IntHopState`,
 /// `int_simulate_path`) — the shared primitive for the V2 pool family + the

@@ -810,7 +810,7 @@ pub fn v3_amount_out(
 }
 
 /// `min(a*b/denom, …)` rounded down — a tiny 512-bit mulDiv. Called by
-/// `v3_amount_out` (and could live in cl-math; kept local to avoid widening).
+/// `v3_amount_out` (and could live in `degenbot-concentrated-liquidity-math`; kept local to avoid widening).
 fn full_mul_div(a: U256, b: U256, denom: U256) -> U256 {
     let prod = U512::from(a) * U512::from(b);
     let q = prod / U512::from(denom);
