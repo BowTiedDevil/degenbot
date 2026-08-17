@@ -11,8 +11,8 @@
 //! that work identically whether the backing `Database` is `WrapDatabaseAsync<
 //! AlloyDB>` (option A) or `BotStateDb<WrapDatabaseAsync<AlloyDB>>` (option B).
 //!
-//! See `docs/spikes/revm-composition-api-and-cold-miss-latency.md` §2.2 for the
-//! verified `CacheDB` insertion API.
+//! See ADR-019 for the verified `CacheDB` insertion API (the detailing spike
+//! doc was removed in the stale-docs cleanup `71ec78b2`).
 
 use degenbot_executor::WarmupSlots;
 use revm::database::CacheDB;

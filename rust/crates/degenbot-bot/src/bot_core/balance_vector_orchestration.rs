@@ -1,7 +1,6 @@
 //! Balance-vector structural family — `impl BotState` orchestration (`Curve` + `Balancer`).
 //!
-//! Carved out of `bot_core/mod.rs` (the `BotState` god-file; see
-//! `docs/plans/botstate-god-file-split.md`). This module owns the balance-vector
+//! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the balance-vector
 //! `BotState` method set — `Curve` and `Balancer` (weighted + stable) registration,
 //! balance-apply, calc, and identity/state getters. Pure `impl BotState`
 //! orchestration: the family state types live in `degenbot-pools` (I/O-free,

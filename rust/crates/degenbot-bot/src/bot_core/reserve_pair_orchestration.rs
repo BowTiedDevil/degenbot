@@ -1,7 +1,6 @@
 //! Reserve-pair structural family — `impl BotState` orchestration (`V2` + `AerodromeV2`).
 //!
-//! Carved out of `bot_core/mod.rs` (the `BotState` god-file; see
-//! `docs/plans/botstate-god-file-split.md`). This module owns the reserve-pair
+//! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the reserve-pair
 //! `BotState` method set — `V2`/`AerodromeV2` registration, sync/apply, snapshots,
 //! and identity/state getters. Pure `impl BotState` orchestration: the family
 //! state types live in `degenbot-pools` (I/O-free, ADR-001).

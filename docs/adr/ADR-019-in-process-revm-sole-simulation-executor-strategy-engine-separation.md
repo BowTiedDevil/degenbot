@@ -347,8 +347,10 @@ leaves a green, verifiable codebase:
   crates by an accidental line" (D6 mirrors its collapse).
 - ADR-018 (tracked debt) — the precedent for recording acknowledged debt
   without a code change (D8 follows this shape).
-- `docs/spikes/revm-composition-api-and-cold-miss-latency.md` — the revm
-  composition API, the verified `CacheDB` insertion surface, and the cold-
-  miss latency profile that motivates the in-process path.
+- (former `docs/spikes/revm-composition-api-and-cold-miss-latency.md`, removed
+  in the stale-docs cleanup `71ec78b2`) — the revm composition API, the
+  verified `CacheDB` insertion surface, and the cold-miss latency profile
+  that motivates the in-process path (D1; the RPC surface survives only for
+  cold-miss state fetches).
 - `docs/architecture/rust-owned-bot.md` — "Rust is the engine, Python is
   the cockpit" (the backrun bot is one cockpit, not the engine).

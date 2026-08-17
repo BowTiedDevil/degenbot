@@ -38,11 +38,14 @@
 > **Resolution (same epic, tasks T5+T6 — the aspiration is now realized):**
 > tags alone could not absorb the shapes (spike `RQQIUK`, negative on the
 > merged-pair holdout), but the vocabulary could: the `terminal_form` axis
-> merged the "blocked" `v3v4` pair (see
-> `docs/plans/pzbgp7-terminal-form-axis-draft.md`), and the topology-rule
-> analysis (`docs/spikes/t6-topology-rules-analysis.md`) found 21/23 arms
-> derivable from a 3-rule debt-flow set, with the last 2 unlocked by the
-> `repay_mechanism` + `seed_delivery` facts. All 23 3-hop bodies are deleted;
+> merged the "blocked" `v3v4` pair, and the topology-rule analysis found
+> 21/23 arms derivable from a 3-rule debt-flow set, with the last 2 unlocked
+> by the `repay_mechanism` + `seed_delivery` facts. (The design docs behind
+> both — `docs/plans/pzbgp7-terminal-form-axis-draft.md` and
+> `docs/spikes/t6-topology-rules-analysis.md` — were removed in the stale-docs
+> cleanup `71ec78b2`; their findings survive in this paragraph, the
+> `CONTEXT.md` walker glossary, and the rule walkers in
+> `grammar_walker/shapes/three_hop.rs`.) All 23 3-hop bodies are deleted;
 > three rule walkers (`rule_walk_v2v3`, `rule_walk_v4_led`,
 > `rule_walk_v2v3_v4_mixed` in `grammar_walker/shapes/three_hop.rs`) derive
 > the enclosures from the facts, byte-identical (golden suites + revm matrix

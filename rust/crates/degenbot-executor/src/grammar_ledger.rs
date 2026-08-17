@@ -253,7 +253,7 @@ pub enum LedgerOp {
     /// `V4_SETTLE(cur, amount)` — the executor pays `amount` of `cur` into the
     /// PM, cancelling debt: `PM[cur] += amount` (nets a negative delta toward
     /// zero). The net-zero-at-unlock-close invariant is the V4 master rule
-    /// (`executor-v4-ledger-rules.md`).
+    /// (checked at `V4UnlockEnd`, below).
     V4Settle { currency: Address, amount: u128 },
     /// `V4_SETTLE_DELTA(cur)` — auto-settle one currency: nets `PM[cur]` to 0
     /// (if negative, executor pays; if positive, take to executor).
@@ -273,9 +273,9 @@ pub enum LedgerOp {
         seeds_pool: Option<Address>,
     },
     /// `V4_UNLOCK` callback end — the master V4 invariant: every touched
-    /// `PM[currency]` must net to zero by callback end
-    /// (`executor-v4-ledger-rules.md`). The validator rejects if any PM delta
-    /// is nonzero. Emitted by the Plan's `V4Unlock` node after its inner Plan.
+    /// `PM[currency]` must net to zero by callback end. The validator
+    /// rejects if any PM delta is nonzero. Emitted by the Plan's `V4Unlock`
+    /// node after its inner Plan.
     V4UnlockEnd,
     /// Seed a V2 pair's excess (credit `H[pool]`) — a transfer/take *to the
     /// pair* that a later `SwapCalc` consumes.

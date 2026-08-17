@@ -1225,7 +1225,7 @@ fn rule_walk_v4_led(
 // (but not the v4-led block — that is `rule_walk_v4_led` — and not the
 // `v3v4{v2,v4}` terminal-form merge): `v2v2v4`, `v2v4v4`, `v2v3v4`,
 // `v3v2v4`, `v3v3v4`, `v2v4v2`, `v2v4v3`. They collapse to one rule-driven
-// derivation. The rules (see `docs/spikes/t6-topology-rules-analysis.md`):
+// derivation. The rules (stated below; T6 record in ADR-031's Resolution):
 //
 // **R1 (enclosure root).** Two root forms:
 //   • A `V4Unlock` is the root when the V4 hop is the flat terminal

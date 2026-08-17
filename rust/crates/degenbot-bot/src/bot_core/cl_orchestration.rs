@@ -1,7 +1,6 @@
 //! Concentrated-liquidity (CL) structural family — `impl BotState` orchestration (V3 + V4).
 //!
-//! Carved out of `bot_core/mod.rs` (the `BotState` god-file; see
-//! `docs/plans/botstate-god-file-split.md`). This module owns the CL-family
+//! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the CL-family
 //! `BotState` method set — V3/V4 registration + apply, the CL-common dual
 //! liquidity buffer, the snapshot seeds, and the coverage/quarantine/lifecycle
 //! state accessors. Pure `impl BotState` orchestration: the family state types
