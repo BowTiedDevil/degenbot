@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Watch the live eth_backrun bot log for the next V4 over-prediction (UO3JM4).
+"""Watch the live settlement-arbitrage bot log for the next V4 over-prediction (UO3JM4).
 
 Detects `[sim-revert-swap] ... matched=false` on a V4 hop (predicted > actual)
 and records a compact **historical snapshot** of everything needed to drive a

@@ -92,14 +92,14 @@ every block by default. To debug one of them, run with the crate set to
 
 ```bash
 RUST_LOG=info,degenbot_bot=debug,degenbot_arbitrage=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_backrun_v2_v3_v4_rust.py
+    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 ```
 
 or, for just the V2 calc trace:
 
 ```bash
 RUST_LOG=info,degenbot_arbitrage=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_backrun_v2_v3_v4_rust.py
+    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 ```
 
 ---
@@ -161,7 +161,7 @@ explicitly on:
 
 ```bash
 RUST_LOG=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_backrun_v2_v3_v4_rust.py
+    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 ```
 
 **Targeted (a single subsystem):** only the V2 calc + solver internals, keeping
@@ -169,5 +169,5 @@ the rest at info:
 
 ```bash
 RUST_LOG=info,degenbot_bot=debug,degenbot_arbitrage=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_backrun_v2_v3_v4_rust.py
+    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 ```

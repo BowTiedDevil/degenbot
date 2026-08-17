@@ -37,7 +37,7 @@ HOTPATH_SHUTDOWN_MS=300000 \
 HOTPATH_OUTPUT_PATH=hp.json \
 HOTPATH_OUTPUT_FORMAT=json \
 HOTPATH_REPORT=functions-timing,threads \
-uv run python examples/eth_backrun_v2_v3_v4_rust.py
+uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 ```
 
 `HOTPATH_SHUTDOWN_MS` forces a clean timed report from the long-running bot (the guard otherwise only drops at pump exit). For a live TUI view instead of a static report: `cargo install hotpath --features=tui` then `hotpath console` in another terminal while the bot runs.

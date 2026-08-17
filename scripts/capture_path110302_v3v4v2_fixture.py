@@ -17,7 +17,7 @@ this path:
     [sim-fixture] hop[2] V2 pool=0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852
                   t0=WETH t1=USDT fee=30 zfo=False       <- THE failing leg
 
-Path shape (WETH→WETH backrun):
+Path shape (WETH→WETH settlement arbitrage):
     hop0 V3 PancakeSwap USDC/WETH  zfo=False  (WETH→USDC)   fee=100
     hop1 V4        USDC/USDT       zfo=True   (USDC→USDT)   fee=8  spacing=1
     hop2 V2 UniV2  WETH/USDT       zfo=False  (USDT→WETH)   fee=997/1000  <- fails

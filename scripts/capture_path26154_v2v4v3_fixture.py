@@ -10,7 +10,7 @@ The live bot halted loudly (ADR-021 tripwire, rc=3) on this path:
                target=PoolManager label=empty kind=halt gas=4463235 revert=0x
     [sim-bals] path=26154 ... combined d=+0        <- whole path reverted
 
-Path shape (WETH→WETH backrun):
+Path shape (WETH→WETH settlement arbitrage):
     hop0 V2 Sushi  MATIC/WETH   zfo=False  (WETH→MATIC)
     hop1 V4        UNI/MATIC    zfo=False  (MATIC→UNI)  <- THE failing leg
     hop2 V3 Uni    UNI/WETH     zfo=True   (UNI→WETH)

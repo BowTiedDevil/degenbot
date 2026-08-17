@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Drive the backrun bot with all output teed to a log file.
+# Drive the settlement-arbitrage bot with all output teed to a log file.
 #
 # A self-contained launcher so the bot can be started/stopped deterministically
 # without rediscovering the launch mechanics each time.
@@ -64,7 +64,7 @@ export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-1}"
 
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).
-BOT_CMD=(uv run python examples/eth_backrun_v2_v3_v4_rust.py)
+BOT_CMD=(uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py)
 
 start() {
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
@@ -93,7 +93,7 @@ stop() {
         rm -f "$PIDFILE"
     fi
     # The uv wrapper may exit while its python child lingers; kill by name too.
-    pkill -9 -f eth_backrun_v2_v3_v4 2>/dev/null
+    pkill -9 -f eth_settlement_arbitrage_v2_v3_v4 2>/dev/null
     echo "[runner] stopped $(date -Is)"
 }
 

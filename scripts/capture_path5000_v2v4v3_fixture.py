@@ -11,7 +11,7 @@ The live bot halted loudly (ADR-021 tripwire, rc=3) on this path:
     [sim-bals] path=5000 ... combined d=+0        <- whole path reverted
     [sim-revert-swap] path=5000 hop=0 ... matched=true  <- hop0 V2 OK
 
-Path shape (WETH→WETH backrun):
+Path shape (WETH→WETH settlement arbitrage):
     hop0 V2 UniV2  MATIC/WETH   zfo=False  (WETH→MATIC)
     hop1 V4        UNI/MATIC    zfo=False  (MATIC→UNI)  <- THE failing leg
     hop2 V3 Uni    UNI/WETH     zfo=True   (UNI→WETH)

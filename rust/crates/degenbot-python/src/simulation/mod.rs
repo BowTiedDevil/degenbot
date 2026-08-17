@@ -24,7 +24,7 @@
 //! - **`PyO3` wrapper** (this module): `#[pyclass]`/`#[pyfunction]` only —
 //!   arg-extract → GIL release (`py.detach`) → strategy call → result wrap.
 //!   No business logic. Mirrors the `submission/` subtree's discipline exactly.
-//! - **Python companion** (`examples/eth_backrun_v2_v3_v4_rust.py`): the
+//! - **Python companion** (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`): the
 //!   cockpit renders the `[sim]` summary from `PyDispatchOutcome` and chains
 //!   `dispatch_profitable_py` → `dispatch_and_submit_py`.
 //!

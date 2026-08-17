@@ -13,7 +13,7 @@ middle/hosted form; **D-B** one shared provider, **D-C** no-config fail-fast,
 
 ## 1. The long-lived registration pipeline
 
-`examples/eth_backrun_v2_v3_v4_rust.py::PathRegistrationPipeline` is the
+`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py::PathRegistrationPipeline` is the
 **single** place that turns a path's hop steps into registered, verified,
 released pools. Both the built-in discovery source AND an operator add route
 through the *same* `_consume` body (build → register + verify → per-path

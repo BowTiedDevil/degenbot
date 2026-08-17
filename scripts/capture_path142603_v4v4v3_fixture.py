@@ -10,7 +10,7 @@ with the hop layout adjusted for the LIVE incident:
     recorded_solve: optimal_input=351476045207054
                     hop_outputs=[676293, 676607, 351475872056229]
     sim-bucket = no-profit  (executed net -173150825 wei WETH -> gross 0)
-    captured_swaps: three in-block swaps the bot backruns (see module docstrings)
+    captured_swaps: three in-block swaps the bot runs in settlement arbitrage (see module docstrings)
 
 The capture reads the DB liquidity snapshot (tick_data) for the three pools and
 the live scalars via `cast` against the archive RPC at TARGET (the same

@@ -1,6 +1,6 @@
 """Minimal reproduction of the find_paths non-termination observed in bot_run.log.
 
-The live bot (`eth_backrun_v2_v3_v4_rust.py`) drives `find_paths_async` from
+The live bot (`eth_settlement_arbitrage_v2_v3_v4_rust.py`) drives `find_paths_async` from
 WETH with max_depth=3 and `allowed_intermediate_tokens=ETH_MAINNET_ALLOWED_TOKENS`
 (16 hub tokens) over the ~600 K-pool mainnet DB subgraph. Across a 12.5 h run
 the DFS had yielded 15.27 M paths and was still climbing — `build_paths` never
