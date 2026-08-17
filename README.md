@@ -250,8 +250,8 @@ When `build_pool` is called, type resolution proceeds in order: (1) pool registr
 Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. The builder handles all I/O (fetching reserves, slot0, etc. from RPC), constructs an `ExternalUpdate` message, and pushes it to the pool:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import PyBot
-_PY_BOT = PyBot()
+from degenbot._ffi import RustBot
+_PY_BOT = RustBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
@@ -404,8 +404,8 @@ pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 V2 pools use the constant-product invariant (x·y=k) with directional fees:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import PyBot
-_PY_BOT = PyBot()
+from degenbot._ffi import RustBot
+_PY_BOT = RustBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
@@ -482,8 +482,8 @@ assert lp.reserves_token1 == 2056841643098872755548
 V3 pools use concentrated liquidity with tick-based positions. The V3 pool uses a **sparse tick data fetcher** for on-demand liquidity loading:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import PyBot
-_PY_BOT = PyBot()
+from degenbot._ffi import RustBot
+_PY_BOT = RustBot()
 from tests.helpers.erc20_factory import make_erc20
 import json
 from pathlib import Path
@@ -555,8 +555,8 @@ assert 0 in lp.tick_data
 V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` instead of address:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import PyBot
-_PY_BOT = PyBot()
+from degenbot._ffi import RustBot
+_PY_BOT = RustBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, UniswapV4PoolKey
 from degenbot.erc20.erc20 import Erc20Token
@@ -722,8 +722,8 @@ Users wanting fine-grained control over **all** client options may pass them thr
 Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
 
 <!-- invisible-code-block: python
-from degenbot._ffi import PyBot
-_PY_BOT = PyBot()
+from degenbot._ffi import RustBot
+_PY_BOT = RustBot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20.erc20 import Erc20Token
@@ -792,8 +792,8 @@ Key design points:
 - **Scaling**: Tokens with non-18 decimals are normalized via scaling factors computed as `ONE * 10**(18 - decimals)`.
 
 <!-- invisible-code-block: python
-from degenbot._ffi import PyBot
-_PY_BOT = PyBot()
+from degenbot._ffi import RustBot
+_PY_BOT = RustBot()
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from fractions import Fraction
@@ -903,14 +903,14 @@ Key design points:
 - **BPT handling**: ComposableStablePools include their own BPT token in the token list. The `bpt_idx` parameter identifies the BPT position so it can be dropped from invariant and swap calculations. `bpt_idx=None` (MetaStable) vs `bpt_idx=int` (Composable).
 
 <!-- invisible-code-block: python
-from degenbot._ffi import PyBot
+from degenbot._ffi import RustBot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2
 
 # --- MetaStablePool (2-token, no BPT, V2 invariant, wstETH/WETH 1.1 rate) ---
-_PY_BOT = PyBot()
+_PY_BOT = RustBot()
 _wsteth = make_erc20(_PY_BOT,
     address='0x7f39C581F595B53c5Cb19bD0b3f8dA6c935E2Ca0',
     name='Wrapped liquid staked Ether 2.0',
@@ -940,7 +940,7 @@ meta_pool = make_balancer_stable_pool(
 )
 
 # --- ComposableStablePool (3-token incl BPT, V1 invariant, static rates) ---
-_PY_BOT2 = PyBot()
+_PY_BOT2 = RustBot()
 _bpt_addr = '0x53BC3cBa3832ebeCBFa002c12023F8ab1AA3a3a0'
 _tusd = make_erc20(_PY_BOT2,
     address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
