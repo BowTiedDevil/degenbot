@@ -2050,7 +2050,7 @@ dependencies = [
  "degenbot-backrun-strategy",
  "degenbot-balancer-math",
  "degenbot-bot",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-core",
  "degenbot-curve-math",
  "degenbot-db",
@@ -2142,7 +2142,7 @@ dependencies = [
  "dashmap",
  "degenbot-abi",
  "degenbot-balancer-math",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-core",
  "degenbot-curve-math",
  "degenbot-db",
@@ -2169,7 +2169,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-cl-math"
+name = "degenbot-concentrated-liquidity-math"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
@@ -2206,7 +2206,7 @@ name = "degenbot-db"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-pathfinding",
  "parking_lot",
  "rusqlite",
@@ -2299,7 +2299,7 @@ version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-balancer-math",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-curve-math",
  "degenbot-decoders",
  "degenbot-simulation",
@@ -2334,7 +2334,7 @@ dependencies = [
  "alloy",
  "dashmap",
  "degenbot-abi",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-core",
  "degenbot-pools",
  "futures-util",
@@ -2355,7 +2355,7 @@ version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-bot",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-executor",
@@ -2389,7 +2389,7 @@ dependencies = [
  "alloy",
  "criterion",
  "degenbot-balancer-math",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-curve-math",
  "degenbot-pools",
  "degenbot-rpc",
@@ -2449,7 +2449,7 @@ dependencies = [
  "degenbot-backrun-strategy",
  "degenbot-balancer-math",
  "degenbot-bot",
- "degenbot-cl-math",
+ "degenbot-concentrated-liquidity-math",
  "degenbot-core",
  "degenbot-curve-math",
  "degenbot-db",

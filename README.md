@@ -57,7 +57,7 @@ Degenbot follows a Polars-inspired three-layer architecture (ADR-005). Every con
 
 | Layer | Where it lives | Holds |
 |-------|----------------|-------|
-| **Rust core** | `rust/crates/degenbot-{core,-cl-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-solvers,…}` — **zero `pyo3`** by default | data + state-machine logic + pure math + protocols (DexIdentity, encoders, decoders) |
+| **Rust core** | `rust/crates/degenbot-{core,-concentrated-liquidity-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-solvers,…}` — **zero `pyo3`** by default | data + state-machine logic + pure math + protocols (DexIdentity, encoders, decoders) |
 | **PyO3 wrapper** | `rust/crates/degenbot-python/src/<domain>/**` (the `degenbot._ffi` extension module) | `#[pyclass]`/`#[pyfunction]` only — arg extraction → GIL release → core call → result wrap. **No business logic.** |
 | **Python companion** | `src/degenbot/**` | user-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display |
 
@@ -70,7 +70,7 @@ The Rust workspace under `rust/crates/` exposes focused, independently consumabl
 | Crate | Responsibility |
 |-------|----------------|
 | `degenbot-core` | Shared types, `DexIdentity`, protocols |
-| `degenbot-v2-math` / `degenbot-cl-math` / `degenbot-curve-math` / `degenbot-balancer-math` / `degenbot-solidly-math` / `degenbot-evm-math` | Per-protocol pure swap/invariant math |
+| `degenbot-v2-math` / `degenbot-concentrated-liquidity-math` / `degenbot-curve-math` / `degenbot-balancer-math` / `degenbot-solidly-math` / `degenbot-evm-math` | Per-protocol pure swap/invariant math |
 | `degenbot-pools` | I/O-free pool state machines |
 | `degenbot-decoders` / `degenbot-abi` | Event + ABI decode/encode |
 | `degenbot-uniswap` | Uniswap V2/V3/V4 domain types |

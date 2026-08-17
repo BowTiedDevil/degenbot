@@ -4095,7 +4095,8 @@ mod tests {
         // Distinct pool_id so the duplicate-registered guard never fires if the
         // previous test's params linger in core (defensive; core is fresh here).
         params.pool_id = [0xe1u8; 32];
-        params.sqrt_price_x96 = U256::from(degenbot_cl_math::cl_lib::tick_math::MAX_SQRT_RATIO);
+        params.sqrt_price_x96 =
+            U256::from(degenbot_concentrated_liquidity_math::tick_math::MAX_SQRT_RATIO);
         assert!(
             matches! {
                 core.register_v4_pool(&params),
@@ -4112,7 +4113,8 @@ mod tests {
         let mut params = make_v4_params_in_spec();
         params.pool_id = [0xe2u8; 32];
         params.sqrt_price_x96 =
-            U256::from(degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO) - uint!(1_U256);
+            U256::from(degenbot_concentrated_liquidity_math::tick_math::MIN_SQRT_RATIO)
+                - uint!(1_U256);
         assert!(
             matches! {
                 core.register_v4_pool(&params),
@@ -4128,7 +4130,7 @@ mod tests {
         let mut core = BotState::new();
         let mut params = make_v4_params_in_spec();
         params.pool_id = [0xe3u8; 32];
-        params.tick = degenbot_cl_math::cl_lib::tick_math::MIN_TICK - 1;
+        params.tick = degenbot_concentrated_liquidity_math::tick_math::MIN_TICK - 1;
         assert!(
             matches! {
                 core.register_v4_pool(&params),
@@ -4828,7 +4830,8 @@ mod tests {
     fn register_v3_pool_rejects_sqrt_price_at_max_as_spec_violation() {
         let mut core = BotState::new();
         let mut params = make_v3_params_in_spec();
-        params.sqrt_price_x96 = U256::from(degenbot_cl_math::cl_lib::tick_math::MAX_SQRT_RATIO);
+        params.sqrt_price_x96 =
+            U256::from(degenbot_concentrated_liquidity_math::tick_math::MAX_SQRT_RATIO);
         assert!(
             matches! {
                 core.register_v3_pool(&params),
@@ -4843,7 +4846,8 @@ mod tests {
         let mut core = BotState::new();
         let mut params = make_v3_params_in_spec();
         params.sqrt_price_x96 =
-            U256::from(degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO) - uint!(1_U256);
+            U256::from(degenbot_concentrated_liquidity_math::tick_math::MIN_SQRT_RATIO)
+                - uint!(1_U256);
         assert!(
             matches! {
                 core.register_v3_pool(&params),
@@ -4857,7 +4861,7 @@ mod tests {
     fn register_v3_pool_rejects_tick_below_min_as_spec_violation() {
         let mut core = BotState::new();
         let mut params = make_v3_params_in_spec();
-        params.tick = degenbot_cl_math::cl_lib::tick_math::MIN_TICK - 1;
+        params.tick = degenbot_concentrated_liquidity_math::tick_math::MIN_TICK - 1;
         assert!(
             matches! {
                 core.register_v3_pool(&params),
@@ -5292,7 +5296,7 @@ mod tests {
     fn v4_snapshot_seed_survives_pump_modify_liquidity() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
         use alloy::primitives::{I256, U128};
-        use degenbot_cl_math as _;
+        use degenbot_concentrated_liquidity_math as _;
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xeeu8; 32];
         let mut core = BotState::new();
@@ -5396,7 +5400,7 @@ mod tests {
     fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
         use alloy::primitives::{I256, U128};
-        use degenbot_cl_math as _;
+        use degenbot_concentrated_liquidity_math as _;
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xeeu8; 32];
         let mut core = BotState::new();

@@ -1,7 +1,7 @@
 """Uniswap V3 library functions.
 
 Stand-alone tick-math primitives re-exported from the Rust
-``degenbot-cl-math`` core. These are the **stateless pure conversions**
+``degenbot-concentrated-liquidity-math`` core. These are the **stateless pure conversions**
 (tick ↔ √P and the CL boundary constants) that a driver or pool class
 needs without holding any pool state — e.g. to set a price-limit by tick.
 

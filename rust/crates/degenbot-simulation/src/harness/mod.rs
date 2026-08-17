@@ -770,7 +770,7 @@ fn fund_v4(currency: Address, amt: u128) -> Vec<u8> {
     out
 }
 
-// ── V3 amount math (via the engine's proven `degenbot-cl-math`) ──
+// ── V3 amount math (via the engine's proven `degenbot-concentrated-liquidity-math`) ──
 
 /// Compute the exact-input V3 output for `amount_in` at `sqrt_price`/`liquidity`
 /// with `fee` (hundredths of a bip), mirroring `PoolV3.swap` (single active
@@ -784,7 +784,7 @@ pub fn v3_amount_out(
     zero_for_one: bool,
     fee: u32,
 ) -> u128 {
-    use degenbot_cl_math::cl_lib::sqrt_price_math::{
+    use degenbot_concentrated_liquidity_math::sqrt_price_math::{
         get_amount0_delta, get_amount1_delta, get_next_sqrt_price_from_input,
     };
     let fee_retained = U256::from(1_000_000u64 - u64::from(fee));

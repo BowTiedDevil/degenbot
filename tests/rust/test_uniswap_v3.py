@@ -66,7 +66,7 @@ def test_tick_math_constants_exposed_from_rust_seam():
     """The four TickMath boundary constants are exposed by the Rust seam.
 
     ADR-005 standalone-Rust-core: the canonical home for these constants is
-    `degenbot-cl-math` (Rust core), surfaced through the `degenbot_rs` PyO3
+    `degenbot-concentrated-liquidity-math` (Rust core), surfaced through the `degenbot_rs` PyO3
     seam. The `v3_libraries` package re-exports them, but the seam must own
     them so a standalone Rust consumer and the Python companion share one
     source of truth.

@@ -466,7 +466,7 @@ pub fn min_usable_tick(tick_spacing: i32) -> i32 {
 /// Compute the tick word and bit position for a compressed tick.
 ///
 /// Returns `(word, bit)` where `word` is the mapping key (`i32`) and `bit`
-/// is in `0..=255` (`u8`). Mirrors `degenbot_cl_math::get_tick_word_and_bit_position`.
+/// is in `0..=255` (`u8`). Mirrors `degenbot_concentrated_liquidity_math::get_tick_word_and_bit_position`.
 #[pyfunction(signature = (tick, tick_spacing))]
 #[must_use]
 pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8) {

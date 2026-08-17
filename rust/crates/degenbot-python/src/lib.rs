@@ -81,12 +81,12 @@ pub mod uniswap;
 // depend on `degenbot-core` directly (default features, no pyo3).
 pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 
-// The concentrated-liquidity math library lives in the `degenbot-cl-math`
+// The concentrated-liquidity math library lives in the `degenbot-concentrated-liquidity-math`
 // workspace member. Re-exported as `crate::cl_lib` so every existing
 // `crate::cl_lib::` call site in the binding layer keeps resolving through the
-// re-export. Pure-Rust consumers depend on `degenbot-cl-math` directly.
+// re-export. Pure-Rust consumers depend on `degenbot-concentrated-liquidity-math` directly.
 #[cfg(feature = "cl-math")]
-pub use degenbot_cl_math::cl_lib;
+pub use degenbot_concentrated_liquidity_math as cl_lib;
 
 // The ABI type/decode/encode + signature-parsing core lives in the
 // `degenbot-abi` workspace member. Re-exported as `crate::abi_types` /

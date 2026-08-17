@@ -44,7 +44,7 @@ adapter (`degenbot-backrun-strategy`) — never to describe the mechanism.
 
 ## Three-layer system (ADR-005)
 
-- **Rust core** — `rust/crates/degenbot-{core,-cl-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-db,-simulation,-submission,-price,-solvers,-executor,-fork,-pathfinding,-pool-updater,-aave-updater,-solidly-math,-evm-math,-v2-math}`. Zero `pyo3` (enforced by `just check-no-pyo3-in-cores`). `degenbot-solvers` owns the full pure solve layer (V2/CL Möbius + Balancer/Curve/Solidly dispatch + QuantAMM basket + the hop-state intake contract — ADR-015); `degenbot-bot` owns `resolve_path` (the core-bound projection) and the I/O orchestration only.
+- **Rust core** — `rust/crates/degenbot-{core,-concentrated-liquidity-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-db,-simulation,-submission,-price,-solvers,-executor,-fork,-pathfinding,-pool-updater,-aave-updater,-solidly-math,-evm-math,-v2-math}`. Zero `pyo3` (enforced by `just check-no-pyo3-in-cores`). `degenbot-solvers` owns the full pure solve layer (V2/CL Möbius + Balancer/Curve/Solidly dispatch + QuantAMM basket + the hop-state intake contract — ADR-015); `degenbot-bot` owns `resolve_path` (the core-bound projection) and the I/O orchestration only.
 - **PyO3 wrapper** — `rust/crates/degenbot-python/src/<domain>/**`. `#[pyclass]`/`#[pyfunction]` only — arg extract → GIL release → core call → result wrap. No business logic.
 - **Python companion** — `src/degenbot/**`. User-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display.
 

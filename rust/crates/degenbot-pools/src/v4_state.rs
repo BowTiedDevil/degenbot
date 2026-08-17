@@ -23,9 +23,9 @@ use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, V3SwapOutcome};
 use crate::TickInfo;
-use degenbot_cl_math::cl_lib::functions::tick_position;
-use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
-use degenbot_cl_math::cl_lib::tick_math::{
+use degenbot_concentrated_liquidity_math::functions::tick_position;
+use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v4;
+use degenbot_concentrated_liquidity_math::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal,
 };
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
@@ -601,13 +601,19 @@ impl V4PoolState {
         // lp_fee)`, NOT `lp_fee` alone, when `slot0.protocolFee > 0`. See
         // `v4_simulate_swap` + `docs/architecture/sim_v4_swap_step_rounding.md`.
         let direction_protocol_fee = if zero_for_one {
-            degenbot_cl_math::cl_lib::swap_math::protocol_fee_zero_for_one(self.protocol_fee)
+            degenbot_concentrated_liquidity_math::swap_math::protocol_fee_zero_for_one(
+                self.protocol_fee,
+            )
         } else {
-            degenbot_cl_math::cl_lib::swap_math::protocol_fee_one_for_zero(self.protocol_fee)
+            degenbot_concentrated_liquidity_math::swap_math::protocol_fee_one_for_zero(
+                self.protocol_fee,
+            )
         };
-        let swap_fee =
-            degenbot_cl_math::cl_lib::swap_math::calculate_swap_fee(direction_protocol_fee, fee)
-                .ok()?;
+        let swap_fee = degenbot_concentrated_liquidity_math::swap_math::calculate_swap_fee(
+            direction_protocol_fee,
+            fee,
+        )
+        .ok()?;
         let gamma_numer = u64::from(1_000_000u32.checked_sub(swap_fee)?);
         let fee_denom = 1_000_000u64;
 
@@ -680,7 +686,7 @@ impl V4PoolState {
                     .iter()
                     .map(|&t| {
                         U256::from(
-                            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(t)
+                            degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal(t)
                                 .unwrap_or(alloy::primitives::U160::ZERO),
                         )
                     })
@@ -816,13 +822,19 @@ pub fn v4_simulate_swap(
     // pool's static LP fee (`PoolKey.fee`); the protocol fee is read from
     // `state.protocol_fee`.
     let direction_protocol_fee = if zero_for_one {
-        degenbot_cl_math::cl_lib::swap_math::protocol_fee_zero_for_one(state.protocol_fee)
+        degenbot_concentrated_liquidity_math::swap_math::protocol_fee_zero_for_one(
+            state.protocol_fee,
+        )
     } else {
-        degenbot_cl_math::cl_lib::swap_math::protocol_fee_one_for_zero(state.protocol_fee)
+        degenbot_concentrated_liquidity_math::swap_math::protocol_fee_one_for_zero(
+            state.protocol_fee,
+        )
     };
-    let swap_fee =
-        degenbot_cl_math::cl_lib::swap_math::calculate_swap_fee(direction_protocol_fee, fee)
-            .map_err(|_| SimulateSwapError::NotComputable)?;
+    let swap_fee = degenbot_concentrated_liquidity_math::swap_math::calculate_swap_fee(
+        direction_protocol_fee,
+        fee,
+    )
+    .map_err(|_| SimulateSwapError::NotComputable)?;
     let fee_pips = U256::from(swap_fee);
 
     let mut amount_specified_remaining = amount_specified;

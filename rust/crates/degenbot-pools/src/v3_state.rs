@@ -22,9 +22,9 @@ use crate::state_history::{
 use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::TickInfo;
-use degenbot_cl_math::cl_lib::functions::tick_position;
-use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
-use degenbot_cl_math::cl_lib::tick_math::{
+use degenbot_concentrated_liquidity_math::functions::tick_position;
+use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v3;
+use degenbot_concentrated_liquidity_math::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 };
@@ -815,7 +815,7 @@ impl V3PoolState {
                     .iter()
                     .map(|&t| {
                         U256::from(
-                            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(t)
+                            degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal(t)
                                 .unwrap_or(alloy::primitives::U160::ZERO),
                         )
                     })
@@ -1537,7 +1537,7 @@ mod apply_inherent_tests {
         // adds the delta to the ACTIVE `liquidity` scalar on top of the
         // boundary-tick map mutation (parity with the on-chain `liquidity`
         // field and the pure reference
-        // `degenbot-cl-math::apply_liquidity_mapping_update`). The journal
+        // `degenbot-concentrated-liquidity-math::apply_liquidity_mapping_update`). The journal
         // delta carries `scalar_priors: Some(..)` so a reorg restore rolls the
         // scalar back to its pre-event value.
         // Why: without the adjust the solver's active-liquidity scalar drifts

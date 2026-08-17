@@ -4,7 +4,7 @@
 //! (read pool row + positions → apply CL `apply_liquidity_mapping_update` per
 //! event → upsert positions + init maps → stamp `liquidity_update_block`/
 //! `liquidity_update_log_index`) to a Rust core over [`DegenbotDb`] +
-//! [`degenbot_cl_math::cl_lib::liquidity_mapping::apply_liquidity_mapping_update`].
+//! [`degenbot_concentrated_liquidity_math::liquidity_mapping::apply_liquidity_mapping_update`].
 //!
 //! # What this is (and isn't)
 //!
@@ -13,7 +13,7 @@
 //! driver loop + RPC event fetch (`get_v3/v4_liquidity_events`/`fetch_logs_retrying`)
 //! STAY PYTHON (orchestration + RPC; `degenbot-rpc` event-fetch port is a
 //! separate concern not in this epic). The math itself lives in
-//! [`degenbot-cl-math`] (sibling task). The standalone-Rust path this enables:
+//! [`degenbot-concentrated-liquidity-math`] (sibling task). The standalone-Rust path this enables:
 //! `DB events → apply_v3/v4_liquidity_updates → upserted DB rows` without Python.
 //!
 //! # Decomposition across V3 + V4
@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use alloy::primitives::{I256, U128, U256};
-use degenbot_cl_math::cl_lib::liquidity_mapping::{
+use degenbot_concentrated_liquidity_math::liquidity_mapping::{
     apply_liquidity_mapping_update, BitmapAtWord, LiquidityAtTick,
 };
 

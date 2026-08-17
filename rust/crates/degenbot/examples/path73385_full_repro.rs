@@ -229,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             1i32,
             true,
             v4_amount,
-            U256::from(degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO)
+            U256::from(degenbot_concentrated_liquidity_math::tick_math::MIN_SQRT_RATIO)
                 .checked_add(U256::from(1u64))
                 .unwrap(),
         );
@@ -239,8 +239,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let v3c = bv3(&fx2.pools["v3_2"]);
         let req = I256::try_from(85_097_884u128).unwrap();
         let limit = U256::from(
-            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(820_000)
-                .expect("limit"),
+            degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal(
+                820_000,
+            )
+            .expect("limit"),
         );
         let v3c_sim = degenbot::degenbot_pools::v3_state::v3_simulate_swap(
             &v3c, 100u32, 1i32, false, req, limit,

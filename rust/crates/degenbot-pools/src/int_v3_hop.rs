@@ -512,8 +512,8 @@ impl IntV3TickRangeSequence {
 mod tests {
     use super::*;
     use alloy::primitives::I256;
-    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
-    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v3;
+    use degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal;
 
     /// Build a 3-range sequence crossing ticks -60, 0, +60 (tick_spacing=60)
     /// with liquidity `L` at every range + the standard net at each boundary.

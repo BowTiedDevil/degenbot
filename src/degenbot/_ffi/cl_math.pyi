@@ -2,7 +2,7 @@
 
 Created at runtime by ``add_cl_math_module`` in the PyO3 wrapper crate
 (``degenbot-python/src/cl_math/mod.rs``). The functions are thin PyO3
-wrappers over the pure-Rust ``degenbot-cl-math`` core crate.
+wrappers over the pure-Rust ``degenbot-concentrated-liquidity-math`` core crate.
 """
 
 from typing import Any, overload
@@ -343,7 +343,7 @@ def apply_liquidity_mapping_update(
     """Apply a liquidity-mapping update (mint/burn) to the tick bitmap & data.
 
     A thin PyO3 wrapper over the pure-Rust
-    ``degenbot_cl_math::lib::liquidity_mapping::apply_liquidity_mapping_update``.
+    ``degenbot_concentrated_liquidity_math::lib::liquidity_mapping::apply_liquidity_mapping_update``.
     Mirrors ``degenbot.calculations.concentrated_liquidity.apply_liquidity_mapping_update``.
     Values may be plain dicts or pydantic ``BitmapAtWord`` / ``LiquidityAtTick``
     models (the seam reads by key or attribute). ``initial_state_block`` values
@@ -385,13 +385,13 @@ def get_sqrt_ratio_at_tick(tick: int) -> int:
 
     """
 
-#: Minimum Uniswap V3 tick. Canonical source: ``degenbot-cl-math`` core.
+#: Minimum Uniswap V3 tick. Canonical source: ``degenbot-concentrated-liquidity-math`` core.
 MIN_TICK: int
-#: Maximum Uniswap V3 tick. Canonical source: ``degenbot-cl-math`` core.
+#: Maximum Uniswap V3 tick. Canonical source: ``degenbot-concentrated-liquidity-math`` core.
 MAX_TICK: int
-#: Minimum sqrt price ratio (X96). Canonical source: ``degenbot-cl-math`` core.
+#: Minimum sqrt price ratio (X96). Canonical source: ``degenbot-concentrated-liquidity-math`` core.
 MIN_SQRT_RATIO: int
-#: Maximum sqrt price ratio (X96). Canonical source: ``degenbot-cl-math`` core.
+#: Maximum sqrt price ratio (X96). Canonical source: ``degenbot-concentrated-liquidity-math`` core.
 MAX_SQRT_RATIO: int
 
 @overload

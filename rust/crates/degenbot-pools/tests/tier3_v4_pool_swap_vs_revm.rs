@@ -68,7 +68,7 @@ use revm::database_interface::EmptyDB;
 use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
-use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+use degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_decoders::revert::RevertClass;
 use degenbot_pools::v3_state::{PoolTickCoverage, SimulateSwapError};
 use degenbot_pools::v4_state::{v4_simulate_swap, V4PoolKey, V4PoolState};

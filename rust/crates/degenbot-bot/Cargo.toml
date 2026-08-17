@@ -20,7 +20,7 @@ alloy = { version = "^2.4", features = ["full", "transport-throttle"] }
 async-trait = { version = "^0.1" }
 dashmap = { version = "^6.2" }
 degenbot-abi = { path = "../degenbot-abi" }
-degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-db = { path = "../degenbot-db" }
 degenbot-decoders = { path = "../degenbot-decoders" }

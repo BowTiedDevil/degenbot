@@ -21,12 +21,14 @@
 //! | V3/V4 `tick` | `int24` | `[MIN_TICK = −887_272, MAX_TICK = 887_272]` |
 //! | V3/V4 `tickSpacing` | `int24` | `[1, 32_767]` (V4 spec: `MIN_TICK_SPACING=1, MAX_TICK_SPACING=type(int16).max`) |
 //!
-//! The V3/V4 bounds reuse `degenbot_cl_math::cl_lib::tick_math`'s constants
+//! The V3/V4 bounds reuse `degenbot_concentrated_liquidity_math::tick_math`'s constants
 //! (`MIN_SQRT_RATIO` / `MAX_SQRT_RATIO` / `MIN_TICK` / `MAX_TICK`) — both V3
 //! and V4 share the same `TickMath`, so the validators are family-agnostic.
 
 use alloy::primitives::{aliases::U112, uint, U256};
-use degenbot_cl_math::cl_lib::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
+use degenbot_concentrated_liquidity_math::tick_math::{
+    MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK,
+};
 
 /// `uint112(-1)` — `2^112 − 1`. The `uint112` storage width v2-core asserts
 /// at `UniswapV2Pair._update` (`require(balance0 <= uint112(-1))`). Held as

@@ -1702,8 +1702,8 @@ fn fee1_76f75965_crossing_overprediction_at_4728() {
 /// oracle-vs-collapse split on the full crossing path).
 #[test]
 fn fee1_zfo_true_two_step_floored_equivalence() {
-    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
-    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v4;
+    use degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal;
     let cur = U256::from(79_231_869_042_278_935_382_727_675_145u128);
     let sqrt0 = U256::from(get_sqrt_ratio_at_tick_internal(0).unwrap()); // 2^96
     let lower = U256::from(79_220_240_490_215_316_061_937_756_561u128); // tick -2

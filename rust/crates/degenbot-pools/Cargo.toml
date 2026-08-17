@@ -18,7 +18,7 @@ parking_lot = { version = "^0.12" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
 degenbot-v2-math = { path = "../degenbot-v2-math" }
-degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math" }
 degenbot-curve-math = { path = "../degenbot-curve-math" }
 degenbot-balancer-math = { path = "../degenbot-balancer-math" }
 degenbot-solidly-math = { path = "../degenbot-solidly-math" }

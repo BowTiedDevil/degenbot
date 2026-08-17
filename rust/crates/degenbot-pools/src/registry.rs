@@ -521,7 +521,7 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
 /// pool's current `tick`.
 ///
 /// Parity with the pure reference
-/// `degenbot-cl-math::cl_lib::liquidity_mapping::apply_liquidity_mapping_update`
+/// `degenbot-concentrated-liquidity-math::cl_lib::liquidity_mapping::apply_liquidity_mapping_update`
 /// and the Python companions (`UniswapV3Pool`/`UniswapV4Pool.update_liquidity_map`):
 /// an in-range liquidity event changes the pool's on-chain `liquidity` field by
 /// `delta` in addition to the boundary-tick map mutation. Without this the

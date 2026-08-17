@@ -15,8 +15,8 @@
 
 use alloy::primitives::{I256, U256, U512};
 
-use crate::cl_lib::full_math::{muldiv, muldiv_rounding_up};
-use crate::cl_lib::unsafe_math::div_rounding_up;
+use crate::full_math::{muldiv, muldiv_rounding_up};
+use crate::unsafe_math::div_rounding_up;
 use degenbot_core::errors::ClMathError;
 
 /// Q96 = 2^96 — the fixed-point scale for sqrt-price values.

@@ -263,7 +263,7 @@ fn main() {
         // Direct replication of the solver's single step vs the sim's on the
         // SAME compute_swap_step_v3 with the same start/liquidity/input/fee.
         {
-            use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+            use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v3;
             let liq = i128::try_from(seq.ranges[0].liquidity).unwrap();
             let fee = U256::from(seq.ranges[0].fee_denom - seq.ranges[0].gamma_numer);
             let amt = I256::try_from(hop1_input).unwrap();
@@ -290,9 +290,11 @@ fn main() {
             // Equality probe: is the coercive price EXACTLY at the current tick's
             // sqrt boundary (the condition that triggers the step-1 drain)?
             let tick_sqrt =
-                degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-276_324)
-                    .map(|v| U256::from(v))
-                    .unwrap_or_default();
+                degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal(
+                    -276_324,
+                )
+                .map(|v| U256::from(v))
+                .unwrap_or_default();
             eprintln!(
                 "[DIAG] tick_sqrt(-276324)={tick_sqrt} state_sqrt={} equal={}",
                 v3_1_state.sqrt_price_x96,
@@ -301,7 +303,7 @@ fn main() {
         }
     }
     {
-        use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
+        use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v3;
         let fee_pips = U256::from(seq.ranges[0].fee_denom - seq.ranges[0].gamma_numer);
         let zfo = seq.ranges[0].zero_for_one;
         let mut consumed_canon = U256::ZERO;

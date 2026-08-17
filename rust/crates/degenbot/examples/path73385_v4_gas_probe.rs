@@ -54,7 +54,7 @@
 
 use alloy::primitives::{aliases::I256, U160, U256};
 use degenbot::investigation::{build_v4_state, real_oracle, PathFixture};
-use degenbot_cl_math::cl_lib::tick_math::MIN_SQRT_RATIO;
+use degenbot_concentrated_liquidity_math::tick_math::MIN_SQRT_RATIO;
 use degenbot_pools::v4_state::v4_simulate_swap;
 use degenbot_simulation::oracle::{self, Verdict};
 
@@ -132,7 +132,7 @@ fn main() {
     let sqrt_price_limit: U160 = if std::env::var("LIMIT_TICK").is_ok() {
         let t = std::env::var("LIMIT_TICK").unwrap().parse::<i32>().unwrap();
         U160::from(
-            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(t)
+            degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal(t)
                 .expect("limit sqrt"),
         )
     } else {

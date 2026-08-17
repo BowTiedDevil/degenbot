@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use alloy::primitives::{I256, U128, U256};
 use std::collections::hash_map::Entry;
 
-use crate::cl_lib::functions::tick_position;
+use crate::functions::tick_position;
 
 /// Bitmap value at a tick-bitmap word position.
 ///

@@ -7,7 +7,7 @@ import {SwapMath as V4SwapMath} from "v4-core/src/libraries/SwapMath.sol";
 /// (ergo task OZRQS6, epic UP5NH6). A thin external wrapper exposing the
 /// internal-pure library function so a Rust `#[test]` can call it via revm
 /// and assert byte-for-byte equality with
-/// `degenbot_cl_math::compute_swap_step_v4`.
+/// `degenbot_concentrated_liquidity_math::compute_swap_step_v4`.
 ///
 /// amountRemaining sign convention: NEGATIVE = exact input (V4 — opposite of
 /// V3). The protocol-fee threading (`calculateSwapFee(protocolFeeDir, lpFee)`)

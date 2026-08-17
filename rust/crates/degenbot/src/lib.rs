@@ -103,7 +103,7 @@ pub use degenbot_simulation;
 pub use degenbot_backrun_strategy;
 
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
-pub use degenbot_cl_math;
+pub use degenbot_concentrated_liquidity_math;
 /// Uniswap V2 constant-product (`x·y=k`) single-hop swap math (`IntHopState`,
 /// `int_simulate_path`) — the shared primitive for the V2 pool family + the
 /// Solidly/Camelot/Aerodrome volatile V2-equivalent hop.

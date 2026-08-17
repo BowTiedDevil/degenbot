@@ -50,7 +50,7 @@
 //!
 //! This crate is `pyo3`-free under its default features (enforced by `just
 //! check-no-pyo3-in-cores`); it depends on `alloy`, `thiserror`, and the
-//! per-family math leaf crates (`degenbot-v2-math`, `degenbot-cl-math`,
+//! per-family math leaf crates (`degenbot-v2-math`, `degenbot-concentrated-liquidity-math`,
 //! `degenbot-curve-math`, `degenbot-balancer-math`, `degenbot-solidly-math`)
 //! plus `degenbot-uniswap` (for `DexVariant`). It is consumed by
 //! `degenbot-bot` and re-exported by the `degenbot` umbrella for standalone

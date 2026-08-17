@@ -7,7 +7,7 @@ import {SwapMath as V3SwapMath} from "v3-core/contracts/libraries/SwapMath.sol";
 /// (ergo task OZRQS6, epic UP5NH6). A thin external wrapper exposing the
 /// internal-pure library function so a Rust `#[test]` can call it via revm
 /// and assert byte-for-byte equality with
-/// `degenbot_cl_math::compute_swap_step_v3`.
+/// `degenbot_concentrated_liquidity_math::compute_swap_step_v3`.
 ///
 /// amountRemaining sign convention: POSITIVE = exact input (V3).
 contract SwapMathV3Harness {

@@ -23,8 +23,8 @@
 
 use alloy::primitives::{aliases::I256, U256};
 
-use crate::cl_lib::full_math::{muldiv, muldiv_rounding_up};
-use crate::cl_lib::sqrt_price_math::{
+use crate::full_math::{muldiv, muldiv_rounding_up};
+use crate::sqrt_price_math::{
     get_amount0_delta, get_amount1_delta, get_next_sqrt_price_from_input,
     get_next_sqrt_price_from_output,
 };
@@ -371,7 +371,7 @@ pub fn protocol_fee_one_for_zero(protocol_fee_packed: u32) -> u32 {
 ///
 /// # Examples
 /// ```
-/// # use degenbot_cl_math::cl_lib::swap_math::calculate_swap_fee;
+/// # use degenbot_concentrated_liquidity_math::swap_math::calculate_swap_fee;
 /// // The path=97 fixture pool: proto=500 pips, lpFee=3000 → 3499 pips.
 /// assert_eq!(calculate_swap_fee(500, 3_000).unwrap(), 3_499);
 /// // No protocol fee → swap fee == LP fee.

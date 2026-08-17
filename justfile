@@ -97,7 +97,7 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-cl-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index; do
+    for crate in degenbot-core degenbot-concentrated-liquidity-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
@@ -167,7 +167,7 @@ test-tier3-step:
     tier3-oracle/build-tier3-harnesses.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-cl-math --test tier3_compute_swap_step_vs_revm
+    cargo test --manifest-path rust/Cargo.toml -p degenbot-concentrated-liquidity-math --test tier3_compute_swap_step_vs_revm
 
 # Tier-3b end-to-end V3 `Pool.swap` oracle (ergo UP5NH6 / 2LTKVO).
 # Builds the v3-core harness (solc 0.7.6) then drives the Rust

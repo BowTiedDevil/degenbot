@@ -1,7 +1,7 @@
 """Parity test: the `cl_get_tick_word_and_bit_position` PyO3 seam (ZJEL3N).
 
 The Rust seam (``degenbot._ffi.cl_get_tick_word_and_bit_position``) wraps
-the pure-Rust core ``degenbot_cl_math::cl_lib::liquidity_mapping::get_tick_word_
+the pure-Rust core ``degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_
 and_bit_position`` (the Uniswap V3 ``TickBitmap.position`` Solidity-equivalent:
 EVM division truncates toward zero on the spacing compression, then ``word =
 compressed >> 8`` + ``bit = compressed.rem_euclid(256)``).
@@ -11,7 +11,7 @@ through this seam, + the pure-Python ``apply_liquidity_mapping_update`` /
 ``flip_tick`` / ``get_tick_word_and_bit_position`` mirrors were RETIRED with
 their parity oracle (§4.3) once the callsite cutover + the Rust
 self-contained ``#[cfg(test)]`` suite in
-``degenbot-cl-math/src/cl_lib/liquidity_mapping.rs`` (68 tests) stayed green.
+``degenbot-concentrated-liquidity-math/src/cl_lib/liquidity_mapping.rs`` (68 tests) stayed green.
 The Python-side parity test below asserts against HARDCODED expectations
 derived from the Solidity ``TickBitmap.position`` spec — it no longer depends on
 the retired Python oracle, so it remains a valid regression guard that the seam

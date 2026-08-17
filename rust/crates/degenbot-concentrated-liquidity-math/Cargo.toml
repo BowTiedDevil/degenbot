@@ -1,5 +1,5 @@
 [package]
-name = "degenbot-cl-math"
+name = "degenbot-concentrated-liquidity-math"
 description = "Pure-Rust ports of Uniswap V3/V4 concentrated-liquidity math libraries."
 version.workspace = true
 edition.workspace = true

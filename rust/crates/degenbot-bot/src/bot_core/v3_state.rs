@@ -18,9 +18,9 @@ mod tests {
     use ::degenbot_solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use alloy::primitives::{Address, B256, U160};
     use alloy::primitives::{I256, U128, U256};
-    use degenbot_cl_math::cl_lib::functions::tick_position;
-    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
-    use degenbot_cl_math::cl_lib::tick_math::{
+    use degenbot_concentrated_liquidity_math::functions::tick_position;
+    use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v3;
+    use degenbot_concentrated_liquidity_math::tick_math::{
         get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
         MIN_SQRT_RATIO,
     };

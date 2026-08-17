@@ -1,6 +1,6 @@
 """Uniswap V3 FullMath: 512-bit multiplication with Q96 rounding.
 
-Thin delegation shim over the Rust ``degenbot-cl-math`` core
+Thin delegation shim over the Rust ``degenbot-concentrated-liquidity-math`` core
 (``cl_muldiv`` / ``cl_muldiv_rounding_up``), exposing them with the V3
 Solidity revert messages via ``EVMRevertError``.
 

@@ -14,7 +14,7 @@
 //! to `U256`.
 //!
 //! It is the V2-family sibling of the other pure-math leaf crates:
-//! `degenbot-cl-math` (concentrated liquidity), `degenbot-curve-math`
+//! `degenbot-concentrated-liquidity-math` (concentrated liquidity), `degenbot-curve-math`
 //! (stableswap), `degenbot-balancer-math` (weighted/stable),
 //! `degenbot-solidly-math` (Solidly stable), and `degenbot-core::evm_math`
 //! (EIP-1559 base fee).

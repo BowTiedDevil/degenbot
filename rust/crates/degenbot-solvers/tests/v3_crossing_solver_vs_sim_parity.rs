@@ -552,7 +552,7 @@ fn v3_sparse_tick_topology_reproduces_onchain_plus_thirteen_class() {
 /// V4 recurrence exposed, which a price exactly on the boundary cannot
 /// exercise). Initialized ticks on both sides so both directions work.
 fn build_real_position_v3_state(base_liquidity: u128, tick_spacing: i32, fee: u32) -> V3PoolState {
-    use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal;
     let sq_t = get_sqrt_ratio_at_tick_internal(0).unwrap();
     let sq_n = get_sqrt_ratio_at_tick_internal(tick_spacing).unwrap();
     let sp = (U256::from(sq_t) + U256::from(sq_n)) / U256::from(2u64);

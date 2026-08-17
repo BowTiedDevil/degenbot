@@ -28,7 +28,7 @@ degenbot-aave = { path = "../degenbot-aave" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-balancer-math = { path = "../degenbot-balancer-math" }
 degenbot-bot = { path = "../degenbot-bot" }
-degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-curve-math = { path = "../degenbot-curve-math" }
 degenbot-db = { path = "../degenbot-db" }

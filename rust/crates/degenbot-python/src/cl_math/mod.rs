@@ -1,5 +1,5 @@
-//! CL-math `PyO3` wrappers over the `degenbot-cl-math` pure core.
-//! Mirrors `crates/degenbot-cl-math/`. (ergo UG6FKN task WXHGOH.)
+//! CL-math `PyO3` wrappers over the `degenbot-concentrated-liquidity-math` pure core.
+//! Mirrors `crates/degenbot-concentrated-liquidity-math/`. (ergo UG6FKN task WXHGOH.)
 
 pub mod cl_lib;
 pub mod tick_math;
@@ -54,7 +54,7 @@ pub fn add_cl_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Register the four `TickMath` boundary constants on the CL-math submodule.
 ///
 /// ADR-005 single-source-of-truth: the canonical home is the
-/// `degenbot-cl-math` core; the `PyO3` seam surfaces them so Python
+/// `degenbot-concentrated-liquidity-math` core; the `PyO3` seam surfaces them so Python
 /// companions and a standalone Rust consumer share one source. The
 /// `uniswap/v3_libraries/__init__` package re-exports these names; the
 /// now-retired pure-Python `tick_math.py` constant definitions are gone

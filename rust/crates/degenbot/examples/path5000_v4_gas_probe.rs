@@ -49,8 +49,8 @@
 
 use alloy::primitives::{aliases::I256, U160, U256};
 use degenbot::investigation::{build_v4_state, real_oracle, PathFixture};
-use degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal;
-use degenbot_cl_math::cl_lib::tick_math::MAX_SQRT_RATIO;
+use degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal;
+use degenbot_concentrated_liquidity_math::tick_math::MAX_SQRT_RATIO;
 use degenbot_pools::v4_state::v4_simulate_swap;
 use degenbot_simulation::oracle::{self, Verdict};
 

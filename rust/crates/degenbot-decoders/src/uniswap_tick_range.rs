@@ -12,7 +12,7 @@
 //! place. The constants are **decode-side validation** (an already-decoded
 //! int24 that lies outside the Uniswap V3 bounds indicates a corrupt or
 //! synthetic log); the canonical tick-math bounds live in
-//! `degenbot-cl-math::tick_math` (`MIN_TICK`/`MAX_TICK`), which this
+//! `degenbot-concentrated-liquidity-math::tick_math` (`MIN_TICK`/`MAX_TICK`), which this
 //! alloy-only leaf does not depend on.
 
 /// Minimum Uniswap V3 tick (the decode-side validation bound for an `int24`
