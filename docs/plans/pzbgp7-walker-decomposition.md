@@ -37,3 +37,21 @@
   production (2/3-hop paths) and the old behavior was a bug per ADR-030.
 - All pure facts fns uniform; cleanest case — quote: "None. All 30 matched the pattern."
 - Gates: 122 executor + 186 (sim+backrun) green; clippy 0 across the three crates.
+
+## T4 (RQQIUK) — tag-row walker spike: PARKED (negative)
+
+Findings: docs/spikes/rqgiuk-tag-row-walker.md.
+
+Core evidence:
+- 23 3-hop arms in three_hop.rs partition into 3 structural groupings; only the V2/V3-only 7-arm
+  set is cleanly tag-actuable without axis invention.
+- v3v4v2 vs v3v4v4 (same Repay sequence) differ in trailing-swap mechanics + cb order, which are
+  prot-keyed by code, not by ledger algebra; distinguishing them via facts requires >=2 new axes
+  (TerminalForm, TrailingHopAmounts, plus a Leading/Middle/Terminal Position axis) — the bespoke
+  shape vocabulary ADR-029 D4 was designed to avoid.
+- Estimate: ~15 of 23 arms are incrementally unifiable (7 V2/V3-only + 8 V4-crossing); the remaining
+  8 need position-role machinery whose cost exceeds the fan-out it removes.
+
+Epic outcome: T1 (split) + T2 (tripwire deletion) + T3 (facts_for/build_walk collapse) delivered.
+ADR-031 record now honest: dispatch is (len, repay-sequence) gated over per-shape modules; ordering
+defects are caught by the LedgerValidator + revm matrix. T4 documented the cost of going further.
