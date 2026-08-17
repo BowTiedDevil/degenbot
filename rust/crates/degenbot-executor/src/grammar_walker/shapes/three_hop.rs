@@ -14,466 +14,16 @@ pub(crate) fn derive(
     facts: &[HopFacts],
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Plan, AddressTable)> {
-    return if facts[0].prot == Prot::V3 && facts[1].prot == Prot::V3 && facts[2].prot == Prot::V3 {
-        // ── v3v3v3: 3-deep nested V3 flashes. Hop2 outermost (SELF),
-        // hop1 middle (recipient=hop2 pool, rpr=true), hop0 innermost
-        // (auto_repay=true, recipient=hop1 pool, rpr=true).
-        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-        let optimal = inputs.optimal_input;
-        if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-            return None;
-        }
-        let b_in = *inputs.consumed_inputs.get(1)?;
-        let c_in = *inputs.consumed_inputs.get(2)?;
-        if !fits_i128(b_in) || !fits_i128(c_in) {
-            return None;
-        }
-        let (out_a, out_b, out_c) = (
-            inputs.hop_outputs[0],
-            inputs.hop_outputs[1],
-            inputs.hop_outputs[2],
-        );
-        let weth = inputs.weth_address;
-        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-        let _ = at.add(fa.pool_address).ok()?;
-        let b_idx = at.add(fb.pool_address).ok()?;
-        let c_idx = at.add(fc.pool_address).ok()?;
-        let inner_a = mechanics::v3_flash_to(
-            &mut at,
-            fa,
-            out_a,
-            optimal,
-            true,
-            b_idx,
-            Some(fb.pool_address),
-            true,
-            vec![],
-        )?;
-        let inner_b = mechanics::v3_flash_to(
-            &mut at,
-            fb,
-            out_b,
-            b_in,
-            false,
-            c_idx,
-            Some(fc.pool_address),
-            true,
-            vec![inner_a],
-        )?;
-        let outer = mechanics::v3_flash_to(
-            &mut at,
-            fc,
-            out_c,
-            c_in,
-            false,
-            SENTINEL_SELF,
-            None,
-            false,
-            vec![inner_b],
-        )?;
-        return Some((
-            vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal,
-                },
-                outer,
-            ],
-            at,
-        ));
-    }
-    // ── v3v3v2: hop1 outermost (recipient=V2 pool, rpr=false), hop0
-    // inner (recipient=hop1 pool, rpr=true) with V2SwapCalc terminal +
-    // WETH self-repay callback.
-    else if facts[0].prot == Prot::V3 && facts[1].prot == Prot::V3 && facts[2].prot == Prot::V2 {
-        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-        let optimal = inputs.optimal_input;
-        if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-            return None;
-        }
-        let b_in = *inputs.consumed_inputs.get(1)?;
-        if !fits_i128(b_in) {
-            return None;
-        }
-        let (out_a, out_b, out_c) = (
-            inputs.hop_outputs[0],
-            inputs.hop_outputs[1],
-            inputs.hop_outputs[2],
-        );
-        let weth = inputs.weth_address;
-        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-        let v2c = at.add(fc.pool_address).ok()?;
-        let v3a = at.add(fa.pool_address).ok()?;
-        let v3b = at.add(fb.pool_address).ok()?;
-        let term = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-        let a_inner_cb: Vec<PlanStep> = vec![
-            term,
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v3a,
-                amount: optimal,
-                seeds_pool: None,
-                repays_flash: Some(fa.pool_address),
-            },
-        ];
-        let inner_a = mechanics::v3_flash_to(
-            &mut at,
-            fa,
-            out_a,
-            optimal,
-            false,
-            v3b,
-            Some(fb.pool_address),
-            true,
-            a_inner_cb,
-        )?;
-        let outer_b = mechanics::v3_flash_to(
-            &mut at,
-            fb,
-            out_b,
-            b_in,
-            false,
-            v2c,
-            Some(fc.pool_address),
-            false,
-            vec![inner_a],
-        )?;
-        return Some((
-            vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal,
-                },
-                outer_b,
-            ],
-            at,
-        ));
-    }
-    // ── v3v2v3: hop2 outermost (SELF, rpr=false), hop0 inner
-    // (recipient=V2 pool, rpr=false) with V2SwapCalc to terminal
-    // (repays V3c) + WETH self-repay callback.
-    else if facts[0].prot == Prot::V3 && facts[1].prot == Prot::V2 && facts[2].prot == Prot::V3 {
-        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-        let optimal = inputs.optimal_input;
-        if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-            return None;
-        }
-        let c_in = *inputs.consumed_inputs.get(2)?;
-        if !fits_i128(c_in) {
-            return None;
-        }
-        let (out_a, out_b, out_c) = (
-            inputs.hop_outputs[0],
-            inputs.hop_outputs[1],
-            inputs.hop_outputs[2],
-        );
-        let weth = inputs.weth_address;
-        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-        let v2b = at.add(fb.pool_address).ok()?;
-        let v3a = at.add(fa.pool_address).ok()?;
-        let v3c = at.add(fc.pool_address).ok()?;
-        let term = mechanics::v2_swap(&mut at, fb, out_b, v3c, Some(fc.pool_address), true)?;
-        let a_inner_cb: Vec<PlanStep> = vec![
-            term,
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v3a,
-                amount: optimal,
-                seeds_pool: None,
-                repays_flash: Some(fa.pool_address),
-            },
-        ];
-        let inner_a = mechanics::v3_flash_to(
-            &mut at,
-            fa,
-            out_a,
-            optimal,
-            false,
-            v2b,
-            Some(fb.pool_address),
-            false,
-            a_inner_cb,
-        )?;
-        let outer_c = mechanics::v3_flash_to(
-            &mut at,
-            fc,
-            out_c,
-            c_in,
-            false,
-            SENTINEL_SELF,
-            None,
-            false,
-            vec![inner_a],
-        )?;
-        return Some((
-            vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal,
-                },
-                outer_c,
-            ],
-            at,
-        ));
-    }
-    // ── v3v2v2: hop0 outermost (recipient=V2 pool, rpr=false) whose
-    // callback is a V2SwapCalc chain to SELF + WETH self-repay.
-    else if facts[0].prot == Prot::V3 && facts[1].prot == Prot::V2 && facts[2].prot == Prot::V2 {
-        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-        let optimal = inputs.optimal_input;
-        if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-            return None;
-        }
-        let (out_a, out_b, out_c) = (
-            inputs.hop_outputs[0],
-            inputs.hop_outputs[1],
-            inputs.hop_outputs[2],
-        );
-        let weth = inputs.weth_address;
-        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-        let v2b = at.add(fb.pool_address).ok()?;
-        let v2c = at.add(fc.pool_address).ok()?;
-        let v3a = at.add(fa.pool_address).ok()?;
-        let b = mechanics::v2_swap(&mut at, fb, out_b, v2c, Some(fc.pool_address), false)?;
-        let c = mechanics::v2_swap(&mut at, fc, out_c, SENTINEL_SELF, None, false)?;
-        let a_inner_cb: Vec<PlanStep> = vec![
-            b,
-            c,
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v3a,
-                amount: optimal,
-                seeds_pool: None,
-                repays_flash: Some(fa.pool_address),
-            },
-        ];
-        let outer = mechanics::v3_flash_to(
-            &mut at,
-            fa,
-            out_a,
-            optimal,
-            false,
-            v2b,
-            Some(fb.pool_address),
-            false,
-            a_inner_cb,
-        )?;
-        return Some((
-            vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal,
-                },
-                outer,
-            ],
-            at,
-        ));
-    }
-    // ── v2v2v3: hop2 outermost (SELF, rpr=false) whose callback is a
-    // WETH prefund + V2SwapCalc chain (hop0→1, hop1 repays V3c).
-    else if facts[0].prot == Prot::V2 && facts[1].prot == Prot::V2 && facts[2].prot == Prot::V3 {
-        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-        let optimal = inputs.optimal_input;
-        if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-            return None;
-        }
-        let c_in = *inputs.consumed_inputs.get(2)?;
-        if !fits_i128(c_in) {
-            return None;
-        }
-        let (out_a, out_b, out_c) = (
-            inputs.hop_outputs[0],
-            inputs.hop_outputs[1],
-            inputs.hop_outputs[2],
-        );
-        let weth = inputs.weth_address;
-        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-        let v2a = at.add(fa.pool_address).ok()?;
-        let v2b = at.add(fb.pool_address).ok()?;
-        let v3c = at.add(fc.pool_address).ok()?;
-        let b_repays = mechanics::v2_swap(&mut at, fb, out_b, v3c, Some(fc.pool_address), true)?;
-        let a_swap = mechanics::v2_swap(&mut at, fa, out_a, v2b, Some(fb.pool_address), false)?;
-        let c_cb: Vec<PlanStep> = vec![
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v2a,
-                amount: optimal,
-                seeds_pool: Some(fa.pool_address),
-                repays_flash: None,
-            },
-            a_swap,
-            b_repays,
-        ];
-        let outer_c = mechanics::v3_flash_to(
-            &mut at,
-            fc,
-            out_c,
-            c_in,
-            false,
-            SENTINEL_SELF,
-            None,
-            false,
-            c_cb,
-        )?;
-        return Some((
-            vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal,
-                },
-                outer_c,
-            ],
-            at,
-        ));
-    }
-    // ── v2v3v3: hop2 outermost (SELF, rpr=false) wrapping hop1
-    // (recipient=hop2 pool, rpr=true) whose callback is WETH prefund +
-    // V2SwapDirect (hop0 repays hop1 flash).
-    else if facts[0].prot == Prot::V2 && facts[1].prot == Prot::V3 && facts[2].prot == Prot::V3 {
-        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-        let optimal = inputs.optimal_input;
-        if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-            return None;
-        }
-        let b_in = *inputs.consumed_inputs.get(1)?;
-        let c_in = *inputs.consumed_inputs.get(2)?;
-        if !fits_i128(b_in) || !fits_i128(c_in) {
-            return None;
-        }
-        let (out_a, out_b, out_c) = (
-            inputs.hop_outputs[0],
-            inputs.hop_outputs[1],
-            inputs.hop_outputs[2],
-        );
-        let weth = inputs.weth_address;
-        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-        let v2a = at.add(fa.pool_address).ok()?;
-        let v3b = at.add(fb.pool_address).ok()?;
-        let v3c = at.add(fc.pool_address).ok()?;
-        let direct = mechanics::v2_swap_direct(
-            &mut at,
-            fa,
-            out_a,
-            fa.out_currency,
-            v3b,
-            Some(fb.pool_address),
-            true,
-        )?;
-        let b_cb: Vec<PlanStep> = vec![
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v2a,
-                amount: optimal,
-                seeds_pool: Some(fa.pool_address),
-                repays_flash: None,
-            },
-            direct,
-        ];
-        let inner_b = mechanics::v3_flash_to(
-            &mut at,
-            fb,
-            out_b,
-            b_in,
-            false,
-            v3c,
-            Some(fc.pool_address),
-            true,
-            b_cb,
-        )?;
-        let outer_c = mechanics::v3_flash_to(
-            &mut at,
-            fc,
-            out_c,
-            c_in,
-            false,
-            SENTINEL_SELF,
-            None,
-            false,
-            vec![inner_b],
-        )?;
-        return Some((
-            vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal,
-                },
-                outer_c,
-            ],
-            at,
-        ));
-    }
-    // ── v2v3v2: hop2 (V2 flash) outermost (SELF) wrapping hop1
-    // (recipient=hop2 pool, rpr=true) whose callback is WETH prefund +
-    // V2SwapDirect (hop0 repays hop1 flash).
-    else if facts[0].prot == Prot::V2 && facts[1].prot == Prot::V3 && facts[2].prot == Prot::V2 {
-        let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
-        let optimal = inputs.optimal_input;
-        if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
-            return None;
-        }
-        let b_in = *inputs.consumed_inputs.get(1)?;
-        let c_in = *inputs.consumed_inputs.get(2)?;
-        if !fits_i128(b_in) || !fits_i128(c_in) {
-            return None;
-        }
-        let (out_a, out_b, out_c) = (
-            inputs.hop_outputs[0],
-            inputs.hop_outputs[1],
-            inputs.hop_outputs[2],
-        );
-        let weth = inputs.weth_address;
-        let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
-        let _ = at.add(fa.out_currency).ok()?;
-        let v2a = at.add(fa.pool_address).ok()?;
-        let v2c = at.add(fc.pool_address).ok()?;
-        let v3b = at.add(fb.pool_address).ok()?;
-        let direct = mechanics::v2_swap_direct(
-            &mut at,
-            fa,
-            out_a,
-            fa.out_currency,
-            v3b,
-            Some(fb.pool_address),
-            true,
-        )?;
-        let b_cb: Vec<PlanStep> = vec![
-            PlanStep::Erc20Transfer {
-                token_idx: SENTINEL_WETH,
-                token_addr: weth,
-                recipient_idx: v2a,
-                amount: optimal,
-                seeds_pool: Some(fa.pool_address),
-                repays_flash: None,
-            },
-            direct,
-        ];
-        let inner_b = mechanics::v3_flash_to(
-            &mut at,
-            fb,
-            out_b,
-            b_in,
-            false,
-            v2c,
-            Some(fc.pool_address),
-            true,
-            b_cb,
-        )?;
-        let outer_c = mechanics::v2_flash(&mut at, fc, out_c, fc.in_currency, c_in, vec![inner_b])?;
-        return Some((
-            vec![
-                PlanStep::SelfFund {
-                    currency: weth,
-                    amount: optimal,
-                },
-                outer_c,
-            ],
-            at,
-        ));
+    return if facts.len() == 3 && facts.iter().all(|f| matches!(f.prot, Prot::V2 | Prot::V3)) {
+        // ── T6 cutover: the 7 V2/V3-only 3-hop families (v3v3v3, v3v3v2,
+        // v3v2v3, v3v2v2, v2v2v3, v2v3v3, v2v3v2) are now derived by the
+        // rule-driven walker (`rule_walk_v2v3`) — R1 (enclosure root) + R2
+        // (repay-graph nest) + R3 (leaf + WETH-seed placement) + the
+        // V2-flash upgrade — instead of 7 hand-written arms. Byte-identity
+        // is pinned by `glopcn_bytepin` + the `degenbot-simulation` revm
+        // matrix; the per-family golden-ordered AddressTable staging lives
+        // in `stage_pools`.
+        return rule_walk_v2v3(facts, inputs);
     } else {
         if facts.len() != 3 {
             return None;
@@ -2200,4 +1750,401 @@ pub(crate) fn derive(
             None
         }
     };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// T6 — rule-driven walker for the 7 V2/V3-only 3-hop families.
+//
+// Replaces the 7 hand-written arms (`v3v3v3` … `v2v3v2`) with a single
+// rule-driven derivation. The rules (see `/tmp/t6_analysis.md`):
+//
+// **R1 (enclosure root).** Every family is SelfFund-led: a `SelfFund{WETH,
+// optimal}` prepends the plan. The outermost frame is the **last
+// flash-capable hop in the repay chain**. A V3 hop is always flash-capable;
+// a V2 hop is flash-capable iff it is the terminal hop (`i=2`) whose
+// preceding hop is a V3 flash — the **V2-flash upgrade** that keeps the
+// debt chain a pure flash nest (the `v2v3v2` case, where `fc` flashes to
+// wrap `fb`'s V3 flash).
+//
+// **R2 (repay-graph nest).** Flashes nest with the **first flash in swap
+// order innermost**; each outer flash's callback wraps the inner flash step
+// as its sole element (reverse-swap nesting for the V3↔V3 chains). The
+// folded calc chain — the non-flash V2 hops — attaches to the innermost
+// flash's callback, in swap order. A calc whose output lands in the next
+// hop's FLASH repays it (`recipient_repays=true`); a calc feeding a
+// downstream calc seeds it. A V2 calc at hop0 whose forward repays hop1's
+// flash uses the **direct handoff** (`V2SwapDirect`); every other calc uses
+// `V2SwapCalc`.
+//
+// **R3 (leaf + WETH-seed placement).** V3-led (hop0 flashes the optimal
+// WETH) repays the seed flash inside its own callback via an explicit
+// `Erc20Transfer{repays_flash=fa}` at the END of the innermost callback —
+// unless the nest is the pure all-flash `v3v3v3`, where `auto_repay`
+// handles the WETH and no transfer is emitted. V2-led prefunds the leading
+// V2 pool with `Erc20Transfer{seeds_pool=fa, repays_flash=None}` at the
+// START of the innermost callback (before the calc chain).
+//
+// The one irreducible per-family residue is the **AddressTable staging
+// order** (the preamble dumps addresses in insertion order and every
+// `pool_idx` reference rides on it) — that is byte-pinned by the golden +
+// revm suites and lives in [`stage_pools`].
+/// `rule_walk_v2v3` — the rule-driven walker over the 7 families.
+#[expect(clippy::too_many_lines)]
+fn rule_walk_v2v3(facts: &[HopFacts], inputs: &ComposerInputs<'_>) -> Option<(Plan, AddressTable)> {
+    if facts.len() != 3 {
+        return None;
+    }
+    let prots = [facts[0].prot, facts[1].prot, facts[2].prot];
+    if !prots.iter().all(|p| matches!(p, Prot::V2 | Prot::V3)) {
+        return None;
+    }
+    let hops: [&HopFacts; 3] = [&facts[0], &facts[1], &facts[2]];
+    let optimal = inputs.optimal_input;
+    if inputs.hop_outputs.contains(&0) || !fits_i128(optimal) {
+        return None;
+    }
+    let outs = [
+        inputs.hop_outputs[0],
+        inputs.hop_outputs[1],
+        inputs.hop_outputs[2],
+    ];
+    let weth = inputs.weth_address;
+
+    // ── R1: flash set. V3 always flashes; a V2 hop flashes iff it is the
+    // terminal hop (i=2) in a V2-led chain (hop0 is V2) whose mid hop is a V3
+    // flash — the V2-flash upgrade (the v2v3v2 case: keeps the debt chain a
+    // pure flash nest so the outer V2 flash wraps the mid V3 flash). In a
+    // V3-led chain (hop0 V3) the trailing V2 is a plain calc, not a flash.
+    let flash = [
+        hops[0].prot == Prot::V3,
+        hops[1].prot == Prot::V3,
+        hops[2].prot == Prot::V3
+            || (hops[2].prot == Prot::V2 && hops[0].prot == Prot::V2 && hops[1].prot == Prot::V3),
+    ];
+    let all_flash = flash[0] && flash[1] && flash[2];
+
+    // Borrow amounts for the flashes that actually flash. hop0 always borrows
+    // the optimal WETH seed; hop1 borrows `b_in`, hop2 borrows `c_in`.
+    let b_in = if flash[1] {
+        let v = *inputs.consumed_inputs.get(1)?;
+        if !fits_i128(v) {
+            return None;
+        }
+        v
+    } else {
+        0
+    };
+    let c_in = if flash[2] {
+        let v = *inputs.consumed_inputs.get(2)?;
+        if !fits_i128(v) {
+            return None;
+        }
+        v
+    } else {
+        0
+    };
+    let in_amounts = [optimal, b_in, c_in];
+
+    // ── Per-family golden-ordered AddressTable staging. The staging ORDER
+    // (not the set) is byte-pinned — the preamble + every pool_idx reference
+    // ride on it — so each family reproduces its hand-authored staging exactly.
+    let mut at = AddressTable::with_sentinels(Some(weth), Some(inputs.executor_address), None);
+    let (a_idx, b_idx, c_idx) = stage_pools(&mut at, &hops)?;
+    let pool_idx = [a_idx, b_idx, c_idx];
+
+    // ── Folded calc chain: the non-flash V2 hops, in swap order. A hop0 calc
+    // whose forward repays hop1's flash uses the direct handoff; every other
+    // calc uses V2SwapCalc. Recipient routing: the next hop's pool (or SELF
+    // for a terminal), repays=true iff that next hop is a flash.
+    let mut calc_chain: Vec<PlanStep> = Vec::new();
+    for i in 0..3 {
+        if flash[i] {
+            continue;
+        }
+        let (recipient_idx, recipient_pool_addr, recipient_repays) = if i < 2 {
+            (
+                pool_idx[i + 1],
+                Some(hops[i + 1].pool_address),
+                flash[i + 1],
+            )
+        } else {
+            (SENTINEL_SELF, None, false)
+        };
+        if i == 0 && flash[1] {
+            calc_chain.push(mechanics::v2_swap_direct(
+                &mut at,
+                hops[0],
+                outs[0],
+                hops[0].out_currency,
+                recipient_idx,
+                recipient_pool_addr,
+                recipient_repays,
+            )?);
+        } else {
+            calc_chain.push(mechanics::v2_swap(
+                &mut at,
+                hops[i],
+                outs[i],
+                recipient_idx,
+                recipient_pool_addr,
+                recipient_repays,
+            )?);
+        }
+    }
+
+    // ── R3: WETH seed/repay placement into the innermost flash's callback.
+    let v3_led = flash[0];
+    let innermost = (0..3).find(|i| flash[*i])?;
+    let mut inner_cb: Vec<PlanStep> = Vec::new();
+    if !v3_led {
+        // V2-led: prefund the leading V2 pool BEFORE the calc chain.
+        inner_cb.push(PlanStep::Erc20Transfer {
+            token_idx: SENTINEL_WETH,
+            token_addr: weth,
+            recipient_idx: a_idx,
+            amount: optimal,
+            seeds_pool: Some(hops[0].pool_address),
+            repays_flash: None,
+        });
+    }
+    inner_cb.extend(calc_chain);
+    if v3_led && !all_flash {
+        // V3-led, non-pure: repay the seed flash AFTER the calc chain.
+        inner_cb.push(PlanStep::Erc20Transfer {
+            token_idx: SENTINEL_WETH,
+            token_addr: weth,
+            recipient_idx: a_idx,
+            amount: optimal,
+            seeds_pool: None,
+            repays_flash: Some(hops[0].pool_address),
+        });
+    }
+    // Pure v3v3v3: no transfer — auto_repay handles the WETH (inner_cb stays []).
+
+    // ── R2: nest flashes in swap order (innermost first). The innermost's
+    // callback holds the folded calc chain + seed transfer; each outer flash
+    // wraps the prior flash step as its callback's sole element.
+    let flash_idx: Vec<usize> = (0..3).filter(|i| flash[*i]).collect();
+    let mut inner_step: Option<PlanStep> = None;
+    for &i in &flash_idx {
+        let cb = if i == innermost {
+            inner_cb.clone()
+        } else {
+            vec![inner_step.clone()?]
+        };
+        let step = if hops[i].prot == Prot::V3 {
+            let (recipient_idx, recipient_pool_addr, recipient_pool_repays) = if i < 2 {
+                (
+                    pool_idx[i + 1],
+                    Some(hops[i + 1].pool_address),
+                    flash[i + 1],
+                )
+            } else {
+                (SENTINEL_SELF, None, false)
+            };
+            mechanics::v3_flash_to(
+                &mut at,
+                hops[i],
+                outs[i],
+                in_amounts[i],
+                all_flash && i == 0,
+                recipient_idx,
+                recipient_pool_addr,
+                recipient_pool_repays,
+                cb,
+            )?
+        } else {
+            // V2 flash — the only V2 flash is the terminal hop2 in v2v3v2.
+            mechanics::v2_flash(
+                &mut at,
+                hops[i],
+                outs[i],
+                hops[i].in_currency,
+                in_amounts[i],
+                cb,
+            )?
+        };
+        inner_step = Some(step);
+    }
+
+    let outer = inner_step?;
+    Some((
+        vec![
+            PlanStep::SelfFund {
+                currency: weth,
+                amount: optimal,
+            },
+            outer,
+        ],
+        at,
+    ))
+}
+
+/// Per-family golden-ordered `AddressTable` pool staging for the 7 V2/V3-only
+/// 3-hop families. Returns `(a_idx, b_idx, c_idx)` — the table indices of the
+/// three hop pools. The staging ORDER (not the set) is byte-pinned: the
+/// preamble dumps addresses in insertion order and every `pool_idx` reference
+/// rides on it, so each family reproduces its hand-authored staging exactly.
+#[expect(clippy::match_same_arms)]
+fn stage_pools(at: &mut AddressTable, hops: &[&HopFacts; 3]) -> Option<(u8, u8, u8)> {
+    let (fa, fb, fc) = (hops[0], hops[1], hops[2]);
+    match [fa.prot, fb.prot, fc.prot] {
+        [Prot::V3, Prot::V3, Prot::V3] => {
+            let a = at.add(fa.pool_address).ok()?;
+            let b = at.add(fb.pool_address).ok()?;
+            let c = at.add(fc.pool_address).ok()?;
+            Some((a, b, c))
+        }
+        // v3v3v2 stages the terminal V2 pool first, then fa, fb.
+        [Prot::V3, Prot::V3, Prot::V2] => {
+            let c = at.add(fc.pool_address).ok()?;
+            let a = at.add(fa.pool_address).ok()?;
+            let b = at.add(fb.pool_address).ok()?;
+            Some((a, b, c))
+        }
+        // v3v2v3 stages the mid V2 pool first, then fa, fc.
+        [Prot::V3, Prot::V2, Prot::V3] => {
+            let b = at.add(fb.pool_address).ok()?;
+            let a = at.add(fa.pool_address).ok()?;
+            let c = at.add(fc.pool_address).ok()?;
+            Some((a, b, c))
+        }
+        // v3v2v2 stages both V2 pools before the leading V3 flash pool.
+        [Prot::V3, Prot::V2, Prot::V2] => {
+            let b = at.add(fb.pool_address).ok()?;
+            let c = at.add(fc.pool_address).ok()?;
+            let a = at.add(fa.pool_address).ok()?;
+            Some((a, b, c))
+        }
+        // v2v2v3 + v2v3v3 stage in swap order (calcs then the flash(es)).
+        [Prot::V2, Prot::V2 | Prot::V3, Prot::V3] => {
+            let a = at.add(fa.pool_address).ok()?;
+            let b = at.add(fb.pool_address).ok()?;
+            let c = at.add(fc.pool_address).ok()?;
+            Some((a, b, c))
+        }
+        // v2v3v2 (V2-flash upgrade): fa.out_currency is staged (index unused)
+        // — a golden quirk of the hand-authored byte layout — then fa, fc, fb.
+        [Prot::V2, Prot::V3, Prot::V2] => {
+            let _ = at.add(fa.out_currency).ok()?;
+            let a = at.add(fa.pool_address).ok()?;
+            let c = at.add(fc.pool_address).ok()?;
+            let b = at.add(fb.pool_address).ok()?;
+            Some((a, b, c))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod rule_walker_tests {
+    #![expect(clippy::cast_possible_truncation, clippy::expect_used)]
+    use super::{derive, rule_walk_v2v3};
+    use crate::composers::{
+        ComposerInputs, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo,
+    };
+    use crate::encoders::enc_preamble;
+    use crate::grammar_ledger::Prot;
+    use crate::grammar_plan::plan_to_bytes;
+    use crate::grammar_walker::facts_for;
+    use alloy::primitives::{address, Address};
+
+    const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    const WBTC: Address = address!("2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    const PM: Address = address!("000000000004444c5dc75cB358380D2e3dE08A90");
+    const EXEC: Address = address!("DeAd0000000000000000000000000000000000Be");
+
+    fn hop(prots: &[Prot], i: usize) -> HopInfo {
+        let cycle = [WETH, USDC, WBTC];
+        let in_t = cycle[i % 3];
+        let out_t = cycle[(i + 1) % 3];
+        match prots[i] {
+            Prot::V2 => HopInfo::V2(V2HopInfo {
+                pool_address: Address::from([0xA0 + i as u8; 20]),
+                token0_address: in_t,
+                token1_address: out_t,
+                fee: 30,
+                zfo: true,
+            }),
+            Prot::V3 => HopInfo::V3(V3HopInfo {
+                pool_address: Address::from([0xB0 + i as u8; 20]),
+                token0_address: in_t,
+                token1_address: out_t,
+                fee: 3000,
+                zfo: true,
+            }),
+            Prot::V4 => unreachable!("V4 excluded by the walker gate"),
+        }
+    }
+
+    fn full_bytes(plan: &crate::grammar_plan::Plan, at: &crate::encoders::AddressTable) -> Vec<u8> {
+        let mut b = enc_preamble(at);
+        b.extend_from_slice(&plan_to_bytes(plan, at));
+        b
+    }
+
+    /// Shadow gate: the rule-driven walker produces byte-identical output to
+    /// the hand-authored arms (pre-cutover) / routes through the walker
+    /// (post-cutover) for every V2/V3-only 3-hop family, across the amount +
+    /// output grid. Byte-identity is the cutover contract.
+    #[test]
+    fn rule_walker_shadows_the_7_arms() {
+        let families: [[Prot; 3]; 7] = [
+            [Prot::V3, Prot::V3, Prot::V3],
+            [Prot::V3, Prot::V3, Prot::V2],
+            [Prot::V3, Prot::V2, Prot::V3],
+            [Prot::V3, Prot::V2, Prot::V2],
+            [Prot::V2, Prot::V2, Prot::V3],
+            [Prot::V2, Prot::V3, Prot::V3],
+            [Prot::V2, Prot::V3, Prot::V2],
+        ];
+        // (optimal, [outs], [consumed]) grid — mirrors glopcn_bytepin.
+        let configs: [(u128, [u128; 3], [u128; 3]); 4] = [
+            (
+                1_000_000_000_000_000_000,
+                [1_000_000_000_000_000_000; 3],
+                [999_999_999_999_999_999; 3],
+            ),
+            (
+                1_000_000_000_000_000_000,
+                [1_000_000_000_000_000_000; 3],
+                [1_000_000_000_000_000_000; 3],
+            ),
+            (2u128.pow(95), [2u128.pow(95); 3], [2u128.pow(95) - 1; 3]),
+            (2u128.pow(95), [2u128.pow(95); 3], [2u128.pow(95); 3]),
+        ];
+
+        for fam in families {
+            let hops: Vec<HopInfo> = (0..3).map(|i| hop(&fam, i)).collect();
+            let path = PathInfo::new(hops);
+            let label = format!("{}{}{}", fam[0] as u8, fam[1] as u8, fam[2] as u8);
+            for (ci, (optimal, outs, consumed)) in configs.iter().enumerate() {
+                let inputs = ComposerInputs {
+                    executor_address: EXEC,
+                    pool_manager_address: PM,
+                    weth_address: WETH,
+                    optimal_input: *optimal,
+                    hop_outputs: outs,
+                    consumed_inputs: consumed,
+                    opts: EncodeOptions::default(),
+                };
+                let facts = facts_for(&path, &inputs).expect("facts exist");
+                let (plan_arm, at_arm) = derive(&facts, &inputs).expect("arm produces a plan");
+                let (plan_wlk, at_wlk) =
+                    rule_walk_v2v3(&facts, &inputs).expect("walker produces a plan");
+                let bytes_arm = full_bytes(&plan_arm, &at_arm);
+                let bytes_wlk = full_bytes(&plan_wlk, &at_wlk);
+                assert_eq!(
+                    bytes_arm,
+                    bytes_wlk,
+                    "walker diverged from derive for family {} config {} (bytes {} vs {})",
+                    label,
+                    ci,
+                    bytes_arm.len(),
+                    bytes_wlk.len(),
+                );
+            }
+        }
+    }
 }

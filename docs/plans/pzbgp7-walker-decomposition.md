@@ -68,3 +68,14 @@ defects are caught by the LedgerValidator + revm matrix. T4 documented the cost 
   + simulation/backrun matrices all green; clippy zero.
 - Remaining 21 three_hop arms consume None (compile-enforced default) — future absorption
   opportunities documented in docs/spikes/rqgiuk-tag-row-walker.md §What IS extractable.
+
+## T6 (A5AC77) — topology rule walker spike (ANALYSIS) + Group A (v2/v3-only) — IMPLEMENTED
+
+Analysis: docs/spikes/t6-topology-rules-analysis.md — 3-rule rule-set + 2 new facts needed only
+for 2 group-C holdouts. Group A (7 arms, three_hop.rs L17-480) collapsed into rule_walk_v2v3
+(246 lines): shadow byte-identity across 7 families x 4 configs, then hard cutover. The V2-flash
+upgrade rule needed one shadow-caught refinement (V2-led-only gating; naive version over-triggered
+on v3v3v2). three_hop.rs: 2,203 -> 2,150. All gates green.
+
+Next per T6-impl plan (WV4BUA): T6b (9 v4-led arms) + T6c (6 remaining + 2 holdouts consuming
+repay_mechanism / seed_delivery axes).
