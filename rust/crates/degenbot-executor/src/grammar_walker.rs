@@ -1652,9 +1652,10 @@ pub fn build_v3v4v4_walk(
 /// A facts-descriptor function pointer (the same signature as `facts_of_*`).
 pub type FactsFn = fn(&PathInfo, &ComposerInputs<'_>) -> Option<Vec<HopFacts>>;
 
-/// The per-family facts descriptor for the given key (mirrors
-/// `build_for_walk`'s dispatch). Exposed for the D6 structural probe
-/// (`tests/facts_driven_invariant.rs`).
+/// The per-family facts descriptor for the given key. This match is the
+/// future single facts dispatcher (T3 collapses the twin `build_for_walk`
+/// match into it); the D6 enclosure invariant in
+/// `tests/facts_driven_invariant.rs` reads facts through it.
 #[must_use]
 pub fn family_facts(key: (Option<Prot>, Option<Prot>, Option<Prot>)) -> Option<FactsFn> {
     Some(match key {
@@ -1755,29 +1756,20 @@ pub(crate) fn build_for_walk(
     })
 }
 
-/// PLACEHOLDER_REVERT_START T1 (v3_v4_v3)
-// + T4 (the 2-hop V2/V3 + any-N all-V2) provide the descriptors the migration
-// tasks consume; derive_plan dispatches on the shape they imply.
-/// The generic enclosure-deriving walker (ADR-031 D3/D6).
+/// The enclosure-deriving walker (ADR-031 D3/D6).
 ///
-/// Reads an arbitrary-length hop sequence's [`HopFacts`] and derives the
+/// Reads an arbitrary-length hop sequence's [`HopFacts`] and computes the
 /// nesting (which `FlashSwap`/`V4Unlock` wraps which, and the repayment order)
-/// from the `out_dest` + `repay` facts — NOT from hardcoded per-family indices.
-///
-/// T1 generalizes this from [`build_v3v4v3_walk`]. Instrumentation counter
-/// for the D6 delegation probe (`tests/facts_driven_invariant.rs`):
-/// incremented on every `derive_plan` entry so the probe can assert a family
-/// `build_*_walk` actually routes through the generic deriver rather than
-/// bypassing it. Each migration task (T4–T7) turns its family's row green.
-pub static DERIVE_PLAN_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
+/// per shape module under [`shapes`] — a `(len, repay-sequence)` partition,
+/// with a genuine `Repay`/`OutDest`-tag partition for the single-V4-middle
+/// residual. See the ADR-031 record correction (2026-08): ordering defects are
+/// caught by the `LedgerValidator` + revm matrix, not unrepresentable by
+/// construction.
 #[must_use]
 pub(crate) fn derive_plan(
     facts: &[HopFacts],
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Plan, AddressTable)> {
-    DERIVE_PLAN_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // ── Shape dispatch (D3/D6 — the enclosure shape is read from the facts).
     // Each enclosure block lives in `grammar_walker/shapes/*.rs` (one module
     // per shape); this fn is a pure (len, repay-sequence) gate dispatcher.

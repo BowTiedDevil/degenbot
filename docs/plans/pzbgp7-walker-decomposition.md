@@ -11,3 +11,16 @@
 - New structural pin: `tests/walker_shapes_layout.rs` (hygiene invariant; stays past T2).
 - Note for T2: the stale doc comment `/// PLACEHOLDER_REVERT_START T1 (v3_v4_v3)` above
   `DERIVE_PLAN_CALLS` refers to epic 62V6Q5's T1 — delete it with the counter.
+
+## T2 (BMY6JJ) — tripwire deletion: DONE
+
+- Deleted: `DERIVE_PLAN_CALLS` static + increment + stale `PLACEHOLDER_REVERT_START` doc;
+  `DONE` allowlist counter probe; both `include_str!` source scans (match-arm count,
+  per-family deriver count) and the `EXPECTED_*` consts.
+- Kept: `d6_enclosure_derived_from_facts` (V4 hops carry `Repay::NetZero`), now documented
+  as the single load-bearing invariant, reading facts through `family_facts`.
+- Fork resolved: `family_facts` survives as the *future single facts dispatcher*
+  (T3 folds the twin `build_for_walk` 30-arm match into it, not vice versa) —
+  re-documented accordingly.
+- Gates: clippy 0; executor (111 tests incl. layout pin + tag invariant) +
+  simulation (78) + backrun-strategy (100) all green.
