@@ -291,7 +291,7 @@ impl PyArbitrageEngine {
     /// Return a fresh async iterator over `newHeads` block notifications
     /// (epic 6W35AI).
     ///
-    /// The backrun bot must derive its block clock from this stream, NOT
+    /// The settlement-arbitrage bot must derive its block clock from this stream, NOT
     /// from the result batch's `solve_block` field — `solve_block` lags by
     /// the send debounce and only advances when a batch is actually sent,
     /// so using it as the clock freezes `[block: N]` behind the pump's

@@ -5,7 +5,7 @@
 //!
 //! This is the genuinely reusable spine the tier-3 on-chain pool oracles and any
 //! **individual user investigation harness** share. It knows nothing about
-//! pools, executors, or backruns: it only sequences EVM transactions against a
+//! pools, executors, or arbitrage strategies: it only sequences EVM transactions against a
 //! fresh self-contained `CacheDB`, so a harness for *any* contract —
 //! `UniswapV3Pool`, a user's custom executor, a lending market — is a thin
 //! family-specific driver on top, not a re-derivation of the EVM plumbing.

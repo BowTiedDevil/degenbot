@@ -20,7 +20,7 @@
 #![expect(clippy::doc_markdown)]
 
 /// The in-process revm engine + its DB stack (the EVM handle, overrides,
-/// AL collector, warm cache). The backrun strategy relocated to
+/// AL collector, warm cache). The settlement-arbitrage strategy relocated to
 /// `degenbot-settlement-strategy` (ADR-019 D4/D7, decision R).
 pub mod sim;
 

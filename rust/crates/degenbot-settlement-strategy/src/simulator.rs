@@ -1,4 +1,4 @@
-//! The backrun strategy's sim value types + the 7-call orchestration.
+//! The settlement-arbitrage strategy's sim value types + the 7-call orchestration.
 //!
 //! Owns the strategy-value surface BOTH consumers of the Rust core reach:
 //! the type `SimResult`, `FailBuckets`, `compute_priority_fee`, `fits_int128`,
@@ -8,7 +8,7 @@
 //! 7-call vector `simulate_path_on_evm` driven per-block over the engine's
 //! `BlockSimHandle::evm_mut`.
 //!
-//! ADR-019 D4/D7 (decision R — Rust-canonical): this is the backrun bundle +
+//! ADR-019 D4/D7 (decision R — Rust-canonical): this is the settlement-arbitrage bundle +
 //! gross/net + priority-fee sizing — one strategy over the
 //! `degenbot-simulation` engine. The engine owns the revm EVM handle
 //! (`BlockSimHandle`), the DB stack, overrides, + the AL inspector; this crate

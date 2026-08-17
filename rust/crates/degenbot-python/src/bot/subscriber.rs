@@ -29,7 +29,7 @@
 //! design. The drainer never blocks the emitter (the pump's notify path),
 //! and the OS thread always keeps up (50ms flush interval, 256-entry
 //! batches). At flush time, coalesce-to-latest-per-pool is applied: a
-//! `pool_id` appears at most once per batch per subscriber. A backrun bot
+//! `pool_id` appears at most once per batch per subscriber. A settlement-arbitrage bot
 //! solves off `BotState`'s current view, not every intermediate transition,
 //! so coalescing within a flush window is correct.
 //!
@@ -201,7 +201,7 @@ fn subscriber_drainer_loop(state: Arc<SubscriberQueueState>) {
 ///
 /// Coalesces to latest-per-pool per callback: if the same callback appears
 /// multiple times for the same `pool_id`, only the latest entry is forwarded.
-/// This matches the backrun bot's need for current state, not every transition.
+/// This matches the settlement-arbitrage bot's need for current state, not every transition.
 fn flush_notification_batch(notifications: &[SubscriberNotification]) {
     if notifications.is_empty() {
         return;

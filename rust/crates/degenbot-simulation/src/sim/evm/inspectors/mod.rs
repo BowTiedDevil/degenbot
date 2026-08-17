@@ -1,5 +1,5 @@
 //! Composable `revm::Inspector` pair for simulation diagnostics — the
-//! engine-generic primitives (ADR-019 D4/D7) that retire the backrun bot's
+//! engine-generic primitives (ADR-019 D4/D7) that retire the settlement-arbitrage bot's
 //! ad-hoc, post-hoc failure analysis.
 //!
 //! Two inspectors, composable with the existing

@@ -579,7 +579,7 @@ impl BlockPump {
     /// backfill ran inside the spawned `resume_from_subscribe` task and
     /// `resume` returned immediately, so an active pool's burn was not yet
     /// buffered when `build_paths` drained → `VerificationMismatchError` at
-    /// post-drain verify (2026-07-12 backrun crash).
+    /// post-drain verify (2026-07-12 settlement-arbitrage crash).
     ///
     /// No-op when `S` is unset (cold start), `S >= W` (catch-up snapshot), or
     /// `S == 0`. Errors log + return (the live loop still starts from `W`).
@@ -2672,7 +2672,7 @@ mod tests {
         // The result batch that finalizes N must carry N's OWN metadata, even
         // though header N+1 (with distinct metadata) arrived earlier and
         // overwrote `current_metadata`. Python computes `base_fee_next` from
-        // this metadata; carrying N+1's would systematically mis-price backruns.
+        // this metadata; carrying N+1's would systematically mis-price settlement arbitrage.
         //
         // Stream: header 101, header 102 (overwrites current_metadata to
         // meta_102), then a forward log for block 102 (tombstones 101). The
@@ -4480,7 +4480,7 @@ mod tests {
     /// spawned `resume_from_subscribe` task, so `PumpState::resume` returned
     /// immediately and Python's `build_paths` drained an EMPTY backfill buffer
     /// (the burn for an active pool was not yet buffered) → the post-drain
-    /// verify mismatched on-chain and crashed the backrun bot with
+    /// verify mismatched on-chain and crashed the settlement-arbitrage bot with
     /// `VerificationMismatchError`. This pins the contract: after
     /// `backfill_to_ws_block` returns, the V3 backfill buffer is populated —
     /// the event did NOT require the live loop to run first.

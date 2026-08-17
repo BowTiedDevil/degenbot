@@ -1,9 +1,9 @@
-//! The backrun searcher strategy — one example strategy over the
+//! The settlement-arbitrage searcher strategy — one example strategy over the
 //! `degenbot-simulation` engine.
 //!
 //! ADR-019 D4/D7 (decision R — Rust-canonical): the strategy stays in Rust
 //! (not re-derived in Python — AGENTS.md's "driver shell, not a
-//! co-implementation"). This crate owns the backrun bot's strategy logic:
+//! co-implementation"). This crate owns the settlement-arbitrage bot's strategy logic:
 //!
 //! - the 7-call pre/post-balance bundle (3 pre-balance → `execute()` →
 //!   3-post-balance over WETH9 / Multicall3 / PoolManager ERC6909),
@@ -23,7 +23,7 @@
 //!
 //! # Standalone-Rust consumer
 //!
-//! `cargo add degenbot-settlement-strategy` reaches the backrun strategy with
+//! `cargo add degenbot-settlement-strategy` reaches the settlement-arbitrage strategy with
 //! zero `pyo3` dependency (ADR-005 standalone-core). The Python driver
 //! (`examples/eth_backrun_v2_v3_v4_rust.py`) is a thin cockpit over a PyO3
 //! wrapper around `dispatch_profitable_results` — it does NOT re-derive the
@@ -34,7 +34,7 @@
 #![expect(clippy::doc_markdown)]
 
 /// The 7-call calldata builders (balanceOf / getEthBalance / ERC6909 /
-/// execute-wrap) — the backrun bundle's read + execute calldata.
+/// execute-wrap) — the settlement-arbitrage bundle's read + execute calldata.
 pub mod calldata;
 
 /// The dispatch fan-out + categorization policy (`dispatch_profitable_results`)

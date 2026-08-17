@@ -91,7 +91,7 @@ pub enum SwapFamily {
 }
 
 /// A captured swap event — the decoded, pool-family-tagged shape consumed by
-/// the backrun strategy's four-way classifier (Drift/SolverCalc/Encoding).
+/// the settlement-arbitrage strategy's four-way classifier (Drift/SolverCalc/Encoding).
 /// Engine-generic: no `SimulateContext`/`SimResult`/strategy vocabulary.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CapturedSwap {

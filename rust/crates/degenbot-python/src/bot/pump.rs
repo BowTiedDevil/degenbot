@@ -175,7 +175,7 @@ impl PumpState {
         // snapshot into the shared core `BotState` but never advances the
         // engine phase). An unconditional `set_phase(Subscribed)` left the
         // phase at `Subscribed` (1) and `resume()`'s `require(SnapshotLoaded)`
-        // guard crashed the production backrun bot:
+        // guard crashed the production settlement-arbitrage bot:
         //   RuntimeError: Cannot call resume: engine is in phase Subscribed,
         //                 but requires SnapshotLoaded
         // `after_subscribe` lands at `SnapshotLoaded` when the core has a
@@ -217,7 +217,7 @@ impl PumpState {
         // the backfill. Pre-fix the backfill ran inside the spawned
         // `resume_from_subscribe` task and `resume` returned immediately — an
         // active pool's burn was not yet buffered when `build_paths` drained,
-        // so the post-drain verify mismatched on-chain and crashed the backrun
+        // so the post-drain verify mismatched on-chain and crashed the settlement-arbitrage
         // bot (`VerificationMismatchError`, 2026-07-12). `block_on` on the
         // shared runtime mirrors `subscribe`'s sync discipline.
         //

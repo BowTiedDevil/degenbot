@@ -2,9 +2,9 @@
 //! p10/p50 parse.
 //!
 //! A generic market-data RPC primitive (not simulation-specific). A sandwich /
-//! liquidation / backrun searcher wanting the same market oracle reaches it
-//! through this crate, not a backrun-shaped simulation crate. Moved here from
-//! the backrun dispatch leaf by ADR-019 D5 — the fee leaf is market data, so
+//! liquidation / settlement-arbitrage searcher wanting the same market oracle reaches it
+//! through this crate, not a settlement-arbitrage-shaped simulation crate. Moved here from
+//! the settlement-arbitrage dispatch leaf by ADR-019 D5 — the fee leaf is market data, so
 //! it belongs with the rest of the typed RPC surface (`AlloyProvider`,
 //! `EthBlock`, the block fetchers).
 //!

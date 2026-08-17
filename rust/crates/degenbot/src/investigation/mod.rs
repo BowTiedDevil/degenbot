@@ -1,5 +1,5 @@
 //! Path **investigation toolkit** — reusable building blocks for reproducing a
-//! captured failing backrun path (the `path<N>_…_block<B>` fixtures written by
+//! captured failing settlement-arbitrage path (the `path<N>_…_block<B>` fixtures written by
 //! `scripts/capture_*_fixture.py`).
 //!
 //! **Layering.** This is degenbot's OWN pool-level scaffold (its capture format,

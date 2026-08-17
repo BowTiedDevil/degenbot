@@ -187,7 +187,7 @@ impl EnginePhase {
     /// BEFORE subscribe — and never advances the engine phase. After
     /// subscribe, the phase was `Subscribed` (1), and `resume()`'s
     /// `require(SnapshotLoaded)` guard (needs `>= 2`) crashed the production
-    /// backrun bot:
+    /// settlement-arbitrage bot:
     ///
     /// ```text
     /// RuntimeError: Cannot call resume: engine is in phase Subscribed,

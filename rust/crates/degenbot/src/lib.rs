@@ -29,7 +29,7 @@
 pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 
 /// Path **investigation toolkit** — shared fixture load/reconstruct/per-hop
-/// oracle helpers for reproducing captured failing backrun paths in the
+/// oracle helpers for reproducing captured failing settlement-arbitrage paths in the
 /// `examples/path*_solver_fixture.rs` investigate-runner dialect.
 pub mod investigation;
 
@@ -96,7 +96,7 @@ pub use degenbot_submission;
 /// test/diagnostic Rust surface — deliberately no FFI exposure.
 pub use degenbot_simulation;
 
-/// The backrun searcher strategy — the 7-call pre/post-balance bundle,
+/// The settlement-arbitrage searcher strategy — the 7-call pre/post-balance bundle,
 /// `compute_priority_fee`, `decode_balance`, `SimResult`, + the
 /// `dispatch_profitable_results` fan-out/categorization policy over the
 /// `degenbot-simulation` engine (ADR-019 D4/D7, decision R — Rust-canonical:

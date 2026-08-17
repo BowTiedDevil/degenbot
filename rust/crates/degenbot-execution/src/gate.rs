@@ -51,7 +51,7 @@ pub type ProbeSpecs = Vec<ProbeSpec>;
 pub enum AssessRule {
     /// `gross = Σ deltas` over the declared probes (`sum-of-deltas`).
     ///
-    /// The default — mirrors the backrun strategy's WETH/ETH/ERC6909 balance
+    /// The default — mirrors the settlement-arbitrage strategy's WETH/ETH/ERC6909 balance
     /// arithmetic generalized to any probe list.
     #[default]
     SumOfDeltas,
@@ -84,7 +84,7 @@ impl Default for AssessOptions {
 ///
 /// `net = gross − gas×(base_fee_next + priority_fee)` is defined in terms of
 /// the pricing policy, so pricing cannot be ordered independently of Assess. A
-/// built-in market-percentile default (the equivalent of the backrun
+/// built-in market-percentile default (the equivalent of the settlement-arbitrage
 /// strategy's `compute_priority_fee`) is provided; a foreign searcher may
 /// override it with a fixed absolute priority fee.
 ///

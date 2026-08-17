@@ -1,6 +1,6 @@
 [package]
 name = "degenbot-settlement-strategy"
-description = "The backrun searcher strategy — the 7-call pre/post-balance bundle, gross/net + priority-fee sizing, dispatch fan-out + categorization policy. One example strategy over the degenbot-simulation engine (ADR-019 D4/D7; pyo3-free Rust core)."
+description = "The settlement-arbitrage searcher strategy — the 7-call pre/post-balance bundle, gross/net + priority-fee sizing, dispatch fan-out + categorization policy. One example strategy over the degenbot-simulation engine (ADR-019 D4/D7; pyo3-free Rust core)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -16,7 +16,7 @@ workspace = true
 # cache). This crate is ONE strategy over the engine — it builds the 7-call
 # vector, drives `BlockSimHandle`'s EVM, decodes balances, sizes the priority
 # fee, + runs the fan-out/categorization policy. ADR-019 D4/D7: the engine
-# stays thin + generic; the backrun bundle is this strategy's concern, not the
+# stays thin + generic; the settlement-arbitrage bundle is this strategy's concern, not the
 # engine's.
 degenbot-simulation = { path = "../degenbot-simulation" }
 # `BotState` (ADR-003 state owner) — the snapshot surface the dispatch

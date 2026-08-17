@@ -15,7 +15,7 @@
 //! strategy type) — [`BlockSimHandle::build`] takes the block-env primitives
 //! (`provider`, `base_fee_next`, `current_block`, `block_timestamp`) + a
 //! projected `&SimulationOverrideParams` directly. Multiple searcher
-//! strategies (the backrun bundle today; sandwich/JIT-L/liquidation later) can
+//! strategies (the settlement-arbitrage bundle today; sandwich/JIT-L/liquidation later) can
 //! drive the same engine with their own `SimulateContext`-equivalent config.
 //!
 //! # Per-block shared-EVM handle (Tier 1, `V5HCR5`)

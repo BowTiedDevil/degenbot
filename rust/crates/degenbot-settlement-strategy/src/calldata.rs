@@ -1,4 +1,4 @@
-//! 7-call vector calldata builders — the backrun strategy's balance-read +
+//! 7-call vector calldata builders — the settlement-arbitrage strategy's balance-read +
 //! execute-wrap calldata.
 //!
 //! The three pre/post balance-read calldata blobs that bracket the `execute()`
@@ -8,7 +8,7 @@
 //! wrap (a thin delegation to `degenbot_executor::encode_execute_call`).
 //!
 //! Moved here from `degenbot-simulation::sim::evm::calldata` (ADR-019 D4/D7,
-//! decision R): these builders are part of the backrun bundle (the 7-call
+//! decision R): these builders are part of the settlement-arbitrage bundle (the 7-call
 //! vector), so they live with the strategy that consumes them, not with the
 //! generic engine. The engine no longer references them.
 //!
@@ -101,11 +101,11 @@ fn encode_single_address(selector: [u8; 4], account: Address) -> Result<Bytes, A
     Ok(Bytes::from(data))
 }
 
-/// Wrap the `execute(bytes, uint256)` call from its parts (the backrun call).
+/// Wrap the `execute(bytes, uint256)` call from its parts (the settlement-arbitrage call).
 ///
 /// Delegates to `degenbot_executor::composers::encode_execute_call` (the
 /// §YQORTM leaf) — the selector + the `(bytes, uint256)` ABI encoding live
-/// there. Colocated with the backrun bundle (the 7-call vector's execute
+/// there. Colocated with the settlement-arbitrage bundle (the 7-call vector's execute
 /// wrap) so the in-process revm path can build the execute calldata without
 /// a cycle.
 ///

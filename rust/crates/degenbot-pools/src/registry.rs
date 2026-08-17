@@ -226,7 +226,7 @@ impl PoolEntry {
     /// last mutated by a forward event — the freshness signal for the per-path
     /// mid-block solve gate (ergo AV42C7). A path is solved at `solve_block`
     /// only when EVERY hop's `update_block >= solve_block`; a stale pool defers
-    /// its path until its block-N log lands and re-dirties it (the backrun
+    /// its path until its block-N log lands and re-dirties it (the settlement-arbitrage
     /// otherwise lands at a block where one pool still holds N-1 state).
     #[must_use]
     pub fn update_block(&self) -> u64 {

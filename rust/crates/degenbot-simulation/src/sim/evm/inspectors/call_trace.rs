@@ -13,7 +13,7 @@
 //! reverting frame's `target` + the revert data are visible at the reverting
 //! frame's `call_end`. [`CallTrace::reverting_frame_label`] walks the trace
 //! for the deepest `Revert` frame + runs [`classify_revert`] on its data —
-//! the *attribution* the backrun bot's `fail_index` (0–6 top-level call
+//! the *attribution* the settlement-arbitrage bot's `fail_index` (0–6 top-level call
 //! index) replaces with `(reverting_frame_depth, reverting_frame_target,
 //! reverting_frame_selector, revert_label)`.
 //!

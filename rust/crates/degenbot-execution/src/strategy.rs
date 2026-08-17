@@ -90,7 +90,7 @@ pub trait ExecutionStrategy {
     /// `passed = net ≥ min_net_profit`.
     ///
     /// This is the **built-in default** assessor a foreign searcher may
-    /// override (e.g. the backrun strategy's richer balance-decode gate, or a
+    /// override (e.g. the settlement-arbitrage strategy's richer balance-decode gate, or a
     /// user's tiny interpreter reading a single return value). It is engine-
     /// free: the caller supplies the deltas, gas, and base fee; the strategy
     /// owns the interpretation + pricing. You are never asked to own the sim

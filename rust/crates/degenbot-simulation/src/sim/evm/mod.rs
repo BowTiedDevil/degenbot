@@ -97,7 +97,7 @@ pub mod serving;
 // mainnet probe; V4 probe extension is the real V4 captured-amount proof.
 
 // 7-call vector calldata builders live in `degenbot-settlement-strategy::calldata`
-// (relocated with the backrun bundle — ADR-019 D4/D7, decision R).
+// (relocated with the settlement-arbitrage bundle — ADR-019 D4/D7, decision R).
 
 /// EIP-2930 access-list emission from the revm `State` journal — retires
 /// `eth_createAccessList`. Reads the touched address + slot set from

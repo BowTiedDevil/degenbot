@@ -3412,7 +3412,7 @@ mod tests {
 
     // ── Block stream (epic 6W35AI) ────────────────────────────────────────
     //
-    // The backrun bot's block clock must come from a forwarded `newHeads`
+    // The settlement-arbitrage bot's block clock must come from a forwarded `newHeads`
     // stream, NOT from `ResultBatch::solve_block` (which lags by debounce
     // delay + only advances on a send). `BlockNotification` + `block_tx` are
     // the dedicated channel, plumbed parallel to `result_tx`.
@@ -4610,7 +4610,7 @@ mod tests {
     /// core `BotState` and never advances the engine phase, so an
     /// unconditional `set_phase(Subscribed)` after subscribe left the phase
     /// at `Subscribed` (1) and `resume()`'s `require(SnapshotLoaded)` guard
-    /// (needs `>= 2`) crashed the production backrun bot:
+    /// (needs `>= 2`) crashed the production settlement-arbitrage bot:
     ///
     ///   `RuntimeError`: Cannot call resume: engine is in phase Subscribed,
     ///                 but requires `SnapshotLoaded`

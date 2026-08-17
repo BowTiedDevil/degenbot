@@ -21,7 +21,7 @@ use degenbot_core::errors::{ProviderError, ProviderResult};
 
 /// The canonical Multicall3 deployed address (same on every supported chain —
 /// pre-deployed via CREATE2 at the chain's first block). Hardcoding matches the
-/// convention used in the backrun strategy crate's dispatch tests.
+/// convention used in the settlement-arbitrage strategy crate's dispatch tests.
 pub const MULTICALL3_ADDRESS: Address = address!("cA11bde05977b3631167028862bE2a173976CA11");
 
 /// keccak256("aggregate3((bool,address,bytes)[])")[0..4] = `0x134dd343`,

@@ -19,7 +19,7 @@
 //!
 //! 1. [`DegenbotDb::fetch_tokens_with_min_degree`] — the `GROUP BY token
 //!    HAVING count(*) >= degree` candidate-token set (§2.1 warm path:
-//!    construction-time graph build per backrun-session startup).
+//!    construction-time graph build per arbitrage-session startup).
 //! 2. [`DegenbotDb::fetch_path_graph_edges`] — ALL chain-filtered edges
 //!    (unfiltered; the caller applies the degree whitelist just like the
 //!    Python `_prepare_graph` does inline).
@@ -27,7 +27,7 @@
 //!    `allowed_intermediate_tokens` resolution.
 //!
 //! All three are pure row→struct transforms over [`DegenbotDb`] (§2.1 warm
-//! path; construction-time graph build per backrun-session startup, not
+//! path; construction-time graph build per arbitrage-session startup, not
 //! per-tx).
 
 use std::collections::{HashMap, HashSet};
