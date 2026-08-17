@@ -19,6 +19,7 @@ RUN dnf install -y \
         mold lld \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
+        hostname \
         bash-completion \
         xdg-utils \
     && dnf clean all
