@@ -33,7 +33,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_rpc",
     "degenbot_decoders",
     "degenbot_uniswap",
-    # The in-process sim engine + the backrun strategy. The divergence probe
+    # The in-process sim engine + the settlement-arbitrage strategy. The divergence probe
     # (``[sim-divergence]``, ergo task 4C33DP / epic TR6GWT) + the bridge-probe
     # (``[bridge-probe]``) emit ``log::info!`` from these crates; the base
     # config in ``degenbot.logging`` lowers them so the records are visible.

@@ -9,7 +9,7 @@ NOT re-register the pool with the engine — it must resolve the existing
 shared-core key, mirroring the V2 path (``register_v2_pool`` reads
 ``pool._py_pool.pool_id``).
 
-Regression (the production backrun bot, ``examples/eth_backrun_v2_v3_v4_rust.py``):
+Regression (the production settlement-arbitrage bot, ``examples/eth_settlement_arbitrage_v2_v3_v4_rust.py``):
 ``register_v4_pool`` called ``self.engine.register_v4_pool`` on the pre-
 registered pool, raising ``ValueError("V4 pool already registered: …")`` for
 every V4 hop in every discovered path. Because the Python ``_v4_keys`` cache

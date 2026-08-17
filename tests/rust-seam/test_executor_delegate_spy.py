@@ -5,7 +5,7 @@ After §4.3 oracle-retirement, the Python `encode_cmd_stream` /
 `compute_simulation_warmup_slots` / `pack_expected_balance` /
 `pack_config` / `mapping_slot` / `v4_input_is_native` functions are deleted
 from `examples/eth_backrun_helpers.py` and `examples/cmd_stream.py`. The
-example (`examples/eth_backrun_v2_v3_v4_rust.py`) must source these from the
+example (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`) must source these from the
 Rust extension `degenbot_rs`.
 
 WEFVGE: the standalone `encode_cmd_stream` / `v4_input_is_native` /
@@ -118,7 +118,7 @@ class TestExampleRoutesThroughRust:
 
     @staticmethod
     def _example_source() -> str:
-        return (EXAMPLES_DIR / "eth_backrun_v2_v3_v4_rust.py").read_text()
+        return (EXAMPLES_DIR / "eth_settlement_arbitrage_v2_v3_v4_rust.py").read_text()
 
     def test_imports_dispatch_from_companion(self) -> None:
         """The driver imports the dispatch seam from the companion, not FFI.

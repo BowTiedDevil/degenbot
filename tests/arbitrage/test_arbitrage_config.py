@@ -1,6 +1,6 @@
-"""Tests for ArbitrageConfig — the unified backrun configuration value object.
+"""Tests for ArbitrageConfig — the unified arbitrage configuration value object.
 
-`ArbitrageConfig` bundles the ~20 scattered backrun tunables (operator identity,
+`ArbitrageConfig` bundles the ~20 scattered arbitrage tunables (operator identity,
 node endpoints, executor contract, dispatch knobs, path filters, dry-run)
 that `main()` currently reads ad-hoc from three sources: a `mainnet.env`
 dotenv dict, module-top constants, and CLI args. `from_env` is the factory

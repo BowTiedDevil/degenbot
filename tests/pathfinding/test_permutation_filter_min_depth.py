@@ -169,7 +169,7 @@ class TestPermutationFilterMinDepth:
     async def test_three_hop_filter_yields_no_two_hop_cycles_async(self, db):
         """Async variant — same regression against ``find_paths_async``.
 
-        ``find_paths_async`` is the entry point used by the example backrun
+        ``find_paths_async`` is the entry point used by the example settlement-arbitrage
         bot, where Bug B was originally observed.
         """
         paths = [

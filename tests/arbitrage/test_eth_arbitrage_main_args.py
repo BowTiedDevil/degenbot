@@ -1,10 +1,10 @@
-"""Tests for the backrun bot's argument parser.
+"""Tests for the settlement-arbitrage bot's argument parser.
 
 The parser is extracted into :func:`degenbot.runner.cli.build_arbitrage_arg_parser`
 so the CLI surface — especially the ``--node-http`` / ``--node-ws`` cascade
 overrides — is verifiable without running the full async session. ``from_env``'s
 handling of ``cli_http`` / ``cli_ws`` is covered by
-``test_backrun_config.py::TestCliOverride``.
+``test_arbitrage_config.py::TestCliOverride``.
 """
 
 from __future__ import annotations

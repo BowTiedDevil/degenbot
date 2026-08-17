@@ -4,8 +4,8 @@ Covers :mod:`degenbot.operator.operator_channel` — the Unix-domain-socket
 JSON-lines channel an operator uses to add a path / trigger discovery on a live
 bot, plus the CLI client helper (:func:`send_command`). The server side is
 exercised with a stub handler; the real host handler (wiring into
-`BackrunSession.enqueue_path` / `trigger_discovery`) is exercised at the
-example/session layer in `tests/arbitrage/test_backrun_session.py`.
+`BotRunner.enqueue_path` / `trigger_discovery`) is exercised at the
+example/session layer in `tests/arbitrage/test_arbitrage_session.py`.
 """
 
 import asyncio

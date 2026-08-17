@@ -1,7 +1,7 @@
 """Tests for ``degenbot.config.resolve_rpc_uris`` — the standard RPC-URI cascade.
 
 The resolver is the one shared resolution path for an HTTP/WS endpoint by
-chain id, used by the library, the ``degenbot`` click CLI, and the backrun
+chain id, used by the library, the ``degenbot`` click CLI, and the settlement-arbitrage
 example. It implements the precedence:
 
     CLI arg  >  OS env ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}``  >

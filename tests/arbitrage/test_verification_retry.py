@@ -154,7 +154,7 @@ class TestVerificationRetryPolicy:
     def test_policy_is_frozen(self) -> None:
         """A policy shared across registration calls must be immutable (a mid-run
         mutation would silently change retry semantics). Mirrors ``ArbitrageConfig``'s
-        frozen contract (test_backrun_config.py::TestImmutability).
+        frozen contract (test_arbitrage_config.py::TestImmutability).
         """
         import dataclasses
 
