@@ -69,6 +69,8 @@ pub mod simulation;
 pub mod solady;
 #[cfg(feature = "solidly-math")]
 pub mod solidly_math;
+#[cfg(feature = "bot")]
+pub mod solvers_basket;
 #[cfg(feature = "submission")]
 pub mod submission;
 #[cfg(feature = "uniswap")]
