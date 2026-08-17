@@ -8,19 +8,17 @@ from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-import sqlalchemy
 from eth_typing import ChecksumAddress
 from sqlalchemy.orm import Session
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.pools import (
     LiquidityPoolTable,
-    PoolManagerTable,
     UniswapV2PoolTableBase,
     UniswapV3PoolTableBase,
     UniswapV4PoolTable,
 )
+from degenbot.database.operations import resolve_token_ids
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
@@ -96,63 +94,6 @@ def _pool_kind_for_type(pool_type: type) -> int:
     raise DegenbotValueError(message=msg)
 
 
-def _get_tokens_with_min_degree(
-    degree: int,
-    session: Session,
-    chain_id: int,
-    pool_types: Sequence[type],
-) -> set[TokenId]:
-    """Candidate tokens appearing in ≥ `degree` pools (SQLAlchemy oracle path).
-
-    Retained as the §4.2 parity oracle for the `_prepare_graph_sqlalchemy`
-    fallback (used when the bound DB is in-memory `:memory:` — the Rust
-    `build_path_graph` seam opens a separate in-memory connection that can't
-    share SQLAlchemy's in-memory DB). The primary file-backed path runs the
-    fetch in Rust (`degenbot_db::fetch_tokens_with_min_degree` via
-    `build_path_graph`).
-
-    Returns:
-        The set of candidate token IDs.
-
-    """
-    token_count_selects: list[sqlalchemy.Select[tuple[TokenId]]] = []
-    for pool_type in pool_types:
-        if issubclass(pool_type, LiquidityPoolTable):
-            token_count_selects.extend((
-                sqlalchemy.select(pool_type.token0_id.label("token_id")).where(
-                    pool_type.chain == chain_id,
-                ),
-                sqlalchemy.select(pool_type.token1_id.label("token_id")).where(
-                    pool_type.chain == chain_id,
-                ),
-            ))
-        if issubclass(pool_type, UniswapV4PoolTable):
-            token_count_selects.extend((
-                sqlalchemy.select(pool_type.currency0_id.label("token_id")).where(
-                    pool_type.manager.has(chain=chain_id),
-                ),
-                sqlalchemy.select(pool_type.currency1_id.label("token_id")).where(
-                    pool_type.manager.has(chain=chain_id),
-                ),
-            ))
-    token_count_subq = sqlalchemy.union_all(*token_count_selects).subquery()
-    token_counts_greater_than_two_subq = (
-        sqlalchemy
-        .select(
-            token_count_subq.columns["token_id"],
-            sqlalchemy.func.count().label("pool_count"),
-        )
-        .group_by(token_count_subq.columns["token_id"])
-        .having(sqlalchemy.func.count() >= degree)
-        .subquery()
-    )
-    return set(
-        session.scalars(
-            sqlalchemy.select(token_counts_greater_than_two_subq.columns["token_id"]),
-        ).all(),
-    )
-
-
 @dataclass(slots=True)
 class _PreparedGraph:
     """The flat edge list + address lookups produced by ``_prepare_graph``.
@@ -183,12 +124,10 @@ def _prepare_graph(
     """Build the flat edge list + address lookup dicts for the Rust DFS.
 
     Delegates the bulk DB read + candidate-token edge filter to the Rust core
-    via `build_path_graph` (AF7OEL) for file-backed DBs (production + the
-    file-backed pathfinding fixtures). For in-memory `:memory:` DBs the Rust
-    seam opens a separate connection that can't share SQLAlchemy's in-memory
-    DB, so those fall back to the SQLAlchemy parity oracle
-    (`_prepare_graph_sqlalchemy` — the §4.2 oracle kept until the seam can
-    bind a shared in-memory handle).
+    via `build_path_graph` (AF7OEL) — the sole graph-build path (ZNWXNC).
+    The DB must be file-backed: the Rust seam opens its own connection on
+    `database_path`, so an in-memory `:memory:` session cannot be shared
+    (test fixtures use temp files).
 
     Returns:
         A ``_PreparedGraph`` with flat edges + address lookup dicts.
@@ -197,15 +136,13 @@ def _prepare_graph(
     engine = session.bind
     db_path = getattr(getattr(engine, "url", None), "database", None) if engine else None
 
-    # In-memory DBs can't be shared with a separate Rust connection — use the
-    # SQLAlchemy parity oracle (§4.2). File-backed DBs take the Rust seam.
     if not db_path or db_path == ":memory:":
-        return _prepare_graph_sqlalchemy(
-            chain_id=chain_id,
-            pool_types=pool_types,
-            session=session,
-            allowed_intermediate_tokens=allowed_intermediate_tokens,
+        msg = (
+            "Pathfinding requires a file-backed database "
+            "(the Rust build_path_graph seam opens its own "
+            "connection); :memory: sessions are not supported."
         )
+        raise DegenbotValueError(message=msg)
     return _prepare_graph_rust(
         chain_id=chain_id,
         pool_types=pool_types,
@@ -323,94 +260,6 @@ def _prepare_graph_rust(
         edges=list(raw["edges"]),
         v2v3_addresses={int(pid): addr for pid, addr in raw["v2v3_addresses"].items()},
         v4_lookups={int(pid): (mgr, hsh) for pid, (mgr, hsh) in raw["v4_lookups"].items()},
-        pool_id_to_type=pool_id_to_type,
-    )
-
-
-def _prepare_graph_sqlalchemy(
-    *,
-    chain_id: int,
-    pool_types: Sequence[type],
-    session: Session,
-    allowed_intermediate_tokens: set[TokenId] | None = None,
-) -> _PreparedGraph:
-    """SQLAlchemy parity oracle (§4.2) for in-memory `:memory:` DBs.
-
-    The Rust `build_path_graph` seam opens a separate connection that can't
-    share SQLAlchemy's in-memory DB, so `:memory:` DBs keep this Python
-    build path as the parity oracle until the seam can bind a shared
-    in-memory handle. File-backed DBs take `_prepare_graph_rust`.
-
-    Returns:
-        A ``_PreparedGraph`` with flat edges + address lookup dicts.
-
-    """
-    start = time.perf_counter()
-
-    candidate_tokens = _get_tokens_with_min_degree(
-        degree=2,
-        session=session,
-        chain_id=chain_id,
-        pool_types=pool_types,
-    )
-    logger.debug(f"Found {len(candidate_tokens)} candidate tokens held by 2 or more pools")
-
-    if allowed_intermediate_tokens is not None:
-        before = len(candidate_tokens)
-        candidate_tokens &= allowed_intermediate_tokens
-        logger.debug(
-            f"Token whitelist applied: {before} → {len(candidate_tokens)} candidate tokens",
-        )
-
-    edges: list[tuple[TokenId, TokenId, PoolId, int]] = []
-    v2v3_addresses: dict[PoolId, ChecksumAddress] = {}
-    v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]] = {}
-    pool_id_to_type: dict[tuple[PoolId, int], type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
-
-    for pool_type in pool_types:
-        if issubclass(pool_type, UniswapV4PoolTable):
-            for pool_id, currency0_id, currency1_id, manager_address, pool_hash in session.execute(
-                sqlalchemy
-                .select(
-                    pool_type.id,
-                    pool_type.currency0_id,
-                    pool_type.currency1_id,
-                    PoolManagerTable.address,
-                    pool_type.pool_hash,
-                )
-                .join(pool_type.manager)
-                .where(pool_type.manager.has(chain=chain_id)),
-            ).all():
-                if currency0_id in candidate_tokens and currency1_id in candidate_tokens:
-                    edges.append((currency0_id, currency1_id, pool_id, _POOL_KIND_V4))
-                    v4_lookups[pool_id] = (manager_address, pool_hash)
-                    pool_id_to_type[pool_id, _POOL_KIND_V4] = pool_type
-
-        elif issubclass(pool_type, LiquidityPoolTable):
-            pool_kind = _pool_kind_for_type(pool_type)
-            for pool_id, token0_id, token1_id, address in session.execute(
-                sqlalchemy.select(
-                    pool_type.id,
-                    pool_type.token0_id,
-                    pool_type.token1_id,
-                    pool_type.address,
-                ).where(pool_type.chain == chain_id),
-            ).all():
-                if token0_id in candidate_tokens and token1_id in candidate_tokens:
-                    edges.append((token0_id, token1_id, pool_id, pool_kind))
-                    v2v3_addresses[pool_id] = address
-                    pool_id_to_type[pool_id, pool_kind] = pool_type
-
-        logger.debug(f"Added edges for pool type {pool_type.__name__}")
-
-    logger.debug(
-        f"Built graph at +{time.perf_counter() - start:.1f}s: {len(edges)} edges",
-    )
-
-    return _PreparedGraph(
-        edges=edges,
-        v2v3_addresses=v2v3_addresses,
-        v4_lookups=v4_lookups,
         pool_id_to_type=pool_id_to_type,
     )
 
@@ -563,14 +412,11 @@ def find_paths(
         allowed_token_ids: set[TokenId] | None = None
         if allowed_intermediate_tokens is not None:
             allowed_token_ids = set(
-                session.scalars(
-                    sqlalchemy.select(Erc20TokenTable.id).where(
-                        Erc20TokenTable.address.in_({
-                            get_checksum_address(t) for t in allowed_intermediate_tokens
-                        }),
-                        Erc20TokenTable.chain == chain_id,
-                    ),
-                ).all(),
+                resolve_token_ids(
+                    chain_id,
+                    (get_checksum_address(tok) for tok in allowed_intermediate_tokens),
+                    session,
+                ).values(),
             )
 
         prepared = _prepare_graph(
@@ -588,22 +434,12 @@ def find_paths(
         )
 
         for (start_token, end_token), direction in traversal_plan.items():
-            start_token_id = session.scalar(
-                sqlalchemy.select(Erc20TokenTable.id).where(
-                    Erc20TokenTable.address == start_token,
-                    Erc20TokenTable.chain == chain_id,
-                ),
-            )
+            start_token_id = resolve_token_ids(chain_id, [start_token], session).get(start_token)
             if start_token_id is None:
                 msg = f"Start token {start_token} was not found in the database."
                 raise DegenbotValueError(message=msg)
 
-            end_token_id = session.scalar(
-                sqlalchemy.select(Erc20TokenTable.id).where(
-                    Erc20TokenTable.address == end_token,
-                    Erc20TokenTable.chain == chain_id,
-                ),
-            )
+            end_token_id = resolve_token_ids(chain_id, [end_token], session).get(end_token)
             if end_token_id is None:
                 msg = f"End token {end_token} was not found in the database."
                 raise DegenbotValueError(message=msg)

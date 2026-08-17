@@ -9,13 +9,15 @@ session orchestration are shell concerns — rubric §2.1).
 """
 
 import pathlib
+from collections.abc import Iterable
 from typing import Any
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, Engine, create_engine, event
+from sqlalchemy import URL, Engine, create_engine, event, select
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
+from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.db import (
     db_backup_database,
     db_compact_database,
@@ -200,6 +202,30 @@ def heal_database(database_path: pathlib.Path) -> dict[str, Any]:
     report = db_heal_database(str(database_path))
     logger.info(f"Database at {database_path}: heal ({report['new_state']}).")
     return report
+
+
+def resolve_token_ids(
+    chain_id: int,
+    addresses: Iterable[str],
+    session: Session,
+) -> dict[str, int]:
+    """Map token addresses to their row ids for `chain_id`.
+
+    ORM query helper kept in the database layer so the pathfinding module
+    stays free of SQLAlchemy (ZNWXNC). Addresses not present in the
+    database are omitted from the mapping.
+
+    """
+    addresses = set(addresses)
+    if not addresses:
+        return {}
+    rows = session.execute(
+        select(Erc20TokenTable.address, Erc20TokenTable.id).where(
+            Erc20TokenTable.address.in_(addresses),
+            Erc20TokenTable.chain == chain_id,
+        ),
+    ).all()
+    return {str(addr): int(tid) for addr, tid in rows}
 
 
 def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:

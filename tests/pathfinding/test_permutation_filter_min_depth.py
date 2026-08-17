@@ -30,8 +30,11 @@ from eth_typing import ChainId
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
-from degenbot.database.models.base import Base, ExchangeTable
-from degenbot.database.operations import get_scoped_sqlite_session
+from degenbot.database.models.base import ExchangeTable
+from degenbot.database.operations import (
+    create_new_sqlite_database,
+    get_scoped_sqlite_session,
+)
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import find_paths, find_paths_async
 
@@ -52,8 +55,11 @@ POOL_A_B_ADDR = "0x2100000000000000000000000000000000000000"
 POOL_B_WETH_ADDR = "0x3100000000000000000000000000000000000000"
 
 
-def _build_in_memory_db() -> DatabaseSessionManager:
-    """Build an in-memory SQLite DB seeded with a synthetic 4-pool V2 graph.
+def _build_file_db(db_path: pathlib.Path) -> DatabaseSessionManager:
+    """Build a file-backed temp SQLite DB with a synthetic 4-pool V2 graph.
+
+    ZNWXNC: the Rust build_path_graph seam opens its own connection, so the
+    fixture uses a temp file instead of :memory:.
 
     Graph (nodes = tokens, edges = V2 pools):
         WETH ===pool1=== A
@@ -61,8 +67,8 @@ def _build_in_memory_db() -> DatabaseSessionManager:
         A     ===pool3=== B
         B     ===pool4=== WETH   (completes 3-hop cycle WETH-A-B-WETH)
     """
-    scoped = get_scoped_sqlite_session(database_path=pathlib.Path(":memory:"))
-    Base.metadata.create_all(bind=scoped.bind)
+    create_new_sqlite_database(db_path)
+    scoped = get_scoped_sqlite_session(database_path=db_path)
 
     session = scoped()
     try:
@@ -110,8 +116,8 @@ def _build_in_memory_db() -> DatabaseSessionManager:
 
 
 @pytest.fixture
-def db():
-    return _build_in_memory_db()
+def db(tmp_path):
+    return _build_file_db(tmp_path / "perm_filter_test.db")
 
 
 def _v2v2v2_filter():

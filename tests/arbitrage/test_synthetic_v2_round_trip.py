@@ -26,8 +26,11 @@ from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.bot import RustBot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
-from degenbot.database.models.base import Base, ExchangeTable
-from degenbot.database.operations import get_scoped_sqlite_session
+from degenbot.database.models.base import ExchangeTable
+from degenbot.database.operations import (
+    create_new_sqlite_database,
+    get_scoped_sqlite_session,
+)
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import find_paths_async
 from degenbot.runner.build_paths import resolve_directions
@@ -57,13 +60,13 @@ _RESERVES: dict[str, tuple[int, int]] = {
 }
 
 
-def _build_in_memory_db() -> DatabaseSessionManager:
-    """Seed an in-memory SQLite with two V2 pools forming a WETH-A-WETH cycle.
+def _build_file_db(db_path: pathlib.Path) -> DatabaseSessionManager:
+    """Seed a file-backed temp SQLite with two V2 pools forming a WETH-A-WETH cycle.
 
     Same pattern as tests/pathfinding/test_permutation_filter_min_depth.py.
     """
-    scoped = get_scoped_sqlite_session(database_path=pathlib.Path(":memory:"))
-    Base.metadata.create_all(bind=scoped.bind)
+    create_new_sqlite_database(db_path)
+    scoped = get_scoped_sqlite_session(database_path=db_path)
 
     session = scoped()
     try:
@@ -113,8 +116,8 @@ def _build_in_memory_db() -> DatabaseSessionManager:
 
 
 @pytest.fixture
-def db():
-    return _build_in_memory_db()
+def db(tmp_path):
+    return _build_file_db(tmp_path / "synthetic_v2_test.db")
 
 
 async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
