@@ -104,11 +104,11 @@ def swap(
 # ── Settlement and token movement ──
 
 @payable
-def settle():
+def settle() -> uint256:
     ...
 
 @payable
-def settleFor(recipient: address):
+def settleFor(recipient: address) -> uint256:
     ...
 
 @nonpayable
