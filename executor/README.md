@@ -3,7 +3,7 @@
 On-chain arbitrage executor contracts for Uniswap V2/V3/V4, written in Vyper 0.5.0a3.
 
 > **[`docs/user-guide.md`](docs/user-guide.md)** — Comprehensive guide for constructing, encoding, and executing optimal arbitrage paths. Includes the full 2-hop and 3-hop path encyclopedia with command stream examples for all 27 permutations.
-
+>
 > **[`docs/pool-mechanics.md`](docs/pool-mechanics.md)** — Pool timing constraints, sync/settle ordering, direct custody rules, and V2/V3 reverse-order execution. Read this before constructing multi-hop swap paths.
 
 Two implementations — **tstore_executor** (static payload queue) and **cmd_executor** (compact command stream with dynamic amounts) — execute identical arbitrage paths using different dispatch mechanisms.

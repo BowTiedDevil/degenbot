@@ -24,7 +24,7 @@ pattern for every pool-permutation, and how to verify correctness.
 11. [2-Hop Path Encyclopedia](#11-2-hop-path-encyclopedia)
 12. [3-Hop Path Encyclopedia](#12-3-hop-path-encyclopedia)
 13. [ERC6909 (Mint/Burn) Strategies](#13-erc6909-mintburn-strategies)
-14. [Profit Checking](#14-profit-checking)
+14. [Profit Checking](#14-profit-checking--bribe-configuration)
 15. [Bribe System](#15-bribe-system)
 16. [Putting It All Together: Encoding a Complete Transaction](#16-putting-it-all-together-encoding-a-complete-transaction)
 17. [Troubleshooting](#17-troubleshooting)

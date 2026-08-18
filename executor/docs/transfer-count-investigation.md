@@ -102,7 +102,7 @@ Transfer #5 is an unavoidable V3 IIA payment. #1 and #5 both move USDC
 timing issue as V2-V3-V3: V2a must send USDC to executor (the callback
 recipient), and then executor sends it to V3b during V3b's callback.
 
-#3 and #4 are both V4_TAKE WETH: PM→V2a and PM→executor. Merging them
+Transfers #3 and #4 are both V4_TAKE WETH: PM→V2a and PM→executor. Merging them
 into one TAKE to the executor (then executor sends to V2a) yields no
 savings (2 transfers instead of 2). But if V2a uses the
 WETH as excess balance, #1 (USDC V2a→executor) and #5 might be mergeable.
