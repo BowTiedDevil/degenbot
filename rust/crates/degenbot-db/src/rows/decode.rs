@@ -32,7 +32,11 @@ pub(crate) fn decode_i256(s: &str) -> Result<alloy::primitives::I256, DbError> {
 /// # Errors
 ///
 /// Returns [`DbError::Decode`] if the non-null value is not a valid `U256`.
-#[expect(dead_code)] // exercised by Aave Option<U256> rows once fetch_aave_* lands (AZGJUN)
+// Reference-free until fetch_aave_* lands (AZGJUN) — keep it that way: a call
+// from dead code (e.g. the aave module's `RowGet` impls) left this `expect`
+// unfulfilled on older rustc versions, breaking builds under
+// `[workspace.lints.rust] warnings = "deny"` (macos-14 wheel CI).
+#[expect(dead_code)]
 pub(crate) fn decode_opt_u256(s: Option<&str>) -> Result<Option<U256>, DbError> {
     s.map(decode_u256).transpose()
 }

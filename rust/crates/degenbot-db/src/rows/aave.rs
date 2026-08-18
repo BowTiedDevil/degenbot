@@ -17,7 +17,7 @@ use alloy::primitives::{Address, U256};
 use rusqlite::Row;
 
 use crate::error::DbError;
-use crate::rows::decode::{decode_address, decode_opt_address, decode_opt_u256, decode_u256};
+use crate::rows::decode::{decode_address, decode_opt_address, decode_u256};
 
 macro_rules! aave_row {
     ($(#[$m:meta])* $name:ident { $($(#[$f:meta])* $field:ident : $ty:ty),* $(,)? }) => {
@@ -104,7 +104,13 @@ impl RowGet for Option<String> {
 
 impl RowGet for Option<U256> {
     fn row_get(row: &Row<'_>, idx: usize) -> Result<Self, DbError> {
-        decode_opt_u256(row.get::<_, Option<String>>(idx)?.as_deref())
+        // Inlined rather than `decode_opt_u256` so that helper stays
+        // reference-free while this module is dead (see its `expect` in
+        // rows/decode.rs).
+        row.get::<_, Option<String>>(idx)?
+            .as_deref()
+            .map(decode_u256)
+            .transpose()
     }
 }
 
