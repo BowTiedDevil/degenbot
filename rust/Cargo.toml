@@ -18,7 +18,7 @@
 # (`crates/degenbot-python/`) inherits it, and maturin reads that crate's
 # version to set the published wheel's — so one edit moves both halves.
 [workspace.package]
-version = "0.6.0-alpha.3"
+version = "0.6.0-alpha.4"
 edition = "2021"
 license = "MIT"
 publish = false
