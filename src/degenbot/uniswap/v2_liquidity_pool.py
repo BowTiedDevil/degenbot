@@ -15,10 +15,9 @@ from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import ExternalUpdateError, NoPoolStateAvailable
 from degenbot.types import DexIdentity, LiquidityPool
-from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
@@ -420,56 +419,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
                 reserves_token1=state.reserves_token1 + token1_delta,
                 block=self.update_block if override_state is not None else None,
             ),
-        )
-
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap.
-
-        Returns:
-            The simulation result with amounts and state transitions.
-
-        Raises:
-            DegenbotValueError: If tokens are unknown or mismatched.
-
-        """
-        v2_state: UniswapV2PoolState | None = None
-        if state_override is not None:
-            if not isinstance(state_override, UniswapV2PoolState):
-                msg = f"Expected UniswapV2PoolState, got {type(state_override).__name__}"
-                raise DegenbotValueError(message=msg)
-            v2_state = state_override
-
-        if token_in == self._token0.address:
-            token_in_obj = self._token0
-            expected_token_out = self._token1.address
-        elif token_in == self._token1.address:
-            token_in_obj = self._token1
-            expected_token_out = self._token0.address
-        else:
-            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
-
-        if token_out != expected_token_out:
-            msg = f"token_out {token_out} does not match expected {expected_token_out}"
-            raise DegenbotValueError(message=msg)
-
-        result = self.simulate_exact_input_swap(
-            token_in=token_in_obj,
-            token_in_quantity=amount_in,
-            override_state=v2_state,
-        )
-        zero_for_one = token_in_obj == self._token0
-        amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=result.initial_state,
-            final_state=result.final_state,
         )
 
     def calculate_tokens_out_from_tokens_in(

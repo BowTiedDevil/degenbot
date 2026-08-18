@@ -39,7 +39,6 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import StaleRateResult
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.pool_protocols import SimulationResult
 
 from .types import (
     BalancerV2PoolState,
@@ -53,7 +52,6 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.types import LiquidityPool
-    from degenbot.types.abstract import AbstractPoolState
 
 # Enum for deployed StableMath invariant versions.
 # V1: always-roundDown with D_P accumulation (older ComposableStablePools)
@@ -663,53 +661,6 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             )
 
         return result
-
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,
-        state_override: AbstractPoolState | None = None,
-        block_identifier: int | str | None = None,
-    ) -> SimulationResult:
-        """Simulate swap.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: See function documentation.
-
-        """
-        balancer_state: BalancerV2PoolState | None = None
-        if state_override is not None:
-            if not isinstance(state_override, BalancerV2PoolState):
-                msg = f"Expected BalancerV2PoolState, got {type(state_override).__name__}"
-                raise DegenbotValueError(message=msg)
-            balancer_state = state_override
-
-        token_in_obj = next((t for t in self._tokens if t.address == token_in), None)
-        if token_in_obj is None:
-            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
-
-        token_out_obj = next((t for t in self._tokens if t.address == token_out), None)
-        if token_out_obj is None:
-            raise DegenbotValueError(message=f"token_out {token_out} not in pool")
-
-        initial_state = balancer_state or self.state
-        amount_out = self.calculate_tokens_out_from_tokens_in(
-            token_in=token_in_obj,
-            token_in_quantity=amount_in,
-            token_out=token_out_obj,
-            override_state=balancer_state,
-            block_identifier=block_identifier,
-        )
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=initial_state,
-            final_state=initial_state,
-        )
 
     def external_update(
         self,

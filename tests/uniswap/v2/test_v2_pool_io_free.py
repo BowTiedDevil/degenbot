@@ -149,14 +149,6 @@ class TestV2PoolIOFreeConstructor:
             state_block=18_000_000,
         )
 
-        # simulate_swap works
-        result = pool.simulate_swap(
-            token_in=weth.address,
-            amount_in=10**18,
-            token_out=usdc.address,
-        )
-        assert result.amount_out > 0
-
         # external_update works
         pool.external_update(
             UniswapV2PoolExternalUpdate(

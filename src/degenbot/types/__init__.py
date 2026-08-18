@@ -8,8 +8,6 @@ from .concrete import BoundedCache, KeyedDefaultDict
 from .pool_protocols import (
     MultiTokenSwapCalculation,
     PoolSimulation,
-    ReverseSimulatablePool,
-    SimulationResult,
     StateManageablePool,
     TwoTokenSwapCalculation,
 )
@@ -22,8 +20,6 @@ __all__ = (
     "LiquidityPool",
     "MultiTokenSwapCalculation",
     "PoolSimulation",
-    "ReverseSimulatablePool",
-    "SimulationResult",
     "StateManageablePool",
     "TwoTokenSwapCalculation",
     "dex_identity",

@@ -35,13 +35,12 @@ from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
 from degenbot.types import LiquidityPool
-from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
 )
-from degenbot.types.pool_protocols import SimulationResult
 from degenbot.types.rpc_types import BlockIdentifier
 
 
@@ -808,62 +807,6 @@ class CurveStableswapPool(
         raise DegenbotValueError(
             message="Tokens not held by pool or in underlying base pool",
         )  # pragma: no cover
-
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: See function documentation.
-
-        """
-        curve_state: CurveStableswapPoolState | None = None
-        if state_override is not None:
-            if not isinstance(state_override, CurveStableswapPoolState):
-                msg = f"Expected CurveStableswapPoolState, got {type(state_override).__name__}"
-                raise DegenbotValueError(message=msg)
-            curve_state = state_override
-        token_in_obj = next((t for t in self._tokens if t.address == token_in), None)
-        if token_in_obj is None:
-            all_tokens = list(self._tokens)
-            if self.base_pool is not None:
-                all_tokens.extend(self.base_pool.tokens)
-            if token_in not in {t.address for t in all_tokens}:
-                raise DegenbotValueError(message=f"token_in {token_in} not in pool")
-
-        token_out_obj = next((t for t in self._tokens if t.address == token_out), None)
-        if token_out_obj is None:
-            all_tokens = list(self._tokens)
-            if self.base_pool is not None:
-                all_tokens.extend(self.base_pool.tokens)
-            if token_out not in {t.address for t in all_tokens}:
-                raise DegenbotValueError(message=f"token_out {token_out} not in pool")
-
-        if token_in_obj is None or token_out_obj is None:
-            msg = f"token_in {token_in} or token_out {token_out} not found in pool tokens"
-            raise DegenbotValueError(message=msg)
-
-        initial_state = curve_state or self.state
-        amount_out = self.calculate_tokens_out_from_tokens_in(
-            token_in=token_in_obj,
-            token_out=token_out_obj,
-            token_in_quantity=amount_in,
-            override_state=curve_state,
-        )
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=initial_state,
-            final_state=initial_state,
-        )
 
 
 class _LazyBasePool:

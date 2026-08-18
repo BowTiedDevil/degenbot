@@ -48,10 +48,9 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.types import LiquidityPool
-from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
@@ -952,48 +951,3 @@ class UniswapV4Pool(
             raise NoPoolStateAvailable(block=block) from e
         if restored is not None:
             self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
-
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,  # ruff:ignore[unused-method-argument]
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap.
-
-        Returns:
-            The simulation result with amounts (final_state = initial_state —
-            V4 simulation doesn't mutate state mid-arbitrage; preserved from
-            the pre-companion behavior).
-
-        Raises:
-            DegenbotValueError: If tokens are unknown or state type mismatches.
-
-        """
-        v4_state: UniswapV4PoolState | None = None
-        if state_override is not None:
-            if not isinstance(state_override, UniswapV4PoolState):
-                msg = f"Expected UniswapV4PoolState, got {type(state_override).__name__}"
-                raise DegenbotValueError(message=msg)
-            v4_state = state_override
-
-        if token_in == self._token0.address:
-            token_in_obj = self._token0
-        elif token_in == self._token1.address:
-            token_in_obj = self._token1
-        else:
-            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
-
-        initial_state = v4_state or self.state
-        amount_out = self.calculate_tokens_out_from_tokens_in(
-            token_in=token_in_obj,
-            token_in_quantity=amount_in,
-            override_state=v4_state,
-        )
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=initial_state,
-            final_state=initial_state,
-        )

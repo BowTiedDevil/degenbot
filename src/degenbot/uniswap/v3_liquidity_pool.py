@@ -39,10 +39,9 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.types import LiquidityPool
-from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
@@ -844,84 +843,4 @@ class UniswapV3Pool(
                 tick=end_tick,
                 block=self.update_block if override_state is None else initial_state.block,
             ),
-        )
-
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,  # ruff:ignore[unused-method-argument]
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap.
-
-        Returns:
-            The simulation result with amounts and state transitions.
-
-        Raises:
-            DegenbotValueError: If tokens are unknown or mismatched.
-
-        """
-        v3_state: UniswapV3PoolState | None = None
-        if state_override is not None:
-            if not isinstance(state_override, UniswapV3PoolState):
-                msg = f"Expected UniswapV3PoolState, got {type(state_override).__name__}"
-                raise DegenbotValueError(message=msg)
-            v3_state = state_override
-        if token_in == self._token0.address:
-            token_in_obj = self._token0
-        elif token_in == self._token1.address:
-            token_in_obj = self._token1
-        else:
-            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
-
-        result = self.simulate_exact_input_swap(
-            token_in=token_in_obj,
-            token_in_quantity=amount_in,
-            override_state=v3_state,
-        )
-        zero_for_one = token_in_obj == self._token0
-        amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=result.initial_state,
-            final_state=result.final_state,
-        )
-
-    def simulate_swap_for_output(
-        self,
-        token_in: ChecksumAddress,  # ruff:ignore[unused-method-argument]
-        token_out: ChecksumAddress,
-        amount_out: int,
-        state_override: UniswapV3PoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap for output.
-
-        Returns:
-            The simulation result with amounts and state transitions.
-
-        Raises:
-            DegenbotValueError: If token_out is unknown.
-
-        """
-        if token_out == self._token0.address:
-            token_out_obj = self._token0
-        elif token_out == self._token1.address:
-            token_out_obj = self._token1
-        else:
-            raise DegenbotValueError(message=f"token_out {token_out} not in pool")
-
-        result = self.simulate_exact_output_swap(
-            token_out=token_out_obj,
-            token_out_quantity=amount_out,
-            override_state=state_override,
-        )
-        zero_for_one = token_out_obj == self._token1
-        amount_in = result.amount0_delta if zero_for_one else result.amount1_delta
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=result.initial_state,
-            final_state=result.final_state,
         )

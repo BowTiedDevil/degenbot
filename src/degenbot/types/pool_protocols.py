@@ -11,7 +11,6 @@ Three pool-shape protocols:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -151,19 +150,6 @@ class StableswapPool(Protocol):
         ...
 
 
-@dataclass(slots=True, frozen=True, kw_only=True)
-class SimulationResult:
-    """Pool-agnostic simulation output.
-
-    Returned by PoolSimulation.simulate_swap for all pool types.
-    """
-
-    amount_in: int
-    amount_out: int
-    initial_state: AbstractPoolState
-    final_state: AbstractPoolState
-
-
 @runtime_checkable
 class PoolSimulation(Protocol):
     """Required interface for all pools.
@@ -176,40 +162,12 @@ class PoolSimulation(Protocol):
         """Pool contract address."""
         ...
 
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate an exact-input swap and return the result."""
-        ...
-
     def subscribe(self, subscriber: Subscriber) -> None:
         """Subscribe a callback to pool state updates."""
         ...
 
     def unsubscribe(self, subscriber: Subscriber) -> None:
         """Remove a subscriber from pool state updates."""
-        ...
-
-
-@runtime_checkable
-class ReverseSimulatablePool(Protocol):
-    """Optional interface for pools that support exact-output simulation.
-
-    Not all pool types can compute input from desired output.
-    """
-
-    def simulate_swap_for_output(
-        self,
-        token_in: ChecksumAddress,
-        token_out: ChecksumAddress,
-        amount_out: int,
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate an exact-output swap and return the result."""
         ...
 
 

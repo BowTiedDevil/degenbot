@@ -23,9 +23,8 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
+from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -350,97 +349,6 @@ class AerodromeV2Pool(
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
         self._notify_subscribers(message=AerodromeV2PoolStateUpdated(self.state))
-
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: See function documentation.
-
-        """
-        aero_state: AerodromeV2PoolState | None = None
-        if state_override is not None:
-            if not isinstance(state_override, AerodromeV2PoolState):
-                msg = f"Expected AerodromeV2PoolState, got {type(state_override).__name__}"
-                raise DegenbotValueError(message=msg)
-            aero_state = state_override
-
-        if token_in == self._token0.address:
-            token_in_obj = self._token0
-            expected_token_out = self._token1.address
-        elif token_in == self._token1.address:
-            token_in_obj = self._token1
-            expected_token_out = self._token0.address
-        else:
-            raise DegenbotValueError(message=f"token_in {token_in} not in pool")
-
-        if token_out != expected_token_out:
-            msg = f"token_out {token_out} does not match expected {expected_token_out}"
-            raise DegenbotValueError(message=msg)
-
-        initial_state = aero_state or self.state
-        amount_out = self.calculate_tokens_out_from_tokens_in(
-            token_in=token_in_obj,
-            token_in_quantity=amount_in,
-            override_state=aero_state,
-        )
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=initial_state,
-            final_state=initial_state,
-        )
-
-    def simulate_swap_for_output(
-        self,
-        token_in: ChecksumAddress,
-        token_out: ChecksumAddress,
-        amount_out: int,
-        state_override: AerodromeV2PoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap for output.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: See function documentation.
-
-        """
-        if token_out == self._token0.address:
-            token_out_obj = self._token0
-            expected_token_in = self._token1.address
-        elif token_out == self._token1.address:
-            token_out_obj = self._token1
-            expected_token_in = self._token0.address
-        else:
-            raise DegenbotValueError(message=f"token_out {token_out} not in pool")
-
-        if token_in != expected_token_in:
-            msg = f"token_in {token_in} does not match expected {expected_token_in}"
-            raise DegenbotValueError(message=msg)
-
-        initial_state = state_override or self.state
-        amount_in = self.calculate_tokens_in_from_tokens_out(
-            token_out=token_out_obj,
-            token_out_quantity=amount_out,
-            override_state=state_override,
-        )
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=initial_state,
-            final_state=initial_state,
-        )
 
 
 class AerodromeV3Pool(UniswapV3Pool):

@@ -11,8 +11,6 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.types.abstract.pool_state import AbstractPoolState
-    from degenbot.types.pool_protocols import SimulationResult
 
 
 class AbstractLiquidityPool(AddressComparable, ABC):
@@ -25,17 +23,6 @@ class AbstractLiquidityPool(AddressComparable, ABC):
     @abstractmethod
     def tokens(self) -> tuple[Erc20Token, ...]:
         """Tokens."""
-        ...
-
-    @abstractmethod
-    def simulate_swap(
-        self,
-        token_in: ChecksumAddress,
-        amount_in: int,
-        token_out: ChecksumAddress,
-        state_override: AbstractPoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap."""
         ...
 
     def __str__(self) -> str:

@@ -1,19 +1,14 @@
 """Tests for pool protocol types.
 
 Verifies that existing pool classes structurally satisfy the defined
-protocols once they implement the required methods (simulate_swap,
-subscribe, unsubscribe).
+protocols once they implement the required methods (subscribe, unsubscribe).
 """
 
-import pytest
 from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.pool_protocols import (
     PoolSimulation,
-    ReverseSimulatablePool,
-    SimulationResult,
     StateManageablePool,
 )
 
@@ -30,15 +25,6 @@ class FakePoolSimulation:
     def address(self):
         return self._address
 
-    def simulate_swap(self, token_in, amount_in, token_out, state_override=None):
-
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_in,
-            initial_state=AbstractPoolState(address=self._address, block=1),
-            final_state=AbstractPoolState(address=self._address, block=1),
-        )
-
     def subscribe(self, subscriber):
         self._subscribers.add(subscriber)
 
@@ -51,17 +37,6 @@ class TestPoolSimulation:
         pool = FakePoolSimulation()
         assert isinstance(pool, PoolSimulation)
 
-    def test_simulate_swap_returns_result(self):
-        pool = FakePoolSimulation()
-        result = pool.simulate_swap(
-            token_in="0x" + "b" * 40,
-            amount_in=1000,
-            token_out="0x" + "c" * 40,
-        )
-        assert isinstance(result, SimulationResult)
-        assert result.amount_in == 1000
-        assert result.amount_out == 1000
-
     def test_subscribe_unsubscribe(self):
         pool = FakePoolSimulation()
         subscriber = object()
@@ -69,22 +44,6 @@ class TestPoolSimulation:
         assert subscriber in pool._subscribers
         pool.unsubscribe(subscriber)
         assert subscriber not in pool._subscribers
-
-
-class TestReverseSimulatablePool:
-    def test_not_satisfied_without_method(self):
-        pool = FakePoolSimulation()
-        assert not isinstance(pool, ReverseSimulatablePool)
-
-    def test_satisfied_with_method(self):
-        class FakeReversePool(FakePoolSimulation):
-            def simulate_swap_for_output(
-                self, token_in, token_out, amount_out, state_override=None
-            ):
-                return self.simulate_swap(token_in, amount_out, token_out, state_override)
-
-        pool = FakeReversePool()
-        assert isinstance(pool, ReverseSimulatablePool)
 
 
 class TestStateManageablePool:
@@ -105,28 +64,3 @@ class TestStateManageablePool:
 
         pool = FakeStateManageablePool()
         assert isinstance(pool, StateManageablePool)
-
-
-class TestSimulationResult:
-    def test_frozen(self):
-
-        result = SimulationResult(
-            amount_in=100,
-            amount_out=200,
-            initial_state=AbstractPoolState(address="0x" + "a" * 40, block=1),
-            final_state=AbstractPoolState(address="0x" + "a" * 40, block=2),
-        )
-        with pytest.raises(AttributeError):
-            result.amount_in = 999
-
-    def test_fields(self):
-
-        addr = "0x" + "a" * 40
-        result = SimulationResult(
-            amount_in=100,
-            amount_out=200,
-            initial_state=AbstractPoolState(address=addr, block=1),
-            final_state=AbstractPoolState(address=addr, block=2),
-        )
-        assert result.amount_in == 100
-        assert result.amount_out == 200

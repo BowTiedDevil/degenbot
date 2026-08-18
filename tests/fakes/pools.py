@@ -49,15 +49,6 @@ class FakeUniswapV4Pool(AbstractLiquidityPool):
     def tokens(self) -> tuple[object, object]:
         return (object(), object())
 
-    def simulate_swap(
-        self,
-        _token_in: str,
-        _amount_in: int,
-        _token_out: str,
-        _state_override: object | None = None,
-    ) -> object:
-        return object()
-
     def __eq__(self, other: object) -> bool:
         if isinstance(other, FakeUniswapV4Pool):
             return self.address == other.address and self.pool_id == other.pool_id
