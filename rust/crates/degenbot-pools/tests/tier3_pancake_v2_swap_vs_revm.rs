@@ -53,7 +53,7 @@
 //! `tier3-oracle/verify-tier3-artifacts.sh` recompiles every harness and
 //! byte-compares it to the committed artifact. After a harness-source edit,
 //! regenerate + publish via
-//! `tier3-oracle/build-tier3-pancake2-swap-harness.sh`.
+//! `tier3-oracle/build-tier3-pancake-v2-swap-harness.sh`.
 
 #![expect(clippy::doc_markdown)] // repo-consistent tier3 doc lint
 

@@ -255,7 +255,7 @@ test-tier3-pancake:
 test-tier3-pancake2:
     #!/usr/bin/env bash
     set -euo pipefail
-    tier3-oracle/build-tier3-pancake2-swap-harness.sh
+    tier3-oracle/build-tier3-pancake-v2-swap-harness.sh
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v2_swap_vs_revm
@@ -319,7 +319,7 @@ rebuild-tier3-artifacts:
     tier3-oracle/build-tier3-curve-swap-harness.sh
     tier3-oracle/build-tier3-balancer-swap-harness.sh
     tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
-    tier3-oracle/build-tier3-pancake2-swap-harness.sh
+    tier3-oracle/build-tier3-pancake-v2-swap-harness.sh
 
 # ========== Code Quality ==========
 

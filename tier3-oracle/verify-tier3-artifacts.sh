@@ -64,7 +64,7 @@ check_one build-tier3-harnesses.sh              SwapMathV3Harness.sol/SwapMathV3
 check_one build-tier3-curve-swap-harness.sh     CurveSwapOracleHarness.sol/CurveSwapOracleHarness.json
 check_one build-tier3-balancer-swap-harness.sh  BalancerSwapOracleHarness.sol/BalancerSwapOracleHarness.json
 check_one build-tier3-pancake-v3-swap-harness.sh PancakeV3SwapOracleHarness.sol/PancakeV3SwapOracleHarness.json
-check_one build-tier3-pancake2-swap-harness.sh PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json
+check_one build-tier3-pancake-v2-swap-harness.sh PancakeV2SwapOracleHarness.sol/PancakeV2SwapOracleHarness.json
 
 # The PINNED PancakeSwap V2 pair (artifacts/PancakeV2Pair/): recompile the
 # committed source at the pinned settings and assert the creation code is
@@ -117,7 +117,7 @@ JSON
     b=$(python3 -c "import sys;s=sys.argv[1].lower();print(s[2:] if s.startswith('0x') else s)" "${committed}")
     if [ "${a}" != "${b}" ]; then
         echo "  ✗ PancakeV2 pair creation code ≠ fresh compile at pinned settings"
-        echo "    Re-run build-tier3-pancake2-swap-harness.sh / refresh artifacts/PancakeV2Pair/ then commit."
+        echo "    Re-run build-tier3-pancake-v2-swap-harness.sh / refresh artifacts/PancakeV2Pair/ then commit."
         fail=1
     else
         echo "  ✓ PancakeV2 pair creation code matches a fresh compile at pinned settings (keccak → 0x57224589… asserted in Rust)"
