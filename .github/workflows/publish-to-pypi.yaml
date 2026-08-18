@@ -70,6 +70,12 @@ jobs:
           # rust/crates/degenbot-bot/src/profiling.rs.
           args: --release --out dist --features pyo3/extension-module ${{ matrix.args }}
           sccache: 'true'
+          # Pin the native (non-manylinux) legs to the same Rust as ci.yml's
+          # dtolnay jobs. Unpinned, each runner image builds with its own
+          # preinstalled rustc (the macos-14 image's older one left a
+          # `#[expect(dead_code)]` in degenbot-db unfulfilled and broke the
+          # wheel build under the workspace's `warnings = "deny"`).
+          rust-toolchain: stable
           working-directory: .
 
       - name: Upload wheels
