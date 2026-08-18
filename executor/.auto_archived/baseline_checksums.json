@@ -1,7 +1,0 @@
-{
-  "fake_erc20": "db0f26280314e519624f5752da6892b0f8d840bc9aa2a687c2e17d0f6b65067a",
-  "fake_uniswap_v2_pair": "60cccdea4ec0e3e78f14a093e092e3c1ddfb7293f910ba0b2e3b25d44ed57aa2",
-  "fake_uniswap_v3_pool": "96fce9709c76029625e27cb3eddae54805c0f175e7fdb30c54956c0fd59e6e1b",
-  "fake_uniswap_v4_pool_manager": "f2fcaa176376c3058e80009865beeb04b3f43d89d0407684391939305ff8ed44",
-  "fake_weth": "0aed3b3ff87e118cb2835b8d8eadbe99989e11a0da1866bfa97e72b95d718c20"
-}
