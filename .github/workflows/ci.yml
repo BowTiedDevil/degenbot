@@ -163,6 +163,23 @@ jobs:
       - name: Verify committed harness bytecode matches a fresh compile
         run: just verify-tier3-artifacts
 
+      # The same, for the Vyper executor (BHL2R2 / tier-3b): recompile the
+      # vendored executor/contracts source with the pinned vyper 0.5.0a3 and
+      # byte-compare the committed artifacts. Since SRMMM7 the toolchain is
+      # self-contained in-repo (executor/ uv project, interpreter pinned via
+      # executor/.python-version — `uv run` fetches it on a fresh runner).
+      - name: Install uv (executor vyper toolchain)
+        uses: astral-sh/setup-uv@v7
+
+      - name: Cache uv wheel cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-executor-${{ hashFiles('executor/uv.lock') }}
+
+      - name: Verify committed executor artifact matches a fresh compile
+        run: just verify-tier3-executor-artifact
+
   rust-build:
     name: Rust Build
     runs-on: ubuntu-latest
