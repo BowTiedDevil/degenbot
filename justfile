@@ -295,12 +295,12 @@ verify-tier3-artifacts:
     tier3-oracle/verify-tier3-artifacts.sh
 
 # Validate the committed Vyper executor artifact (BHL2R2 / tier-3b): recompile
-# src-executor/cmd_executor.vy with the pinned vyper 0.5.0a3 (into a throwaway
-# dir, PUBLISH=0) and byte-compare creation + runtime against what the Rust
-# tier-3b tests load from `tier3-oracle/artifacts/executor/`. This is the
-# authoritative compile-vs-use check for the vyper artifact; the toolchain-free
-# complement `tier3_executor_artifacts.rs` runs in the default suite. Requires
-# the toolchain: `/workspaces/executor` uv project (vyper 0.5.0a3). Wired into
+# executor/contracts/cmd_executor.vy with the pinned vyper 0.5.0a3 (into a
+# throwaway dir, PUBLISH=0) and byte-compare against what the Rust tier-3b tests
+# load from `tier3-oracle/artifacts/executor/`. This is the authoritative
+# compile-vs-use check for the vyper artifact; the toolchain-free complement
+# `tier3_executor_artifacts.rs` runs in the default suite. Requires the
+# toolchain: the in-repo `executor/` uv project (vyper ==0.5.0a3). Wired into
 # the CI `tier3-oracle` job (not the default cargo-test path).
 verify-tier3-executor-artifact:
     tier3-oracle/verify-tier3-executor-artifact.sh

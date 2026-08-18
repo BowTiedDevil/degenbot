@@ -2,17 +2,24 @@
 # Build the committed Vyper executor artifact for the BHL2R2 tier-3b oracle
 # (deterministic revm replay of the V3->V4->V3 sim-Halt against real bytecode).
 #
-# Compiles `/workspaces/executor` contracts/cmd_executor.vy with the PINNED
+# Compiles the vendored `executor/contracts/cmd_executor.vy` with the PINNED
 # vyper 0.5.0a3 (the only version proven to compile it — ./AGENTS.md + task
 # 2ISTMX), emits creation + runtime bytecode + ABI + method identifiers +
 # error map + immutable-deploy layout, and writes the artifact + manifest under
 # `artifacts/executor/`. The compiled output is byte-for-byte deterministic
-# (verified: a fresh build of the committed `src-executor` tree equals the
-# committed artifact).
+# (verified: a fresh build of the committed source equals the committed
+# artifact). The V3 topology harness (`src-executor/ExecutorV3Harness.sol`)
+# is compiled alongside with solc 0.7.6.
 #
-# Toolchain: requires the `/workspaces/executor` uv project (vyper 0.5.0a3).
-# This mirrors `build-tier3-*-swap-harness.sh` and is wired into the CI
-# `tier3-oracle` job (NOT the default cargo-test path, which is toolchain-free).
+# Toolchain: the in-repo `executor/` uv project (`uv run vyper` executes
+# inside it; vyper pinned ==0.5.0a3, requires-python >=3.14). The executor
+# contracts were pulled in from the sibling /workspaces/executor repo
+# (epic SRMMM7) — degenbot is now self-contained.
+#
+# EXECUTOR_DIR / VYPROOT env vars override the in-repo defaults for one-off
+# builds. This mirrors `build-tier3-*-swap-harness.sh` and is wired into the
+# CI `tier3-oracle` job (NOT the default cargo-test path, which is
+# toolchain-free).
 #
 # PUBLISH=1 (default) writes into `artifacts/executor/`.
 # PUBLISH=0 writes into `$OUT_DIR/executor/` (used by verify-tier3-executor-artifact.sh).
@@ -20,23 +27,26 @@ set -euo pipefail
 TD="$(cd "$(dirname "$0")" && pwd)"
 cd "${TD}"
 
-EXECUTOR_SRC="${EXECUTOR_SRC:-/workspaces/executor}"
-VYPROOT="${VYPROOT:-${EXECUTOR_SRC}}"
+REPO_ROOT="$(cd "${TD}/.." && pwd)"
+EXECUTOR_DIR="${EXECUTOR_DIR:-${REPO_ROOT}/executor}"
+VYPROOT="${VYPROOT:-${EXECUTOR_DIR}}"
+VYPER_SRC="${EXECUTOR_DIR}/contracts/cmd_executor.vy"
 OUT_ROOT="${OUT_DIR:-${TD}/artifacts}"
 OUT="${OUT_ROOT}/executor"
 
+# The V3 topology harness (solc 0.7.6) stays oracle-side; the Vyper executor
+# source + interfaces live in the vendored executor/ project.
 SRC_DIR="src-executor"
-VY="cmd_executor.vy"
 
-echo "▸ compiling ${SRC_DIR}/${VY} with pinned vyper 0.5.0a3"
+echo "▸ compiling ${VYPER_SRC} with pinned vyper 0.5.0a3"
 mkdir -p "${OUT}"
 # `uv run vyper` must run inside the executor project (its venv + pyproject own
-# vyper 0.5.0a3 and the `ethereum` builtin package). Vyper resolves the
-# `.interfaces` relative import from the input file's own directory, so passing
-# the absolute src-executor path works regardless of cwd.
+# the pinned vyper 0.5.0a3 and the `ethereum` builtin package). Vyper resolves
+# the `.interfaces` relative import from the input file's own directory, so
+# passing the absolute contracts path works regardless of cwd.
 (
   cd "${VYPROOT}"
-  uv run vyper -f combined_json "${TD}/${SRC_DIR}/${VY}" > /tmp/tier3_executor_combined.json
+  uv run vyper -f combined_json "${VYPER_SRC}" > /tmp/tier3_executor_combined.json
 )
 
 # ── V3 topology harness (solc 0.7.6) ─────────────────────────────────────
@@ -88,9 +98,10 @@ print(f"wrote {sys.argv[2]}")
 PYV3
 rm -f "${RAW}"
 
-python3 - "$OUT" "${SRC_DIR}" "/tmp/tier3_executor_combined.json" "$VY" <<'PY'
+python3 - "$OUT" "$REPO_ROOT" "/tmp/tier3_executor_combined.json" "$VYPER_SRC" <<'PY'
 import json, hashlib, os, sys
-out, src_dir, combined_path, vy_name = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+out, repo_root, combined_path, vy_abs = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+vy_name = os.path.basename(vy_abs)
 d = json.load(open(combined_path))
 key = [k for k in d if vy_name in k]
 if not key:
@@ -116,19 +127,21 @@ open(f"{out}/cmd_executor.immutables.json", "w").write(json.dumps(c["layout"]["c
 # manifest: artifacts -> tracked-source sha256, plus toolchain pin. Every
 # artifact maps to the sha256 of the SAME git-tracked source (cmd_executor.vy),
 # mirroring write-harness-manifest.sh. The V3 topology harness (solc 0.7.6)
-# maps to its own tracked .sol source.
+# maps to its own tracked .sol source. `source` paths are REPO-ROOT-relative
+# (the guard test tier3_executor_artifacts.rs joins them against the repo root).
 def sha(p):
     return hashlib.sha256(open(p, "rb").read()).hexdigest()
-src_hash = sha(f"{src_dir}/{vy_name}")
-v3sol = "src-executor/ExecutorV3Harness.sol"
-v3_hash = sha(v3sol)
+vy_src = os.path.relpath(vy_abs, repo_root)
+src_hash = sha(vy_abs)
+v3sol_abs = os.path.join(repo_root, "tier3-oracle/src-executor/ExecutorV3Harness.sol")
+v3_hash = sha(v3sol_abs)
 art = {
-    "executor/cmd_executor.creation.hex":    {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
-    "executor/cmd_executor.runtime.hex":     {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
-    "executor/cmd_executor.abi.json":        {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
-    "executor/cmd_executor.error_map.json":  {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
-    "executor/cmd_executor.immutables.json": {"source": f"{src_dir}/{vy_name}", "sha256": src_hash},
-    "executor/ExecutorV3Harness.sol/ExecutorV3Harness.json": {"source": v3sol, "sha256": v3_hash},
+    "executor/cmd_executor.creation.hex":    {"source": vy_src, "sha256": src_hash},
+    "executor/cmd_executor.runtime.hex":     {"source": vy_src, "sha256": src_hash},
+    "executor/cmd_executor.abi.json":        {"source": vy_src, "sha256": src_hash},
+    "executor/cmd_executor.error_map.json":  {"source": vy_src, "sha256": src_hash},
+    "executor/cmd_executor.immutables.json": {"source": vy_src, "sha256": src_hash},
+    "executor/ExecutorV3Harness.sol/ExecutorV3Harness.json": {"source": "tier3-oracle/src-executor/ExecutorV3Harness.sol", "sha256": v3_hash},
 }
 with open(f"{out}/manifest.json", "w") as fh:
     json.dump({"vyper_version": d.get("version"), "artifacts": art}, fh, indent=2, sort_keys=True)

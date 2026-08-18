@@ -5,11 +5,13 @@
 //! `cargo test --workspace` suite and load the canonical executor bytecode from
 //! the COMMITTED `tier3-oracle/artifacts/executor/` tree, so no vyper is needed
 //! to RUN the suite. This test closes the drift hole that committed-binary
-//! decision opens: it recomputes the sha256 of the git-tracked
-//! `tier3-oracle/src-executor/cmd_executor.vy` and compares against the manifest
-//! recorded in `artifacts/executor/manifest.json`, and asserts each committed
-//! artifact is present (with non-empty hex bytecode for the `.hex` files).
-//! A tracked source edit without a rebuild+re-publish fails here.
+//! decision opens: it recomputes the sha256 of the git-tracked executor
+//! sources (REPO-ROOT-relative `source` paths recorded in the manifest —
+//! `executor/contracts/cmd_executor.vy` for the Vyper source, the oracle-side
+//! `.sol` for the V3 topology harness) and compares against
+//! `artifacts/executor/manifest.json`, asserting each committed artifact is
+//! present (with non-empty hex bytecode for the `.hex` files). A tracked
+//! source edit without a rebuild+re-publish fails here.
 //!
 //! The AUTHORITATIVE compile-vs-use check (requires the real vyper 0.5.0a3
 //! toolchain) is `tier3-oracle/verify-tier3-executor-artifact.sh` — it runs in
@@ -86,7 +88,9 @@ fn committed_executor_artifacts_match_tracked_source() {
 
         // 1. The git-tracked source must be present and hash to the manifest
         //    value — a tracked source edit without a rebuild fails here.
-        let source_path = root.join(expected_src);
+        //    `source` paths are REPO-ROOT-relative (see the build script's
+        //    manifest emission).
+        let source_path = repo_root().join(expected_src);
         let actual_hash = sha256_hex(&source_path);
         assert_eq!(
             actual_hash,

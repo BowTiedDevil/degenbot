@@ -1,9 +1,0 @@
-# WETH interface — matches canonical WETH9.
-
-@payable
-def deposit():
-    ...
-
-@nonpayable
-def withdraw(amount: uint256):
-    ...

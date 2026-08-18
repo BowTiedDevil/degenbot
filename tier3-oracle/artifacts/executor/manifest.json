@@ -2,27 +2,27 @@
   "artifacts": {
     "executor/ExecutorV3Harness.sol/ExecutorV3Harness.json": {
       "sha256": "b64bca5faa2fc9f01694ad542f9a322116328da40ea115300c11227109457075",
-      "source": "src-executor/ExecutorV3Harness.sol"
+      "source": "tier3-oracle/src-executor/ExecutorV3Harness.sol"
     },
     "executor/cmd_executor.abi.json": {
       "sha256": "6d73a00f1c729ddf0e7b3f1cd5b95fbd85365b579911ef53c0163af12b168e2b",
-      "source": "src-executor/cmd_executor.vy"
+      "source": "executor/contracts/cmd_executor.vy"
     },
     "executor/cmd_executor.creation.hex": {
       "sha256": "6d73a00f1c729ddf0e7b3f1cd5b95fbd85365b579911ef53c0163af12b168e2b",
-      "source": "src-executor/cmd_executor.vy"
+      "source": "executor/contracts/cmd_executor.vy"
     },
     "executor/cmd_executor.error_map.json": {
       "sha256": "6d73a00f1c729ddf0e7b3f1cd5b95fbd85365b579911ef53c0163af12b168e2b",
-      "source": "src-executor/cmd_executor.vy"
+      "source": "executor/contracts/cmd_executor.vy"
     },
     "executor/cmd_executor.immutables.json": {
       "sha256": "6d73a00f1c729ddf0e7b3f1cd5b95fbd85365b579911ef53c0163af12b168e2b",
-      "source": "src-executor/cmd_executor.vy"
+      "source": "executor/contracts/cmd_executor.vy"
     },
     "executor/cmd_executor.runtime.hex": {
       "sha256": "6d73a00f1c729ddf0e7b3f1cd5b95fbd85365b579911ef53c0163af12b168e2b",
-      "source": "src-executor/cmd_executor.vy"
+      "source": "executor/contracts/cmd_executor.vy"
     }
   },
   "vyper_version": "0.5.0a3"
