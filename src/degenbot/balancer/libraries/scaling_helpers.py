@@ -70,24 +70,6 @@ def _upscale_array(amounts: list[int], scaling_factors: Sequence[int]) -> None:
         amounts[i] = _rs_mul_down(amounts[i], scaling_factors[i])
 
 
-def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> None:
-    """Downscale an entire array in-place (rounding down), equivalent to ``_downscale_down`` per.
-
-    in-place.
-    """
-    for i in range(len(amounts)):
-        amounts[i] = _rs_div_down(amounts[i], scaling_factors[i])
-
-
-def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
-    """Downscale an entire array in-place (rounding up), equivalent to ``_downscale_up`` per.
-
-    in-place.
-    """
-    for i in range(len(amounts)):
-        amounts[i] = _rs_div_up(amounts[i], scaling_factors[i])
-
-
 def _compute_scaling_factor(token: Erc20Token) -> int:
     # Tokens that don't implement the `decimals` method are not supported.
     token_decimals = token.decimals

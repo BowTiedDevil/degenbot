@@ -43,12 +43,3 @@ class DegenbotTypeError(DegenbotError):
 
 
 """DegenbotTypeError class."""
-
-
-class ExternalServiceError(DegenbotError):
-    """Raised on errors resulting to some call to an external service."""
-
-    def __init__(self, error: str) -> None:
-        """Initialize the instance."""
-        self.error = error
-        super().__init__(message=f"External service error: {error}")

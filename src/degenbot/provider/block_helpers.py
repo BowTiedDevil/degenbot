@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, cast
 
 from degenbot.exceptions import DegenbotValueError
-from degenbot.provider import AlloyProvider, AsyncAlloyProvider
+from degenbot.provider import AlloyProvider
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.rpc_types import BlockIdentifier
 
@@ -32,45 +32,6 @@ def get_number_for_block_identifier(
             return block_number_as_int
         case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
             block = provider.get_block(cast("int | str", identifier))
-            if block is None:
-                raise DegenbotValueError(message=f"Block {block_tag} not found")
-            block_number = block.get("number")
-            if TYPE_CHECKING:
-                assert block_number is not None
-            return block_number
-        case str() as block_number_as_str:
-            try:
-                return int(block_number_as_str, 16)
-            except ValueError:
-                raise DegenbotValueError(
-                    message=f"Invalid block identifier {identifier!r}",
-                ) from None
-        case bytes() as block_number_as_bytes:
-            return int.from_bytes(block_number_as_bytes, byteorder="big")
-        case _:
-            raise DegenbotValueError(message=f"Invalid block identifier {identifier!r}")
-
-
-async def get_number_for_block_identifier_async(
-    identifier: BlockIdentifier | None,
-    provider: AsyncAlloyProvider,
-) -> BlockNumber:
-    """Resolve a block identifier to a block number asynchronously.
-
-    Returns:
-        Block number as integer
-
-    Raises:
-        DegenbotValueError: If the block identifier is invalid or block not found.
-
-    """
-    match identifier:
-        case None:
-            return await provider.get_block_number()
-        case int() as block_number_as_int:
-            return block_number_as_int
-        case "latest" | "earliest" | "pending" | "safe" | "finalized" as block_tag:
-            block = await provider.get_block(cast("int | str", identifier))
             if block is None:
                 raise DegenbotValueError(message=f"Block {block_tag} not found")
             block_number = block.get("number")

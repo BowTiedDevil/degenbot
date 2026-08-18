@@ -36,7 +36,6 @@ class UniswapV2PoolCalc:
 
     Class variables with Uniswap V2 defaults:
         FEE: Directional fee rate (default 0.3%)
-        RESERVES_STRUCT_TYPES: ABI struct types for reserve decoding
     """
 
     # Attributes provided by V2PoolState in the MRO
@@ -57,7 +56,6 @@ class UniswapV2PoolCalc:
 
     # These can be overridden by subclasses (e.g., PancakeSwap uses different fee)
     FEE: Fraction = Fraction(3, 1000)
-    RESERVES_STRUCT_TYPES: tuple[str, ...] = ("uint112", "uint112")
 
     def calculate_tokens_in_from_tokens_out(
         self,

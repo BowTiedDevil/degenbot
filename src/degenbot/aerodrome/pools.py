@@ -462,12 +462,3 @@ class AerodromeV3Pool(UniswapV3Pool):
         "uint32",
         "bool",
     )
-
-    SLOT0_STRUCT_TYPES = (
-        "uint160",
-        "int24",
-        "uint16",
-        "uint16",
-        "uint16",
-        "bool",
-    )

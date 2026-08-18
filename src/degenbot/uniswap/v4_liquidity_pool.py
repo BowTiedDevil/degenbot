@@ -169,17 +169,6 @@ class UniswapV4Pool(
 
     type PoolState = UniswapV4PoolState
 
-    SLOT0_STRUCT_TYPES = (
-        "uint160",  # sqrtPriceX96
-        "int24",  # tick
-        "uint24",  # protocolFee
-        "uint24",  # lpFee
-    )
-    TICK_LIQUIDITY_STRUCT_TYPES = (
-        "uint128",  # liquidityGross
-        "int128",  # liquidityNet
-    )
-
     # Instance attributes set in `_from_py_pool` (the only construction seam).
     _py_pool: LiquidityPool
     _pool_id: HexBytes

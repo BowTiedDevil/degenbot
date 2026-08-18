@@ -44,13 +44,10 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import BrokenPool, TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.provider import (
-    AlloyProvider,
-    AsyncAlloyProvider,
+    AlloyProvider,  # ruff:ignore[typing-only-first-party-import]
+    AsyncAlloyProvider,  # ruff:ignore[typing-only-first-party-import]
 )
 from degenbot.provider.factory import get_provider_from_config
-from degenbot.provider.subscription import (
-    Subscription,  # ruff:ignore[typing-only-first-party-import]
-)
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -1199,46 +1196,6 @@ class Bot:
 
         """
         return self.provider
-
-    async def start_listening(self) -> tuple[Subscription, Subscription]:
-        """Start WS subscriptions for newHeads and unfiltered logs on this Bot's chain.
-
-        Single chain (ADR-006 D5): no ``chain_id`` argument. Creates an
-        AsyncAlloyProvider from the configured WS URI for this Bot's chain,
-        subscribes to new block headers and unfiltered log events
-        (``eth_subscribe("logs", {})``), and returns both subscriptions as a
-        tuple ``(heads_sub, logs_sub)``. The adapter is cached on the Bot.
-
-        Returns:
-            Tuple of ``(heads_subscription, logs_subscription)``.
-
-        Raises:
-            DegenbotValueError: If no WS URI is configured for this chain.
-
-        """
-        # Reuse existing adapter if already created
-        if self._async_adapter is not None:
-            heads = await self._async_adapter.subscribe_blocks()
-            logs = await self._async_adapter.subscribe_logs()
-            return heads, logs
-
-        # Look up WS URI from config
-        ws_uri = self.config.ws.get(self.chain_id)
-        if ws_uri is None:
-            msg = (
-                f"No WS URI configured for chain {self.chain_id}. "
-                f"Add [ws.{self.chain_id}] to config."
-            )
-            raise DegenbotValueError(message=msg)
-
-        # Create async alloy provider from WS URI
-        adapter = await AsyncAlloyProvider.create(str(ws_uri))
-
-        self._async_adapter = adapter
-
-        heads = await adapter.subscribe_blocks()
-        logs = await adapter.subscribe_logs()
-        return heads, logs
 
     def update(
         self,

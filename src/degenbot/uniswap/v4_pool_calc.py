@@ -27,8 +27,6 @@ class UniswapV4PoolCalc:
 
     Class variables that V4 subclasses may override:
     - FEE_DENOMINATOR
-    - SLOT0_STRUCT_TYPES
-    - TICK_LIQUIDITY_STRUCT_TYPES
     """
 
     # MRO-provided attributes (declared for type checking;

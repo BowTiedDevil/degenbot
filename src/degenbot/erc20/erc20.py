@@ -1,26 +1,19 @@
 """Erc20Token: on-chain token with metadata, balance, and approval tracking."""
 
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import Any, Self
 
 from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, scoped_session
 
 from degenbot._ffi import Erc20Token as _TokenHandle
-from degenbot.abi import AbiDecodeError, decode
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Erc20TokenTable
 from degenbot.exceptions.infrastructure import NoPriceOracle
-from degenbot.provider import AlloyProvider
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
-from degenbot.types.rpc_types import BlockIdentifier
-
-if TYPE_CHECKING:
-    from hexbytes import HexBytes
 
 
 def get_token_from_database(
@@ -216,146 +209,6 @@ class Erc20Token(AbstractErc20Token):
     def set_cached_total_supply(self, block_number: int, total_supply: int) -> None:
         """Set cached total supply."""
         self._cached_total_supply[block_number] = total_supply
-
-    # -- RPC static methods (used by Bot.build_erc20token) --
-
-    @staticmethod
-    def fetch_name_symbol_decimals_batched(
-        address: ChecksumAddress,
-        provider: AlloyProvider,
-    ) -> tuple[str, str, int]:
-        """Fetch token name, symbol, and decimals via batched RPC calls.
-
-        Returns:
-            The computed value.
-
-        """
-        name_calldata = encode_function_calldata(
-            function_prototype="name()",
-            function_arguments=None,
-        )
-        symbol_calldata = encode_function_calldata(
-            function_prototype="symbol()",
-            function_arguments=None,
-        )
-        decimals_calldata = encode_function_calldata(
-            function_prototype="decimals()",
-            function_arguments=None,
-        )
-
-        name_result = provider.call(to=address, data=name_calldata)
-        symbol_result = provider.call(to=address, data=symbol_calldata)
-        decimals_result = provider.call(to=address, data=decimals_calldata)
-
-        (name,) = decode(types=["string"], data=name_result)
-        (symbol,) = decode(types=["string"], data=symbol_result)
-        (decimals,) = decode(types=["uint256"], data=decimals_result)
-
-        return cast("str", name), cast("str", symbol), cast("int", decimals)
-
-    @staticmethod
-    def fetch_name(
-        address: ChecksumAddress,
-        provider: AlloyProvider,
-        func_prototype: str = "name()",
-    ) -> str:
-        """Fetch token name via RPC call.
-
-        Returns:
-            The computed string value.
-
-        """
-        result = provider.call(
-            to=address,
-            data=encode_function_calldata(
-                function_prototype=func_prototype,
-                function_arguments=None,
-            ),
-        )
-
-        try:
-            (name,) = decode(types=["string"], data=result)
-            return cast("str", name)
-        except AbiDecodeError:
-            (name,) = decode(types=["bytes32"], data=result)
-            return cast("HexBytes", name).decode("utf-8", errors="ignore").strip("\x00")
-
-    @staticmethod
-    def fetch_symbol(
-        address: ChecksumAddress,
-        provider: AlloyProvider,
-        func_prototype: str = "symbol()",
-    ) -> str:
-        """Fetch token symbol via RPC call.
-
-        Returns:
-            The computed string value.
-
-        """
-        result = provider.call(
-            to=address,
-            data=encode_function_calldata(
-                function_prototype=func_prototype,
-                function_arguments=None,
-            ),
-        )
-
-        try:
-            (symbol,) = decode(types=["string"], data=result)
-            return cast("str", symbol)
-        except AbiDecodeError:
-            (symbol,) = decode(types=["bytes32"], data=result)
-            return cast("HexBytes", symbol).decode("utf-8", errors="ignore").strip("\x00")
-
-    @staticmethod
-    def fetch_decimals(
-        address: ChecksumAddress,
-        provider: AlloyProvider,
-        func_prototype: str = "decimals()",
-    ) -> int:
-        """Fetch token decimals via RPC call.
-
-        Returns:
-            The computed integer value.
-
-        """
-        (result,) = raw_call(
-            provider,
-            address=address,
-            calldata=encode_function_calldata(
-                function_prototype=func_prototype,
-                function_arguments=None,
-            ),
-            return_types=["uint256"],
-        )
-        return cast("int", result)
-
-    @staticmethod
-    def fetch_total_supply(
-        address: ChecksumAddress,
-        provider: AlloyProvider,
-        block_identifier: BlockIdentifier | None = None,
-    ) -> int:
-        """Fetch total supply via RPC call.
-
-        Returns:
-            The computed integer value.
-
-        """
-        block: int | None = None
-        if block_identifier is not None and isinstance(block_identifier, int):
-            block = block_identifier
-
-        result = provider.call(
-            to=address,
-            data=encode_function_calldata(
-                function_prototype="totalSupply()",
-                function_arguments=None,
-            ),
-            block=block,
-        )
-        (total_supply,) = decode(types=["uint256"], data=result)
-        return cast("int", total_supply)
 
     @property
     def price(self) -> float:

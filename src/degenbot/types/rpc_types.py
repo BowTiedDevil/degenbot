@@ -27,40 +27,6 @@ from hexbytes import HexBytes
 #: subsumed by the ``str`` arm.
 BlockIdentifier = int | str
 
-#: JSON-RPC method name (``eth_blockNumber``, ``evm_mine`` …) — was
-#: ``web3.types.RPCEndpoint = NewType("RPCEndpoint", str)``; the newtype adds
-#: no runtime semantics + the degenbot call sites pass plain ``str`` literals,
-#: so the alias flattens to ``str``.
-RPCEndpoint = str
-
-
-class RPCResponse(TypedDict, total=False):
-    """Loose JSON-RPC response envelope — matches ``web3.types.RPCResponse``.
-
-    The ``result`` payload is ``Any`` (it is method-dependent): the typed
-    converters in ``degenbot-rpc`` decode per-method into the
-    ``TransactionData`` / ``BlockData`` / ``LogData`` shapes below.
-    """
-
-    jsonrpc: str
-    id: int | str
-    method: str
-    params: Any
-    error: Any
-    result: Any
-
-
-class FilterParams(TypedDict, total=False):
-    """``eth_getLogs`` filter params — was ``web3.types.FilterParams``.
-
-    ``fromBlock``/``toBlock`` are ``BlockIdentifier`` (int or tag).
-    """
-
-    fromBlock: BlockIdentifier
-    toBlock: BlockIdentifier
-    address: str | list[str]
-    topics: list[Any] | None
-
 
 #: Transaction params for ``eth_call`` / ``eth_sendTransaction`` — was ``web3.types.TxParams``.
 #:

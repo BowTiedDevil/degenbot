@@ -31,14 +31,11 @@ target, so no caller wiring is required and no cache reset is needed.
 """
 
 import atexit
-import functools
-import inspect
 import logging
 import logging.handlers
 import os
 import queue
 import sys
-from collections.abc import Callable
 
 """
 Create a global logger instance.
@@ -181,52 +178,3 @@ def set_log_level(level: int) -> None:
         logging.getLogger(name).setLevel(level)
     for name in PY_PACKAGE_ROOT_LOGGER_NAMES:
         logging.getLogger(name).setLevel(level)
-
-
-# Check DEGENBOT_DEBUG_FUNCTION_CALLS environment variable for function call logging
-_FUNCTION_CALL_LOGGING_ENABLED = os.environ.get("DEGENBOT_DEBUG_FUNCTION_CALLS", "").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-
-
-def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
-    """Log function calls when DEGENBOT_DEBUG_FUNCTION_CALLS is enabled.
-
-    Returns:
-        The computed value.
-
-    """
-    if not _FUNCTION_CALL_LOGGING_ENABLED:
-        return func
-
-    func_name = getattr(func, "__name__", repr(func))
-
-    if inspect.iscoroutinefunction(func):
-
-        @functools.wraps(func)
-        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            sig = inspect.signature(func)
-            bound = sig.bind(*args, **kwargs)
-            bound.apply_defaults()
-            arg_str = ", ".join(f"{k}={v!r}" for k, v in bound.arguments.items())
-            logger.debug("%s(%s)", func_name, arg_str)
-            result: R = await func(*args, **kwargs)
-            logger.debug("%s -> %r", func_name, result)
-            return result
-
-        return async_wrapper  # ty:ignore[invalid-return-type]
-
-    @functools.wraps(func)
-    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        sig = inspect.signature(func)
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-        arg_str = ", ".join(f"{k}={v!r}" for k, v in bound.arguments.items())
-        logger.debug("%s(%s)", func_name, arg_str)
-        result: R = func(*args, **kwargs)
-        logger.debug("%s -> %r", func_name, result)
-        return result
-
-    return sync_wrapper

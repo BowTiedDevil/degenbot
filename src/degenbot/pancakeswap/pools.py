@@ -16,13 +16,3 @@ class PancakeswapV3Pool(UniswapV3Pool):
     """PancakeswapV3Pool class."""
 
     variant: ClassVar[str | None] = "pancakeswap"
-
-    SLOT0_STRUCT_TYPES = (
-        "uint160",
-        "int24",
-        "uint16",
-        "uint16",
-        "uint16",
-        "uint32",
-        "bool",
-    )
