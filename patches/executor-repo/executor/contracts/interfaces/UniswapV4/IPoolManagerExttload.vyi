@@ -1,7 +1,0 @@
-# Separate interface for exttload (single-slot) — Vyper does not support
-# function overloading, so the single-slot and batch-slot signatures need
-# distinct interface names even though both target the same PoolManager address.
-
-@view
-def exttload(slot: bytes32) -> bytes32:
-    ...

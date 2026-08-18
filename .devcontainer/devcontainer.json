@@ -125,7 +125,8 @@
   // exported it resolves to empty and falls back to /etc/localtime.
   "mounts": [
     "source=/etc/localtime,target=/etc/localtime,type=bind,readonly=true",
-    "source=${localEnv:HOME}/code/executor,target=/workspaces/executor,type=bind,readonly=true",
+    // /workspaces/executor bind mount retired (SRMMM7): the executor repo is
+    // vendored in-repo at executor/ — source, probe harness and vyper toolchain.
     "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
     "source=${localEnv:HOME}/.config/degenbot,target=/home/dev/.config/degenbot,type=bind",
     "source=${localEnv:HOME}/.foundry,target=/home/dev/.foundry,type=bind",
