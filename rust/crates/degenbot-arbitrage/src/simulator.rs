@@ -149,9 +149,13 @@ fn parse_execute_gas_override(v: &str) -> Option<u64> {
     }
 }
 
-/// The `config=0` (check_mode=0, no bribe) the oracle uses — the operator
-/// verifies profitability off-chain via the pre/post balance reads rather than
-/// an on-chain profit check (L2017–L2020).
+/// The raw `config=0` (check_mode=0, no bribe, no on-chain profit check) —
+/// the operator verifies profitability off-chain via the pre/post balance
+/// reads. Retained for the offline calldata-dump examples
+/// (`path26154_executor_payload` / `path5000_executor_payload`), which encode
+/// but do not execute. The production sim does NOT use this: it runs the
+/// axis-aware `config_for_options` (Q35IJN — active profit assert by default,
+/// `check_mode=2` under `erc6909_profit`; SMOZG3).
 pub const EXECUTE_CONFIG: U256 = U256::ZERO;
 
 /// The int128 range bounds (ports `INT128_MIN`/`INT128_MAX` from

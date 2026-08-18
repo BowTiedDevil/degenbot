@@ -35,7 +35,9 @@
 //! ERC20 transfer instead of a `take`, and they are back in the matrix.)
 
 use alloy::primitives::U256;
-use degenbot_simulation::harness::{assert_profitable, v3_amount_out, Harness, Hop, HopPool};
+use degenbot_simulation::harness::{
+    assert_erc6909_capture, assert_profitable, v3_amount_out, Harness, Hop, HopPool,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Prot {
@@ -243,21 +245,21 @@ fn matrix_covers_full_reachable_grammar() {
     );
 }
 
-/// Negative control: a deliberately unprofitable chain still EXECUTES but with
-/// a negative WETH delta, so [`assert_profitable`] must reject it. Proves the
-/// delta guard fires on a real losing path rather than being vacuous.
+/// Negative control (SMOZG3): a deliberately unprofitable chain under the
+/// production axis-aware config (default Custody → `check_mode=1`) now reverts
+/// **on-chain** at the U3WVLL profit assert — the money-loss floor is active
+/// by default, so the loss never executes. The harness classifies the revert
+/// and [`assert_profitable`]'s first guard ("payload must execute") fires.
 ///
 /// **Ko5NNB cutover note — why SelfFund:** since the all-V2 family routes
 /// through the Plan + validator gate, a losing all-V2 **InPathFlash** stream is
-/// REJECTED (`Erc20TransferBeforeCredit`: the flash repay `100k` exceeds the
-/// stream's ~82k terminal WETH — see the executor's
-/// `all_v2_gate_rejects_unprofitable_inpathflash_stream`). A losing but
-/// EXECUTED path is only representable under `FundingSource::SelfFund`: no
-/// flash debt, so the executor eats the loss from its held WETH buffer
-/// (the `optimal_input * 2` funding) and the stream genuinely runs at a loss.
-/// This is exactly the case `assert_profitable` must catch.
+/// REJECTED at encode (`Erc20TransferBeforeCredit`: the flash repay `100k`
+/// exceeds the stream's ~82k terminal WETH). A losing stream that reaches the
+/// profit assert is only representable under `FundingSource::SelfFund`: no
+/// flash debt, so the executor would eat the loss from its held WETH buffer —
+/// the case the on-chain floor now reverts.
 #[test]
-#[should_panic(expected = "expected a profitable (positive) WETH delta")]
+#[should_panic(expected = "payload must execute (reach 2 pools)")]
 fn unprofitable_chain_is_rejected() {
     let mut h = Harness::new().unwrap();
     let u = h.add_token().unwrap();
@@ -287,12 +289,59 @@ fn unprofitable_chain_is_rejected() {
             },
         )
         .unwrap();
-    assert!(result.outcome.executed(2), "still touches both pools");
+    // The on-chain `check_mode=1` assert reverts the losing self-fund path
+    // (U3WVLL floor) — the revert IS the protection; classify it as such.
+    assert!(
+        matches!(
+            result.outcome,
+            degenbot_simulation::harness::ExecOutcome::Reverted { .. }
+        ),
+        "losing self-fund path must revert at the profit assert: {result:?}"
+    );
+    assert_profitable(&result, 2, "unprofitable");
+}
+
+/// The off-chain delta guard remains the belt-and-suspenders (SMOZG3): with
+/// the documented on-chain assert opt-out (`ProfitCapture::SweepToAddress` →
+/// `check_mode=3`, the ONLY way to defeat the U3WVLL assert), the losing path
+/// EXECUTES and a negative WETH delta is what reaches the operator — so
+/// [`assert_profitable`]'s delta guard must still fire on it.
+#[test]
+#[should_panic(expected = "expected a profitable (positive) WETH delta")]
+fn unprofitable_chain_sweep_defeats_assert_but_delta_guard_fires() {
+    let mut h = Harness::new().unwrap();
+    let u = h.add_token().unwrap();
+    let pa = h.add_pool(u, h.weth, 2_000_000, 1_000_000).unwrap();
+    let pb = h.add_pool(u, h.weth, 2_000_000, 1_000_000).unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: u,
+            pool: HopPool::V2(pa),
+        },
+        Hop {
+            src: u,
+            dst: h.weth,
+            pool: HopPool::V2(pb),
+        },
+    ];
+    let opts = degenbot_executor::composers::EncodeOptions {
+        funding: degenbot_executor::grammar_ledger::FundingSource::SelfFund,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::SweepToAddress,
+        ..Default::default()
+    };
+    let result = h
+        .run_chain_with_opts(&hops, 100_000, 5_000_000, opts)
+        .unwrap();
+    assert!(
+        result.outcome.executed(2),
+        "sweep defeats the on-chain assert; the loss path still executes: {result:?}"
+    );
     assert!(
         result.actual_weth_delta < 0,
         "must actually lose: {result:?}"
     );
-    assert_profitable(&result, 2, "unprofitable");
+    assert_profitable(&result, 2, "unprofitable-sweep");
 }
 
 /// ADR-033 guard: the harness's session-scoped [`EncodeContext`] projection
@@ -424,4 +473,201 @@ fn cl_hop_aligned_clamp_shape_executes_with_consistent_delta() {
     // must match the caller-aligned prediction within tolerance — the
     // committed amounts moved exactly the WETH they encoded for.
     assert_profitable(&result, 2, "aligned-clamp-shape");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SMOZG3 — ERC6909-vault profit capture (the `erc6909_profit` operator toggle)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// SMOZG3: a 2-hop V4 WETH-terminal path with the `erc6909_profit` toggle,
+/// driven through the declarative entry — the production-mirror of the
+/// strategy's `SimulatePath → encode_request → execute(axis-aware config)`
+/// path. The stream mints the profit as an ERC6909 claim on the PoolManager;
+/// the oracle is the contract-computed `PM.balanceOf(executor, weth)` read
+/// around `execute` — the independent side of the `check_mode=2` on-chain
+/// assert — measured to the 0.1% `assert_profitable` pattern.
+#[test]
+fn erc6909_capture_v4v4_lands_in_vault() {
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t,
+            dst: h.weth,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t,
+                    h.weth,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    // The oracle probe's regime pin (SMOZG3 open question 1): the executor
+    // holds NO ERC6909 position beforehand — the capture is a fresh mint of
+    // the profit surplus, not a transfer of a pre-held claim.
+    assert_eq!(
+        h.pm_balance_of(h.executor, h.weth).unwrap(),
+        alloy::primitives::U256::ZERO,
+        "fixture starts from a zero ERC6909 position"
+    );
+    let opts = degenbot_executor::composers::EncodeOptions {
+        erc6909_profit: true,
+        ..Default::default()
+    };
+    let result = h
+        .run_chain_with_opts(&hops, 100_000, 8_000_000, opts)
+        .unwrap_or_else(|e| panic!("run erc6909 capture: {e}"));
+    assert_erc6909_capture(&result, 2, "v4_v4 erc6909 capture");
+}
+
+/// SMOZG3 parity: the 3-hop pure-V4 family (`v4_v4_v4`, the other family that
+/// declares the `capture` axis) captures to the vault with the same oracle.
+#[test]
+fn erc6909_capture_v4v4v4_lands_in_vault() {
+    let mut h = Harness::new().unwrap();
+    let t1 = h.add_token().unwrap();
+    let t2 = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t1,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t1,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t1,
+            dst: t2,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t1,
+                    t2,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t2,
+            dst: h.weth,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t2,
+                    h.weth,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    let opts = degenbot_executor::composers::EncodeOptions {
+        erc6909_profit: true,
+        ..Default::default()
+    };
+    let result = h
+        .run_chain_with_opts(&hops, 100_000, 40_000_000, opts)
+        .unwrap_or_else(|e| panic!("run erc6909 capture 3-hop: {e}"));
+    assert_erc6909_capture(&result, 3, "v4_v4_v4 erc6909 capture");
+}
+
+/// SMOZG3 (open question 3, RESOLVED): `use_v4_batch` and `erc6909_profit`
+/// do NOT compose on a WETH-terminal pure-V4 path. Probed at runtime pre-fix:
+/// the combined stream executes the batch and then reverts with the
+/// PoolManager's D0 (credit-before-debit) — `_cmd_v4_batch`'s tail settle
+/// takes the WETH delta into custody before `V4_MINT_COMPACT` runs, leaving
+/// nothing for the mint to convert. The fix makes the funnel decline the
+/// combination; the declarative entry surfaces that as an encode error.
+#[test]
+fn erc6909_capture_with_batch_declines_unexecutable_combo() {
+    let mut h = Harness::new().unwrap();
+    let t = h.add_token().unwrap();
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    h.weth,
+                    t,
+                    3000,
+                    60,
+                    sqrt_x(1),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+        Hop {
+            src: t,
+            dst: h.weth,
+            pool: HopPool::V4(
+                h.add_v4_pool(
+                    t,
+                    h.weth,
+                    3000,
+                    60,
+                    sqrt_x(3),
+                    liq(),
+                    1_000_000_000_000,
+                    1_000_000_000_000,
+                )
+                .unwrap(),
+            ),
+        },
+    ];
+    let opts = degenbot_executor::composers::EncodeOptions {
+        erc6909_profit: true,
+        use_v4_batch: true,
+        ..Default::default()
+    };
+    assert!(
+        h.run_chain_with_opts(&hops, 100_000, 8_000_000, opts).is_err(),
+        "batch + erc6909 capture must decline at encode (unexecutable on the current artifact; TGUZCT)"
+    );
 }

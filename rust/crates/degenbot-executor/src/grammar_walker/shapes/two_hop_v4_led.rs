@@ -5,7 +5,7 @@ use crate::composers::{resolve_axes, ComposerInputs, CurrencyBridge, NATIVE_CURR
 use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 use crate::grammar_ledger::{ProfitCapture, Prot};
 use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
-use crate::grammar_shape::v4_scaffold_table;
+use crate::grammar_shape::{erc6909_batch_capture_declines, v4_scaffold_table};
 
 #[expect(clippy::too_many_lines, clippy::needless_return)]
 pub(crate) fn derive(
@@ -136,6 +136,16 @@ pub(crate) fn derive(
                     },
                     PlanStep::V4SettleAll,
                 ]
+            } else if erc6909_batch_capture_declines(
+                capture,
+                inputs.opts.use_v4_batch,
+                out_currency_b,
+                weth,
+            ) {
+                // SMOZG3: batch tail-settle + V4_MINT on the WETH terminal is
+                // unexecutable on the current executor artifact (D0) — decline
+                // until TGUZCT ships the composable artifact.
+                return None;
             } else {
                 let swaps: Vec<PlanStep> = if inputs.opts.use_v4_batch {
                     vec![PlanStep::V4Batch {

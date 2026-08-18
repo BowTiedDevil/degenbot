@@ -31,6 +31,7 @@ from degenbot.logging import logger as bot_logger
 from degenbot.provider import AsyncAlloyProvider
 from degenbot.runner.config import format_failure_breakdown, format_sim_diag_line
 from degenbot.runner.driver_constants import (
+    ERC6909_PROFIT,
     _SIM_FAIL_RENDER_CAP,
     INJECT_EXECUTOR_CODE,
     MIN_PROFIT_MARGIN_BPS,
@@ -145,6 +146,10 @@ async def _dispatch_profitable(
                 consumed_inputs=list(ci),
                 solve_block=sb,
                 state_nonces=list(sn),
+                # SMOZG3: the operator's ERC6909 vault-capture toggle — the
+                # Rust seam defaults it to False (custody capture, the
+                # long-standing production behavior); env-gated opt-in.
+                erc6909_profit=ERC6909_PROFIT,
             ),
         )
 

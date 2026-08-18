@@ -55,6 +55,14 @@ MIN_PROFIT_NET = 1
 MIN_PROFIT_MARGIN_BPS = int(os.environ.get("DEGENBOT_MIN_PROFIT_MARGIN_BPS", "0"))
 FEE_PERCENTILES = (10, 50)
 
+# ERC6909 vault profit capture (SMOZG3): capture Uniswap-V4 profit as an
+# ERC6909 claim on the PoolManager (``V4_MINT_COMPACT``) instead of custody
+# WETH, with the ``check_mode=2`` on-chain assert. The stream effect is
+# limited to pure-V4 paths (``v4_v4`` / ``v4_v4_v4``); other families keep
+# custody capture and only the ERC6909 floor is armed. Enable with
+# ``DEGENBOT_ERC6909_PROFIT=1``.
+ERC6909_PROFIT = os.environ.get("DEGENBOT_ERC6909_PROFIT", "0") == "1"
+
 # Build/registration tunables.
 REG_QUEUE_BOUND = int(os.environ.get("DEGENBOT_REG_QUEUE_BOUND", "64"))
 REG_WORKERS = int(os.environ.get("DEGENBOT_REG_WORKERS", "4"))

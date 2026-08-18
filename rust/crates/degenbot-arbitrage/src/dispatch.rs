@@ -1055,6 +1055,75 @@ mod tests {
         assert_eq!(dropped, 0);
     }
 
+    // ── SMOZG3: the production axis chain (kwarg → intake → config) ────────
+
+    #[test]
+    #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract
+    fn erc6909_candidate_option_reaches_intake_and_mode2_config() {
+        // The operator's `erc6909_profit` flag must survive the full
+        // production projection — DispatchCandidate → `to_simulate_path` →
+        // `encode_request` (the ADR-033 intake) — resolving through
+        // `resolve_axes` to the `Erc6909` capture axis and packing
+        // `check_mode=2` (the on-chain ERC6909 WETH floor the profit assert
+        // runs under). This pins the chain end-to-end so the ADR-033
+        // reshape cannot silently drop the knob.
+        let cand = DispatchCandidate {
+            path_id: 42,
+            optimal_input: 1_000_000_000_000_000_000u128,
+            engine_profit: 1_000,
+            hop_outputs: vec![1_100_000_000_000_000_000u128, 1_300_000_000_000_000_000u128],
+            consumed_inputs: vec![1_000_000_000_000_000_000u128, 1_100_000_000_000_000_000u128],
+            solve_block: 100,
+            path_info: two_v2_hops(),
+            opts: EncodeOptions {
+                erc6909_profit: true,
+                ..Default::default()
+            },
+            state_nonces: vec![],
+        };
+        let path = cand.to_simulate_path();
+        // kwarg → SimulatePath.opts (unchanged across the ADR-033 reshape):
+        assert!(
+            path.opts.erc6909_profit,
+            "candidate opts must reach SimulatePath"
+        );
+        let req = path.encode_request();
+        // → resolve_axes: the legacy bool forces the Erc6909 capture axis.
+        let (_, capture, _) = degenbot_executor::composers::resolve_axes(req.opts);
+        assert!(
+            matches!(
+                capture,
+                degenbot_executor::grammar_ledger::ProfitCapture::Erc6909
+            ),
+            "erc6909_profit must resolve to the Erc6909 capture axis"
+        );
+        // → the axis-aware packed config: check_mode=2 (Erc6909 WETH assert).
+        let cfg = degenbot_executor::composers::config_for_options(req.opts, U256::ZERO)
+            .expect("axes in range");
+        assert_eq!(
+            cfg & U256::from(255u64),
+            U256::from(2u64),
+            "check_mode must be 2 for Erc6909 capture"
+        );
+    }
+
+    #[test]
+    #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract
+    fn custody_candidate_defaults_to_mode1_assert() {
+        // Control: the default (no operator toggle) runs the ACTIVE
+        // WETH+ETH profit assert (U3WVLL), not the old check_mode=0 fast path.
+        let cand = candidate(43, 1_000, 100);
+        let path = cand.to_simulate_path();
+        let req = path.encode_request();
+        let cfg = degenbot_executor::composers::config_for_options(req.opts, U256::ZERO)
+            .expect("axes in range");
+        assert_eq!(
+            cfg & U256::from(255u64),
+            U256::from(1u64),
+            "default capture must pack check_mode=1 (active assert)"
+        );
+    }
+
     #[test]
     fn thin_margin_50_bps_drops_low_profit() {
         // 50 bps = 0.5%. profit * 10000 >= opt_input * 50.

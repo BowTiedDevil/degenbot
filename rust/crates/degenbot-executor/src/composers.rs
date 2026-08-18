@@ -540,9 +540,12 @@ pub struct EncodedCall {
 ///     U3WVLL contract fix made the executor read its OWN combined balance at
 ///     start+end, so the operator no longer supplies the pre-tx balance).
 ///
-/// This is the single axis-aware config builder; production still uses a
-/// hardcoded `EXECUTE_CONFIG = ZERO` constant (a separate strategy-layer fork
-/// to migrate), but tests use this to prove the axis→config→contract path.
+/// This is the single axis-aware config builder. Production
+/// (`degenbot-arbitrage`'s `simulate_path_on_evm`, Q35IJN) packs every
+/// `execute(bytes, uint256)` call through it, and the declarative harness
+/// (`run_path_with_*`, SMOZG3) mirrors it — so the on-chain profit check
+/// (check_mode 1/2/3) runs under production exactly as it runs under tests.
+/// Only the offline calldata-dump examples use the raw zero config.
 ///
 /// # Errors
 ///

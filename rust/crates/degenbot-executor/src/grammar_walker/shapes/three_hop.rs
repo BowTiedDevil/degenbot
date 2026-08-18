@@ -6,7 +6,8 @@ use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WET
 use crate::grammar_ledger::Prot;
 use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
 use crate::grammar_shape::{
-    native_capture_declines, v4_bridge_steps, v4_scaffold_table, v4_terminal_capture_steps,
+    erc6909_batch_capture_declines, native_capture_declines, v4_bridge_steps, v4_scaffold_table,
+    v4_terminal_capture_steps,
 };
 
 #[expect(clippy::too_many_lines, clippy::needless_return)]
@@ -769,6 +770,14 @@ fn rule_walk_v4_led(
                 }
                 steps
             };
+            if !any_gap
+                && erc6909_batch_capture_declines(capture, inputs.opts.use_v4_batch, output_c, weth)
+            {
+                // SMOZG3: batch tail-settle + V4_MINT on the WETH terminal is
+                // unexecutable on the current executor artifact (D0) — decline
+                // until TGUZCT ships the composable artifact.
+                return None;
+            }
             inner.append(&mut v4_terminal_capture_steps(
                 output_c,
                 terminal_idx,

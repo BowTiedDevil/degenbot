@@ -327,6 +327,27 @@ the [execution-strategy guide](docs/execution-strategy.md).
 
 **SHIPPED (2026-07-23, commit `050e99fd`).** `degenbot-arbitrage` crate created; `SimulateContext` split (engine primitives stay in `degenbot-simulation`; strategy config moved); `BlockSimHandle::build` now takes block-env primitives + a projected `&SimulationOverrideParams` (the engine never names `SimulateContext`); `BlockSimHandle::evm_mut` exposes the borrowed `&mut evm` the strategy drives; `simulate_path` (the strategy-coupled method) removed; strategy code (`SimResult`/`SimulateContext`/`SimulatePath`/`FailBuckets`/`compute_priority_fee`/`fits_int128`/the 7-call `simulate_path_on_evm`/`simulate_in_process_with_db`/`decode_balance`/the calldata builders/`dispatch_profitable_results`/`DispatchCandidate`/`DispatchOutcome`/`filter_thin_margin_results`/constants) relocated to the strategy crate; the PyO3 seam re-sourced to `degenbot-arbitrage` for strategy types + `degenbot-simulation` for the engine handle (the Python driver stays a thin cockpit — no 7-call re-derivation); stranded engine deps (`degenbot-submission`/`degenbot-abi`/`futures`/the `BlockPriorityFees` re-export/tokio `sync`) removed. Gates green: `just test-rust` (engine 17 + strategy 21 + reachability + standalone), `just lint-rust` (clippy clean), `just check-no-pyo3-in-cores`, `just test-python` (360 wrapped `tests/rust` tests passing within the full suite). ADR-019 epic fully done (7/7 ergo tasks).
 
+### ERC6909 vault profit capture (SMOZG3 / ADR-034)
+
+- **ERC6909 capture** — the operator's `erc6909_profit` toggle
+  (`DEGENBOT_ERC6909_PROFIT=1`): captures Uniswap-V4 profit as an ERC6909
+  claim on the PoolManager (a fresh `V4_MINT_COMPACT` — no pre-held position
+  required) instead of custody WETH. The `execute()` config packs
+  `check_mode=2` (the unconditional on-chain floor
+  `PM.erc6909WETH(after) >= before`), and the declarative harness asserts the
+  vault delta to the 0.1% oracle pattern (`assert_erc6909_capture`).
+- **Stream effect is pure-V4 only** — per `family_axis_support`, the capture
+  axis branches the stream only for `v4_v4`/`v4_v4_v4`; other families keep
+  custody capture with only the mode-2 floor armed.
+- **batch×capture decline (interim)** — `use_v4_batch` + `erc6909_profit`
+  on a WETH terminal is unexecutable on the *current* executor artifact
+  (the batch tail-settle takes the WETH delta into custody; the follow-up
+  mint reverts `D0`) — the funnel declines the combination
+  (`erc6909_batch_capture_declines`). The executor is **pre-deployment**
+  (operated via state-override code injection, `INJECT_EXECUTOR_CODE=1`
+  default) with in-repo Vyper source, so composing the two at the source is
+  **TGUZCT** — the decline is a fail-closed interim until it ships.
+
 ### Execution strategy seam (ADR-025)
 
 **The seam.** The execution side of degenbot is the **developer's own `cmd_executor` adapter**, not a general execution layer. A new pyo3-free `degenbot-execution` crate owns the **`ExecutionStrategy`** trait + its value types (the solve-result view, the gate protocol, `ExecutionResult`) — no default strategy. `degenbot-arbitrage` implements it as the **default adapter** (stays Rust-canonical per ADR-019 R). A foreign user's crate `impl ExecutionStrategy`, or supplies a Python callable lifted into it via **`PyPayloadComposer`/`PyExecutionStrategy`** (the Polars-`map_elements` model) — both meet the same seam. This is the execution-side twin of ADR-015's `degenbot-solvers` relocation; the two-adapter rule (settlement arbitrage + a user's own contract) justifies the seam.

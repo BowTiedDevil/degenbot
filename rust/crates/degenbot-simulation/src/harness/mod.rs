@@ -49,7 +49,7 @@ use crate::oracle::{
 };
 
 pub mod declarative;
-pub use declarative::{assert_profitable, ChainResult, Hop, HopPool};
+pub use declarative::{assert_erc6909_capture, assert_profitable, ChainResult, Hop, HopPool};
 
 /// Repo root = this crate + three up.
 fn repo_root() -> PathBuf {
@@ -569,6 +569,11 @@ impl Harness {
     /// KO5NNB variant of [`Self::run_path`] with explicit [`EncodeOptions`]
     /// (funding axis etc.), threaded through to `encode_path_with_opts` — used
     /// by [`crate::harness::declarative::Harness::run_chain_with_opts`].
+    ///
+    /// Executes under the **production axis-aware config** (SMOZG3 — the same
+    /// `config_for_options(opts, 0)` the arbitrage strategy packs, Q35IJN):
+    /// the on-chain profit check runs exactly like production (default
+    /// Custody → `check_mode=1` active assert; `erc6909_profit` → `check_mode=2`).
     pub fn run_path_with_opts(
         &mut self,
         path: &degenbot_executor::composers::PathInfo,
@@ -578,7 +583,7 @@ impl Harness {
         opts: degenbot_executor::composers::EncodeOptions,
     ) -> Result<ExecOutcome, String> {
         let cmd = self.encode_path_with_opts(path, optimal_input, hop_outputs, opts)?;
-        self.execute_payload(&cmd, gas)
+        self.execute_payload_config(&cmd, gas, production_config(opts)?)
     }
 
     /// ADR-033 (D7) variant of [`Self::run_path_with_opts`] with CALLER-supplied
@@ -602,7 +607,7 @@ impl Harness {
             consumed_inputs,
             opts,
         )?;
-        self.execute_payload(&cmd, gas)
+        self.execute_payload_config(&cmd, gas, production_config(opts)?)
     }
 
     /// ADR-033 (D7): encode with CALLER-supplied per-hop `consumed_inputs`
@@ -693,6 +698,15 @@ impl Harness {
         )
         .ok_or_else(|| "encode_cmd_stream returned None".to_string())
     }
+}
+
+/// The production axis-aware `execute()` config — the single point where the
+/// harness meets the strategy's Q35IJN config expression
+/// (Custody → `check_mode=1`, Erc6909 → `check_mode=2`, SweepToAddress →
+/// `check_mode=3`).
+fn production_config(opts: degenbot_executor::composers::EncodeOptions) -> Result<U256, String> {
+    degenbot_executor::composers::config_for_options(opts, U256::ZERO)
+        .map_err(|e| format!("config_for_options: {e}"))
 }
 
 /// Classification of an executed payload.

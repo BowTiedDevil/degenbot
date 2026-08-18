@@ -147,6 +147,14 @@ pub struct ChainResult {
     /// `predicted_profit`; a large divergence means the encoded amounts moved
     /// the wrong WETH even though the payload didn't revert.
     pub actual_weth_delta: i128,
+    /// Measured PoolManager ERC6909 WETH-balance delta
+    /// (`PM.balanceOf(executor, weth)`) after `execute` — where the
+    /// `erc6909_profit` capture mints the profit
+    /// ([`assert_erc6909_capture`] is its assertion; SMOZG3). 0 for
+    /// streams the capture axis does not branch (every non-pure-V4 family:
+    /// they reach the vault only via the on-chain `check_mode` config, never
+    /// the stream bytes).
+    pub erc6909_delta: i128,
 }
 
 impl Harness {
@@ -228,15 +236,19 @@ impl Harness {
 
         // 4. Measure, execute, measure.
         let before = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let erc6909_before = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
         let outcome = self.run_path_with_opts(&path, optimal_input, &hop_outputs, gas, opts)?;
         let after = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let erc6909_after = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
         let actual_weth_delta = after as i128 - before as i128;
+        let erc6909_delta = erc6909_after as i128 - erc6909_before as i128;
 
         Ok(ChainResult {
             outcome,
             hop_outputs,
             predicted_profit,
             actual_weth_delta,
+            erc6909_delta,
         })
     }
 
@@ -294,6 +306,7 @@ impl Harness {
         }
 
         let before = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let erc6909_before = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
         let outcome = self.run_path_with_consumed(
             &path,
             optimal_input,
@@ -303,13 +316,16 @@ impl Harness {
             opts,
         )?;
         let after = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let erc6909_after = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
         let actual_weth_delta = after as i128 - before as i128;
+        let erc6909_delta = erc6909_after as i128 - erc6909_before as i128;
 
         Ok(ChainResult {
             outcome,
             hop_outputs: hop_outputs.to_vec(),
             predicted_profit,
             actual_weth_delta,
+            erc6909_delta,
         })
     }
 
@@ -384,15 +400,19 @@ impl Harness {
         }
 
         let before = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let erc6909_before = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
         let outcome = self.execute_payload(payload, gas)?;
         let after = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let erc6909_after = self.pm_balance_of(self.executor, self.weth)?.to::<u128>();
         let actual_weth_delta = after as i128 - before as i128;
+        let erc6909_delta = erc6909_after as i128 - erc6909_before as i128;
 
         Ok(ChainResult {
             outcome,
             hop_outputs,
             predicted_profit,
             actual_weth_delta,
+            erc6909_delta,
         })
     }
 }
@@ -421,6 +441,47 @@ pub fn assert_profitable(result: &ChainResult, expected_swaps: usize, label: &st
         "[{label}] measured WETH delta {} diverges from predicted {} (tol {}): {:?}",
         result.actual_weth_delta,
         result.predicted_profit,
+        tol,
+        result
+    );
+}
+
+/// Assert a [`ChainResult`] is a genuine **ERC6909-vault capture** (the
+/// `erc6909_profit` operator toggle; SMOZG3): the path executed, the measured
+/// PoolManager ERC6909 WETH delta — the **contract-computed** side of the
+/// profit assertion, read via `PM.balanceOf(executor, weth)` — is positive
+/// and matches the predicted profit within the same 0.1% tolerance as
+/// [`assert_profitable`] (±1-wei-per-hop rounding), and the profit did NOT
+/// also remain in the executor's custody WETH (a capture that regressed to
+/// custody, or a double count, would leave the WETH delta ≈ the profit).
+///
+/// This is the oracle half of the `check_mode=2` on-chain assert: the
+/// contract floors `PM.balanceOf` across `execute` (`after >= before`), and
+/// this assert pins the **magnitude** the floor alone cannot see.
+#[track_caller]
+pub fn assert_erc6909_capture(result: &ChainResult, expected_swaps: usize, label: &str) {
+    assert!(
+        result.outcome.executed(expected_swaps),
+        "[{label}] payload must execute (reach {expected_swaps} pools): {:?}",
+        result.outcome
+    );
+    assert!(
+        result.erc6909_delta > 0,
+        "[{label}] expected an ERC6909 vault capture (positive PM balance delta), got {result:?}"
+    );
+    let tol = (result.predicted_profit.abs() / 1000).max(64);
+    assert!(
+        (result.erc6909_delta - result.predicted_profit).abs() <= tol,
+        "[{label}] ERC6909 delta {} diverges from predicted {} (tol {}): {:?}",
+        result.erc6909_delta,
+        result.predicted_profit,
+        tol,
+        result
+    );
+    assert!(
+        result.actual_weth_delta <= tol,
+        "[{label}] custody WETH delta {} must not also carry the profit (tol {}): {:?}",
+        result.actual_weth_delta,
         tol,
         result
     );
