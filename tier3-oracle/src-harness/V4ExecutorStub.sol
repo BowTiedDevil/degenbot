@@ -239,18 +239,26 @@ contract PoolManager {
         _pendingSettle = currency;
     }
 
-    function settle() external payable {
+    // Matches v4-core main: `function settle() external payable returns (uint256 paid)`.
+    // The cmd_executor extcall frame was recompiled for the uint256 return
+    // (b9cb64e50), so the stub must return the settled amount or the frame
+    // reverts on the expected-return-size assert.
+    function settle() external payable returns (uint256 paid) {
         if (msg.value > 0) {
             // Native settle: the caller has physically transferred `msg.value`
             // into the PM; CREDIT the caller's native delta by +value (reducing
             // a negative debt to zero). Matches v4-core `_settle` / the
             // executor's proven fake PM (`_account_delta(account, NATIVE, +paid)`).
             _accountDelta(msg.sender, NATIVE, int256(uint256(msg.value)));
+            paid = msg.value;
         } else {
             address c = _pendingSettle;
             bytes32 s = _slot(msg.sender, c);
             int256 cur; assembly { cur := tload(s) }
-            if (cur < 0) { assembly { tstore(s, 0) } }
+            if (cur < 0) {
+                paid = uint256(-cur);
+                assembly { tstore(s, 0) }
+            }
             _pendingSettle = address(0);
         }
     }
