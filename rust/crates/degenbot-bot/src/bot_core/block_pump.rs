@@ -1611,6 +1611,12 @@ impl BlockPump {
                     // engine) — NOT `engine.apply_log`. The FSM's `on_log_applied`
                     // records the clock's received/applied edges and arms the
                     // quiesce-gated publish (ADR-008 D2).
+                    // One fact — a forward log applied to engine state — feeds
+                    // two consumers (T4 pairing pin, epic O3HW7E): the FSM
+                    // quiesce arm (`on_log_applied` -> publish_pending) and
+                    // the engine's `has_logs_this_block` (finalize
+                    // bookkeeping, LEZJAS). Coordinated here, once; do not
+                    // split or drop either write.
                     self.bot.dispatch_log(&log);
                     fsm.on_log_applied(log_block);
 
@@ -2186,6 +2192,10 @@ mod tests {
         /// `on_drain` path fires. Default `false` keeps every existing test's
         /// no-drain behavior unchanged.
         dirty: AtomicBool,
+        /// `record_logs_this_block` call count (T4 pairing pin, epic
+        /// O3HW7E): the LEZJAS bookkeeping write must fire exactly when the
+        /// FSM's `on_log_applied` ran for an applied forward log.
+        logs_recorded: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeDrainSink {
@@ -2199,12 +2209,25 @@ mod tests {
                 last_processed: AtomicU64::new(last_processed.unwrap_or(0)),
                 path_refs: Mutex::new(Vec::new()),
                 dirty: AtomicBool::new(false),
+                logs_recorded: std::sync::atomic::AtomicUsize::new(0),
             }
         }
 
         /// Set the test dirty flag (see `dirty` field doc).
         fn set_dirty(&self, dirty: bool) {
             self.dirty.store(dirty, Ordering::Relaxed);
+        }
+
+        /// Number of `record_logs_this_block` calls the pump routed here
+        /// (T4 pairing pin).
+        fn logs_recorded(&self) -> usize {
+            self.logs_recorded
+                .load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        /// Quiesce publishes the sink received (`on_send` call log).
+        fn sends(&self) -> Vec<BlockMetadata> {
+            self.sent.lock().unwrap().clone()
         }
 
         fn drained_blocks(&self) -> Vec<u64> {
@@ -2247,7 +2270,10 @@ mod tests {
             self.solved.lock().unwrap().push(block);
         }
         fn set_solve_anchor(&self, _block: u64) {}
-        fn record_logs_this_block(&self) {}
+        fn record_logs_this_block(&self) {
+            self.logs_recorded
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         fn last_processed_block(&self) -> Option<u64> {
             let v = self.last_processed.load(Ordering::Relaxed);
             (v != 0).then_some(v)
@@ -3142,6 +3168,126 @@ mod tests {
         );
         assert_eq!(st.reserve1, U112::from(1_500));
         assert_eq!(st.update_block, w - 5);
+    }
+
+    /// T4 (epic O3HW7E): one fact — a forward log applied to engine state —
+    /// feeds two consumers: the FSM quiesce arm (`on_log_applied`, which
+    /// arms the quiesce-gated publish) and the engine-side
+    /// `has_logs_this_block` bookkeeping (LEZJAS), routed through the
+    /// sink's `record_logs_this_block`. This pin asserts the pairing: a
+    /// forward log fires exactly one `record_logs_this_block` AND arms the
+    /// quiesce publish (`on_send`); a reorg (`removed: true`) log fires
+    /// neither — the reorg arms early-return before the apply+record site.
+    /// Green-on-first-run pin of the status quo (no production change).
+    #[tokio::test]
+    async fn log_applied_pairing_forward_records_reorg_does_not() {
+        use stream::StreamExt;
+
+        let bot = Arc::new(Bot::new(1));
+        let w = 21_500_000u64;
+        let pool = Address::from([0xc2u8; 20]);
+        {
+            let arc = bot.state_arc();
+            let mut core = arc.write();
+            let _ = core
+                .register_v2_pool(&RegisterV2PoolParams {
+                    address: pool,
+                    token0: Address::from([0xa0u8; 20]),
+                    token1: Address::from([0xa1u8; 20]),
+                    reserve0: U112::from(1_000),
+                    reserve1: U112::from(2_000),
+                    fee_token0: (997, 1000),
+                    fee_token1: (997, 1000),
+                    factory: Address::from([0xf0u8; 20]),
+                    variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                    update_block: w,
+                    ..Default::default()
+                })
+                .expect("test setup: V2 registration");
+        }
+
+        let header = |n: u64| WsEvent::BlockHeader {
+            number: n,
+            timestamp: n,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        };
+
+        // Forward: header(w+1) + a live Sync@w+1 -> applied -> both writes
+        // fire (the pairing).
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(Arc::clone(&bot), None);
+        sink.set_dirty(true);
+        pump.run_test_loop(
+            stream::iter(vec![
+                header(w + 1),
+                WsEvent::Log(make_v2_sync_log(
+                    pool,
+                    U256::from(2_000u64),
+                    U256::from(1_500u64),
+                    w + 1,
+                    false,
+                )),
+            ])
+            .boxed(),
+            w,
+        )
+        .await;
+        // Sink ops are deferred to the background drainer — wait for the
+        // quiesce publish to land (same pattern as
+        // `decoupled_drain_still_publishes_with_block_metadata`).
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            if !sink.sends().is_empty() || std::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            sink.logs_recorded(),
+            1,
+            "forward log: exactly one record_logs_this_block"
+        );
+        assert!(
+            !sink.sends().is_empty(),
+            "forward log: the quiesce publish (on_log_applied's arm) fired"
+        );
+
+        // Reorg: a removed:true Sync at w+1 -> the EnterReorg arm,
+        // which early-returns before the apply + record site: no record,
+        // no publish.
+        let (mut pump2, sink2, shutdown2) = pump_for_test_with_bot(Arc::clone(&bot), None);
+        sink2.set_dirty(true);
+        pump2
+            .run_test_loop(
+                stream::iter(vec![
+                    header(w + 1),
+                    WsEvent::Log(make_v2_sync_log(
+                        pool,
+                        U256::from(2_000u64),
+                        U256::from(1_500u64),
+                        w + 1,
+                        true,
+                    )),
+                ])
+                .boxed(),
+                w,
+            )
+            .await;
+        // Let the drainer settle any (nonexistent) work before asserting the
+        // negative.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!shutdown2.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            sink2.logs_recorded(),
+            0,
+            "reorg arm: no record_logs_this_block"
+        );
+        assert!(
+            sink2.sends().is_empty(),
+            "reorg arm: no quiesce publish armed"
+        );
     }
 
     /// Resume-anchor contract: `on_drain(first_block)` anchors
