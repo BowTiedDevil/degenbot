@@ -105,13 +105,9 @@ check-no-pyo3-in-cores:
     done
     echo "OK: core crates + umbrella are pyo3-free under default features"
 
-# Build Rust release library (links Python - for testing only)
-build-rust-debug:
-    cargo build --release -p degenbot_rs --manifest-path rust/Cargo.toml
-
 # Build Rust extension module (correct for Python extension)
 build-rust-extension:
-    cargo build --release -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
+    cargo build -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
 # ========== Python Development ==========
 
