@@ -510,6 +510,26 @@ mod mechanics {
 
 mod shapes;
 
+/// Shared per-family facts helper: the per-protocol default mapping with the
+/// strict fee semantics the `facts_of_*` producers have always had (a fee
+/// that overflows `u16` declines the path — the default mapping zeros it,
+/// which would mis-encode the swap).
+fn v3_hop_facts_strict(h: &V3HopInfo) -> Option<HopFacts> {
+    let mut f = v3_hop_facts(h);
+    f.swap_fee = u16::try_from(h.fee).ok()?;
+    Some(f)
+}
+
+/// The 2-hop terminal override: the closing WETH as the terminal's output,
+/// the leading forward as its input, off-stream repayment (a terminal hop
+/// borrows nothing).
+fn closing_hop(mut f: HopFacts, forward: Address, weth: Address) -> HopFacts {
+    f.out_currency = weth;
+    f.in_currency = forward;
+    f.repay = Repay::Offstream;
+    f
+}
+
 /// Read the `v3_v4_v3` per-protocol facts (the D4 data half).
 pub(crate) fn facts_of_v3v4v3(
     path: &PathInfo,
@@ -520,68 +540,25 @@ pub(crate) fn facts_of_v3v4v3(
     else {
         return None;
     };
-    let fwd_a = v3_forward(a);
-    let in_a = v3_input(a);
-    let (forward_b, in_currency_b) = v4_hop_currencies(b);
-    let fwd_c = v3_forward(c);
-    let in_c = v3_input(c);
-    let fa = HopFacts {
-        prot: Prot::V3,
-        zfo: a.zfo,
-        swap_fee: u16::try_from(a.fee).ok()?,
-        tick_spacing: 0,
-        out_currency: fwd_a,
-        in_currency: in_a,
-        out_dest: OutDest::PoolManager, // the leading V3 seeds the PM for the unlock
-        repay: Repay::SelfRefund,
-        pool_address: a.pool_address,
-        pool_id_hex: None,
-        terminal_form: None,
-        repay_mechanism: None,
-        seed_delivery: None,
-        currency0_address: a.token0_address,
-        currency1_address: a.token1_address,
-    };
-    let fb = HopFacts {
-        prot: Prot::V4,
-        zfo: b.zfo,
-        swap_fee: u16::try_from(b.fee).ok()?,
-        tick_spacing: i16::try_from(b.tick_spacing).ok()?,
-        out_currency: forward_b,
-        in_currency: in_currency_b,
-        out_dest: OutDest::Repay(c.pool_address), // take to the terminal V3, repaying its flash
-        repay: Repay::NetZero,
-        pool_address: b.pool_manager_address,
-        pool_id_hex: Some(b.pool_id_hex.clone()),
-        terminal_form: None,
-        repay_mechanism: None,
-        seed_delivery: None,
-        currency0_address: b.currency0_address,
-        currency1_address: b.currency1_address,
-    };
-    let fc = HopFacts {
-        prot: Prot::V3,
-        zfo: c.zfo,
-        swap_fee: u16::try_from(c.fee).ok()?,
-        tick_spacing: 0,
-        out_currency: fwd_c,
-        in_currency: in_c,
-        out_dest: OutDest::Executor,
-        repay: Repay::Offstream,
-        pool_address: c.pool_address,
-        pool_id_hex: None,
-        terminal_form: None,
-        repay_mechanism: None,
-        seed_delivery: None,
-        currency0_address: c.token0_address,
-        currency1_address: c.token1_address,
-    };
+    let mut fa = v3_hop_facts_strict(a)?;
+    fa.out_dest = OutDest::PoolManager; // the leading V3 seeds the PM for the unlock
+    let mut fb = v4_hop_facts_netzero(b);
+    fb.swap_fee = u16::try_from(b.fee).ok()?;
+    fb.tick_spacing = i16::try_from(b.tick_spacing).ok()?;
+    fb.out_dest = OutDest::Repay(c.pool_address); // take to the terminal V3, repaying its flash
+    let mut fc = v3_hop_facts_strict(c)?;
+    fc.repay = Repay::Offstream; // the terminal borrows nothing (the default is SelfRefund)
     Some(vec![fa, fb, fc])
 }
 
-/// The 2-hop V2→V3 facts (`v2v3`, funding-branched). The terminal's
-/// `out_currency` is the closing WETH; the terminal's `in_currency` is the
-/// leading forward.
+/// The 2-hop leading-V3-flash shape (`v3v2`, `v3v3`) — a SelfFund + a leading
+/// V3 flash; the terminal is a V2 `V2SwapCalc` from the seeded forward
+/// (`v3v2`) or a V3 flash with `auto_repay` (`v3v3`). Both families share
+/// this shape; `facts[1].prot` picks the terminal mechanics (ADR-031 D3/D6).
+///
+/// The 2-hop V2→V3 facts (`v2v3`, funding-branched): the terminal's
+/// `out_currency` is the closing WETH; its `in_currency` is the leading
+/// forward.
 pub(crate) fn facts_of_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<HopFacts>> {
     if path.hops.len() != 2 {
         return None;
@@ -589,51 +566,13 @@ pub(crate) fn facts_of_v2v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
     let (HopInfo::V2(a), HopInfo::V3(b)) = (&path.hops[0], &path.hops[1]) else {
         return None;
     };
-    let fwd_a = v2_forward(a);
-    Some(vec![
-        HopFacts {
-            prot: Prot::V2,
-            zfo: a.zfo,
-            swap_fee: a.fee,
-            tick_spacing: 0,
-            out_currency: fwd_a,
-            in_currency: if a.zfo {
-                a.token0_address
-            } else {
-                a.token1_address
-            },
-            out_dest: OutDest::Executor,
-            repay: Repay::SelfRefund,
-            pool_address: a.pool_address,
-            pool_id_hex: None,
-            terminal_form: None,
-            repay_mechanism: None,
-            seed_delivery: None,
-            currency0_address: a.token0_address,
-            currency1_address: a.token1_address,
-        },
-        HopFacts {
-            prot: Prot::V3,
-            zfo: b.zfo,
-            swap_fee: u16::try_from(b.fee).ok()?,
-            tick_spacing: 0,
-            out_currency: inputs.weth_address, // closing WETH, per the gold
-            in_currency: fwd_a,
-            out_dest: OutDest::Executor,
-            repay: Repay::Offstream,
-            pool_address: b.pool_address,
-            pool_id_hex: None,
-            terminal_form: None,
-            repay_mechanism: None,
-            seed_delivery: None,
-            currency0_address: b.token0_address,
-            currency1_address: b.token1_address,
-        },
-    ])
+    let terminal = closing_hop(v3_hop_facts_strict(b)?, v2_forward(a), inputs.weth_address);
+    Some(vec![v2_hop_facts(a), terminal])
 }
 
-/// The any-N all-V2 facts (`all_v2`, funding-branched). `closing` is the last
-/// hop's `out_currency`; no `weth` is baked in (the chain is the whole stream).
+/// The any-N all-V2 facts (`all_v2`, funding-branched). Every hop is the
+/// default V2 mapping; the chain is the whole stream (no closing WETH is
+/// baked in).
 pub(crate) fn facts_of_all_v2(
     path: &PathInfo,
     _inputs: &ComposerInputs<'_>,
@@ -642,27 +581,7 @@ pub(crate) fn facts_of_all_v2(
         .hops
         .iter()
         .map(|h| match h {
-            HopInfo::V2(h) => Some(HopFacts {
-                prot: Prot::V2,
-                zfo: h.zfo,
-                swap_fee: h.fee,
-                tick_spacing: 0,
-                out_currency: v2_forward(h),
-                in_currency: if h.zfo {
-                    h.token0_address
-                } else {
-                    h.token1_address
-                },
-                out_dest: OutDest::Executor,
-                repay: Repay::SelfRefund,
-                pool_address: h.pool_address,
-                pool_id_hex: None,
-                terminal_form: None,
-                repay_mechanism: None,
-                seed_delivery: None,
-                currency0_address: h.token0_address,
-                currency1_address: h.token1_address,
-            }),
+            HopInfo::V2(h) => Some(v2_hop_facts(h)),
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
@@ -674,7 +593,7 @@ pub(crate) fn facts_of_all_v2(
 
 /// The 2-hop V3→V3 facts (`v3v3`, SelfFund, two V3 flashes). The terminal's
 /// `out_currency` is the closing WETH (the hand-authored producer hardcodes
-/// `weth` for the terminal V3), so the descriptor takes `inputs`.
+/// `weth` for the terminal V3); `closing_hop` applies that.
 pub(crate) fn facts_of_v3v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<Vec<HopFacts>> {
     if path.hops.len() != 2 {
         return None;
@@ -682,47 +601,9 @@ pub(crate) fn facts_of_v3v3(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
     let (HopInfo::V3(a), HopInfo::V3(b)) = (&path.hops[0], &path.hops[1]) else {
         return None;
     };
-    let fwd_a = v3_forward(a);
-    Some(vec![
-        HopFacts {
-            prot: Prot::V3,
-            zfo: a.zfo,
-            swap_fee: u16::try_from(a.fee).ok()?,
-            tick_spacing: 0,
-            out_currency: fwd_a,
-            in_currency: if a.zfo {
-                a.token0_address
-            } else {
-                a.token1_address
-            },
-            out_dest: OutDest::Executor,
-            repay: Repay::SelfRefund,
-            pool_address: a.pool_address,
-            pool_id_hex: None,
-            terminal_form: None,
-            repay_mechanism: None,
-            seed_delivery: None,
-            currency0_address: a.token0_address,
-            currency1_address: a.token1_address,
-        },
-        HopFacts {
-            prot: Prot::V3,
-            zfo: b.zfo,
-            swap_fee: u16::try_from(b.fee).ok()?,
-            tick_spacing: 0,
-            out_currency: inputs.weth_address, // closing WETH, per the gold
-            in_currency: fwd_a,
-            out_dest: OutDest::Executor,
-            repay: Repay::Offstream,
-            pool_address: b.pool_address,
-            pool_id_hex: None,
-            terminal_form: None,
-            repay_mechanism: None,
-            seed_delivery: None,
-            currency0_address: b.token0_address,
-            currency1_address: b.token1_address,
-        },
-    ])
+    let lead = v3_hop_facts_strict(a)?;
+    let terminal = closing_hop(v3_hop_facts_strict(b)?, v3_forward(a), inputs.weth_address);
+    Some(vec![lead, terminal])
 }
 
 /// The 2-hop V3→V2 facts (`v3v2`, SelfFund, terminal V2 swap). The terminal
@@ -734,53 +615,11 @@ pub(crate) fn facts_of_v3v2(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Opt
     let (HopInfo::V3(a), HopInfo::V2(b)) = (&path.hops[0], &path.hops[1]) else {
         return None;
     };
-    let fwd_a = v3_forward(a);
-    Some(vec![
-        HopFacts {
-            prot: Prot::V3,
-            zfo: a.zfo,
-            swap_fee: u16::try_from(a.fee).ok()?,
-            tick_spacing: 0,
-            out_currency: fwd_a,
-            in_currency: if a.zfo {
-                a.token0_address
-            } else {
-                a.token1_address
-            },
-            out_dest: OutDest::Executor,
-            repay: Repay::SelfRefund,
-            pool_address: a.pool_address,
-            pool_id_hex: None,
-            terminal_form: None,
-            repay_mechanism: None,
-            seed_delivery: None,
-            currency0_address: a.token0_address,
-            currency1_address: a.token1_address,
-        },
-        HopFacts {
-            prot: Prot::V2,
-            zfo: b.zfo,
-            swap_fee: b.fee,
-            tick_spacing: 0,
-            out_currency: inputs.weth_address, // closing WETH, per the gold
-            in_currency: fwd_a,
-            out_dest: OutDest::Executor,
-            repay: Repay::Offstream,
-            pool_address: b.pool_address,
-            pool_id_hex: None,
-            terminal_form: None,
-            repay_mechanism: None,
-            seed_delivery: None,
-            currency0_address: b.token0_address,
-            currency1_address: b.token1_address,
-        },
-    ])
+    let lead = v3_hop_facts_strict(a)?;
+    let terminal = closing_hop(v2_hop_facts(b), v3_forward(a), inputs.weth_address);
+    Some(vec![lead, terminal])
 }
 
-/// The 2-hop leading-V3-flash shape (`v3v2`, `v3v3`) — a SelfFund + a leading
-/// V3 flash; the terminal is a V2 `V2SwapCalc` from the seeded forward (`v3v2`)
-/// or a V3 flash with `auto_repay` (`v3v3`). Both families share this shape;
-/// `facts[1].prot` picks the terminal mechanics (ADR-031 D3/D6).
 /// A V3 hop's facts (shared by the V3-involving shape derivers).
 pub(crate) fn v3_hop_facts(h: &V3HopInfo) -> HopFacts {
     HopFacts {
