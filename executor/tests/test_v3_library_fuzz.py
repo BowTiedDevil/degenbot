@@ -6,12 +6,23 @@ same Anvil instance, then uses Hypothesis to compare outputs across a wide
 range of inputs. Any disagreement is a bug in the Vyper port.
 """
 
-import pytest
 import json
-from hypothesis import given, settings, HealthCheck
+from pathlib import Path
+
+import pytest
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from .conftest_shared import Q96
+# Committed solc 0.7.6 artifact (see scripts/build-sol-reference-artifact.sh):
+# the original Solidity V3-math libraries, deployed next to the Vyper
+# test_harness for cross-implementation fuzzing.
+SOL_REF_ARTIFACT = (
+    Path(__file__).resolve().parent.parent
+    / "contracts"
+    / "sol_reference"
+    / "artifacts"
+    / "SolReference.json"
+)
 
 
 # ── Strategies ──
@@ -29,6 +40,7 @@ valid_sqrt_price = st.integers(min_value=MIN_SQRT_RATIO, max_value=MAX_SQRT_RATI
 
 # ── Fixtures ──
 
+
 @pytest.fixture(scope="module")
 def harness(project, accounts):
     """Deploy the Vyper test harness."""
@@ -41,7 +53,12 @@ def sol_ref(accounts):
     from ethpm_types import ContractType
     from ape.contracts.base import ContractContainer
 
-    with open("/tmp/sol_ref_out/SolReference.sol/SolReference.json") as f:
+    if not SOL_REF_ARTIFACT.is_file():
+        pytest.fail(
+            f"missing committed artifact {SOL_REF_ARTIFACT} — build and commit it "
+            "with executor/scripts/build-sol-reference-artifact.sh"
+        )
+    with open(SOL_REF_ARTIFACT) as f:
         artifact = json.load(f)
 
     ct = ContractType(
@@ -55,11 +72,7 @@ def sol_ref(accounts):
 
 def _compare_vy_sol(vy_result, sol_result, context):
     """Compare Vyper and Solidity results, with helpful error message."""
-    assert vy_result == sol_result, (
-        f"{context}:\n"
-        f"  Vyper = {vy_result}\n"
-        f"  Sol   = {sol_result}"
-    )
+    assert vy_result == sol_result, f"{context}:\n  Vyper = {vy_result}\n  Sol   = {sol_result}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -100,7 +113,9 @@ class TestFullMathFuzz:
         try:
             sol = sol_ref.test_mul_div_rounding_up(a, b, d)
         except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy} for mul_div_rounding_up({a}, {b}, {d})")
+            pytest.fail(
+                f"Solidity reverted but Vyper returned {vy} for mul_div_rounding_up({a}, {b}, {d})"
+            )
 
         assert vy == sol, f"mul_div_rounding_up({a}, {b}, {d}): Vyper={vy}, Sol={sol}"
 
@@ -120,23 +135,33 @@ class TestSqrtPriceMathFuzz:
         zero_for_one=st.booleans(),
     )
     @settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-    def test_get_next_sqrt_price_from_input(self, harness, sol_ref, sqrt_p, liquidity, amount, zero_for_one):
+    def test_get_next_sqrt_price_from_input(
+        self, harness, sol_ref, sqrt_p, liquidity, amount, zero_for_one
+    ):
         sqrt_p_u160 = min(sqrt_p, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
         try:
-            vy = harness.test_get_next_sqrt_price_from_input(sqrt_p_u160, liquidity_u128, amount, zero_for_one)
+            vy = harness.test_get_next_sqrt_price_from_input(
+                sqrt_p_u160, liquidity_u128, amount, zero_for_one
+            )
         except Exception:
             with pytest.raises(Exception):
-                sol_ref.test_get_next_sqrt_price_from_input(sqrt_p_u160, liquidity_u128, amount, zero_for_one)
+                sol_ref.test_get_next_sqrt_price_from_input(
+                    sqrt_p_u160, liquidity_u128, amount, zero_for_one
+                )
             return
 
         try:
-            sol = sol_ref.test_get_next_sqrt_price_from_input(sqrt_p_u160, liquidity_u128, amount, zero_for_one)
+            sol = sol_ref.test_get_next_sqrt_price_from_input(
+                sqrt_p_u160, liquidity_u128, amount, zero_for_one
+            )
         except Exception:
             pytest.fail(f"Solidity reverted but Vyper returned {vy}")
 
-        assert vy == sol, f"from_input({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one}): Vyper={vy}, Sol={sol}"
+        assert vy == sol, (
+            f"from_input({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one}): Vyper={vy}, Sol={sol}"
+        )
 
     @given(
         sqrt_p=valid_sqrt_price,
@@ -145,23 +170,33 @@ class TestSqrtPriceMathFuzz:
         zero_for_one=st.booleans(),
     )
     @settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-    def test_get_next_sqrt_price_from_output(self, harness, sol_ref, sqrt_p, liquidity, amount, zero_for_one):
+    def test_get_next_sqrt_price_from_output(
+        self, harness, sol_ref, sqrt_p, liquidity, amount, zero_for_one
+    ):
         sqrt_p_u160 = min(sqrt_p, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
         try:
-            vy = harness.test_get_next_sqrt_price_from_output(sqrt_p_u160, liquidity_u128, amount, zero_for_one)
+            vy = harness.test_get_next_sqrt_price_from_output(
+                sqrt_p_u160, liquidity_u128, amount, zero_for_one
+            )
         except Exception:
             with pytest.raises(Exception):
-                sol_ref.test_get_next_sqrt_price_from_output(sqrt_p_u160, liquidity_u128, amount, zero_for_one)
+                sol_ref.test_get_next_sqrt_price_from_output(
+                    sqrt_p_u160, liquidity_u128, amount, zero_for_one
+                )
             return
 
         try:
-            sol = sol_ref.test_get_next_sqrt_price_from_output(sqrt_p_u160, liquidity_u128, amount, zero_for_one)
+            sol = sol_ref.test_get_next_sqrt_price_from_output(
+                sqrt_p_u160, liquidity_u128, amount, zero_for_one
+            )
         except Exception:
             pytest.fail(f"Solidity reverted but Vyper returned {vy}")
 
-        assert vy == sol, f"from_output({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one}): Vyper={vy}, Sol={sol}"
+        assert vy == sol, (
+            f"from_output({sqrt_p_u160}, {liquidity_u128}, {amount}, {zero_for_one}): Vyper={vy}, Sol={sol}"
+        )
 
     @given(
         sqrt_a=valid_sqrt_price,
@@ -187,7 +222,9 @@ class TestSqrtPriceMathFuzz:
         except Exception:
             pytest.fail(f"Solidity reverted but Vyper returned {vy}")
 
-        assert vy == sol, f"amount0({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up}): Vyper={vy}, Sol={sol}"
+        assert vy == sol, (
+            f"amount0({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up}): Vyper={vy}, Sol={sol}"
+        )
 
     @given(
         sqrt_a=valid_sqrt_price,
@@ -213,7 +250,9 @@ class TestSqrtPriceMathFuzz:
         except Exception:
             pytest.fail(f"Solidity reverted but Vyper returned {vy}")
 
-        assert vy == sol, f"amount1({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up}): Vyper={vy}, Sol={sol}"
+        assert vy == sol, (
+            f"amount1({sqrt_a_u160}, {sqrt_b_u160}, {liquidity_u128}, {round_up}): Vyper={vy}, Sol={sol}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -275,31 +314,32 @@ class TestSwapMathFuzz:
         fee_pips=fee_pips,
     )
     @settings(max_examples=500, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-    def test_compute_swap_step(self, harness, sol_ref, sqrt_current, sqrt_target, liquidity, amount_remaining, fee_pips):
+    def test_compute_swap_step(
+        self, harness, sol_ref, sqrt_current, sqrt_target, liquidity, amount_remaining, fee_pips
+    ):
         sqrt_current_u160 = min(sqrt_current, 2**160 - 1)
         sqrt_target_u160 = min(sqrt_target, 2**160 - 1)
         liquidity_u128 = min(liquidity, 2**128 - 1)
 
         try:
             vy = harness.test_compute_swap_step(
-                sqrt_current_u160, sqrt_target_u160, liquidity_u128,
-                amount_remaining, fee_pips
+                sqrt_current_u160, sqrt_target_u160, liquidity_u128, amount_remaining, fee_pips
             )
         except Exception:
             with pytest.raises(Exception):
                 sol_ref.test_compute_swap_step(
-                    sqrt_current_u160, sqrt_target_u160, liquidity_u128,
-                    amount_remaining, fee_pips
+                    sqrt_current_u160, sqrt_target_u160, liquidity_u128, amount_remaining, fee_pips
                 )
             return
 
         try:
             sol = sol_ref.test_compute_swap_step(
-                sqrt_current_u160, sqrt_target_u160, liquidity_u128,
-                amount_remaining, fee_pips
+                sqrt_current_u160, sqrt_target_u160, liquidity_u128, amount_remaining, fee_pips
             )
         except Exception:
-            pytest.fail(f"Solidity reverted but Vyper returned {vy} for compute_swap_step({sqrt_current_u160}, {sqrt_target_u160}, {liquidity_u128}, {amount_remaining}, {fee_pips})")
+            pytest.fail(
+                f"Solidity reverted but Vyper returned {vy} for compute_swap_step({sqrt_current_u160}, {sqrt_target_u160}, {liquidity_u128}, {amount_remaining}, {fee_pips})"
+            )
 
         assert vy == sol, (
             f"compute_swap_step({sqrt_current_u160}, {sqrt_target_u160}, "
