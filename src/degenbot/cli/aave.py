@@ -2,11 +2,15 @@
 
 import signal
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import click
 import tqdm
 from eth_typing import ChainId
+
+# Runtime (not TYPE_CHECKING) import: the cast() calls below reference
+# BlockParams unquoted so vulture can see the use; TC006 is noqa'd there.
+from eth_typing.evm import BlockParams
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -38,9 +42,6 @@ from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.updater import CancelHandle
-
-if TYPE_CHECKING:
-    from eth_typing.evm import BlockParams
 
 # Display limit for ``aave position risk`` output (the sole survivor of the
 # former ``constants.py`` — the rest was deleted by the §4.2 writer
@@ -98,10 +99,10 @@ def _resolve_to_block(to_block: str, *, chain_id: int, bot: Bot) -> int | None:
 
     if ":" in to_block:
         parts = to_block.split(":", 1)
-        block_tag, offset = cast("tuple[BlockParams, str]", parts)
+        block_tag, offset = cast(tuple[BlockParams, str], parts)  # ruff: ignore[runtime-cast-value]
         block_offset = int(offset.strip())
     else:
-        block_tag = cast("BlockParams", to_block)
+        block_tag = cast(BlockParams, to_block)  # ruff: ignore[runtime-cast-value]
         block_offset = 0
 
     if block_tag not in _BLOCK_TAGS:

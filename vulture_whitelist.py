@@ -18,7 +18,6 @@ Regenerate candidate entries from a clean tree with:
     vulture src/degenbot --min-confidence 80 --make-whitelist
 """
 
-BlockParams  # cli/aave.py: imported for string-form forward refs in cast() — vulture can't parse str-annotations
 constant_product_calc_exact_in  # uniswap/v2_functions.py: test-only — byte-parity reference for Rust `v2_math` (tests/rust/test_v2_math_parity.py)
 constant_product_calc_exact_out  # uniswap/v2_functions.py: test-only — byte-parity reference for Rust `v2_math` (tests/rust/test_v2_math_parity.py)
 dialect  # database/models/base.py: SQLAlchemy TypeDecorator.process_bind_param signature (framework-required)
