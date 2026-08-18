@@ -14,6 +14,11 @@ reachable only through explicit `just test-tier3-*` recipes — they build
 canonical-reference bytecode, so they are not in the default
 `cargo test`/`just test-rust` path.
 
+> **Post-acceptance update:** the `just test-tier3-*` family recipes were
+> consolidated into a single `just test-tier3 [family]` verb (no family = all
+> families), and the family tests now ALSO run in the default `just test-rust`
+> path — they load the committed tier-3 artifact bytecode toolchain-free.
+
 ## Context
 
 The ADR-005 dual-path framework makes a testable claim — Rust and Python are

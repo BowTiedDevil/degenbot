@@ -68,7 +68,7 @@ test-rust-nextest: test-standalone
 
 # Run Rust linter (clippy)
 lint-rust:
-    cargo clippy --fix --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --fix --all-targets --all-features --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Lint Rust (check-only; non-mutating). Mirrors the clippy gate CI runs,
 # minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
@@ -97,7 +97,7 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-concentrated-liquidity-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index; do
+    for crate in degenbot-core degenbot-concentrated-liquidity-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
@@ -114,10 +114,6 @@ build-rust-extension:
 # Build and install Python extension in development mode
 dev:
     uv run maturin develop
-
-# Build Python extension wheels
-build-wheels:
-    uv run maturin build --release
 
 # Run only the Python track (full pytest). CI's python-test matrix job and the
 # pre-push hook call this subunit directly; humans use `just test`. Under the
@@ -147,141 +143,96 @@ record-golden *args:
 verify-deployments *args:
     DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
 
-# Tier-3a byte-exact oracle: SwapMath.computeSwapStep (V3 + V4) vs real
-# canonical core libraries run as EVM bytecode in revm (ergo task OZRQS6,
-# epic UP5NH6). Builds BOTH harnesses (V3 via direct solc 0.7.6 — v3-core
-# pragmas <0.8 + foundry can't resolve solc <0.8 here; V4 via forge 0.8.26)
-# via tier3-oracle/build-tier3-harnesses.sh, then runs the proptest with
-# --include-ignored. The proptest asserts each Rust output field === the
-# on-chain output byte-for-byte. The V3 direct-solc + V4 forge split is a
-# documented toolchain deviation (foundry's solc-list endpoint is
-# unreachable for <0.8 in this env); the script caches solc 0.7.6 in the svm
-# dir for reuse.
-test-tier3-step:
+# ========== Tier-3 On-Chain Oracles ==========
+#
+# `just test-tier3 [family]` — build a family's pinned canonical-reference
+# harness (real solc/forge toolchain), republish its artifacts under
+# `tier3-oracle/artifacts/`, and run that family's byte-exact
+# Rust-vs-real-EVM test. No family (default `all`) runs EVERY family, in the
+# order listed below.
+#
+# Family notes (harness sources under `tier3-oracle/src*/`, epic UP5NH6 task
+# IDs unless noted):
+#   step      SwapMath.computeSwapStep (V3 + V4) vs the real canonical core
+#             libraries run as EVM bytecode in revm (OZRQS6). V3 via direct
+#             solc 0.7.6 (v3-core pragmas <0.8 + foundry can't resolve solc
+#             <0.8 in this env — documented toolchain deviation; the script
+#             caches solc 0.7.6 in the svm dir) + V4 via forge 0.8.26.
+#             Asserts each Rust output field === the on-chain output.
+#   swap      V3 `Pool.swap` end-to-end (2LTKVO). solc 0.7.6 harness, drives
+#             `v3_simulate_swap` against real UniswapV3Pool bytecode in revm.
+#   v2        V2 `Pair.swap` (TLBUNW — family 1/3 of SH6HAK). solc 0.5.16
+#             harness; `IntHopState::swap` (V2 getAmountOut) byte-exact via the
+#             K-invariant boundary.
+#   v4        V4 `PoolManager.swap` end-to-end (2LTKVO). solc 0.8.26 harness
+#             (PoolManager singleton + unlocker + mock tokens);
+#             `v4_simulate_swap` through the unlock/settle dance, with
+#             amount0/amount1 byte-exact to the on-chain BalanceDelta.
+#   path5000  path-5000 V4 CL-hop clamp regression (BHTWBZ): prove the CL-hop
+#             input clamp turns the 20.7M-gas EMPTY-HALT into a clean
+#             byte-exact fill under the executor's 5M ceiling. Rebuilds the
+#             shared v4 harness and runs the pair from the umbrella `degenbot`
+#             crate.
+#   curve     Curve stableswap `get_dy` (YXMNWB — family 2/3 of SH6HAK). solc
+#             0.8.26 harness — a faithful Solidity port of the STANDARD
+#             stableswap `get_dy` (Curve's canonical source is Vyper, absent
+#             here); the `simulate_swap` standard path is byte-exact to the
+#             on-chain `getDy`.
+#   balancer  Balancer weighted/stable (EZLECC — family 3/3 of SH6HAK). solc
+#             0.7.6 harness over the CANONICAL balancer-v2-monorepo math cores
+#             (FixedPoint/LogExpMath/WeightedMath/StableMath, pinned commit
+#             f8b6f44); the `simulate_swap` weighted + stable
+#             (invariant_version==1) paths are byte-exact.
+#   pancake   PancakeSwap V3 `PancakeV3Pool.swap`. solc 0.7.6 harness over the
+#             Etherscan-verified deployed source (pool 0x1445F32D1A74872bA41f3D8cF4022E9996120b31,
+#             vendored under `lib/pancake-src/`); byte-exact math AND the
+#             9-field `Swap` event variant decodes only via the PancakeSwap
+#             decoder (not the Uniswap one).
+#   pancake2  PancakeSwap V2 pair swap (the fork-fee sub-slice of the V2
+#             family — the source of `tier3_v2_pair_swap_vs_revm.rs`'s
+#             deferral). solc 0.5.16 harness over the REAL Ethereum-mainnet
+#             `PancakePair` (hardcoded 0.25% fee = the engine's
+#             `PANCAKESWAP_V2` preset, 3-tuple timestamped reserves);
+#             `IntHopState::swap` byte-exact at the fork fee via the
+#             K-invariant boundary.
+#
+# The same tests ALSO run in the default `just test-rust` (they load the
+# COMMITTED bytecode from `tier3-oracle/artifacts/`, toolchain-free), so this
+# recipe's unique role is regenerate + publish the artifacts (after a
+# harness-source edit; `rebuild-tier3-artifacts` republishes without running
+# them) and re-run the family. Recompiling dozens of revm harnesses is slow —
+# run a single family, or `all`, accordingly.
+test-tier3 family='all':
     #!/usr/bin/env bash
     set -euo pipefail
-    tier3-oracle/build-tier3-harnesses.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-concentrated-liquidity-math --test tier3_compute_swap_step_vs_revm
 
-# Tier-3b end-to-end V3 `Pool.swap` oracle (ergo UP5NH6 / 2LTKVO).
-# Builds the v3-core harness (solc 0.7.6) then drives the Rust
-# `v3_simulate_swap` against real UniswapV3Pool bytecode in revm.
-test-tier3-swap:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-v3-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v3_pool_swap_vs_revm
+    run_family() {
+        local harness pkg test
+        case "$1" in
+            step)     harness=build-tier3-harnesses.sh;           pkg=degenbot-concentrated-liquidity-math; test=tier3_compute_swap_step_vs_revm ;;
+            swap)     harness=build-tier3-v3-swap-harness.sh;     pkg=degenbot-pools; test=tier3_v3_pool_swap_vs_revm ;;
+            v2)       harness=build-tier3-v2-swap-harness.sh;     pkg=degenbot-pools; test=tier3_v2_pair_swap_vs_revm ;;
+            v4)       harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot-pools; test=tier3_v4_pool_swap_vs_revm ;;
+            path5000) harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot; test=tier3_path5000_v4_clamp ;;
+            curve)    harness=build-tier3-curve-swap-harness.sh;  pkg=degenbot-pools; test=tier3_curve_swap_vs_revm ;;
+            balancer) harness=build-tier3-balancer-swap-harness.sh; pkg=degenbot-pools; test=tier3_balancer_swap_vs_revm ;;
+            pancake)  harness=build-tier3-pancake-v3-swap-harness.sh; pkg=degenbot-pools; test=tier3_pancake_v3_swap_vs_revm ;;
+            pancake2) harness=build-tier3-pancake-v2-swap-harness.sh; pkg=degenbot-pools; test=tier3_pancake_v2_swap_vs_revm ;;
+            *) echo "unknown tier-3 family '$1' (families: step swap v2 v4 path5000 curve balancer pancake pancake2 | all)" >&2; exit 2 ;;
+        esac
+        tier3-oracle/"$harness"
+        python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+        export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        cargo test --manifest-path rust/Cargo.toml -p "$pkg" --test "$test"
+    }
 
-# Tier-3 V2 `Pair.swap` oracle (ergo UP5NH6 / TLBUNW — family 1/3 of SH6HAK).
-# Builds the v2-core harness (solc 0.5.16) then drives the engine's
-# `IntHopState::swap` (V2 getAmountOut) against real UniswapV2Pair bytecode
-# in revm, asserting byte-exact via the K-invariant boundary.
-test-tier3-v2:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-v2-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v2_pair_swap_vs_revm
-
-# Tier-3b V4 `PoolManager.swap` end-to-end oracle (ergo UP5NH6 / 2LTKVO —
-# the V4 half). Builds the v4-core harness (solc 0.8.26: PoolManager singleton
-# + unlocker + mock tokens) then drives the Rust `v4_simulate_swap` against the
-# canonical `PoolManager` bytecode in revm through the unlock/settle dance,
-# asserting amount0/amount1 byte-exact to the on-chain BalanceDelta.
-test-tier3-v4:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-v4-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_v4_pool_swap_vs_revm
-
-# Tier-3 Curve stableswap `get_dy` oracle (ergo UP5NH6 / YXMNWB — family 2/3
-# of SH6HAK's Tier-3 cutover). Builds the src-curve harness (solc 0.8.26 — a
-# faithful Solidity port of the STANDARD stableswap `get_dy`; Curve's canonical
-# source is Vyper, absent here) then drives the engine's `simulate_swap`
-# standard path against the on-chain `getDy`, asserting byte-exact across a
-# pinned case + proptest.
-test-tier3-curve:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-curve-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_curve_swap_vs_revm
-
-# Tier-3 Balancer weighted/stable swap oracle (ergo UP5NH6 / EZLECC — family
-# 3/3 of SH6HAK's Tier-3 cutover). Builds the src-balancer harness (solc
-# 0.7.6) over the CANONICAL balancer-v2-monorepo math cores (FixedPoint/
-# LogExpMath/WeightedMath/StableMath, pinned commit f8b6f44), then drives the
-# engine's `simulate_swap` weighted + stable (invariant_version==1) paths
-# against the on-chain bytecode, asserting byte-exact across pinned cases +
-# proptests.
-test-tier3-balancer:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-balancer-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_balancer_swap_vs_revm
-
-# Tier-3 PancakeSwap V3 `PancakeV3Pool.swap` oracle (task: PancakeSwap V3
-# variant harness). Builds the src-pancake-v3 harness (solc 0.7.6) over the REAL
-# `PancakeV3Pool` — the Etherscan-verified deployed source (pool
-# 0x1445F32D1A74872bA41f3D8cF4022E9996120b31) vendored under `lib/pancake-src/`
-# — then drives the engine's `v3_simulate_swap` against the on-chain swap,
-# asserting byte-exact math AND that the 9-field `Swap` event variant decodes
-# only via the PancakeSwap decoder (not the Uniswap one), matching the sim.
-test-tier3-pancake:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-pancake-v3-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v3_swap_vs_revm
-
-# Tier-3 PancakeSwap V2 pair swap oracle (the fork-fee sub-slice of the V2
-# family — the source of `tier3_v2_pair_swap_vs_revm.rs`'s deferral). Builds
-# the src-pancake2 harness (solc 0.5.16) over the REAL Ethereum-mainnet
-# `PancakePair` — the deployed PancakeSwap V2 fork of UniswapV2Pair, hardcoded
-# 0.25% fee (`mul(25)/10000`, matching the engine `PANCAKESWAP_V2` preset) + 3-tuple
-# timestamped reserves — then drives the engine's `IntHopState::swap` against
-# the on-chain K-invariant boundary, asserting byte-exactness at the fork fee.
-test-tier3-pancake2:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-pancake-v2-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot-pools --test tier3_pancake_v2_swap_vs_revm
-
-# Tier-3 path-5000 V4 CL-hop clamp regression (ergo BHTWBZ): prove the
-# CL-hop input clamp turns the 20.7M-gas EMPTY-HALT into a clean byte-exact
-# fill under the executor's 5M ceiling, using the real v4-core PoolManager.
-# The test loads the committed V4SwapOracleHarness bytecode (no toolchain),
-# so it ALSO runs in the default `just test-rust`; this recipe rebuilds +
-# republishes the v4 harness (like the other families) then re-runs the pair.
-test-tier3-path5000:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tier3-oracle/build-tier3-v4-swap-harness.sh
-    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml -p degenbot --test tier3_path5000_v4_clamp
-
-# Tier-3 umbrella: rebuild + republish every canonical-reference harness, then
-# run the full on-chain oracle suite. The individual tests ALSO run in the
-# default `just test-rust` (they load the COMMITTED bytecode from
-# `tier3-oracle/artifacts/`), so this recipe's unique role is regenerate +
-# publish the artifacts (after a harness-source edit) and re-run each family.
-# Recompiling dozens of revm harnesses makes this slow — run explicitly, or in
-# the CI `tier3-oracle` job.
-test-tier3: test-tier3-step test-tier3-swap test-tier3-v2 test-tier3-v4 test-tier3-path5000 test-tier3-curve test-tier3-balancer test-tier3-pancake test-tier3-pancake2
+    if [ "{{ family }}" = "all" ]; then
+        for f in step swap v2 v4 path5000 curve balancer pancake pancake2; do
+            run_family "$f"
+        done
+    else
+        run_family "{{ family }}"
+    fi
 
 # Validate the committed tier-3 harness bytecode: recompile EVERY harness with
 # the real solc/forge toolchain (into a throwaway dir, PUBLISH=0 — committed
@@ -411,15 +362,6 @@ update-deps:
     cargo upgrade --manifest-path rust/Cargo.toml --incompatible
     cargo update --manifest-path rust/Cargo.toml
 
-# ========== CI/CD ==========
-
-# Simulate CI Rust checks
-ci-rust: fmt-check check-no-pyo3-in-cores lint-rust test-rust
-    cargo build --release -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
-
-# Simulate full CI pipeline
-ci-full: ci-rust lint-markdown test-python
-
 # ========== Repository Setup ==========
 
 # Install prek git hooks and configure commit template.
@@ -451,23 +393,3 @@ setup-git-hooks:
     echo "    Bypass: git push --no-verify (CI still runs)."
     echo "✓ commit template configured."
 
-# ========== Documentation ==========
-
-# Render a Mermaid diagram (Markdown or .mmd) to PNG.
-# Example: just mermaid-png docs/architecture/rust-solver-engine.md
-mermaid-png input output='':
-    scripts/mermaid-export {{ input }} {{ output }} -f png
-
-# Render a Mermaid diagram (Markdown or .mmd) to SVG.
-# Example: just mermaid-svg docs/architecture/rust-solver-engine.md
-mermaid-svg input output='':
-    scripts/mermaid-export {{ input }} {{ output }} -f svg
-
-# Build documentation
-docs:
-    cargo doc --no-deps --manifest-path rust/Cargo.toml
-    uv run mkdocs build 2>/dev/null || echo "mkdocs not configured"
-
-# Serve documentation locally
-serve-docs:
-    cargo doc --open 2>/dev/null --manifest-path rust/Cargo.toml || echo "Open rust/target/doc/degenbot_rs/index.html"

@@ -91,7 +91,7 @@ fn load_harness_bytecode(contract_dir: &str, contract: &str) -> Bytecode {
     let json_str = std::fs::read_to_string(&path).unwrap_or_else(|err| {
         panic!(
             "Tier-3a: harness artifact not found at {path_display} ({err}). \
-             Run `just test-tier3-step` (it runs \
+             Run `just test-tier3 step` (it runs \
              tier3-oracle/build-tier3-harnesses.sh before this test), not bare \
              `cargo test --include-ignored`."
         )

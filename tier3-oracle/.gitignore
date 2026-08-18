@@ -1,6 +1,6 @@
 # Build artifacts (forge output + solc cache + dependency libs). The committed
-# source-of-truth is Solidity; bytecode is rebuilt by `just test-tier3-smoke`
-# (and the CI step in task BQ43DK), never checked in.
+# source-of-truth is Solidity; bytecode is rebuilt by `just test-tier3`
+# [family] (and the CI step in task BQ43DK), never checked in.
 out/
 cache/
 lib/

@@ -48,19 +48,16 @@ The whole module is marked ``online_rpc`` and so is **deselected by default**
 (``pyproject.toml`` → ``-m "not slow and not base and not online_rpc"``) — CI
 runs offline and never needs a node. Run on demand against a local/mainnet RPC::
 
-    just test-python -m online_rpc tests/registry/test_deployment_onchain_verification.py
+    just verify-deployments
 
 Escalate tiers with the env var (default ``1``)::
 
     # Tier 2 (+selector fingerprint)
-    DEGENBOT_VERIFY_DEPLOYMENTS=2 just test-python -m online_rpc \
-        tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=2 just verify-deployments
     # Tier 3 (+Etherscan source name; needs key)
-    DEGENBOT_VERIFY_DEPLOYMENTS=3 ETHERSCAN_API_KEY=... just test-python \
-        -m online_rpc tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=3 ETHERSCAN_API_KEY=... just verify-deployments
     # Tier 4 (+init_code_hash reproduces pool address)
-    DEGENBOT_VERIFY_DEPLOYMENTS=4 just test-python -m online_rpc \
-        tests/registry/test_deployment_onchain_verification.py
+    DEGENBOT_VERIFY_DEPLOYMENTS=4 just verify-deployments
 
 Per-chain rows skip individually when their chain's RPC is unreachable (e.g.
 on a machine with only a local Ethereum node, the Base/Arbitrum rows skip).
