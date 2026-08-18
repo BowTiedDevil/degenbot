@@ -160,6 +160,7 @@ pub struct HopFacts {
 /// `v3_v4_v3` shape exercises is implemented; A2 generalizes.
 mod mechanics {
     use super::{AddressTable, HopFacts, OutDest};
+    use crate::composers::NATIVE_CURRENCY_ADDRESS;
     use crate::encoders::{SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF};
     use crate::grammar_ledger::Prot;
     use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
@@ -359,6 +360,73 @@ mod mechanics {
     /// Net every pool-manager ledger to zero (the unlock exit).
     pub fn v4_settle_all() -> PlanStep {
         PlanStep::V4SettleAll
+    }
+
+    /// A V4 sync step — the forward-settle prelude's first op (the pool's
+    /// accounting state pinned against the forward currency's ledger).
+    pub fn v4_sync(currency_idx: u8, currency_addr: Address) -> PlanStep {
+        PlanStep::V4Sync {
+            currency_idx,
+            currency_addr,
+        }
+    }
+
+    /// A plain ERC20 transfer at explicit table indices — the shape owns the
+    /// routing. `repays_flash: Some(pool)` marks a flash-repayment transfer.
+    pub fn erc20_transfer(
+        token_idx: u8,
+        token_addr: Address,
+        recipient_idx: u8,
+        amount: u128,
+        seeds_pool: Option<Address>,
+        repays_flash: Option<Address>,
+    ) -> PlanStep {
+        PlanStep::Erc20Transfer {
+            token_idx,
+            token_addr,
+            recipient_idx,
+            amount,
+            seeds_pool,
+            repays_flash,
+        }
+    }
+
+    /// A native (ETH) transfer — the V2 swap-in draw inside a flash callback.
+    pub fn native_transfer(amount: u128) -> PlanStep {
+        PlanStep::NativeTransfer { amount }
+    }
+
+    /// Net the V4 pool-manager NATIVE ledger to zero — the native-input V4
+    /// swap's bridge (the unlock's WETH debt against the V2 draw).
+    pub fn v4_settle_delta() -> PlanStep {
+        PlanStep::V4SettleDelta {
+            currency_idx: SENTINEL_NATIVE,
+            currency_addr: NATIVE_CURRENCY_ADDRESS,
+        }
+    }
+
+    /// Deposit WETH into the V4 pool (the v2v4 native-out in-callback arm).
+    pub fn weth_deposit(weth_idx: u8, weth_addr: Address, amount: u128) -> PlanStep {
+        PlanStep::WethDeposit {
+            weth_idx,
+            weth_addr,
+            amount,
+        }
+    }
+
+    /// Withdraw WETH from the V4 pool (the native-in arms' callback head).
+    pub fn weth_withdraw(weth_idx: u8, weth_addr: Address, amount: u128) -> PlanStep {
+        PlanStep::WethWithdraw {
+            weth_idx,
+            weth_addr,
+            amount,
+        }
+    }
+
+    /// A self-fund — top-level funding of the flash input from the executor's
+    /// own balance (the plan head, before the lead flash).
+    pub fn self_fund(currency: Address, amount: u128) -> PlanStep {
+        PlanStep::SelfFund { currency, amount }
     }
 
     /// A batched V4 swap (the `use_v4_batch` optimization) over the hop.
