@@ -597,6 +597,18 @@ impl Harness {
         )
     }
 
+    /// ADR-033 encode intake context: the session-scoped deployment addresses
+    /// (executor / PoolManager / WETH), derived once from what the harness
+    /// deployed and shared by every `encode_path*` call (mirrors the
+    /// arbitrage `SimulateContext::encode_context` projection).
+    #[must_use]
+    pub fn encode_context(&self) -> degenbot_executor::composers::EncodeContext {
+        degenbot_executor::composers::EncodeContext::new(
+            self.executor,
+            self.pool_manager,
+            self.weth,
+        )
+    }
     /// Encode a path with explicit [`EncodeOptions`] (WE45KC runtime axis proof
     /// — funding source / profit capture / bribe).
     pub fn encode_path_with_opts(
@@ -612,11 +624,7 @@ impl Harness {
             .take(n)
             .collect();
         degenbot_executor::composers::encode_cmd_stream(
-            &degenbot_executor::composers::EncodeContext::new(
-                self.executor,
-                self.pool_manager,
-                self.weth,
-            ),
+            &self.encode_context(),
             &degenbot_executor::composers::EncodeRequest::new(
                 path.clone(),
                 optimal_input,

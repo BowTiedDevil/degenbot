@@ -406,10 +406,6 @@ impl EncodeRequest {
     /// `path.hops.len()` (a programmer error — the arrays are per-hop, aligned
     /// with the path). The panic names the mismatched arrays.
     #[must_use]
-    #[expect(
-        clippy::panic,
-        reason = "constructor invariant: per-hop arrays must align with the path (programmer error, ADR-033)"
-    )]
     pub fn new(
         path: PathInfo,
         optimal_input: u128,

@@ -294,3 +294,22 @@ fn unprofitable_chain_is_rejected() {
     );
     assert_profitable(&result, 2, "unprofitable");
 }
+
+/// ADR-033 guard: the harness's session-scoped [`EncodeContext`] projection
+/// maps the DEPLOYED addresses in the canonical (executor, pool_manager,
+/// weth) order — pinning each field to its own deployment so a field-order
+/// footgun in the projection (or the single call site) fails loudly.
+/// `EncodeContext` is `PartialEq`, so a transposed pair (pm ↔ weth) is caught.
+#[test]
+fn harness_encode_context_projects_deployed_addresses() {
+    let h = Harness::new().unwrap();
+    let ctx = h.encode_context();
+    assert_eq!(
+        ctx,
+        degenbot_executor::composers::EncodeContext::new(h.executor, h.pool_manager, h.weth,),
+        "encode_context must project (executor, pool_manager, weth) from the deployed addresses"
+    );
+    // The projection is Copy + Eq — the session value can be threaded by value.
+    let ctx2 = ctx;
+    assert_eq!(ctx, ctx2);
+}
