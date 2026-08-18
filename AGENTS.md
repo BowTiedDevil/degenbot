@@ -1,10 +1,17 @@
-# AGENTS.md
+## Agent Coordination
+Coordinate with other local pi sessions on related codebases. Use `/skill:pi-intercom` for patterns.
+
+**When:** Same codebase (parallel work), reference codebase (consulting patterns), related repos (shared libraries).
+
+**Not when:** Unrelated codebases, trivial questions, or when you can proceed independently.
+
+**Principle:** Prefer `send` for notifications; `ask` only when blocked waiting for input.
 
 ## Architectural Vision
 
 **Long-term goal: a set of first-class standalone Rust crates that together form a complete, functional MEV bot.**
 
-degenbot is migrating from a pure-Python library to a Rust core composed of standalone crates. The end state has two equally first-class consumers:
+`degenbot` is migrating from a pure-Python library to a Rust core composed of standalone crates. The end state has two equally first-class consumers:
 
 1. **Pure-Rust MEV bot.** Someone should be able to `cargo add degenbot` (the umbrella crate re-exporting the cores) and build a fully functional MEV bot using Rust components ONLY — event decoding, pool state, solvers, pump loop, swap encoding, the lot. No Python in the build, no Python at runtime.
 2. **Python-driven MEV bot.** Someone in Python should be able to build a functional MEV bot using the Python interface as a **driver** over the same Rust core, via a thin PyO3 layer that translates Python calls into Rust calls.
@@ -18,7 +25,7 @@ Unless directed otherwise, design standalone features without a backwards compat
 Use `ergo` for all feature planning. Discover usage with `ergo --help` and `ergo quickstart`. Include detailed implementation and planning notes in the body of each task.
 
 ## Refactoring & Feature Development
-Use red/green test-driven development per the `tdd` skill when refactoring and adding new features.
+Use red/green test-driven development when refactoring and adding new features. Use `/skill:tdd` for guidelines.
 
 ## Commands
 See the justfile.
