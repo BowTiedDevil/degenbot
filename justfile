@@ -342,9 +342,23 @@ format:
 
 # ========== Dependency Updates ==========
 
-# Upgrade Python and Rust dependencies.
+# Upgrade Python and Rust dependencies (incl. semver-major bumps) — the
+# repo-local replacement for dependabot's pip + cargo ecosystems.
 #
-# Two passes over Rust deps, because Cargo splits the job:
+# Python — two passes, mirroring Cargo's split of requirements from lockfile:
+#   1. `scripts/bump_python_deps.py` rewrites the version *requirements* in
+#      pyproject.toml (main deps + pinned dependency-group entries) to the
+#      latest stable on PyPI, across semver major boundaries (e.g.
+#      `pydantic ~= 2.13` -> `~= 2.14`) — the `cargo upgrade` analog. Plain
+#      `uv sync --upgrade`/`uv lock --upgrade` cannot do this: re-resolving
+#      only advances within the existing ranges. Unpinned dev-group entries
+#      are already open-ended, and the script honors the [tool.uv]
+#      `exclude-newer` horizon so the new pins remain resolvable by uv.
+#   2. `uv lock --upgrade` re-resolves uv.lock inside the new ranges — direct
+#      + transitive, all groups — the `cargo update` analog; `uv sync` then
+#      refreshes the venv.
+#
+# Rust — two passes, because Cargo splits the job:
 #   1. `cargo upgrade --incompatible` rewrites the version *requirements* in
 #      every member Cargo.toml to the latest published, including across
 #      semver major boundaries (e.g. revm 41 -> 42). `cargo update` alone
@@ -356,9 +370,12 @@ format:
 #
 # Requires the `cargo-edit` subcommand (`cargo upgrade`); install with
 #   `cargo install --locked cargo-edit`
-# Upgrade Python and Rust dependencies (incl. semver-major bumps).
 update-deps:
-    uv sync --upgrade
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run python scripts/bump_python_deps.py
+    uv lock --upgrade
+    uv sync
     cargo upgrade --manifest-path rust/Cargo.toml --incompatible
     cargo update --manifest-path rust/Cargo.toml
 
