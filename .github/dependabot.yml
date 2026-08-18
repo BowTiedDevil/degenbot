@@ -9,18 +9,3 @@ updates:
       actions:
         patterns: ["*"]
 
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    groups:
-      python-deps:
-        patterns: ["*"]
-
-  - package-ecosystem: "cargo"
-    directory: "/rust"
-    schedule:
-      interval: "weekly"
-    groups:
-      rust-deps:
-        patterns: ["*"]
