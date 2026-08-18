@@ -13,7 +13,6 @@
 //! assembly + re-export hub.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::Ordering;
 
 use alloy::primitives::{Address, U256};
 
@@ -539,7 +538,7 @@ impl BotState {
         // the first log of N+1 closes N; a drain mid-block would pin
         // `update_block=N` missing a later same-block log. Events for the
         // in-progress block stay buffered.
-        let cutoff = self.pump_complete_cutoff.load(Ordering::Relaxed);
+        let cutoff = self.pump_complete_cutoff;
         if cutoff == 0 {
             if dbg {
                 tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump NO-COMPLETE (no tombstone yet)");
@@ -1318,7 +1317,7 @@ impl BotState {
         // `BlockClock` tombstone cutoff (3M5PO5) — a block is complete when
         // the first log of N+1 closes N; a drain mid-block would pin
         // `update_block=N` missing a later same-block log.
-        let cutoff = self.pump_complete_cutoff.load(Ordering::Relaxed);
+        let cutoff = self.pump_complete_cutoff;
         if cutoff == 0 {
             return;
         }

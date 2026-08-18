@@ -19,9 +19,6 @@
 //! `advance_to_drained` requires `LogsApplied`, which requires the tombstone
 //! (first `removed: false` log for N+1).
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-
 /// The state of a single tracked block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockState {
@@ -105,15 +102,6 @@ pub struct BlockClock {
     /// Whether the clock is currently in the reorg path (accepting a
     /// contiguous `removed: true` chunk).
     in_reorg: bool,
-    /// The deepest block that has reached the TOMBSTONE (`LogsApplied` or,
-    /// transiently, `Drained`) — i.e. the highest FULLY-DELIVERED block. This
-    /// is the single source of truth the registration drain
-    /// (`BotState::apply_pump_buffer_v3/_v4` → `drain_pump_completed`) reads
-    /// for its cutoff, replacing the retired buffer shadow marker (3M5PO5).
-    /// Shared by `Arc` so both the pump task (which owns `BlockClock`) and the
-    /// registration path (`BotState` on the asyncio thread) read the same value
-    /// without a cross-runtime lock. `0` until the first tombstone.
-    highest_applied: Arc<AtomicU64>,
 }
 
 impl BlockClock {
@@ -322,43 +310,21 @@ impl BlockClock {
         }
     }
 
-    /// Transition `block` from `LogsArriving` to `LogsApplied` (the tombstone)
-    /// and advance the shared [`highest_applied`](Self::highest_applied)
-    /// cutoff — the one signal the registration drain relies on.
+    /// Transition `block` from `LogsArriving` to `LogsApplied` (the tombstone).
+    /// The pump driver mirrors this verdict into `BotState`'s delivery cutoff
+    /// (BGEDB6) — the clock holds no shared cutoff interior.
     fn tombstone(&mut self, block: u64) {
         if let Some(state) = self.blocks.get_mut(&block) {
             *state = BlockState::LogsApplied;
         }
-        // Monotonic store — a re-reported/re-awaited block never rewinds the
-        // cutoff (mirrors the retired `mark_block_complete` contract).
-        let mut cur = self.highest_applied.load(Ordering::Relaxed);
-        while block > cur {
-            match self.highest_applied.compare_exchange_weak(
-                cur,
-                block,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(actual) => cur = actual,
-            }
-        }
     }
 
-    /// Shared handle to the deepest tombstoned (`LogsApplied`/`Drained`)
-    /// block. The pump hands this to `BotState` at startup so the
-    /// registration drain reads the same completeness cutoff the pump's own
-    /// clock tracks — the single source of truth (3M5PO5).
-    #[must_use]
-    pub fn highest_applied_handle(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.highest_applied)
-    }
-
-    /// The deepest tombstoned (`LogsApplied`/`Drained`) block — the
-    /// registration drain's completeness cutoff (3M5PO5). Computed over the
-    /// per-block map; `0` until the first tombstone. Test-side value read
-    /// until T2 (BGEDB6) moves authority for the cutoff to `BotState` and
-    /// the shared atom goes away.
+    /// The deepest tombstoned (`LogsApplied`/`Drained`) block — the test-side
+    /// read of the delivery cutoff (3M5PO5, last complete block). Computed
+    /// over the per-block map; `0` until the first tombstone. Production
+    /// authority for the cutoff lives on `BotState` since BGEDB6; this
+    /// accessor exists so the clock's own tests pin the tombstone-only
+    /// advance semantics.
     #[cfg(test)]
     #[must_use]
     fn highest_applied(&self) -> u64 {

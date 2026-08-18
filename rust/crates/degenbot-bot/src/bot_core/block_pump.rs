@@ -1047,13 +1047,6 @@ impl BlockPump {
         // backfill + shutdown. A header alone NEVER advances the cursor —
         // only `advance_to_drained` (after the tombstone) does.
 
-        // 3M5PO5: share the clock's tombstone cutoff with BotState so the
-        // registration drain reads the SAME "highest fully-delivered block"
-        // the pump's clock tracks (no buffer-local shadow marker).
-        self.bot
-            .state_arc()
-            .write()
-            .set_pump_complete_cutoff(fsm.highest_applied_handle());
         // Per-block metadata, snapshotted from each block's header. A block's
         // tombstone (first log for N+1) may arrive AFTER header N+1 overwrote
         // `current_metadata`, so the result batch that finalizes N must carry
@@ -1538,6 +1531,15 @@ impl BlockPump {
                             // moved the cursor to `new_head` in `on_log`).
                         }
                         LogDecision::TombstonePrevious(prev) => {
+                            // 3M5PO5 correction (BGEDB6): this tombstone verdict is the
+                            // pump's single writer of the delivery cutoff — `BotState`
+                            // owns the value and the driver mirrors the verdict on
+                            // execution (the same decision-execution pattern as the
+                            // `set_last_solved_block` steps).
+                            self.bot
+                                .state_arc()
+                                .write()
+                                .advance_pump_complete_cutoff(prev);
                             // First removed:false log for N+1 → tombstone N.
                             // Finalize N with N's OWN metadata (snapshotted
                             // when N's header arrived), not fsm.current_metadata
@@ -2928,6 +2930,58 @@ mod tests {
         assert_eq!(
             finalized[0].1, meta_w,
             "block w's batch carries w's metadata (in-order, anchored)"
+        );
+    }
+
+    /// BGEDB6 (3M5PO5 correction): the delivery cutoff (last complete block)
+    /// is owned by `BotState` and outlives a pump run. A second
+    /// `run_with_stream` (a resume with a fresh `PumpFSM`/`BlockClock`)
+    /// must NOT reset it — the old design re-embedded a fresh
+    /// `Arc<AtomicU64>` (starting at 0) into `BotState` at startup, and the
+    /// registration drain stalled until every block re-tombstoned.
+    #[tokio::test]
+    async fn resume_never_resets_pump_complete_cutoff() {
+        use stream::StreamExt;
+        let header = |n: u64| WsEvent::BlockHeader {
+            number: n,
+            timestamp: n,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        };
+        let bot = Arc::new(Bot::new(1));
+        let w = 21_500_000u64;
+
+        // Run 1: header(w) + header(w+1) + a forward log for w+1 -> tombstone w.
+        let (mut pump1, _sink1, _shutdown1) = pump_for_test_with_bot(Arc::clone(&bot), None);
+        let events: Vec<WsEvent> = vec![
+            header(w),
+            header(w + 1),
+            WsEvent::Log(make_v2_sync_log(
+                Address::from([0xfcu8; 20]),
+                U256::from(1),
+                U256::from(2),
+                w + 1,
+                false,
+            )),
+        ];
+        pump1.run_test_loop(stream::iter(events).boxed(), w).await;
+        assert_eq!(
+            bot.state_arc().read().pump_complete_cutoff(),
+            w,
+            "run 1's tombstone of w must reach the state-owned cutoff"
+        );
+
+        // Run 2 (resume): a fresh pump, fresh FSM + clock. One header, no new
+        // logs -> no new tombstone. The cutoff must survive, not reset.
+        let (mut pump2, _sink2, _shutdown2) = pump_for_test_with_bot(Arc::clone(&bot), None);
+        pump2
+            .run_test_loop(stream::iter(vec![header(w + 1)]).boxed(), w)
+            .await;
+        assert_eq!(
+            bot.state_arc().read().pump_complete_cutoff(),
+            w,
+            "a resume must NOT reset the cutoff — the value outlives the run"
         );
     }
 

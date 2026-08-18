@@ -18,8 +18,6 @@
 //! code reaches into the FSM's fields.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
 
 use crate::bot_core::block_clock::{BlockClock, HeaderDecision, LogDecision};
 use crate::bot_core::block_pump::RELEVANT_TOPICS;
@@ -142,13 +140,6 @@ impl PumpFSM {
     #[must_use]
     pub fn publish_pending(&self) -> bool {
         self.publish_pending
-    }
-
-    /// The clock's highest fully-applied/delivered block handle (shared with
-    /// `BotState` as the pump-complete cutoff, ADR-008).
-    #[must_use]
-    pub fn highest_applied_handle(&self) -> Arc<AtomicU64> {
-        self.clock.highest_applied_handle()
     }
 
     /// The snapshotted metadata for `block` (deferred tombstone finalize, VTWCIG).

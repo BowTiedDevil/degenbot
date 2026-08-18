@@ -5,7 +5,6 @@
 //! `BotState`'s `HashMaps`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
@@ -164,13 +163,14 @@ pub struct BotState {
     /// closes the `S+1..W-1` gap before resume. `None` when no snapshot was
     /// loaded (cold-start path — the pump anchors on `first_observed_block`).
     snapshot_seed_block: Option<u64>,
-    /// The highest FULLY-DELIVERED block — the shared handle to the pump's
-    /// `BlockClock` tombstone cutoff (3M5PO5). The registration drain reads
-    /// this as the `drain_pump_completed` cutoff instead of a buffer-local
-    /// shadow marker; `0` (or the buffer as a whole not yet seeded) means no
-    /// block has been tombstoned → nothing drains. Seeded by the pump at
-    /// startup via [`set_pump_complete_cutoff`](Self::set_pump_complete_cutoff).
-    pump_complete_cutoff: Arc<AtomicU64>,
+    /// The highest FULLY-DELIVERED block — the delivery cutoff (last complete
+    /// block, 3M5PO5). The registration drain reads this as the
+    /// `drain_pump_completed` cutoff instead of a buffer-local shadow marker;
+    /// `0` means no block has been tombstoned → nothing drains. Owned here as
+    /// a plain monotone value that outlives pump runs (BGEDB6): the pump
+    /// driver advances it on the tombstone verdict, and a resume never resets
+    /// it.
+    pump_complete_cutoff: u64,
 }
 
 /// Diagnostic: log every V3 pump-buffer INSERTION for the pool address named
@@ -609,33 +609,24 @@ impl BotState {
             v4_pool_ids: HashMap::new(),
             v4_state_views: HashMap::new(),
             snapshot_seed_block: None,
-            pump_complete_cutoff: Arc::new(AtomicU64::new(0)),
+            pump_complete_cutoff: 0,
         }
     }
 
-    /// Share the pump's `BlockClock` tombstone cutoff with `BotState` so the
-    /// registration drain reads the same "highest fully-delivered block" the
-    /// pump's own clock tracks — the single source of truth (3M5PO5). Called
-    /// once by the pump at startup; a no-op elsewhere.
-    pub fn set_pump_complete_cutoff(&mut self, handle: Arc<AtomicU64>) {
-        self.pump_complete_cutoff = handle;
-    }
-
-    /// The current shared pump-completeness cutoff (`0` until the first
-    /// tombstone). Test/diagnostic read of the value the registration drain
-    /// gates on.
+    /// The current delivery cutoff (`0` until the first tombstone). Read of
+    /// the value the registration drain gates on.
     #[must_use]
     pub fn pump_complete_cutoff(&self) -> u64 {
-        self.pump_complete_cutoff.load(Ordering::Relaxed)
+        self.pump_complete_cutoff
     }
 
-    /// Monotonically advance the shared pump-completeness cutoff. The live
-    /// pump mutates the SAME value via `BlockClock::tombstone`; this direct
-    /// advance is for tests that drive the registration drain without a pump.
+    /// Monotonically advance the delivery cutoff (last complete block). The
+    /// live pump drives this when executing the `TombstonePrevious` verdict
+    /// (BGEDB6); tests that drive the registration drain without a pump use
+    /// the same entry point.
     pub fn advance_pump_complete_cutoff(&mut self, block: u64) {
-        let cur = self.pump_complete_cutoff.load(Ordering::Relaxed);
-        if block > cur {
-            self.pump_complete_cutoff.store(block, Ordering::Relaxed);
+        if block > self.pump_complete_cutoff {
+            self.pump_complete_cutoff = block;
         }
     }
 
