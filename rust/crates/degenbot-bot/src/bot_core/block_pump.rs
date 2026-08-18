@@ -999,6 +999,15 @@ impl BlockPump {
         // Epic A1: the pump's decision state now lives in the PumpFSM; the
         // driver routes the decision arms through it. `current_block` seeds the FSM.
         let mut fsm = PumpFSM::new(current_block, 0);
+        // DFQYM5 single-writer, now FSM-owned (epic O3HW7E/T3): on a resume
+        // where the snapshot→WS gap was backfilled (S < W), the backfill owns
+        // [S+1, W] inclusive and the live WS owns [W+1, ∞). Seed the FSM's
+        // recovery anchor with W so `should_drop_recovered_forward` is the
+        // single owner of the boundary drop rule — reorgs stay exempt (they
+        // must reach the reorg classifier), and no inline duplicate remains.
+        if snapshot_seed.is_some_and(|s| s > 0 && s < first_observed_block) {
+            fsm.record_backfill(first_observed_block);
+        }
         // header establishes our anchor but shouldn't trigger a solve
         // (backfill already solved up to this point).
 
@@ -1415,25 +1424,17 @@ impl BlockPump {
                     // remains a hard ADR-008 D3 fault (only the pump's own
                     // single-writer range is benign).
                     if fsm.should_drop_recovered_forward(log_block, log.removed) {
-                        continue;
-                    }
-                    // Boundary-block delivery alignment (DFQYM5): when the
-                    // snapshot→WS gap was closed (snapshot seed S <
-                    // first_observed_block W), the backfill above covered
-                    // [S+1, W] INCLUSIVE — block W's logs are ALREADY fully
-                    // applied to BotState. The fresh WS `logs` subscription,
-                    // however, delivers only the PARTIAL set of W's logs mined
-                    // after it engaged (observed: 6 of 35 at the boundary).
-                    // Those partial duplicates must NOT be re-applied
-                    // (double-apply → state corruption), and must not re-anchor
-                    // the fsm.clock at W (which would tombstone W and trip the
-                    // WS-completeness check on a block the backfill owns, not
-                    // the WS). Drop any WS log for block ≤ W when backfill
-                    // covered W — this is the single-writer rule: backfill owns
-                    // [S+1, W], the live WS owns [W+1, ∞).
-                    if snapshot_seed.is_some_and(|s| s > 0 && s < first_observed_block)
-                        && log_block <= first_observed_block
-                    {
+                        crate::bot_core::trace_ws_log_dispatch(
+                            log.address(),
+                            log_block,
+                            log.log_index,
+                            log.transaction_index,
+                            *log.topics()
+                                .first()
+                                .unwrap_or(&alloy::primitives::B256::ZERO),
+                            log.removed,
+                            "DroppedRecovery",
+                        );
                         continue;
                     }
                     // WS-completeness tracker: record the delivered relevant
@@ -2983,6 +2984,164 @@ mod tests {
             w,
             "a resume must NOT reset the cutoff — the value outlives the run"
         );
+    }
+
+    // ==============================================================
+    // T3 (epic O3HW7E): the single-writer boundary rule has one owner —
+    // the FSM's recovery anchor + `should_drop_recovered_forward` (the
+    // BQ7ZBC drop path). The driver seeds the anchor from the resume
+    // boundary; no inline `snapshot_seed` check remains in the log loop.
+    // ==============================================================
+
+    /// DFQYM5 single-writer regression for the resume boundary: with the
+    /// snapshot→WS gap backfilled (S < W), the WS's partial duplicate of W
+    /// (the boundary block the backfill already fully applied) must not be
+    /// re-applied, while the first LIVE log (W+1) flows through. Pins the
+    /// behavior T3 preserves while the drop rule's owner moves from the
+    /// inline driver check to the FSM's recovery anchor.
+    #[tokio::test]
+    async fn resume_boundary_duplicate_dropped_live_block_applied() {
+        use stream::StreamExt;
+
+        let bot = Arc::new(Bot::new(1));
+        let w = 21_500_000u64;
+        let pool = Address::from([0xc0u8; 20]);
+        let pool_id = {
+            let arc = bot.state_arc();
+            let mut core = arc.write();
+            let pool_id = core
+                .register_v2_pool(&RegisterV2PoolParams {
+                    address: pool,
+                    token0: Address::from([0xa0u8; 20]),
+                    token1: Address::from([0xa1u8; 20]),
+                    reserve0: U112::from(1_000),
+                    reserve1: U112::from(2_000),
+                    fee_token0: (997, 1000),
+                    fee_token1: (997, 1000),
+                    factory: Address::from([0xf0u8; 20]),
+                    variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                    update_block: w - 10,
+                    ..Default::default()
+                })
+                .expect("test setup: V2 registration");
+            // Simulate the backfill having applied W (the boundary): state +
+            // the drain cutoff both land at W.
+            let _ = core.apply_sync_by_pool_id(pool_id, U112::from(5_000), U112::from(1_000), w);
+            core.advance_pump_complete_cutoff(w);
+            core.set_snapshot_seed_block(Some(w - 10)); // S < W -> backfill owned
+            pool_id
+        };
+
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(Arc::clone(&bot), None);
+        sink.set_dirty(true);
+
+        let header = |n: u64| WsEvent::BlockHeader {
+            number: n,
+            timestamp: n,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        };
+        let dup_w = make_v2_sync_log(pool, U256::from(5_500u64), U256::from(900u64), w, false);
+        let live_w1 =
+            make_v2_sync_log(pool, U256::from(6_000u64), U256::from(950u64), w + 1, false);
+        pump.run_test_loop(
+            stream::iter(vec![
+                header(w + 1),
+                WsEvent::Log(dup_w),
+                WsEvent::Log(live_w1),
+            ])
+            .boxed(),
+            w,
+        )
+        .await;
+
+        let arc = bot.state_arc();
+        let core = arc.read();
+        let st = core.get_v2_pool_state(pool_id).expect("v2 state");
+        assert_eq!(
+            st.reserve0,
+            U112::from(6_000),
+            "W's partial duplicate must NOT re-apply (backfill owns [S+1, W])"
+        );
+        assert_eq!(st.update_block, w + 1, "the live W+1 log applies");
+    }
+
+    /// The T3 behavior delta: a `removed: true` (reorg) log at or below the
+    /// resume boundary must REACH the reorg classifier — the single-writer
+    /// drop rule only exempts forward logs. Before T3 the inline
+    /// `snapshot_seed` check silently dropped reorg logs at the boundary
+    /// (a deep-reorg re-delivery could never unwind the backfilled range);
+    /// after T3 `should_drop_recovered_forward(removed: true)` is false and
+    /// `ReorgCoordinator` restores the pool's pre-block state.
+    ///
+    /// (RED on pre-T3 code: the reorg log drops inline and the pool stays at
+    /// the backfilled-at-W reserves.)
+    #[tokio::test]
+    async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
+        use stream::StreamExt;
+
+        let bot = Arc::new(Bot::new(1));
+        let w = 21_500_000u64;
+        let pool = Address::from([0xc1u8; 20]);
+        let pool_id = {
+            let arc = bot.state_arc();
+            let mut core = arc.write();
+            let pool_id = core
+                .register_v2_pool(&RegisterV2PoolParams {
+                    address: pool,
+                    token0: Address::from([0xa0u8; 20]),
+                    token1: Address::from([0xa1u8; 20]),
+                    reserve0: U112::from(1_000),
+                    reserve1: U112::from(2_000),
+                    fee_token0: (997, 1000),
+                    fee_token1: (997, 1000),
+                    factory: Address::from([0xf0u8; 20]),
+                    variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                    update_block: w - 10,
+                    ..Default::default()
+                })
+                .expect("test setup: V2 registration");
+            // Backfill-applied state: w-5 then W (both inside [S+1, W]).
+            let _ =
+                core.apply_sync_by_pool_id(pool_id, U112::from(3_000), U112::from(1_500), w - 5);
+            let _ = core.apply_sync_by_pool_id(pool_id, U112::from(5_000), U112::from(1_000), w);
+            core.advance_pump_complete_cutoff(w);
+            core.set_snapshot_seed_block(Some(w - 10)); // S < W -> backfill owned
+            pool_id
+        };
+
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), None);
+
+        let header = |n: u64| WsEvent::BlockHeader {
+            number: n,
+            timestamp: n,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        };
+        // The WS re-delivers the removed boundary Sync (deep-reorg replay).
+        let reorg_w = make_v2_sync_log(pool, U256::from(5_000u64), U256::from(1_000u64), w, true);
+        pump.run_test_loop(
+            stream::iter(vec![header(w + 1), WsEvent::Log(reorg_w)]).boxed(),
+            w,
+        )
+        .await;
+
+        assert!(
+            !shutdown.load(std::sync::atomic::Ordering::SeqCst),
+            "a reorg inside the backfilled range is recoverable — no shutdown"
+        );
+        let arc = bot.state_arc();
+        let core = arc.read();
+        let st = core.get_v2_pool_state(pool_id).expect("v2 state");
+        assert_eq!(
+            st.reserve0,
+            U112::from(3_000),
+            "the reorg classifier restored the pre-W state (unwound W's delta)"
+        );
+        assert_eq!(st.reserve1, U112::from(1_500));
+        assert_eq!(st.update_block, w - 5);
     }
 
     /// Resume-anchor contract: `on_drain(first_block)` anchors
