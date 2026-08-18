@@ -36,13 +36,18 @@ degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-execution = { path = "../degenbot-execution" }
 degenbot-executor = { path = "../degenbot-executor" }
 degenbot-fork = { path = "../degenbot-fork" }
+# The net-profit order index — re-exported for standalone consumers; the
+# `degenbot-arbitrage` edge below enables its `order-index` feature so
+# `dispatch_profitable` gets the deterministic pre-sim selection in every
+# umbrella build (B5L2XA; ADR-024).
+degenbot-order-index = { path = "../degenbot-order-index" }
 degenbot-pathfinding = { path = "../degenbot-pathfinding" }
 degenbot-pool-updater = { path = "../degenbot-pool-updater" }
 degenbot-pools = { path = "../degenbot-pools" }
 degenbot-price = { path = "../degenbot-price" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-simulation = { path = "../degenbot-simulation" }
-degenbot-arbitrage = { path = "../degenbot-arbitrage" }
+degenbot-arbitrage = { path = "../degenbot-arbitrage", features = ["order-index"] }
 degenbot-solidly-math = { path = "../degenbot-solidly-math" }
 degenbot-solvers = { path = "../degenbot-solvers" }
 degenbot-submission = { path = "../degenbot-submission" }

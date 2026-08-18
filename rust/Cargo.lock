@@ -2058,6 +2058,7 @@ dependencies = [
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
+ "degenbot-order-index",
  "degenbot-pathfinding",
  "degenbot-pool-updater",
  "degenbot-pools",

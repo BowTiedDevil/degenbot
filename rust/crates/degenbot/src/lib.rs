@@ -104,6 +104,13 @@ pub use degenbot_simulation;
 /// co-implementation).
 pub use degenbot_arbitrage;
 
+/// Net-profit order index (ADR-024) — convex-hull / upper-envelope `top_k`
+/// selection over `(gross, gas)` path results (`OrderIndex` trait,
+/// `EnvelopeIndex`, `ScanTopK` baseline). The seam `degenbot-arbitrage`
+/// consumes for deterministic pre-sim selection, shipped to the standalone
+/// consumer by this crate (B5L2XA).
+pub use degenbot_order_index;
+
 /// Concentrated-liquidity math (`tick_math`, `swap_math`, `liquidity_mapping`).
 pub use degenbot_concentrated_liquidity_math;
 /// Uniswap V2 constant-product (`x·y=k`) single-hop swap math (`IntHopState`,

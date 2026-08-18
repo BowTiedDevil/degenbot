@@ -43,7 +43,7 @@ degenbot-price = { path = "../degenbot-price", optional = true, features = ["pyo
 degenbot-submission = { path = "../degenbot-submission", optional = true, features = ["pyo3"] }
 degenbot-simulation = { path = "../degenbot-simulation", optional = true }
 revm = { version = "^42.0", default-features = false }
-degenbot-arbitrage = { path = "../degenbot-arbitrage", optional = true }
+degenbot-arbitrage = { path = "../degenbot-arbitrage", optional = true, features = ["order-index"] }
 degenbot-executor = { path = "../degenbot-executor", optional = true }
 degenbot-execution = { path = "../degenbot-execution", optional = true }
 degenbot-fork = { path = "../degenbot-fork", optional = true }
@@ -76,6 +76,9 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "s
 # (the engine wrapper references degenbot_rpc::provider::AlloyProvider + degenbot_decoders::PoolId
 # + degenbot_uniswap::dex_identity directly), and `rpc` implies `abi` (rpc/contract wraps
 # crate::abi_types). `async` gates the rpc/ async submodules (no new dep).
+# The `degenbot-arbitrage` dep spec carries `features = ["order-index"]`, so
+# every `simulation` build (default) gets ADR-024's deterministic profit-
+# descending pre-sim selection inside `dispatch_profitable` (B5L2XA).
 default = ["auto-initialize", "bot", "rpc", "price", "submission", "simulation", "abi", "concentrated-liquidity-math", "balancer-math", "curve-math", "solidly-math", "v2-math", "uniswap", "pathfinding", "async", "db", "executor", "execution", "pool", "aave-updater", "fork"]
 extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
