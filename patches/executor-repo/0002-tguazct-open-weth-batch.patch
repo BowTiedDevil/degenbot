@@ -1,0 +1,109 @@
+--- a/contracts/cmd_executor.vy
++++ b/contracts/cmd_executor.vy
+@@ -57,6 +57,7 @@
+     0x40  V4_SWAP_COMPACT   V4 swap (uint128 amount + default sqrt_limit)
+     0x41  V4_SWAP_DYNAMIC   V4 swap (amount from PM exttload)
+     0x42  V4_BATCH          V4 multi-swap + auto-settle (tight loop)
++    0x43  V4_BATCH_OPEN_WETH  V4 multi-swap; positive WETH delta left open for a trailing V4_MINT_COMPACT (TGUZCT)
+ 
+   V4 Settlement / ERC6909 (0x50-0x5F):
+     0x50  V4_UNLOCK         Enter PoolManager unlock context
+@@ -174,6 +175,13 @@
+ COMMAND_V4_SWAP_DYNAMIC: constant(bytes1) = 0x41
+ COMMAND_V4_BATCH: constant(bytes1) = 0x42
+ 
++# TGUZCT: V4_BATCH variant that leaves a POSITIVE WETH delta open at batch end
++# (no custody take) so a trailing V4_MINT_COMPACT can convert it — the batch
++# x ERC6909-capture composition. A negative WETH delta still settles (the PM
++# must always be repaid). The encoder's ledger rule guarantees the pairing:
++# an open positive WETH delta without a consuming mint reverts at PM.unlock.
++COMMAND_V4_BATCH_OPEN_WETH: constant(bytes1) = 0x43
++
+ # ── Sentinel bytes: only protocol roles (0xFC–0xFF). ──
+ # No path-specific tokens are baked into the contract.
+ # idx < SENTINEL_THRESHOLD → t_addresses table lookup (populated per-tx via SET_ADDRESS).
+@@ -338,6 +346,15 @@
+     actual: uint256
+     expected: uint256
+ 
++# TGUZCT: V4_MINT_COMPACT cannot be honored — the live PM delta for the
++# currency is not positive enough to cover the mint amount (credit before
++# debit). Names the starving command sequence that would otherwise surface
++# as the PoolManager's opaque D0 (e.g. a full-settle V4_BATCH before the
++# mint takes the WETH delta into custody first).
++error InsufficientMintDelta:
++    actual: uint256
++    expected: uint256
++
+ error InvalidCommand:
+     opcode: uint256
+ 
+@@ -774,9 +791,20 @@
+ 
+ 
+ @internal
+-def _cmd_v4_batch(data: Bytes[MAX_COMMANDS_LENGTH], offset: uint256) -> uint256:
++def _cmd_v4_batch(
++    data: Bytes[MAX_COMMANDS_LENGTH],
++    offset: uint256,
++    open_weth: bool,
++) -> uint256:
+     """V4_BATCH: [0x42][num_swaps:1][entry_1:24]...[entry_N:24]
+ 
++    V4_BATCH_OPEN_WETH (0x43): identical layout, open_weth=True (TGUZCT). The
++    tail settle skips the WETH custody `take` for a POSITIVE delta, leaving it
++    open for a trailing V4_MINT_COMPACT (batch x ERC6909 capture). A negative
++    WETH delta still settles. A positive delta left open WITHOUT a consuming
++    mint reverts at PM.unlock (CurrencyNotSettled — every delta must be
++    settled) — the encoder's ledger rule requires the pairing.
++
+     PRECONDITION: all batch swaps' NET input/output currencies must resolve to
+     WETH or native ETH. Settlement at batch end only reads the WETH and NATIVE
+     delta slots; any other ERC20 currency with a nonzero delta is NOT settled
+@@ -879,7 +907,15 @@
+     native_delta: int256 = convert(staticcall IPoolManagerExttload(POOL_MANAGER_ADDR).exttload(NATIVE_DELTA_SLOT), int256)
+     self._v4_settle_currency(NATIVE_ADDRESS, native_delta)
+     weth_delta: int256 = convert(staticcall IPoolManagerExttload(POOL_MANAGER_ADDR).exttload(WETH_DELTA_SLOT), int256)
+-    self._v4_settle_currency(WETH_ADDR, weth_delta)
++    if open_weth:
++        # TGUZCT: leave a positive WETH delta open for the trailing
++        # V4_MINT_COMPACT (it credits the ERC6909 claim and debits the live
++        # delta, returning to zero before PM.unlock). A negative WETH delta
++        # is still settled — the PM must always be repaid.
++        if weth_delta < 0:
++            self._v4_settle_currency(WETH_ADDR, weth_delta)
++    else:
++        self._v4_settle_currency(WETH_ADDR, weth_delta)
+ 
+     return batch_offset
+ 
+@@ -1603,6 +1639,18 @@
+     else:
+         recipient = self.t_addresses[r_idx]
+ 
++    # TGUZCT fail-fast (defense in depth): PM.mint is credit-before-debit —
++    # it needs the caller's LIVE PM delta for `currency` positive and >=
++    # amount. A starving sequence (e.g. a full-settle V4_BATCH before this
++    # mint took the WETH delta into custody) would otherwise revert with the
++    # PoolManager's opaque D0. Name it here. Cost: one warm transient load.
++    mintable: int256 = self._read_pm_delta(currency)
++    if mintable < convert(amount, int256):
++        raise InsufficientMintDelta(
++            actual=convert(0 if mintable < 0 else mintable, uint256),
++            expected=amount,
++        )
++
+     # ERC6909 id = uint160(currency_address), per CurrencyLibrary.toId()
+     extcall IPoolManager(POOL_MANAGER_ADDR).mint(
+         recipient,
+@@ -1704,7 +1752,9 @@
+         elif command == 65:  # 0x41 V4_SWAP_DYNAMIC
+             return self._cmd_v4_swap_dynamic(data, offset)
+         elif command == 66:  # 0x42 V4_BATCH
+-            return self._cmd_v4_batch(data, offset)
++            return self._cmd_v4_batch(data, offset, False)
++        elif command == 67:  # 0x43 V4_BATCH_OPEN_WETH (TGUZCT)
++            return self._cmd_v4_batch(data, offset, True)
+     elif command_hi == 3:  # 0x30-0x3F: V3 swap group
+         if command == 48:  # 0x30 V3_SWAP_COMPACT
+             return self._cmd_v3_swap_compact(data, offset)

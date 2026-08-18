@@ -1,0 +1,9 @@
+# Separate interface for exttload (batch) — Vyper does not support
+# function overloading, so the single-slot and batch-slot signatures need
+# distinct interface names even though both target the same PoolManager address.
+
+MAX_EXTTLOAD_SLOTS: constant(uint256) = 32
+
+@view
+def exttload(slots: DynArray[bytes32, MAX_EXTTLOAD_SLOTS]) -> DynArray[bytes32, MAX_EXTTLOAD_SLOTS]:
+    ...
