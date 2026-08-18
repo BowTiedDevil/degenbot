@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime_bytecode = Bytes::copy_from_slice(&build_executor_runtime(OWNER, EXECUTOR));
 
     let bot_state = BotState::new();
-    let warmup = compute_simulation_warmup_slots(EXECUTOR, WETH, PM);
+    let warmup = compute_simulation_warmup_slots(EXECUTOR, WETH);
     let overrides = SimulationOverrideParams {
         owner: OWNER,
         inject_code: true,

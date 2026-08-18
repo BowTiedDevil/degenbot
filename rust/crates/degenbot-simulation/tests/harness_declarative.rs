@@ -11,7 +11,7 @@
 //! Executor grammar harness — the generated declarative matrix (UQOAHA).
 //!
 //! The reachable 2- and 3-hop grammar is the **full cross-product** of
-//! `{V2,V3,V4}` per hop: `degenbot_executor::grammar::encode_grammar` (and the
+//! `{V2,V3,V4}` per hop: `degenbot_executor::grammar_shape::derive_shape` (and the
 //! all-V2 any-N route, since the KO5NNB cutover) enumerate all `3²=9` two-hop
 //! and `3³=27` three-hop family tuples; there is no residual for 2/3-hop
 //! paths. Every family is therefore **one generated table row** — the whole

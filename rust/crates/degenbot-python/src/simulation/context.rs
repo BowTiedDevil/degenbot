@@ -133,9 +133,9 @@ impl PySimulateContext {
             ));
         }
 
-        // Warmup slots depend only on injected + weth + pm; compute once.
+        // Warmup slots depend only on injected + weth; compute once.
         let warmup_injected = injected.unwrap_or(owner);
-        let warmup = compute_simulation_warmup_slots(warmup_injected, weth, pm);
+        let warmup = compute_simulation_warmup_slots(warmup_injected, weth);
 
         Ok(Self {
             provider,

@@ -1,12 +1,26 @@
-//! Pure-Rust cmd-executor domain — simulation warmup-slot storage math.
+//! The `cmd_executor` command-stream grammar — solver result → the `bytes`
+//! the on-chain `cmd_executor.execute(bytes, config)` contract runs.
 //!
-//! A pyo3-free *core leaf* implementing the Solidity storage-slot math that
-//! feeds `eth_simulateV1` warmup-slot overrides. These pre-warm three storage
-//! slots so injected runtime bytecode (no `initialize()` call) sees warm
-//! storage, replicating `cmd_executor.initialize()`'s cold-SSTORE avoidance
-//! (~22,100 gas/slot).
+//! A pyo3-free *core leaf* (ADR-005 standalone surface) with two modules:
 //!
-//! # Storage-layout domain knowledge
+//! - **The command grammar** (the bulk of this crate): the per-protocol hop
+//!   facts + the plan walker that derives the enclosure and emits a
+//!   [`grammar_plan::Plan`] ([`grammar_walker`]), the ledger validator that
+//!   gates every Plan ([`grammar_ledger`]), the shape-class deriver
+//!   ([`grammar_shape`]), the opcode builders ([`encoders`]), the
+//!   `execute` config packing ([`config`]), and the public intake —
+//!   [`composers::EncodeContext`] + [`composers::EncodeRequest`] →
+//!   [`composers::encode_cmd_stream`] (ADR-033). The ADR-029/030/031 record
+//!   records own the grammar's invariants (axes, tri-state outcomes, the
+//!   facts-driven walker).
+//! - **The warmup-slot math** ([`WarmupSlots`] /
+//!   [`compute_simulation_warmup_slots`]): the Solidity storage-slot math
+//!   that feeds simulation state-override warmup — three slots pre-warmed so
+//!   injected runtime bytecode (no `initialize()` call) sees warm storage,
+//!   replicating `cmd_executor.initialize()`'s cold-SSTORE avoidance
+//!   (~22,100 gas/slot).
+//!
+//! # Warmup-slot storage layout
 //!
 //! - **WETH9** `balanceOf` at mapping slot **3** (`name`@0, `symbol`@1,
 //!   `decimals`@2 — all occupy storage, not `constant`).
@@ -16,16 +30,18 @@
 //! - **ERC6909 id** = `uint160(currency)` per `CurrencyLibrary.toId()` — the
 //!   native id is `uint160(address(0)) = 0`.
 //!
-//! The [`WarmupSlots`] struct carries the three computed **slot addresses**
-//! only (`U256`); the warmed balance values + the `eth_simulateV1`
+//! [`WarmupSlots`] carries the three computed **slot addresses** only
+//! (`U256`); the warmed balance values + the `eth_simulateV1`
 //! `{address: {"stateDiff": {slot_hex: value_hex}}}` dict shape are a thin
-//! PyO3 adapter concern (cutover task), not this leaf.
+//! PyO3 adapter concern, not a core one.
 //!
 //! # Parity
 //!
-//! Byte-for-byte parity vs `cmd_executor.initialize()`'s storage layout
-//! (§4.2). Slot hexes are the canonical mainnet WETH (`0xC02…`) /
-//! PoolManager (`0x0000…444c`) slots.
+//! The warmup slots are byte-for-byte parity vs
+//! `cmd_executor.initialize()`'s storage layout (§4.2) — canonical mainnet
+//! WETH (`0xC02…`) / PoolManager (`0x0000…444c`). The grammar's byte-identity
+//! is pinned by the golden corpus + the revm runtime matrix
+//! (degenbot-simulation).
 
 // Solidity/ERC identifiers (balanceOf, ERC6909, protocolFeesAccrued, …) are
 // ubiquitous in this crate's docs; allow the pedantic doc-markdown lint to
@@ -37,7 +53,6 @@ use alloy::primitives::{keccak256, Address, U256};
 pub mod composers;
 pub mod config;
 pub mod encoders;
-pub mod grammar;
 pub mod grammar_ledger;
 pub mod grammar_plan;
 pub mod grammar_shape;
@@ -147,15 +162,10 @@ pub fn erc6909_id(currency: Address) -> U256 {
 /// # Arguments
 ///
 /// - `executor` — the cmd_executor contract address.
-/// - `weth` — the WETH9 contract address.
-/// - `pool_manager` — the Uniswap V4 PoolManager contract address (the
-///   ERC6909-balance host).
+/// - `weth` — the WETH9 contract address (the ERC6909 WETH id derives from
+///   it; the native id is 0).
 #[must_use]
-pub fn compute_simulation_warmup_slots(
-    executor: Address,
-    weth: Address,
-    _pool_manager: Address,
-) -> WarmupSlots {
+pub fn compute_simulation_warmup_slots(executor: Address, weth: Address) -> WarmupSlots {
     let executor_slot_key = U256::from_be_bytes(executor.into_word().0);
     let weth_id = erc6909_id(weth);
     let native_id = U256::ZERO; // uint160(address(0)) = 0
@@ -178,7 +188,6 @@ mod tests {
     /// Canonical mainnet WETH9 and PoolManager (per the parity corpus
     /// `tests/arbitrage/test_warmup_slots_gas.py`).
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-    const PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
 
     /// `uint160(WETH)` — the ERC6909 WETH id.
     const WETH_ID: U256 =
@@ -237,7 +246,7 @@ mod tests {
         for &(executor, weth_slot, weth_hex, erc_weth, erc_weth_hex, erc_native, erc_native_hex) in
             FIXTURES
         {
-            let slots = compute_simulation_warmup_slots(executor, WETH, PM);
+            let slots = compute_simulation_warmup_slots(executor, WETH);
             assert_eq!(
                 slots.weth_balance, weth_slot,
                 "WETH balance slot (executor {executor:?})"

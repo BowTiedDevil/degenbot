@@ -115,7 +115,7 @@ fn mock_no_rpc_provider() -> AlloyProvider {
 }
 
 fn smoke_warmup() -> WarmupSlots {
-    compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH, SMOKE_PM)
+    compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH)
 }
 
 fn smoke_v2_path(path_id: u64) -> SimulatePath {

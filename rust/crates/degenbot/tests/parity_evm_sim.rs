@@ -155,7 +155,7 @@ fn evm_sim_success_path_dual_driver_parity() {
     let fx = load_fixture();
     let provider = mock_no_rpc_provider();
     let executor_bc = executor_stub_bytecode(SMOKE_GIFT);
-    let warmup = compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH, SMOKE_PM);
+    let warmup = compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH);
     let ctx = SimulateContext {
         provider: &provider,
         executor_owner: SMOKE_OWNER,

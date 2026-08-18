@@ -1943,7 +1943,7 @@ mod tests {
     }
 
     fn smoke_warmup() -> WarmupSlots {
-        compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH, SMOKE_PM)
+        compute_simulation_warmup_slots(SMOKE_EXECUTOR, SMOKE_WETH)
     }
 
     fn smoke_ctx(provider: &AlloyProvider) -> SimulateContext<'_> {

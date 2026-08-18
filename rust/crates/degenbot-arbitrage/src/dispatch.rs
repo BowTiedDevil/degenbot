@@ -939,7 +939,7 @@ mod tests {
     }
 
     fn warmup() -> WarmupSlots {
-        compute_simulation_warmup_slots(EXECUTOR, WETH, PM)
+        compute_simulation_warmup_slots(EXECUTOR, WETH)
     }
 
     fn ctx(provider: &AlloyProvider) -> SimulateContext<'_> {

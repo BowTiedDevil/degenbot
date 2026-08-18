@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn apply_simulation_overrides_writes_match_oracle_values() {
         for inject_code in [false, true] {
-            let warmup = compute_simulation_warmup_slots(INJECTED, WETH, PM);
+            let warmup = compute_simulation_warmup_slots(INJECTED, WETH);
             let runtime = Bytes::from_static(RUNTIME_BYTECODE);
 
             let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
@@ -323,7 +323,7 @@ mod tests {
     /// is funded). This pins the no-inject branch.
     #[test]
     fn apply_simulation_overrides_skip_when_no_code_injection() {
-        let warmup = compute_simulation_warmup_slots(INJECTED, WETH, PM);
+        let warmup = compute_simulation_warmup_slots(INJECTED, WETH);
         let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
         apply_simulation_overrides(
             &mut cache_db,

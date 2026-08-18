@@ -290,7 +290,7 @@ fn run_executor_call_trace(fx: &Fixture, runtime: &[u8]) {
         wrap_execute_calldata(EXECUTOR, &cmd, EXECUTE_CONFIG).expect("wrap execute calldata");
 
     let provider = mock_no_rpc_provider();
-    let warmup: WarmupSlots = compute_simulation_warmup_slots(EXECUTOR, WETH, PM);
+    let warmup: WarmupSlots = compute_simulation_warmup_slots(EXECUTOR, WETH);
     let ctx = SimulateContext {
         provider: &provider,
         executor_owner: OWNER,
@@ -423,7 +423,7 @@ fn main() {
         runtime_bytecode.len()
     );
     let provider = mock_no_rpc_provider();
-    let warmup: WarmupSlots = compute_simulation_warmup_slots(EXECUTOR, WETH, PM);
+    let warmup: WarmupSlots = compute_simulation_warmup_slots(EXECUTOR, WETH);
 
     let ctx = SimulateContext {
         provider: &provider,

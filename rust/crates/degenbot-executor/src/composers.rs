@@ -43,28 +43,6 @@ pub const NATIVE_CURRENCY_ADDRESS: Address = Address::ZERO;
 /// The 4-byte selector for `execute(bytes,uint256)`, `0xab5898e8`.
 pub const EXECUTE_SELECTOR: [u8; 4] = [0xab, 0x58, 0x98, 0xe8];
 
-/// `INT128_MAX` = 2¹²⁷ − 1 — the upper bound the Python `fits_int128` guard
-/// checks for every explicitly-amounted swap.
-#[expect(
-    dead_code,
-    reason = "T5 (epic 6SU5LM) retired checked_swap_input; general composers guard"
-)]
-const INT128_MAX_U128: u128 = (1u128 << 127) - 1;
-
-/// True if `value` fits in a signed 128-bit integer (the Python
-/// `fits_int128` guard, restricted to the non-negative amounts the composers
-/// accept).
-///
-/// `pub(crate)` so the Facet A grammar ([`crate::grammar`]) resolves the CL-clamp
-/// swap-in at this ONE shared point (ADR-025), rather than re-implementing it.
-#[expect(
-    dead_code,
-    reason = "T5 (epic 6SU5LM) retired checked_swap_input; general composers guard"
-)]
-pub(crate) fn fits_int128(value: u128) -> bool {
-    value <= INT128_MAX_U128
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Hop descriptors + PathInfo
 // ═══════════════════════════════════════════════════════════════════════════
@@ -251,7 +229,7 @@ impl CurrencyBridge {
 /// forward output hop A produced (the quantity to wrap or unwrap).
 ///
 /// Returns `None` (for `?` propagation) only if `V4_TAKE_COMPACT` fails to
-/// encode (uint96 overflow — caller should have guarded with `fits_int128`).
+/// encode (uint96 overflow — the walker's int128 guard bounds the amounts).
 /// [`CurrencyBridge::None`] emits nothing.
 #[cfg(test)]
 pub(crate) fn emit_currency_bridge(
@@ -509,8 +487,7 @@ pub struct ComposerInputs<'a> {
 /// * all-V2 hops (≥2): [`crate::grammar_shape::derive_all_v2`] — the Plan +
 ///   validator path (KO5NNB cutover)
 /// * every other 2/3-hop mix: the shape-class walker
-///   ([`crate::grammar_shape::derive_shape`], reached via
-///   [`crate::grammar::encode_grammar`])
+///   ([`crate::grammar_shape::derive_shape`])
 #[must_use]
 pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec<u8>> {
     let num_hops = req.path.hops.len();
@@ -532,7 +509,7 @@ pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec
     if num_hops >= 2 && req.path.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
         crate::grammar_shape::derive_all_v2(&req.path, &inputs)
     } else {
-        crate::grammar::encode_grammar(&req.path, &inputs)
+        crate::grammar_shape::derive_shape(&req.path, &inputs)
     }
 }
 
@@ -555,10 +532,12 @@ pub struct EncodedCall {
 /// [`EncodeOptions`] (the axis-aware config builder, WE45KC). Reads the full
 /// per-path axis set:
 ///   - `capture` → `check_mode`: `Erc6909` = 2 (verify via PM.balanceOf),
-///     `Custody`/`Native`/`Owner`/`BalancerVault` = 0 (skip the on-chain profit
-///     check). Resolved through [`resolve_axes`] so the legacy `erc6909_profit`
-///     bool is collapsed into `capture` (backwards-compatible: `erc6909_profit: true`
-///     forces `Erc6909`).
+///     `SweepToAddress` = 3 (SWEEP — defeats the assert), every other capture
+///     (`Custody`/`Native`/`Owner`/`BalancerVault`) = 1 (WETH+ETH combined
+///     balance assert — active by default, U3WVLL). Resolved through
+///     [`resolve_axes`] so the legacy `erc6909_profit` bool is collapsed into
+///     `capture` (backwards-compatible: `erc6909_profit: true` forces
+///     `Erc6909`).
 ///   - `bribe` → `bribe_bips` + `bribe_recipient_idx`: `None` = (0, 0) (no bribe);
 ///     `Some{bips, recipient_idx}` is forwarded (recipient_idx 0 = block.coinbase).
 ///   - `expected_value` is IGNORED (kept in the signature for ABI compat; the
@@ -638,7 +617,7 @@ pub fn encode_execute_call(
 /// Encode a 3-hop arbitrage path as a `cmd_executor` command stream.
 ///
 /// Facet A (T2TCJM): delegates to the generic per-shape-class grammar walk
-/// (`[`crate::grammar`]`), which dispatches to per-family hop adapters — the
+/// ([`crate::grammar_shape`]), which dispatches to per-family hop adapters — the
 /// same byte-identical engine `encode_cmd_stream` now uses. Retained as a thin
 /// 3-hop convenience entry (public, `#[doc(hidden)]`) for callers/tests that
 /// previously reached the 27 `three_hop_*` dispatcher directly.
@@ -666,7 +645,7 @@ pub fn encode_cmd_3_hop(
         consumed_inputs,
         opts,
     };
-    crate::grammar::encode_grammar(path_info, &inputs)
+    crate::grammar_shape::derive_shape(path_info, &inputs)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

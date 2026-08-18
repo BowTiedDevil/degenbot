@@ -475,6 +475,22 @@ command grammar emits. A stream is a sequence of compact opcodes against an
 address table.
 _Avoid_: "payload" (reserved for the solve-result → strategy seam, ADR-025).
 
+**Encode request** — the per-path intake value the composer funnel consumes: the
+path plus the solver's amounts (optimal input, per-hop outputs, per-hop consumed
+inputs) plus the operator's declared axes, as one unit. One per path, built once
+at the producing site. It is the contract the CL overfeed-clamp invariant
+attaches to: `consumed_inputs[i]` is the executable input to hop i, and for an
+over-fed CL hop it is the clamped value the on-chain exact-in loop terminates on
+(UO3JM4).
+_Avoid_: "command stream" (the `bytes` the request is encoded into). "payload"
+(the ADR-025 solve-result → strategy seam bytes). "EncodeOptions" (the axis
+bundle is a part of the request, not the request).
+
+**Encode context** — the session-scoped bundle of deployment addresses (executor,
+PoolManager, WETH) shared by every encode request in a session. One per session,
+never per-path.
+_Avoid_: folding it into the encode request (session scope re-stated per path).
+
 **Command grammar** — the rules + per-shape-class description (protocol
 sequence × funding source × profit capture × builder bribe) that derive a valid
 command stream, including the ordering the stream must satisfy. Distinct from

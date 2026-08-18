@@ -91,10 +91,10 @@ fn compute_simulation_warmup_slots<'py>(
         .map_err(|e| PyValueError::new_err(format!("Invalid executor address: {e}")))?;
     let weth = parse_address(weth_address)
         .map_err(|e| PyValueError::new_err(format!("Invalid weth address: {e}")))?;
-    let pm = parse_address(pool_manager_address)
-        .map_err(|e| PyValueError::new_err(format!("Invalid pool manager address: {e}")))?;
-
-    let slots = py.detach(|| core_warmup_slots(executor, weth, pm));
+    // `pool_manager_address` is the dict KEY of the PoolManager override entry
+    // — the slot math itself needs only executor + weth (the PM's ERC6909 id
+    // slots are canonical mainnet constants, not address-derived).
+    let slots = py.detach(|| core_warmup_slots(executor, weth));
 
     let weth_addr_str =
         to_checksum_address_str(weth_address).map_err(|e| PyValueError::new_err(e.to_string()))?;

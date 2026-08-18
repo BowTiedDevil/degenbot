@@ -539,7 +539,7 @@ fn in_process_sim_standalone_slice() {
         dyn_provider,
     )
         as Arc<dyn Provider<Ethereum>>);
-    let warmup = compute_simulation_warmup_slots(EXECUTOR, WETH, PM);
+    let warmup = compute_simulation_warmup_slots(EXECUTOR, WETH);
     let ctx = SimulateContext {
         provider: &provider,
         executor_owner: OWNER,
