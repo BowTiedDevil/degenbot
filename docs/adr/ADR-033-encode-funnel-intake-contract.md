@@ -52,11 +52,21 @@ vocabulary at the seam:
 5. **The sweep** deletes the pass-through, fixes the facade and the
    `check_mode` doc to the code's reality, drops the ignored parameter (and its
    `_ffi.executor` stub ripple), and removes the dead tombstones.
-6. **The harness earns the depth**: a new declarative entry accepting
-   caller-supplied amounts plus an over-fed CL fixture — clamped via the pure
-   pools rule (`V3SwapOutcome::exact_input_clamp_bound`) to a profitable
-   execution, unclamped to the EMPTY-HALT verdict — so the clamp invariant is
-   tested at runtime against the real contract, the first time.
+6. **The harness earns the depth**: a new declarative entry
+   (`run_chain_with_consumed`) accepting caller-supplied per-hop amounts —
+   the shape the production solver commits after `clamp_cl_hop_capacity`
+   re-aligns `hop_outputs[i]`/`consumed_inputs[i+1]` (path-73385) — so the
+   production `encode_cmd_stream` intake is first exercised with
+   non-synthesized amounts against the real `cmd_executor`, with a clamped
+   aligned-shape fixture. The over-fed CL pair (clamped profitable /
+   unclamped EMPTY-HALT) is **parked with a note**: the stub `PoolV3` is
+   closed-form (single active range, no tick bitmap), so its capacity bound
+   sits at the extreme `MIN`/`MAX` price limits — u128-amount-infeasible for
+   any loopback path at those prices. The profitable clamped-execution /
+   EMPTY-HALT verdict proof lives in the real-`PoolManager` tier-3
+   regression (`tier3_path5000_v4_clamp.rs`); the pure clamp rule
+   (`V3SwapOutcome::exact_input_clamp_bound`) is unit-green in
+   `degenbot-pools`.
 7. **Internal encoders stay** (`encode_cmd_3_hop`'s 8 pinned call sites
    included) — the deepening is the interface move; the walker/encoder
    internals are the grammar-walker continuation's territory.
@@ -87,13 +97,16 @@ vocabulary at the seam:
 - The interface a caller (or test) must learn is two small values; the
   amount-triple invariants become a property of one constructor instead of
   prose repeated at every crossing.
-- The clamp invariant gains a runtime home: the declarative matrix can — and
-  now does — encode an over-fed CL hop at the clamped value and observe
-  execution on the real `cmd_executor`.
-- One new acyclic edge (`degenbot-simulation → degenbot-pools`, leaf math
-  crate) lets the harness compute the clamp bound with the same pure rule the
-  solver uses; the engine keeps the application policy (margin, which hops,
-  forward-alignment) in `clamp_cl_hop_capacity`.
+- The clamp invariant's runtime home is split by pool fidelity: the
+  declarative matrix exercises the intake with the clamp's re-aligned amount
+  shape (clamped commit + aligned `hop_outputs[0]`, executed against the real
+  `cmd_executor`), while the real-`PoolManager` tier-3 regression owns the
+  profitable clamped-execution / EMPTY-HALT verdict (Decision 6, parked
+  rationale).
+- No new crate edge was added: the harness consumes the engine's
+  already-committed amounts (the seam's contract), so the pure clamp rule
+  stays in `degenbot-pools` and the application policy (margin, which hops,
+  forward-alignment) stays in the engine's `clamp_cl_hop_capacity`.
 - The `degenbot-execution` seam's decoupled amount bundle (ADR-025 D5) is
   deliberately untouched; unifying it, if the default adapter deepening
   proceeds, is a separate decision.

@@ -581,6 +581,64 @@ impl Harness {
         self.execute_payload(&cmd, gas)
     }
 
+    /// ADR-033 (D7) variant of [`Self::run_path_with_opts`] with CALLER-supplied
+    /// `consumed_inputs` — the per-hop amounts the production solver commits
+    /// after `clamp_cl_hop_capacity` re-aligns them — instead of this harness
+    /// synthesizing the full-consumption chain (`[optimal_input,
+    /// hop_outputs[0], …]`).
+    pub fn run_path_with_consumed(
+        &mut self,
+        path: &degenbot_executor::composers::PathInfo,
+        optimal_input: u128,
+        hop_outputs: &[u128],
+        consumed_inputs: &[u128],
+        gas: u64,
+        opts: degenbot_executor::composers::EncodeOptions,
+    ) -> Result<ExecOutcome, String> {
+        let cmd = self.encode_path_with_consumed(
+            path,
+            optimal_input,
+            hop_outputs,
+            consumed_inputs,
+            opts,
+        )?;
+        self.execute_payload(&cmd, gas)
+    }
+
+    /// ADR-033 (D7): encode with CALLER-supplied per-hop `consumed_inputs`
+    /// — the production solver's committed amounts (the shape
+    /// `clamp_cl_hop_capacity` re-aligns) — instead of synthesizing the
+    /// full-consumption chain. The amounts still flow through the production
+    /// `encode_cmd_stream` intake (`EncodeContext` + `EncodeRequest`).
+    pub fn encode_path_with_consumed(
+        &self,
+        path: &degenbot_executor::composers::PathInfo,
+        optimal_input: u128,
+        hop_outputs: &[u128],
+        consumed_inputs: &[u128],
+        opts: degenbot_executor::composers::EncodeOptions,
+    ) -> Result<Vec<u8>, String> {
+        if hop_outputs.len() != path.hops.len() || consumed_inputs.len() != path.hops.len() {
+            return Err(format!(
+                "encode_path_with_consumed: per-hop arrays must have one entry per hop ({} hops, {} outputs, {} consumed)",
+                path.hops.len(),
+                hop_outputs.len(),
+                consumed_inputs.len()
+            ));
+        }
+        degenbot_executor::composers::encode_cmd_stream(
+            &self.encode_context(),
+            &degenbot_executor::composers::EncodeRequest::new(
+                path.clone(),
+                optimal_input,
+                hop_outputs.to_vec(),
+                consumed_inputs.to_vec(),
+                opts,
+            ),
+        )
+        .ok_or_else(|| "encode_cmd_stream returned None".to_string())
+    }
+
     /// Encode a PathInfo through the production `encode_cmd_stream` (the raw
     /// payload `execute_payload`/`execute_data` then drive).
     pub fn encode_path(

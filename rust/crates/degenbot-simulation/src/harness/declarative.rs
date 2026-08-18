@@ -240,6 +240,79 @@ impl Harness {
         })
     }
 
+    /// ADR-033 (D7) variant of [`Self::run_chain_with_opts`] with CALLER-supplied
+    /// per-hop amounts: `hop_outputs` (the predicted per-hop outputs) and
+    /// `consumed_inputs` (the committed per-hop inputs — the shape the
+    /// production solver commits after `clamp_cl_hop_capacity`). Same universal
+    /// funding + approvals + measurement as [`Self::run_chain_with_opts`];
+    /// funding buffers cover `max(derived, committed)` per hop.
+    pub fn run_chain_with_consumed(
+        &mut self,
+        hops: &[Hop],
+        optimal_input: u128,
+        hop_outputs: &[u128],
+        consumed_inputs: &[u128],
+        gas: u64,
+        opts: degenbot_executor::composers::EncodeOptions,
+    ) -> Result<ChainResult, String> {
+        let n = hops.len();
+        if n < 1 {
+            return Err("run_chain_with_consumed needs >=1 hops".to_string());
+        }
+        if hop_outputs.len() != n || consumed_inputs.len() != n {
+            return Err(format!(
+                "run_chain_with_consumed: per-hop arrays need {n} entries ({} outputs, {} consumed)",
+                hop_outputs.len(),
+                consumed_inputs.len()
+            ));
+        }
+        let out_terminal = *hop_outputs.last().expect("validated non-empty");
+        let predicted_profit = out_terminal as i128 - optimal_input as i128;
+
+        let path_hops: Vec<HopInfo> = hops
+            .iter()
+            .map(|hop| hop.pool.to_hop_info(self.pool_manager, hop.src))
+            .collect();
+        let path = PathInfo::new(path_hops);
+
+        // Universal funding + approvals — buffers cover the committed
+        // (possibly clamped) amounts, not just the derived ones.
+        let entry_buffer = optimal_input.max(consumed_inputs[0]);
+        self.fund(self.weth, self.executor, entry_buffer * 2)?;
+        let mut funded = vec![self.weth];
+        for (i, hop) in hops.iter().enumerate().skip(1) {
+            if hop.src != self.weth && !funded.contains(&hop.src) {
+                let buf = hop_outputs[i - 1].max(consumed_inputs[i]) * 2;
+                self.fund(hop.src, self.executor, buf)?;
+                funded.push(hop.src);
+            }
+        }
+        for hop in hops {
+            if let HopPool::V2(p) = &hop.pool {
+                self.executor_approve_pair(*p)?;
+            }
+        }
+
+        let before = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let outcome = self.run_path_with_consumed(
+            &path,
+            optimal_input,
+            hop_outputs,
+            consumed_inputs,
+            gas,
+            opts,
+        )?;
+        let after = self.balance_of(self.weth, self.executor)?.to::<u128>();
+        let actual_weth_delta = after as i128 - before as i128;
+
+        Ok(ChainResult {
+            outcome,
+            hop_outputs: hop_outputs.to_vec(),
+            predicted_profit,
+            actual_weth_delta,
+        })
+    }
+
     /// Build the production `PathInfo`, forward-traversed `hop_outputs`, and
     /// `consumed_inputs = [optimal_input, hop_outputs[0], …]` for a hop chain —
     /// everything the derivations/composers need, exposed publicly for the

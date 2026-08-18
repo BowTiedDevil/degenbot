@@ -35,7 +35,7 @@
 //! ERC20 transfer instead of a `take`, and they are back in the matrix.)
 
 use alloy::primitives::U256;
-use degenbot_simulation::harness::{assert_profitable, Harness, Hop, HopPool};
+use degenbot_simulation::harness::{assert_profitable, v3_amount_out, Harness, Hop, HopPool};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Prot {
@@ -312,4 +312,116 @@ fn harness_encode_context_projects_deployed_addresses() {
     // The projection is Copy + Eq — the session value can be threaded by value.
     let ctx2 = ctx;
     assert_eq!(ctx, ctx2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADR-033 (D7) — caller-supplied amounts through the production intake
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// ADR-033 D7 deepening: `run_chain_with_consumed` is the first declarative
+/// entry that takes CALLER-supplied per-hop amounts — the shape the
+/// production solver commits after `clamp_cl_hop_capacity` re-aligns
+/// `hop_outputs[i]`/`consumed_inputs[i+1]` (path-73385) — instead of the
+/// harness re-deriving a full-consumption chain. These fixtures drive that
+/// entry through the production `encode_cmd_stream` intake against the real
+/// `cmd_executor` bytecode, which no earlier harness entry could do.
+///
+/// **Over-feed clamp pair — parked with a note (per the plan's escape
+/// clause).** A V3 CL over-feed at runtime needs the pool's capacity bound
+/// to sit mid-price-range. The stub `PoolV3` is closed-form (single active
+/// range, no tick bitmap): its capacity bound sits at the extreme
+/// `MIN`/`MAX` price limits, where the opposing token prices at ~1e38 per
+/// unit — u128-amount-infeasible for any loopback path. The profitable
+/// clamped-execution / EMPTY-HALT verdict proof lives in the real-
+/// `PoolManager` tier-3 regression (`tier3_path5000_v4_clamp.rs`), and the
+/// pure clamp rule (`V3SwapOutcome::exact_input_clamp_bound`) is unit-green
+/// in `degenbot-pools`. The aligned-shape fixtures below exercise the
+/// intake's handling of exactly the amount shape the clamp produces:
+/// a V2→V3 chain whose CL-hop committed input is the previous hop's clamped,
+/// re-aligned output (both sides clamped consistently). The amounts must
+/// still encode + execute with the measured delta matching the prediction.
+///
+/// The aligned-shape fixture: a V2→V3 chain where the CL hop's committed
+/// input is a fraction of the V2 hop's natural output — the shape
+/// `clamp_cl_hop_capacity` engineers (the previous hop's output re-aligned
+/// to the committed CL input, both clamped consistently). The amounts must
+/// still encode + execute with the measured delta matching the prediction.
+#[test]
+fn cl_hop_aligned_clamp_shape_executes_with_consistent_delta() {
+    let mut h = Harness::new().unwrap();
+    let t1 = h.add_token().unwrap();
+    let r0: u128 = 1_000_000_000_000;
+    let v2 = h.add_pool(h.weth, t1, r0, r0).unwrap();
+    let v3 = h
+        .add_v3_pool(
+            t1,
+            h.weth,
+            3000,
+            sqrt_x(3),
+            liq(),
+            1_000_000_000_000,
+            1_000_000_000_000,
+        )
+        .unwrap();
+    let r_in = if v2.token0 == h.weth {
+        v2.reserve0
+    } else {
+        v2.reserve1
+    };
+    let r_out = if v2.token0 == h.weth {
+        v2.reserve1
+    } else {
+        v2.reserve0
+    };
+    let v2_out = |in_weth: u128| {
+        let amp = U256::from(in_weth) * U256::from(997u64);
+        let num = amp * U256::from(r_out);
+        let den = U256::from(r_in) * U256::from(1000u64) + amp;
+        (num / den).to::<u128>()
+    };
+
+    // Natural chain: 100_000 WETH in → full-consumption amounts.
+    let natural_in: u128 = 100_000;
+    let natural_v2_out = v2_out(natural_in);
+    // The clamped shape: the V2 hop commits enough for 70% of the natural
+    // output, and the CL hop's committed input equals that re-aligned
+    // output (consumed_inputs[1] == hop_outputs[0] — the alignment
+    // clamp_cl_hop_capacity enforces, with both sides clamped).
+    let clamped_v2_out = v2_out(natural_in * 70 / 100);
+    assert!(
+        clamped_v2_out < natural_v2_out,
+        "clamped V2 output must be below the natural output"
+    );
+    let v3_out = v3_amount_out(v3.sqrt_price, v3.liquidity, clamped_v2_out, true, 3000);
+
+    let hops = vec![
+        Hop {
+            src: h.weth,
+            dst: t1,
+            pool: HopPool::V2(v2),
+        },
+        Hop {
+            src: t1,
+            dst: h.weth,
+            pool: HopPool::V3(v3),
+        },
+    ];
+    let result = h
+        .run_chain_with_consumed(
+            &hops,
+            natural_in * 70 / 100,
+            &[clamped_v2_out, v3_out],
+            &[natural_in * 70 / 100, clamped_v2_out],
+            8_000_000,
+            degenbot_executor::composers::EncodeOptions::default(),
+        )
+        .unwrap_or_else(|e| panic!("run_chain_with_consumed: {e}"));
+    assert!(
+        result.outcome.executed(2),
+        "aligned clamp shape must execute both pools: {result:?}"
+    );
+    // Profitable by construction (3x terminal return): the measured delta
+    // must match the caller-aligned prediction within tolerance — the
+    // committed amounts moved exactly the WETH they encoded for.
+    assert_profitable(&result, 2, "aligned-clamp-shape");
 }
