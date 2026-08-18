@@ -354,6 +354,22 @@ impl BlockClock {
         Arc::clone(&self.highest_applied)
     }
 
+    /// The deepest tombstoned (`LogsApplied`/`Drained`) block — the
+    /// registration drain's completeness cutoff (3M5PO5). Computed over the
+    /// per-block map; `0` until the first tombstone. Test-side value read
+    /// until T2 (BGEDB6) moves authority for the cutoff to `BotState` and
+    /// the shared atom goes away.
+    #[cfg(test)]
+    #[must_use]
+    fn highest_applied(&self) -> u64 {
+        self.blocks
+            .iter()
+            .filter(|(_, s)| matches!(s, BlockState::LogsApplied | BlockState::Drained))
+            .map(|(b, _)| *b)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Mark every tracked block strictly before `head` as `Tainted` (reorg
     /// rewind) so the replay can re-track them forward through the SM.
     fn taint_range_before(&mut self, head: u64) {
@@ -449,21 +465,20 @@ mod tests {
         );
     }
 
-    /// The shared `highest_applied` cutoff (3M5PO5) — the registration drain's
+    /// The `highest_applied` cutoff (3M5PO5) — the registration drain's
     /// single source of truth — advances ONLY on the tombstone (the first
     /// `removed: false` log of N+1), exactly as the retired buffer
-    /// `last_complete_block` marker did, and the handle is shareable by `Arc`.
+    /// `last_complete_block` marker did.
     #[test]
     fn highest_applied_cutoff_advances_on_tombstone_only() {
         let mut clock = BlockClock::new();
-        let handle = clock.highest_applied_handle();
-        assert_eq!(handle.load(Ordering::Relaxed), 0, "no tombstone yet");
+        assert_eq!(clock.highest_applied(), 0, "no tombstone yet");
 
         // Observe headers — a header alone must NOT advance the cutoff.
         clock.observe_header(100);
-        assert_eq!(handle.load(Ordering::Relaxed), 0);
+        assert_eq!(clock.highest_applied(), 0);
         clock.observe_header(101);
-        assert_eq!(handle.load(Ordering::Relaxed), 0);
+        assert_eq!(clock.highest_applied(), 0);
 
         // The first removed:false log for 101 tombstones 100.
         assert_eq!(
@@ -471,7 +486,7 @@ mod tests {
             LogDecision::TombstonePrevious(100)
         );
         assert_eq!(
-            handle.load(Ordering::Relaxed),
+            clock.highest_applied(),
             100,
             "a successor log tombstones the predecessor into the cutoff"
         );
@@ -481,7 +496,7 @@ mod tests {
             clock.observe_log(102, false),
             LogDecision::TombstonePrevious(101)
         );
-        assert_eq!(handle.load(Ordering::Relaxed), 101);
+        assert_eq!(clock.highest_applied(), 101);
     }
 
     /// The full happy path: `Observed → LogsArriving → LogsApplied → Drained`,
