@@ -37,8 +37,10 @@ hooks = [
   # latency for no safety gain.
 
   # File-scoped (run on staged files only). Fix with
-  # `npx markdownlint-cli2 --fix <file>` if it fails.
-  { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], stages = ["pre-commit"] },
+  # `npx markdownlint-cli2 --fix <file>` if it fails. The vendored
+  # executor/ tree (SRMMM7/T1) keeps its own docs conventions — same
+  # scoping principle as the src/-only Python lint gates.
+  { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], stages = ["pre-commit"], exclude = "^executor/" },
 
   # Forbid `# noqa: ...PLC0415`. This lint is suppressed project-wide by a
   # shared ruff config; the suppression must never be re-enabled per-line.

@@ -1,0 +1,27 @@
+[project]
+name = "executor"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "eth-ape[recommended-plugins]",
+    "hypothesis",
+    # Hard pin: byte-deterministic artifact builds (BHL2R2). 0.5.0a3+
+    # commit.994bfdec on python 3.14.6 reproduces the committed
+    # tier3-oracle/artifacts/executor/ byte-for-byte — the only vyper
+    # proven to compile cmd_executor.vy (task 2ISTMX).
+    "vyper == 0.5.0a3",
+]
+
+[tool.uv]
+link-mode = "copy"
+
+[tool.pytest.ini_options]
+addopts = [
+    "--numprocesses", "4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-xdist",
+    "pytest",
+]

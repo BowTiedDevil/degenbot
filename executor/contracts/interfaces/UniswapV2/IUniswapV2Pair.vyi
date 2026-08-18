@@ -1,0 +1,56 @@
+# Uniswap V2 Pair interface — matches UniswapV2Pair.sol
+# Bytes size matches executor contracts (callers).
+
+MAX_SWAP_DATA_LENGTH: constant(uint256) = 512
+
+# ── Events (from UniswapV2Pair.sol) ──
+
+event Swap:
+    sender: indexed(address)
+    amount0In: uint256
+    amount1In: uint256
+    amount0Out: uint256
+    amount1Out: uint256
+    to: indexed(address)
+
+event Sync:
+    reserve0: uint112
+    reserve1: uint112
+
+event Mint:
+    sender: indexed(address)
+    amount0: uint256
+    amount1: uint256
+
+event Burn:
+    sender: indexed(address)
+    amount0: uint256
+    amount1: uint256
+    to: indexed(address)
+
+# ── Functions ──
+
+@view
+def token0() -> address:
+    ...
+
+@view
+def token1() -> address:
+    ...
+
+@nonpayable
+def swap(
+    amount0Out: uint256,
+    amount1Out: uint256,
+    to: address,
+    data: Bytes[MAX_SWAP_DATA_LENGTH]
+):
+    ...
+
+@view
+def getReserves() -> (uint112, uint112, uint32):
+    ...
+
+@nonpayable
+def reset():
+    ...

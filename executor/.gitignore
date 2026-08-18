@@ -1,0 +1,6 @@
+.auto
+.build/
+.gas-results
+
+**/__pycache__/
+**/.build/.gas-results

@@ -1,0 +1,42 @@
+name: executor
+
+default_ecosystem: ethereum
+
+ethereum:
+  default_network: mainnet-fork
+  mainnet:
+    default_provider: node
+  mainnet_fork:
+    default_provider: foundry
+
+node:
+  ethereum:
+    mainnet:
+      uri: http://node:8545
+
+foundry:
+  host: auto
+  fork:
+    ethereum:
+      mainnet:
+        upstream_provider: node
+    base:
+      mainnet:
+        upstream_provider: node      
+
+# The default test accounts can misbehave on mainnet forks due to an EIP-7702 delegation that interferes with Ether transfers, so define a new one (https://iancoleman.io/bip39/)
+test:
+  mnemonic: lonely obtain knife delay escape high cotton light rabbit release orient paddle ordinary toast abandon jazz issue visa patient bleak broom summer snack author
+
+vyper:
+  version: 0.5.0a3
+
+dependencies:
+  - name: v4-core
+    github: Uniswap/v4-core
+    ref: main
+
+plugins:
+  - foundry
+  - vyper
+  - etherscan
