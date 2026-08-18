@@ -40,46 +40,6 @@ class TestCacheMissCallsProvider:
         assert result == 12345
         assert cache.get_cached_block_timestamp(100) == 12345
 
-    def test_contract_d(self) -> None:
-        """Contract D is fetched from provider on miss, then cached."""
-        fake = FakeCurveDataProvider(d=10**18)
-        cache = _make_cache(data_provider=fake)
-        result = cache.get_cached_contract_d(100)
-        assert result == 10**18
-        assert cache.get_cached_contract_d(100) == 10**18
-
-    def test_gamma(self) -> None:
-        """Gamma is fetched from provider on miss, then cached."""
-        fake = FakeCurveDataProvider(gamma=10**10)
-        cache = _make_cache(data_provider=fake)
-        result = cache.get_cached_gamma(100)
-        assert result == 10**10
-        assert cache.get_cached_gamma(100) == 10**10
-
-    def test_price_scale(self) -> None:
-        """Price scale is fetched from provider on miss, then cached."""
-        fake = FakeCurveDataProvider(price_scale=(10**18, 10**18))
-        cache = _make_cache(data_provider=fake)
-        result = cache.get_cached_price_scale(100)
-        assert result == (10**18, 10**18)
-        assert cache.get_cached_price_scale(100) == (10**18, 10**18)
-
-    def test_admin_balances(self) -> None:
-        """Admin balances are fetched from provider on miss, then cached."""
-        fake = FakeCurveDataProvider(admin_balances=(100, 200))
-        cache = _make_cache(data_provider=fake)
-        result = cache.get_cached_admin_balances(100)
-        assert result == (100, 200)
-        assert cache.get_cached_admin_balances(100) == (100, 200)
-
-    def test_scaled_redemption_price(self) -> None:
-        """Scaled redemption price is fetched from provider on miss, then cached."""
-        fake = FakeCurveDataProvider(redemption_price=10**18)
-        cache = _make_cache(data_provider=fake)
-        result = cache.get_cached_scaled_redemption_price(100)
-        assert result == 10**18
-        assert cache.get_cached_scaled_redemption_price(100) == 10**18
-
 
 class TestCacheMissingProviderRaises:
     """On cache miss with no provider, PerBlockCache raises MissingCurveData."""
@@ -89,36 +49,6 @@ class TestCacheMissingProviderRaises:
         cache = _make_cache(data_provider=None)
         with pytest.raises(MissingCurveData):
             cache.get_cached_block_timestamp(100)
-
-    def test_contract_d(self) -> None:
-        """Missing provider raises MissingCurveData for contract D."""
-        cache = _make_cache(data_provider=None)
-        with pytest.raises(MissingCurveData):
-            cache.get_cached_contract_d(100)
-
-    def test_gamma(self) -> None:
-        """Missing provider raises MissingCurveData for gamma."""
-        cache = _make_cache(data_provider=None)
-        with pytest.raises(MissingCurveData):
-            cache.get_cached_gamma(100)
-
-    def test_price_scale(self) -> None:
-        """Missing provider raises MissingCurveData for price_scale."""
-        cache = _make_cache(data_provider=None)
-        with pytest.raises(MissingCurveData):
-            cache.get_cached_price_scale(100)
-
-    def test_admin_balances(self) -> None:
-        """Missing provider raises MissingCurveData for admin_balances."""
-        cache = _make_cache(data_provider=None)
-        with pytest.raises(MissingCurveData):
-            cache.get_cached_admin_balances(100)
-
-    def test_scaled_redemption_price(self) -> None:
-        """Missing provider raises MissingCurveData for scaled_redemption_price."""
-        cache = _make_cache(data_provider=None)
-        with pytest.raises(MissingCurveData):
-            cache.get_cached_scaled_redemption_price(100)
 
     def test_base_cache_updated(self) -> None:
         """Missing provider raises MissingCurveData for base_cache_updated."""

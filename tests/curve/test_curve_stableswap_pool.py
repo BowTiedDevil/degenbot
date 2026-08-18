@@ -1,10 +1,13 @@
 import itertools
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
 import eth_abi.exceptions
 import pytest
 import web3
+
+if TYPE_CHECKING:
+    from web3.contract import Contract
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector, keccak256
@@ -474,8 +477,3 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
             )
             print(msg)
             raise AssertionError(msg) from e
-
-
-def test_get_d(tripool: CurveStableswapPool):
-    # Check that D=0 for an empty pool
-    assert tripool._get_d(_xp=[0, 0, 0], _amp=1000) == 0

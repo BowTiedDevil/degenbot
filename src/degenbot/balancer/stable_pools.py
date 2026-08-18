@@ -85,19 +85,6 @@ class BalancerRateProvider(Protocol):
         ...
 
 
-class _StaticRateProvider:
-    """A rate provider that always returns construction-time rates.
-
-    Used when no I/O-capable provider is injected.
-    """
-
-    def __init__(self, rates: tuple[int, ...]) -> None:
-        self._rates = rates
-
-    def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:  # ruff:ignore[unused-method-argument]
-        return self._rates
-
-
 class _HandleRateProviderAdapter:
     """Thin Python shim that delegates to the stored Rust rate-provider trait object.
 

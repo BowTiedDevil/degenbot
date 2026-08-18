@@ -596,45 +596,6 @@ def test_simulations(
         == sim_result
     )
 
-    added_liquidity = 10_000_000
-    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.simulate_add_liquidity(
-        added_reserves_token0=added_liquidity,
-        added_reserves_token1=added_liquidity,
-    ) == UniswapV2PoolSimulationResult(
-        amount0_delta=added_liquidity,
-        amount1_delta=added_liquidity,
-        initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state,
-        final_state=UniswapV2PoolState(
-            address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.address,
-            block=None,
-            reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token0
-            + added_liquidity,
-            reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token1
-            + added_liquidity,
-        ),
-    )
-
-    removed_liquidity = 10_000_000
-    assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.simulate_remove_liquidity(
-            removed_reserves_token0=removed_liquidity,
-            removed_reserves_token1=removed_liquidity,
-        )
-        == UniswapV2PoolSimulationResult(
-            amount0_delta=-removed_liquidity,
-            amount1_delta=-removed_liquidity,
-            initial_state=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state,
-            final_state=UniswapV2PoolState(
-                address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.address,
-                block=None,
-                reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token0
-                - removed_liquidity,
-                reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token1
-                - removed_liquidity,
-            ),
-        )
-    )
-
 
 def test_simulation_input_validation(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,

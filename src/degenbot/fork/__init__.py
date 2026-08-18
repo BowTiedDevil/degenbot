@@ -438,42 +438,6 @@ class AnvilFork:
         else:
             raise DegenbotValueError(message="No options provided.")
 
-    def set_snapshot(self) -> int:
-        """Take a snapshot (`evm_snapshot`) and return its integer id.
-
-        Returns:
-            The snapshot id used with :meth:`return_to_snapshot`.
-
-        Raises:
-            AnvilError: If the RPC call fails.
-
-        """
-        try:
-            return int(self._require_fork().snapshot())
-        except RuntimeError as exc:
-            raise AnvilError(method="evm_snapshot", error=str(exc)) from exc
-
-    def return_to_snapshot(self, snapshot_id: int) -> None:
-        """Return to a snapshot (`evm_revert`).
-
-        Raises:
-            AnvilError: If the RPC call fails (or the snapshot id is not
-                valid).
-            DegenbotValueError: If `snapshot_id < 0`.
-
-        """
-        if snapshot_id < 0:
-            raise DegenbotValueError(message="ID cannot be negative")
-        try:
-            reverted = self._require_fork().revert(snapshot_id)
-        except RuntimeError as exc:
-            raise AnvilError(method="evm_revert", error=str(exc)) from exc
-        if not reverted:
-            raise AnvilError(
-                method="evm_revert",
-                error=f"Failed to revert to snapshot {snapshot_id}",
-            )
-
     @validate_call
     def set_balance(
         self,

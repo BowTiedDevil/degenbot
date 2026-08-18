@@ -51,21 +51,6 @@ class PerBlockCache:
         self._cache_block_timestamps: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth,
         )
-        self._cache_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth,
-        )
-        self._cache_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth,
-        )
-        self._cache_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth,
-        )
-        self._cache_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth,
-        )
-        self._cache_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth,
-        )
         self._cache_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
             max_items=state_cache_depth,
         )
@@ -95,104 +80,6 @@ class PerBlockCache:
             raise MissingCurveData(self._address, "block_timestamp", msg)
         result = self._data_provider.block_timestamp(block_number)
         self._cache_block_timestamps[block_number] = result
-        return result
-
-    def get_cached_contract_d(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached contract D value (crypto pools).
-
-        Returns:
-            The D invariant value as an integer.
-
-        Raises:
-            MissingCurveData: If the value is not cached and no provider is available.
-
-        """
-        with contextlib.suppress(KeyError):
-            return self._cache_contract_D[block_number]
-        if self._data_provider is None:
-            msg = "contract_D requires a data_provider. Provide one via Bot.build_pool()."
-            raise MissingCurveData(self._address, "D", msg)
-        result = self._data_provider.d(block_number)
-        self._cache_contract_D[block_number] = result
-        return result
-
-    def get_cached_gamma(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached gamma value (crypto pools).
-
-        Returns:
-            The gamma value as an integer.
-
-        Raises:
-            MissingCurveData: If the value is not cached and no provider is available.
-
-        """
-        with contextlib.suppress(KeyError):
-            return self._cache_gamma[block_number]
-        if self._data_provider is None:
-            msg = "gamma requires a data_provider. Provide one via Bot.build_pool()."
-            raise MissingCurveData(self._address, "gamma", msg)
-        result = self._data_provider.gamma(block_number)
-        self._cache_gamma[block_number] = result
-        return result
-
-    def get_cached_price_scale(self, block_number: BlockNumber) -> tuple[int, ...]:
-        """Fetch or retrieve cached price scale (crypto pools).
-
-        Returns:
-            The price scale values as a tuple of integers.
-
-        Raises:
-            MissingCurveData: If the value is not cached and no provider is available.
-
-        """
-        with contextlib.suppress(KeyError):
-            return self._cache_price_scale[block_number]
-        if self._data_provider is None:
-            msg = "price_scale requires a data_provider. Provide one via Bot.build_pool()."
-            raise MissingCurveData(self._address, "price_scale", msg)
-        result = self._data_provider.price_scale(block_number)
-        self._cache_price_scale[block_number] = result
-        return result
-
-    def get_cached_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
-        """Fetch or retrieve cached admin balances.
-
-        Returns:
-            The admin balances as a tuple of integers.
-
-        Raises:
-            MissingCurveData: If the value is not cached and no provider is available.
-
-        """
-        with contextlib.suppress(KeyError):
-            return self._cache_admin_balances[block_number]
-        if self._data_provider is None:
-            msg = "admin_balances requires a data_provider. Provide one via Bot.build_pool()."
-            raise MissingCurveData(self._address, "admin_balances", msg)
-        result = self._data_provider.admin_balances(block_number)
-        self._cache_admin_balances[block_number] = result
-        return result
-
-    def get_cached_scaled_redemption_price(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached scaled redemption price.
-
-        Returns:
-            The scaled redemption price as an integer.
-
-        Raises:
-            MissingCurveData: If the value is not cached and no provider is available.
-
-        """
-        with contextlib.suppress(KeyError):
-            return self._cache_scaled_redemption_price[block_number]
-        if self._data_provider is None:
-            msg = (
-                "scaled_redemption_price requires a data_provider."
-                " Provide one via Bot.build_pool()."
-            )
-            raise MissingCurveData(self._address, "redemption_price", msg)
-        result = self._data_provider.redemption_price(block_number)
-        self._cache_scaled_redemption_price[block_number] = result
         return result
 
     def get_cached_base_cache_updated(self, block_number: BlockNumber) -> int:

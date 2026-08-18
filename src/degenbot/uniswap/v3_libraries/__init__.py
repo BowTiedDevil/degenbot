@@ -14,7 +14,7 @@ U64B2O census found no Python consumer, so those internals are removed from
 the FFI surface entirely (``compute_swap_step_v3``/``_v4`` remain as the
 dual-driver parity fixture seam).
 
-The leaf submodules (``.full_math``, ``.bit_math``, ``.tick``,
+The leaf submodules (``.full_math``, ``.bit_math``,
 ``.tick_bitmap``, ``.functions``) are the Solidity-matching surface that
 adds input validation and ``EVMRevertError`` conversion on top of the
 ``cl_*`` primitives.

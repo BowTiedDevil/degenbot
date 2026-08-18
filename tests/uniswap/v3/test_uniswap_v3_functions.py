@@ -1,11 +1,6 @@
-from fractions import Fraction
-
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.uniswap.v3_functions import (
-    decode_v3_path,
-    exchange_rate_from_sqrt_price_x96,
     generate_v3_pool_address,
 )
 
@@ -52,37 +47,4 @@ def test_v3_address_generator() -> None:
             init_hash="0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2",
         )
         == BASE_PANCAKESWAP_V3_WETH_CBETH_ADDRESS
-    )
-
-
-def test_v3_decode_path() -> None:
-    path = (
-        HexBytes(MAINNET_WBTC_ADDRESS)
-        + HexBytes(
-            (MAINNET_UNISWAP_V3_WBTC_WETH_LP_FEE).to_bytes(length=3, byteorder="big")
-        )  # pad to 3 bytes
-        + HexBytes(MAINNET_WETH_ADDRESS)
-    )
-    assert decode_v3_path(path) == [
-        MAINNET_WBTC_ADDRESS,
-        MAINNET_UNISWAP_V3_WBTC_WETH_LP_FEE,
-        MAINNET_WETH_ADDRESS,
-    ]
-
-    for fee in (100, 500, 3000, 10000):
-        path = (
-            HexBytes(MAINNET_WBTC_ADDRESS)
-            + HexBytes((fee).to_bytes(length=3, byteorder="big"))  # pad to 3 bytes
-            + HexBytes(MAINNET_WETH_ADDRESS)
-        )
-        assert decode_v3_path(path) == [MAINNET_WBTC_ADDRESS, fee, MAINNET_WETH_ADDRESS]
-
-
-def test_v3_exchange_rates_from_sqrt_price_x96() -> None:
-    # ref: https://blog.uniswap.org/uniswap-v3-math-primer
-    weth_usdc_sqrt_price_x96 = 2018382873588440326581633304624437
-
-    assert (
-        exchange_rate_from_sqrt_price_x96(weth_usdc_sqrt_price_x96)
-        == Fraction(2018382873588440326581633304624437, 2**96) ** 2
     )

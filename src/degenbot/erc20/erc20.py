@@ -3,37 +3,14 @@
 from typing import Any, Self
 
 from eth_typing import ChecksumAddress
-from sqlalchemy import select
-from sqlalchemy.orm import Session, scoped_session
 
 from degenbot._ffi import Erc20Token as _TokenHandle
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models import Erc20TokenTable
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
-
-
-def get_token_from_database(
-    token: ChecksumAddress,
-    chain_id: int,
-    session: Session | scoped_session[Session],
-) -> Erc20TokenTable | None:
-    """Return token from database.
-
-    Returns:
-        The computed value.
-
-    """
-    return session.scalar(
-        select(Erc20TokenTable).where(
-            Erc20TokenTable.address == token,
-            Erc20TokenTable.chain == chain_id,
-        ),
-    )
-
 
 UNKNOWN_NAME = "Unknown Token"
 UNKNOWN_SYMBOL = "UNKNOWN"

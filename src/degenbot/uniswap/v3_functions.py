@@ -1,70 +1,15 @@
 """Uniswap V3 swap and burn amount calculations."""
 
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable
 from fractions import Fraction
-from itertools import cycle
 
 from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.abi import encode
-from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address
-from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.v3_types import Pip
-
-
-def decode_v3_path(path: bytes) -> list[ChecksumAddress | Pip]:
-    """Decode the V3 Router/Router2 path bytes.
-
-    Close-packed encoding of 20 byte pool addresses, interleaved with 3 byte fees.
-
-    Returns:
-        A list of decoded addresses and fees.
-
-    Raises:
-        DegenbotValueError: If the path has invalid length.
-
-    """
-
-    def _extract_address(chunk: bytes) -> ChecksumAddress:
-        return get_checksum_address(chunk)
-
-    def _extract_fee(chunk: bytes) -> Pip:
-        return int.from_bytes(chunk, byteorder="big")
-
-    address_bytes = 20
-    fee_bytes = 3
-
-    if any([
-        len(path) < address_bytes + fee_bytes + address_bytes,
-        len(path) % (address_bytes + fee_bytes) != address_bytes,
-    ]):  # pragma: no cover
-        raise DegenbotValueError(message="Invalid path.")
-
-    chunk_length_and_decoder_function: Iterator[
-        tuple[
-            int,
-            Callable[
-                [bytes],
-                ChecksumAddress | Pip,
-            ],
-        ]
-    ] = cycle([
-        (address_bytes, _extract_address),
-        (fee_bytes, _extract_fee),
-    ])
-
-    path_offset = 0
-    decoded_path: list[ChecksumAddress | Pip] = []
-    while path_offset != len(path):
-        byte_length, extraction_func = next(chunk_length_and_decoder_function)
-        path_chunk = HexBytes(path[path_offset : path_offset + byte_length])
-        decoded_path.append(extraction_func(path_chunk))
-        path_offset += byte_length
-
-    return decoded_path
 
 
 def exchange_rate_from_sqrt_price_x96(sqrt_price_x96: int) -> Fraction:

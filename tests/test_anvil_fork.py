@@ -4,7 +4,6 @@ from pydantic import ValidationError
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions.base import DegenbotError, DegenbotValueError
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 
@@ -82,18 +81,6 @@ def test_rpc_methods(fork_mainnet_full: AnvilFork):
     with pytest.raises(ValidationError):
         fork_mainnet_full.set_next_base_fee(MAX_UINT256 + 1)
     fork_mainnet_full.set_next_base_fee(11 * 10**9)
-
-    # Set several snapshot IDs and return to them
-    snapshot_ids = [fork_mainnet_full.set_snapshot() for _ in range(10)]
-    for snapshot_id in snapshot_ids:
-        fork_mainnet_full.return_to_snapshot(snapshot_id)
-
-    with pytest.raises(DegenbotError, match="Anvil RPC call to evm_revert failed:"):
-        fork_mainnet_full.return_to_snapshot(100)
-
-    # Negative IDs are not allowed
-    with pytest.raises(DegenbotValueError, match="ID cannot be negative"):
-        fork_mainnet_full.return_to_snapshot(-1)
 
     for balance in [MIN_UINT256, MAX_UINT256]:
         fork_mainnet_full.set_balance(VITALIK_ADDRESS, balance)
@@ -194,15 +181,15 @@ def test_reset_to_new_transaction_hash():
     assert fork.provider.block_number == 20987963
 
 
-def test_ipc_kwargs():
-    fork = AnvilFork(
+def test_ipc_kwargs() -> None:
+    # IPCProvider type check retired — AnvilFork now uses Rust DynProvider
+    # timeout check retired — Rust provider manages its own timeouts
+    AnvilFork(
         localhost="127.0.0.1",
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
         ipc_provider_kwargs={"timeout": None},
     )
-    # IPCProvider type check retired — AnvilFork now uses Rust DynProvider
-    # timeout check retired — Rust provider manages its own timeouts
 
 
 def test_balance_overrides_in_constructor():

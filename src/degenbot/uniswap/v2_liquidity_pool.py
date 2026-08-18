@@ -338,56 +338,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         if restored is not None:
             self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
-    def simulate_add_liquidity(
-        self,
-        added_reserves_token0: int,
-        added_reserves_token1: int,
-        override_state: PoolState | None = None,
-    ) -> UniswapV2PoolSimulationResult:
-        """Simulate adding liquidity.
-
-        Returns:
-            The simulation result with delta amounts and state transitions.
-
-        """
-        state = override_state if override_state is not None else self.state
-        return UniswapV2PoolSimulationResult(
-            amount0_delta=added_reserves_token0,
-            amount1_delta=added_reserves_token1,
-            initial_state=state,
-            final_state=dataclasses.replace(
-                state,
-                reserves_token0=state.reserves_token0 + added_reserves_token0,
-                reserves_token1=state.reserves_token1 + added_reserves_token1,
-                block=self.update_block if override_state is not None else None,
-            ),
-        )
-
-    def simulate_remove_liquidity(
-        self,
-        removed_reserves_token0: int,
-        removed_reserves_token1: int,
-        override_state: PoolState | None = None,
-    ) -> UniswapV2PoolSimulationResult:
-        """Simulate removing liquidity.
-
-        Returns:
-            The simulation result with delta amounts and state transitions.
-
-        """
-        state = override_state if override_state is not None else self.state
-        return UniswapV2PoolSimulationResult(
-            amount0_delta=-removed_reserves_token0,
-            amount1_delta=-removed_reserves_token1,
-            initial_state=state,
-            final_state=dataclasses.replace(
-                state,
-                reserves_token0=state.reserves_token0 - removed_reserves_token0,
-                reserves_token1=state.reserves_token1 - removed_reserves_token1,
-                block=self.update_block if override_state is not None else None,
-            ),
-        )
-
     def simulate_exact_input_swap(
         self,
         token_in: Erc20Token,

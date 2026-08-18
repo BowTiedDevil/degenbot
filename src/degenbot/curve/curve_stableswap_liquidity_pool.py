@@ -5,28 +5,13 @@ plain pools, metapools, lending pools, and crypto pools.
 """
 
 import contextlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve.math import (
-    stableswap_get_d as curve_stableswap_get_d,
-)
-from degenbot.curve.math import (
-    stableswap_get_y as curve_stableswap_get_y,
-)
-from degenbot.curve.math import (
-    stableswap_get_y_d as curve_stableswap_get_y_d,
-)
-from degenbot.curve.math import (
-    stableswap_newton_y as curve_stableswap_newton_y,
-)
-from degenbot.curve.math import (
-    stableswap_reduction_coefficient as curve_stableswap_reduction_coefficient,
-)
 from degenbot.curve.per_block_cache import PerBlockCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
 from degenbot.curve.strategies import PoolStrategies
@@ -240,12 +225,10 @@ class CurveStableswapPool(
     _create_timestamp: int | None
     _data_provider: CurveDataProvider | None
     _cache: PerBlockCache
-    _coin_index_type: str
     _name: str
     _subscribers: WeakSet[Subscriber]
     FEE_DENOMINATOR: int = 10**10
     A_PRECISION: int = 100
-    MAX_COINS: int = 8
     # BASE_CACHE_EXPIRES moved to PerBlockCache
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
@@ -408,8 +391,6 @@ class CurveStableswapPool(
             base_pool_is_set=self.base_pool is not None,
         )
 
-        self._coin_index_type = "uint256"
-
         # The registration block (genesis journal delta). Used to pre-populate
         # base-cache virtual-price values for metapools at construction time.
         registration_block = py_pool.update_block
@@ -532,53 +513,6 @@ class CurveStableswapPool(
         )
         self._notify_subscribers(
             CurveStableSwapPoolStateUpdated(state=new_state),
-        )
-
-    def _fetch_token_balance(
-        self,
-        token: Erc20Token,
-        address: ChecksumAddress,
-        *,
-        block_identifier: int | None = None,
-    ) -> int:
-        """Fetch token balance using the data provider if available.
-
-        Returns:
-            The computed integer value.
-
-        Raises:
-            MissingCurveData: See function documentation.
-
-        """
-        if self._data_provider is not None and block_identifier is not None:
-            return self._data_provider.token_balance(token.address, address, block_identifier)
-        raise MissingCurveData(
-            self.address,
-            "token_balance",
-            "Token balance fetch requires I/O. Provide a data_provider.",
-        )
-
-    def _fetch_token_total_supply(
-        self,
-        token: Erc20Token,
-        *,
-        block_identifier: int | None = None,
-    ) -> int:
-        """Fetch token total supply using the data provider if available.
-
-        Returns:
-            The computed integer value.
-
-        Raises:
-            MissingCurveData: See function documentation.
-
-        """
-        if self._data_provider is not None and block_identifier is not None:
-            return self._data_provider.token_total_supply(token.address, block_identifier)
-        raise MissingCurveData(
-            self.address,
-            "token_total_supply",
-            "Token total supply fetch requires I/O. Provide a data_provider.",
         )
 
     def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
@@ -754,164 +688,6 @@ class CurveStableswapPool(
             return self._py_pool.curve_get_dy_underlying(i, j, dx, block_number, override_balances)
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
-
-    def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
-        """Solve for the Curve stableswap invariant D.
-
-        Delegates to the pure function stableswap_get_d. Kept as a thin
-        wrapper for backwards compatibility with callers that access pool state.
-
-        Returns:
-            The computed integer value.
-
-        Raises:
-            EVMRevertError: See function documentation.
-
-        """
-        try:
-            return curve_stableswap_get_d(
-                list(_xp),
-                _amp,
-                len(self._tokens),
-                self.A_PRECISION,
-                self._strategies.d_variant.value,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-
-    def _get_y(self, i: int, j: int, x: int, xp: Sequence[int]) -> int:
-        """Calculate x[j] if one makes x[i] = x.
-
-        Delegates to the pure function stableswap_get_y. Resolves amp from
-        the pool's A-ramping state and block timestamps before calling.
-
-        Returns:
-            The computed integer value.
-
-        Raises:
-            EVMRevertError: See function documentation.
-
-        """
-        amp = (
-            self._a(timestamp=self._cache.get_cached_block_timestamp(self.update_block))
-            // self.A_PRECISION
-            if self._strategies.y_variant == YVariant.VARIANT_0
-            else self._a(timestamp=self._cache.get_cached_block_timestamp(self.update_block))
-        )
-        try:
-            return curve_stableswap_get_y(
-                i,
-                j,
-                x,
-                list(xp),
-                amp,
-                len(self._tokens),
-                self.A_PRECISION,
-                self._strategies.y_variant.value,
-                self._strategies.d_variant.value,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-
-    def _get_y_d(self, a: int, i: int, xp: Sequence[int], d: int) -> int:
-        """Calculate y given A, xp, and D.
-
-        Delegates to the pure function stableswap_get_y_d.
-
-        Returns:
-            The computed integer value.
-
-        Raises:
-            EVMRevertError: See function documentation.
-
-        """
-        try:
-            return curve_stableswap_get_y_d(
-                a,
-                i,
-                list(xp),
-                d,
-                len(self._tokens),
-                self.A_PRECISION,
-                self._strategies.yd_variant.value,
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-
-    def _resolve_rates(
-        self,
-        *,
-        rates: tuple[int, ...],
-        block_number: int,
-    ) -> tuple[int, ...]:
-        """Select rates based on the pool's lending rate style.
-
-        Returns rate_multipliers for NONE, or calls the data provider
-        for lending pools.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            MissingCurveData: See function documentation.
-
-        """
-        if self._strategies.lending_rate_style == LendingRateStyle.NONE:
-            return rates
-
-        if self._data_provider is None:
-            raise MissingCurveData(
-                self.address,
-                "lending_rate",
-                "Data provider is required for pools with lending tokens. "
-                "Provide one via Bot.build_pool().",
-            )
-        return self._data_provider.lending_rates(block_number)
-
-    def _xp(self, rates: Iterable[int], balances: Iterable[int]) -> tuple[int, ...]:
-        return tuple(
-            rate * balance // self.PRECISION for rate, balance in zip(rates, balances, strict=True)
-        )
-
-    def _newton_y(self, ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int) -> int:
-        """Calculate xp[i] given other balances and invariant D using Newton's method.
-
-        Delegates to the pure function stableswap_newton_y.
-        Used by crypto (volatile) Curve pools.
-
-        Returns:
-            The computed integer value.
-
-        Raises:
-            EVMRevertError: See function documentation.
-
-        """
-        try:
-            return curve_stableswap_newton_y(
-                ann,
-                gamma,
-                list(xp),
-                d,
-                token_index,
-                len(self._tokens),
-                self.A_PRECISION,
-            )
-        except ValueError as e:
-            raise EVMRevertError(
-                error=f"_newton_y() did not converge for pool {self.address}",
-            ) from e
-
-    @staticmethod
-    def _reduction_coefficient(x: Sequence[int], fee_gamma: int, n_coins: int) -> int:
-        """fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
-
-        Delegates to the pure function stableswap_reduction_coefficient.
-
-        Returns:
-            The computed integer value.
-
-        """
-        return curve_stableswap_reduction_coefficient(list(x), fee_gamma, n_coins)
 
     def calculate_tokens_out_from_tokens_in(
         self,
