@@ -13,7 +13,7 @@
 use super::super::mechanics;
 use super::super::{fits_i128, HopFacts};
 use crate::composers::{ComposerInputs, NATIVE_CURRENCY_ADDRESS};
-use crate::encoders::{AddressTable, SENTINEL_SELF, SENTINEL_WETH};
+use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 use crate::grammar_ledger::Prot;
 use crate::grammar_plan::Plan;
 
@@ -37,6 +37,10 @@ pub(crate) fn derive(
     seed_v4_arm(fa, fb, inputs, forward_out, v4_out_amount, v4_swap_in)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "One arm for six families (guards + table staging + inner/callback/plan-head sequences); splitting would move the branches into a parameter bag."
+)]
 fn seed_v4_arm(
     fa: &HopFacts,
     fb: &HopFacts,
@@ -98,7 +102,10 @@ fn seed_v4_arm(
     if native_in {
         inner.push(mechanics::v4_swap(&mut at, fb, v4_swap_in, v4_out_amount)?);
         inner.push(mechanics::native_transfer(v4_swap_in));
-        inner.push(mechanics::v4_settle_delta());
+        inner.push(mechanics::v4_settle_delta(
+            SENTINEL_NATIVE,
+            NATIVE_CURRENCY_ADDRESS,
+        ));
     } else {
         inner.push(mechanics::v4_sync(extra_idx, fwd));
         inner.push(mechanics::erc20_transfer(

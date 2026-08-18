@@ -160,7 +160,6 @@ pub struct HopFacts {
 /// `v3_v4_v3` shape exercises is implemented; A2 generalizes.
 mod mechanics {
     use super::{AddressTable, HopFacts, OutDest};
-    use crate::composers::NATIVE_CURRENCY_ADDRESS;
     use crate::encoders::{SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF};
     use crate::grammar_ledger::Prot;
     use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
@@ -396,12 +395,76 @@ mod mechanics {
         PlanStep::NativeTransfer { amount }
     }
 
-    /// Net the V4 pool-manager NATIVE ledger to zero — the native-input V4
-    /// swap's bridge (the unlock's WETH debt against the V2 draw).
-    pub fn v4_settle_delta() -> PlanStep {
+    /// Net one pool-manager ledger to zero at an explicit index — the caller
+    /// owns which ledger (input ledger, WETH, or the NATIVE bridge).
+    pub fn v4_settle_delta(currency_idx: u8, currency_addr: Address) -> PlanStep {
         PlanStep::V4SettleDelta {
-            currency_idx: SENTINEL_NATIVE,
-            currency_addr: NATIVE_CURRENCY_ADDRESS,
+            currency_idx,
+            currency_addr,
+        }
+    }
+
+    /// A V4 take-delta step — move the PM ledger's residual to a recipient
+    /// (a tok terminal's explicit take; the V4-tail batch path auto-settles
+    /// WETH/Native so emits none).
+    pub fn v4_take_delta(
+        currency_idx: u8,
+        currency_addr: Address,
+        recipient_idx: u8,
+        seeds_pool: Option<Address>,
+    ) -> PlanStep {
+        PlanStep::V4TakeDelta {
+            currency_idx,
+            currency_addr,
+            recipient_idx,
+            seeds_pool,
+        }
+    }
+
+    /// A V4TakeCompact at explicit table indices — positional (the shape
+    /// owns the routing, including takes whose currency is not the hop's
+    /// `out_currency`, like the V4-led arms' native take).
+    pub fn v4_take_compact_at(
+        currency_idx: u8,
+        currency_addr: Address,
+        recipient_idx: u8,
+        amount: u128,
+        seeds_pool: Option<Address>,
+        repays_flash: Option<Address>,
+    ) -> PlanStep {
+        PlanStep::V4TakeCompact {
+            currency_idx,
+            currency_addr,
+            recipient_idx,
+            amount,
+            seeds_pool,
+            repays_flash,
+        }
+    }
+
+    /// One entry of a [`PlanStep::V4Batch`] — the hop's facts supply fee /
+    /// tick_spacing / zfo / out-currency; the shape stages the table and
+    /// passes the pair indices + the (possibly bridged) input currency.
+    pub fn v4_batch_entry(
+        facts: &HopFacts,
+        c0_idx: u8,
+        c1_idx: u8,
+        amount: u128,
+        out_amount: u128,
+        in_currency: Address,
+    ) -> V4BatchSwap {
+        V4BatchSwap {
+            c0_idx,
+            c1_idx,
+            fee: facts.swap_fee,
+            tick_spacing: facts.tick_spacing,
+            hooks_idx: SENTINEL_NATIVE,
+            zfo: facts.zfo,
+            amount,
+            in_currency,
+            in_amount: amount,
+            out_currency: facts.out_currency,
+            out_amount,
         }
     }
 
@@ -429,11 +492,9 @@ mod mechanics {
         PlanStep::SelfFund { currency, amount }
     }
 
-    /// A batched V4 swap (the `use_v4_batch` optimization) over the hop.
-    #[expect(
-        dead_code,
-        reason = "T7 (epic 6SU5LM) wires the v4_v4/v4_v4_v4 batch paths"
-    )]
+    /// A batched V4 swap (the `use_v4_batch` optimization) over the hop —
+    /// `entries` carry per-swap currency/fee/tick_spacing; the pool-manager
+    /// index is implicit.
     pub fn v4_batch(
         at: &mut AddressTable,
         facts: &HopFacts,
