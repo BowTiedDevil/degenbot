@@ -3,6 +3,8 @@
 //! ordering is owned by `derive_plan` in the parent file.
 pub(crate) mod all_v2_chain;
 pub(crate) mod tag_residual;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub(crate) mod three_hop;
 pub(crate) mod two_hop_seed_v4;
 pub(crate) mod two_hop_uniswap_only;

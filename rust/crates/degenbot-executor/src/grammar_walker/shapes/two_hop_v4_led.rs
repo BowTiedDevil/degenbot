@@ -587,3 +587,122 @@ pub(crate) fn derive(
         }
     };
 }
+
+#[cfg(test)]
+mod walk_probe {
+    #![expect(
+        clippy::print_stdout,
+        reason = "T1_CAPTURE diagnostic mode for golden-table capture"
+    )]
+
+    use super::super::test_support as tf;
+    use crate::composers::PathInfo;
+
+    /// The walk region: everything before the first test module, so the probe
+    /// cannot count literals inside its own fixture.
+    fn walk_source() -> &'static str {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/grammar_walker/shapes/two_hop_v4_led.rs"
+        ));
+        let i = src.find("\n#[cfg(test)]").unwrap_or(src.len());
+        &src[..i]
+    }
+
+    /// RED by design (T1 RKNRJO, epic 6SWFBS): 49 literal `PlanStep::` sites
+    /// today. Goes GREEN when T4 (4FKIPB) walks the v4v2/v4v3/v4v4 arms onto
+    /// `mechanics` + the shared capture/bridge helpers; then it stays put as
+    /// the honesty invariant (D6 precedent: RED probe at f3b06397, honesty
+    /// test kept at DDNEAB).
+    #[test]
+    fn two_hop_v4_led_arms_use_mechanics_not_planstep_literals() {
+        let src = walk_source();
+        let count = src.matches("PlanStep::").count();
+        assert_eq!(
+            count, 0,
+            "two_hop_v4_led.rs still hand-builds {count} PlanStep sites; the walk must express them via mechanics:: + shared capture/bridge helpers"
+        );
+    }
+
+    /// Per-file byte-identity pin: the exact current streams for every
+    /// v4v2/v4v3/v4v4 family × amount-set × `EncodeOptions` combo, including
+    /// the decline partition (the SMOZG3 erc6909×batch WETH-terminal declines
+    /// stay declined — TGUZCT is still open).
+    const FAMILIES: &[(&str, &[&str])] = &[
+        ("V4_V2", &["V4", "V2"]),
+        ("V4_V3", &["V4", "V3"]),
+        ("V4_V4", &["V4", "V4"]),
+    ];
+
+    const GOLDEN: &[&str] = &[
+        "V4_V2_base_0 3adae8a43d6f79ce",
+        "V4_V2_base_1 3adae8a43d6f79ce",
+        "V4_V2_base_2 ff9113c64ec696a9",
+        "V4_V2_base_3 ff9113c64ec696a9",
+        "V4_V2_batch_0 3adae8a43d6f79ce",
+        "V4_V2_batch_1 3adae8a43d6f79ce",
+        "V4_V2_batch_2 ff9113c64ec696a9",
+        "V4_V2_batch_3 ff9113c64ec696a9",
+        "V4_V2_erc6909_0 3adae8a43d6f79ce",
+        "V4_V2_erc6909_1 3adae8a43d6f79ce",
+        "V4_V2_erc6909_2 ff9113c64ec696a9",
+        "V4_V2_erc6909_3 ff9113c64ec696a9",
+        "V4_V3_base_0 518e53d8d63b481e",
+        "V4_V3_base_1 e1abca545ee1b7d7",
+        "V4_V3_base_2 684ebfe7c96d6ab6",
+        "V4_V3_base_3 2a3e56a813e6561a",
+        "V4_V3_batch_0 518e53d8d63b481e",
+        "V4_V3_batch_1 e1abca545ee1b7d7",
+        "V4_V3_batch_2 684ebfe7c96d6ab6",
+        "V4_V3_batch_3 2a3e56a813e6561a",
+        "V4_V3_erc6909_0 518e53d8d63b481e",
+        "V4_V3_erc6909_1 e1abca545ee1b7d7",
+        "V4_V3_erc6909_2 684ebfe7c96d6ab6",
+        "V4_V3_erc6909_3 2a3e56a813e6561a",
+        "V4_V4_base_0 51aa71ec610de3b5",
+        "V4_V4_base_1 5a137aa3db157ffa",
+        "V4_V4_base_2 ac79cd7b8e92e5cc",
+        "V4_V4_base_3 124e035d9389cec8",
+        "V4_V4_batch_0 677fc97e39900f55",
+        "V4_V4_batch_1 70705488b1a36c9a",
+        "V4_V4_batch_2 f07dd803d7b0ca7a",
+        "V4_V4_batch_3 6a28c372bc84cf16",
+        "V4_V4_erc6909_0 51aa71ec610de3b5",
+        "V4_V4_erc6909_1 5a137aa3db157ffa",
+        "V4_V4_erc6909_2 ac79cd7b8e92e5cc",
+        "V4_V4_erc6909_3 124e035d9389cec8",
+    ];
+
+    #[test]
+    fn two_hop_v4_led_streams_are_pinned() {
+        let mut lines = Vec::new();
+        for (fam, combo) in FAMILIES {
+            let path = PathInfo::new(tf::build_hops(combo));
+            for (label, opt) in tf::opts() {
+                for (ci, (optimal, out, consumed)) in tf::configs().iter().enumerate() {
+                    lines.push(tf::entry_line(
+                        fam,
+                        path.clone(),
+                        *optimal,
+                        &out[..2],
+                        &consumed[..2],
+                        label,
+                        ci,
+                        opt,
+                    ));
+                }
+            }
+        }
+        lines.sort();
+        if std::env::var("T1_CAPTURE").is_ok() {
+            for l in &lines {
+                println!("{l}");
+            }
+        }
+        assert_eq!(
+            lines.join("\n"),
+            GOLDEN.join("\n"),
+            "2-hop V4-led streams changed — T1 pin"
+        );
+    }
+}

@@ -685,3 +685,107 @@ pub(crate) fn derive(
         }
     };
 }
+
+#[cfg(test)]
+mod walk_probe {
+    #![expect(
+        clippy::print_stdout,
+        reason = "T1_CAPTURE diagnostic mode for golden-table capture"
+    )]
+
+    use super::super::test_support as tf;
+    use crate::composers::PathInfo;
+
+    /// The walk region: everything before the first test module, so the probe
+    /// cannot count literals inside its own fixture.
+    fn walk_source() -> &'static str {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/grammar_walker/shapes/two_hop_seed_v4.rs"
+        ));
+        let i = src.find("\n#[cfg(test)]").unwrap_or(src.len());
+        &src[..i]
+    }
+
+    /// RED by design (T1 RKNRJO, epic 6SWFBS): 60 literal `PlanStep::` sites
+    /// today. Goes GREEN when T3 (CP6BNJ) walks the v2v4/v3v4 arms onto
+    /// `mechanics` + the shared capture/bridge helpers; then it stays put as
+    /// the honesty invariant that no per-family Plan bodies reappear (D6
+    /// precedent: the RED probe committed at f3b06397, honesty test kept at
+    /// DDNEAB).
+    #[test]
+    fn two_hop_seed_v4_arms_use_mechanics_not_planstep_literals() {
+        let src = walk_source();
+        let count = src.matches("PlanStep::").count();
+        assert_eq!(
+            count, 0,
+            "two_hop_seed_v4.rs still hand-builds {count} PlanStep sites; the walk must express them via mechanics:: + shared capture/bridge helpers"
+        );
+    }
+
+    /// Per-file byte-identity pin (T4 gate target): the exact current streams
+    /// for every v2v4/v3v4 family × amount-set × `EncodeOptions` combo,
+    /// including the decline partition (the SMOZG3 erc6909×batch WETH-terminal
+    /// declines stay declined — TGUZCT is still open).
+    const FAMILIES: &[(&str, &[&str])] = &[("V2_V4", &["V2", "V4"]), ("V3_V4", &["V3", "V4"])];
+
+    const GOLDEN: &[&str] = &[
+        "V2_V4_base_0 923364d759eb212d",
+        "V2_V4_base_1 3a1b12cf9f0ec888",
+        "V2_V4_base_2 34faecb7315436c5",
+        "V2_V4_base_3 3de42bc24146d541",
+        "V2_V4_batch_0 923364d759eb212d",
+        "V2_V4_batch_1 3a1b12cf9f0ec888",
+        "V2_V4_batch_2 34faecb7315436c5",
+        "V2_V4_batch_3 3de42bc24146d541",
+        "V2_V4_erc6909_0 923364d759eb212d",
+        "V2_V4_erc6909_1 3a1b12cf9f0ec888",
+        "V2_V4_erc6909_2 34faecb7315436c5",
+        "V2_V4_erc6909_3 3de42bc24146d541",
+        "V3_V4_base_0 91cede1cd9a55e3f",
+        "V3_V4_base_1 e5f550676312ba0e",
+        "V3_V4_base_2 14e64c847a39e6db",
+        "V3_V4_base_3 8522cd96d6641187",
+        "V3_V4_batch_0 91cede1cd9a55e3f",
+        "V3_V4_batch_1 e5f550676312ba0e",
+        "V3_V4_batch_2 14e64c847a39e6db",
+        "V3_V4_batch_3 8522cd96d6641187",
+        "V3_V4_erc6909_0 91cede1cd9a55e3f",
+        "V3_V4_erc6909_1 e5f550676312ba0e",
+        "V3_V4_erc6909_2 14e64c847a39e6db",
+        "V3_V4_erc6909_3 8522cd96d6641187",
+    ];
+
+    #[test]
+    fn two_hop_seed_v4_streams_are_pinned() {
+        let mut lines = Vec::new();
+        for (fam, combo) in FAMILIES {
+            let path = PathInfo::new(tf::build_hops(combo));
+            for (label, opt) in tf::opts() {
+                for (ci, (optimal, out, consumed)) in tf::configs().iter().enumerate() {
+                    lines.push(tf::entry_line(
+                        fam,
+                        path.clone(),
+                        *optimal,
+                        &out[..2],
+                        &consumed[..2],
+                        label,
+                        ci,
+                        opt,
+                    ));
+                }
+            }
+        }
+        lines.sort();
+        if std::env::var("T1_CAPTURE").is_ok() {
+            for l in &lines {
+                println!("{l}");
+            }
+        }
+        assert_eq!(
+            lines.join("\n"),
+            GOLDEN.join("\n"),
+            "2-hop seed-V4 streams changed — T1 pin"
+        );
+    }
+}
