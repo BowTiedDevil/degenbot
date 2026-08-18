@@ -79,18 +79,23 @@ hooks = [
   #    (maturin develop) produces the .so that python-test imports, so it must
   #    precede python-test.
   #
+  # 4. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
+  #    aborts the push and the remaining gates are skipped. Without it, prek
+  #    runs the whole stage to completion and reports every failure.
+  #
   # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
   # manually with `prek run --hook-stage pre-push --skip rust-test` etc.
-  { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false },
+  # (add `--fail-fast` there to mirror the installed push behavior).
+  { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
-  { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check",   stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "python-lint", name = "Python lint", language = "system", entry = "just lint-python-check", stages = ["pre-push"], always_run = true, pass_filenames = false },
+  { id = "rust-clippy", name = "Rust clippy", language = "system", entry = "just lint-rust-check",   stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "python-lint", name = "Python lint", language = "system", entry = "just lint-python-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # Rust track (mirrors ci.yml: rust-build, rust-test).
-  { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false },
+  { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   # Python track: build (maturin develop) then test.
-  { id = "python-build", name = "Python build (maturin)", language = "system", entry = "just dev",         stages = ["pre-push"], always_run = true, pass_filenames = false },
-  { id = "python-test",  name = "Python tests",            language = "system", entry = "just test-python", stages = ["pre-push"], always_run = true, pass_filenames = false },
+  { id = "python-build", name = "Python build (maturin)", language = "system", entry = "just dev",         stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+  { id = "python-test",  name = "Python tests",            language = "system", entry = "just test-python", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 ]
