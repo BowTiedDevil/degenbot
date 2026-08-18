@@ -125,19 +125,19 @@ extend-select = [
     "TRY",      # tryceratops
 ]
 ignore = [
-    "D203",     # incorrect-blank-line-before-class
-    "D213",     # multi-line-summary-second-line
-    "COM812",   # trailing-commas
-    "N818",     # error-suffix-on-exception-name
-    "PLR0904",  # too-many-public-methods
-    "PLR0911",  # too-many-return-statements
-    "PLR0912",  # too-many-branches
-    "PLR0913",  # too-many-arguments
-    "PLR0914",  # too-many-local-variables
-    "PLR0915",  # too-many-statements
-    "PYI021",   # required for IDE to show wrapped Rust code info
-    "RUF067",   # non-empty-init-module
-    "S101",     # asserts are used often, but not as input validation
+    "incorrect-blank-line-before-class",
+    "multi-line-summary-second-line",
+    "missing-trailing-comma",
+    "error-suffix-on-exception-name",
+    "too-many-public-methods",
+    "too-many-return-statements",
+    "too-many-branches",
+    "too-many-arguments",
+    "too-many-locals",
+    "too-many-statements",
+    "docstring-in-stub", # required for IDE to show wrapped Rust code info
+    "non-empty-init-module", # asserts are used often, but not as input validation
+    "assert",
 ]
 logger-objects = [
     "logging.logger",
@@ -149,84 +149,84 @@ allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/aave_replay_diff.py" = [
-    "ANN401",   # the drive/compare JSON-report dicts are dict[str, Any]
-    "ARG001",   # CLI dispatchers take unused `args` for argparse's set_defaults
+    "any-type",   # the drive/compare JSON-report dicts are dict[str, Any]
+    "unused-function-argument",   # CLI dispatchers take unused `args` for argparse's set_defaults
     "D",        # docstring strictness (Returns:/Raises:/imperative) not enforced on the CLI
     "DOC",      # pydoclint Returns:/Raises: sections not enforced on the CLI
-    "EM102",    # short f-string error messages are fine in a script
-    "PLC0415",  # lazy imports avoid circular dependency with degenbot.provider
-    "PLW0717",  # the drive fn's broad try/except is intentional (log+re-raise)
-    "PLR1702",  # the bisect loop nests deeply by design
+    "f-string-in-exception",    # short f-string error messages are fine in a script
+    "import-outside-top-level",  # lazy imports avoid circular dependency with degenbot.provider
+    "too-many-statements-in-try-clause",  # the drive fn's broad try/except is intentional (log+re-raise)
+    "too-many-nested-blocks",  # the bisect loop nests deeply by design
     "PTH",      # os.path + os.makedirs are fine for the bisect's file-copy logic
-    "PLW1514",  # the JSON-dump file writes use utf-8 implicitly
-    "RET504",   # unnecessary-assign for clarity in the drive fn
-    "S105",     # "DEGENBOT_RPC_HTTP_CHAINID_1" is an envvar NAME, not a password
-    "S110",     # the optional event-fetcher import's try/except/pass is intentional
-    "S608",     # the table-name is from a hardcoded _TABLE_ORDER list, not user input
+    "unspecified-encoding",  # the JSON-dump file writes use utf-8 implicitly
+    "unnecessary-assign",   # unnecessary-assign for clarity in the drive fn
+    "hardcoded-password-string",     # "DEGENBOT_RPC_HTTP_CHAINID_1" is an envvar NAME, not a password
+    "try-except-pass",     # the optional event-fetcher import's try/except/pass is intentional
+    "hardcoded-sql-expression",     # the table-name is from a hardcoded _TABLE_ORDER list, not user input
     "SIM",      # the compare dict-comprehensions are clarity over comprehension
-    "SLF001",   # sqlalchemy's `row._mapping` is the documented dict-access API
-    "TRY003",   # raise-vanilla-args on the SystemExit messages
-    "TRY301",   # re-raising the worker-thread error from within the try is intentional
-    "T201",     # the CLI prints its summary to stdout by design
+    "private-member-access",   # sqlalchemy's `row._mapping` is the documented dict-access API
+    "raise-vanilla-args",   # raise-vanilla-args on the SystemExit messages
+    "raise-within-try",   # re-raising the worker-thread error from within the try is intentional
+    "print",     # the CLI prints its summary to stdout by design
 ]
 "tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "ARG",
     "D",
     "DOC",
-    "ICN001",   # benchmark scripts may import networkx without alias
-    "INP001",   # benchmark scripts are not part of a package
-    "PLC0415",  # benchmark scripts may import conditionally
-    "PLC2701",  # tests may need to import private modules
+    "unconventional-import-alias",   # benchmark scripts may import networkx without alias
+    "implicit-namespace-package",   # benchmark scripts are not part of a package
+    "import-outside-top-level",  # benchmark scripts may import conditionally
+    "import-private-name",  # tests may need to import private modules
     "PLR",
-    "S301",
-    "S311",
-    "S403",
-    "SLF001",   # tests may need to access private attributes to test implementation
-    "T201",     # print
+    "suspicious-pickle-usage",
+    "suspicious-non-cryptographic-random-usage",
+    "suspicious-pickle-import",
+    "private-member-access",   # tests may need to access private attributes to test implementation
+    "print",     # print
 ]
 "src/degenbot/provider/factory.py" = [
-    "PLC0415",  # lazy import avoids circular dependency with degenbot.provider.__init__
+    "import-outside-top-level",  # lazy import avoids circular dependency with degenbot.provider.__init__
 ]
 "src/degenbot/registry/deployment_loader.py" = [
-    "PLC0415",  # lazy imports avoid circular dependency (pool classes → uniswap → this module)
+    "import-outside-top-level",  # lazy imports avoid circular dependency (pool classes → uniswap → this module)
 ]
 "src/degenbot/uniswap/deployments.py" = [
-    "PLC0415",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
+    "import-outside-top-level",  # lazy import avoids circular dependency (deployment_loader → pool classes → this module)
 ]
 "src/degenbot/runner/**" = [
     # These rules were carried forward from the ``examples/*`` accommodation the
     # backrun driver was developed under (epic 5TSYKN relocates it un-rewritten).
     # The driver is moved with no behavior change, so it inherits the same style
     # exceptions; each can be re-enabled + cleaned incrementally.
-    "ANN401",   # driver callables take `Any` (injected builders/consumers, hop dicts)
+    "any-type",   # driver callables take `Any` (injected builders/consumers, hop dicts)
     "ARG",      # signatures keep meaningful-but-unused slots (e.g. v4_snapshot symmetry)
-    "B023",     # registration _consume's lambdas capture the loop-bound `step`
-    "BLE001",   # registration sim-loops catch broad Exception to log + continue per-path
+    "function-uses-loop-variable",     # registration _consume's lambdas capture the loop-bound `step`
+    "blind-except",   # registration sim-loops catch broad Exception to log + continue per-path
     "D",        # docstring strictness (imperative / blank-line-after-summary)
     "DOC",      # pydoclint Return:/Raises: sections
-    "FBT001",   # boolean flag args (dry_run / live toggles)
-    "PLC0415",  # lazy imports where needed
-    "PLC2701",  # imports the private ``degenbot._ffi`` seam (mark_progress)
-    "PLR0917",  # public dispatch/consume signatures carry many positional args
-    "PLR2004",  # driver constants (revert layout, block/fee thresholds) read cleaner inline
-    "PLW0603",  # module-top tunables / bytecode cache reassignment (intentional)
-    "PLW0717",  # guarded verify try-blocks contain many statements by design
+    "boolean-type-hint-positional-argument",   # boolean flag args (dry_run / live toggles)
+    "import-outside-top-level",  # lazy imports where needed
+    "import-private-name",  # imports the private ``degenbot._ffi`` seam (mark_progress)
+    "too-many-positional-arguments",  # public dispatch/consume signatures carry many positional args
+    "magic-value-comparison",  # driver constants (revert layout, block/fee thresholds) read cleaner inline
+    "global-statement",  # module-top tunables / bytecode cache reassignment (intentional)
+    "too-many-statements-in-try-clause",  # guarded verify try-blocks contain many statements by design
     "TC",       # typing-only imports stay plain (cleaned by TC003 where trivial)
 ]
 "examples/*" = [
-    "ANN401",   # the FFI/live-bot callables take `Any` (e.g. injected builders/consumers)
+    "any-type",   # the FFI/live-bot callables take `Any` (e.g. injected builders/consumers)
     "ARG",      # example function signatures keep meaningful-but-unused slots (logging, fakes)
-    "BLE001",   # example sim loops catch broad Exception to log + continue per-path
+    "blind-except",   # example sim loops catch broad Exception to log + continue per-path
     "D",        # docstring strictness (D100/D103/D104/D105/D107/D205/D413) not enforced on demo scripts
     "DOC",      # pydoclint Return:/Raises: sections not enforced on demo scripts
-    "FBT001",   # boolean flag args (dry_run / live toggles) are fine in a CLI example
-    "PLC0415",  # lazy imports avoid circular deps + resolve under script-mode sys.path
-    "PLC2701",  # the example intentionally imports the private `degenbot._ffi` seam
-    "PLR0917",  # internal example functions carry many positional args (dispatcher plumbing)
-    "PLR2004",  # example constants (revert layout, block/fee thresholds) read cleaner inline
-    "PLW0603",  # module-top tunables are reassigned from CLI args (intentional)
-    "PLW0717",  # the guarded sim-verify try-blocks contain many statements by design
+    "boolean-type-hint-positional-argument",   # boolean flag args (dry_run / live toggles) are fine in a CLI example
+    "import-outside-top-level",  # lazy imports avoid circular deps + resolve under script-mode sys.path
+    "import-private-name",  # the example intentionally imports the private `degenbot._ffi` seam
+    "too-many-positional-arguments",  # internal example functions carry many positional args (dispatcher plumbing)
+    "magic-value-comparison",  # example constants (revert layout, block/fee thresholds) read cleaner inline
+    "global-statement",  # module-top tunables are reassigned from CLI args (intentional)
+    "too-many-statements-in-try-clause",  # the guarded sim-verify try-blocks contain many statements by design
 ]
 
 [tool.pytest.ini_options]
