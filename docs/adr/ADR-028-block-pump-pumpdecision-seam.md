@@ -115,3 +115,56 @@ realize A6's goal** ("the FSM's dispatcher is the single caller that would other
 re-expose the nine methods"); the literal `DrainSink::drain` collapse is recorded here as
 superseded rather than executed, so it is not re-litigated without a forcing function (a
 structural need for the trait object itself to be the one-entry policy surface).
+
+## Correction addendum (epic O3HW7E, 2026-08)
+
+The architecture review of this seam (2026-08-17) found two ownership frictions the
+original ADR did not anticipate. Both are corrected in place; the decisions above stand.
+
+### (a) State ownership: no shared interior crosses the PumpFSM capsule
+
+The delivery cutoff (glossary: **Last complete block**; code name
+`pump_complete_cutoff` on `BotState`) is a **monotone value owned by `BotState`**,
+advanced by the pump driver when it *executes* a tombstone verdict
+(`LogDecision::TombstonePrevious`). It is **not** FSM-owned and **not** shared: the
+3M5PO5 `Arc<AtomicU64>` handle that once bridged the shared atom into the driver is
+retired — no shared interior state crosses the `PumpFSM` capsule in either direction.
+`BotState` is the single owner; the driver mirrors the tombstone verdict into it; a
+resume (fresh pump, fresh `PumpFSM` + `BlockClock`) never resets it (test-pinned:
+`resume_never_resets_pump_complete_cutoff`). This closes the last seam-friction: the
+FSM capsule remains pure, and the one stateful fact the executor needs across pump
+lifetimes lives in the one stateful owner (state), not threaded through the seam.
+
+### (b) Resume boundary drop: the single-writer rule has one owner
+
+At a resume where the snapshot→WS gap was backfilled (seed S < first observed W), the
+backfill covers `[S+1, W]` inclusive. That boundary was previously enforced by an
+**inline driver check** in `run_with_stream`'s log loop (the original DFQYM5
+`snapshot_seed` drop) in addition to the FSM's BQ7ZBC
+`should_drop_recovered_forward` — the same rule, two owners. Corrected: the driver now
+seeds the FSM's `recovery_anchor` with W via `record_backfill(first_observed_block)`
+at resume when backfill covered `[S+1, W]`, and the inline check is **deleted** — the
+single-writer drop rule ("backfill owns `[S+1, W]`, the live WS owns `[W+1, ∞)`") is
+owned by exactly one FSM method, unified across the resume boundary and mid-run
+`handle_timeout_eager` recovery. The reorg arm of the rule is unchanged and now
+actually holds at the resume boundary: `should_drop_recovered_forward(removed: true)`
+is always false, so a re-delivered `removed: true` log at ≤ W reaches the reorg
+classifier and can unwind the backfilled range (a behavior delta of this epic — the
+old inline check dropped reorg logs silently at the boundary; test-pinned:
+`resume_boundary_reorg_reaches_classifier_not_inline_drop`). The drop is traced as
+`DroppedRecovery` on the `ws_event_decision` target.
+
+### (c) A6 reaffirmation: the cursor stamps are executor fan-out, by design
+
+Future reviews must not re-suggest collapsing the pump's direct cursor stamps —
+`set_last_solved_block`, `set_solve_anchor`, `record_logs_this_block`,
+`last_processed_block`, the change-set take — into the FSM or into a narrower
+`DrainSink`. They are the **executor's fan-out detail behind the `PumpDecision` seam**
+(ADR-027's dispatch owner + ADR-025/LEZJAS engine ownership), executed because the FSM
+emitted a decision; they are not pump policy. The apply-site pairing doc-comment
+(test-pinned by `log_applied_pairing_forward_records_reorg_does_not`) states the one
+coordination the driver does own: one applied forward log feeds exactly two consumers
+—the FSM quiesce arm and the engine's `has_logs_this_block` bookkeeping. The A6
+supersession above closes the re-suggestion loop for good: absent a structural forcing
+function (the trait object itself becoming the one-entry policy surface), the wide
+`DrainSink` + `Engine` surfaces stay as executor fan-out.
