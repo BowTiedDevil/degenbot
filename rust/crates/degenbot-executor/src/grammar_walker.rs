@@ -165,57 +165,32 @@ mod mechanics {
     use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
     use alloy::primitives::Address;
 
-    /// The V3 flash-swap step, built from the hop's facts. `out_dest` picks
-    /// the recipient routing. `pool_address` + `zfo` come from the facts.
+    /// The V3 flash-swap step, built from the hop's facts. `pool_address` +
+    /// `zfo` come from the facts. Recipient routing: `None` derives from
+    /// `facts.out_dest` (Executor → SELF, PoolManager → PM); `Some((idx,
+    /// pool_addr, pool_repays))` sets it explicitly — the 3-hop nested-flash
+    /// families (T5) route a flash's repayment to a downstream recipient pool
+    /// (`pool_repays`), which the out-derivation cannot express.
+    /// Single primitive since T2 (5AZSLE, epic 6SWFBS) folded the old
+    /// `v3_flash`/`v3_flash_to` pair; byte-identity pinned by the glopcn
+    /// goldens.
     pub fn v3_flash(
         at: &mut AddressTable,
         facts: &HopFacts,
         out_amount: u128,
         in_amount: u128,
         auto_repay: bool,
+        recipient: Option<(u8, Option<Address>, bool)>,
         callback: Vec<PlanStep>,
     ) -> Option<PlanStep> {
-        let pool_idx = at.add(facts.pool_address).ok()?;
-        let (recipient_idx, recipient_pool_addr, recipient_pool_repays) = match facts.out_dest {
-            OutDest::Executor => (SENTINEL_SELF, None, false),
-            OutDest::PoolManager => (SENTINEL_PM, None, false),
-            OutDest::Repay(_) => unreachable!("V3 hop never repays a pool here"),
+        let (recipient_idx, recipient_pool_addr, recipient_pool_repays) = match recipient {
+            Some(r) => r,
+            None => match facts.out_dest {
+                OutDest::Executor => (SENTINEL_SELF, None, false),
+                OutDest::PoolManager => (SENTINEL_PM, None, false),
+                OutDest::Repay(_) => unreachable!("V3 hop never repays a pool here"),
+            },
         };
-        Some(PlanStep::FlashSwap {
-            pool_idx,
-            pool_addr: facts.pool_address,
-            protocol: Prot::V3,
-            zfo: facts.zfo,
-            fee: facts.swap_fee,
-            out_currency: facts.out_currency,
-            out_amount,
-            in_currency: facts.in_currency,
-            in_amount,
-            recipient_idx,
-            recipient_pool_addr,
-            recipient_pool_repays,
-            auto_repay,
-            callback,
-        })
-    }
-
-    /// The full-form V3 flash: a `FlashSwap` with explicit recipient routing
-    /// (`recipient_idx`/`recipient_pool_addr`/`recipient_pool_repays`). The
-    /// 3-hop nested-flash families (T5) route a flash's repayment to a
-    /// downstream recipient pool (`recipient_pool_repays`), which the default
-    /// `v3_flash` (SELF/None/false) cannot express.
-    #[expect(clippy::too_many_arguments)]
-    pub fn v3_flash_to(
-        at: &mut AddressTable,
-        facts: &HopFacts,
-        out_amount: u128,
-        in_amount: u128,
-        auto_repay: bool,
-        recipient_idx: u8,
-        recipient_pool_addr: Option<Address>,
-        recipient_pool_repays: bool,
-        callback: Vec<PlanStep>,
-    ) -> Option<PlanStep> {
         Some(PlanStep::FlashSwap {
             pool_idx: at.add(facts.pool_address).ok()?,
             pool_addr: facts.pool_address,

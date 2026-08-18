@@ -223,15 +223,13 @@ pub(crate) fn derive(
                     currency_idx: forward_a,
                     currency_addr: fwd_a,
                 },
-                mechanics::v3_flash_to(
+                mechanics::v3_flash(
                     &mut at,
                     fa,
                     out_a,
                     optimal_input,
                     false,
-                    pm_idx,
-                    None,
-                    false,
+                    Some((pm_idx, None, false)),
                     cb,
                 )?,
             ];
@@ -432,15 +430,13 @@ fn rule_walk_v2v3(facts: &[HopFacts], inputs: &ComposerInputs<'_>) -> Option<(Pl
             } else {
                 (SENTINEL_SELF, None, false)
             };
-            mechanics::v3_flash_to(
+            mechanics::v3_flash(
                 &mut at,
                 hops[i],
                 outs[i],
                 in_amounts[i],
                 all_flash && i == 0,
-                recipient_idx,
-                recipient_pool_addr,
-                recipient_pool_repays,
+                Some((recipient_idx, recipient_pool_addr, recipient_pool_repays)),
                 cb,
             )?
         } else {
@@ -567,7 +563,7 @@ fn stage_pools(at: &mut AddressTable, hops: &[&HopFacts; 3]) -> Option<(u8, u8, 
 // currency reference rides on it) — byte-pinned by `glopcn_bytepin` + the
 // `degenbot-simulation` revm matrix. Each family reproduces its hand-authored
 // staging sequence exactly (the `at.add` calls below mirror the arms 1:1;
-// `mechanics::v4_swap` / `v2_swap` / `v3_flash_to` dedup against the
+// `mechanics::v4_swap` / `v2_swap` / `v3_flash` dedup against the
 // pre-staged entries, preserving the preamble order).
 /// `rule_walk_v4_led` — the rule-driven walker over the 9 V4-led families.
 #[expect(clippy::too_many_lines, clippy::similar_names)]
@@ -905,26 +901,22 @@ fn rule_walk_v4_led(
             let v4swap_a = mechanics::v4_swap(&mut at, fa, optimal_input, out_a)?;
             let inner_take =
                 mechanics::v4_take_compact(&mut at, fa, v3b, out_a, Some(fb.pool_address))?;
-            let inner_b = mechanics::v3_flash_to(
+            let inner_b = mechanics::v3_flash(
                 &mut at,
                 fb,
                 out_b,
                 b_swap_in,
                 false,
-                v3c,
-                Some(fc.pool_address),
-                true,
+                Some((v3c, Some(fc.pool_address), true)),
                 vec![inner_take],
             )?;
-            let outer_c = mechanics::v3_flash_to(
+            let outer_c = mechanics::v3_flash(
                 &mut at,
                 fc,
                 out_c,
                 c_swap_in,
                 false,
-                SENTINEL_SELF,
-                None,
-                false,
+                Some((SENTINEL_SELF, None, false)),
                 vec![inner_b],
             )?;
             let inner: Plan = vec![
@@ -965,15 +957,13 @@ fn rule_walk_v4_led(
             let v4swap_a = mechanics::v4_swap(&mut at, fa, optimal_input, out_a)?;
             let v4swap_c = mechanics::v4_swap(&mut at, fc, c_swap_in, out_c)?;
             let take = mechanics::v4_take_compact(&mut at, fa, v3b, out_a, Some(fb.pool_address))?;
-            let flash_b = mechanics::v3_flash_to(
+            let flash_b = mechanics::v3_flash(
                 &mut at,
                 fb,
                 out_b,
                 b_swap_in,
                 false,
-                pm_idx,
-                None,
-                false,
+                Some((pm_idx, None, false)),
                 vec![take],
             )?;
             let inner: Plan = vec![
@@ -1142,15 +1132,13 @@ fn rule_walk_v4_led(
                     currency_addr: weth,
                 },
             ];
-            let plan: Plan = vec![mechanics::v3_flash_to(
+            let plan: Plan = vec![mechanics::v3_flash(
                 &mut at,
                 fc,
                 out_c,
                 c_swap_in,
                 false,
-                SENTINEL_SELF,
-                None,
-                false,
+                Some((SENTINEL_SELF, None, false)),
                 vec![PlanStep::V4Unlock {
                     inner: v4_inner,
                     pool_manager_idx: pm_idx,
@@ -1552,8 +1540,14 @@ fn rule_walk_v2v3_v4_mixed(
                     currency_idx: forward_b,
                     currency_addr: fwd_b,
                 },
-                mechanics::v3_flash_to(
-                    &mut at, fb, out_b, b_swap_in, false, pm_idx, None, false, cb,
+                mechanics::v3_flash(
+                    &mut at,
+                    fb,
+                    out_b,
+                    b_swap_in,
+                    false,
+                    Some((pm_idx, None, false)),
+                    cb,
                 )?,
             ];
             Some((plan, at))
@@ -1652,15 +1646,13 @@ fn rule_walk_v2v3_v4_mixed(
                     currency: weth,
                     amount: optimal_input,
                 },
-                mechanics::v3_flash_to(
+                mechanics::v3_flash(
                     &mut at,
                     fa,
                     out_a,
                     optimal_input,
                     false,
-                    v2b,
-                    None,
-                    false,
+                    Some((v2b, None, false)),
                     a_cb,
                 )?,
             ];
@@ -1722,15 +1714,13 @@ fn rule_walk_v2v3_v4_mixed(
                 inner: v4_inner,
                 pool_manager_idx: pm_idx,
             };
-            let inner_a = mechanics::v3_flash_to(
+            let inner_a = mechanics::v3_flash(
                 &mut at,
                 fa,
                 out_a,
                 optimal_input,
                 false,
-                v3b,
-                Some(fb.pool_address),
-                true,
+                Some((v3b, Some(fb.pool_address), true)),
                 vec![unlock],
             )?;
             let plan: Plan = vec![
@@ -1738,15 +1728,13 @@ fn rule_walk_v2v3_v4_mixed(
                     currency_idx: forward_b,
                     currency_addr: fwd_b,
                 },
-                mechanics::v3_flash_to(
+                mechanics::v3_flash(
                     &mut at,
                     fb,
                     out_b,
                     b_swap_in,
                     false,
-                    pm_idx,
-                    None,
-                    false,
+                    Some((pm_idx, None, false)),
                     vec![inner_a],
                 )?,
             ];
@@ -1919,15 +1907,13 @@ fn rule_walk_v2v3_v4_mixed(
                     currency: weth,
                     amount: optimal_input,
                 },
-                mechanics::v3_flash_to(
+                mechanics::v3_flash(
                     &mut at,
                     fc,
                     out_c,
                     c_swap_in,
                     false,
-                    SENTINEL_SELF,
-                    None,
-                    false,
+                    Some((SENTINEL_SELF, None, false)),
                     c_cb,
                 )?,
             ];

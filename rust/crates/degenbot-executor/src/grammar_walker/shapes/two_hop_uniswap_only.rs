@@ -48,7 +48,7 @@ pub(crate) fn derive(
                     repays_flash: None,
                 },
                 mechanics::v2_swap(&mut at, fa, forward_out, SENTINEL_SELF, None, false)?,
-                mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, vec![])?,
+                mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, None, vec![])?,
             ]
         } else {
             let forward_idx = at.add(fa.out_currency).ok()?;
@@ -58,6 +58,7 @@ pub(crate) fn derive(
                 terminal_out,
                 b_swap_in,
                 false,
+                None,
                 vec![PlanStep::Erc20Transfer {
                     token_idx: forward_idx,
                     token_addr: fa.out_currency,
@@ -121,7 +122,8 @@ pub(crate) fn derive(
         if !fits_i128(b_swap_in) {
             return None;
         }
-        let terminal = mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, vec![])?;
+        let terminal =
+            mechanics::v3_flash(&mut at, fb, terminal_out, b_swap_in, true, None, vec![])?;
         callback.push(terminal);
     }
     let plan: Plan = vec![
@@ -129,7 +131,15 @@ pub(crate) fn derive(
             currency: weth,
             amount: optimal_input,
         },
-        mechanics::v3_flash(&mut at, fa, forward_out, optimal_input, false, callback)?,
+        mechanics::v3_flash(
+            &mut at,
+            fa,
+            forward_out,
+            optimal_input,
+            false,
+            None,
+            callback,
+        )?,
     ];
     return Some((plan, at));
 }

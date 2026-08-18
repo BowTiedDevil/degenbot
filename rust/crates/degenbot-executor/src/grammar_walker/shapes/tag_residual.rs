@@ -95,6 +95,7 @@ pub(crate) fn derive(
         out_lead,
         optimal_input,
         false,
+        None,
         leading_callback,
     )?;
     let plan: Plan = vec![
@@ -106,7 +107,15 @@ pub(crate) fn derive(
             currency_idx: forward_lead,
             currency_addr: lf.out_currency,
         },
-        mechanics::v3_flash(&mut at, tf, out_term, term_in, false, vec![leading_flash])?,
+        mechanics::v3_flash(
+            &mut at,
+            tf,
+            out_term,
+            term_in,
+            false,
+            None,
+            vec![leading_flash],
+        )?,
     ];
     Some((plan, at))
 }
