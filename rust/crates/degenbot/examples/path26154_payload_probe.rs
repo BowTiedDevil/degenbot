@@ -29,7 +29,8 @@ use std::collections::HashMap;
 
 use alloy::primitives::{address, Address, U256};
 use degenbot::degenbot_executor::composers::{
-    encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
+    encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo, PathInfo, V2HopInfo,
+    V3HopInfo, V4HopInfo,
 };
 
 const FIXTURE_PATH: &str = concat!(
@@ -151,14 +152,14 @@ fn main() {
     );
 
     match encode_cmd_stream(
-        &path_info,
-        optimal_input,
-        &hop_outputs,
-        &hop_outputs,
-        EXECUTOR,
-        POOL_MANAGER,
-        WETH,
-        EncodeOptions::default(),
+        &EncodeContext::new(EXECUTOR, POOL_MANAGER, WETH),
+        &EncodeRequest::new(
+            path_info.clone(),
+            optimal_input,
+            hop_outputs.clone(),
+            hop_outputs.clone(),
+            EncodeOptions::default(),
+        ),
     ) {
         None => {
             println!("ENCODE RESULT: None — the composer REJECTED the V2-V4-V3 payload.");

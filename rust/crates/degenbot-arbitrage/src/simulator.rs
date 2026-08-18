@@ -37,7 +37,8 @@ use alloy::primitives::{Address, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_executor::composers::{
-    config_for_options, encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V4HopInfo,
+    config_for_options, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo,
+    PathInfo, V2HopInfo, V4HopInfo,
 };
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::fees::BlockPriorityFees;
@@ -795,6 +796,17 @@ impl SimulateContext<'_> {
             pool_manager_address: self.pool_manager_address,
         }
     }
+
+    /// The ADR-033 encode intake context: the session-scoped deployment
+    /// addresses (executor / PoolManager / WETH).
+    #[must_use]
+    pub fn encode_context(&self) -> EncodeContext {
+        EncodeContext::new(
+            self.executor_address,
+            self.pool_manager_address,
+            self.weth_address,
+        )
+    }
 }
 
 /// Per-path inputs to [`BlockSimHandle`] / [`simulate_path_on_evm`].
@@ -825,6 +837,20 @@ impl SimulatePath {
     #[must_use]
     pub fn hop_count(&self) -> usize {
         self.path_info.hops.len()
+    }
+
+    /// The ADR-033 encode intake for this path — the strategy's per-path
+    /// projection that owns the amount-triple invariants (the CL overfeed
+    /// clamp lands on `consumed_inputs` before this point).
+    #[must_use]
+    pub fn encode_request(&self) -> EncodeRequest {
+        EncodeRequest::new(
+            self.path_info.clone(),
+            self.optimal_input,
+            self.hop_outputs.clone(),
+            self.consumed_inputs.clone(),
+            self.opts,
+        )
     }
 
     /// Whether any hop is a V4 hop (the int128 guard keys on this).
@@ -1000,17 +1026,9 @@ where
         }
     }
 
-    // Encode the cmd_executor command stream (YQORTM).
-    let cmd_bytes = encode_cmd_stream(
-        &path.path_info,
-        path.optimal_input,
-        &path.hop_outputs,
-        &path.consumed_inputs,
-        ctx.executor_address,
-        ctx.pool_manager_address,
-        ctx.weth_address,
-        path.opts,
-    );
+    // Encode the cmd_executor command stream (YQORTM) via the ADR-033 intake:
+    // the session context + the per-path request (the strategy's projection).
+    let cmd_bytes = encode_cmd_stream(&ctx.encode_context(), &path.encode_request());
     let Some(cmd_bytes) = cmd_bytes else {
         fail_buckets.record(
             path.path_id,
@@ -2645,14 +2663,8 @@ mod tests {
         };
 
         let cmd = encode_cmd_stream(
-            &path.path_info,
-            path.optimal_input,
-            &path.hop_outputs,
-            &path.consumed_inputs,
-            executor,
-            pm,
-            weth,
-            path.opts,
+            &EncodeContext::new(executor, pm, weth),
+            &path.encode_request(),
         )
         .expect("expression should encode");
 

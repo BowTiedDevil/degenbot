@@ -24,8 +24,8 @@
 
 use alloy::primitives::{address, Address};
 use degenbot_executor::composers::{
-    encode_cmd_3_hop, encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo,
-    V4HopInfo,
+    encode_cmd_3_hop, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo,
+    PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
 };
 
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
@@ -106,14 +106,14 @@ fn every_combo_encodes_through_both_entry_points() {
             let out2: Vec<u128> = vec![1_000_000_000_000_000_000u128; 2];
             let consumed: Vec<u128> = vec![999_999_999_999_999_999u128; 2];
             let r = encode_cmd_stream(
-                &path,
-                1_000_000_000_000_000_000,
-                &out2,
-                &consumed,
-                EXECUTOR,
-                PM,
-                WETH,
-                *opts,
+                &EncodeContext::new(EXECUTOR, PM, WETH),
+                &EncodeRequest::new(
+                    path.clone(),
+                    1_000_000_000_000_000_000,
+                    out2.clone(),
+                    consumed.clone(),
+                    *opts,
+                ),
             );
             assert!(
                 r.is_some(),
@@ -141,14 +141,14 @@ fn every_combo_encodes_through_both_entry_points() {
             let out2: Vec<u128> = vec![1_000_000_000_000_000_000u128; 3];
             let consumed: Vec<u128> = vec![999_999_999_999_999_999u128; 3];
             let a = encode_cmd_stream(
-                &path,
-                1_000_000_000_000_000_000,
-                &out2,
-                &consumed,
-                EXECUTOR,
-                PM,
-                WETH,
-                *opts,
+                &EncodeContext::new(EXECUTOR, PM, WETH),
+                &EncodeRequest::new(
+                    path.clone(),
+                    1_000_000_000_000_000_000,
+                    out2.clone(),
+                    consumed.clone(),
+                    *opts,
+                ),
             );
             let b = encode_cmd_3_hop(
                 &path,
@@ -189,14 +189,14 @@ fn all_v2_entries_produce_identical_plan_bytes() {
     let out2: Vec<u128> = vec![1_000_000_000_000_000_000u128; 3];
     let consumed: Vec<u128> = vec![999_999_999_999_999_999u128; 3];
     let a = encode_cmd_stream(
-        &path,
-        1_000_000_000_000_000_000,
-        &out2,
-        &consumed,
-        EXECUTOR,
-        PM,
-        WETH,
-        EncodeOptions::default(),
+        &EncodeContext::new(EXECUTOR, PM, WETH),
+        &EncodeRequest::new(
+            path.clone(),
+            1_000_000_000_000_000_000,
+            out2.clone(),
+            consumed.clone(),
+            EncodeOptions::default(),
+        ),
     );
     let b = encode_cmd_3_hop(
         &path,

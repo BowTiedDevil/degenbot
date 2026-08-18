@@ -16,8 +16,8 @@
 
 use alloy::primitives::{address, Address};
 use degenbot_executor::composers::{
-    encode_cmd_3_hop, encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo,
-    V4HopInfo,
+    encode_cmd_3_hop, encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo,
+    PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
 };
 
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
@@ -592,9 +592,17 @@ fn glopcn_byte_identity_is_pinned() {
             // ADR-030: a validator Reject is fatal (panics), distinct from a
             // routine decline. Catch it so the pin can record the true
             // decline/reject partition instead of conflating them under `None`.
+            let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
             let call = || {
                 if n == 2 {
-                    encode_cmd_stream(path, optimal, out, consumed, EXECUTOR, PM, WETH, opts)
+                    let req = EncodeRequest::new(
+                        path.clone(),
+                        optimal,
+                        out.to_vec(),
+                        consumed.to_vec(),
+                        opts,
+                    );
+                    encode_cmd_stream(&ctx, &req)
                 } else {
                     encode_cmd_3_hop(path, optimal, out, consumed, EXECUTOR, PM, WETH, opts)
                 }
@@ -639,8 +647,18 @@ fn glopcn_byte_identity_is_pinned() {
             let path = PathInfo::new(hops);
             let out4: Vec<u128> = vec![out[0]; 4];
             let consumed4: Vec<u128> = vec![consumed[0]; 4];
+            let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
             let hash = match std::panic::catch_unwind(|| {
-                encode_cmd_stream(&path, *optimal, &out4, &consumed4, EXECUTOR, PM, WETH, opt)
+                encode_cmd_stream(
+                    &ctx,
+                    &EncodeRequest::new(
+                        path.clone(),
+                        *optimal,
+                        out4.clone(),
+                        consumed4.clone(),
+                        opt,
+                    ),
+                )
             }) {
                 Ok(Some(b)) => format!("{:016x}", fnv1a(&b)),
                 Ok(None) => "None".to_string(),

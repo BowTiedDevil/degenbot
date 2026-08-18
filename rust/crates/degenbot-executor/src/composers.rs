@@ -351,6 +351,119 @@ pub fn resolve_axes(
     (opts.funding, capture, opts.bribe)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Encode intake: EncodeContext (session) + EncodeRequest (per path, ADR-033)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The session-scoped deployment addresses shared by every encode request in
+/// one session (ADR-033). Built once per session (the strategy), never per
+/// path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EncodeContext {
+    /// The `cmd_executor` contract the stream executes on.
+    pub executor: Address,
+    /// The Uniswap-V4 `PoolManager` (the pool-key / delta-claim home).
+    pub pool_manager: Address,
+    /// The session's WETH (the seed + wrap/unwrap bridge currency).
+    pub weth: Address,
+}
+
+impl EncodeContext {
+    #[must_use]
+    pub fn new(executor: Address, pool_manager: Address, weth: Address) -> Self {
+        Self {
+            executor,
+            pool_manager,
+            weth,
+        }
+    }
+}
+
+/// The per-path encode intake (ADR-033): the path + the solver's amount
+/// triple + the declared axes, as one unit.
+///
+/// Built exactly once at each producing site (the strategy's candidate
+/// projection; the declarative harness chain runners) and handed to
+/// [`encode_cmd_stream`] together with an [`EncodeContext`]. A request
+/// without its path is the shape that lets amounts be synthesized blind to
+/// what the path constrains — so path and amounts are one unit.
+///
+/// **The CL overfeed-clamp invariant (UO3JM4 / path-5000 EMPTY-HALT) attaches
+/// to this value**: `consumed_inputs[i]` is the *executable* input fed to hop
+/// `i`. For a non-over-fed CL hop (and for V2/Balancer/Curve/Solidly hops) it
+/// equals `hop_outputs[i − 1]`; for an over-fed CL hop the producer clamps it
+/// to `input_consumed − 1` (the solver's `clamp_cl_hop_capacity`, whose bound
+/// is the pools-layer `exact_input_clamp_bound` rule) so the on-chain
+/// exact-in loop terminates on `amountRemaining == 0` instead of marching
+/// empty bitmap words. Building the request is where that invariant is owned;
+/// it is not re-derived by the encoder.
+#[derive(Clone, Debug)]
+pub struct EncodeRequest {
+    /// The resolved path hops (the encode's shape selector).
+    pub path: PathInfo,
+    /// The flash/optimal input amount (u128; the `cmd_executor` int128
+    /// convention).
+    pub optimal_input: u128,
+    /// Per-hop output amounts. `hop_outputs[i]` = the output after hop `i`
+    /// (`[forward_out, final_output]` for a 2-hop path).
+    pub hop_outputs: Vec<u128>,
+    /// Per-hop executable input amounts (the CL-clamp swap-in — see the type
+    /// doc for the invariant).
+    pub consumed_inputs: Vec<u128>,
+    /// The declared per-path axes (funding / capture / bribe + the opcode
+    /// toggles).
+    pub opts: EncodeOptions,
+}
+
+impl EncodeRequest {
+    /// Build a request, checking the hop-alignment invariants.
+    ///
+    /// `hop_outputs` and `consumed_inputs` are per-hop arrays: each must have
+    /// exactly one entry per hop in `path`, or the encode would index
+    /// misaligned amounts silently.
+    ///
+    /// # Panics
+    ///
+    /// If `hop_outputs.len()` or `consumed_inputs.len()` differs from
+    /// `path.hops.len()` (a programmer error — the arrays are per-hop, aligned
+    /// with the path). The panic names the mismatched arrays.
+    #[must_use]
+    #[expect(
+        clippy::panic,
+        reason = "constructor invariant: per-hop arrays must align with the path (programmer error, ADR-033)"
+    )]
+    pub fn new(
+        path: PathInfo,
+        optimal_input: u128,
+        hop_outputs: Vec<u128>,
+        consumed_inputs: Vec<u128>,
+        opts: EncodeOptions,
+    ) -> Self {
+        let n = path.hops.len();
+        assert_eq!(
+            hop_outputs.len(),
+            n,
+            "EncodeRequest: hop_outputs has {} entries for a {}-hop path",
+            hop_outputs.len(),
+            n
+        );
+        assert_eq!(
+            consumed_inputs.len(),
+            n,
+            "EncodeRequest: consumed_inputs has {} entries for a {}-hop path",
+            consumed_inputs.len(),
+            n
+        );
+        Self {
+            path,
+            optimal_input,
+            hop_outputs,
+            consumed_inputs,
+            opts,
+        }
+    }
+}
+
 /// Bundled context every composer needs beyond the hops.
 ///
 /// Built once per path (in [`encode_cmd_stream`] / [`encode_cmd_3_hop`]) and
@@ -379,39 +492,36 @@ pub struct ComposerInputs<'a> {
 /// contract. Uses compact command encoding (`V2_SWAP_COMPACT`, `V2_SWAP_CALC`,
 /// `V4_SWAP_COMPACT`, …) with an address table for minimal calldata size.
 ///
-/// Returns `None` if encoding fails for this path type.
+/// The intake contract is the pair [`EncodeContext`] (session-scoped
+/// deployment addresses) + [`EncodeRequest`] (per path: the path + the
+/// solver's amount triple + the declared axes — ADR-033). The CL
+/// overfeed-clamp invariant attaches to the request (`consumed_inputs[i]`
+/// is the executable input to hop `i`) — it is owned where the request is
+/// built, not re-derived here. Bribes never ride the stream: the caller
+/// passes them through `pack_config` at the call site.
+///
+/// Returns `None` if encoding declines for this path type. A validator
+/// `Reject` (a Plan was built but violated the ledger invariants) is fatal
+/// by contract (ADR-030) — it panics rather than folding into `None`.
 ///
 /// # Path-type routing
 ///
 /// * all-V2 hops (≥2): [`crate::grammar_shape::derive_all_v2`] — the Plan +
 ///   validator path (KO5NNB cutover)
-/// * 2-hop V4-V4 / V4-V3 / V3-V4 / V4-V2 / V2-V4 / V3-V3 / V2-V3 / V3-V2:
-///   the corresponding `encode_cmd_*` two-hop composer
-/// * 3-hop: [`encode_cmd_3_hop`] (all 27 V2/V3/V4 combinations)
+/// * every other 2/3-hop mix: the shape-class walker
+///   ([`crate::grammar_shape::derive_shape`], reached via
+///   [`crate::grammar::encode_grammar`])
 #[must_use]
-#[expect(clippy::too_many_arguments)] // encoder args (path + inputs + executor/pm/weth + opts)
-pub fn encode_cmd_stream(
-    path_info: &PathInfo,
-    optimal_input: u128,
-    hop_outputs: &[u128],
-    consumed_inputs: &[u128],
-    executor_address: Address,
-    pool_manager_address: Address,
-    weth_address: Address,
-    opts: EncodeOptions,
-) -> Option<Vec<u8>> {
-    // Bribes are moved out of the stream into the `config` ABI parameter —
-    // the caller passes bribes via `pack_config` at the call site, so there
-    // is nothing to reject here.
-    let num_hops = path_info.hops.len();
+pub fn encode_cmd_stream(ctx: &EncodeContext, req: &EncodeRequest) -> Option<Vec<u8>> {
+    let num_hops = req.path.hops.len();
     let inputs = ComposerInputs {
-        executor_address,
-        pool_manager_address,
-        weth_address,
-        optimal_input,
-        hop_outputs,
-        consumed_inputs,
-        opts,
+        executor_address: ctx.executor,
+        pool_manager_address: ctx.pool_manager,
+        weth_address: ctx.weth,
+        optimal_input: req.optimal_input,
+        hop_outputs: &req.hop_outputs,
+        consumed_inputs: &req.consumed_inputs,
+        opts: req.opts,
     };
 
     // Facet A (T2TCJM): a generic per-shape-class hop-grammar walk replaces the
@@ -419,10 +529,10 @@ pub fn encode_cmd_stream(
     // byte-identical output (validated by the golden corpus). All-V2 any-N uses
     // the Plan + validator path (`derive_all_v2` → `build_walk` → gate
     // → `plan_to_bytes`, KO5NNB); other 2/3-hop paths use the combo grammar walk.
-    if num_hops >= 2 && path_info.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
-        crate::grammar_shape::derive_all_v2(path_info, &inputs)
+    if num_hops >= 2 && req.path.hops.iter().all(|h| matches!(h, HopInfo::V2(_))) {
+        crate::grammar_shape::derive_all_v2(&req.path, &inputs)
     } else {
-        crate::grammar::encode_grammar(path_info, &inputs)
+        crate::grammar::encode_grammar(&req.path, &inputs)
     }
 }
 

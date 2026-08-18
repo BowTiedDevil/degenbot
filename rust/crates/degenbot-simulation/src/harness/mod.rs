@@ -612,14 +612,18 @@ impl Harness {
             .take(n)
             .collect();
         degenbot_executor::composers::encode_cmd_stream(
-            path,
-            optimal_input,
-            hop_outputs,
-            &consumed,
-            self.executor,
-            self.pool_manager,
-            self.weth,
-            opts,
+            &degenbot_executor::composers::EncodeContext::new(
+                self.executor,
+                self.pool_manager,
+                self.weth,
+            ),
+            &degenbot_executor::composers::EncodeRequest::new(
+                path.clone(),
+                optimal_input,
+                hop_outputs.to_vec(),
+                consumed,
+                opts,
+            ),
         )
         .ok_or_else(|| "encode_cmd_stream returned None".to_string())
     }

@@ -40,7 +40,8 @@ use degenbot::degenbot_arbitrage::{
     simulate_in_process_with_db, FailBuckets, SimResult, SimulateContext, SimulatePath,
 };
 use degenbot::degenbot_executor::composers::{
-    encode_cmd_stream, EncodeOptions, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
+    encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo, PathInfo, V2HopInfo,
+    V3HopInfo, V4HopInfo,
 };
 use degenbot::degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use degenbot::degenbot_simulation::apply_simulation_overrides;
@@ -266,18 +267,18 @@ fn run_executor_call_trace(fx: &Fixture, runtime: &[u8]) {
     // Encode the exact command stream the payload probe produced.
     let path = build_path(fx, 5000);
     let cmd = encode_cmd_stream(
-        &path.path_info,
-        path.optimal_input,
-        &path.hop_outputs,
-        &path.consumed_inputs,
-        EXECUTOR,
-        PM,
-        WETH,
-        EncodeOptions {
-            erc6909_profit: false,
-            use_v4_batch: false,
-            ..Default::default()
-        },
+        &EncodeContext::new(EXECUTOR, PM, WETH),
+        &EncodeRequest::new(
+            path.path_info.clone(),
+            path.optimal_input,
+            path.hop_outputs.clone(),
+            path.consumed_inputs.clone(),
+            EncodeOptions {
+                erc6909_profit: false,
+                use_v4_batch: false,
+                ..Default::default()
+            },
+        ),
     )
     .expect("encode_cmd_stream Some");
     println!(
