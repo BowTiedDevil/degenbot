@@ -5,7 +5,9 @@ Imports encoding helpers from conftest_shared.py and provides
 common fixtures used across test files.
 """
 
+import os
 from pathlib import Path
+
 import pytest
 
 from eth_utils.address import to_checksum_address
@@ -14,6 +16,25 @@ from ape.api.accounts import TestAccountAPI
 from ape.contracts.base import ContractInstance
 from ape.managers.project import ProjectManager
 from ape_test.accounts import TestAccount
+
+# pytest-xdist: pin one anvil port per worker.
+# ape-foundry's "host: auto" makes the FIRST caller prefer 127.0.0.1:8545
+# ("attempt the default port before anything else"). Concurrent workers
+# start at the same time and collide there: the losers' anvil fails to
+# bind, their provider then finds an anvil ALREADY listening on 8545 and
+# re-attaches to it ("connecting to existing process"). The fork chain is
+# now shared across workers — with the shared test mnemonic every worker
+# sends from the same owner account, so concurrent txns fail with
+# "nonce too low" (-32003). An explicit per-worker APE_FOUNDRY_HOST gives
+# each worker its own anvil + fork; setdefault preserves an operator's
+# explicit override. The value must be a full URI: a bare host:port makes
+# Provider._port (yarl) fail to parse, which silently falls back to the
+# default 8545 path and collapses the workers back onto one chain.
+_xdist_worker = os.environ.get("PYTEST_XDIST_WORKER", "")
+if _xdist_worker.startswith("gw"):
+    os.environ.setdefault(
+        "APE_FOUNDRY_HOST", f"http://127.0.0.1:{8550 + int(_xdist_worker[2:])}"
+    )
 
 NATIVE_ADDRESS = to_checksum_address("0x0000000000000000000000000000000000000000")
 ZERO_ADDRESS = to_checksum_address("0x0000000000000000000000000000000000000000")
@@ -105,7 +126,7 @@ def run_executor(weth, executor, v4_pm):
 
     Usage::
 
-        tx = run_executor(at, commands, owner)            # WETH+ETH profit check
+        tx = run_executor(at, commands, owner)  # WETH+ETH profit check
         tx = run_executor(at, commands, owner, check_mode=2)  # ERC6909 profit check
         tx = run_executor(at, commands, owner, skip_profit=True)  # no check
 
@@ -127,7 +148,10 @@ def run_executor(weth, executor, v4_pm):
     Returns:
         ReceiptApi of the transaction.
     """
-    def _run(at, commands, owner, *, skip_profit=False, check_mode=1, expected_balance=None, **kwargs):
+
+    def _run(
+        at, commands, owner, *, skip_profit=False, check_mode=1, expected_balance=None, **kwargs
+    ):
         if skip_profit:
             config = 0
         elif expected_balance is not None:
@@ -142,7 +166,7 @@ def run_executor(weth, executor, v4_pm):
                 value = weth.balanceOf(executor) + executor.balance
             config = make_config(check_mode=check_mode, expected_value=value)
 
-        raise_on_revert = kwargs.pop('raise_on_revert', True)
+        raise_on_revert = kwargs.pop("raise_on_revert", True)
         tx = executor.execute(
             enc_preamble(at) + commands,
             config,
