@@ -48,6 +48,20 @@
 "type": "error"
 },
 {
+"name": "InsufficientMintDelta",
+"inputs": [
+{
+"name": "actual",
+"type": "uint256"
+},
+{
+"name": "expected",
+"type": "uint256"
+}
+],
+"type": "error"
+},
+{
 "name": "InvalidCommand",
 "inputs": [
 {
