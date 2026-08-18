@@ -73,6 +73,14 @@ per-pool `Quarantined → drain+verify → Live` sequence owned by the Rust core
   pool; verified exactly once against on-chain@snapshot-block (step-1), then
   consumed so memory is bounded. Comparing engine-current instead of the seed
   would false-mismatch every active pool under a rolling start (CBCH6H).
+- **Last complete block** (delivery cutoff; code name
+  `pump_complete_cutoff` on `BotState`) — the highest block the pump has fully
+  delivered (tombstoned by the first `removed:false` log of N+1). The gate the
+  registration drain uses: a pin's `update_block` cannot outrun it (the inline
+  `last_complete_block` above is this fact). Owned by `BotState` as a monotone
+  value; the pump driver advances it when executing the tombstone verdict —
+  no shared handle crosses the `PumpFSM` capsule, and a resume never resets
+  it (ADR-028 correction, 2026-08; supersedes the 3M5PO5 shared-atom bridge).
 - **Verify-lifecycle** (the choreography) — the per-pool
   `set_quarantined → verify seed (RPC) → drain+pin → verify post-drain (RPC) →
   set_live` sequence plus its block-resolution + config-gating policy. Owned by
@@ -599,6 +607,17 @@ modules under `grammar_walker/shapes/` are the code half they feed).
 _Avoid_: conflating with "ledger" (a hop-facts entry is per protocol; a ledger
 is a location an operation reads/writes).
 
+**Mechanics** (ADR-031 D4) — the shared step-primitive library the walker
+shape modules compose: one builder per `PlanStep` variant (`v2_flash`,
+`v3_flash`, `v2_swap`, `v4_swap`, `v4_unlock`, `v4_take_compact`,
+`v4_settle*` …) plus the per-protocol facts builders (`v2_hop_facts`,
+`v3_hop_facts`, `v4_hop_facts_netzero`). Flash primitives derive their
+recipient routing from `facts.out_dest` by default; a shape passes an
+explicit recipient triple only where the facts tag cannot express it
+(e.g. a downstream pool's flash repayment). Since epic `6SWFBS` no shape
+module builds a `PlanStep` literal — step construction is mechanics-only.
+_Avoid_: "encoders" (the byte side) or "ledger" (the validator side).
+
 **Enclosure** — the callback-nesting structure of a command stream —
 which `FlashSwap`/`V4Unlock` wraps which, and the repayment order. Per ADR-029
 D3 it is the grammar's output, never a user axis; per ADR-031 (as corrected
@@ -610,13 +629,18 @@ only. The take-before-credit / terminal-V2-draw classes are caught by the
 unrepresentable by construction.
 _Avoid_: "nesting"/"wrapping" as the canonical term.
 
-**Walker shape family (ADR-031, realized by epic `PZBGP7`)** — the 3-hop
-families are no longer hand-authored bodies: `facts_for` sets per-variant
-facts plus position-scoped axes (below), `derive_plan` routes on
-`(len, repay-sequence)` gates to three topology rule-walkers
-(`rule_walk_v2v3`, `rule_walk_v4_led`, `rule_walk_v2v3_v4_mixed`) +
-`tag_residual`; byte-identity is proven by goldens + the revm matrix,
-current-shape parity by the three `rule_walker_shadows_*` tests.
+**Walker shape family (ADR-031, epics `PZBGP7` + `6SWFBS`)** — no family
+has a hand-authored Plan body. `facts_for` sets per-variant facts plus
+position-scoped axes (below); `derive_plan` routes on
+`(len, repay-sequence)` gates to six per-shape modules under
+`grammar_walker/shapes/` — the 3-hop rule-walkers
+(`rule_walk_v2v3`, `rule_walk_v4_led`, `rule_walk_v2v3_v4_mixed`,
+`tag_residual`) are themselves composed of the shared **mechanics**
+primitives, and the 2-hop shapes (seed→V4, V4-led, all-V2 chain,
+uniswap-only) are pure walks over them. Every shape module carries a
+RED→GREEN honesty probe asserting zero `PlanStep::` literals in its walk
+region, and byte-identity is pinned by per-shape golden stream tables +
+`glopcn_bytepin` across every family × amount set × entry point.
 
 **Terminal form** (`HopFacts.terminal_form`, epic T5) — how the trailing
 hop of a V4-mid 3-hop shape completes: `DirectHandoff` (swap completes on

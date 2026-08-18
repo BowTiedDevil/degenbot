@@ -109,3 +109,54 @@ exist), plus the golden-byte corpora and honesty invariant. A validator
   walkers live in `grammar_walker.rs`.
 - `Reject` stays reachable (amounts from solver inputs + hand-authored facts
   can still err), so the validator and ADR-030's fatal-Reject remain load-bearing.
+## Addendum
+
+### The mechanics unification + 2-hop walks (epic `6SWFBS`, 2026-08-18)
+
+At the D6 cutover the six per-shape modules existed, but two of them still
+**hand-built** per-family `PlanStep` bodies: the 2-hop seed→V4 shape
+(`v2v4`/`v3v4` — 60 literal sites) and the 2-hop V4-led shape
+(`v4v2`/`v4v3`/`v4v4` — 49 literal sites). Epic `6SWFBS` removed the last
+hand-built Plan body:
+
+- **T1** (gates before code): per-shape golden stream pins (families ×
+  base/batch/erc6909 amount sets) + a RED probe counting `PlanStep::`
+  literals in each walk region. Probes flip GREEN per file and are
+  *retained* as honesty invariants (D6 precedent).
+- **T2** — folded the `v3_flash`/`v3_flash_to` pair into the single
+  `mechanics::v3_flash`: the recipient triple may be omitted and is then
+  derived from `facts.out_dest` (Executor→SELF, PoolManager→PM);
+  `Some((idx, pool, repays))` makes it explicit. All flash-bearing sites
+  in the three-hop, tag-residual, and uniswap-only modules route through
+  the one primitive.
+- **T3/T4** — the two 2-hop shapes are now one arm function each,
+  composed purely of `mechanics` primitives (`v4_swap`, `v4_unlock`,
+  `v4_take_compact`/`v4_take_compact_at`, `v4_take_delta`,
+  `v4_settle`/`v4_settle_delta`/`v4_settle_all`, `v4_sync`,
+  `erc20_transfer`, `native_transfer`, `self_fund`, `weth_deposit`/
+  `weth_withdraw`, `v2_flash`, `v3_flash`, `v2_swap`,
+  `v4_batch`/`v4_batch_entry`) + the shared `v4_terminal_capture_steps`
+  / `v4_bridge_steps` helpers. The v2↔v3 delta within each 2-hop shape
+  collapsed to the lead protocol — plus, once, `weth_deposit` standing in
+  for `self_fund`.
+- **T5** — deduped the five `facts_of_*` producers onto the shared
+  per-protocol builders. Exposed that the shared defaults are *not* the
+  per-family defaults: the v3v4v3 terminal needs `repay: Offstream`
+  (builder default is `SelfRefund`), and fee overflow must decline the
+  path (the builder default zeros the fee, which would mis-encode; a
+  latent `TakeBeforeCredit` validator reject, caught by the byte pin
+  before commit).
+
+**Byte-transparency proof:** zero golden-hash edits across all per-shape
+pin tables and `glopcn_bytepin` (every family × amount set × both entry
+points); the executor suite ends all-green (118 lib tests) with no RED
+probes remaining. Net across T2–T5: ~1,100 lines removed.
+
+**Corrections to the main text:** (a) "the per-shape bodies are
+hand-authored code" — as of 6SWFBS, no shape module contains a single
+`PlanStep` literal; all step construction lives in `mod mechanics` plus
+the two shared `grammar_shape` helpers, and the D4 data/code split is
+complete for every family. (b) The D4 additive claim ("a new protocol is
+one hop-facts descriptor + one mechanics module") now holds for the
+walked 2-hop arms too: walking six families cost ten small primitives
+and one arm function per shape.
