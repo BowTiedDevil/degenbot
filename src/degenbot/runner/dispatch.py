@@ -31,8 +31,8 @@ from degenbot.logging import logger as bot_logger
 from degenbot.provider import AsyncAlloyProvider
 from degenbot.runner.config import format_failure_breakdown, format_sim_diag_line
 from degenbot.runner.driver_constants import (
-    ERC6909_PROFIT,
     _SIM_FAIL_RENDER_CAP,
+    ERC6909_PROFIT,
     INJECT_EXECUTOR_CODE,
     MIN_PROFIT_MARGIN_BPS,
     MIN_PROFIT_NET,
