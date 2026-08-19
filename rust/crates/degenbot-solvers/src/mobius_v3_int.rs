@@ -61,12 +61,12 @@ pub use ::degenbot_pools::int_v3_hop::{
 ///
 /// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
-// TRANSITION (ergo 7J22EQ → PXSY47): assumed-tuple piecewise
-// simulator. Production solving now uses the self-determining
-// `simulate_walk_path`; this remains as the validation oracle for the
-// ON5QMD rounding-parity nets and the uncapped enumeration
-// references in the test module. PXSY47 retires it when the solver
-// objective unifies with the step-faithful walker.
+// VALIDATION-ONLY ORACLE (ergo 7J22EQ → PXSY47, done): assumed-tuple
+// piecewise simulator, superseded in production by the self-determining
+// `simulate_walk_path` (PXSY47 shipped the step-faithful walker).
+// Retained as the test-only validation oracle for the ON5QMD
+// rounding-parity nets and the uncapped enumeration references in the
+// test module.
 #[cfg_attr(not(test), expect(dead_code))]
 fn int_simulate_cl_path_n(
     amount_in: U256,
@@ -153,12 +153,12 @@ fn int_simulate_cl_path_n(
 ///
 /// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
-// TRANSITION (ergo 7J22EQ → PXSY47): assumed-tuple piecewise
-// simulator. Production solving now uses the self-determining
-// `simulate_walk_path`; this remains as the validation oracle for the
-// ON5QMD rounding-parity nets and the uncapped enumeration
-// references in the test module. PXSY47 retires it when the solver
-// objective unifies with the step-faithful walker.
+// VALIDATION-ONLY ORACLE (ergo 7J22EQ → PXSY47, done): assumed-tuple
+// piecewise simulator, superseded in production by the self-determining
+// `simulate_walk_path` (PXSY47 shipped the step-faithful walker).
+// Retained as the test-only validation oracle for the ON5QMD
+// rounding-parity nets and the uncapped enumeration references in the
+// test module.
 #[cfg_attr(not(test), expect(dead_code))]
 fn int_simulate_v3_v3_path(
     amount_in: U256,
@@ -1053,8 +1053,8 @@ pub fn exact_solve_mixed_v2_v3_sequence(
 ///
 /// Returns a [`SimulationResult`] with per-hop output and consumed-input amounts.
 #[must_use]
-// TRANSITION (ergo 7J22EQ → PXSY47): assumed-tuple piecewise
-// simulator; production solving now uses `simulate_walk_path`.
+// VALIDATION-ONLY ORACLE (ergo 7J22EQ → PXSY47, done): assumed-tuple
+// piecewise simulator, superseded in production by `simulate_walk_path`.
 // Retained for the test module's uncapped-enumeration reference and
 // N-hop parity nets.
 #[cfg_attr(not(test), expect(dead_code))]
