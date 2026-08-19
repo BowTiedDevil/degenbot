@@ -162,7 +162,7 @@ For reproducing degenbot's captured failing backrun paths (the
 ```rust
 use degenbot::investigation::{PathFixture, register_v2, register_v3, build_v3_state, v3_hop_output};
 
-let fx = PathFixture::load("tests/fixtures/path26154_v2v4v3_block25700805.json")?;
+let fx = PathFixture::load("tests/fixtures/path5000_v2v4v3_block25704509.json")?;
 let pid0 = register_v2(&mut engine.core().write(), &fx.pools["v2_0"])?;
 let st   = build_v3_state(&fx.pools["v3_2"]);
 v3_hop_output(&st, fee, spacing, zero_for_one, input);  // vs the tier-3-validated twin
@@ -203,5 +203,16 @@ instead.
   and `capture_path205_v2v4v3_fixture.py` plus their fixtures
   (`path13822_v3v3v3_block25696004_onchain.json`, `path205_v2v4v3_block25695845.json`)
   were deleted as dead weight — no live test/example/doc consumed them (verified by
-  whole-tree `rg` + git history). `capture_path13822_v3v3v3_fixture.py` remains: it is
-  the parameterized (`FIX_PATH_ID`) generator for the consumed `path13827` fixture.
+  whole-tree `rg` + git history). `capture_path13822_v3v3v3_fixture.py` (the
+  parameterized `FIX_PATH_ID` generator for the `path13827` fixture) was deleted
+  in the 2026-08-19 sweep (HAVRUW/SEG2PS) together with that fixture's last
+  consumer (a run-once example).
+- **Deleted one-shot path-debug examples (2026-08-19, HAVRUW/SEG2PS):** the 19
+  `rust/crates/degenbot/examples/` run-once `path*`/`fee1`/`desync`/probe
+  harnesses plus their fixtures and one-off capture/verify/watch scripts — no
+  live test, example, or doc consumed them (verified by whole-tree `rg`; per
+  CONTEXT.md, ad-hoc path fixtures are weak cross-checks to DELETE once the revm
+  harnesses cover them). Kept: `standalone_consumer.rs`, the `path5000` /
+  `path73385` fixtures + capture scripts (consumed by committed tier-3 regression
+  tests). The Layer-3 worked example now points at the kept `path5000` fixture,
+  and the `EXECUTE_CONFIG` constant whose calldata-dump examples went is deleted.

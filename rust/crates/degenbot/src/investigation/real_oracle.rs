@@ -8,7 +8,7 @@
 //! **Layering.** Investigation tooling (like the wider [`crate::investigation`]
 //! — run-once diagnostic scaffolding, not library surface), so it relaxes the
 //! pedantic `doc_markdown`/`cast_possible_wrap` nits the production cores keep
-//! (matching the `path5000_v4_gas_probe` example it was extracted from). It
+//! (run-once diagnostic scaffolding, not library surface). It
 //! still emits no `pyo3` and holds no engine state—it is a thin, contract-level
 //! revm driver over the reusable [`degenbot_simulation::oracle`] spine.
 #![expect(
@@ -20,11 +20,12 @@
     clippy::panic
 )]
 //!
-//! Extracted from the `path5000_v4_gas_probe` example so the deploy+seed+drive
-//! sequence lives in ONE place — the example and the committed tier-3-path5000
-//! regression test (`tests/tier3_path5000_v4_clamp.rs`) share it. See that test
-//! for the full RED→GREEN narrative (the CL-hop input clamp turns a 20.7M-gas
-//! EMPTY-HALT into a ~190k clean fill under the 5M executor ceiling).
+//! The deploy+seed+drive sequence lives in ONE place here — shared by the
+//! committed tier-3-path5000 regression test (`tests/tier3_path5000_v4_clamp.rs`;
+//! the `path5000_v4_gas_probe` example it was extracted from was deleted in the
+//! 2026-08-19 sweep). See that test for the full RED→GREEN narrative (the CL-hop
+//! input clamp turns a 20.7M-gas EMPTY-HALT into a ~190k clean fill under the
+//! 5M executor ceiling).
 
 use std::path::PathBuf;
 

@@ -50,8 +50,7 @@ pub mod hop_oracle;
 pub mod reconstruct;
 
 // `real_oracle` carries its own module-level `#![allow]` (it's self-contained
-// tooling extracted from the path5000_v4_gas_probe example), so it needs no
-// wrapper here.
+// run-once diagnostic tooling), so it needs no wrapper here.
 pub mod real_oracle;
 
 pub use fixture::{PathFixture, PathHop, PoolData, RecordedSolve, TickJson};
