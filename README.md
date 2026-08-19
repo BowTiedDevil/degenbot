@@ -912,7 +912,7 @@ except StaleRateResult as e:
 
 ### Uniswap Arbitrage
 
-Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `ArbitrageEngine` (EVM-exact U512 solve), driven through `EngineRegistry` — the production solve surface that replaced both the deprecated `UniswapLpCycle` / `UniswapCurveCycle` and the since-retired Python `ArbitragePath` wrapper (ACDWOC):
+Optimal arbitrage amounts for a cyclic pool sequence are computed by the Rust `ArbitrageEngine` (EVM-exact U512 solve), driven through `EngineRegistry`. The older Python cycle/solver classes are retired — the Rust engine is the sole solve surface:
 
 <!-- invisible-code-block: python
 import asyncio
@@ -987,10 +987,10 @@ asyncio.run(registry.register_v3_pool(v3_pool))
 -->
 
 ```python
-# Production startup ritual (Plan 102): `registry.start(node_http, node_ws)`
-# runs subscribe -> snapshot -> verify-config and returns BEFORE resume();
+# In production, `registry.start(node_http, node_ws)` runs the startup
+# ritual (subscribe, snapshot, verify config) and returns BEFORE resume();
 # after attaching the result consumer, `registry.engine.resume()` is the
-# single gate after which one ResultBatch per block flows.
+# single gate after which one result batch per block flows.
 path_id = registry.register_path(
     pools_and_zfos=[(v2_pool, True), (v3_pool, False)],
 )
@@ -998,51 +998,15 @@ path_id = registry.register_path(
 # hops); profitable solves surface in the next `latest_results()` batch.
 solved_path = registry.engine.inspect_path(path_id)
 assert solved_path["path_id"] == path_id
-
-# The Python `BrentSolver` reference oracle and the legacy
-# `tests/arbitrage/test_engine_vs_brent_parity.py` cross-validation test
-# were retired alongside the f64 hop-state taxonomy (ergo 6C32UV / LMM2NB);
-# the Rust `ArbitrageEngine` is now the sole solve surface and its own
-# regression corpus is the oracle.
 ```
-
-> **Note:** The legacy `UniswapLpCycle` / `UniswapCurveCycle`, the Python
-> `ArbitragePath` wrapper, the Python `BrentSolver` reference oracle, and
-> the Python `SwapAmounts` / `generate_payloads` encoding mirror have all
-> been retired. The Rust `ArbitrageEngine` (driven via `EngineRegistry`) is
-> the production solve surface, and on-chain calldata is produced Rust-side
-> by `degenbot_executor::composers::encode_cmd_stream` /
-> `dispatch_profitable`. There is no Python swap-amount encoding layer.
 
 #### Swap Encoding & On-Chain Execution
 
-On-chain calldata for a solved arb path is produced entirely in the Rust
-core. The Python `SwapAmounts` / `generate_payloads` / `EncodedCall` mirror
-was retired (epic `6Y2PBF`) once the Rust-side `dispatch_profitable_py`
-seam became the sole encode/dispatch surface — there is no Python encoding
-pipeline to call.
+A profitable solve goes straight from the Rust engine to a submitted
+transaction — there is no Python encoding layer. After a path solves:
 
-The Rust encoding flow:
-
-1. **Resolve** — `EngineRegistry.register_path(...)` builds a `path_id`
-   against the `BotState`-owned pool identities.
-2. **Solve** — the Rust `ArbitrageEngine` produces `optimal_input` /
-   `hop_outputs` / `consumed_inputs` for the registered path.
-3. **Encode** — `degenbot_executor::composers::encode_cmd_stream` emits the
-   per-hop calldata (V2 `swap()`, V3 `swap()`, V4 PoolManager `swap()`, Curve
-   `exchange()`/`exchange_underlying()`), composed into the cmd-executor
-   contract envelope; the Python-visible entry point is the
-   `dispatch_profitable_py` PyO3 seam, which calls `encode_cmd_stream`
-   directly, with V4 BalanceDelta `int128` overflow guarded Rust-side by
-   `composers::fits_int128`.
-4. **Submit** — the resulting `execute_calldata` is handed to the Rust
-   submission layer (`degenbot-submission`: EIP-1559 signing + fee
-   finalization, exposed via `degenbot._ffi.submission`'s `Dispatcher` /
-   `TxSigner` and `dispatch_and_submit_py`).
-
-`EngineRegistry` and the example bot driver consume `DispatchCandidate` /
-`PyDispatchOutcome` (carrying `path_info` / `hop_outputs`) — never a Python
-`SwapAmounts` object.
+1. **Encode** — the Rust core emits the per-hop calldata (V2 `swap()`, V3 `swap()`, V4 PoolManager `swap()`, Curve `exchange()` / `exchange_underlying()`) and composes it into the cmd-executor contract envelope.
+2. **Submit** — the Rust submission layer signs (EIP-1559) and sends the transaction; dry-run mode (the default) stops after solving and simulates in-process without submitting.
 
 ### Running the Settlement-Arbitrage Bot
 
@@ -1061,7 +1025,7 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --permutation V
 uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py --live
 ```
 
-Endpoints and operator keys come from `examples/mainnet.env` + the OS env: `DEGENBOT_RPC_HTTP_CHAINID_1` / `DEGENBOT_RPC_WS_CHAINID_1` (CLI `--node-http` / `--node-ws` take precedence), `OPERATOR_ADDRESS` / `OPERATOR_PRIVATE_KEY` in live mode, and optional `EXECUTOR_CONTRACT_ADDRESS` overrides. `BotRunner` sequences the startup handshake — subscribe WS → load the V3+V4 DB snapshot into core state → backfill the snapshot→WS gap in Rust → `resume()` the pump → attach the result consumer → `build_paths()` — after which the **Rust core owns the hot loop** (event decode, per-block re-solve, revm simulation, `encode_cmd_stream` encoding, fee finalization, submission) and the Python driver owns config, result rendering, and dispatch policy. With `--operator-socket PATH`, the bot also hosts an `OperatorServer` that the `degenbot path add` / `degenbot path discover` CLI commands target to steer the live path set without a restart (protocol + design in [`docs/architecture/operator-add-path-surface.md`](docs/architecture/operator-add-path-surface.md)). The current state layer is specified by [ADR-003](docs/adr/ADR-003-botcore-state-layer.md) + [ADR-005](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md); [docs/architecture/rust-owned-bot.md](docs/architecture/rust-owned-bot.md) is the original (Plans 079–082) design, kept for history.
+Endpoints and operator keys come from `examples/mainnet.env` + the OS env: `DEGENBOT_RPC_HTTP_CHAINID_1` / `DEGENBOT_RPC_WS_CHAINID_1` (CLI `--node-http` / `--node-ws` take precedence), `OPERATOR_ADDRESS` / `OPERATOR_PRIVATE_KEY` in live mode, and optional `EXECUTOR_CONTRACT_ADDRESS` overrides. `BotRunner` performs the driver-side startup handshake, after which the **Rust core owns the hot loop** — event decode, per-block re-solve, in-process simulation, encoding, submission — and the Python driver owns config, result rendering, and dispatch policy. With `--operator-socket PATH`, the bot also hosts an `OperatorServer` that the `degenbot path add` / `degenbot path discover` CLI commands target to steer the live path set without a restart (protocol + design in [`docs/architecture/operator-add-path-surface.md`](docs/architecture/operator-add-path-surface.md)).
 
 ## Bot API Reference
 
