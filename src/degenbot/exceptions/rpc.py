@@ -7,12 +7,9 @@ codebase previously imported: ``Web3Exception`` (the broad RPC base),
 
 Owning them here lets probe sites throughout the codebase
 (:mod:`degenbot.builders.type_resolution`, :mod:`degenbot.builders.erc20_builder`)
-catch a single degenbot-owned type regardless
-of which provider backend (Alloy or the transitional web3 backend) raised the
-failure. The adapter seam
-(:mod:`degenbot.provider.sync_adapter`, :mod:`degenbot.provider.async_adapter`,
-:mod:`degenbot.provider.alloy_errors`) converts each backend's native failure
-into these types so downstream code is backend-agnostic.
+catch a single degenbot-owned type regardless of which provider backend raised
+the failure. ``degenbot.provider.alloy_errors`` converts the backend's native
+failure into these types so downstream code is backend-agnostic.
 
 Layering note: these are **provider-layer** exceptions — the RPC node reported a
 revert or a missing transaction. They are distinct from the pool-math-layer
@@ -29,11 +26,8 @@ class RpcError(DegenbotError):
 
     The degenbot-owned equivalent of ``web3.exceptions.Web3Exception``: the
     broad base a caller can catch to mean "an RPC call failed for some reason."
-    Probe sites that previously caught ``Web3Exception`` catch this instead,
-    so they remain backend-agnostic once the web3 backend is retired
-    (its adapter seam converts web3's native failures into
-    :exc:`ContractLogicError` / :exc:`TransactionNotFound`, both subclasses
-    of this base).
+    Probe sites catch this instead of backend-specific native types, so they
+    remain backend-agnostic.
     """
 
 
@@ -41,11 +35,9 @@ class ContractLogicError(RpcError):
     """An ``eth_call`` execution revert reported by the provider.
 
     The degenbot-owned equivalent of ``web3.exceptions.ContractLogicError``.
-    Raised at the provider adapter seam — by
-    :func:`degenbot.provider.alloy_errors.alloy_revert_error` for the Alloy
-    backend and by the web3 adapter's ``call``/``call_raw`` conversion for
-    the transitional web3 backend — so probe sites catch one type across both
-    backends.
+    Raised at the provider adapter seam (see
+    :func:`degenbot.provider.alloy_errors.alloy_revert_error`) so probe sites
+    catch one type regardless of backend.
 
     Constructed with a positional revert message (mirroring the web3 type's
     constructor) so call sites can write ``ContractLogicError("... reverted")
@@ -63,6 +55,5 @@ class TransactionNotFound(RpcError):
 
     The degenbot-owned equivalent of
     ``web3.exceptions.TransactionNotFound``. Raised by the provider adapter
-    seam when a receipt lookup misses; callers that previously caught the
-    web3 type catch this instead.
+    seam when a receipt lookup misses.
     """

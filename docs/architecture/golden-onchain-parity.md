@@ -51,10 +51,11 @@ RPC in CI.
 
 ### Why a separate L2 instead of folding the quoter into the L1 cassette?
 
-The quoter call in existing tests goes through `fork.w3.eth.contract(…).call()`
-— web3's own provider, **not** degenbot's `ProviderAdapter`. A provider-level
-cassette would not capture it without re-routing every quoter call through the
-adapter/`raw_call`. L2 intercepts the oracle call **at the test boundary**, so:
+The quoter call in existing tests goes through a test-local contract interface —
+its own provider connection, **not** the cassette-bound provider the pool under
+test uses. A provider-level cassette would not capture it without re-routing
+every quoter call through the same provider instance. L2 intercepts the oracle
+call **at the test boundary**, so:
 
 - the oracle truth is a small file of plain ints (trivially reviewable in a PR);
 - it is decoupled from quoter-ABI / calldata churn;

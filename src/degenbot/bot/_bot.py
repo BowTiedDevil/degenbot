@@ -425,8 +425,8 @@ class Bot:
         After the Rust engine has taken ownership of all pool state (snapshots
         streamed, pools registered, backfill complete), the Python-side
         tracker caches, snapshots, and pool/token registries are redundant —
-        the hot loop only needs the engine and the async web3 handle. This
-        drops them so they stop pinning pool objects in memory.
+        the hot loop only needs the engine and the async Alloy provider
+        handle. This drops them so they stop pinning pool objects in memory.
 
         Idempotent; safe to call once, at the end of the startup handshake
         (after ``build_paths`` completes). Concrete trackers that carry a

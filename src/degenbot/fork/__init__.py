@@ -290,10 +290,9 @@ class AnvilFork:
     def http_url(self) -> str:
         """HTTP endpoint of the spawned anvil node (e.g. ``http://127.0.0.1:PORT``).
 
-        Use to construct a separate ``Web3``/``HTTPProvider`` over the
-        rust-owned anvil subprocess when the IPC-bound `provider` is not
-        enough (e.g. test code still on web3.py contract patterns, or a
-        second `AlloyProvider` over HTTP transport).
+        Use to construct a second ``AlloyProvider`` over the rust-owned anvil
+        subprocess when the IPC-bound `provider` is not enough (e.g. a plain
+        HTTP transport from another Python process).
         """
         return self._require_fork().http_url
 

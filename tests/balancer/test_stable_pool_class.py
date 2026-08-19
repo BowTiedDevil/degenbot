@@ -31,8 +31,10 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import StaleRateResult
 from degenbot.fork import AnvilFork
+from degenbot.provider import AlloyProvider
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.w3_contract import W3ContractCompat
 
 pytestmark = pytest.mark.online_rpc
 
@@ -112,14 +114,18 @@ class CacheAwareRateProvider:
         rate_provider_addresses: list[str],
         token_addresses: list[str],
         bpt_idx: int | None,
-        w3,
+        provider: AlloyProvider,
         *,
         zero_addr: str = "0x0000000000000000000000000000000000000000",
     ) -> None:
-        self._pool = w3.eth.contract(address=get_checksum_address(pool_address), abi=pool_abi)
+        self._pool = W3ContractCompat(
+            get_checksum_address(pool_address),
+            pool_abi,
+            provider,
+        )
         self._rate_contracts = []
         self._bpt_idx = bpt_idx
-        self._w3 = w3
+        self._provider = provider
 
         zero = zero_addr
         for i, rp in enumerate(rate_provider_addresses):
@@ -127,15 +133,16 @@ class CacheAwareRateProvider:
                 self._rate_contracts.append(None)
             else:
                 self._rate_contracts.append(
-                    w3.eth.contract(address=get_checksum_address(rp), abi=RATE_ABI),
+                    W3ContractCompat(get_checksum_address(rp), RATE_ABI, provider),
                 )
         self._token_addresses = token_addresses
 
     def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
-        if block_identifier is None:
-            block_ts = self._w3.eth.get_block("latest")["timestamp"]
-        else:
-            block_ts = self._w3.eth.get_block(block_identifier)["timestamp"]
+        block = self._provider.get_block(
+            block_identifier if block_identifier is not None else "latest",
+        )
+        assert block is not None
+        block_ts = block["timestamp"]
 
         rates: list[int] = []
         for i, (rp_contract, token_addr) in enumerate(
@@ -182,14 +189,15 @@ def _build_stable_pool(
     that replicates the on-chain _cacheTokenRateIfNecessary flow for
     exact-integer matching.
     """
-    w3 = fork.w3
-    vault = w3.eth.contract(
-        address=get_checksum_address(BALANCER_V2_VAULT_ADDRESS),
-        abi=VAULT_ABI,
+    vault = W3ContractCompat(
+        get_checksum_address(BALANCER_V2_VAULT_ADDRESS),
+        VAULT_ABI,
+        fork.provider,
     )
-    pool = w3.eth.contract(
-        address=get_checksum_address(pool_address),
-        abi=POOL_ABI,
+    pool = W3ContractCompat(
+        get_checksum_address(pool_address),
+        POOL_ABI,
+        fork.provider,
     )
 
     pool_id = pool.functions.getPoolId().call()
@@ -203,7 +211,7 @@ def _build_stable_pool(
     base_scaling_factors: list[int] = []
     fresh_rates: list[int] = []
     for i, t in enumerate(tokens):
-        erc20_c = w3.eth.contract(address=get_checksum_address(t), abi=ERC20_ABI)
+        erc20_c = W3ContractCompat(get_checksum_address(t), ERC20_ABI, fork.provider)
         decimals = erc20_c.functions.decimals().call()
         symbol = erc20_c.functions.symbol().call()
         name = erc20_c.functions.name().call()
@@ -212,7 +220,7 @@ def _build_stable_pool(
 
         rp = rate_providers[i]
         if rp != "0x0000000000000000000000000000000000000000":
-            rp_c = w3.eth.contract(address=get_checksum_address(rp), abi=RATE_ABI)
+            rp_c = W3ContractCompat(get_checksum_address(rp), RATE_ABI, fork.provider)
             rate = rp_c.functions.getRate().call()
         else:
             rate = ONE
@@ -241,7 +249,7 @@ def _build_stable_pool(
             rate_provider_addresses=[str(rp) for rp in rate_providers],
             token_addresses=[str(t) for t in tokens],
             bpt_idx=bpt_idx,
-            w3=w3,
+            provider=fork.provider,
         )
 
     return make_balancer_stable_pool(
@@ -269,10 +277,10 @@ def _query_swap(
     kind: int,
 ) -> int:
     """Query the BalancerQueries contract for a swap result."""
-    w3 = fork.w3
-    queries = w3.eth.contract(
-        address=get_checksum_address(BALANCERQUERIES_CONTRACT_ADDRESS),
-        abi=QUERIES_ABI,
+    queries = W3ContractCompat(
+        get_checksum_address(BALANCERQUERIES_CONTRACT_ADDRESS),
+        QUERIES_ABI,
+        fork.provider,
     )
     try:
         return queries.functions.querySwap(

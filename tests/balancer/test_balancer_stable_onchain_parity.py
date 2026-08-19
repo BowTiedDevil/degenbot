@@ -63,6 +63,7 @@ from degenbot.utils.bytes import to_bytes
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.w3_contract import W3ContractCompat
 
 if TYPE_CHECKING:
     from degenbot.balancer.stable_pools import BalancerV2StablePool
@@ -236,9 +237,11 @@ def _query_swap_callable(
     """BalancerQueries ``querySwap`` oracle call (GIVEN_IN or GIVEN_OUT)."""
 
     def _call() -> int:
-        query_contract = web3.Web3(web3.HTTPProvider(fork.fork.http_url)).eth.contract(  # type: ignore[union-attr]
-            address=BALANCERQUERIES_CONTRACT_ADDRESS,
-            abi=_BALANCERQUERIES_ABI,
+        assert fork.fork is not None
+        query_contract = W3ContractCompat(
+            BALANCERQUERIES_CONTRACT_ADDRESS,
+            _BALANCERQUERIES_ABI,
+            fork.fork.provider,
         )
         return query_contract.functions.querySwap(
             (to_bytes(pool_id_hex), swap_kind, token_in, token_out, amount, b""),

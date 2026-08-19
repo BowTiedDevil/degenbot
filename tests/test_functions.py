@@ -6,7 +6,6 @@ from degenbot.contract.addresses import create2_address
 from degenbot.crypto import keccak256
 from degenbot.exceptions import DegenbotValueError
 from degenbot.fork import AnvilFork
-from degenbot.provider import AlloyProvider
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.call_helpers import (
     encode_function_calldata,
@@ -135,9 +134,8 @@ def test_create2():
 
 @pytest.mark.online_rpc
 def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
-    """Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer"""
-    w3 = fork_mainnet_full.w3
-    provider = AlloyProvider.from_web3(w3)
+    """Check that every supported block-identifier input converts to a block number"""
+    provider = fork_mainnet_full.provider
 
     # Known string literals
     latest_block = get_number_for_block_identifier("latest", provider)

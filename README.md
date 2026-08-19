@@ -47,7 +47,7 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 
 Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
 
-Today the Python layer still owns some infrastructure (database via SQLAlchemy, RPC via web3.py, publisher/subscriber, price oracles, the DB-aware updaters, simulation, and transaction submission); each of these is on the migration path into the Rust core, moved one piece at a time.
+Today the Python layer still owns some infrastructure (database via SQLAlchemy, publisher/subscriber, price oracles, the DB-aware updaters, simulation, and transaction submission); each of these is on the migration path into the Rust core, moved one piece at a time.
 
 These classes serve as building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
 
@@ -614,43 +614,40 @@ assert lp.pool_key == UniswapV4PoolKey(
 
 ### Forking With Anvil
 
-The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The object provides a `w3` attribute, connected to an IPC socket, which can be used to communicate with the fork like a typical RPC.
+The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The object provides a `provider` attribute — an `AlloyProvider` — which can be used to communicate with the fork like any typical RPC client.
 
 <!-- skip: start "requires running anvil process" -->
 
 ```python
 >>> fork = degenbot.AnvilFork(fork_url='http://localhost:8545')
->>> fork.w3.eth.chain_id
+>>> fork.provider.chain_id
 1
->>> fork.w3.eth.block_number
+>>> fork.provider.block_number
 22675736
 
 # The `AnvilFork` instance also exposes HTTP and WS endpoints that can be used to make a
 # separate connection from a remote machine.
->>> import web3
->>> _w3 = web3.Web3(web3.HTTPProvider(fork.http_url))
->>> _w3.is_connected()
-True
->>> _w3 = web3.Web3(web3.LegacyWebSocketProvider(fork.ws_url))
->>> _w3.is_connected()
+>>> from degenbot.provider import AlloyProvider
+>>> _prov = AlloyProvider(fork.http_url)
+>>> _prov.is_connected()
 True
 
 # The fork can be reset to a different endpoint, which defaults to the latest block.
 >>> fork.reset(fork_url='http://localhost:8544')
->>> fork.w3.eth.chain_id
+>>> fork.provider.chain_id
 8453
 
 # The fork can also be reset with a specified block number or a transaction hash.
 >>> fork.reset(fork_url='http://localhost:8545', block_number=22_675_800)
->>> fork.w3.eth.chain_id
+>>> fork.provider.chain_id
 1
->>> fork.w3.eth.block_number
+>>> fork.provider.block_number
 22675800
 
 >>> fork.reset(fork_url='http://localhost:8545', block_number=22_675_800)
->>> fork.w3.eth.chain_id
+>>> fork.provider.chain_id
 1
->>> fork.w3.eth.block_number
+>>> fork.provider.block_number
 22675800
 
 # The fork can also be reset to an imaginary block after a specific transaction
@@ -660,12 +657,12 @@ True
     fork_url='http://localhost:8545',
     transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c'
 )
->>> fork.w3.eth.block_number
+>>> fork.provider.block_number
 22675814
 
 # Blocks can be manually mined
 >>> fork.mine()
->>> fork.w3.eth.block_number
+>>> fork.provider.block_number
 22675815
 
 # Byte code can be set for an arbitrary address.
@@ -673,8 +670,8 @@ True
     address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
     bytecode=bytes.fromhex('45')
 )
->>> fork.w3.eth.get_code('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
-HexBytes('0x45')
+>>> fork.provider.get_code('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+b'\x45'
 ```
 
 #### Anvil Options
