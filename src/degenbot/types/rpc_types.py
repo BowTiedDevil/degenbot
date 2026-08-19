@@ -9,9 +9,10 @@ dicts use camelCase (matching the web3.py convention, as produced by ``log_to_py
 
 C1 (YMDOZL): the ``web3.types`` imports (``BlockIdentifier``, ``BlockData``, ``FilterParams``,
 ``LogReceipt``, ``RPCEndpoint``, ``RPCResponse``, ``TxParams``) are reproduced here natively
-so the codebase carries zero web3 type imports (no ``web3.types.*`` anywhere). The shapes are deliberately
-loose (``total=False`` TypedDicts with the fields actually produced/consumed) so they survive the
-full web3py retirement epic (Pass C) without type-check churn.
+so the codebase carries zero web3 type imports (no ``web3.types.*`` anywhere). The shapes are
+deliberately loose (``total=False`` TypedDicts with the fields actually
+produced/consumed) so they survive the full web3py retirement epic (Pass C) without
+type-check churn.
 """
 
 from __future__ import annotations
