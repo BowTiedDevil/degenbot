@@ -261,7 +261,6 @@ markers = [
 [dependency-groups]
 dev = [
     "coverage",
-    "eth-abi",
     "hypothesis",
     "maturin",
     "pre-commit",
