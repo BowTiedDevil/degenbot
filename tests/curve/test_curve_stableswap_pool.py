@@ -404,7 +404,7 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
         print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
 
         try:
-            lp = _build_pool(fork_mainnet_full, cast("str", pool_address))
+            lp = _build_pool(fork_mainnet_full, pool_address)
             _test_calculations(lp=lp, provider=fork_mainnet_full.provider)
         except (BrokenPool, NoLiquidity):
             continue
@@ -435,7 +435,7 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
         try:
-            lp = _build_pool(fork_mainnet_full, cast("str", pool_address))
+            lp = _build_pool(fork_mainnet_full, pool_address)
         except MissingCurveData:
             print("  Skipping pool with missing data")
             continue

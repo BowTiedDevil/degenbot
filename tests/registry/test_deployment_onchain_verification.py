@@ -274,8 +274,8 @@ def _compute_pool_address(deployer: str, init_hash: str, known: tuple[str, str, 
     """Recompute the CREATE2 pool address in-process from deployer + init_hash.
 
     Uses the codebase's own auditable ``generate_v2/v3_pool_address`` (which
-    builds the salt via ``eth_abi`` + ``create2_address``), so the computation
-    is the same code path production pool discovery uses.
+    builds the salt via native packed encoding + ``create2_address``), so the
+    computation is the same code path production pool discovery uses.
     """
     from degenbot.uniswap.v2_functions import generate_v2_pool_address
     from degenbot.uniswap.v3_functions import generate_v3_pool_address

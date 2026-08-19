@@ -42,13 +42,13 @@ import json
 import pathlib
 import shutil
 
-from eth_abi import encode as abi_encode
 from degenbot._ffi import ChecksummedAddress
 from degenbot.types.rpc_types import LogReceipt
 from hexbytes import HexBytes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.pool import (
     UNISWAP_V3_BURN_EVENT_HASH,

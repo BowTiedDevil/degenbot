@@ -1,9 +1,10 @@
-"""web3.eth.contract compatibility wrapper using AlloyProvider + eth_abi.
+"""web3.eth.contract compatibility wrapper using AlloyProvider + degenbot.abi.
 
 Replaces ``web3.Web3(url).eth.contract(address=addr, abi=ABI)`` with a
-shim that uses the Rust ``AlloyProvider`` for ``eth_call`` and ``eth_abi``
-for ABI encoding/decoding, eliminating the ``web3`` runtime dependency for
-on-chain parity tests.
+shim that uses the Rust ``AlloyProvider`` for ``eth_call`` and the Rust-
+backed ``degenbot.abi`` core for ABI encoding/decoding, eliminating both
+the ``web3`` and ``eth_abi`` runtime dependencies from the on-chain parity
+tests.
 
 Supports both positional and keyword arguments (web3's contract interface
 accepts both ``.functions.foo(a, b)`` and ``.functions.foo(arg1=a, arg2=b)``).
@@ -13,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import eth_abi
-
+from degenbot.abi import decode as abi_decode
+from degenbot.abi import encode as abi_encode
 from degenbot.crypto import function_selector
 from degenbot.exceptions import ContractLogicError
 from degenbot.provider import AlloyProvider
@@ -51,7 +52,7 @@ class _FunctionsResult:
 
         # Encode args — merge positional and keyword (in ABI order)
         all_args = [*self._args, *self._kwargs.values()]
-        encoded_args = eth_abi.abi.encode(types=input_types, args=all_args) if input_types else b""
+        encoded_args = abi_encode(types=input_types, args=all_args) if input_types else b""
         calldata = selector + encoded_args
 
         # Execute eth_call
@@ -67,7 +68,7 @@ class _FunctionsResult:
         if not output_types:
             return None
 
-        decoded = eth_abi.abi.decode(types=output_types, data=raw_bytes)
+        decoded = abi_decode(types=output_types, data=raw_bytes)
 
         # Unwrap single-element tuples (web3 returns single value for single return)
         if len(decoded) == 0:
@@ -101,7 +102,7 @@ class _FunctionsAccessor:
 
 
 class W3ContractCompat:
-    """web3.eth.contract replacement backed by AlloyProvider + eth_abi."""
+    """web3.eth.contract replacement backed by AlloyProvider + degenbot.abi."""
 
     def __init__(self, address: str, abi: list[dict[str, Any]], provider: AlloyProvider) -> None:
         self._provider = provider
