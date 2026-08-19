@@ -80,6 +80,11 @@ pub fn bytes_to_int_signed<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound
 /// The `HexBytes` wrapper type was abolished (ergo JWXZ4A, option D): the
 /// boundary container crosses FFI as plain `bytes`, and the `py.import`
 /// class-lookup machinery this helper used to need is gone.
+///
+/// # Errors
+///
+/// Never fails under normal use; the `PyResult` boundary keeps the helper
+/// uniform with the other cache conversions.
 pub fn to_py_bytes<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound<'py, PyAny>> {
     let py_bytes = PyBytes::new(py, bytes);
     Ok(py_bytes.into_any())
@@ -87,7 +92,7 @@ pub fn to_py_bytes<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound<'py, Py
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::print_stderr)]
+    #![expect(clippy::unwrap_used)]
 
     use super::*;
 
@@ -141,22 +146,18 @@ mod tests {
     #[test]
     fn test_to_py_bytes() {
         pyo3::Python::attach(|py| {
-            // Plain bytes: `.hex()` is the bare (unprefixed) hex string.
+            // Plain `bytes` objects: round-trip the bytes through the boundary.
             let empty_hb = to_py_bytes(py, &[]).unwrap();
-            let hex_str: String = empty_hb.call_method0("hex").unwrap().extract().unwrap();
-            assert_eq!(hex_str, "");
+            let empty_vec: Vec<u8> = empty_hb.extract().unwrap();
+            assert!(empty_vec.is_empty());
 
             let test_bytes = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
             let hb = to_py_bytes(py, &test_bytes).unwrap();
-            let hex_str: String = hb.call_method0("hex").unwrap().extract().unwrap();
-            assert_eq!(hex_str, "0123456789abcdef");
+            let roundtrip: Vec<u8> = hb.extract().unwrap();
+            assert_eq!(roundtrip, test_bytes);
 
             // It is a plain `bytes` instance (not a subclass, not str).
-            let is_bytes: bool = hb
-                .call_method1("isinstance", (py.eval("bytes").unwrap(),))
-                .unwrap()
-                .extract()
-                .unwrap();
+            let is_bytes: bool = hb.is_instance_of::<PyBytes>();
             assert!(is_bytes);
         });
     }

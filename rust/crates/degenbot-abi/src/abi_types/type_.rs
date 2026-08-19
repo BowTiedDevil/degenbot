@@ -54,7 +54,7 @@ impl AbiType {
         match self {
             Self::Bytes | Self::String | Self::Array(_) => true,
             Self::FixedArray(inner, _) => inner.is_dynamic(),
-            Self::Tuple(comps) => comps.iter().any(|c| c.is_dynamic()),
+            Self::Tuple(comps) => comps.iter().any(AbiType::is_dynamic),
             _ => false,
         }
     }
@@ -105,7 +105,7 @@ impl AbiType {
                 "({})",
                 comps
                     .iter()
-                    .map(|c| c.type_str())
+                    .map(AbiType::type_str)
                     .collect::<Vec<_>>()
                     .join(",")
             )),

@@ -18,8 +18,8 @@ use pyo3::types::{PyDict, PyList};
 ///     The 32-byte digest as `bytes`.
 #[pyfunction]
 #[must_use]
-pub fn keccak256(data: Vec<u8>) -> Vec<u8> {
-    alloy::primitives::keccak256(&data).as_slice().to_vec()
+pub fn keccak256(data: &[u8]) -> Vec<u8> {
+    alloy::primitives::keccak256(data).as_slice().to_vec()
 }
 
 /// Canonical event-signature type string of one event-input component,
@@ -58,6 +58,11 @@ fn canonical_param_type(component: &Bound<'_, PyDict>) -> PyResult<String> {
 ///
 /// Returns:
 ///     The 32-byte topic as `bytes`.
+///
+/// # Errors
+///
+/// Fails with `PyValueError` if the entry is not a well-formed event ABI
+/// entry (missing `type`/`name`, wrong `type`, or bad inputs/components).
 #[pyfunction]
 pub fn event_topic(event_abi: &Bound<'_, PyDict>) -> PyResult<Vec<u8>> {
     let ty: String = event_abi
