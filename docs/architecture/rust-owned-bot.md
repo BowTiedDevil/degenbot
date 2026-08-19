@@ -585,6 +585,10 @@ V4 pools are identified by `(PoolManager, pool_id)` — discovered via `find_pat
 
 Eliminates ~95%+ of simulation failures from scam/tax/honeypot tokens.
 
+### 12.4 Steering a Live Bot
+
+The path set of a *running* bot is steerable without a restart: the operator add-path / on-demand-discovery surface (long-lived registration pipeline, the Unix-socket JSON-lines channel, and the `degenbot path` CLI client) is documented in [operator-add-path-surface.md](operator-add-path-surface.md).
+
 ---
 
 ## 13. Bot: State Owner & FFI Topology
