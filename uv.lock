@@ -595,6 +595,9 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "click" },
+    { name = "eth-typing" },
+    { name = "eth-utils" },
+    { name = "hexbytes" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy" },
@@ -607,6 +610,8 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "coverage" },
+    { name = "eth-abi" },
+    { name = "eth-account" },
     { name = "hypothesis" },
     { name = "maturin" },
     { name = "pre-commit" },
@@ -631,6 +636,9 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = "~=1.19" },
     { name = "click", specifier = "~=8.4" },
+    { name = "eth-typing", specifier = "~=6.0" },
+    { name = "eth-utils", specifier = "~=6.0" },
+    { name = "hexbytes", specifier = "~=1.3" },
     { name = "pydantic", specifier = "~=2.13" },
     { name = "pydantic-settings", specifier = "~=2.14" },
     { name = "sqlalchemy", specifier = "~=2.0" },
@@ -643,6 +651,8 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "coverage" },
+    { name = "eth-abi", specifier = "~=5.2" },
+    { name = "eth-account", specifier = "~=0.13" },
     { name = "hypothesis" },
     { name = "maturin" },
     { name = "pre-commit" },
@@ -660,7 +670,7 @@ dev = [
     { name = "ty" },
     { name = "vulture" },
     { name = "vyper" },
-    { name = "web3" },
+    { name = "web3", specifier = "~=7.16" },
 ]
 
 [[package]]
@@ -1076,14 +1086,14 @@ wheels = [
 
 [[package]]
 name = "mako"
-version = "1.3.12"
+version = "1.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markupsafe" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/00/62/791b31e69ae182791ec67f04850f2f062716bbd205483d63a215f3e062d3/mako-1.3.12.tar.gz", hash = "sha256:9f778e93289bd410bb35daadeb4fc66d95a746f0b75777b942088b7fd7af550a", size = 400219, upload-time = "2026-04-28T19:01:08.512Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/12/b5fa2353e2754cd67fb9f83793fa48ff42c213a5da7e719869d2301f6ab8/mako-1.4.1.tar.gz", hash = "sha256:d7904710b662996425a21627710c4777c45053146942cf8a7aebf757c92b8c27", size = 410165, upload-time = "2026-08-05T06:10:56.611Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/b1/a0ec7a5a9db730a08daef1fdfb8090435b82465abbf758a596f0ea88727e/mako-1.3.12-py3-none-any.whl", hash = "sha256:8f61569480282dbf557145ce441e4ba888be453c30989f879f0d652e39f53ea9", size = 78521, upload-time = "2026-04-28T19:01:10.393Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/54/12ed58d458474aaab5c3d180173e745a4fe131bb330370596876d19ff60f/mako-1.4.1-py3-none-any.whl", hash = "sha256:a359d9a94a541213958742b2698d0a7757bb83551767bc468a74b9905aba9617", size = 80010, upload-time = "2026-08-05T06:10:58.248Z" },
 ]
 
 [[package]]
