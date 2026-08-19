@@ -25,7 +25,6 @@ dependencies = [
     "tenacity ~= 9.1",
     "tomlkit ~= 0.15",
     "tqdm ~= 4.70",
-    "ujson ~= 5.13",
 ]
 license = {text = "MIT"}
 license-files = ["LICENSE"]
@@ -263,7 +262,6 @@ dev = [
     "coverage",
     "hypothesis",
     "maturin",
-    "pre-commit",
     "prek",
     "pytest-asyncio",
     "pytest-cov",
