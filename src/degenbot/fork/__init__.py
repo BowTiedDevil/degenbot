@@ -22,8 +22,8 @@ The breaking change vs the pre-0.7 Python `AnvilFork` is `self.w3` →
 management).
 
 `PyAnvilFork` exposes the IPC path the rust core resolved for the spawned
-anvil process. Tests + callers using `fork.w3.eth.X` should be migrated to
-`fork.provider.X` (task FF5 / `ECKJE2`) — the legacy attribute is gone.
+anvil process. Former callers using `fork.w3.eth.X` are migrated to
+`fork.provider.X` (FF5 / `ECKJE2`, done) — the legacy attribute is gone.
 """
 
 from __future__ import annotations
@@ -88,8 +88,9 @@ class AnvilFork:
     raises the legacy `AnvilError` exception subclass on rust-side
     RPC failures, and exposes general RPC through the `AlloyProvider`
     pyclass at :attr:`provider` (replacing the legacy `self.w3` Web3 handle
-    — that handle is gone; callers should migrate to
-    ``fork.provider.get_block_number()`` etc., covered in task `ECKJE2`).
+    — that handle is gone; all callers now use
+    ``fork.provider.get_block_number()`` etc.; the migration shipped in
+    task `ECKJE2`).
 
     The rust core (`degenbot_fork::AnvilFork`) owns:
 
