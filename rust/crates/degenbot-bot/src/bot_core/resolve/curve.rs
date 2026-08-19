@@ -30,7 +30,7 @@ pub(crate) fn project_curve(
     // Curve constants
     let precision = U256::from(10u64).pow(U256::from(18u64));
     let fee_denom = U256::from(10u64).pow(U256::from(10u64));
-    let a_precision = U256::from(100u64);
+    let a_precision = U256::from(id.a_precision);
     let amp = U256::from(id.a_coefficient).saturating_mul(a_precision);
     let n_coins = U256::from(id.tokens.len() as u64);
     // Build rate-adjusted XP: xp[i] = balances[i] * rate_multipliers[i] / PRECISION

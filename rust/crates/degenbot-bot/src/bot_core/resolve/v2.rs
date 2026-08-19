@@ -3,6 +3,7 @@
 use alloy::primitives::U256;
 
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
+use degenbot_v2_math::IntHopState;
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -36,8 +37,7 @@ pub(crate) fn project_v2(
             identity.fee_token1.1,
         )
     };
-    let hop_state =
-        degenbot_v2_math::IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom);
+    let hop_state = IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom);
     Ok((ResolvedHop::V2 { state: hop_state }, state.state_nonce))
 }
 

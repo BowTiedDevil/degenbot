@@ -74,11 +74,7 @@ impl std::fmt::Display for MissingHopReason {
 }
 
 /// Log a hop invalidation at `debug` (path context + hop index + reason).
-pub(crate) fn log_invalidation(
-    pool_ref: &MixedPoolRef,
-    hop_index: usize,
-    reason: MissingHopReason,
-) {
+fn log_invalidation(pool_ref: &MixedPoolRef, hop_index: usize, reason: MissingHopReason) {
     tracing::debug!(
         ?pool_ref,
         hop = hop_index,
