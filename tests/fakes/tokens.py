@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from degenbot.types.address_comparable import AddressComparable
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
+    from degenbot._ffi import ChecksummedAddress
 
 
 @dataclass(frozen=True, eq=False)
@@ -30,7 +30,7 @@ class FakeToken(AddressComparable):
     .decimals, .symbol, and .name — all provided here.
     """
 
-    address: "ChecksumAddress"
+    address: "ChecksummedAddress"
     name: str = "Token"
     symbol: str = "TKN"
     decimals: int = 18

@@ -2,7 +2,7 @@ import random
 from fractions import Fraction
 
 import pytest
-from eth_typing import ChecksumAddress
+from degenbot._ffi import ChecksummedAddress
 from eth_utils.address import to_checksum_address
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
@@ -18,7 +18,7 @@ def random_addresses() -> list[bytes]:
 
 
 @pytest.fixture(scope="module")
-def checksummed_random_addresses(random_addresses) -> list[ChecksumAddress]:
+def checksummed_random_addresses(random_addresses) -> list[ChecksummedAddress]:
     return [to_checksum_address(addr) for addr in random_addresses]
 
 

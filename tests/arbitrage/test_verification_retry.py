@@ -18,9 +18,8 @@ retries only the transient ``VerificationRpcError`` category, leaving
 continue on unverified data.
 
 These tests pin the retry helper's behavior through its public interface
-(``retry_verification_call``). The helper builds a ``tenacity.Retrying``
-(reusing the codebase's existing retry idiom from
-``provider.log_fetching.fetch_logs_retrying``); a ``base_delay=0`` policy keeps
+(``retry_verification_call``). The helper builds a ``tenacity.Retrying``;
+a ``base_delay=0`` policy keeps
 the tests fast/deterministic (no real sleeping).
 """
 

@@ -28,8 +28,7 @@ Example:
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from eth_typing import ChecksumAddress as Address
-
+from degenbot._ffi import ChecksummedAddress as Address
 from degenbot._ffi.contract import Contract as _Contract
 from degenbot._ffi.contract import decode_return_data as _decode_return_data
 from degenbot._ffi.contract import encode_function_call as _encode_function_call

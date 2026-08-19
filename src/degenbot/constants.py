@@ -2,8 +2,9 @@
 
 import typing
 
-from eth_typing import ChainId, ChecksumAddress
+from eth_typing import ChainId
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 
 
@@ -65,8 +66,12 @@ MAX_UINT160 = _max_uint(160)
 MIN_UINT256 = _min_uint(256)
 MAX_UINT256 = _max_uint(256)
 
-DEAD_ADDRESS: ChecksumAddress = get_checksum_address("0x000000000000000000000000000000000000dead")
-ZERO_ADDRESS: ChecksumAddress = get_checksum_address("0x0000000000000000000000000000000000000000")
+DEAD_ADDRESS: ChecksummedAddress = get_checksum_address(
+    "0x000000000000000000000000000000000000dead"
+)
+ZERO_ADDRESS: ChecksummedAddress = get_checksum_address(
+    "0x0000000000000000000000000000000000000000"
+)
 
 # ref: https://eips.ethereum.org/EIPS/eip-1967
 ERC_1967_IMPLEMENTATION_SLOT = 0x360894A13BA1A3210667C828492DB98DCA3E2076CC3735A920A3CA505D382BBC
@@ -75,7 +80,7 @@ ERC_1967_BEACON_SLOT = 0xA3F0AD74E5423AEBFD80D3EF4346578335A9A72AEAEE59FF6CB3582
 
 
 # Contract addresses for the wrapped native token, keyed by chain ID
-WRAPPED_NATIVE_TOKENS: dict[int, ChecksumAddress] = {
+WRAPPED_NATIVE_TOKENS: dict[int, ChecksummedAddress] = {
     ChainId.ETH: get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
     ChainId.BASE: get_checksum_address("0x4200000000000000000000000000000000000006"),
     ChainId.FTM: get_checksum_address("0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83"),

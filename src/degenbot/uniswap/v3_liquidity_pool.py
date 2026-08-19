@@ -28,8 +28,7 @@ import dataclasses
 from typing import Any, ClassVar, Self, TypedDict
 from weakref import WeakSet
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -107,14 +106,14 @@ class UniswapV3Pool(
     # `__init__` raises). Declared at class scope so the type checker tracks
     # them without inline annotations on the classmethod body.
     _py_pool: LiquidityPool
-    address: ChecksumAddress
-    factory: ChecksumAddress
+    address: ChecksummedAddress
+    factory: ChecksummedAddress
     _fee: int
     _tick_spacing: int
     _token0: Erc20Token
     _token1: Erc20Token
     init_hash: str
-    deployer_address: ChecksumAddress
+    deployer_address: ChecksummedAddress
     name: str
     _initial_state_block: int
     _sparse_liquidity_map: bool

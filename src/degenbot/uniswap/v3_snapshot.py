@@ -1,30 +1,22 @@
 """Uniswap V3 pool snapshot and subscription handler."""
 
-import asyncio
 import pathlib
 from collections import defaultdict, deque
 from typing import Any, Protocol, TypedDict
 
 import pydantic_core
-import tqdm
-import tqdm.asyncio
-from eth_typing import ChecksumAddress, HexAddress
+from eth_typing import HexAddress
 from sqlalchemy.orm import Session, scoped_session
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot._ffi.db import DatabaseSnapshot as _EngineSnapshot
-from degenbot.abi import decode as abi_decode
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.crypto import event_topic
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.logging import logger
-from degenbot.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retrying_async
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
-from degenbot.types.rpc_types import LogReceipt
-from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent, UniswapV3PoolLiquidityMappingUpdate
 
@@ -48,7 +40,7 @@ class UniswapV3LiquiditySnapshotSource(Protocol):
 
     # Any class implementing the protocol must implement these methods, transforming data as
     # necessary to return the specified types.
-    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+    def get_liquidity_map(self, pool_address: ChecksummedAddress) -> LiquidityMap | None:
         """Return liquidity map.
 
         Returns:
@@ -66,7 +58,7 @@ class UniswapV3LiquiditySnapshotSource(Protocol):
         """
         ...
 
-    def get_pools(self) -> set[ChecksumAddress]:
+    def get_pools(self) -> set[ChecksummedAddress]:
         """Return pools.
 
         Returns:
@@ -113,7 +105,7 @@ class MonolithicJsonFileSnapshot:
         self._file_snapshot: dict[str, Any] = pydantic_core.from_json(path.read_bytes())
         self.chain_id: int = self._file_snapshot["chain_id"]
 
-    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+    def get_liquidity_map(self, pool_address: ChecksummedAddress) -> LiquidityMap | None:
         """Return liquidity map.
 
         Returns:
@@ -146,7 +138,7 @@ class MonolithicJsonFileSnapshot:
             return None
         return int(newest_block)
 
-    def get_pools(self) -> set[ChecksumAddress]:
+    def get_pools(self) -> set[ChecksummedAddress]:
         """Return pools.
 
         Returns:
@@ -198,7 +190,7 @@ class IndividualJsonFileSnapshot:
             return None
         return int(newest_block)
 
-    def get_pools(self) -> set[ChecksumAddress]:
+    def get_pools(self) -> set[ChecksummedAddress]:
         """Return pools.
 
         Returns:
@@ -207,7 +199,7 @@ class IndividualJsonFileSnapshot:
         """
         return {get_checksum_address(pool_file.stem) for pool_file in self._dir.glob("0x*.json")}
 
-    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+    def get_liquidity_map(self, pool_address: ChecksummedAddress) -> LiquidityMap | None:
         """Return liquidity map.
 
         Returns:
@@ -302,7 +294,7 @@ class DatabaseSnapshot:
             )
         return self._rust_snapshot
 
-    def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
+    def get_liquidity_map(self, pool_address: ChecksummedAddress) -> LiquidityMap | None:
         """Return liquidity map.
 
         Returns:
@@ -321,7 +313,7 @@ class DatabaseSnapshot:
             },
         )
 
-    def get_all_liquidity_maps(self) -> dict[ChecksumAddress, dict[int, tuple[int, int]]]:
+    def get_all_liquidity_maps(self) -> dict[ChecksummedAddress, dict[int, tuple[int, int]]]:
         """Return all V3 tick data as plain dicts.
 
         Delegates the bulk read to the Rust core (GIL released during the
@@ -345,7 +337,7 @@ class DatabaseSnapshot:
         """
         return self._rust().get_newest_block_v3()
 
-    def get_pools(self) -> set[ChecksumAddress]:
+    def get_pools(self) -> set[ChecksummedAddress]:
         """Return pools.
 
         Returns:
@@ -357,13 +349,6 @@ class DatabaseSnapshot:
 
 class UniswapV3LiquiditySnapshot:
     """Retrieve and maintain liquidity positions for Uniswap V3 pools."""
-
-    UNISWAP_V3_MINT_EVENT_HASH = event_topic(
-        next(e for e in UNISWAP_V3_POOL_ABI if e.get("name") == "Mint" and e.get("type") == "event")
-    )
-    UNISWAP_V3_BURN_EVENT_HASH = event_topic(
-        next(e for e in UNISWAP_V3_POOL_ABI if e.get("name") == "Burn" and e.get("type") == "event")
-    )
 
     def __init__(self, source: UniswapV3LiquiditySnapshotSource) -> None:
         """Initialize the instance.
@@ -380,10 +365,12 @@ class UniswapV3LiquiditySnapshot:
             raise ValueError(msg)
         self.newest_block: BlockNumber = source_block
 
-        self._liquidity_events: dict[ChecksumAddress, deque[UniswapV3LiquidityEvent]] = defaultdict(
-            deque,
+        self._liquidity_events: dict[ChecksummedAddress, deque[UniswapV3LiquidityEvent]] = (
+            defaultdict(
+                deque,
+            )
         )
-        self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap | None] = KeyedDefaultDict(
+        self._liquidity_snapshot: dict[ChecksummedAddress, LiquidityMap | None] = KeyedDefaultDict(
             lambda key: self._source.get_liquidity_map(get_checksum_address(key)),
         )
 
@@ -395,157 +382,13 @@ class UniswapV3LiquiditySnapshot:
         return self._chain_id
 
     @property
-    def pools(self) -> set[ChecksumAddress]:
+    def pools(self) -> set[ChecksummedAddress]:
         """Pools."""
         return self._source.get_pools()
 
-    def _process_liquidity_event_log(
-        self,
-        log: LogReceipt,
-    ) -> tuple[ChecksumAddress, UniswapV3LiquidityEvent]:
-        """Decode an event log and convert to an address and a `UniswapV3LiquidityEvent`.
-
-        For processing with `UniswapV3Pool.update_liquidity_map`.
-
-        Returns:
-            Tuple of (pool address, liquidity event).
-
-        """
-        # ref: https://github.com/Uniswap/v3-core/blob/main/contracts/interfaces/pool/IUniswapV3PoolEvents.sol
-        #
-        # event Mint(
-        #     address sender,
-        #     address indexed owner,
-        #     int24 indexed tickLower,
-        #     int24 indexed tickUpper,
-        #     uint128 amount,
-        #     uint256 amount0,
-        #     uint256 amount1
-        # );
-        # event Burn(
-        #     address indexed owner,
-        #     int24 indexed tickLower,
-        #     int24 indexed tickUpper,
-        #     uint128 amount,
-        #     uint256 amount0,
-        #     uint256 amount1
-        # );
-
-        assert not log["removed"]
-
-        (tick_lower,) = abi_decode(["int24"], log["topics"][2])
-        (tick_upper,) = abi_decode(["int24"], log["topics"][3])
-
-        if log["topics"][0] == self.UNISWAP_V3_BURN_EVENT_HASH:
-            # Decode Burn event
-            amount, _, _ = abi_decode(
-                ["uint128", "uint256", "uint256"],
-                log["data"],
-            )
-            amount = -amount
-        else:
-            # Decode Mint event
-            _, amount, _, _ = abi_decode(
-                ["address", "uint128", "uint256", "uint256"],
-                log["data"],
-            )
-
-        return log["address"], UniswapV3LiquidityEvent(
-            block_number=log["blockNumber"],
-            liquidity=amount,
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            tx_index=log["transactionIndex"],
-            log_index=log["logIndex"],
-        )
-
-    def fetch_new_events(
-        self,
-        to_block: BlockNumber,
-        *,
-        provider: AlloyProvider,
-        blocks_per_request: int | None = None,
-    ) -> None:
-        """Fetch liquidity events from the block following the last-known event to the target block.
-
-        using `eth_getLogs`. Blocks per request will be capped at `blocks_per_request`.
-        """
-        logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
-
-        event_logs = fetch_logs_retrying(
-            provider=provider,
-            start_block=self.newest_block + 1,
-            end_block=to_block,
-            max_blocks_per_request=blocks_per_request,
-            topic_signature=[
-                [
-                    self.UNISWAP_V3_MINT_EVENT_HASH,
-                    self.UNISWAP_V3_BURN_EVENT_HASH,
-                ],  # match topic0: Mint OR Burn
-            ],
-        )
-
-        for event_log in tqdm.tqdm(
-            event_logs,
-            desc="Processing liquidity events",
-            unit="event",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            # Ignore zero-amount events
-            if any(event_log["data"][:32]):
-                pool_address, liquidity_event = self._process_liquidity_event_log(event_log)
-                self._liquidity_events[pool_address].append(liquidity_event)
-
-        self.newest_block = to_block
-
-    async def fetch_new_events_async(
-        self,
-        to_block: BlockNumber,
-        *,
-        provider: AsyncAlloyProvider,
-        blocks_per_request: int | None = None,
-    ) -> None:
-        """Async version of fetch_new_events.
-
-        Fetch liquidity events from the block following the last-known event to the target block
-        using `eth_getLogs` via the async provider. Blocks per request will be capped at
-        `blocks_per_request`.
-        """
-        logger.info(f"Updating Uniswap V3 snapshot from block {self.newest_block} to {to_block}")
-
-        event_logs = await fetch_logs_retrying_async(
-            provider=provider,
-            start_block=self.newest_block + 1,
-            end_block=to_block,
-            max_blocks_per_request=blocks_per_request,
-            topic_signature=[
-                [
-                    self.UNISWAP_V3_MINT_EVENT_HASH,
-                    self.UNISWAP_V3_BURN_EVENT_HASH,
-                ],
-            ],
-        )
-
-        async for event_log in tqdm.asyncio.tqdm(
-            event_logs,
-            desc="Processing liquidity events",
-            unit="event",
-            bar_format="{desc}: {percentage:3.1f}% |{bar}| {n_fmt}/{total_fmt}",
-            leave=False,
-        ):
-            await asyncio.sleep(0)
-
-            # Ignore zero-amount events
-            if any(event_log["data"][:32]):
-                pool_address, liquidity_event = self._process_liquidity_event_log(event_log)
-                self._liquidity_events[pool_address].append(liquidity_event)
-
-        self.newest_block = to_block
-
     def pending_updates(
         self,
-        pool_address: HexAddress,
+        pool_address: str,
     ) -> tuple[UniswapV3PoolLiquidityMappingUpdate, ...]:
         """Consume pending liquidity updates for the pool.
 

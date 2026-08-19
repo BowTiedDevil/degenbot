@@ -16,8 +16,10 @@ full web3py retirement epic (Pass C) without type-check churn.
 
 from typing import Any, TypedDict
 
-from eth_typing import ChecksumAddress, HexStr
+from eth_typing import HexStr
 from hexbytes import HexBytes
+
+from degenbot._ffi import ChecksummedAddress
 
 # ── RPC primitive aliases (C1 — replaces ``web3.types`` primitives) ───────
 
@@ -38,8 +40,8 @@ BlockIdentifier = int | str
 TxParams = TypedDict(
     "TxParams",
     {
-        "from": ChecksumAddress | str,
-        "to": ChecksumAddress | str,
+        "from": ChecksummedAddress | str,
+        "to": ChecksummedAddress | str,
         "gas": int,
         "gasPrice": int,
         "maxFeePerGas": int,
@@ -211,7 +213,7 @@ class LogReceipt(TypedDict, total=True):
     ``LogData`` carries.
     """
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
     blockHash: HexBytes
     blockNumber: int
     data: HexBytes

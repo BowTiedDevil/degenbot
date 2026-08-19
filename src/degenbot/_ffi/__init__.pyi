@@ -10,7 +10,6 @@ Python package.
 from collections.abc import Callable, Coroutine
 from typing import Any, overload
 
-from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
 from . import aave as aave
@@ -172,8 +171,19 @@ class PathIterator:
     def __iter__(self) -> PathIterator: ...
     def __next__(self) -> list[tuple[int, int]]: ...
 
+# A plain ``str`` holding an EIP-55 checksummed 20-byte hex address
+# (``0x`` + 40 chars with the correct checksum casing). Rust FFI entry
+# points that return an address decode + checksum it in Rust
+# (``Address::to_checksum``) and cross the boundary as a ``PyString`` —
+# hence a plain ``str`` at runtime, not an ``eth_typing.ChecksummedAddress``
+# instance. It is equivalent to an ``eth_typing.ChecksummedAddress`` where one is
+# expected (content-based equality) but is not an ``isinstance`` match;
+# use this alias to document the checksum guarantee without claiming the
+# ``eth_typing`` class.
+type ChecksummedAddress = str
+
 @overload
-def to_checksum_address(address: str) -> str: ...
+def to_checksum_address(address: str) -> ChecksummedAddress: ...
 @overload
 def to_checksum_address(address: bytes) -> str: ...
 def compute_aerodrome_v2_pool_address(
@@ -585,7 +595,7 @@ class BotIo:
     def fetch_pool_row(self, chain_id: int, address: str) -> LiquidityPoolRow | None: ...
     def fetch_exchange(self, exchange_id: int) -> ExchangeRow | None: ...
     # --- ADR-005 build-path RPC delegation (slice 14) ---
-    def fetch_factory_address(self, address: str) -> ChecksumAddress | None: ...
+    def fetch_factory_address(self, address: str) -> ChecksummedAddress | None: ...
     def fetch_erc20_metadata_batch(
         self, addresses: list[str]
     ) -> list[tuple[str, str, int] | None]: ...

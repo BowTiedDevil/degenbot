@@ -29,9 +29,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
-    from degenbot._ffi import BotIo
+    from degenbot._ffi import BotIo, ChecksummedAddress
     from degenbot.database.models.pools import LiquidityPoolTable
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -151,7 +149,7 @@ def _descriptor_from_probing_result(
     *,
     succeeded_method: str | None,
     chain_id: ChainId,
-    factory: ChecksumAddress,
+    factory: ChecksummedAddress,
 ) -> PoolTypeDescriptor:
     """Map 'which method succeeded' to a PoolTypeDescriptor.
 
@@ -192,11 +190,11 @@ def _descriptor_from_probing_result(
 
 
 def fetch_factory_from_chain(
-    address: ChecksumAddress,
+    address: ChecksummedAddress,
     *,
     chain_id: ChainId,  # ruff:ignore[unused-function-argument] — kept for API consistency with resolve_pool_type
     io: BotIo,
-) -> ChecksumAddress | None:
+) -> ChecksummedAddress | None:
     """Fetch the factory address from the pool contract's factory() method.
 
     The encode → call → decode → checksum choreography is Rust-owned
@@ -211,10 +209,10 @@ def fetch_factory_from_chain(
 
 
 def resolve_pool_type_by_probing(
-    address: ChecksumAddress,
+    address: ChecksummedAddress,
     *,
     chain_id: ChainId,
-    factory: ChecksumAddress,
+    factory: ChecksummedAddress,
     io: BotIo,
 ) -> PoolTypeDescriptor:
     """Determine pool type by probing the contract on-chain.
@@ -266,7 +264,7 @@ def resolve_pool_type_by_probing(
 
 
 def resolve_pool_type(
-    address: ChecksumAddress,
+    address: ChecksummedAddress,
     *,
     chain_id: ChainId,
     io: BotIo,

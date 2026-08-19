@@ -195,7 +195,7 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
 }
 
 /// Map a hex-string pool address into `alloy::primitives::Address`. The pool's
-/// contract address comes from Python's `ChecksumAddress` / `str` form in the
+/// contract address comes from Python's `ChecksummedAddress` / `str` form in the
 /// pyo3 adapter path; the standalone Rust consumer passes the same hex string.
 fn parse_address(s: &str) -> Result<Address, BootstrapTickError> {
     s.parse::<Address>()

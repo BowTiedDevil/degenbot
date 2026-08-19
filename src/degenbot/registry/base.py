@@ -46,13 +46,13 @@ from degenbot.types.abstract import AbstractRegistry
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from eth_typing import ChecksumAddress
+    from degenbot._ffi import ChecksummedAddress
 
 
 class AddressFunction(Protocol):
     """Protocol for address checksumming functions."""
 
-    def __call__(self, address: str | bytes) -> ChecksumAddress:
+    def __call__(self, address: str | bytes) -> ChecksummedAddress:
         """Checksum the given address."""
         ...
 
@@ -270,14 +270,14 @@ class AddressRegistry[T](AbstractAddressRegistry[T]):
 
         """
         super().__init__(checksum_fn=checksum_fn, on_duplicate=on_duplicate, name=name)
-        self._items: dict[tuple[int, ChecksumAddress], T] = {}
+        self._items: dict[tuple[int, ChecksummedAddress], T] = {}
 
     def _build_key(
         self,
         chain_id: int,
         address: str | bytes = "",
         **address_args: str | bytes,
-    ) -> tuple[int, ChecksumAddress]:
+    ) -> tuple[int, ChecksummedAddress]:
         """Build key (chain_id, checksummed_address).
 
         Returns:
@@ -293,7 +293,7 @@ class AddressRegistry[T](AbstractAddressRegistry[T]):
             raise ValueError(msg)
         return (chain_id, self._checksum_fn(first_address))
 
-    def _storage(self) -> dict[tuple[int, ChecksumAddress], T]:
+    def _storage(self) -> dict[tuple[int, ChecksummedAddress], T]:
         """Backing storage for this registry.
 
         Returns:

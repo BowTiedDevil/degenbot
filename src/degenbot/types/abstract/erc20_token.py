@@ -1,14 +1,13 @@
 """Abstract ERC-20 token protocol definition."""
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.types.address_comparable import AddressComparable
 
 
 class AbstractErc20Token(AddressComparable):
     """AbstractErc20Token class."""
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
     symbol: str
     name: str
     decimals: int

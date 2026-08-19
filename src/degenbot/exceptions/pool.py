@@ -9,9 +9,9 @@ Includes exceptions for:
 
 from typing import TYPE_CHECKING, Any
 
-from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot.exceptions.base import DegenbotError
 from degenbot.types.aliases import BlockNumber
 
@@ -258,7 +258,7 @@ class UnknownPool(LiquidityPoolError):
     state prior to the update is unknown.
     """
 
-    def __init__(self, pool: ChecksumAddress) -> None:
+    def __init__(self, pool: ChecksummedAddress) -> None:
         """Initialize the instance."""
         super().__init__(message=f"A liquidity update for unknown pool {pool} was provided.")
 

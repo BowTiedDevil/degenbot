@@ -7,7 +7,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
-from eth_typing import ChecksumAddress
+from degenbot._ffi import ChecksummedAddress
 from scipy.optimize import minimize_scalar
 
 from degenbot.exceptions import DegenbotError
@@ -25,8 +25,8 @@ if TYPE_CHECKING:
 V2_FEE = Fraction(3, 1000)
 
 # Token addresses used by the fixture
-USDC_ADDRESS: ChecksumAddress = ChecksumAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
-WETH_ADDRESS: ChecksumAddress = ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+USDC_ADDRESS: ChecksummedAddress = ChecksummedAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+WETH_ADDRESS: ChecksummedAddress = ChecksummedAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 
 def build_pools_from_fixture(

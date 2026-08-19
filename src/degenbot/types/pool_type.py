@@ -7,7 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
+    from degenbot._ffi import ChecksummedAddress
 
 
 class PoolFamily(Enum):
@@ -34,7 +34,7 @@ class PoolTypeDescriptor:
     variant: str | None  # "sushiswap", "camelot", "aerodrome", etc.
     # None = canonical Uniswap variant
     kind: str  # DB polymorphic type: "uniswap_v2", "sushiswap_v3", etc.
-    factory: ChecksumAddress | None
+    factory: ChecksummedAddress | None
 
 
 def derive_kind(family: PoolFamily, variant: str | None) -> str:

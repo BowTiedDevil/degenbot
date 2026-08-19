@@ -55,12 +55,12 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable
 
-    from eth_typing import ChecksumAddress
+    from degenbot._ffi import ChecksummedAddress
 
 
 CHAIN = 1
-UNISWAP_V2_FACTORY: ChecksumAddress = get_checksum_address("0x" + "f" * 40)
-V2_POOL_MANAGER_ADDRESS: ChecksumAddress = get_checksum_address("0x" + "b" * 40)
+UNISWAP_V2_FACTORY: ChecksummedAddress = get_checksum_address("0x" + "f" * 40)
+V2_POOL_MANAGER_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "b" * 40)
 V4_POOL_HASH = "0x" + "c" * 64
 
 V2_POOL_CREATED_TOPIC = HexBytes(
@@ -75,9 +75,9 @@ V4_POOL_CREATED_TOPIC = HexBytes(
 
 
 def _v2_pool_created_log(
-    pool_address: ChecksumAddress,
-    token0: ChecksumAddress,
-    token1: ChecksumAddress,
+    pool_address: ChecksummedAddress,
+    token0: ChecksummedAddress,
+    token1: ChecksummedAddress,
     *,
     stable: bool = False,
 ) -> LogReceipt:
@@ -100,9 +100,9 @@ def _v2_pool_created_log(
 
 
 def _v3_pool_created_log(
-    pool_address: ChecksumAddress,
-    token0: ChecksumAddress,
-    token1: ChecksumAddress,
+    pool_address: ChecksummedAddress,
+    token0: ChecksummedAddress,
+    token1: ChecksummedAddress,
     fee: int,
     tick_spacing: int,
 ) -> LogReceipt:
@@ -127,11 +127,11 @@ def _v3_pool_created_log(
 
 def _v4_pool_created_log(
     pool_hash: str,
-    currency0: ChecksumAddress,
-    currency1: ChecksumAddress,
+    currency0: ChecksummedAddress,
+    currency1: ChecksummedAddress,
     fee: int,
     tick_spacing: int,
-    hooks: ChecksumAddress,
+    hooks: ChecksummedAddress,
 ) -> LogReceipt:
     return LogReceipt(  # type: ignore[typeddict-item]
         {
@@ -454,10 +454,10 @@ def test_set_exchange_last_update_block_seam(seeded_db: pathlib.Path) -> None:
 # flips active + `db_fetch_exchange` reads it back; `db_upsert_pool_manager`
 # round-trips + is idempotent.
 
-FACTORY: ChecksumAddress = get_checksum_address("0x" + "f" * 40)
-DEPLOYER: ChecksumAddress = get_checksum_address("0x" + "d" * 40)
-POOL_MANAGER: ChecksumAddress = get_checksum_address("0x" + "b" * 40)
-STATE_VIEW: ChecksumAddress = get_checksum_address("0x" + "e" * 40)
+FACTORY: ChecksummedAddress = get_checksum_address("0x" + "f" * 40)
+DEPLOYER: ChecksummedAddress = get_checksum_address("0x" + "d" * 40)
+POOL_MANAGER: ChecksummedAddress = get_checksum_address("0x" + "b" * 40)
+STATE_VIEW: ChecksummedAddress = get_checksum_address("0x" + "e" * 40)
 
 
 def test_db_upsert_exchange_inserts_active_false_and_is_idempotent(
@@ -587,7 +587,7 @@ def test_db_upsert_pool_manager_round_trips_and_is_idempotent(
     assert first.exchange_id == exchange.id
 
     # re-call with a changed state_view — same id, state_view updated.
-    other_state_view: ChecksumAddress = get_checksum_address("0x" + "a" * 40)
+    other_state_view: ChecksummedAddress = get_checksum_address("0x" + "a" * 40)
     second = db_upsert_pool_manager(
         database_path=str(db_path),
         address=POOL_MANAGER,

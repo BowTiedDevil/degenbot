@@ -10,8 +10,7 @@ eliminating the need for side-effect mirrors or call-ordering contracts.
 
 import contextlib
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.exceptions.pool import MissingCurveData
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
@@ -37,7 +36,7 @@ class PerBlockCache:
     def __init__(
         self,
         data_provider: CurveDataProvider | None,
-        address: ChecksumAddress,
+        address: ChecksummedAddress,
         *,
         base_pool_is_set: bool,
         state_cache_depth: int = 8,

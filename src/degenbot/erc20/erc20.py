@@ -2,8 +2,7 @@
 
 from typing import Any, Self
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot._ffi import Erc20Token as _TokenHandle
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
@@ -30,8 +29,8 @@ class Erc20Token(AbstractErc20Token):
     # `self.x: T = ...` as `invalid-type-form`).
     _py_token: _TokenHandle
     _state_cache_depth: int
-    _cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int]
-    _cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]]
+    _cached_approval: dict[tuple[int, ChecksummedAddress, ChecksummedAddress], int]
+    _cached_balance: dict[ChecksummedAddress, BoundedCache[BlockNumber, int]]
     _cached_total_supply: BoundedCache[BlockNumber, int]
     _price_oracle: ChainlinkPriceContract | None
 
@@ -109,7 +108,7 @@ class Erc20Token(AbstractErc20Token):
         return self
 
     @property
-    def address(self) -> ChecksumAddress:
+    def address(self) -> ChecksummedAddress:
         """Token contract address (EIP-55 checksum).
 
         Rust holds the address bytes; ``get_checksum_address`` applies the
@@ -134,7 +133,7 @@ class Erc20Token(AbstractErc20Token):
 
     # -- Cache accessors (dictionary operations, no I/O) --
 
-    def get_cached_balance(self, address: ChecksumAddress, block_number: int) -> int | None:
+    def get_cached_balance(self, address: ChecksummedAddress, block_number: int) -> int | None:
         """Return cached balance.
 
         Returns:
@@ -144,7 +143,9 @@ class Erc20Token(AbstractErc20Token):
         cache = self._cached_balance.get(address, BoundedCache(max_items=self._state_cache_depth))
         return cache.get(block_number)
 
-    def set_cached_balance(self, address: ChecksumAddress, block_number: int, balance: int) -> None:
+    def set_cached_balance(
+        self, address: ChecksummedAddress, block_number: int, balance: int
+    ) -> None:
         """Set cached balance."""
         if address not in self._cached_balance:
             self._cached_balance[address] = BoundedCache(max_items=self._state_cache_depth)
@@ -153,8 +154,8 @@ class Erc20Token(AbstractErc20Token):
     def get_cached_approval(
         self,
         block_number: int,
-        owner: ChecksumAddress,
-        spender: ChecksumAddress,
+        owner: ChecksummedAddress,
+        spender: ChecksummedAddress,
     ) -> int | None:
         """Return cached approval.
 
@@ -167,8 +168,8 @@ class Erc20Token(AbstractErc20Token):
     def set_cached_approval(
         self,
         block_number: int,
-        owner: ChecksumAddress,
-        spender: ChecksumAddress,
+        owner: ChecksummedAddress,
+        spender: ChecksummedAddress,
         amount: int,
     ) -> None:
         """Set cached approval."""

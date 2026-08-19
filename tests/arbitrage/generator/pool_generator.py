@@ -8,7 +8,7 @@ import math
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from eth_typing import ChecksumAddress
+from degenbot._ffi import ChecksummedAddress
 from hexbytes import HexBytes
 
 from degenbot.types.abstract import AbstractPoolState
@@ -55,7 +55,7 @@ class PoolStateGenerator:
 
     def generate_v2_pool_state(
         self,
-        address: ChecksumAddress,
+        address: ChecksummedAddress,
         reserves_token0: int,
         reserves_token1: int,
         block: int = 0,
@@ -64,7 +64,7 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        address : ChecksumAddress
+        address : ChecksummedAddress
             The pool address.
         reserves_token0 : int
             Reserve amount for token0.
@@ -88,7 +88,7 @@ class PoolStateGenerator:
 
     def generate_v3_pool_state(
         self,
-        address: ChecksumAddress,
+        address: ChecksummedAddress,
         sqrt_price_x96: SqrtPriceX96,
         liquidity: Liquidity,
         tick: Tick,
@@ -105,7 +105,7 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        address : ChecksumAddress
+        address : ChecksummedAddress
             The pool address.
         sqrt_price_x96 : SqrtPriceX96
             The current sqrt price in Q128.96 format.
@@ -147,7 +147,7 @@ class PoolStateGenerator:
 
     def generate_v4_pool_state(
         self,
-        address: ChecksumAddress,
+        address: ChecksummedAddress,
         pool_id: HexBytes,
         sqrt_price_x96: SqrtPriceX96,
         liquidity: Liquidity,
@@ -165,7 +165,7 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        address : ChecksumAddress
+        address : ChecksummedAddress
             The PoolManager address.
         pool_id : HexBytes
             The pool identifier.
@@ -297,7 +297,7 @@ class PoolStateGenerator:
 
     def generate_v2_pool_state_from_price(
         self,
-        address: ChecksumAddress,
+        address: ChecksummedAddress,
         price_token1_per_token0: float,
         liquidity_base: int,
         config: PoolGenerationConfig,
@@ -306,7 +306,7 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        address : ChecksumAddress
+        address : ChecksummedAddress
             The pool address.
         price_token1_per_token0 : float
             Target price (how many token1 per token0).
@@ -340,7 +340,7 @@ class PoolStateGenerator:
 
     def generate_v3_pool_state_from_price(
         self,
-        address: ChecksumAddress,
+        address: ChecksummedAddress,
         price_token1_per_token0: float,
         liquidity: Liquidity,
         config: V3PoolGenerationConfig,
@@ -349,7 +349,7 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        address : ChecksumAddress
+        address : ChecksummedAddress
             The pool address.
         price_token1_per_token0 : float
             Target price (how many token1 per token0).
@@ -386,7 +386,7 @@ class PoolStateGenerator:
     def inject_price_discrepancy(
         self,
         pool_a_state: UniswapV2PoolState,
-        pool_b_address: ChecksumAddress,
+        pool_b_address: ChecksummedAddress,
         discrepancy: PriceDiscrepancyConfig,
     ) -> UniswapV2PoolState:
         """Create a second V2 pool state that creates an arbitrage opportunity.
@@ -398,7 +398,7 @@ class PoolStateGenerator:
         ----------
         pool_a_state : UniswapV2PoolState
             State of the first pool.
-        pool_b_address : ChecksumAddress
+        pool_b_address : ChecksummedAddress
             Address for the second pool.
         discrepancy : PriceDiscrepancyConfig
             Price discrepancy configuration.
@@ -435,8 +435,8 @@ class PoolStateGenerator:
 
     def generate_profitable_v2_pair(
         self,
-        pool_a_address: ChecksumAddress,
-        pool_b_address: ChecksumAddress,
+        pool_a_address: ChecksummedAddress,
+        pool_b_address: ChecksummedAddress,
         fee_a: Fraction,
         fee_b: Fraction,
         price_ratio: float,
@@ -448,9 +448,9 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        pool_a_address : ChecksumAddress
+        pool_a_address : ChecksummedAddress
             Address for pool A.
-        pool_b_address : ChecksumAddress
+        pool_b_address : ChecksummedAddress
             Address for pool B.
         fee_a : Fraction
             Fee for pool A.
@@ -493,8 +493,8 @@ class PoolStateGenerator:
 
     def generate_profitable_v3_pair(
         self,
-        pool_a_address: ChecksumAddress,
-        pool_b_address: ChecksumAddress,
+        pool_a_address: ChecksummedAddress,
+        pool_b_address: ChecksummedAddress,
         tick_spacing: int,
         price_ratio: float,
         liquidity: Liquidity,
@@ -505,9 +505,9 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        pool_a_address : ChecksumAddress
+        pool_a_address : ChecksummedAddress
             Address for pool A.
-        pool_b_address : ChecksumAddress
+        pool_b_address : ChecksummedAddress
             Address for pool B.
         tick_spacing : int
             Tick spacing for both pools.
@@ -549,8 +549,8 @@ class PoolStateGenerator:
 
     def generate_profitable_v4_pair(
         self,
-        pool_a_address: ChecksumAddress,
-        pool_b_address: ChecksumAddress,
+        pool_a_address: ChecksummedAddress,
+        pool_b_address: ChecksummedAddress,
         pool_a_id: HexBytes,
         pool_b_id: HexBytes,
         tick_spacing: int,
@@ -563,9 +563,9 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        pool_a_address : ChecksumAddress
+        pool_a_address : ChecksummedAddress
             PoolManager address.
-        pool_b_address : ChecksumAddress
+        pool_b_address : ChecksummedAddress
             PoolManager address (same as pool_a for V4).
         pool_a_id : HexBytes
             Pool ID for pool A.
@@ -627,8 +627,8 @@ class PoolStateGenerator:
 
     def generate_profitable_mixed_pair(
         self,
-        v2_pool_address: ChecksumAddress,
-        v3_pool_address: ChecksumAddress,
+        v2_pool_address: ChecksummedAddress,
+        v3_pool_address: ChecksummedAddress,
         v2_fee: Fraction,
         v3_tick_spacing: int,
         price_ratio: float,
@@ -641,9 +641,9 @@ class PoolStateGenerator:
 
         Parameters
         ----------
-        v2_pool_address : ChecksumAddress
+        v2_pool_address : ChecksummedAddress
             Address for the V2 pool.
-        v3_pool_address : ChecksumAddress
+        v3_pool_address : ChecksummedAddress
             Address for the V3 pool.
         v2_fee : Fraction
             Fee for the V2 pool.

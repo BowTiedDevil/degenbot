@@ -61,8 +61,7 @@ from degenbot.version import __version__
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
@@ -693,7 +692,7 @@ class Bot:
     def _dispatch_build(
         *,
         builder: PoolBuilder,
-        address: ChecksumAddress,
+        address: ChecksummedAddress,
         chain_id: ChainId,
         io: BotIo,
         request: BuildRequest,

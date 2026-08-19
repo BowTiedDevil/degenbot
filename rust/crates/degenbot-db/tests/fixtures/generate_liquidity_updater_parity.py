@@ -43,7 +43,7 @@ import pathlib
 import shutil
 
 from eth_abi import encode as abi_encode
-from eth_typing import ChecksumAddress
+from degenbot._ffi import ChecksummedAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -99,9 +99,9 @@ V4_MODIFY_TOPIC = HexBytes("0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af6
 CHAIN = 1
 TICK_SPACING = 10
 
-V3_POOL_ADDRESS: ChecksumAddress = get_checksum_address("0x" + "a" * 40)
-V3_FACTORY: ChecksumAddress = get_checksum_address("0x" + "f" * 40)
-V4_POOL_MANAGER_ADDRESS: ChecksumAddress = get_checksum_address("0x" + "b" * 40)
+V3_POOL_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "a" * 40)
+V3_FACTORY: ChecksummedAddress = get_checksum_address("0x" + "f" * 40)
+V4_POOL_MANAGER_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "b" * 40)
 # V4 pool-hash as a 0x-prefixed hex string (matches `pool_id.to_0x_hex()` in the
 # Python `apply_v4_liquidity_updates` lookup). Must be exactly 66 chars.
 V4_POOL_HASH = "0x" + "c" * 64

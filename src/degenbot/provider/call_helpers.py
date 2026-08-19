@@ -7,8 +7,7 @@ ABI encoding/decoding and block identifier resolution.
 from collections.abc import Sequence
 from typing import Any
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.abi import decode, encode
 from degenbot.crypto import function_selector
 from degenbot.provider import AlloyProvider
@@ -57,7 +56,7 @@ def extract_argument_types_from_function_prototype(function_prototype: str) -> l
 
 def raw_call(
     provider: AlloyProvider,
-    address: ChecksumAddress,
+    address: ChecksummedAddress,
     calldata: bytes,
     return_types: list[str],
     block_identifier: BlockIdentifier | None = None,

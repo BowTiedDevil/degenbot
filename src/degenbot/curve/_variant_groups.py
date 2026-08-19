@@ -7,12 +7,11 @@ The builder resolves variant group membership at construction time and passes
 the result as strategy enums to the pool constructor.
 """
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.types import DVariant, YDVariant, YVariant
 
-_D_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
+_D_VARIANT_GROUP_0: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0x06364f10B501e868329afBc005b3492902d6C763",
@@ -24,7 +23,7 @@ _D_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
     )
 )
 
-_D_VARIANT_GROUP_1: frozenset[ChecksumAddress] = frozenset(
+_D_VARIANT_GROUP_1: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
@@ -34,7 +33,7 @@ _D_VARIANT_GROUP_1: frozenset[ChecksumAddress] = frozenset(
     )
 )
 
-_D_VARIANT_GROUP_2: frozenset[ChecksumAddress] = frozenset(
+_D_VARIANT_GROUP_2: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0x0AD66FeC8dB84F8A3365ADA04aB23ce607ac6E24",
@@ -57,7 +56,7 @@ _D_VARIANT_GROUP_2: frozenset[ChecksumAddress] = frozenset(
     )
 )
 
-_D_VARIANT_GROUP_3: frozenset[ChecksumAddress] = frozenset(
+_D_VARIANT_GROUP_3: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022",
@@ -66,7 +65,7 @@ _D_VARIANT_GROUP_3: frozenset[ChecksumAddress] = frozenset(
     )
 )
 
-_D_VARIANT_GROUP_4: frozenset[ChecksumAddress] = frozenset(
+_D_VARIANT_GROUP_4: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0x1062FD8eD633c1f080754c19317cb3912810B5e5",
@@ -83,7 +82,7 @@ _D_VARIANT_GROUP_4: frozenset[ChecksumAddress] = frozenset(
 )
 
 
-_Y_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
+_Y_VARIANT_GROUP_0: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51",
@@ -94,7 +93,7 @@ _Y_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
     )
 )
 
-_Y_VARIANT_GROUP_1: frozenset[ChecksumAddress] = frozenset(
+_Y_VARIANT_GROUP_1: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0x06364f10B501e868329afBc005b3492902d6C763",
@@ -111,7 +110,7 @@ _Y_VARIANT_GROUP_1: frozenset[ChecksumAddress] = frozenset(
 )
 
 
-_Y_D_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
+_Y_D_VARIANT_GROUP_0: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)
     for addr in (
         "0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2",
@@ -120,7 +119,7 @@ _Y_D_VARIANT_GROUP_0: frozenset[ChecksumAddress] = frozenset(
 )
 
 
-def resolve_d_variant(pool_address: ChecksumAddress | str) -> DVariant:
+def resolve_d_variant(pool_address: ChecksummedAddress | str) -> DVariant:
     """Resolve the D-calculation variant for a Curve pool address.
 
     Returns DVariant.STANDARD for unrecognized addresses.
@@ -143,7 +142,7 @@ def resolve_d_variant(pool_address: ChecksumAddress | str) -> DVariant:
     return DVariant.STANDARD
 
 
-def resolve_y_variant(pool_address: ChecksumAddress | str) -> YVariant:
+def resolve_y_variant(pool_address: ChecksummedAddress | str) -> YVariant:
     """Resolve the Y-calculation variant for a Curve pool address.
 
     Y_VARIANT_GROUP_0 ⊂ Y_VARIANT_GROUP_1, so addresses resolve to:
@@ -165,7 +164,7 @@ def resolve_y_variant(pool_address: ChecksumAddress | str) -> YVariant:
     return YVariant.STANDARD
 
 
-def resolve_yd_variant(pool_address: ChecksumAddress | str) -> YDVariant:
+def resolve_yd_variant(pool_address: ChecksummedAddress | str) -> YDVariant:
     """Resolve the Y_D-calculation variant for a Curve pool address.
 
     Returns YDVariant.STANDARD for unrecognized addresses.

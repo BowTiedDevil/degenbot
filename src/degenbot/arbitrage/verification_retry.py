@@ -17,8 +17,7 @@ the transient ``VerificationRpcError`` category, leaving
 ``VerificationRpcError`` is re-raised (``reraise=True``) — the bot still does
 NOT silently continue on unverified data.
 
-Uses ``tenacity`` (the codebase's existing retry idiom, also used by
-``degenbot.provider.log_fetching.fetch_logs_retrying``) so the policy composes
+Uses ``tenacity`` (the codebase's retry idiom) so the policy composes
 with the rest of the retry machinery: exponential wait with jitter, bounded
 attempts, retry only on ``VerificationRpcError``.
 """

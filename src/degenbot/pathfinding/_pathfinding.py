@@ -8,9 +8,9 @@ from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from eth_typing import ChecksumAddress
 from sqlalchemy.orm import Session
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import (
     LiquidityPoolTable,
@@ -58,7 +58,7 @@ _DISCOVERY_HEARTBEAT_INTERVAL_S: float = 15.0
 class PathStep:
     """PathStep class."""
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
     type: type[LiquidityPoolTable | UniswapV4PoolTable]
     hash: str | None = None
 
@@ -110,8 +110,8 @@ class _PreparedGraph:
     """
 
     edges: list[tuple[TokenId, TokenId, PoolId, int]]
-    v2v3_addresses: dict[PoolId, ChecksumAddress]
-    v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]]
+    v2v3_addresses: dict[PoolId, ChecksummedAddress]
+    v4_lookups: dict[PoolId, tuple[ChecksummedAddress, str]]
     pool_id_to_type: dict[tuple[PoolId, int], type[LiquidityPoolTable | UniswapV4PoolTable]]
 
 
@@ -271,8 +271,8 @@ def _prepare_graph_rust(
 
 def _build_path_steps(
     path: list[tuple[PoolId, int]],
-    v2v3_addresses: dict[PoolId, ChecksumAddress],
-    v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]],
+    v2v3_addresses: dict[PoolId, ChecksummedAddress],
+    v4_lookups: dict[PoolId, tuple[ChecksummedAddress, str]],
     pool_id_to_type: dict[tuple[PoolId, int], type[LiquidityPoolTable | UniswapV4PoolTable]],
 ) -> list[PathStep]:
     """Convert a raw Rust path ``(pool_id, pool_kind_u8)`` into ``PathStep`` objects.
@@ -307,9 +307,9 @@ def _build_path_steps(
 
 
 def _prepare_traversal_plan(
-    start_tokens: set[ChecksumAddress],
-    end_tokens: set[ChecksumAddress],
-) -> dict[tuple[ChecksumAddress, ChecksumAddress], Direction]:
+    start_tokens: set[ChecksummedAddress],
+    end_tokens: set[ChecksummedAddress],
+) -> dict[tuple[ChecksummedAddress, ChecksummedAddress], Direction]:
     """Prepare a traversal plan that will cover all combinations from the given starting and ending.
 
     sets.
@@ -321,7 +321,7 @@ def _prepare_traversal_plan(
     # Assemble an exhaustive plan based on the Cartesian product of all start and end nodes:
     # e.g. P(a|b -> a|b) == P(a->a) + P(a->b) + P(b->a) + P(b->b)
     traversal_plan: dict[
-        tuple[ChecksumAddress, ChecksumAddress],
+        tuple[ChecksummedAddress, ChecksummedAddress],
         Direction,
     ] = dict.fromkeys(
         itertools.product(start_tokens, end_tokens),
@@ -365,14 +365,14 @@ def _convert_pool_type_filter(
 def find_paths(
     *,
     chain_id: int,
-    start_tokens: Iterable[ChecksumAddress | str],
-    end_tokens: Iterable[ChecksumAddress | str],
+    start_tokens: Iterable[ChecksummedAddress | str],
+    end_tokens: Iterable[ChecksummedAddress | str],
     min_depth: int = 2,
     max_depth: int | None = None,
     pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
     db: DatabaseSessionManager,
     pool_type_per_depth: Sequence[set[type] | None] | None = None,
-    allowed_intermediate_tokens: Iterable[ChecksumAddress | str] | None = None,
+    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None,
 ) -> Iterator[Sequence[PathStep]]:
     """Find paths from each of the given start tokens to each of the given end tokens.
 
@@ -495,14 +495,14 @@ def find_paths(
 async def find_paths_async(
     *,
     chain_id: int,
-    start_tokens: Iterable[ChecksumAddress | str],
-    end_tokens: Iterable[ChecksumAddress | str],
+    start_tokens: Iterable[ChecksummedAddress | str],
+    end_tokens: Iterable[ChecksummedAddress | str],
     min_depth: int = 2,
     max_depth: int | None = None,
     pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
     db: DatabaseSessionManager,
     pool_type_per_depth: Sequence[set[type] | None] | None = None,
-    allowed_intermediate_tokens: Iterable[ChecksumAddress | str] | None = None,
+    allowed_intermediate_tokens: Iterable[ChecksummedAddress | str] | None = None,
 ) -> AsyncIterator[Sequence[PathStep]]:
     """Async version of ``find_paths``.
 

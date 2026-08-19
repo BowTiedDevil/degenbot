@@ -5,8 +5,7 @@ from fractions import Fraction
 from typing import Any, ClassVar, Self
 from weakref import WeakSet
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
 )
@@ -49,14 +48,14 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     # them without inline annotations on the classmethod body
     _py_pool: LiquidityPool
     dex: DexIdentity
-    address: ChecksumAddress
-    factory: ChecksumAddress
+    address: ChecksummedAddress
+    factory: ChecksummedAddress
     _fee_token0: Fraction
     _fee_token1: Fraction
     _token0: Erc20Token
     _token1: Erc20Token
     init_hash: str
-    deployer: ChecksumAddress
+    deployer: ChecksummedAddress
     name: str
     _subscribers: WeakSet[Subscriber]
 

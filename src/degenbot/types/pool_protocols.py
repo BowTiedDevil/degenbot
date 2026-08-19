@@ -16,8 +16,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.concrete import Subscriber
@@ -42,7 +41,7 @@ class ConstantProductPool(Protocol):
     """
 
     @property
-    def address(self) -> ChecksumAddress:
+    def address(self) -> ChecksummedAddress:
         """Pool contract address."""
         ...
 
@@ -90,7 +89,7 @@ class ConcentratedLiquidityPool(Protocol):
     """
 
     @property
-    def address(self) -> ChecksumAddress:
+    def address(self) -> ChecksummedAddress:
         """Pool contract address."""
         ...
 
@@ -158,7 +157,7 @@ class PoolSimulation(Protocol):
     """
 
     @property
-    def address(self) -> ChecksumAddress:
+    def address(self) -> ChecksummedAddress:
         """Pool contract address."""
         ...
 

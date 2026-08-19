@@ -1,9 +1,9 @@
 """Deterministic contract address derivation."""
 
-from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 
 
@@ -11,7 +11,7 @@ def create2_address(
     deployer: str | bytes,
     salt: bytes | str,
     init_code_hash: bytes | str,
-) -> ChecksumAddress:
+) -> ChecksummedAddress:
     """Generate the deterministic CREATE2 address.
 
     Given a deployer, salt, and the keccak hash of the contract creation

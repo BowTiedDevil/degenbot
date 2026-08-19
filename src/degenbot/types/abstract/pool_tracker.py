@@ -9,8 +9,7 @@ from degenbot.checksum_cache import get_checksum_address
 if TYPE_CHECKING:
     from threading import Lock
 
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.bot import Bot
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -25,10 +24,10 @@ class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
     # Instance variables
     _bot: Bot
     _chain_id: ChainId
-    _deployer_address: ChecksumAddress
-    _factory_address: ChecksumAddress
-    _tracked_pools: dict[ChecksumAddress, Pool]
-    _untracked_pools: set[ChecksumAddress]
+    _deployer_address: ChecksummedAddress
+    _factory_address: ChecksummedAddress
+    _tracked_pools: dict[ChecksummedAddress, Pool]
+    _untracked_pools: set[ChecksummedAddress]
     _lock: Lock
 
     def __init__(
@@ -55,7 +54,7 @@ class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
         with self._lock:
             self._tracked_pools[pool_helper.address] = pool_helper
 
-    def remove(self, pool_address: ChecksumAddress | str) -> None:
+    def remove(self, pool_address: ChecksummedAddress | str) -> None:
         """Perform remove."""
         pool_address = get_checksum_address(pool_address)
         self._tracked_pools.pop(pool_address, None)
@@ -67,11 +66,11 @@ class AbstractPoolTracker[Pool: AbstractLiquidityPool]:
         return self._chain_id
 
     @property
-    def deployer_address(self) -> ChecksumAddress:
+    def deployer_address(self) -> ChecksummedAddress:
         """Deployer address."""
         return self._deployer_address
 
     @property
-    def factory_address(self) -> ChecksumAddress:
+    def factory_address(self) -> ChecksummedAddress:
         """Factory address."""
         return self._factory_address

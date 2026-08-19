@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 
 import eth_typing
-from eth_typing import ChecksumAddress
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 
 
@@ -14,7 +14,7 @@ class AaveV3Deployment:
 
     name: str
     chain_id: eth_typing.ChainId
-    pool_address_provider: ChecksumAddress
+    pool_address_provider: ChecksummedAddress
 
 
 EthereumMainnetAaveV3 = AaveV3Deployment(

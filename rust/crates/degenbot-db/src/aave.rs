@@ -560,7 +560,7 @@ impl DegenbotDb {
     /// Addresses are returned as raw stored [`String`]s — `fetch_pool_events`/
     /// `fetch_scaled_token_events` accept the checksum form; the orchestrator
     /// checksum-normalizes once at the call site (mirrors the Python path
-    /// which holds `ChecksumAddress`s).
+    /// which holds `ChecksummedAddress`s).
     ///
     /// # Errors
     ///

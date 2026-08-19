@@ -15,10 +15,10 @@ bucket-sorter stays here (it's trivial Python, not math).
 
 from typing import Any
 
-from eth_typing import ChecksumAddress
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot._ffi.db import DatabasePositionQuery as _EnginePositionQuery
 from degenbot.aave import AavePriceOracle
 from degenbot.checksum_cache import get_checksum_address
@@ -106,7 +106,7 @@ class DatabasePositionQuery:
         """
         return self._handle().get_collateral_config_map(user_id)
 
-    def get_oracle_address(self, market_id: int) -> ChecksumAddress | None:
+    def get_oracle_address(self, market_id: int) -> ChecksummedAddress | None:
         """Get the price oracle address for a market.
 
         Returns:
@@ -116,7 +116,7 @@ class DatabasePositionQuery:
         addr = self._handle().get_oracle_address(market_id)
         return get_checksum_address(addr) if addr is not None else None
 
-    def get_asset_addresses(self, market_id: int) -> set[ChecksumAddress]:
+    def get_asset_addresses(self, market_id: int) -> set[ChecksummedAddress]:
         """Get all unique underlying asset addresses for a market.
 
         Returns:
@@ -135,12 +135,12 @@ class OraclePriceFetcher:
     per-asset skip-on-error behavior.
     """
 
-    def __init__(self, provider: AlloyProvider, oracle_address: ChecksumAddress) -> None:
+    def __init__(self, provider: AlloyProvider, oracle_address: ChecksummedAddress) -> None:
         """Initialize the instance."""
         self._provider = provider
         self._oracle_address = oracle_address
 
-    def fetch(self, asset_addresses: set[ChecksumAddress]) -> dict[ChecksumAddress, int]:
+    def fetch(self, asset_addresses: set[ChecksummedAddress]) -> dict[ChecksummedAddress, int]:
         """Fetch prices for all assets from the Aave oracle.
 
         Returns:
@@ -243,7 +243,7 @@ def analyze_positions_for_market(
     """
     position_query = DatabasePositionQuery(session)
 
-    price_map: dict[ChecksumAddress, int] = {}
+    price_map: dict[ChecksummedAddress, int] = {}
     if provider is not None:
         oracle_address = position_query.get_oracle_address(market_id)
         if oracle_address is None:
@@ -258,7 +258,7 @@ def analyze_positions_for_market(
 
     result = PositionAnalysisResult()
 
-    # The price_map is keyed by checksummed ChecksumAddress (the fetcher's
+    # The price_map is keyed by checksummed ChecksummedAddress (the fetcher's
     # output); the record dicts carry checksummed addresses too (the
     # _checksum_* helpers). Both match — pass the price_map straight through.
     seam_prices: dict[str, int] | None = (
@@ -285,7 +285,7 @@ def analyze_positions_for_market(
 
 
 def _checksum_user(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the user address to a ChecksumAddress.
+    """Normalize the user address to a ChecksummedAddress.
 
     Returns:
         The row with its ``address`` field EIP-55 checksummed.
@@ -297,7 +297,7 @@ def _checksum_user(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _checksum_collateral(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the underlying address to a ChecksumAddress.
+    """Normalize the underlying address to a ChecksummedAddress.
 
     Returns:
         The row with its ``underlying_address`` field EIP-55 checksummed.
@@ -309,7 +309,7 @@ def _checksum_collateral(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _checksum_debt(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the underlying address to a ChecksumAddress.
+    """Normalize the underlying address to a ChecksummedAddress.
 
     Returns:
         The row with its ``underlying_address`` field EIP-55 checksummed.

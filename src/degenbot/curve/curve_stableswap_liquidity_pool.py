@@ -9,8 +9,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.per_block_cache import PerBlockCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
@@ -199,7 +198,7 @@ class CurveStableswapPool(
     # Class-scope instance-attribute declarations (red-knot): `_from_py_pool`
     # assigns these on `Self`; declare them at class scope so attribute reads
     # in helper/calc methods resolve (mirrors the Balancer/Aerodrome seams).
-    address: ChecksumAddress
+    address: ChecksummedAddress
     _py_pool: LiquidityPool
     _tokens: tuple[Erc20Token, ...]
     _a_coefficient: int

@@ -43,7 +43,7 @@ pub(crate) fn decode_opt_u256(s: Option<&str>) -> Result<Option<U256>, DbError> 
 
 /// Decode a non-null `VARCHAR(42)` checksummed address to [`Address`].
 ///
-/// Addresses are stored EIP-55 checksummed (Python `ChecksumAddress`); this
+/// Addresses are stored EIP-55 checksummed (Python `ChecksummedAddress`); this
 /// validates the checksum, matching the Python reader's `get_checksum_address`.
 pub(crate) fn decode_address(s: &str) -> Result<Address, DbError> {
     Address::parse_checksummed(s, None)

@@ -2,8 +2,7 @@
 
 from dataclasses import dataclass
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.types.aliases import BlockNumber
 
 
@@ -11,5 +10,5 @@ from degenbot.types.aliases import BlockNumber
 class AbstractPoolState:
     """AbstractPoolState class."""
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
     block: BlockNumber | None

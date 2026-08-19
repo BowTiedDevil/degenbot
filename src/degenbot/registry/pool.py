@@ -8,9 +8,7 @@ from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
 from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
-    from degenbot._ffi import Bot
+    from degenbot._ffi import Bot, ChecksummedAddress
     from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
@@ -31,7 +29,7 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
     def get(
         self,
         chain_id: ChainId,
-        pool_manager_address: ChecksumAddress,
+        pool_manager_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> ConcentratedLiquidityPool | None:
         """Retrieve a V4 pool by chain, manager address, and pool ID.
@@ -50,7 +48,7 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
         self,
         pool: ConcentratedLiquidityPool,
         chain_id: ChainId,
-        pool_manager_address: ChecksumAddress,
+        pool_manager_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> None:
         """Register a V4 pool."""
@@ -65,7 +63,7 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
         self,
         pool: ConcentratedLiquidityPool,
         chain_id: ChainId,
-        pool_manager_address: ChecksumAddress,
+        pool_manager_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> ConcentratedLiquidityPool:
         """Idempotently register a V4 pool, returning the stored instance.
@@ -88,7 +86,7 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
     def remove(
         self,
         chain_id: ChainId,
-        pool_manager_address: ChecksumAddress,
+        pool_manager_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> None:
         """Remove a V4 pool."""
@@ -127,7 +125,7 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
     def get(
         self,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: None = None,
     ) -> AbstractLiquidityPool | None: ...
 
@@ -135,14 +133,14 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
     def get(
         self,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> ConcentratedLiquidityPool | None: ...
 
     def get(
         self,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: PoolId | None = None,
     ) -> AbstractLiquidityPool | ConcentratedLiquidityPool | None:
         """Retrieve a pool by chain and address.
@@ -163,7 +161,7 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         self,
         pool: AbstractLiquidityPool,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: PoolId | None = None,
     ) -> None:
         """Register a pool.
@@ -194,7 +192,7 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         self,
         pool: AbstractLiquidityPool,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: PoolId | None = None,
     ) -> AbstractLiquidityPool | ConcentratedLiquidityPool:
         """Idempotently register a pool, returning the stored instance.
@@ -228,7 +226,7 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
     def remove(
         self,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: PoolId,
     ) -> None: ...
 
@@ -236,14 +234,14 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
     def remove(
         self,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: None = None,
     ) -> None: ...
 
     def remove(
         self,
         chain_id: ChainId,
-        pool_address: ChecksumAddress,
+        pool_address: ChecksummedAddress,
         pool_id: PoolId | None = None,
     ) -> None:
         """Remove a pool.

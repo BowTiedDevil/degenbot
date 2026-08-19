@@ -4,7 +4,7 @@ Verifies that existing pool classes structurally satisfy the defined
 protocols once they implement the required methods (subscribe, unsubscribe).
 """
 
-from eth_typing import ChecksumAddress
+from degenbot._ffi import ChecksummedAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.pool_protocols import (
@@ -18,7 +18,7 @@ class FakePoolSimulation:
 
     def __init__(self, address: str = "0x" + "a" * 40) -> None:
 
-        self._address = ChecksumAddress(get_checksum_address(address))
+        self._address = ChecksummedAddress(get_checksum_address(address))
         self._subscribers: set[object] = set()
 
     @property

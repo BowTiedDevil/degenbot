@@ -2,7 +2,7 @@
 
 Includes exceptions for:
 - RPC connections (DegenbotConnectionError, ConnectionTimeout, ...)
-- Data fetching (FetchingError, LogFetchingTimeout, BlockFetchingTimeout)
+- Data fetching (FetchingError, BlockFetchingTimeout)
 - Registry operations (RegistryError, RegistryAlreadyInitialized)
 - Database operations (BackupExists)
 - Anvil fork operations (AnvilError)
@@ -57,15 +57,6 @@ class Web3ConnectionTimeout(ConnectionTimeout):
 
 class FetchingError(DegenbotError):
     """Base exception for data fetching errors."""
-
-
-class LogFetchingTimeout(FetchingError):
-    """Raised when log fetching operations timeout after multiple retry attempts."""
-
-    def __init__(self, max_retries: int) -> None:
-        """Initialize the instance."""
-        self.max_retries = max_retries
-        super().__init__(message=f"Timed out fetching logs after {max_retries} tries.")
 
 
 class BlockFetchingTimeout(FetchingError):

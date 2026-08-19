@@ -11,7 +11,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from eth_typing import ChecksumAddress
+from degenbot._ffi import ChecksummedAddress
 from hexbytes import HexBytes
 
 from degenbot.types.abstract import AbstractPoolState
@@ -42,9 +42,9 @@ class ArbitrageCycleFixture:
         Unique identifier for the fixture.
     cycle_type : str
         Type of arbitrage cycle (e.g., "v2_v2", "v3_v3", "v2_v3").
-    pool_states : dict[ChecksumAddress, AbstractPoolState]
+    pool_states : dict[ChecksummedAddress, AbstractPoolState]
         Pool states keyed by address.
-    input_token_address : ChecksumAddress
+    input_token_address : ChecksummedAddress
         Address of the input token for the arbitrage.
     expected_optimal_input : int
         Known optimal input amount (or 0 if unknown).
@@ -57,8 +57,8 @@ class ArbitrageCycleFixture:
 
     id: str
     cycle_type: str
-    pool_states: dict[ChecksumAddress, AbstractPoolState]
-    input_token_address: ChecksumAddress
+    pool_states: dict[ChecksummedAddress, AbstractPoolState]
+    input_token_address: ChecksummedAddress
     expected_optimal_input: int = 0
     expected_profit: int = 0
     profit_tolerance_bps: int = 10
@@ -102,14 +102,14 @@ class ArbitrageCycleFixture:
         """
         data = json.loads(json_str)
         pool_states = {
-            cast("ChecksumAddress", addr): _deserialize_pool_state(state_data)
+            cast("ChecksummedAddress", addr): _deserialize_pool_state(state_data)
             for addr, state_data in data["pool_states"].items()
         }
         return cls(
             id=data["id"],
             cycle_type=data["cycle_type"],
             pool_states=pool_states,
-            input_token_address=cast("ChecksumAddress", data["input_token_address"]),
+            input_token_address=cast("ChecksummedAddress", data["input_token_address"]),
             expected_optimal_input=data["expected_optimal_input"],
             expected_profit=data["expected_profit"],
             profit_tolerance_bps=data["profit_tolerance_bps"],
@@ -193,11 +193,11 @@ class ArbitrageCycleFixture:
 
 
 # Token addresses used in fixtures (for reference)
-USDC_ADDRESS: ChecksumAddress = cast(
-    "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+USDC_ADDRESS: ChecksummedAddress = cast(
+    "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 )
-WETH_ADDRESS: ChecksumAddress = cast(
-    "ChecksumAddress", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+WETH_ADDRESS: ChecksummedAddress = cast(
+    "ChecksummedAddress", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 )
 
 
@@ -261,7 +261,7 @@ def _deserialize_pool_state(data: dict[str, Any]) -> AbstractPoolState:
     pool_type = data["type"]
     if pool_type == "v4":
         return UniswapV4PoolState(
-            address=cast("ChecksumAddress", data["address"]),
+            address=cast("ChecksummedAddress", data["address"]),
             block=data["block"],
             id=HexBytes(data["id"]),
             liquidity=data["liquidity"],
@@ -282,7 +282,7 @@ def _deserialize_pool_state(data: dict[str, Any]) -> AbstractPoolState:
         )
     if pool_type == "v3":
         return UniswapV3PoolState(
-            address=cast("ChecksumAddress", data["address"]),
+            address=cast("ChecksummedAddress", data["address"]),
             block=data["block"],
             liquidity=data["liquidity"],
             sqrt_price_x96=data["sqrt_price_x96"],
@@ -302,7 +302,7 @@ def _deserialize_pool_state(data: dict[str, Any]) -> AbstractPoolState:
         )
     if pool_type == "v2":
         return UniswapV2PoolState(
-            address=cast("ChecksumAddress", data["address"]),
+            address=cast("ChecksummedAddress", data["address"]),
             block=data["block"],
             reserves_token0=data["reserves_token0"],
             reserves_token1=data["reserves_token1"],
@@ -333,14 +333,14 @@ class FixtureFactory:
 
         Arbitrage: Buy ETH in pool B (cheaper), sell in pool A (more expensive).
         """
-        pool_a_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000001"
+        pool_a_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000001"
         )
-        pool_b_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000002"
+        pool_b_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000002"
         )
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )  # USDC
 
         # Generate pools with 2% price difference
@@ -367,14 +367,14 @@ class FixtureFactory:
 
         Demonstrates fee impact on arbitrage profitability.
         """
-        pool_a_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000003"
+        pool_a_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000003"
         )
-        pool_b_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000004"
+        pool_b_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000004"
         )
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         pool_a, pool_b = self._generator.generate_profitable_v2_pair(
@@ -395,14 +395,14 @@ class FixtureFactory:
 
     def simple_v3_arb_same_tick_spacing(self) -> ArbitrageCycleFixture:
         """Two V3 pools at same tick spacing, different prices."""
-        pool_a_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000005"
+        pool_a_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000005"
         )
-        pool_b_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000006"
+        pool_b_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000006"
         )
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         pool_a, pool_b = self._generator.generate_profitable_v3_pair(
@@ -422,14 +422,14 @@ class FixtureFactory:
 
     def simple_v3_arb_cross_fee_tier(self) -> ArbitrageCycleFixture:
         """V3 pools at different fee tiers."""
-        pool_a_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000007"
+        pool_a_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000007"
         )
-        pool_b_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000008"
+        pool_b_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000008"
         )
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         # Pool A: 0.05% fee tier (tick_spacing=10)
@@ -451,14 +451,14 @@ class FixtureFactory:
 
     def simple_mixed_v2_v3(self) -> ArbitrageCycleFixture:
         """V2 vs V3 arbitrage."""
-        v2_pool_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000009"
+        v2_pool_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000009"
         )
-        v3_pool_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x000000000000000000000000000000000000000A"
+        v3_pool_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x000000000000000000000000000000000000000A"
         )
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         v2_pool, v3_pool = self._generator.generate_profitable_mixed_pair(
@@ -480,13 +480,13 @@ class FixtureFactory:
 
     def simple_v4_arb(self) -> ArbitrageCycleFixture:
         """Two V4 pools with price difference."""
-        pool_manager_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000FFF"
+        pool_manager_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000FFF"
         )
         pool_a_id = HexBytes("0x" + "01" * 32)
         pool_b_id = HexBytes("0x" + "02" * 32)
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         pool_a, pool_b = self._generator.generate_profitable_v4_pair(
@@ -503,8 +503,8 @@ class FixtureFactory:
             id="simple_v4_arb",
             cycle_type="v4_v4",
             pool_states={
-                cast("ChecksumAddress", pool_a_id.to_0x_hex()): pool_a,
-                cast("ChecksumAddress", pool_b_id.to_0x_hex()): pool_b,
+                cast("ChecksummedAddress", pool_a_id.to_0x_hex()): pool_a,
+                cast("ChecksummedAddress", pool_b_id.to_0x_hex()): pool_b,
             },
             input_token_address=input_token_address,
         )
@@ -514,15 +514,15 @@ class FixtureFactory:
 
         Tests arbitrage between V4 and V3 pool implementations.
         """
-        pool_manager_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000FFF"
+        pool_manager_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000FFF"
         )
-        v3_pool_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x000000000000000000000000000000000000000B"
+        v3_pool_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x000000000000000000000000000000000000000B"
         )
         pool_a_id = HexBytes("0x" + "03" * 32)
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         # Generate V4 pool
@@ -549,7 +549,7 @@ class FixtureFactory:
             id="simple_v4_vs_v3",
             cycle_type="v3_v4",
             pool_states={
-                cast("ChecksumAddress", pool_a_id.to_0x_hex()): v4_pool,
+                cast("ChecksummedAddress", pool_a_id.to_0x_hex()): v4_pool,
                 v3_pool_address: v3_pool,
             },
             input_token_address=input_token_address,
@@ -584,10 +584,10 @@ class FixtureFactory:
         """
         random.seed(seed)
 
-        pool_a_address: ChecksumAddress = cast("ChecksumAddress", f"0x{seed:040x}")
-        pool_b_address: ChecksumAddress = cast("ChecksumAddress", f"0x{(seed + 1):040x}")
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        pool_a_address: ChecksummedAddress = cast("ChecksummedAddress", f"0x{seed:040x}")
+        pool_b_address: ChecksummedAddress = cast("ChecksummedAddress", f"0x{(seed + 1):040x}")
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         price_ratio = random.uniform(*price_ratio_range)
@@ -637,10 +637,10 @@ class FixtureFactory:
         """
         random.seed(seed)
 
-        pool_a_address: ChecksumAddress = cast("ChecksumAddress", f"0x{seed:040x}")
-        pool_b_address: ChecksumAddress = cast("ChecksumAddress", f"0x{(seed + 1):040x}")
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        pool_a_address: ChecksummedAddress = cast("ChecksummedAddress", f"0x{seed:040x}")
+        pool_b_address: ChecksummedAddress = cast("ChecksummedAddress", f"0x{(seed + 1):040x}")
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         price_ratio = random.uniform(*price_ratio_range)
@@ -689,13 +689,13 @@ class FixtureFactory:
         """
         random.seed(seed)
 
-        pool_manager_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0x0000000000000000000000000000000000000FFF"
+        pool_manager_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0x0000000000000000000000000000000000000FFF"
         )
         pool_a_id = HexBytes(f"0x{seed:064x}")
         pool_b_id = HexBytes(f"0x{(seed + 1):064x}")
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         price_ratio = random.uniform(*price_ratio_range)
@@ -715,8 +715,8 @@ class FixtureFactory:
             id=f"random_v4_pair_seed_{seed}",
             cycle_type="v4_v4",
             pool_states={
-                cast("ChecksumAddress", pool_a_id.to_0x_hex()): pool_a,
-                cast("ChecksumAddress", pool_b_id.to_0x_hex()): pool_b,
+                cast("ChecksummedAddress", pool_a_id.to_0x_hex()): pool_a,
+                cast("ChecksummedAddress", pool_b_id.to_0x_hex()): pool_b,
             },
             input_token_address=input_token_address,
         )
@@ -766,9 +766,9 @@ class FixtureFactory:
             msg = f"pool_types length ({len(pool_types)}) must match num_pools ({num_pools})"
             raise ValueError(msg)
 
-        pool_states: dict[ChecksumAddress, AbstractPoolState] = {}
-        input_token_address: ChecksumAddress = cast(
-            "ChecksumAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        pool_states: dict[ChecksummedAddress, AbstractPoolState] = {}
+        input_token_address: ChecksummedAddress = cast(
+            "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
 
         # Generate consecutive pools with price differences
@@ -776,7 +776,7 @@ class FixtureFactory:
         liquidity = LIQUIDITY_MULTIPLIERS[liquidity_depth]
 
         for i, pool_type in enumerate(pool_types):
-            pool_address: ChecksumAddress = cast("ChecksumAddress", f"0x{(seed + i):040x}")
+            pool_address: ChecksummedAddress = cast("ChecksummedAddress", f"0x{(seed + i):040x}")
 
             # Each pool has progressively different price
             price_ratio = random.uniform(*price_ratio_range)
@@ -803,8 +803,8 @@ class FixtureFactory:
                     config=config,
                 )
             elif pool_type == "v4":
-                pool_manager_address: ChecksumAddress = cast(
-                    "ChecksumAddress", "0x0000000000000000000000000000000000000FFF"
+                pool_manager_address: ChecksummedAddress = cast(
+                    "ChecksummedAddress", "0x0000000000000000000000000000000000000FFF"
                 )
                 pool_id = HexBytes(f"0x{(seed + i):064x}")
                 v4_config = V3PoolGenerationConfig(
@@ -819,7 +819,7 @@ class FixtureFactory:
                 tick = round(tick / v4_config.tick_spacing) * v4_config.tick_spacing
                 sqrt_price_x96 = get_sqrt_ratio_at_tick(tick)
 
-                pool_states[cast("ChecksumAddress", pool_id.to_0x_hex())] = (
+                pool_states[cast("ChecksummedAddress", pool_id.to_0x_hex())] = (
                     self._generator.generate_v4_pool_state(
                         address=pool_manager_address,
                         pool_id=pool_id,

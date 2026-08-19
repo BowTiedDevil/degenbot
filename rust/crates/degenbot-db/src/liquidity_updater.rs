@@ -9,10 +9,10 @@
 //! # What this is (and isn't)
 //!
 //! This is the **apply-and-persist core** (`port-now` per the §2.1 rubric): a
-//! pure row→math→row transform over the DB substrate. The Python `pool_update`
-//! driver loop + RPC event fetch (`get_v3/v4_liquidity_events`/`fetch_logs_retrying`)
-//! STAY PYTHON (orchestration + RPC; `degenbot-rpc` event-fetch port is a
-//! separate concern not in this epic). The math itself lives in
+//! pure row→math→row transform over the DB substrate. RPC event fetch is
+//! Rust-owned (`degenbot-rpc::provider::LogFetcher::fetch_logs_chunked`);
+//! the retired Python fetch path (`provider/log_fetching.py`,
+//! `fetch_logs_retrying*`) is removed. The math itself lives in
 //! [`degenbot-concentrated-liquidity-math`] (sibling task). The standalone-Rust path this enables:
 //! `DB events → apply_v3/v4_liquidity_updates → upserted DB rows` without Python.
 //!

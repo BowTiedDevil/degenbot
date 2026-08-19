@@ -22,12 +22,12 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 import eth_typing
-from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.abstract import AbstractExchangeDeployment
 
 if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.registry.deployment_loader import DeploymentRecord
 
     # Declare the types of the lazy constants so static checkers know their
@@ -61,8 +61,8 @@ __all__ = ("AbstractExchangeDeployment",)
 class UniswapFactoryDeployment:
     """UniswapFactoryDeployment class."""
 
-    address: ChecksumAddress
-    deployer: ChecksumAddress | None
+    address: ChecksummedAddress
+    deployer: ChecksummedAddress | None
     pool_init_hash: str
 
 
@@ -70,14 +70,14 @@ class UniswapFactoryDeployment:
 class UniswapPoolManagerDeployment:
     """UniswapPoolManagerDeployment class."""
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
 
 
 @dataclass(slots=True, frozen=True)
 class UniswapStateViewDeployment:
     """UniswapStateViewDeployment class."""
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
 
 
 @dataclass(slots=True, frozen=True)

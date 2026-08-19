@@ -20,8 +20,7 @@ from degenbot.uniswap import resolve_deployer, resolve_v2_init_hash
 from degenbot.uniswap.trackers import AbstractUniswapV3PoolTracker
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.bot import Bot
     from degenbot.types.aliases import ChainId
 
@@ -34,7 +33,7 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
 
     def get_pool(
         self,
-        pool_address: ChecksumAddress | str,
+        pool_address: ChecksummedAddress | str,
         *,
         silent: bool = False,
         pool_class_kwargs: dict[str, Any] | None = None,
@@ -104,7 +103,7 @@ class AerodromeV2PoolTracker(
         factory_address: str,
         bot: Bot,
         chain_id: ChainId | None = None,
-        deployer_address: ChecksumAddress | str | None = None,
+        deployer_address: ChecksummedAddress | str | None = None,
         pool_init_hash: str | None = None,
     ) -> None:
         """Initialize the instance."""
@@ -142,7 +141,7 @@ class AerodromeV2PoolTracker(
             else None
         )
         self._tracked_pools = {}
-        self._untracked_pools: set[ChecksumAddress] = set()
+        self._untracked_pools: set[ChecksummedAddress] = set()
 
     def __repr__(self) -> str:  # pragma: no cover
         """Return the canonical string representation.
@@ -209,7 +208,7 @@ class AerodromeV2PoolTracker(
             pool_class_kwargs=pool_class_kwargs,
         )
 
-    def _require_pool_implementation_address(self) -> ChecksumAddress:
+    def _require_pool_implementation_address(self) -> ChecksummedAddress:
         """Return the EIP-1167 master implementation address, or raise.
 
         Returns:
@@ -249,7 +248,7 @@ class AerodromeV3PoolTracker(
             else None
         )
 
-    def _require_pool_implementation_address(self) -> ChecksumAddress:
+    def _require_pool_implementation_address(self) -> ChecksummedAddress:
         """Return the EIP-1167 master implementation address, or raise.
 
         Returns:

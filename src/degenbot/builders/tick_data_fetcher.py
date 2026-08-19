@@ -10,9 +10,7 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from eth_typing import ChecksumAddress
-
-    from degenbot._ffi import BotIo
+    from degenbot._ffi import BotIo, ChecksummedAddress
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -35,7 +33,7 @@ class TickDataTypes:
 class _PoolRef:
     """Minimal pool reference needed by fetch helpers."""
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
     tick_spacing: int
 
 

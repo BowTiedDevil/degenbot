@@ -4,8 +4,7 @@ from fractions import Fraction
 from typing import Any, ClassVar, Self
 from weakref import WeakSet
 
-from eth_typing import ChecksumAddress
-
+from degenbot._ffi import ChecksummedAddress
 from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
@@ -74,10 +73,10 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
     # Instance attributes set in `_from_py_pool` (the only construction seam).
     _py_pool: LiquidityPool
-    address: ChecksumAddress
+    address: ChecksummedAddress
     pool_id: bytes
     pool_specialization: int
-    vault: ChecksumAddress
+    vault: ChecksummedAddress
     _tokens: tuple[Erc20Token, ...]
     scaling_factors: tuple[int, ...]
     fee: Fraction

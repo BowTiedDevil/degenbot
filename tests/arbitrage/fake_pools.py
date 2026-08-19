@@ -19,7 +19,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
+    from degenbot._ffi import ChecksummedAddress
 
     from degenbot.erc20.erc20 import Erc20Token
     from tests.fakes.tokens import FakeToken
@@ -67,7 +67,7 @@ class TickRangeDefinition:
 
 
 def build_v3_pool_with_ticks(
-    address: ChecksumAddress,
+    address: ChecksummedAddress,
     token0: FakeToken | Erc20Token,
     token1: FakeToken | Erc20Token,
     tick_spacing: int,
@@ -84,7 +84,7 @@ def build_v3_pool_with_ticks(
 
     Parameters
     ----------
-    address : ChecksumAddress
+    address : ChecksummedAddress
         Pool address
     token0 : FakeToken | Erc20Token
         Token0
@@ -173,7 +173,7 @@ def _add_tick_liquidity(
 
 
 def create_two_range_v3_pool(
-    address: ChecksumAddress,
+    address: ChecksummedAddress,
     token0: FakeToken | Erc20Token,
     token1: FakeToken | Erc20Token,
     current_tick: int,
@@ -190,7 +190,7 @@ def create_two_range_v3_pool(
 
     Parameters
     ----------
-    address : ChecksumAddress
+    address : ChecksummedAddress
         Pool address
     token0 : FakeToken | Erc20Token
         Token0

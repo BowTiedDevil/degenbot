@@ -19,8 +19,6 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
-from eth_typing import ChecksumAddress
-
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
@@ -190,7 +188,7 @@ async def _apply_result_if_ready(
         return
 
     current_block = dispatcher.current_block
-    operator_nonce = await async_w3.get_transaction_count(cast("ChecksumAddress", operator_address))
+    operator_nonce = await async_w3.get_transaction_count(operator_address)
     solve_block = int(cast("Any", batch["solve_block"]))
 
     results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]] = []

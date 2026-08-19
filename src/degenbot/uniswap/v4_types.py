@@ -2,9 +2,9 @@
 
 import dataclasses
 
-from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PoolStateMessage
@@ -38,11 +38,11 @@ class UniswapV4PoolState(AbstractPoolState):
 class UniswapV4PoolKey:
     """UniswapV4PoolKey class."""
 
-    currency0: ChecksumAddress
-    currency1: ChecksumAddress
+    currency0: ChecksummedAddress
+    currency1: ChecksummedAddress
     fee: Pip
     tick_spacing: int
-    hooks: ChecksumAddress
+    hooks: ChecksummedAddress
 
 
 @dataclasses.dataclass(slots=True)

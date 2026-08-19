@@ -49,8 +49,7 @@ from .types import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import LiquidityPool
 
 # Enum for deployed StableMath invariant versions.
@@ -149,10 +148,10 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     # Class-scope instance-attribute declarations (red-knot): `_from_py_pool`
     # assigns these on `Self`; declare them at class scope so attribute reads
     # in helper methods resolve (mirrors the weighted companion).
-    address: ChecksumAddress
+    address: ChecksummedAddress
     pool_id: bytes
     pool_specialization: int
-    vault: ChecksumAddress
+    vault: ChecksummedAddress
     _py_pool: LiquidityPool
     _tokens: tuple[Erc20Token, ...]
     scaling_factors: tuple[int, ...]

@@ -1,17 +1,18 @@
 """AddressComparable: address wrapper with equality by checksum."""
 
-from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
+
+from degenbot._ffi import ChecksummedAddress
 
 
 class AddressComparable:
     """Mixin providing address-based comparison, ordering, and hashing.
 
-    Any on-chain entity identified by a ChecksumAddress can inherit from this
+    Any on-chain entity identified by a ChecksummedAddress can inherit from this
     to get consistent equality, ordering, and hashing by address.
     """
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
 
     def __eq__(self, other: object) -> bool:
         """Check equality with another object.

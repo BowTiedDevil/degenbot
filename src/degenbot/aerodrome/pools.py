@@ -28,8 +28,7 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.provider import AlloyProvider
     from degenbot.types import LiquidityPool
     from degenbot.types.aliases import BlockNumber
@@ -52,9 +51,9 @@ class AerodromeV2Pool(
 
     # Instance attributes set in `_from_py_pool` (the only construction seam).
     _py_pool: LiquidityPool
-    address: ChecksumAddress
-    factory: ChecksumAddress
-    deployer_address: ChecksumAddress
+    address: ChecksummedAddress
+    factory: ChecksummedAddress
+    deployer_address: ChecksummedAddress
     _initial_state_block: int
     _stable: bool
     _fee: Fraction
@@ -232,8 +231,8 @@ class AerodromeV2Pool(
         provider: AlloyProvider,
         state_block: BlockNumber,
     ) -> tuple[
-        ChecksumAddress,  # factory
-        tuple[ChecksumAddress, ChecksumAddress],  # tokens
+        ChecksummedAddress,  # factory
+        tuple[ChecksummedAddress, ChecksummedAddress],  # tokens
         bool,  # stable
         int,  # fee
         tuple[int, int],  # reserves

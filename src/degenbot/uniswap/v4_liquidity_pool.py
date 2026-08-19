@@ -31,9 +31,9 @@ from enum import Enum
 from typing import Any, Self
 from weakref import WeakSet
 
-from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 
+from degenbot._ffi import ChecksummedAddress
 from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -171,9 +171,9 @@ class UniswapV4Pool(
     # Instance attributes set in `_from_py_pool` (the only construction seam).
     _py_pool: LiquidityPool
     _pool_id: HexBytes
-    _pool_manager_address: ChecksumAddress
-    hook_address: ChecksumAddress
-    _state_view_address: ChecksumAddress
+    _pool_manager_address: ChecksummedAddress
+    hook_address: ChecksummedAddress
+    _state_view_address: ChecksummedAddress
     active_hooks: frozenset["Hooks"]
     _token0: Erc20Token
     _token1: Erc20Token
@@ -580,7 +580,7 @@ class UniswapV4Pool(
         return amount_out
 
     @property
-    def address(self) -> ChecksumAddress:
+    def address(self) -> ChecksummedAddress:
         """Address.
 
         Returns:

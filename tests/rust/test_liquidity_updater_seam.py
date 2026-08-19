@@ -49,7 +49,7 @@ from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.types.rpc_types import LogReceipt
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
+    from degenbot._ffi import ChecksummedAddress
     from sqlalchemy.orm import Session, scoped_session
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / (
@@ -58,8 +58,8 @@ FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / (
 
 # Fixture constants (must mirror `generate_liquidity_updater_parity.py`).
 CHAIN = 1
-V3_POOL_ADDRESS: ChecksumAddress = get_checksum_address("0x" + "a" * 40)
-V4_POOL_MANAGER_ADDRESS: ChecksumAddress = get_checksum_address("0x" + "b" * 40)
+V3_POOL_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "a" * 40)
+V4_POOL_MANAGER_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "b" * 40)
 V4_POOL_HASH = "0x" + "c" * 64
 V4_MODIFY_TOPIC = HexBytes("0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec")
 

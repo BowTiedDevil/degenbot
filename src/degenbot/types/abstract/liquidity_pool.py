@@ -8,15 +8,14 @@ from typing import TYPE_CHECKING
 from degenbot.types.address_comparable import AddressComparable
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.erc20.erc20 import Erc20Token
 
 
 class AbstractLiquidityPool(AddressComparable, ABC):
     """AbstractLiquidityPool class."""
 
-    address: ChecksumAddress
+    address: ChecksummedAddress
     name: str
 
     @property

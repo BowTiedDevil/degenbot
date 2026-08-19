@@ -25,8 +25,7 @@ from degenbot.uniswap.v3_functions import generate_v3_pool_address
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.bot import Bot
     from degenbot.types.aliases import ChainId
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -41,7 +40,7 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         bot: Bot,
         *,
         chain_id: ChainId | None = None,
-        deployer_address: ChecksumAddress | str | None = None,
+        deployer_address: ChecksummedAddress | str | None = None,
         pool_init_hash: str | None = None,
     ) -> None:
         """Initialize the instance."""
@@ -68,11 +67,11 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         self._factory_address = factory_address
         self._pool_init_hash = pool_init_hash or ""
         self._tracked_pools = {}
-        self._untracked_pools: set[ChecksumAddress] = set()
+        self._untracked_pools: set[ChecksummedAddress] = set()
 
     def get_pool(
         self,
-        pool_address: ChecksumAddress | str,
+        pool_address: ChecksummedAddress | str,
         *,
         silent: bool = False,
     ) -> Pool:
@@ -183,20 +182,20 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
     """AbstractUniswapV3PoolTracker class."""
 
     _chain_id: ChainId
-    _deployer_address: ChecksumAddress
-    _factory_address: ChecksumAddress
-    _tracked_pools: dict[ChecksumAddress, Pool]
-    _untracked_pools: set[ChecksumAddress]
+    _deployer_address: ChecksummedAddress
+    _factory_address: ChecksummedAddress
+    _tracked_pools: dict[ChecksummedAddress, Pool]
+    _untracked_pools: set[ChecksummedAddress]
     _lock: Lock
     _pool_init_hash: str
     _snapshot: UniswapV3LiquiditySnapshot | None
 
     def __init__(
         self,
-        factory_address: ChecksumAddress | str,
+        factory_address: ChecksummedAddress | str,
         bot: Bot,
         *,
-        deployer_address: ChecksumAddress | str | None = None,
+        deployer_address: ChecksummedAddress | str | None = None,
         chain_id: ChainId | None = None,
         pool_init_hash: str | None = None,
         snapshot: UniswapV3LiquiditySnapshot | None = None,
@@ -237,7 +236,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
 
     def get_pool(
         self,
-        pool_address: ChecksumAddress | str,
+        pool_address: ChecksummedAddress | str,
         *,
         silent: bool = False,
     ) -> Pool:
@@ -324,8 +323,8 @@ class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_fac
     def get_pool_from_tokens_and_fee(
         self,
         token_addresses: tuple[
-            ChecksumAddress | str,
-            ChecksumAddress | str,
+            ChecksummedAddress | str,
+            ChecksummedAddress | str,
         ],
         pool_fee: int,
         *,

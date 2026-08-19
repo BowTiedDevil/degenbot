@@ -14,8 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import DexIdentity
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -26,7 +25,7 @@ if TYPE_CHECKING:
 class PoolDeploymentData:
     """Per-chain deployment data for a pool factory."""
 
-    factory_address: ChecksumAddress
+    factory_address: ChecksummedAddress
     deployer: str
     pool_init_hash: str | None
     implementation_address: str | None = None

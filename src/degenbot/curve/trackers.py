@@ -12,8 +12,7 @@ from degenbot.exceptions.pool import PoolCreationFailed, PoolNotAssociated
 from degenbot.types.abstract import AbstractPoolTracker
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
-
+    from degenbot._ffi import ChecksummedAddress
     from degenbot.bot import Bot
     from degenbot.types.aliases import ChainId
 
@@ -37,13 +36,13 @@ class CurveStableswapPoolTracker(
         """Initialize the instance."""
         self._bot = bot
         self._chain_id = chain_id or bot.chain_id
-        self._tracked_pools: dict[ChecksumAddress, CurveStableswapPool] = {}
-        self._untracked_pools: set[ChecksumAddress] = set()
+        self._tracked_pools: dict[ChecksummedAddress, CurveStableswapPool] = {}
+        self._untracked_pools: set[ChecksummedAddress] = set()
         self._lock = Lock()
 
     def get_pool(
         self,
-        pool_address: ChecksumAddress | str,
+        pool_address: ChecksummedAddress | str,
         *,
         silent: bool = False,
     ) -> CurveStableswapPool:
@@ -101,7 +100,7 @@ class CurveStableswapPoolTracker(
 
     def get_pools_for_token(
         self,
-        token_address: ChecksumAddress | str,
+        token_address: ChecksummedAddress | str,
     ) -> list[CurveStableswapPool]:
         """Return all tracked pools that contain the given token.
 
