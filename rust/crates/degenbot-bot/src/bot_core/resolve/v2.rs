@@ -43,6 +43,7 @@ pub(crate) fn project_v2(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::super::MissingHopReason;
     use super::project_v2;
     use crate::bot_core::{BotState, RegisterV2PoolParams};
@@ -51,7 +52,7 @@ mod tests {
     use degenbot_uniswap::dex_identity::DexVariant;
 
     // -----------------------------------------------------------------
-    // Per-family projection tests (T3, epic MKRKNB): `project_v2` crosses
+    // Per-family projection tests: `project_v2` crosses
     // the seam directly — orientation selection + fee routing included.
     // -----------------------------------------------------------------
 

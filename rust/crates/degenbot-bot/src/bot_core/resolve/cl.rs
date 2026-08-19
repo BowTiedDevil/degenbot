@@ -104,6 +104,7 @@ pub(crate) fn project_v4(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used)]
     use std::collections::HashMap;
 
     use super::super::MissingHopReason;
@@ -116,7 +117,7 @@ mod tests {
     use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 
     // -----------------------------------------------------------------
-    // Per-family projection tests (T3, epic MKRKNB). CL guardrail: V3 and
+    // Per-family projection tests. CL guardrail: V3 and
     // V4 are two adapters behind the shared `ConcentratedLiquidityPool`
     // interface with genuinely distinct builders — the tests here stay
     // per-adapter and never share a construction path.

@@ -71,6 +71,7 @@ pub(crate) fn project_curve(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::super::MissingHopReason;
     use super::project_curve;
     use crate::bot_core::{BotState, RegisterCurvePoolParams};
@@ -78,7 +79,7 @@ mod tests {
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
     // -----------------------------------------------------------------
-    // Per-family projection tests (T3, epic MKRKNB): `project_curve`
+    // Per-family projection tests: `project_curve`
     // crosses the seam directly — rate-adjusted XP + pairwise (0/1) variant
     // decode included.
     // -----------------------------------------------------------------

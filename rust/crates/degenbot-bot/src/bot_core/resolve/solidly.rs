@@ -99,6 +99,7 @@ pub(crate) fn project_solidly(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::super::MissingHopReason;
     use super::project_solidly;
     use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
@@ -107,7 +108,7 @@ mod tests {
     use degenbot_uniswap::dex_identity::DexVariant;
 
     // -----------------------------------------------------------------
-    // Per-family projection tests (T3, epic MKRKNB): assert against the
+    // Per-family projection tests: assert against the
     // `project_solidly` seam directly — the interface IS the test
     // surface. Ported from the engine-level `resolve_path_*solidly*` tests
     // in `arb_engine/tests.rs`; assertions unchanged, harness simplified

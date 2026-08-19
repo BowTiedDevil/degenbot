@@ -78,6 +78,7 @@ pub(crate) fn project_balancer_stable(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::super::MissingHopReason;
     use super::project_balancer_stable;
     use crate::bot_core::{BotState, RegisterBalancerStablePoolParams};

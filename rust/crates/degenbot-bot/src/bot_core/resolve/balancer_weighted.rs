@@ -68,6 +68,7 @@ pub(crate) fn project_balancer_weighted(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::super::MissingHopReason;
     use super::project_balancer_weighted;
     use crate::bot_core::{BotState, RegisterBalancerWeightedPoolParams};
@@ -76,7 +77,7 @@ mod tests {
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
     // -----------------------------------------------------------------
-    // Per-family projection tests (T3, epic MKRKNB): `project_
+    // Per-family projection tests: `project_
     // balancer_weighted` crosses the seam directly — 18-decimal upscaling
     // + pairwise (0/1) selection + pow-version decode included.
     // -----------------------------------------------------------------
