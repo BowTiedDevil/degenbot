@@ -3182,7 +3182,7 @@ mod tests {
         );
     }
 
-    /// T47PPB: block-25641093 end-to-end through the REAL pool-state feed.
+    /// Block 25641093 end-to-end through the REAL pool-state feed.
     /// Rebuilds pool 0xDcA4038A98CD6bD6B4deFA11304FD1626c6665c9's tick data
     /// from the fixture log (pool_seg -74028, WP3.0/SDP1 with the 11-log
     /// synthetic mid-spine), feeds it through the same
@@ -3193,8 +3193,8 @@ mod tests {
     /// 2's visible ranges ended before the -22900 liquidity change); GREEN
     /// once the pair-collapse + drain invariants land. The predicted hop-2
     /// output must match on-chain revm (1_109_518_347) within the integer
-    /// model's residual step-rounding slack (observed 7 wei — PXSY47 owns
-    /// tightening this to byte-exact).
+    /// model's residual step-rounding slack (observed 7 wei; byte-exact
+    /// tightening was left open when the originating effort closed).
     #[test]
     fn block_25641093_pool_feed_hop2_predicts_revm_output() {
         use alloy::primitives::{Address, B256, I256, U128, U512};
@@ -3284,16 +3284,12 @@ mod tests {
         let (_, state) = V3PoolState::from_params(params, 4);
 
         let seq = state
-            // 24 = the T47PPB solver feed depth (solver_dispatch passes the
+            // 24 = the solver feed depth (solver_dispatch passes the
             // same number; the range cache cap must be >= it). The swap is zfo
             // (DAI token0 in, WETH token1 out, price decreasing).
             .build_int_v3_sequence(1, 100, true, 24)
-            .expect("T47PPB: sequence");
-        eprintln!("[T47PPB-dbg] range count = {}", seq.ranges.len());
-        for (i, r) in seq.ranges.iter().enumerate() {
-            eprintln!("[T47PPB-dbg] r{i}: liq={}", r.liquidity);
-        }
-        // The two T47PPB invariants, asserted together:
+            .expect("int v3 sequence");
+        // The two feed invariants, asserted together:
         //  (1) current-tick drain: the leading hop models the contract-faithful
         //      current segment [current, sqrt(-74028)] at STORED liquidity
         //      (5.407e18), then the free-fall ranges AFTER it must be
@@ -3306,22 +3302,22 @@ mod tests {
         //      reaching it. Depth 24 keeps it visible.
         assert!(
             seq.ranges.len() >= 5,
-            "T47PPB: need the leading segment + drain + activation (>=5 ranges)"
+            "need the leading segment + drain + activation (>=5 ranges)"
         );
         assert!(
             seq.ranges[0].liquidity == 5_407_362_545_736_161_987,
-            "T47PPB: leading current segment must run at stored (pre-drain) liquidity"
+            "leading current segment must run at stored (pre-drain) liquidity"
         );
         assert!(
             seq.ranges[1..4].iter().all(|r| r.liquidity == 0),
-            "T47PPB: free-fall ranges must be zero-liquidity (current-tick drain), \
+            "free-fall ranges must be zero-liquidity (current-tick drain), \
              got {:?}",
             seq.ranges.iter().map(|r| r.liquidity).collect::<Vec<_>>()
         );
         let activation: u128 = 64_914_675_035_050_604;
         assert!(
             seq.ranges.iter().any(|r| r.liquidity == activation),
-            "T47PPB: the -84382 activation ({activation}) must be visible"
+            "the -84382 activation ({activation}) must be visible"
         );
 
         // Whole-hop replay: the input that takes the price from the current
@@ -3367,16 +3363,12 @@ mod tests {
         let hops = [WalkHop::Cl { crossings }];
         let outcome = simulate_walk_path(gross_in, &hops);
         let got = outcome.hop_outputs[0];
-        eprintln!(
-            "[T47PPB-dbg] gross_in={gross_in} predicted={got} oracle={oracle_out} \
-             doc-capture=1109518347"
-        );
-        // * vs the validated step-faithful oracle (PXSY47 tightens this to
-        //   byte-exact): the residual is per-step floor slack (observed 7 wei).
+        // vs the validated step-faithful oracle: the residual is per-step
+        // floor slack (observed 7 wei).
         let delta = got.abs_diff(oracle_out);
         assert!(
             delta <= U256::from(64u64),
-            "T47PPB pool-feed replay: predicted {got} vs oracle {oracle_out} (delta {delta} wei)"
+            "pool-feed replay: predicted {got} vs oracle {oracle_out} (delta {delta} wei)"
         );
         // NOTE: the divergence doc records the on-chain sim capture as
         // 1_109_518_347 while the pure-math value against the captured

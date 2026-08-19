@@ -24,7 +24,6 @@ mkdir -p "$LOGDIR"
 #   DEGENBOT_VERIFY_DBG          (structural verify diagnostics / divergence set)
 #   DEGENBOT_DUMP_CALL_TRACE     (full revm call trace on sim failure)
 #   DEGENBOT_V2_CALC_TRACE       (V2 reserves slot8 before each sim)
-#   DEGENBOT_DEBUG_V4_SOLVE      (V4 solver intermediates)
 #   DEGENBOT_SIM_LOG_REVERTED_SWAPS (per-hop actual-vs-predicted on revert)
 #   DEGENBOT_SIM_EXIT_ON_FAIL=1  (stop on first sim failure) + IGNORE_BUCKETS
 #     default "" (empty allowlist = trap on EVERY bucket, sys.exit(3))
@@ -40,7 +39,7 @@ mkdir -p "$LOGDIR"
 # --------------------------------------------------------------------------
 # Debug-visible instrumented runs (default ON here).
 #
-# The Rust core's granular diagnostics ([debug-v4-solve], [solver-dbg],
+# The Rust core's granular diagnostics ([solver-dbg],
 # [solver-st], [v2-calc-trace], ...) are gated behind the `debug` tracing
 # level AND the Python-side DEBUG logger (see docs/logging.md). Set BOTH below
 # so those lines reach logs/bot_run.log in these instrumented runs:

@@ -80,7 +80,6 @@ why they were demoted. They are intentionally **kept in the code**, just gated.
 
 | prefix | crate target | what it does |
 |---|---|---|
-| `[debug-v4-solve]` | `degenbot_bot` | per-V4-hop solver intermediates (tick, liquidity, sqrt price, …) |
 | `[solver-dbg]` | `degenbot_bot` | solve-entry debug trace (`rebuild_and_solve_affected`, `solve_all`) |
 | `[solver-st]` | `degenbot_bot` | per-path solver pool-state dump for cross-referencing against sim |
 | `[v2-calc-trace]` | `degenbot_arbitrage` | V2 reserves slot-8 read immediately before each path sim |
@@ -118,7 +117,6 @@ code, not by the tracing filter.
 | `DEGENBOT_VERIFY_DBG` | ON | structural verify diagnostics / divergence set |
 | `DEGENBOT_DUMP_CALL_TRACE` | ON | full revm call trace on a sim failure |
 | `DEGENBOT_V2_CALC_TRACE` | ON | V2 reserves slot-8 read before each sim (see `[v2-calc-trace]` above) |
-| `DEGENBOT_DEBUG_V4_SOLVE` | ON | V4 solver intermediates (see `[debug-v4-solve]` above) |
 | `DEGENBOT_SIM_LOG_REVERTED_SWAPS` | ON | per-hop actual-vs-predicted on revert |
 | `DEGENBOT_SIM_EXIT_ON_FAIL` | 1 | stop on first sim failure (`=0` for a soak run) |
 | `DEGENBOT_WS_COMPLETENESS` | ON | per-block `eth_getLogs` vs WS delivery cross-check (aborts loudly on a live WS drop) |

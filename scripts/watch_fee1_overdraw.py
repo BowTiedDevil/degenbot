@@ -7,9 +7,8 @@ later repro offline:
 
   * the matched=false event (path_id, hop, solve_block, predicted/actual)
   * the path's `[solver-st]` hops line (per-hop family / sq / liq / fee / zfo
-    at solve time) and the nearest `[sim-diag]` / `[sim-fail]` / `[debug-v4-solve]`
+    at solve time) and the nearest `[sim-diag]` / `[sim-fail]`
     context — the **live on-chain scalars** that the DB does NOT hold
-  * whether a `[debug-v4-solve]` pool-id hint was captured near the event
 
 The degenbot DB is **static** (the bot does not write it), so it is NOT
 snapshotted here. Pool identity + tick_data are pulled on demand during
@@ -121,8 +120,6 @@ def _record(args, root, audit, tail, pid, hop, actual, predicted, event_line):
     os.makedirs(d, exist_ok=True)
 
     ctx = [l for l in tail if f"path_id={pid}" in l or f"path_id\":{pid}" in l]
-    # Nearest debug-v4-solve (a recently-solved V4 pool) as an identity hint.
-    v4_hint = [l for l in tail if "debug-v4-solve" in l][-6:]
 
     payload = {
         "utc_capture": ts,
@@ -135,14 +132,12 @@ def _record(args, root, audit, tail, pid, hop, actual, predicted, event_line):
         "solve_block": solve_block,
         "event_line": event_line,
         "path_context_lines": uniq(ctx),
-        "v4_debug_hint_lines": uniq(v4_hint),
         "note": (
             "DB is static (bot does not write it) — pool identity + tick_data "
             "are pulled on demand with scripts/dump_pool_state.py, resolving "
             "pool_hash from the path's hop token pairs in the sim-fail hops "
-            "field. The scalars above (solver-st sq/liq/fee/zfo, debug-v4-solve "
-            "tick/liquidity/protocol_fee) are the solve-time on-chain truth the "
-            "DB does not hold."
+            "field. The scalars above (solver-st sq/liq/fee/zfo) are the "
+            "solve-time on-chain truth the DB does not hold."
         ),
     }
     with open(os.path.join(d, "event.json"), "w") as f:

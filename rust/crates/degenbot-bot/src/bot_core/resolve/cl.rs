@@ -63,41 +63,6 @@ pub(crate) fn project_v4(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    // AV42C7-debug: dump V4 solver intermediates for the
-    // closed-form vs on-chain divergence hunt. Conservative
-    // default ON (`crate::bot_core::bot_env_flag_default_on`);
-    // set `DEGENBOT_DEBUG_V4_SOLVE=0` to disable. grep the log
-    // for the failing pool_id (from the [sim-fixture] dump) to
-    // localize the over-prediction to drain/coverage/range.
-    if crate::bot_core::bot_env_flag_default_on("DEGENBOT_DEBUG_V4_SOLVE") {
-        let pid_hex = alloy::hex::encode(identity.pool_id);
-        let drain: i128 = if pool_ref.zero_for_one {
-            pool_state
-                .tick_data
-                .get(&pool_state.tick)
-                .map_or(0, |info| {
-                    let bytes = info.liquidity_net.to_be_bytes::<32>();
-                    let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-                    i128::from_be_bytes(low)
-                })
-        } else {
-            0
-        };
-        tracing::debug!(
-            pool_manager = ?identity.pool_manager,
-            pool_id = %pid_hex,
-            zero_for_one = %pool_ref.zero_for_one,
-            tick = pool_state.tick,
-            liquidity = pool_state.liquidity,
-            sqrt_price_x96 = %pool_state.sqrt_price_x96,
-            protocol_fee = pool_state.protocol_fee,
-            coverage = ?pool_state.coverage,
-            n_ranges = int_seq.ranges.len(),
-            drain = %drain,
-            "[debug-v4-solve] pool details"
-        );
-    }
-
     Ok((ResolvedHop::V4 { int_seq }, pool_state.state_nonce))
 }
 
