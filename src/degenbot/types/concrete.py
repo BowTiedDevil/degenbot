@@ -1,11 +1,8 @@
-"""Concrete type definitions (state caches, publish/subscribe)."""
+"""Concrete type definitions (state caches)."""
 
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
-from typing import Any, Protocol, Self
-from weakref import WeakSet
-
-from degenbot.types.abstract import AbstractPoolState
+from typing import Any, Self
 
 
 class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
@@ -28,103 +25,6 @@ class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
         value = self._default_factory(key)
         self[key] = value
         return value
-
-
-class AbstractPublisherMessage:
-    """A message sent by a `Publisher` to a `Subscriber`."""
-
-
-class PoolStateMessage(AbstractPublisherMessage):
-    """A message notifying that the publisher (a liquidity pool) has updated its state."""
-
-    state: AbstractPoolState
-
-
-class TextMessage(AbstractPublisherMessage):
-    """A generic text message."""
-
-    def __init__(self, text: str) -> None:
-        """Initialize the instance."""
-        self.text = text
-
-    def __eq__(self, other: object) -> bool:
-        """Check equality with another object.
-
-        Returns:
-            The computed value.
-
-        """
-        if not isinstance(other, TextMessage):
-            return NotImplemented
-        return self.text == other.text
-
-    def __hash__(self) -> int:
-        """Return the hash value.
-
-        Returns:
-            The computed value.
-
-        """
-        return hash(self.text)
-
-    def __repr__(self) -> str:
-        """Return a string representation.
-
-        Returns:
-            The computed value.
-
-        """
-        return f"{self.__class__.__name__}(text={self.text})"
-
-    def __str__(self) -> str:
-        """Return a string representation.
-
-        Returns:
-            The computed value.
-
-        """
-        return self.text
-
-
-class Publisher(Protocol):
-    """Can send a `Message` to a `Subscriber`."""
-
-    _subscribers: WeakSet["Subscriber"]
-
-    def subscribe(self, subscriber: "Subscriber") -> None:
-        """Subscribe to receive messages from this `Publisher`."""
-
-    def unsubscribe(self, subscriber: "Subscriber") -> None:
-        """Stop receiving messages from this `Publisher`."""
-
-    def _notify_subscribers(self, message: AbstractPublisherMessage) -> None:
-        """Send a message to all subscribers."""
-
-
-class PublisherMixin:
-    """A set of default methods to accept subscribe & unsubscribe requests, and notify all.
-
-    subscribers of a message. Classes using this mixin meet the `Publisher` protocol requirements.
-    """
-
-    def subscribe(self: Publisher, subscriber: "Subscriber") -> None:
-        """Perform subscribe."""
-        self._subscribers.add(subscriber)
-
-    def unsubscribe(self: Publisher, subscriber: "Subscriber") -> None:
-        """Perform unsubscribe."""
-        self._subscribers.discard(subscriber)
-
-    def _notify_subscribers(self: Publisher, message: AbstractPublisherMessage) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)
-
-
-class Subscriber(Protocol):
-    """Can subscribe to messages from a `Publisher`."""
-
-    def notify(self, publisher: "Publisher", message: AbstractPublisherMessage) -> None:
-        """Deliver `message` to `Subscriber`."""
 
 
 class BoundedCache[KT, VT](OrderedDict[KT, VT]):

@@ -7,22 +7,15 @@ notification path for Rust-owned ``BotState`` mutations. Worker_3's ZBD4MS seam
 + the ``PySubscriberAdapter``) is the bridge a Python callable uses to register
 against that SAME ``LogDispatcher`` path the engine ``EngineSubscriber`` uses.
 
-THIS task (73UJL6) routes the Python pub/sub **consumers** — the classes/
-functions that subscribe to a ``Publisher`` to drive an update loop — through
-that Rust seam when their target is a **Rust-owned** pool, instead of the legacy
-Python ``PublisherMixin`` path. The canonical consumer is
-``tests/fakes/subscribers.py::FakeSubscriber``, which exposes TWO explicit
-subscribe methods:
-
-- ``subscribe_rust(bot, pool_id)`` — routes through the Rust
-  ``register_subscriber`` seam (the consumer/test context that built the pool
-  through the bot ALREADY has both arguments — ``pool._py_pool.pool_id`` — so
-  no pool-side bot stash is needed; the ``Bot`` is Rust-owned state and is
-  NOT mirrored onto the pool object, per AGENTS.md's "do not introduce a
-  Python mirror of Rust-owned state").
-- ``subscribe(publisher)`` — the legacy Python ``PublisherMixin`` path for
-  Python-only publishers (pinned by ``tests/types/test_publisher_mixin.py`` +
-  ``test_pool_protocols.py``, which stay Python per the 73UJL6 non-goals).
+THIS task (73UJL6; the legacy ``PublisherMixin`` path was retired in VI53G5)
+routes the Python pub/sub **consumers** — the classes/functions that subscribe
+to a pool to drive an update loop — through that Rust seam. The canonical
+consumer is ``tests/fakes/subscribers.py::FakeSubscriber``, whose explicit
+``subscribe_rust`` method routes through the Rust ``register_subscriber`` seam
+(the consumer/test context that built the pool through the bot ALREADY has both
+arguments — ``pool._py_pool.pool_id`` — so no pool-side bot stash is needed; the
+``Bot`` is Rust-owned state and is NOT mirrored onto the pool object, per
+AGENTS.md's "do not introduce a Python mirror of Rust-owned state").
 
 The oracle for the Rust-routed path is the SAME ``LogDispatcher`` fan-out
 contract worker_3's ``tests/test_pubsub_seam_parity.py`` pins (registration-
@@ -33,12 +26,10 @@ free function): a ``FakeSubscriber`` that subscribed to a ``make_v2_pool``
 companion receives the mutated ``pool_id`` when ``py_bot.dispatch_log`` applies
 a V2 ``Sync`` event to that pool — the SAME ``pool_id`` worker_3's seam surfaces.
 
-The seam's current payload is ``pool_id`` only (the full ``PoolStateUpdated``
-``notify(publisher, message)`` reconstruction is the deferred
-``PublisherMixin``-retirement sibling task, flagged in ``FakeSubscriber``'s
-docstring). So the ``FakeSubscriber.__call__`` notify records ``pool_id``
-(``inbox`` ``{"pool_id": ...}`` / ``notifications`` ``(None, pool_id)``) — the
-parity here is the notification SET + order, not the message payload.
+The seam's payload is the mutated ``pool_id``. So the
+``FakeSubscriber.__call__`` notify records ``pool_id`` (``inbox``
+``{"pool_id": ...}`` / ``notifications`` ``(None, pool_id)``) — the parity
+here is the notification SET + order.
 """
 
 from __future__ import annotations
@@ -118,7 +109,7 @@ class TestFakeSubscriberRustSeamRouting:
         """A ``FakeSubscriber`` subscribed via ``subscribe_rust(bot, pool_id)``
         to a Rust-owned V2 pool receives ``pool_id`` when ``dispatch_log``
         applies a V2 ``Sync`` event to that pool — routed through the Rust
-        seam, NOT the legacy Python ``PublisherMixin`` path."""
+        seam."""
         py_bot = Bot(1)
         pool_id, sub, address, _pool = _make_v2_pool_with_subscriber(py_bot)
 
@@ -132,11 +123,9 @@ class TestFakeSubscriberRustSeamRouting:
             block_number=100,
         )
 
-        # The seam surfaces ``pool_id`` only (``FakeSubscriber.__call__``'s
-        # notify records ``{"pool_id": pool_id}`` / ``(None, pool_id)`` — the
-        # ``None`` publisher slot is the payload-fidelity gap flagged in the
-        # ``FakeSubscriber`` docstring + this module's: the full
-        # ``PoolStateUpdated(state)`` reconstruction is a deferred sibling).
+        # The seam surfaces ``pool_id`` only (``FakeSubscriber.__call__``
+        # records ``{"pool_id": pool_id}`` / ``(None, pool_id)`` — the
+        # ``None`` publisher slot is unused).
         #
         # Wait for the subscriber drainer to flush (batched notify).
         deadline = time.monotonic() + _SUBSCRIBER_FLUSH_S
@@ -153,8 +142,7 @@ class TestFakeSubscriberRustSeamRouting:
     def test_notification_order_for_multiple_rust_routed_subscribers(self):
         """§4.2: multiple ``FakeSubscriber``s subscribed to one Rust-owned pool
         receive ``pool_id`` in REGISTRATION order (the Rust ``LogDispatcher``
-        ``Vec<Weak>`` fan-out is registration-ordered + deterministic — STRONGER
-        than the Python ``PublisherMixin`` ``WeakSet`` hash-order)."""
+        ``Vec<Weak>`` fan-out is registration-ordered + deterministic)."""
         py_bot = Bot(1)
         token0 = make_erc20(
             py_bot=py_bot,
@@ -226,8 +214,8 @@ class TestFakeSubscriberRustSeamRouting:
     def test_unsubscribe_releases_the_rust_subscriber(self):
         """``FakeSubscriber.unsubscribe_rust`` releases the stored
         ``PoolStateSubscription`` handle (anchor) → the dispatcher's ``Weak`` goes
-        dead → subsequent dispatches silently skip this subscriber (mirrors
-        ``PublisherMixin.unsubscribe`` + the engine-adapter Weak lifecycle)."""
+        dead → subsequent dispatches silently skip this subscriber (mirrors the
+        engine-adapter Weak lifecycle)."""
         py_bot = Bot(1)
         pool_id, sub, address, _pool = _make_v2_pool_with_subscriber(py_bot)
 
@@ -258,24 +246,6 @@ class TestFakeSubscriberRustSeamRouting:
         assert sub.notifications == [(None, pool_id)], (
             "after unsubscribe_rust(), the Rust-routed subscriber must be skipped"
         )
-
-    def test_python_only_publisher_stays_on_publisher_mixin_path(self):
-        """A ``FakeSubscriber`` subscribed via ``subscribe(publisher)`` to a
-        Python-only publisher (no ``_py_bot``/``_py_pool``) takes the legacy
-        ``PublisherMixin`` path — the full ``notify(publisher, message)`` is
-        delivered. Pins the parity-preservation AC for
-        ``test_publisher_mixin.py`` + ``test_pool_protocols.py``."""
-        pub = _PythonOnlyPublisher()
-        sub = FakeSubscriber()
-        sub.subscribe(pub)  # Python-only publisher → PublisherMixin path.
-
-        msg = _DummyMessage()
-        pub._notify_subscribers(msg)
-
-        assert sub.inbox == [{"from": pub, "message": msg}], (
-            "Python-only publisher must deliver the full (publisher, message) payload"
-        )
-        assert sub.notifications == [(pub, msg)]
 
     def test_wrong_pool_dispatch_does_not_notify_subscriber(self):
         """§4.2 isolation: a ``FakeSubscriber`` subscribed to pool A is NOT
@@ -326,32 +296,3 @@ class TestFakeSubscriberRustSeamRouting:
         assert sub_a.notifications == [], (
             "a FakeSubscriber registered for pool A must not be notified for a pool B mutation"
         )
-
-
-class _DummyMessage:
-    """A minimal publisher message for the Python-only path parity test."""
-
-
-class _PythonOnlyPublisher:
-    """A minimal ``PublisherMixin`` publisher (Python-only — no Rust backing).
-
-    Mirrors ``tests/types/test_publisher_mixin.py::_FakePublisher``: a
-    ``PublisherMixin`` with a ``WeakSet`` of subscribers, exercising the legacy
-    Python ``notify(publisher, message)`` dispatch path. ``FakeSubscriber.subscribe``
-    takes this path for a Python-only publisher (no ``_py_bot``/``_py_pool``).
-    """
-
-    def __init__(self) -> None:
-        from weakref import WeakSet
-
-        self._subscribers: WeakSet[FakeSubscriber] = WeakSet()
-
-    def subscribe(self, subscriber: FakeSubscriber) -> None:
-        self._subscribers.add(subscriber)
-
-    def unsubscribe(self, subscriber: FakeSubscriber) -> None:
-        self._subscribers.discard(subscriber)
-
-    def _notify_subscribers(self, message) -> None:
-        for subscriber in self._subscribers:
-            subscriber.notify(publisher=self, message=message)

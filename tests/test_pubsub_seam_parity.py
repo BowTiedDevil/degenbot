@@ -8,35 +8,30 @@ as a `PoolStateSubscriber` against that SAME `LogDispatcher` the engine
 adapter uses — so Rust-owned mutations notify Rust AND Python subscribers
 through one fan-out.
 
-The oracle is `src/degenbot/types/concrete.py::PublisherMixin._notify_subscribers`
-(``for subscriber in self._subscribers: subscriber.notify(publisher=self,
-message=message)``). §4.2 pins:
+The oracle is `_PyOracleOracle` below — an insertion-ordered list of
+`weakref.ref` mirroring the Rust `Vec<Weak<dyn PoolStateSubscriber>>`.
+§4.2 pins:
 
 1. **Notification ordering + fan-out match the Rust mechanism contract.** The
    Rust `LogDispatcher::notify` iterates the `Vec<Weak<dyn PoolStateSubscriber>>`
-   in registration order (a `Vec`, deterministic — STRONGER than the Python
-   `PublisherMixin` `WeakSet`, whose iteration is hash-order / non-deterministic).
-   A Python callback registered via `register_subscriber` receives `pool_id` in
+   in registration order (a `Vec`, deterministic). A Python callback
+   registered via `register_subscriber` receives `pool_id` in
    registration order; the matching Python oracle mirror (a `list` of `weakref.ref`,
    mirroring the Rust `Vec<Weak>` structure) produces the SAME notify sequence.
    The §4.2 contract is: the same SET of live subscribers receives exactly one
    notification each per dispatch; the Rust port additionally guarantees
-   registration-order determinism (an improvement over `PublisherMixin`).
+   registration-order determinism.
 2. **Drop-skip parity.** Dropping the returned `PoolStateSubscription` handle (or
    `.unsubscribe()`) drops the strong `Arc` → `LogDispatcher`'s `Weak` goes
-   dead → subsequent `notify` calls silently skip it (mirrors the engine-
-   adapter Weak lifecycle + `PublisherMixin.unsubscribe`).
+   dead → subsequent `notify` calls silently skip it (mirrors the
+   engine-adapter Weak lifecycle).
 3. **One notify per dispatch.** A single dispatched log for a registered pool
    fires each (live) subscriber exactly once.
 4. **Wrong-pool isolation.** A subscriber registered for `pool_id=A` is NOT
    notified when `pool_id=B` mutates.
 
-The Rust notify currently surfaces only ``pool_id`` (not the full Python
-``PoolStateUpdated(state)`` message). Reconstructing the latter requires
-reading ``BotState`` + building the Python state wrapper — that's the
-``PublisherMixin`` retirement cutover, a deferred sibling task. The ordering
-+ fan-out + drop-skip parity (the mechanism contract) IS pinned here; the
-message-payload fidelity lands with the cutover.
+The Rust notify surfaces the mutated ``pool_id`` per dispatch. The ordering
++ fan-out + drop-skip parity (the mechanism contract) IS pinned here.
 """
 
 import gc
@@ -94,8 +89,7 @@ class _Recorder:
 
 
 class _PyOracleOracle:
-    """A faithful Python mirror of the Rust `LogDispatcher` fan-out, lifted
-    from `PublisherMixin._notify_subscribers`.
+    """A faithful Python mirror of the Rust `LogDispatcher` fan-out contract.
 
     Mirrors the Rust `LogDispatcher::notify` contract EXACTLY: subscribers are
     held as `weakref.ref`s in a `list` (insertion-ordered, mirroring the Rust
@@ -121,8 +115,8 @@ class _PyOracleOracle:
 
 
 class TestPySubscriberAdapterParity:
-    """§4.2 parity: Rust `LogDispatcher` fan-out matches the Python
-    `PublisherMixin` notification ordering + skip-on-drop contract.
+    """§4.2 parity: Rust `LogDispatcher` fan-out matches the Python oracle's
+    notification ordering + skip-on-drop contract.
 
     Notifications are delivered via a batched drainer (50ms flush interval),
     so each test waits up to `_SUBSCRIBER_FLUSH_S` after dispatch for the
@@ -165,12 +159,12 @@ class TestPySubscriberAdapterParity:
         # Reassure the linter the handle is held (lifetime anchor).
         assert handle is not None
 
-    def test_notification_order_matches_publisher_mixin_oracle(self):
+    def test_notification_order_matches_python_oracle(self):
         """§4.2: the Rust `LogDispatcher` fan-out order is IDENTICAL to the
-        Python `PublisherMixin._notify_subscribers` order for the same
-        subscriber set. Register three Python callbacks against the Rust seam
-        + the same three against the Python `WeakSet` oracle; dispatch one
-        log; assert both paths produced the same notify sequence."""
+        Python oracle's order for the same subscriber set. Register three
+        Python callbacks against the Rust seam + the same three against the
+        Python oracle; dispatch one log; assert both paths produced the same
+        notify sequence."""
         py_bot = Bot()
         pool_id_a = _register_v2_pool(py_bot, address="0x" + "11" * 20)
 
@@ -205,10 +199,10 @@ class TestPySubscriberAdapterParity:
             f"Rust seam notify order {rust_order!r} != registration order {names!r}"
         )
         assert oracle_order == names, (
-            f"PublisherMixin oracle order {oracle_order!r} != registration order {names!r}"
+            f"Python oracle order {oracle_order!r} != registration order {names!r}"
         )
         assert rust_order == oracle_order, (
-            "§4.2 parity breach: Rust fan-out order != Python PublisherMixin order"
+            "§4.2 parity breach: Rust fan-out order != Python oracle order"
         )
         assert len(handles) == 3  # anchors
         assert len(oracle_subs) == 3  # oracle anchors
@@ -217,7 +211,7 @@ class TestPySubscriberAdapterParity:
         """§4.2 drop-skip parity: dropping the returned `PoolStateSubscription` handle
         drops the strong `Arc` → `LogDispatcher`'s `Weak` goes dead → subsequent
         `notify` calls silently skip that subscriber, while the live one keeps
-        firing. Mirrors the engine-adapter Weak lifecycle + `PublisherMixin.unsubscribe`.
+        firing. Mirrors the engine-adapter Weak lifecycle.
         """
         py_bot = Bot()
         pool_id = _register_v2_pool(py_bot)

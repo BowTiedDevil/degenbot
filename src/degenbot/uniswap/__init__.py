@@ -24,7 +24,6 @@ from .v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
 )
 from .v3_liquidity_pool import UniswapV3Pool
 from .v3_snapshot import UniswapV3LiquiditySnapshot
@@ -32,11 +31,10 @@ from .v3_types import (
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
-    UniswapV3PoolStateUpdated,
 )
 from .v4_liquidity_pool import UniswapV4Pool
 from .v4_snapshot import UniswapV4LiquiditySnapshot
-from .v4_types import UniswapV4PoolExternalUpdate, UniswapV4PoolState, UniswapV4PoolStateUpdated
+from .v4_types import UniswapV4PoolExternalUpdate, UniswapV4PoolState
 
 pool_type_registry.set_default_v2_class(UniswapV2Pool)
 pool_type_registry.set_default_v3_class(UniswapV3Pool)
@@ -47,20 +45,17 @@ __all__ = (
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",
-    "UniswapV2PoolStateUpdated",
     "UniswapV2PoolTracker",
     "UniswapV3LiquiditySnapshot",
     "UniswapV3Pool",
     "UniswapV3PoolExternalUpdate",
     "UniswapV3PoolSimulationResult",
     "UniswapV3PoolState",
-    "UniswapV3PoolStateUpdated",
     "UniswapV3PoolTracker",
     "UniswapV4LiquiditySnapshot",
     "UniswapV4Pool",
     "UniswapV4PoolExternalUpdate",
     "UniswapV4PoolState",
-    "UniswapV4PoolStateUpdated",
     "resolve_deployer",
     "resolve_v2_init_hash",
     "resolve_v3_init_hash",

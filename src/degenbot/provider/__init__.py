@@ -33,9 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Self
 
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
-from degenbot._ffi.provider import AlloySubscription
 from degenbot._ffi.provider import AsyncAlloyProvider as RustAsyncAlloyProvider
-from degenbot.exceptions import SubscriptionNotSupported
 from degenbot.provider.factory import (
     get_async_provider_from_config,
     get_provider_from_config,
@@ -43,7 +41,6 @@ from degenbot.provider.factory import (
 from degenbot.provider.offline_provider import (
     OfflineProvider,
 )
-from degenbot.provider.subscription import LogSubscriptionFilter, Subscription
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.rpc_types import (
     BlockData,
@@ -599,49 +596,13 @@ class AlloyProvider:
         """Context manager exit."""
         self.close()
 
-    # ----- Subscription stubs (sync provider — always raises) -----
-
-    def _raise_subscription_not_supported(self) -> None:  # ruff:ignore[no-self-use]
-        """Raise for any sync subscription call.
-
-        Raises:
-            SubscriptionNotSupported: Always.
-
-        """
-        raise SubscriptionNotSupported(transport="sync", rpc_url="unknown")
-
-    def subscribe_blocks(self) -> None:
-        """Not available on sync providers — use AsyncAlloyProvider."""
-        self._raise_subscription_not_supported()
-
-    def subscribe_full_blocks(self) -> None:
-        """Not available on sync providers — use AsyncAlloyProvider."""
-        self._raise_subscription_not_supported()
-
-    def subscribe_pending_transactions(self) -> None:
-        """Not available on sync providers — use AsyncAlloyProvider."""
-        self._raise_subscription_not_supported()
-
-    def subscribe_full_pending_transactions(self) -> None:
-        """Not available on sync providers — use AsyncAlloyProvider."""
-        self._raise_subscription_not_supported()
-
-    def subscribe_logs(
-        self,
-        addresses: list[str] | None = None,  # ruff:ignore[unused-method-argument]
-        topics: list[list[str]] | None = None,  # ruff:ignore[unused-method-argument]
-    ) -> None:
-        """Not available on sync providers — use AsyncAlloyProvider."""
-        self._raise_subscription_not_supported()
-
 
 class AsyncAlloyProvider:
     """High-performance async Ethereum RPC provider using Alloy.
 
     A thin Python wrapper around the Rust ``AsyncAlloyProvider`` pyclass.
-    Adds string block-identifier resolution, subscription wrapping, and
-    adapter-compat introspection shims so it is a direct drop-in for the
-    retired ``AsyncProviderAdapter``.
+    Adds string block-identifier resolution and adapter-compat introspection
+    shims so it is a direct drop-in for the retired ``AsyncProviderAdapter``.
 
     Args:
         rust_provider: The underlying Rust ``AsyncAlloyProvider`` pyclass.
@@ -941,59 +902,6 @@ class AsyncAlloyProvider:
         """Close the provider and release resources."""
         self._provider.close()
 
-    # ----- Subscription methods -----
-
-    async def subscribe_blocks(self) -> Subscription:
-        """Subscribe to new block headers.
-
-        Returns:
-            A subscription yielding new block numbers.
-
-        """
-        return Subscription(_inner=self._provider.subscribe_blocks())
-
-    async def subscribe_full_blocks(self) -> Subscription:
-        """Subscribe to full block bodies.
-
-        Returns:
-            A subscription yielding full block data.
-
-        """
-        return Subscription(_inner=self._provider.subscribe_full_blocks())
-
-    async def subscribe_pending_transactions(self) -> Subscription:
-        """Subscribe to pending transaction hashes.
-
-        Returns:
-            A subscription yielding pending transaction hashes.
-
-        """
-        return Subscription(_inner=self._provider.subscribe_pending_transactions())
-
-    async def subscribe_full_pending_transactions(self) -> Subscription:
-        """Subscribe to full pending transaction bodies.
-
-        Returns:
-            A subscription yielding full pending transaction bodies.
-
-        """
-        return Subscription(_inner=self._provider.subscribe_full_pending_transactions())
-
-    async def subscribe_logs(
-        self,
-        addresses: list[str] | None = None,
-        topics: list[list[str]] | None = None,
-    ) -> Subscription:
-        """Subscribe to filtered log events.
-
-        Returns:
-            A subscription yielding matching log entries.
-
-        """
-        return Subscription(
-            _inner=self._provider.subscribe_logs(addresses=addresses, topics=topics)
-        )
-
     # ----- Introspection shims -----
 
     @staticmethod
@@ -1046,12 +954,9 @@ class AsyncAlloyProvider:
 
 __all__ = [
     "AlloyProvider",
-    "AlloySubscription",
     "AsyncAlloyProvider",
     "LogFilter",
-    "LogSubscriptionFilter",
     "OfflineProvider",
-    "Subscription",
     "get_async_provider_from_config",
     "get_provider_from_config",
 ]

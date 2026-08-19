@@ -4,7 +4,6 @@ import dataclasses
 
 from degenbot.types.abstract import AbstractPoolState, AbstractSimulationResult
 from degenbot.types.aliases import BlockNumber
-from degenbot.types.concrete import PoolStateMessage
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
 type BitmapWord = int
@@ -71,13 +70,6 @@ class UniswapV3PoolSimulationResult(UniswapSimulationResult):
 
     initial_state: UniswapV3PoolState
     final_state: UniswapV3PoolState
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV3PoolStateUpdated(PoolStateMessage):
-    """UniswapV3PoolStateUpdated class."""
-
-    state: UniswapV3PoolState
 
 
 type InitializedTickMap = dict[BitmapWord, BitmapAtWord]

@@ -6,7 +6,6 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from degenbot.types.abstract import AbstractPoolState
-from degenbot.types.concrete import PoolStateMessage
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
     BitmapWord,
@@ -78,13 +77,6 @@ class UniswapV4PoolLiquidityMappingUpdate:
     liquidity: Liquidity
     tick_lower: Tick
     tick_upper: Tick
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV4PoolStateUpdated(PoolStateMessage):
-    """UniswapV4PoolStateUpdated class."""
-
-    state: UniswapV4PoolState
 
 
 type InitializedTickMap = dict[BitmapWord, BitmapAtWord]

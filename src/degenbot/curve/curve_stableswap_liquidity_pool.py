@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import contextlib
 from typing import TYPE_CHECKING, Any, Self
-from weakref import WeakSet
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.per_block_cache import PerBlockCache
@@ -19,7 +18,6 @@ from degenbot.curve.types import (
     CurveDataProvider,
     CurveStableswapPoolExternalUpdate,
     CurveStableswapPoolState,
-    CurveStableSwapPoolStateUpdated,
     DVariant,
     LendingRateStyle,
     MetapoolRateStyle,
@@ -34,10 +32,6 @@ from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.concrete import (
-    PublisherMixin,
-    Subscriber,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -187,7 +181,6 @@ class _HandleCurveDataProviderAdapter:
 
 
 class CurveStableswapPool(
-    PublisherMixin,
     StableswapPoolState,
     AbstractLiquidityPool,
 ):
@@ -229,7 +222,6 @@ class CurveStableswapPool(
     _data_provider: CurveDataProvider | None
     _cache: PerBlockCache
     _name: str
-    _subscribers: WeakSet[Subscriber]
     FEE_DENOMINATOR: int = 10**10
     A_PRECISION: int = 100
     # BASE_CACHE_EXPIRES moved to PerBlockCache
@@ -404,8 +396,6 @@ class CurveStableswapPool(
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
         self._name = f"{token_string} ({self.__class__.__name__}, {fee_string}%)"
-
-        self._subscribers = WeakSet()
         return self
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -509,14 +499,6 @@ class CurveStableswapPool(
         if not applied:  # pragma: no cover - defensive, unreachable for a Curve handle
             msg = f"external_update rejected for {self.address} (not a Curve pool in Rust)"
             raise DegenbotValueError(message=msg)
-        new_state = CurveStableswapPoolState(
-            address=self.address,
-            balances=update.balances,
-            block=update.block_number,
-        )
-        self._notify_subscribers(
-            CurveStableSwapPoolStateUpdated(state=new_state),
-        )
 
     def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
         """Resolve a block identifier to an integer. Falls back to data provider if available.

@@ -7,7 +7,6 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from degenbot.types.abstract import AbstractPoolState
-from degenbot.types.concrete import PoolStateMessage
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -345,10 +344,3 @@ class CurveStableSwapPoolAttributes:
     is_metapool: bool
     underlying_coin_addresses: list[HexAddress] | None = dataclasses.field(default=None)
     base_pool_address: HexAddress | None = dataclasses.field(default=None)
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class CurveStableSwapPoolStateUpdated(PoolStateMessage):
-    """CurveStableSwapPoolStateUpdated class."""
-
-    state: CurveStableswapPoolState

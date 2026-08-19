@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
-from weakref import WeakSet
 
 from degenbot.abi import decode as abi_decode
 from degenbot.aerodrome.types import (
     AerodromeV2PoolExternalUpdate,
     AerodromeV2PoolState,
-    AerodromeV2PoolStateUpdated,
     AerodromeV3PoolState,
 )
 from degenbot.aerodrome.v2_pool_calc import AerodromeV2PoolCalc
@@ -24,7 +22,6 @@ from degenbot.exceptions.pool import (
 )
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -36,7 +33,6 @@ if TYPE_CHECKING:
 
 
 class AerodromeV2Pool(
-    PublisherMixin,
     AerodromeV2PoolStateMixin,
     AerodromeV2PoolCalc,
     AbstractLiquidityPool,
@@ -60,7 +56,6 @@ class AerodromeV2Pool(
     _token0: Erc20Token
     _token1: Erc20Token
     name: str
-    _subscribers: WeakSet[Subscriber]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
@@ -138,7 +133,6 @@ class AerodromeV2Pool(
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # ruff:ignore[line-too-long]
 
         self._initial_state_block = py_pool.update_block
-        self._subscribers = WeakSet()
         return self
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -221,9 +215,6 @@ class AerodromeV2Pool(
             update.reserves_token0,
             update.reserves_token1,
             update.block_number,
-        )
-        self._notify_subscribers(
-            message=AerodromeV2PoolStateUpdated(self.state),
         )
 
     def get_pool_identity_values(
@@ -336,9 +327,6 @@ class AerodromeV2Pool(
 
         Use this method to maintain consistent state data following a chain re-organization.
 
-        The pool will notify all subscribers of the new state with a `AerodromeV2PoolStateUpdated`
-        event.
-
         Raises:
             NoPoolStateAvailable: See function documentation.
 
@@ -347,7 +335,6 @@ class AerodromeV2Pool(
             self._py_pool.restore_aerodrome_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
-        self._notify_subscribers(message=AerodromeV2PoolStateUpdated(self.state))
 
 
 class AerodromeV3Pool(UniswapV3Pool):

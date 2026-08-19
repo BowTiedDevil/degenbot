@@ -29,7 +29,6 @@ from .curve import (
     CurveStableswapPool,
     CurveStableswapPoolSimulationResult,
     CurveStableswapPoolState,
-    CurveStableSwapPoolStateUpdated,
 )
 from .erc20 import Erc20Token, EtherPlaceholder
 from .fork import AnvilFork
@@ -93,7 +92,6 @@ __all__ = (
     "AnvilFork",
     "Bot",
     "ChainlinkPriceContract",
-    "CurveStableSwapPoolStateUpdated",
     "CurveStableswapPool",
     "CurveStableswapPoolSimulationResult",
     "CurveStableswapPoolState",

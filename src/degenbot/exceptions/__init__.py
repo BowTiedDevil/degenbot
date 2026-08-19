@@ -50,9 +50,6 @@ from degenbot.exceptions.infrastructure import (
     NoPriceOracle,
     RegistryAlreadyInitialized,
     RegistryError,
-    SubscriptionDisconnected,
-    SubscriptionError,
-    SubscriptionNotSupported,
     Web3ConnectionTimeout,
 )
 from degenbot.exceptions.pool import (
@@ -145,9 +142,6 @@ __all__ = (
     "RpcError",
     "SpecViolationError",
     "StaleRateResult",
-    "SubscriptionDisconnected",
-    "SubscriptionError",
-    "SubscriptionNotSupported",
     "TokenDenylistedError",
     "TrackerAlreadyInitialized",
     "TrackerError",

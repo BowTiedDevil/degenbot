@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.chain import ChecksummedAddress
-    from degenbot.types.concrete import Subscriber
 
 
 # ── Pool-shape protocols (replace ABCs) ─────────────────────────────
@@ -153,20 +152,12 @@ class StableswapPool(Protocol):
 class PoolSimulation(Protocol):
     """Required interface for all pools.
 
-    Supports exact-input swap simulation and pub/sub for state updates.
+    Supports exact-input swap simulation.
     """
 
     @property
     def address(self) -> ChecksummedAddress:
         """Pool contract address."""
-        ...
-
-    def subscribe(self, subscriber: Subscriber) -> None:
-        """Subscribe a callback to pool state updates."""
-        ...
-
-    def unsubscribe(self, subscriber: Subscriber) -> None:
-        """Remove a subscriber from pool state updates."""
         ...
 
 

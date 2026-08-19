@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Self
-from weakref import WeakSet
 
 from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
@@ -28,7 +27,6 @@ from degenbot.balancer.math import (
 )
 from degenbot.balancer.types import (
     BalancerV2PoolState,
-    BalancerV2PoolStateUpdated,
     BalancerV2WeightedPoolExternalUpdate,
 )
 from degenbot.builders.balancer_builder_base import BalancerBuilderBase
@@ -36,7 +34,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.concrete import PublisherMixin, Subscriber
 
 if TYPE_CHECKING:
     from degenbot.types import LiquidityPool
@@ -68,7 +65,7 @@ def detect_pow_version(bytecode: str) -> PowVersion:
     return PowVersion.V1
 
 
-class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
+class BalancerV2Pool(AbstractLiquidityPool):
     """BalancerV2Pool class."""
 
     variant: ClassVar[str | None] = "balancer_weighted"
@@ -86,7 +83,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
     fee: Fraction
     weights: tuple[int, ...]
     pow_version: PowVersion
-    _subscribers: WeakSet[Subscriber]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
@@ -158,8 +154,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self.fee = Fraction(py_pool.balancer_swap_fee, cls.FEE_DENOMINATOR)
         self.weights = tuple(py_pool.balancer_weights)
         self.pow_version = PowVersion.V1 if py_pool.balancer_pow_version == 1 else PowVersion.V2
-
-        self._subscribers = WeakSet()
         return self
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -352,11 +346,3 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
                 "(not a Balancer weighted pool in Rust)"
             )
             raise DegenbotValueError(message=msg)
-        new_state = BalancerV2PoolState(
-            address=self.address,
-            balances=update.balances,
-            block=update.block_number,
-        )
-        self._notify_subscribers(
-            BalancerV2PoolStateUpdated(state=new_state),
-        )

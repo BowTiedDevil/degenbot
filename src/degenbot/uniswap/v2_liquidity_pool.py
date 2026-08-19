@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Self
-from weakref import WeakSet
 
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
@@ -15,14 +14,12 @@ from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import ExternalUpdateError, NoPoolStateAvailable
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
-    UniswapV2PoolStateUpdated,
 )
 
 if TYPE_CHECKING:
@@ -31,7 +28,7 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import BlockNumber
 
 
-class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
+class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     """A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant."""
 
     variant: ClassVar[str | None] = None
@@ -61,7 +58,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     init_hash: str
     deployer: ChecksummedAddress
     name: str
-    _subscribers: WeakSet[Subscriber]
 
     type PoolState = UniswapV2PoolState
 
@@ -207,8 +203,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
                 f"{100 * self._fee_token1.numerator / self._fee_token1.denominator:.2f}"
             )
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {fee_string}%)"
-
-        self._subscribers = WeakSet()
         return self
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -296,9 +290,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
             reserve1=update.reserves_token1,
             block_number=update.block_number,
         )
-        self._notify_subscribers(
-            message=UniswapV2PoolStateUpdated(self.state),
-        )
 
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached V2 reorg journal deltas earlier than the given block.
@@ -326,7 +317,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         back the pre-target reserves in one write guard). The journal's
         ``update_block`` lands at the oldest popped delta's block (the target
         convention); the restored reserves are the pre-target state.
-        Subscribers are notified with the restored state.
 
         Raises:
             NoPoolStateAvailable: If no state exists prior to the target
@@ -334,11 +324,9 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
         """
         try:
-            restored = self._py_pool.restore_before_block(block)
+            self._py_pool.restore_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
-        if restored is not None:
-            self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_exact_input_swap(
         self,

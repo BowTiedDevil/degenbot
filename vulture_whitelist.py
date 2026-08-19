@@ -22,4 +22,3 @@ dialect  # database/models/base.py: SQLAlchemy TypeDecorator.process_bind_param 
 exc_type  # provider/__init__.py: __exit__ context-manager protocol parameter
 exc_val  # provider/__init__.py: __exit__ context-manager protocol parameter
 exc_tb  # provider/__init__.py: __exit__ context-manager protocol parameter
-publisher  # types/concrete.py: Subscriber.notify Protocol parameter, part of the documented pub-sub contract

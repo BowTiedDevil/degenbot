@@ -4,7 +4,6 @@ import dataclasses
 
 from degenbot.types.abstract import AbstractPoolState, AbstractSimulationResult
 from degenbot.types.aliases import BlockNumber
-from degenbot.types.concrete import PoolStateMessage
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -35,10 +34,3 @@ class UniswapV2PoolExternalUpdate:
     block_number: BlockNumber
     reserves_token0: int
     reserves_token1: int
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class UniswapV2PoolStateUpdated(PoolStateMessage):
-    """UniswapV2PoolStateUpdated class."""
-
-    state: UniswapV2PoolState

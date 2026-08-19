@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import dataclasses
 from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict
-from weakref import WeakSet
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
@@ -39,7 +38,6 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
@@ -53,7 +51,6 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolLiquidityMappingUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
-    UniswapV3PoolStateUpdated,
 )
 
 if TYPE_CHECKING:
@@ -82,7 +79,6 @@ class BitmapAtWordAsDict(TypedDict):
 
 
 class UniswapV3Pool(
-    PublisherMixin,
     V3PoolState,
     UniswapV3PoolCalc,
     AbstractLiquidityPool,
@@ -123,7 +119,6 @@ class UniswapV3Pool(
     _sparse_liquidity_map: bool
     _bitmap_override: dict[int, BitmapAtWord]
     _tick_data_fetcher: Any
-    _subscribers: WeakSet[Subscriber]
 
     TICK_STRUCT_TYPES = (
         "uint128",
@@ -254,8 +249,6 @@ class UniswapV3Pool(
         # representation handle sparse misses.
         self._bitmap_override = {}
         self._tick_data_fetcher = None
-
-        self._subscribers = WeakSet()
         return self
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -467,7 +460,6 @@ class UniswapV3Pool(
                     bitmap=int(bitmap_at_word[0]),
                     block=int(bitmap_at_word[1]) if len(bitmap_at_word) > 1 else block,
                 )
-        self._notify_subscribers(message=UniswapV3PoolStateUpdated(self.state))
         # NOTE: ``_sparse_liquidity_map`` is NOT flipped here — the fetcher's
         # incremental word backfill (the common caller of this method) must
         # keep the pool sparse so subsequent swaps re-enter the fetch retry
@@ -542,7 +534,6 @@ class UniswapV3Pool(
             tick=update.tick,
             block_number=update.block_number,
         )
-        self._notify_subscribers(message=UniswapV3PoolStateUpdated(self.state))
         return True
 
     def update_liquidity_map(
@@ -597,8 +588,6 @@ class UniswapV3Pool(
                 block_number=state_block,
             )
 
-        self._notify_subscribers(message=UniswapV3PoolStateUpdated(self.state))
-
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached states earlier than the given block.
 
@@ -618,19 +607,16 @@ class UniswapV3Pool(
         journal deltas at/after the target + reverse-applies tick priors +
         writes back pre-target scalars in one write guard). The journal's
         ``update_block`` lands at the oldest popped delta's block (the target
-        convention); the restored scalars are the pre-target state. Subscribers
-        are notified with the restored state.
+        convention); the restored scalars are the pre-target state.
 
         Raises:
             NoPoolStateAvailable: If no state exists prior to the target block.
 
         """
         try:
-            restored = self._py_pool.restore_v3_before_block(block)
+            self._py_pool.restore_v3_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
-        if restored is not None:
-            self._notify_subscribers(message=UniswapV3PoolStateUpdated(self.state))
 
     def simulate_exact_input_swap(
         self,

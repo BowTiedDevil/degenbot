@@ -1,7 +1,7 @@
 """Tests for pool protocol types.
 
 Verifies that existing pool classes structurally satisfy the defined
-protocols once they implement the required methods (subscribe, unsubscribe).
+protocols once they implement the required methods.
 """
 
 from __future__ import annotations
@@ -16,34 +16,18 @@ from degenbot.types.pool_protocols import (
 class FakePoolSimulation:
     """Minimal class satisfying PoolSimulation."""
 
-    def __init__(self, address: str = "0x" + "a" * 40) -> None:
-
+    def __init__(self, address: str = "0x" + "a" * 40):
         self._address = get_checksum_address(address)
-        self._subscribers: set[object] = set()
 
     @property
     def address(self):
         return self._address
-
-    def subscribe(self, subscriber):
-        self._subscribers.add(subscriber)
-
-    def unsubscribe(self, subscriber):
-        self._subscribers.discard(subscriber)
 
 
 class TestPoolSimulation:
     def test_fake_pool_satisfies_protocol(self):
         pool = FakePoolSimulation()
         assert isinstance(pool, PoolSimulation)
-
-    def test_subscribe_unsubscribe(self):
-        pool = FakePoolSimulation()
-        subscriber = object()
-        pool.subscribe(subscriber)
-        assert subscriber in pool._subscribers
-        pool.unsubscribe(subscriber)
-        assert subscriber not in pool._subscribers
 
 
 class TestStateManageablePool:

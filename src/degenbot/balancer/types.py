@@ -4,7 +4,6 @@ import dataclasses
 
 from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.aliases import BlockNumber
-from degenbot.types.concrete import PoolStateMessage
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
@@ -33,10 +32,3 @@ class BalancerV2StablePoolExternalUpdate:
 
     block_number: BlockNumber
     balances: tuple[int, ...]
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class BalancerV2PoolStateUpdated(PoolStateMessage):
-    """Message published when a Balancer V2 pool's state changes."""
-
-    state: BalancerV2PoolState

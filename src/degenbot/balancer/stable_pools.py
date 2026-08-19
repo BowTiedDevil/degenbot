@@ -5,7 +5,6 @@ from __future__ import annotations
 from fractions import Fraction
 from itertools import starmap
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
-from weakref import WeakSet
 
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
@@ -38,11 +37,9 @@ from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import StaleRateResult
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.concrete import PublisherMixin, Subscriber
 
 from .types import (
     BalancerV2PoolState,
-    BalancerV2PoolStateUpdated,
     BalancerV2StablePoolExternalUpdate,
 )
 
@@ -109,7 +106,7 @@ class _HandleRateProviderAdapter:
         return tuple(rates)
 
 
-class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
+class BalancerV2StablePool(AbstractLiquidityPool):
     """Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
 
     Supports token-to-token swaps using StableMath. For ComposableStablePools,
@@ -162,7 +159,6 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     _base_scaling_factors: tuple[int, ...]
     _non_bpt_indices: tuple[int, ...]
     _rate_provider_is_static: bool
-    _subscribers: WeakSet[Subscriber]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
@@ -270,8 +266,6 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             self._non_bpt_indices = tuple(i for i in range(len(self._tokens)) if i != self.bpt_idx)
         else:
             self._non_bpt_indices = tuple(range(len(self._tokens)))
-
-        self._subscribers = WeakSet()
         return self
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -693,11 +687,3 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
                 f"external_update rejected for {self.address} (not a Balancer stable pool in Rust)"
             )
             raise DegenbotValueError(message=msg)
-        new_state = BalancerV2PoolState(
-            address=self.address,
-            balances=update.balances,
-            block=update.block_number,
-        )
-        self._notify_subscribers(
-            BalancerV2PoolStateUpdated(state=new_state),
-        )

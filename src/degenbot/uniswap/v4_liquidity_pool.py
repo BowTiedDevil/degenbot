@@ -31,7 +31,6 @@ from __future__ import annotations
 import dataclasses
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
-from weakref import WeakSet
 
 from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
@@ -47,7 +46,6 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
@@ -62,7 +60,6 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolKey,
     UniswapV4PoolLiquidityMappingUpdate,
     UniswapV4PoolState,
-    UniswapV4PoolStateUpdated,
 )
 from degenbot.utils.bytes import to_0x_hex
 
@@ -143,7 +140,6 @@ class Hooks(Enum):
 
 
 class UniswapV4Pool(
-    PublisherMixin,
     V4PoolState,
     UniswapV4PoolCalc,
     AbstractLiquidityPool,
@@ -188,7 +184,6 @@ class UniswapV4Pool(
     _sparse_liquidity_map: bool
     _bitmap_override: dict[int, Any]
     _tick_data_fetcher: Any
-    _subscribers: WeakSet[Subscriber]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
@@ -312,7 +307,6 @@ class UniswapV4Pool(
 
         self._bitmap_override = {}
         self._tick_data_fetcher = None
-        self._subscribers = WeakSet()
         return self
 
     def __eq__(self, other: object) -> bool:
@@ -809,7 +803,6 @@ class UniswapV4Pool(
                 self._bitmap_override[int(word)] = BitmapAtWord(**bitmap_at_word)
             else:
                 self._bitmap_override[int(word)] = bitmap_at_word
-        self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
         # NOTE: ``_sparse_liquidity_map`` NOT flipped — fetcher's incremental
         # backfill must keep the pool sparse. See V3 companion for rationale.
 
@@ -875,7 +868,6 @@ class UniswapV4Pool(
             tick=update.tick,
             block_number=update.block_number,
         )
-        self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
         return True
 
     def update_liquidity_map(
@@ -924,8 +916,6 @@ class UniswapV4Pool(
                 block_number=state_block,
             )
 
-        self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))
-
     def discard_states_before_block(self, block: BlockNumber) -> None:
         """Discard cached states earlier than the given block.
 
@@ -949,8 +939,6 @@ class UniswapV4Pool(
 
         """
         try:
-            restored = self._py_pool.restore_v3_before_block(block)
+            self._py_pool.restore_v3_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
-        if restored is not None:
-            self._notify_subscribers(message=UniswapV4PoolStateUpdated(self.state))

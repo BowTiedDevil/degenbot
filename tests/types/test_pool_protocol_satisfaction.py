@@ -14,5 +14,3 @@ class TestProtocolDeclarations:
         """PoolSimulation declares the required pool interface."""
         attrs = PoolSimulation.__protocol_attrs__
         assert "address" in attrs
-        assert "subscribe" in attrs
-        assert "unsubscribe" in attrs

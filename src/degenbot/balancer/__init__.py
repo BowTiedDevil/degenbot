@@ -3,7 +3,6 @@
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2, BalancerV2StablePool
 from degenbot.balancer.types import (
-    BalancerV2PoolStateUpdated,
     BalancerV2StablePoolExternalUpdate,
     BalancerV2WeightedPoolExternalUpdate,
 )
@@ -12,7 +11,6 @@ __all__ = [
     "INVARIANT_V1",
     "INVARIANT_V2",
     "BalancerV2Pool",
-    "BalancerV2PoolStateUpdated",
     "BalancerV2StablePool",
     "BalancerV2StablePoolExternalUpdate",
     "BalancerV2WeightedPoolExternalUpdate",
