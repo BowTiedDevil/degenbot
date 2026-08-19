@@ -13,9 +13,6 @@ HARD gate.
 
 from __future__ import annotations
 
-import eth_account
-from eth_account import Account
-
 from degenbot._ffi.submission import TxParams, TxSigner
 from degenbot._ffi.submission import finalize_fees as rs_finalize_fees
 
@@ -23,8 +20,10 @@ from degenbot._ffi.submission import finalize_fees as rs_finalize_fees
 ANVIL_KEY_HEX = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 ANVIL_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
-# The exact raw signed bytes eth_account produces for this key + tx_params
-# (captured once, pinned here — the Rust seam must reproduce them exactly).
+# The exact raw signed bytes the eth_account oracle produced for this key +
+# tx_params (captured once, pinned here — the Rust seam must reproduce them
+# exactly). eth_account is retired from the dev deps (2DMR4V); this fixed
+# byte string is the permanent record of the §4.2 HARD gate oracle.
 ETH_ACCOUNT_RAW_HEX = (
     "02f870010784773594008506fc23ac008303d09094"
     "000000000000000000000000000000000000000080"
@@ -192,28 +191,3 @@ def test_chain_id_replay_protection() -> None:
         TxSigner.recover_sender(bytes(raw_mainnet)).lower()
         == TxSigner.recover_sender(bytes(raw_sepolia)).lower()
     )
-
-
-# ---------------------------------------------------------------------------
-# Sanity: eth_account still produces the pinned oracle bytes (version drift
-# guard — if eth_account changes its RFC 6979 nonce, the fixture breaks here
-# rather than silently passing the Rust test)
-# ---------------------------------------------------------------------------
-
-
-def test_eth_account_oracle_still_produces_pinned_bytes() -> None:
-    tx_params = {
-        "chainId": 1,
-        "nonce": 7,
-        "gas": 250_000,
-        "maxFeePerGas": ORACLE_MAX_FEE,
-        "maxPriorityFeePerGas": ORACLE_PRIORITY_FEE,
-        "to": ZERO_ADDR,
-        "value": 0,
-        "data": bytes([0x12, 0x34, 0x56, 0x78]),
-        "type": "0x2",
-        "accessList": [],
-    }
-    signed = Account.sign_transaction(transaction_dict=tx_params, private_key=ANVIL_KEY_HEX)
-    assert signed.raw_transaction.hex() == ETH_ACCOUNT_RAW_HEX
-    assert eth_account.__version__  # import surface check

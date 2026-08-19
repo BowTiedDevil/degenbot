@@ -3,7 +3,7 @@
 //!
 //! `degenbot.crypto.keccak256` / `event_topic` (Python) delegate here; the
 //! golden vectors in `tests/test_crypto_parity.py` pin parity with the old
-//! eth_utils implementations byte-for-byte.
+//! `eth_utils` implementations byte-for-byte.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -17,6 +17,7 @@ use pyo3::types::{PyDict, PyList};
 /// Returns:
 ///     The 32-byte digest as `bytes`.
 #[pyfunction]
+#[must_use]
 pub fn keccak256(data: Vec<u8>) -> Vec<u8> {
     alloy::primitives::keccak256(&data).as_slice().to_vec()
 }
