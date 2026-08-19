@@ -29,10 +29,11 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from degenbot._ffi import BotIo, ChecksummedAddress
+    from degenbot._ffi import BotIo
     from degenbot.database.models.pools import LiquidityPoolTable
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.chain import ChecksummedAddress
 
 
 def pool_class_for_descriptor(

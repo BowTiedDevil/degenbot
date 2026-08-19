@@ -508,6 +508,35 @@ pub fn value_to_alloy_for_type(
             Ok(alloy::dyn_abi::DynSolValue::Uint(unsigned, *bits))
         }
 
+        // Dynamic array: map elements against the item type so that tuples
+        // (or dynamic arrays of dynamic arrays) encode to the right
+        // DynSolValue shapes.
+        (DynSolType::Array(inner_ty), AbiValue::Array(values)) => {
+            let alloy_values: Result<Vec<_>, _> = values
+                .iter()
+                .map(|v| value_to_alloy_for_type(v, inner_ty))
+                .collect();
+            Ok(alloy::dyn_abi::DynSolValue::Array(alloy_values?))
+        }
+        // Tuple: a Python list/tuple arrives as AbiValue::Array regardless of
+        // the target layout; map component-by-component so tuples (and nested
+        // tuples) encode to DynSolValue::Tuple.
+        (DynSolType::Tuple(components), AbiValue::Array(values)) => {
+            if values.len() != components.len() {
+                return Err(AbiDecodeError::UnsupportedType(format!(
+                    "Tuple of {} components requires exactly {} values, got {}",
+                    components.len(),
+                    components.len(),
+                    values.len()
+                )));
+            }
+            let alloy_values: Result<Vec<_>, _> = components
+                .iter()
+                .zip(values.iter())
+                .map(|(c, v)| value_to_alloy_for_type(v, c))
+                .collect();
+            Ok(alloy::dyn_abi::DynSolValue::Tuple(alloy_values?))
+        }
         // Handle FixedArray conversion
         (DynSolType::FixedArray(inner_ty, expected_size), AbiValue::Array(values)) => {
             if values.len() != *expected_size {

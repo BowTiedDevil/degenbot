@@ -45,7 +45,7 @@ from degenbot.utils.bytes import to_bytes
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.chain import ChecksummedAddress
 
 
 class AddressFunction(Protocol):

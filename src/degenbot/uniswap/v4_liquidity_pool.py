@@ -67,9 +67,9 @@ from degenbot.uniswap.v4_types import (
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import LiquidityPool
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 

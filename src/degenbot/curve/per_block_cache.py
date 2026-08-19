@@ -17,8 +17,8 @@ from degenbot.exceptions.pool import MissingCurveData
 from degenbot.types.concrete import BoundedCache
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
 
     from .types import CurveDataProvider
 

@@ -31,6 +31,9 @@ pub enum AbiType {
     Array(Box<Self>),
     /// Fixed-size array of a type (e.g., `uint256[3]`)
     FixedArray(Box<Self>, usize),
+    /// Tuple of types (e.g., `(address,bool,bytes)`) - parenthesized
+    /// Solidity tuple components as used by aggregate3-style calls
+    Tuple(Vec<Self>),
 }
 
 impl AbiType {
@@ -51,6 +54,7 @@ impl AbiType {
         match self {
             Self::Bytes | Self::String | Self::Array(_) => true,
             Self::FixedArray(inner, _) => inner.is_dynamic(),
+            Self::Tuple(comps) => comps.iter().any(|c| c.is_dynamic()),
             _ => false,
         }
     }
@@ -97,6 +101,14 @@ impl AbiType {
             Self::FixedBytes(size) => Cow::Owned(format!("bytes{size}")),
             Self::Array(inner) => Cow::Owned(format!("{}[]", inner.type_str())),
             Self::FixedArray(inner, size) => Cow::Owned(format!("{}[{size}]", inner.type_str())),
+            Self::Tuple(comps) => Cow::Owned(format!(
+                "({})",
+                comps
+                    .iter()
+                    .map(|c| c.type_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )),
         }
     }
 
@@ -126,6 +138,11 @@ impl AbiType {
             Self::FixedArray(inner, size) => {
                 let inner_type = inner.to_alloy_type()?;
                 Ok(DynSolType::FixedArray(Box::new(inner_type), *size))
+            }
+            Self::Tuple(comps) => {
+                let alloy_types: Result<Vec<_>, _> =
+                    comps.iter().map(Self::to_alloy_type).collect();
+                Ok(DynSolType::Tuple(alloy_types?))
             }
         }
     }
@@ -225,8 +242,46 @@ fn parse_abi_type(s: &str) -> Result<AbiType, AbiTypeError> {
         }
     }
 
+    // Handle tuple types: (t1,t2,...)
+    if s.starts_with('(') {
+        return parse_tuple_type(s);
+    }
+
     // Parse base type
     parse_base_type(normalize_type(s))
+}
+
+fn parse_tuple_type(maybe_tuple: &str) -> Result<AbiType, AbiTypeError> {
+    // Parse a tuple type string `(t1,t2,...)` (no array suffix - those are
+    // stripped by `parse_abi_type` before this is reached).
+    let mut depth = 0;
+    let mut close = None;
+    for (i, c) in maybe_tuple.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close.ok_or_else(|| AbiTypeError::UnknownType(maybe_tuple.to_string()))?;
+    if !maybe_tuple[close + 1..].trim().is_empty() {
+        return Err(AbiTypeError::UnknownType(maybe_tuple.to_string()));
+    }
+    let inner = &maybe_tuple[1..close];
+    if inner.trim().is_empty() {
+        return Err(AbiTypeError::UnknownType(maybe_tuple.to_string()));
+    }
+    let components = parse_type_list(inner)?;
+    if components.is_empty() {
+        return Err(AbiTypeError::UnknownType(maybe_tuple.to_string()));
+    }
+    Ok(AbiType::Tuple(components))
 }
 
 /// Parse a normalized base type string (no arrays).
@@ -330,6 +385,67 @@ mod tests {
         assert_eq!(AbiType::parse("uint").unwrap(), AbiType::Uint(256));
         assert_eq!(AbiType::parse("int").unwrap(), AbiType::Int(256));
         assert_eq!(AbiType::parse("function").unwrap(), AbiType::FixedBytes(24));
+    }
+
+    #[test]
+    fn test_parse_tuple_types() {
+        assert_eq!(
+            AbiType::parse("(address,bool,bytes)").unwrap(),
+            AbiType::Tuple(vec![AbiType::Address, AbiType::Bool, AbiType::Bytes])
+        );
+        assert_eq!(
+            AbiType::parse("(bool,bytes)[]").unwrap(),
+            AbiType::Array(Box::new(AbiType::Tuple(vec![
+                AbiType::Bool,
+                AbiType::Bytes
+            ])))
+        );
+        assert_eq!(
+            AbiType::parse("((uint256,address),bool)").unwrap(),
+            AbiType::Tuple(vec![
+                AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Address]),
+                AbiType::Bool,
+            ])
+        );
+        assert_eq!(
+            AbiType::parse("(uint256,bool)[2]").unwrap(),
+            AbiType::FixedArray(
+                Box::new(AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Bool])),
+                2
+            )
+        );
+    }
+
+    #[test]
+    fn test_tuple_type_str_roundtrip() {
+        for s in [
+            "(address,bool,bytes)",
+            "(bool,bytes)[]",
+            "((uint256,address),bool)",
+            "(uint256,bool)[2]",
+            "(uint8,(uint256,bool))[]",
+        ] {
+            let ty = AbiType::parse(s).unwrap();
+            assert_eq!(ty.type_str(), s, "roundtrip failed for {s}");
+        }
+    }
+
+    #[test]
+    fn test_tuple_is_dynamic() {
+        assert!(!AbiType::parse("(bool,uint8)").unwrap().is_dynamic());
+        assert!(AbiType::parse("(uint256,bytes)").unwrap().is_dynamic());
+        assert!(AbiType::parse("(bytes[])[]").unwrap().is_dynamic());
+        assert!(AbiType::parse("((uint256,string),bool)")
+            .unwrap()
+            .is_dynamic());
+    }
+
+    #[test]
+    fn test_parse_tuple_errors() {
+        assert!(AbiType::parse("()").is_err());
+        assert!(AbiType::parse("(uint256))").is_err());
+        assert!(AbiType::parse("((uint256)").is_err());
+        assert!(AbiType::parse("(,bool)").is_err());
     }
 
     #[test]

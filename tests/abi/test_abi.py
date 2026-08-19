@@ -296,3 +296,87 @@ class TestErrors:
         """Bad data raises AbiDecodeError."""
         with pytest.raises(AbiDecodeError):
             decode_single("uint256", b"\x00" * 10)
+
+
+# Pinned tuple vectors from eth_abi 5.x (MS2FIV parity probe).
+_SINGLE_TUP_HEX = (
+    "000000000000000000000000000000000000000000000000000000000000002000000000000000000000"
+    "000011111111111111111111111111111111111111110000000000000000000000000000000000000000"
+    "000000000000000000000001000000000000000000000000000000000000000000000000000000000000"
+    "006000000000000000000000000000000000000000000000000000000000000000010100000000000000"
+    "000000000000000000000000000000000000000000000000"
+)
+_DYNARR1_TUP_HEX = (
+    "000000000000000000000000000000000000000000000000000000000000002000000000000000000000"
+    "000000000000000000000000000000000000000000010000000000000000000000000000000000000000"
+    "000000000000000000000020000000000000000000000000111111111111111111111111111111111111"
+    "111100000000000000000000000000000000000000000000000000000000000000010000000000000000"
+    "000000000000000000000000000000000000000000000060000000000000000000000000000000000000"
+    "000000000000000000000000000101000000000000000000000000000000000000000000000000000000"
+    "00000000"
+)
+_NESTED_TUP_HEX = (
+    "000000000000000000000000000000000000000000000000000000000000002000000000000000000000"
+    "000000000000000000000000000000000000000000010000000000000000000000000000000000000000"
+    "000000000000000000000007000000000000000000000000000000000000000000000000000000000000"
+    "007b0000000000000000000000000000000000000000000000000000000000000001"
+)
+_FIXED2_TUP_HEX = (
+    "000000000000000000000000000000000000000000000000000000000000000100000000000000000000"
+    "000000000000000000000000000000000000000000010000000000000000000000000000000000000000"
+    "000000000000000000000002000000000000000000000000000000000000000000000000000000000000"
+    "0000"
+)
+_NESTEDDEC_TUP_HEX = (
+    "000000000000000000000000000000000000000000000000000000000000002a00000000000000000000"
+    "000011111111111111111111111111111111111111110000000000000000000000000000000000000000"
+    "000000000000000000000001"
+)
+
+
+_TUP_ADDR = "0x1111111111111111111111111111111111111111"
+
+
+class TestTuples:
+    """Solidity tuple type strings (MS2FIV) with pinned byte vectors.
+
+    Value shapes follow Solidity semantics: one outer value per type;
+    an array's value is a list whose elements are themselves tuples
+    (each a list/tuple of the component values)."""
+
+    def test_encode_tuple(self) -> None:
+        result = encode(["(address,bool,bytes)"], [(_TUP_ADDR, True, b"\x01")])
+        assert len(result) == 192
+        assert result == bytes.fromhex(_SINGLE_TUP_HEX)
+
+    def test_encode_tuple_in_dynamic_array(self) -> None:
+        result = encode(["(address,bool,bytes)[]"], [[(_TUP_ADDR, True, b"\x01")]])
+        assert result == bytes.fromhex(_DYNARR1_TUP_HEX)
+
+    def test_encode_nested_tuple_array(self) -> None:
+        result = encode(["(uint8,(uint256,bool))[]"], [[(7, (123, True))]])
+        assert result == bytes.fromhex(_NESTED_TUP_HEX)
+
+    def test_encode_fixed_array_of_tuples(self) -> None:
+        result = encode(["(uint256,bool)[2]"], [[(1, True), (2, False)]])
+        assert result == bytes.fromhex(_FIXED2_TUP_HEX)
+
+    def test_decode_nested_tuple(self) -> None:
+        data = bytes.fromhex(_NESTEDDEC_TUP_HEX)
+        result = decode(["((uint256,address),bool)"], data)
+        # tuple components decode as plain Python lists (like arrays)
+        assert result[0][0][0] == 42
+        assert result[0][0][1].lower() == _TUP_ADDR.lower()
+        assert result[0][1] is True
+
+    def test_decode_tuple_elements_are_lists(self) -> None:
+        data = bytes.fromhex(_NESTEDDEC_TUP_HEX)
+        result = decode(["((uint256,address),bool)"], data)
+        assert isinstance(result[0], list)
+        assert isinstance(result[0][0], list)
+        assert result[0][0][0] == 42
+        assert result[0][1] is True
+
+    def test_tuple_mismatched_component_count(self) -> None:
+        with pytest.raises(AbiEncodeError):
+            encode(["(uint256,bool)"], [(1,)])

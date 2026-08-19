@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.types.chain import ChecksummedAddress
 
 type PoolId = int
 type TokenId = int

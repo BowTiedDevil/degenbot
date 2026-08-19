@@ -14,10 +14,10 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import DexIdentity
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
 
 

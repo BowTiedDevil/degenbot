@@ -17,8 +17,8 @@ from degenbot.uniswap.v3_types import (
 )
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
 
 type FeeToProtocol = int
 type SwapFee = int

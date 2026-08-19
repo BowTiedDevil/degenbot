@@ -26,10 +26,9 @@ type PoolId = str
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, scoped_session
 
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.types.aliases import BlockNumber, ChainId
-    from degenbot.types.chain import HexAddress, HexStr
+    from degenbot.types.chain import ChecksummedAddress, HexAddress, HexStr
 
     type PoolManagerAddress = ChecksummedAddress
     type ManagedPoolIdentifier = tuple[PoolManagerAddress, PoolId]

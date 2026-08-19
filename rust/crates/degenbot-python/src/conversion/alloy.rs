@@ -23,7 +23,7 @@
 use crate::abi_types::AbiValue;
 use crate::conversion::cache::{bytes_to_int, bytes_to_int_signed};
 use alloy::primitives::{I256, U256};
-use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyList, PyString};
+use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyList, PyString, PyTuple};
 use pyo3::{exceptions::PyValueError, prelude::*, PyTypeInfo};
 use std::str::FromStr;
 
@@ -223,6 +223,13 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
     // Try list (for arrays)
     if let Ok(list) = obj.cast::<PyList>() {
         let values: Result<Vec<_>, _> = list.iter().map(|item| convert_item(&item, py)).collect();
+        return Ok(AbiValue::Array(values?));
+    }
+
+    // Try tuple (Solidity tuple components). The target type decides whether
+    // this maps to DynSolValue::Tuple or an array element.
+    if let Ok(tup) = obj.cast::<PyTuple>() {
+        let values: Result<Vec<_>, _> = tup.iter().map(|item| convert_item(&item, py)).collect();
         return Ok(AbiValue::Array(values?));
     }
 

@@ -35,6 +35,11 @@ type HexStr = str
 #: A hex-encoded address string — was ``eth_typing.HexAddress``.
 type HexAddress = str
 
+#: An EVM address string in EIP-55 checksummed form (plain ``str``).
+#: The stable domain home for this name; src files import it here
+#: instead of from ``degenbot._ffi`` (ADR-013 barrier).
+type ChecksummedAddress = str
+
 #: A hex-encoded 32-byte hash — was ``eth_typing.Hash32``.
 type Hash32 = str
 
@@ -79,6 +84,7 @@ __all__ = (
     "Address",
     "BlockParams",
     "ChainId",
+    "ChecksummedAddress",
     "Hash32",
     "HexAddress",
     "HexStr",

@@ -49,8 +49,8 @@ from .types import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import LiquidityPool
+    from degenbot.types.chain import ChecksummedAddress
 
 # Enum for deployed StableMath invariant versions.
 # V1: always-roundDown with D_P accumulation (older ComposableStablePools)

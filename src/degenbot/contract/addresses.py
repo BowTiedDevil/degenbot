@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import keccak256
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.crypto import keccak256
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:

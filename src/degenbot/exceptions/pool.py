@@ -15,8 +15,8 @@ from degenbot.exceptions.base import DegenbotError
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.v4_liquidity_pool import Hooks
 
 # --- EVM ---

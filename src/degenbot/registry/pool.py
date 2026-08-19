@@ -8,9 +8,10 @@ from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
 from degenbot.types.pool_protocols import ConcentratedLiquidityPool
 
 if TYPE_CHECKING:
-    from degenbot._ffi import Bot, ChecksummedAddress
+    from degenbot._ffi import Bot
     from degenbot.types.abstract import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.chain import ChecksummedAddress
 
 
 type PoolId = bytes

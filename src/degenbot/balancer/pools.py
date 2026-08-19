@@ -39,8 +39,8 @@ from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import LiquidityPool
+    from degenbot.types.chain import ChecksummedAddress
 
 # Hex representation of the TWO constant (2e18 = 0x1bc16d674ec80000)
 # This value only appears in the bytecode of V2 WeightedPool contracts that include

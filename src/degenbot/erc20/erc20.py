@@ -11,9 +11,9 @@ from degenbot.types.abstract import AbstractErc20Token
 from degenbot.types.concrete import BoundedCache
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot._ffi import Erc20Token as _TokenHandle
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
 
 UNKNOWN_NAME = "Unknown Token"
 UNKNOWN_SYMBOL = "UNKNOWN"

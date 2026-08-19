@@ -56,7 +56,21 @@ def test_no_ffi_imports_outside_init_files() -> None:
             continue
         rel = str(f.relative_to(REPO_ROOT))
         source = f.read_text()
+        tc_indent: int | None = None  # indent of an enclosing if-TYPE_CHECKING header
         for lineno, line in enumerate(source.splitlines(), 1):
+            stripped = line.strip()
+            if stripped:
+                ind = len(line) - len(line.lstrip())
+                if tc_indent is not None and ind <= tc_indent:
+                    tc_indent = None
+            if (
+                stripped.startswith("if ")
+                and "TYPE_CHECKING" in stripped
+                and stripped.endswith(":")
+            ):
+                tc_indent = len(line) - len(line.lstrip())
+            if tc_indent is not None and (len(line) - len(line.lstrip())) > tc_indent:
+                continue  # TYPE_CHECKING-only: annotations are strings, no runtime _ffi touch
             if not _FFI_IMPORT_RE.search(line):
                 continue
             m = _FFI_NAMES_RE.match(line)

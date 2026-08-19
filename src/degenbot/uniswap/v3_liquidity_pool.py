@@ -57,9 +57,9 @@ from degenbot.uniswap.v3_types import (
 )
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import LiquidityPool
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 type Token0Amount = int

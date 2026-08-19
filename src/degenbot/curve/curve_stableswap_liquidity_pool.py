@@ -42,9 +42,9 @@ from degenbot.types.concrete import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.types import LiquidityPool
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
 
 

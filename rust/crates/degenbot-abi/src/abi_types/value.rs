@@ -205,6 +205,9 @@ impl AbiValue {
                     .collect();
                 Ok(Self::Array(values?))
             }
+            AbiType::Tuple(_) => Err(ContractError::InvalidAbi {
+                message: "tuple types are not supported as string arguments".to_string(),
+            }),
         }
     }
 

@@ -10,7 +10,8 @@ from degenbot.logging import logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from degenbot._ffi import BotIo, ChecksummedAddress
+    from degenbot._ffi import BotIo
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 

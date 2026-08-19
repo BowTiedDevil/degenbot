@@ -12,9 +12,9 @@ from degenbot.exceptions.pool import PoolCreationFailed, PoolNotAssociated
 from degenbot.types.abstract import AbstractPoolTracker
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.bot import Bot
     from degenbot.types.aliases import ChainId
+    from degenbot.types.chain import ChecksummedAddress
 
 
 class CurveStableswapPoolTracker(

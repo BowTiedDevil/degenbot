@@ -25,9 +25,9 @@ from degenbot.uniswap.v3_functions import generate_v3_pool_address
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.bot import Bot
     from degenbot.types.aliases import ChainId
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 

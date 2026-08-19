@@ -9,10 +9,10 @@ from degenbot.checksum_cache import get_checksum_address
 if TYPE_CHECKING:
     from threading import Lock
 
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.bot import Bot
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
+    from degenbot.types.chain import ChecksummedAddress
 
 
 class AbstractPoolTracker[Pool: AbstractLiquidityPool]:

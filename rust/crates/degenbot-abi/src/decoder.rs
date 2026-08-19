@@ -153,6 +153,7 @@ pub fn decode_for_types(
     let cached = crate::abi_types::CachedAbiTypes::from_abi_types(types)?;
     cached.decode(data)
 }
+
 #[cfg(test)]
 #[expect(
     clippy::panic,
@@ -164,8 +165,43 @@ pub fn decode_for_types(
 mod tests {
 
     use super::*;
+    use alloy::hex;
     use alloy::primitives::{I256, U256};
     use std::sync::Arc;
+
+    #[test]
+    fn test_decode_tuple_dynamic_array() {
+        // Pinned from eth_abi 5.x (MS2FIV parity probe).
+        let pined: &[u8] = &hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000046162636400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000");
+        let values = decode_rust(&["(bool,bytes)[]"], pined).unwrap();
+        assert_eq!(
+            values,
+            vec![AbiValue::Array(vec![
+                AbiValue::Array(vec![
+                    AbiValue::Bool(true),
+                    AbiValue::Bytes(b"abcd".to_vec())
+                ]),
+                AbiValue::Array(vec![AbiValue::Bool(false), AbiValue::Bytes(Vec::new())]),
+            ])]
+        );
+    }
+
+    #[test]
+    fn test_decode_nested_tuple() {
+        // Pinned from eth_abi 5.x (MS2FIV parity probe).
+        let pined: &[u8] = &hex!("000000000000000000000000000000000000000000000000000000000000002a00000000000000000000000011111111111111111111111111111111111111110000000000000000000000000000000000000000000000000000000000000001");
+        let values = decode_rust(&["((uint256,address),bool)"], pined).unwrap();
+        assert_eq!(
+            values,
+            vec![AbiValue::Array(vec![
+                AbiValue::Array(vec![
+                    AbiValue::Uint(U256::from(42u64), 256),
+                    AbiValue::Address([0x11; 20])
+                ]),
+                AbiValue::Bool(true),
+            ])]
+        );
+    }
 
     #[test]
     fn test_decode_uint256_rust() {

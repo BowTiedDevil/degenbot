@@ -61,11 +61,11 @@ from degenbot.version import __version__
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]

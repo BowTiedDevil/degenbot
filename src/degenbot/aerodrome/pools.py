@@ -28,10 +28,10 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from degenbot.provider import AlloyProvider
     from degenbot.types import LiquidityPool
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 

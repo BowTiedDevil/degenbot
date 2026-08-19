@@ -88,14 +88,13 @@ def _encode_get_tick_liquidity(pool_id: str, tick: int) -> str:
 
 
 def _abi_encode_aggregate3(calls: list[tuple[str, str]]) -> str:
-    """ABI-encode aggregate3 via eth_abi if available, else raise."""
-    try:
-        from eth_abi import encode  # type: ignore
-    except Exception as e:  # pragma: no cover - only if eth_abi missing
-        raise RuntimeError("eth_abi required for aggregate3 encoding: pip install eth-abi") from e
+    """ABI-encode aggregate3 via the Rust-backed degenbot.abi core."""
+    from degenbot.abi import encode  # lazy: keep this script importable without the bot
+
     elements = []
     for tgt, calldata in calls:
-        elements.append((tgt, True, bytes.fromhex(calldata[2:])))
+        # raw 20-byte target so no EIP-55 case assumption is needed
+        elements.append((bytes.fromhex(tgt[2:]), True, bytes.fromhex(calldata[2:])))
     args = encode(["(address,bool,bytes)[]"], [elements]).hex()
     return f"{AGGREGATE3_SEL}{args}"
 
@@ -181,9 +180,9 @@ def fetch_onchain_tickmap(rpc_url, state_view, mc3, pool_id, block, spacing, bat
         for w in chunk:
             # ABI: dynamic array of tuple -> each element has a bytes tail.
             pass
-        # We'll decode via eth_abi too.
-        from eth_abi import decode  # type: ignore
+        from degenbot.abi import decode  # lazy: keep this script importable without the bot
 
+        # degenbot.abi decodes tuple elements as plain lists (unpacked below)
         results = decode(["(bool,bytes)[]"], rbytes)[0]
         if len(results) != len(chunk):
             raise RuntimeError(f"aggregate3 returned {len(results)} rows, expected {len(chunk)}")

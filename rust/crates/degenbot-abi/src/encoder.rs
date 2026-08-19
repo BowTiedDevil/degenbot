@@ -232,6 +232,57 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn test_encode_tuple_dynamic_array() {
+        // Pinned from eth_abi 5.x (MS2FIV parity probe).
+        let pined: &[u8] = &hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000111111111111111111111111111111111111111100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000101000000000000000000000000000000000000000000000000000000000000000000000000000000000000002222222222222222222222222222222222222222000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000");
+        let el1 = AbiValue::Array(vec![
+            AbiValue::Address([0x11; 20]),
+            AbiValue::Bool(true),
+            AbiValue::Bytes(vec![0x01]),
+        ]);
+        let el2 = AbiValue::Array(vec![
+            AbiValue::Address([0x22; 20]),
+            AbiValue::Bool(false),
+            AbiValue::Bytes(Vec::new()),
+        ]);
+        let out = encode_rust(
+            &["(address,bool,bytes)[]"],
+            &[AbiValue::Array(vec![el1, el2])],
+        )
+        .unwrap();
+        assert_eq!(out, pined);
+    }
+
+    #[test]
+    fn test_encode_nested_tuple() {
+        // Pinned from eth_abi 5.x (MS2FIV parity probe).
+        let pined: &[u8] = &hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000007b0000000000000000000000000000000000000000000000000000000000000001");
+        let inner = AbiValue::Array(vec![
+            AbiValue::Uint(U256::from(123u64), 256),
+            AbiValue::Bool(true),
+        ]);
+        let el = AbiValue::Array(vec![AbiValue::Uint(U256::from(7u64), 256), inner]);
+        let out = encode_rust(&["(uint8,(uint256,bool))[]"], &[AbiValue::Array(vec![el])]).unwrap();
+        assert_eq!(out, pined);
+    }
+
+    #[test]
+    fn test_encode_fixed_array_of_tuples() {
+        // Pinned from eth_abi 5.x (MS2FIV parity probe).
+        let pined: &[u8] = &hex!("0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000");
+        let v1 = AbiValue::Array(vec![
+            AbiValue::Uint(U256::from(1u64), 256),
+            AbiValue::Bool(true),
+        ]);
+        let v2 = AbiValue::Array(vec![
+            AbiValue::Uint(U256::from(2u64), 256),
+            AbiValue::Bool(false),
+        ]);
+        let out = encode_rust(&["(uint256,bool)[2]"], &[AbiValue::Array(vec![v1, v2])]).unwrap();
+        assert_eq!(out, pined);
+    }
+
+    #[test]
     fn test_encode_uint256() {
         let value = AbiValue::Uint(U256::from(12345u64), 256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
