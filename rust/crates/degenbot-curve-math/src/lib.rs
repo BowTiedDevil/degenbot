@@ -39,6 +39,15 @@
 //!
 //! All functions are pure: numeric inputs → numeric outputs.
 
+/// Curve `StableSwap` xp precision: balances are stored as 18-decimal
+/// fixed point and the xp form is `balance * rate_multiplier / X_PRECISION`
+/// (Vyper contracts store the same value unadjusted, so the caller divides).
+pub const X_PRECISION: u128 = 1_000_000_000_000_000_000;
+
+/// Curve fee denominator: fees are fractions of 1/1e10 (4 = 0.04% = 4 bps),
+/// matching the contract fee convention.
+pub const FEE_DENOMINATOR: u128 = 10_000_000_000;
+
 pub mod curve_dy_calculator;
 pub mod stableswap;
 
