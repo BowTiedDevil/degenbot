@@ -21,10 +21,9 @@ from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING
 
-import eth_typing
-
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.abstract import AbstractExchangeDeployment
+from degenbot.types.chain import ChainId
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
@@ -109,7 +108,7 @@ _DeploymentConstant = (
 
 # (chain_id, lowercase-factory) → DeploymentRecord — the JSON source of truth,
 # indexed lazily on first access. ``chain_id`` from the JSON is an ``int``;
-# ``eth_typing.ChainId`` is an ``IntEnum`` so it hashes equal for the lookup.
+# ``ChainId`` is an ``IntEnum`` so it hashes equal for the lookup.
 # Lazy: breaks a circular import (deployment_loader → aerodrome.pools →
 # uniswap.__init__ → uniswap.deployments). The Rust resolve_* fns above are
 # available immediately; the JSON records load on first _record() call.
@@ -218,37 +217,37 @@ def _constants() -> dict[str, _DeploymentConstant]:
         # Mainnet DEX
         "EthereumMainnetPancakeswapV2": _v2(
             name="Ethereum Mainnet Pancakeswap V2",
-            chain_id=eth_typing.ChainId.ETH,
+            chain_id=ChainId.ETH,
             factory="0x1097053Fd2ea711dad45caCcc45EfF7548fCB362",
         ),
         "EthereumMainnetPancakeswapV3": _v3(
             name="Ethereum Mainnet Pancakeswap V3",
-            chain_id=eth_typing.ChainId.ETH,
+            chain_id=ChainId.ETH,
             factory="0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
         ),
         "EthereumMainnetSushiswapV2": _v2(
             name="Ethereum Mainnet Sushiswap V2",
-            chain_id=eth_typing.ChainId.ETH,
+            chain_id=ChainId.ETH,
             factory="0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac",
         ),
         "EthereumMainnetSushiswapV3": _v3(
             name="Ethereum Mainnet Sushiswap V3",
-            chain_id=eth_typing.ChainId.ETH,
+            chain_id=ChainId.ETH,
             factory="0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F",
         ),
         "EthereumMainnetUniswapV2": _v2(
             name="Ethereum Mainnet Uniswap V2",
-            chain_id=eth_typing.ChainId.ETH,
+            chain_id=ChainId.ETH,
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
         ),
         "EthereumMainnetUniswapV3": _v3(
             name="Ethereum Mainnet Uniswap V3",
-            chain_id=eth_typing.ChainId.ETH,
+            chain_id=ChainId.ETH,
             factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         ),
         "EthereumMainnetUniswapV4": UniswapV4ExchangeDeployment(
             name="Ethereum Mainnet Uniswap V4",
-            chain_id=eth_typing.ChainId.ETH,
+            chain_id=ChainId.ETH,
             pool_manager=UniswapPoolManagerDeployment(
                 address=get_checksum_address("0x000000000004444c5dc75cB358380D2e3dE08A90"),
             ),
@@ -259,52 +258,52 @@ def _constants() -> dict[str, _DeploymentConstant]:
         # Base DEX
         "BaseAerodromeV2": _v2(
             name="Aerodrome V2",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
         ),
         "BaseAerodromeV3": _v3(
             name="Base Aerodrome V3",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A",
         ),
         "BasePancakeswapV2": _v2(
             name="Pancakeswap V2",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x02a84c1b3BBD7401a5f7fa98a384EBC70bB5749E",
         ),
         "BasePancakeswapV3": _v3(
             name="Pancakeswap V3",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
         ),
         "BaseSushiswapV2": _v2(
             name="Sushiswap V2",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x71524B4f93c58fcbF659783284E38825f0622859",
         ),
         "BaseSushiswapV3": _v3(
             name="Sushiswap V3",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0xc35DADB65012eC5796536bD9864eD8773aBc74C4",
         ),
         "BaseSwapbasedV2": _v2(
             name="Swapbased V2",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x04C9f118d21e8B767D2e50C946f0cC9F6C367300",
         ),
         "BaseUniswapV2": _v2(
             name="Uniswap V2",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
         ),
         "BaseUniswapV3": _v3(
             name="Uniswap V3",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             factory="0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
         ),
         "BaseUniswapV4": UniswapV4ExchangeDeployment(
             name="Uniswap V4",
-            chain_id=eth_typing.ChainId.BASE,
+            chain_id=ChainId.BASE,
             pool_manager=UniswapPoolManagerDeployment(
                 address=get_checksum_address("0x498581fF718922c3f8e6A244956aF099B2652b2b"),
             ),
@@ -315,22 +314,22 @@ def _constants() -> dict[str, _DeploymentConstant]:
         # Arbitrum DEX
         "ArbitrumCamelotV2": _v2(
             name="Arbitrum Camelot V2",
-            chain_id=eth_typing.ChainId.ARB1,
+            chain_id=ChainId.ARB1,
             factory="0x6EcCab422D763aC031210895C81787E87B43A652",
         ),
         "ArbitrumSushiswapV2": _v2(
             name="Arbitrum Sushiswap V2",
-            chain_id=eth_typing.ChainId.ARB1,
+            chain_id=ChainId.ARB1,
             factory="0xc35DADB65012eC5796536bD9864eD8773aBc74C4",
         ),
         "ArbitrumUniswapV3": _v3(
             name="Arbitrum Uniswap V3",
-            chain_id=eth_typing.ChainId.ARB1,
+            chain_id=ChainId.ARB1,
             factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
         ),
         "ArbitrumSushiswapV3": _v3(
             name="Arbitrum Sushiswap V3",
-            chain_id=eth_typing.ChainId.ARB1,
+            chain_id=ChainId.ARB1,
             factory="0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e",
         ),
     }

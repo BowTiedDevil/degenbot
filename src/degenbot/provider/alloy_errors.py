@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 from degenbot.exceptions import ContractLogicError
 
 if TYPE_CHECKING:
-    from eth_typing import Address
+    from degenbot.types.chain import Address
 
 # Markers indicating an EVM execution revert inside the Rust provider's
 # formatted error string. Solidity >=0.8 surfaces as the phrase

@@ -26,7 +26,6 @@ independent of any production snapshot.
 import pathlib
 
 import pytest
-from eth_typing import ChainId
 
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
@@ -37,6 +36,7 @@ from degenbot.database.operations import (
 )
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import find_paths, find_paths_async
+from degenbot.types.chain import ChainId
 
 CHAIN = ChainId.ETH  # value 1; arbitrary but conventional
 

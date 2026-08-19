@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from degenbot._ffi import to_checksum_address
 
 if TYPE_CHECKING:
-    from eth_typing import HexAddress
-
     from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.chain import HexAddress
 
 _HEX_PREFIX_LENGTH = 2
 
@@ -24,5 +23,5 @@ def get_checksum_address(address: HexAddress | bytes) -> ChecksummedAddress:
 
     """
     if isinstance(address, str) and len(address) >= _HEX_PREFIX_LENGTH and address[:2] == "0X":
-        address = cast("HexAddress", "0x" + address[2:])
+        address = "0x" + address[2:]
     return to_checksum_address(address)

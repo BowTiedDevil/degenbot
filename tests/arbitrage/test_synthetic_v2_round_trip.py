@@ -19,7 +19,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
-from eth_typing import ChainId
 
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
@@ -33,6 +32,7 @@ from degenbot.database.operations import (
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import find_paths_async
 from degenbot.runner.build_paths import resolve_directions
+from degenbot.types.chain import ChainId
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 

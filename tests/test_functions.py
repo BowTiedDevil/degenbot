@@ -1,5 +1,4 @@
 import pytest
-from eth_typing import Hash32, HexStr
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
@@ -162,14 +161,14 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
 
     # Hash32
     assert isinstance(
-        get_number_for_block_identifier(Hash32((1).to_bytes(length=32, byteorder="big")), provider),
+        get_number_for_block_identifier(((1).to_bytes(length=32, byteorder="big")), provider),
         BlockNumber.__value__,
     )
 
     # HexStr
     assert isinstance(
         get_number_for_block_identifier(
-            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()),
+            ("0x" + (128).to_bytes(32, byteorder="big").hex()),
             provider,
         ),
         BlockNumber.__value__,

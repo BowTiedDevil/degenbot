@@ -6,7 +6,6 @@ import hypothesis
 import hypothesis.strategies
 import pydantic_core
 import pytest
-from eth_typing import ChainId
 from hexbytes import HexBytes
 
 from degenbot._ffi import Bot as _Engine
@@ -23,6 +22,7 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.fork import AnvilFork
+from degenbot.types.chain import ChainId
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,

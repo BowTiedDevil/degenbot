@@ -1,11 +1,11 @@
 import pytest
-from eth_typing import ChainId
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import PoolNotAssociated, TrackerAlreadyInitialized, TrackerError
 from degenbot.fork import AnvilFork
 from degenbot.pancakeswap.trackers import PancakeswapV3PoolTracker
 from degenbot.sushiswap.trackers import SushiswapV3PoolTracker
+from degenbot.types.chain import ChainId
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,

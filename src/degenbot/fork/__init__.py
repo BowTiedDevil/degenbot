@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Iterable
 
-    from eth_typing import HexAddress, HexStr
+    from degenbot.types.chain import HexAddress, HexStr
 
 
 def _coerce_address_to_str(address: HexAddress | bytes) -> str:

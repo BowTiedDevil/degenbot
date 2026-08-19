@@ -17,10 +17,9 @@ from __future__ import annotations
 
 import os
 
-from eth_typing import ChainId
-
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
+from degenbot.types.chain import ChainId
 
 WETH_ADDRESS = WRAPPED_NATIVE_TOKENS[ChainId.ETH]
 MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"

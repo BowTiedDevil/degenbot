@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import typing
 
-from eth_typing import ChainId
-
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.types.chain import ChainId
 
 if typing.TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress

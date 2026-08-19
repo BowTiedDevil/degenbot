@@ -12,6 +12,8 @@ from typing import Any, overload
 
 from hexbytes import HexBytes
 
+from degenbot.types.chain import HexAddress
+
 from . import aave as aave
 
 # ------------------------------------------------------------------
@@ -175,12 +177,10 @@ class PathIterator:
 # (``0x`` + 40 chars with the correct checksum casing). Rust FFI entry
 # points that return an address decode + checksum it in Rust
 # (``Address::to_checksum``) and cross the boundary as a ``PyString`` —
-# hence a plain ``str`` at runtime, not an ``eth_typing.ChecksummedAddress``
-# instance. It is equivalent to an ``eth_typing.ChecksummedAddress`` where one is
-# expected (content-based equality) but is not an ``isinstance`` match;
-# use this alias to document the checksum guarantee without claiming the
-# ``eth_typing`` class.
-type ChecksummedAddress = str
+# hence a plain ``str`` at runtime. Aliased to ``HexAddress`` to document
+# the checksum guarantee; content-equal to any `str` address but not an
+# ``isinstance`` distinction (there is none).
+type ChecksummedAddress = HexAddress
 
 @overload
 def to_checksum_address(address: str) -> ChecksummedAddress: ...

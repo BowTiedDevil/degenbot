@@ -1,5 +1,4 @@
 import pytest
-from eth_typing import ChainId
 
 from degenbot.config import _init_config
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
@@ -12,6 +11,7 @@ from degenbot.database.models.pools import (
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.pathfinding import PathStep, find_paths, find_paths_async
+from degenbot.types.chain import ChainId
 
 BASE_CHAIN_ID = ChainId.BASE
 WETH_BASE_ADDRESS = WRAPPED_NATIVE_TOKENS[BASE_CHAIN_ID]

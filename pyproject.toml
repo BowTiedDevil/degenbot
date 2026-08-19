@@ -26,7 +26,6 @@ dependencies = [
     "tomlkit ~= 0.15",
     "tqdm ~= 4.70",
     "ujson ~= 5.13",
-    "eth_typing ~= 6.0",
     "eth_utils ~= 6.0",
     "hexbytes ~= 1.3",
 ]

@@ -25,7 +25,7 @@ from hexbytes import HexBytes
 from degenbot.contract import get_function_selector
 
 if TYPE_CHECKING:
-    from eth_typing import ABIEvent
+    from degenbot.types.chain import ABIEvent
 
 __all__ = (
     "event_topic",

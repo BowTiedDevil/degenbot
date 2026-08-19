@@ -12,11 +12,10 @@ from degenbot.types.concrete import PoolStateMessage
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from eth_typing import HexAddress
-
     from degenbot._ffi import ChecksummedAddress
     from degenbot.erc20 import Erc20Token
     from degenbot.types.aliases import BlockNumber
+    from degenbot.types.chain import HexAddress
     from degenbot.types.rpc_types import BlockIdentifier
 
 

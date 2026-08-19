@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from eth_typing import HexStr
 from hexbytes import HexBytes
+
+from degenbot.types.chain import HexStr
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress

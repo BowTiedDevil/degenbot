@@ -18,12 +18,12 @@ from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent, UniswapV3PoolLiquidityMappingUpdate
 
 if TYPE_CHECKING:
-    from eth_typing import HexAddress
     from sqlalchemy.orm import Session, scoped_session
 
     from degenbot._ffi import ChecksummedAddress
     from degenbot.database.session_manager import DatabaseSessionManager
     from degenbot.types.aliases import BlockNumber, ChainId
+    from degenbot.types.chain import HexAddress
 
 
 class LiquidityMap(TypedDict):

@@ -8,11 +8,11 @@ Thin delegation shim over the Rust ``degenbot-core`` core, exposed via the
 single implementation, ``#[cfg(test)]`` corpus the regression set.
 """
 
-from eth_typing import HexStr
 from hexbytes import HexBytes
 
 from degenbot._ffi.solady import flz_compress as _flz_compress_rust
 from degenbot._ffi.solady import flz_decompress as _flz_decompress_rust
+from degenbot.types.chain import HexStr
 
 __all__ = ["flz_compress", "flz_decompress"]
 

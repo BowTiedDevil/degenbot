@@ -6,11 +6,6 @@ from typing import Any, Literal, cast
 
 import click
 import tqdm
-from eth_typing import ChainId
-
-# Runtime (not TYPE_CHECKING) import: the cast() calls below reference
-# BlockParams unquoted so vulture can see the use; TC006 is noqa'd there.
-from eth_typing.evm import BlockParams
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -41,6 +36,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.factory import get_provider_from_config
+from degenbot.types.chain import BlockParams, ChainId
 from degenbot.updater import CancelHandle
 
 # Display limit for ``aave position risk`` output (the sole survivor of the

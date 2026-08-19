@@ -10,11 +10,11 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from eth_typing import ChainId
 from sqlalchemy.orm import Session
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import PoolManagerTable
+from degenbot.types.chain import ChainId
 
 # revision identifiers, used by Alembic.
 revision: str = "06a3739885a0"

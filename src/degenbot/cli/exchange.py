@@ -5,7 +5,6 @@ messages; the Rust core owns the database state.
 """
 
 import click
-import eth_typing
 
 from degenbot.bot import Bot
 from degenbot.cli import cli
@@ -15,6 +14,7 @@ from degenbot.db import (
     db_upsert_exchange,
     db_upsert_pool_manager,
 )
+from degenbot.types.chain import ChainId
 from degenbot.uniswap.deployments import (
     BaseAerodromeV2,
     BaseAerodromeV3,
@@ -68,7 +68,7 @@ def deactivate() -> None:
 @click.pass_obj
 def activate_base_aerodrome_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "aerodrome_v2",
 ) -> None:
     """Activate Aerodrome V2 on Base mainnet."""
@@ -95,7 +95,7 @@ def activate_base_aerodrome_v2(
 @click.pass_obj
 def activate_base_aerodrome_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "aerodrome_v3",
 ) -> None:
     """Activate Aerodrome V3 on Base mainnet."""
@@ -122,7 +122,7 @@ def activate_base_aerodrome_v3(
 @click.pass_obj
 def activate_base_pancakeswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
     """Activate Pancakeswap V2 on Base mainnet."""
@@ -149,7 +149,7 @@ def activate_base_pancakeswap_v2(
 @click.pass_obj
 def activate_base_pancakeswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
     """Activate Pancakeswap V3 on Base mainnet."""
@@ -176,7 +176,7 @@ def activate_base_pancakeswap_v3(
 @click.pass_obj
 def activate_base_swapbased_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "swapbased_v2",
 ) -> None:
     """Activate SwapBased V2 on Base mainnet."""
@@ -203,7 +203,7 @@ def activate_base_swapbased_v2(
 @click.pass_obj
 def activate_base_sushiswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
     """Activate Sushiswap V2 on Base mainnet."""
@@ -230,7 +230,7 @@ def activate_base_sushiswap_v2(
 @click.pass_obj
 def activate_base_sushiswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
     """Activate Sushiswap V3 on Base mainnet."""
@@ -257,7 +257,7 @@ def activate_base_sushiswap_v3(
 @click.pass_obj
 def activate_base_uniswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "uniswap_v2",
 ) -> None:
     """Activate Uniswap V2 on Base mainnet."""
@@ -284,7 +284,7 @@ def activate_base_uniswap_v2(
 @click.pass_obj
 def activate_base_uniswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "uniswap_v3",
 ) -> None:
     """Activate Uniswap V3 on Base mainnet."""
@@ -311,7 +311,7 @@ def activate_base_uniswap_v3(
 @click.pass_obj
 def activate_base_uniswap_v4(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "uniswap_v4",
 ) -> None:
     """Activate Uniswap V4 on Base mainnet."""
@@ -351,7 +351,7 @@ def activate_base_uniswap_v4(
 @click.pass_obj
 def activate_ethereum_pancakeswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
     """Activate Pancakeswap V2 on Ethereum mainnet."""
@@ -378,7 +378,7 @@ def activate_ethereum_pancakeswap_v2(
 @click.pass_obj
 def activate_ethereum_pancakeswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
     """Activate Pancakeswap V3 on Ethereum mainnet."""
@@ -405,7 +405,7 @@ def activate_ethereum_pancakeswap_v3(
 @click.pass_obj
 def activate_ethereum_sushiswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
     """Activate Sushiswap V2 on Ethereum mainnet."""
@@ -432,7 +432,7 @@ def activate_ethereum_sushiswap_v2(
 @click.pass_obj
 def activate_ethereum_sushiswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
     """Activate Sushiswap V3 on Ethereum mainnet."""
@@ -459,7 +459,7 @@ def activate_ethereum_sushiswap_v3(
 @click.pass_obj
 def activate_ethereum_uniswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "uniswap_v2",
 ) -> None:
     """Activate Uniswap V2 on Ethereum mainnet."""
@@ -486,7 +486,7 @@ def activate_ethereum_uniswap_v2(
 @click.pass_obj
 def activate_ethereum_uniswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "uniswap_v3",
 ) -> None:
     """Activate Uniswap V3 on Ethereum mainnet."""
@@ -513,7 +513,7 @@ def activate_ethereum_uniswap_v3(
 @click.pass_obj
 def activate_ethereum_uniswap_v4(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "uniswap_v4",
 ) -> None:
     """Activate Uniswap V4 on Ethereum mainnet."""
@@ -553,7 +553,7 @@ def activate_ethereum_uniswap_v4(
 @click.pass_obj
 def deactivate_base_aerodrome_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "aerodrome_v2",
 ) -> None:
     """Deactivate Aerodrome V2 on Base mainnet."""
@@ -581,7 +581,7 @@ def deactivate_base_aerodrome_v2(
 @click.pass_obj
 def deactivate_base_aerodrome_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "aerodrome_v3",
 ) -> None:
     """Deactivate Aerodrome V3 on Base mainnet."""
@@ -609,7 +609,7 @@ def deactivate_base_aerodrome_v3(
 @click.pass_obj
 def deactivate_base_pancakeswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
     """Deactivate Pancakeswap V2 on Base mainnet."""
@@ -639,7 +639,7 @@ def deactivate_base_pancakeswap_v2(
 @click.pass_obj
 def deactivate_base_pancakeswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
     """Deactivate Pancakeswap V3 on Base mainnet."""
@@ -669,7 +669,7 @@ def deactivate_base_pancakeswap_v3(
 @click.pass_obj
 def deactivate_base_sushiswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
     """Deactivate Sushiswap V2 on Base mainnet."""
@@ -697,7 +697,7 @@ def deactivate_base_sushiswap_v2(
 @click.pass_obj
 def deactivate_base_sushiswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
     """Deactivate Sushiswap V3 on Base mainnet."""
@@ -725,7 +725,7 @@ def deactivate_base_sushiswap_v3(
 @click.pass_obj
 def deactivate_base_swapbased_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "swapbased_v2",
 ) -> None:
     """Deactivate SwapBased V2 on Base mainnet."""
@@ -753,7 +753,7 @@ def deactivate_base_swapbased_v2(
 @click.pass_obj
 def deactivate_base_uniswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "uniswap_v2",
 ) -> None:
     """Deactivate Uniswap V2 on Base mainnet."""
@@ -781,7 +781,7 @@ def deactivate_base_uniswap_v2(
 @click.pass_obj
 def deactivate_base_uniswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "uniswap_v3",
 ) -> None:
     """Deactivate Uniswap V3 on Base mainnet."""
@@ -809,7 +809,7 @@ def deactivate_base_uniswap_v3(
 @click.pass_obj
 def deactivate_base_uniswap_v4(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.BASE,
+    chain_id: ChainId = ChainId.BASE,
     exchange_name: str = "uniswap_v4",
 ) -> None:
     """Deactivate Uniswap V4 on Base mainnet."""
@@ -842,7 +842,7 @@ def deactivate_base_uniswap_v4(
 @click.pass_obj
 def deactivate_ethereum_pancakeswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "pancakeswap_v2",
 ) -> None:
     """Deactivate Pancakeswap V2 on Ethereum mainnet."""
@@ -872,7 +872,7 @@ def deactivate_ethereum_pancakeswap_v2(
 @click.pass_obj
 def deactivate_ethereum_pancakeswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "pancakeswap_v3",
 ) -> None:
     """Deactivate Pancakeswap V3 on Ethereum mainnet."""
@@ -902,7 +902,7 @@ def deactivate_ethereum_pancakeswap_v3(
 @click.pass_obj
 def deactivate_ethereum_sushiswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "sushiswap_v2",
 ) -> None:
     """Deactivate Sushiswap V2 on Ethereum mainnet."""
@@ -932,7 +932,7 @@ def deactivate_ethereum_sushiswap_v2(
 @click.pass_obj
 def deactivate_ethereum_sushiswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "sushiswap_v3",
 ) -> None:
     """Deactivate Sushiswap V3 on Ethereum mainnet."""
@@ -960,7 +960,7 @@ def deactivate_ethereum_sushiswap_v3(
 @click.pass_obj
 def deactivate_ethereum_uniswap_v2(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "uniswap_v2",
 ) -> None:
     """Deactivate Uniswap V2 on Ethereum mainnet."""
@@ -990,7 +990,7 @@ def deactivate_ethereum_uniswap_v2(
 @click.pass_obj
 def deactivate_ethereum_uniswap_v3(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "uniswap_v3",
 ) -> None:
     """Deactivate Uniswap V3 on Ethereum mainnet."""
@@ -1020,7 +1020,7 @@ def deactivate_ethereum_uniswap_v3(
 @click.pass_obj
 def deactivate_ethereum_uniswap_v4(
     bot: Bot,
-    chain_id: eth_typing.ChainId = eth_typing.ChainId.ETH,
+    chain_id: ChainId = ChainId.ETH,
     exchange_name: str = "uniswap_v4",
 ) -> None:
     """Deactivate Uniswap V4 on Ethereum mainnet."""
