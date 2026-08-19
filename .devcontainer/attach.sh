@@ -67,35 +67,6 @@ fi
 USER="dev"
 
 # ---------------------------------------------------------------------------
-# Port 9320: verify it is published to the host; warn loudly when it isn't.
-#
-# Port publishing (`-p`) is a CREATE-time attribute baked when the container is
-# created via `devcontainer up` / VSCode 'Reopen in Container' (it comes from
-# runArgs in devcontainer.json). attach.sh does `podman start` + `podman exec`
-# and never reads devcontainer.json, and podman cannot add a `-p` port to an
-# already-created container — the port map is immutable after create (unlike the
-# /etc/localtime self-heal above, which can re-point a symlink). So a live
-# forward for 9320 can only exist if the container was created from a
-# devcontainer.json whose runArgs included `-p 127.0.0.1:9320:9320` — i.e. via
-# rebuild.sh (the terminal's create path) or VSCode after that entry landed.
-#
-# We can't retrofit the publish here, but we DETECT and surface the gap (same
-# philosophy as the venv guard above) so a container that predates this entry
-# isn't silently missing the forward the user asked for:
-#   1. `podman port` lists a mapping -> already forwarded, nothing to do.
-#   2. no mapping -> warn + point at rebuild.sh, which recreates the container
-#      from current devcontainer.json and DOES apply the new runArgs.
-if [ -z "$(podman port "$name" 9320/tcp 2>/dev/null)" ]; then
-  echo "⚠️  port 9320 is NOT published to the host on this container." >&2
-  echo "    Port forwarding is baked at create time (-p in devcontainer.json" >&2
-  echo "    runArgs); podman can't add it to a running container. Rebuild the" >&2
-  echo "    container to apply it:" >&2
-  echo "      .devcontainer/rebuild.sh" >&2
-  echo "    (attaching anyway; the in-container service still works, it's just" >&2
-  echo "    not reachable from the host loopback until the rebuild.)" >&2
-fi
-
-# ---------------------------------------------------------------------------
 # Timezone: forward the HOST's timezone into the container.
 #
 # attach.sh does `podman start` + `podman exec` — it has no knowledge of
