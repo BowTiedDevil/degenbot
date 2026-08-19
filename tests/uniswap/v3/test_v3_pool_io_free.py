@@ -3,9 +3,8 @@
 import pathlib
 from unittest.mock import MagicMock
 
-import eth_abi.abi
-
 from degenbot._ffi import Bot as _Engine
+from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
@@ -86,16 +85,16 @@ def _v3_offline_provider(
     so the recorded `tickBitmap` calldata exactly matches the builder's
     request at the current tick.
     """
-    factory_enc = eth_abi.abi.encode(types=["address"], args=[factory_addr]).hex()
-    token0_enc = eth_abi.abi.encode(types=["address"], args=[weth_addr]).hex()
-    token1_enc = eth_abi.abi.encode(types=["address"], args=[usdc_addr]).hex()
-    fee_enc = eth_abi.abi.encode(types=["uint24"], args=[V3_FEE]).hex()
-    spacing_enc = eth_abi.abi.encode(types=["int24"], args=[V3_TICK_SPACING]).hex()
-    slot0_enc = eth_abi.abi.encode(
+    factory_enc = abi_encode(types=["address"], args=[factory_addr]).hex()
+    token0_enc = abi_encode(types=["address"], args=[weth_addr]).hex()
+    token1_enc = abi_encode(types=["address"], args=[usdc_addr]).hex()
+    fee_enc = abi_encode(types=["uint24"], args=[V3_FEE]).hex()
+    spacing_enc = abi_encode(types=["int24"], args=[V3_TICK_SPACING]).hex()
+    slot0_enc = abi_encode(
         types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
         args=[sqrt_price, tick, 0, 0, 0, 0, False],
     ).hex()
-    liquidity_enc = eth_abi.abi.encode(types=["uint128"], args=[liquidity]).hex()
+    liquidity_enc = abi_encode(types=["uint128"], args=[liquidity]).hex()
     to = pool_addr.lower()
     # Sparse seed word for the current tick (tick ÷ spacing, word = >> 8).
     compressed = tick // V3_TICK_SPACING
@@ -109,7 +108,7 @@ def _v3_offline_provider(
         f"{to}:0xd0c93a7c": spacing_enc,  # tickSpacing()
         f"{to}:0x3850c7bd": slot0_enc,  # slot0()
         f"{to}:0x1a686502": liquidity_enc,  # liquidity()
-        f"{to}:0x5339c296{tick_bitmap_arg}": eth_abi.abi.encode(
+        f"{to}:0x5339c296{tick_bitmap_arg}": abi_encode(
             types=["uint256"], args=[0]
         ).hex(),  # tickBitmap(current_word) → empty
     }

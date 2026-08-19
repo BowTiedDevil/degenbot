@@ -1,10 +1,12 @@
 import itertools
 from typing import TYPE_CHECKING, cast
 
-import eth_abi.abi
-import eth_abi.exceptions
 import pytest
 import web3
+
+from degenbot.abi import AbiDecodeError
+from degenbot.abi import decode as abi_decode
+from degenbot.abi import encode as abi_encode
 
 if TYPE_CHECKING:
     from web3.contract import Contract
@@ -29,9 +31,7 @@ from tests.helpers.w3_contract import make_contract
 
 pytestmark = pytest.mark.online_rpc
 
-
 Timestamp = int
-
 
 CRYPTO_POOL_ADDRESSES = {"0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"}
 CURVE_V1_FACTORY_ADDRESS = get_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
@@ -77,7 +77,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: web3.Web3):
                 NoLiquidity,
                 EVMRevertError,
                 ContractLogicError,
-                eth_abi.exceptions.InsufficientDataBytes,
+                AbiDecodeError,
             ):
                 continue
             except Exception:
@@ -92,13 +92,13 @@ def _test_calculations(lp: CurveStableswapPool, w3: web3.Web3):
                     tx = TxParams(
                         to=lp.address,
                         data=function_selector("get_dy(uint256,uint256,uint256)")
-                        + eth_abi.abi.encode(
+                        + abi_encode(
                             types=["uint256", "uint256", "uint256"],
                             args=[token_in_index, token_out_index, amount],
                         ),
                     )
 
-                    contract_amount, *_ = eth_abi.abi.decode(
+                    contract_amount, *_ = abi_decode(
                         data=w3.eth.call(transaction=tx),
                         types=["uint256"],
                     )
@@ -108,7 +108,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: web3.Web3):
                         token_out_index,
                         amount,
                     ).call()
-            except (ContractLogicError, eth_abi.exceptions.InsufficientDataBytes):
+            except (ContractLogicError, AbiDecodeError):
                 # The on-chain contract reverts for broken/unsupported pools
                 continue
 
@@ -149,7 +149,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: web3.Web3):
                         token_out_index,
                         amount,
                     ).call()
-                except (ContractLogicError, eth_abi.exceptions.InsufficientDataBytes):
+                except (ContractLogicError, AbiDecodeError):
                     continue
 
                 assert calc_amount == contract_amount, (
@@ -349,13 +349,13 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
                 i=token_index,
             )
 
-            amount_contract, *_ = eth_abi.abi.decode(
+            amount_contract, *_ = abi_decode(
                 types=["uint256"],
                 data=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.call(
                     transaction=TxParams(
                         to=basepool.address,
                         data=function_selector("calc_withdraw_one_coin(uint256,int128)")
-                        + eth_abi.abi.encode(
+                        + abi_encode(
                             types=["uint256", "int128"],
                             args=[token_in_amount, token_index],
                         ),
@@ -378,7 +378,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
                 deposit=True,
             )
 
-            calc_token_amount_contract, *_ = eth_abi.abi.decode(
+            calc_token_amount_contract, *_ = abi_decode(
                 types=["uint256"],
                 data=web3.Web3(web3.HTTPProvider(fork_mainnet_full.http_url)).eth.call(
                     transaction=TxParams(
@@ -386,7 +386,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
                         data=keccak256(
                             text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)",
                         )[:4]
-                        + eth_abi.abi.encode(
+                        + abi_encode(
                             types=[f"uint256[{len(basepool.tokens)}]", "bool"],
                             args=[amount_array, True],
                         ),

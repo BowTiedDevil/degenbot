@@ -17,9 +17,8 @@ just "the result matches". Mirrors
 
 from __future__ import annotations
 
-import eth_abi.abi
-
 from degenbot._ffi import Bot
+from degenbot.abi import encode as abi_encode
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
@@ -49,7 +48,7 @@ def _compute_v4_pool_id(
     return (
         "0x"
         + keccak256(
-            eth_abi.abi.encode(
+            abi_encode(
                 types=["address", "address", "uint24", "int24", "address"],
                 args=[currency0, currency1, fee, tick_spacing, hooks],
             ),

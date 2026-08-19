@@ -40,10 +40,11 @@ import pathlib
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Self
 
-import eth_abi.abi
 import pytest
 
 from degenbot._ffi import Bot
+from degenbot.abi import decode as abi_decode
+from degenbot.abi import encode as abi_encode
 from degenbot.crypto import function_selector, keccak256
 from degenbot.curve.strategies import (
     DVariant,
@@ -261,13 +262,13 @@ def _get_dy_standard_callable(
 
     def _call() -> int:
         data = function_selector("get_dy(int128,int128,uint256)") + (
-            eth_abi.abi.encode(
+            abi_encode(
                 types=["int128", "int128", "uint256"],
                 args=[i, j, amount],
             )
         )
         res = fork.raw_call(pool_addr, data)
-        amount_out, *_ = eth_abi.abi.decode(types=["uint256"], data=res)
+        amount_out, *_ = abi_decode(types=["uint256"], data=res)
         return amount_out
 
     return _call
@@ -284,13 +285,13 @@ def _get_dy_uint256_callable(
 
     def _call() -> int:
         data = function_selector("get_dy(uint256,uint256,uint256)") + (
-            eth_abi.abi.encode(
+            abi_encode(
                 types=["uint256", "uint256", "uint256"],
                 args=[i, j, amount],
             )
         )
         res = fork.raw_call(pool_addr, data)
-        amount_out, *_ = eth_abi.abi.decode(types=["uint256"], data=res)
+        amount_out, *_ = abi_decode(types=["uint256"], data=res)
         return amount_out
 
     return _call
@@ -307,13 +308,13 @@ def _get_dy_underlying_callable(
 
     def _call() -> int:
         data = function_selector("get_dy_underlying(int128,int128,uint256)") + (
-            eth_abi.abi.encode(
+            abi_encode(
                 types=["int128", "int128", "uint256"],
                 args=[i, j, amount],
             )
         )
         res = fork.raw_call(pool_addr, data)
-        amount_out, *_ = eth_abi.abi.decode(types=["uint256"], data=res)
+        amount_out, *_ = abi_decode(types=["uint256"], data=res)
         return amount_out
 
     return _call
@@ -491,10 +492,10 @@ def _calc_withdraw_one_coin_callable(
 ) -> Any:
     def _call() -> int:
         data = function_selector("calc_withdraw_one_coin(uint256,int128)") + (
-            eth_abi.abi.encode(types=["uint256", "int128"], args=[amount, i])
+            abi_encode(types=["uint256", "int128"], args=[amount, i])
         )
         res = fork.raw_call(pool_addr, data)
-        out, *_ = eth_abi.abi.decode(types=["uint256"], data=res)
+        out, *_ = abi_decode(types=["uint256"], data=res)
         return out
 
     return _call
@@ -509,12 +510,12 @@ def _calc_token_amount_callable(
     def _call() -> int:
         data = keccak256(
             text=f"calc_token_amount(uint256[{n_tokens}],bool)",
-        )[:4] + eth_abi.abi.encode(
+        )[:4] + abi_encode(
             types=[f"uint256[{n_tokens}]", "bool"],
             args=[amounts, True],
         )
         res = fork.raw_call(pool_addr, data)
-        out, *_ = eth_abi.abi.decode(types=["uint256"], data=res)
+        out, *_ = abi_decode(types=["uint256"], data=res)
         return out
 
     return _call

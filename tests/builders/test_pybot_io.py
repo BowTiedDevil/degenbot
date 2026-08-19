@@ -16,11 +16,11 @@ route a real builder through `BotIo`; that's the 14a follow-on (one builder's
 
 from __future__ import annotations
 
-import eth_abi.abi
 import pytest
 
 from degenbot._ffi import BotIo
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
+from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
 from degenbot.utils.bytes import to_bytes
@@ -98,7 +98,7 @@ class _FactoryCallProvider:
         # factory_raw is the 40-hex-char lowercase address (no 0x prefix),
         # ABI-encoded right-aligned in a 32-byte word -- what a real
         # `factory()` call returns.
-        self._encoded = eth_abi.abi.encode(types=["address"], args=[factory_raw])
+        self._encoded = abi_encode(types=["address"], args=[factory_raw])
         self.calls: list[tuple[str, bytes]] = []  # (to, data)
 
     def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
@@ -112,11 +112,11 @@ class _Erc20MetadataProvider:
     def __init__(self, *, name: str, symbol: str, decimals: int) -> None:
         self._responses: dict[bytes, bytes] = {
             # keccak256("name()")[..4] = 0x06fdde03
-            bytes.fromhex("06fdde03"): eth_abi.abi.encode(types=["string"], args=[name]),
+            bytes.fromhex("06fdde03"): abi_encode(types=["string"], args=[name]),
             # keccak256("symbol()")[..4] = 0x95d89b41
-            bytes.fromhex("95d89b41"): eth_abi.abi.encode(types=["string"], args=[symbol]),
+            bytes.fromhex("95d89b41"): abi_encode(types=["string"], args=[symbol]),
             # keccak256("decimals()")[..4] = 0x313ce567
-            bytes.fromhex("313ce567"): eth_abi.abi.encode(types=["uint256"], args=[decimals]),
+            bytes.fromhex("313ce567"): abi_encode(types=["uint256"], args=[decimals]),
         }
         self.calls: list[bytes] = []  # data received
 
@@ -138,7 +138,7 @@ class _AddressArgProvider:
 
 
 def _uint256_encoded(value: int) -> bytes:
-    return eth_abi.abi.encode(types=["uint256"], args=[value])
+    return abi_encode(types=["uint256"], args=[value])
 
 
 class _V2PoolProvider:
@@ -150,13 +150,13 @@ class _V2PoolProvider:
         # Selectors for the 4 reads this provider answers.
         self._responses: dict[bytes, bytes] = {
             # keccak256("factory()")[..4] = 0xc45a0155
-            bytes.fromhex("c45a0155"): eth_abi.abi.encode(types=["address"], args=[factory]),
+            bytes.fromhex("c45a0155"): abi_encode(types=["address"], args=[factory]),
             # keccak256("token0()")[..4] = 0x0dfe1681
-            bytes.fromhex("0dfe1681"): eth_abi.abi.encode(types=["address"], args=[token0]),
+            bytes.fromhex("0dfe1681"): abi_encode(types=["address"], args=[token0]),
             # keccak256("token1()")[..4] = 0xd21220a7
-            bytes.fromhex("d21220a7"): eth_abi.abi.encode(types=["address"], args=[token1]),
+            bytes.fromhex("d21220a7"): abi_encode(types=["address"], args=[token1]),
             # keccak256("getReserves()")[..4] = 0x0902f1ac
-            bytes.fromhex("0902f1ac"): eth_abi.abi.encode(
+            bytes.fromhex("0902f1ac"): abi_encode(
                 types=["uint112", "uint112", "uint32"], args=[reserves0, reserves1, 0]
             ),
         }
@@ -189,20 +189,20 @@ class _V3PoolProvider:
     ) -> None:
         self._responses: dict[bytes, bytes] = {
             # factory() / token0() / token1() selectors (same as V2).
-            bytes.fromhex("c45a0155"): eth_abi.abi.encode(types=["address"], args=[factory]),
-            bytes.fromhex("0dfe1681"): eth_abi.abi.encode(types=["address"], args=[token0]),
-            bytes.fromhex("d21220a7"): eth_abi.abi.encode(types=["address"], args=[token1]),
+            bytes.fromhex("c45a0155"): abi_encode(types=["address"], args=[factory]),
+            bytes.fromhex("0dfe1681"): abi_encode(types=["address"], args=[token0]),
+            bytes.fromhex("d21220a7"): abi_encode(types=["address"], args=[token1]),
             # keccak256("fee()")[..4] = 0xddca3f43
-            bytes.fromhex("ddca3f43"): eth_abi.abi.encode(types=["uint24"], args=[fee]),
+            bytes.fromhex("ddca3f43"): abi_encode(types=["uint24"], args=[fee]),
             # keccak256("tickSpacing()")[..4] = 0xd0c93a7c
-            bytes.fromhex("d0c93a7c"): eth_abi.abi.encode(types=["int24"], args=[tick_spacing]),
+            bytes.fromhex("d0c93a7c"): abi_encode(types=["int24"], args=[tick_spacing]),
             # keccak256("slot0()")[..4] = 0x3850c7bd
-            bytes.fromhex("3850c7bd"): eth_abi.abi.encode(
+            bytes.fromhex("3850c7bd"): abi_encode(
                 types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
                 args=[sqrt_price_x96, tick, 0, 0, 0, 0, False],
             ),
             # keccak256("liquidity()")[..4] = 0x1a686502
-            bytes.fromhex("1a686502"): eth_abi.abi.encode(types=["uint128"], args=[liquidity]),
+            bytes.fromhex("1a686502"): abi_encode(types=["uint128"], args=[liquidity]),
         }
         self.calls: list[bytes] = []
 
@@ -225,11 +225,11 @@ class _AerodromeProvider:
         # keccak256("stable()")[..4]
         stable_sel = function_selector("stable()")
         if sel == stable_sel:
-            return to_bytes(eth_abi.abi.encode(types=["bool"], args=[self._stable]))
+            return to_bytes(abi_encode(types=["bool"], args=[self._stable]))
         # keccak256("getFee(address,bool)")[..4]
         get_fee_sel = function_selector("getFee(address,bool)")
         if sel == get_fee_sel:
-            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._fee_raw]))
+            return to_bytes(abi_encode(types=["uint256"], args=[self._fee_raw]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -324,12 +324,10 @@ class _TickDataProvider:
         sel = data[:4]
         # tickBitmap(int16) selector = 0x5339c296
         if sel == function_selector("tickBitmap(int16)"):
-            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
+            return to_bytes(abi_encode(types=["uint256"], args=[self._bitmap]))
         # ticks(int24) selector = 0xf30dba93
         if sel == function_selector("ticks(int24)"):
-            return to_bytes(
-                eth_abi.abi.encode(types=["uint128", "int128"], args=[self._lg, self._ln])
-            )
+            return to_bytes(abi_encode(types=["uint128", "int128"], args=[self._lg, self._ln]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -347,11 +345,9 @@ class _V4TickDataProvider:
         self.calls.append(data)
         sel = data[:4]
         if sel == function_selector("getTickBitmap(bytes32,int16)"):
-            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
+            return to_bytes(abi_encode(types=["uint256"], args=[self._bitmap]))
         if sel == function_selector("getTickLiquidity(bytes32,int24)"):
-            return to_bytes(
-                eth_abi.abi.encode(types=["uint128", "int128"], args=[self._lg, self._ln])
-            )
+            return to_bytes(abi_encode(types=["uint128", "int128"], args=[self._lg, self._ln]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -389,7 +385,7 @@ def test_pybot_io_probe_balancer_pool_type_returns_weighted():
     """When getNormalizedWeights() succeeds, probe returns 'weighted'."""
     pool_addr = "aa" * 20
     weights = [5 * 10**17, 5 * 10**17]
-    encoded = eth_abi.abi.encode(types=["uint256[]"], args=[weights]).hex()
+    encoded = abi_encode(types=["uint256[]"], args=[weights]).hex()
     provider = _BalancerOfflineProbeProvider.build(
         pool_addr, weights_success=encoded, amp_success=None
     )
@@ -400,9 +396,7 @@ def test_pybot_io_probe_balancer_pool_type_returns_stable():
     """When getNormalizedWeights() reverts but getAmplificationParameter()
     succeeds, probe returns 'stable'."""
     pool_addr = "aa" * 20
-    amp_payload = eth_abi.abi.encode(
-        types=["uint256", "bool", "uint256"], args=[2_000, False, 1000]
-    ).hex()
+    amp_payload = abi_encode(types=["uint256", "bool", "uint256"], args=[2_000, False, 1000]).hex()
     provider = _BalancerOfflineProbeProvider.build(
         pool_addr, weights_success=None, amp_success=amp_payload
     )
@@ -440,7 +434,7 @@ class _V4Slot0Provider:
         if sel == function_selector("getSlot0(bytes32)"):
             return to_bytes(self._slot0)
         if sel == function_selector("getLiquidity(bytes32)"):
-            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._liq]))
+            return to_bytes(abi_encode(types=["uint256"], args=[self._liq]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -453,7 +447,7 @@ class _CamelotProvider:
         sigs = ["stableSwap()", "FEE_DENOMINATOR()", "token0FeePercent()", "token1FeePercent()"]
         types = ["bool", "uint256", "uint16", "uint16"]
         self._responses = {
-            function_selector(sig): eth_abi.abi.encode(types=[ty], args=[v])
+            function_selector(sig): abi_encode(types=[ty], args=[v])
             for sig, ty, v in zip(sigs, types, t, strict=True)
         }
         self.calls: list[bytes] = []
@@ -472,11 +466,9 @@ class _CurveProvider:
 
     def __init__(self, *, a: int, fee: int, admin_fee: int) -> None:
         self._r = {
-            function_selector("A()"): eth_abi.abi.encode(types=["uint256"], args=[a]),
-            function_selector("fee()"): eth_abi.abi.encode(types=["uint256"], args=[fee]),
-            function_selector("admin_fee()"): eth_abi.abi.encode(
-                types=["uint256"], args=[admin_fee]
-            ),
+            function_selector("A()"): abi_encode(types=["uint256"], args=[a]),
+            function_selector("fee()"): abi_encode(types=["uint256"], args=[fee]),
+            function_selector("admin_fee()"): abi_encode(types=["uint256"], args=[admin_fee]),
         }
         self.calls: list[bytes] = []
 
@@ -502,7 +494,7 @@ class _CurveBalancesProvider:
         if sel == function_selector("balances(uint256)"):
             # uint256 arg is in word 0 (bytes 4..36). Decode it as the index.
             idx = int.from_bytes(data[4:36], "big")
-            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._balances[idx]]))
+            return to_bytes(abi_encode(types=["uint256"], args=[self._balances[idx]]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -515,7 +507,7 @@ def _recorded_factory_fixture() -> str:
     pool_addr = "ab" * 20
     # `factory()` selector = keccak256("factory()")[:4] = 0xc45a0155.
     # Recorded result = ABI-encoded address (32 bytes, right-aligned), no 0x.
-    encoded = eth_abi.abi.encode(types=["address"], args=["0x" + factory_raw]).hex()
+    encoded = abi_encode(types=["address"], args=["0x" + factory_raw]).hex()
     calls = {f"0x{pool_addr}:0xc45a0155": encoded}
     code = {f"0x{pool_addr}": "60806040"}
     return json.dumps({
@@ -568,7 +560,7 @@ def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
 
     factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
     token_addr = "ab" * 20
-    encoded = eth_abi.abi.encode(types=["address"], args=["0x" + factory_raw]).hex()
+    encoded = abi_encode(types=["address"], args=["0x" + factory_raw]).hex()
     # balanceOf(0xff..ff): the offline provider matches by full calldata, so
     # the reverting call is keyed by the raw `balanceOf` selector + 32-byte owner.
     reverting_balance_of = "0x70a08231" + "0" * 24 + "ff" * 20

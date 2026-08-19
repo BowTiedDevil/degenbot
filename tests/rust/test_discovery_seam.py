@@ -20,9 +20,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from eth_abi import encode as abi_encode
 from sqlalchemy import select
 
+from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.pool_updater_configs import (
     V2PoolUpdateConfig,

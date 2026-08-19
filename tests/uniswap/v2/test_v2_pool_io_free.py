@@ -4,10 +4,10 @@ import pathlib
 from fractions import Fraction
 from unittest.mock import MagicMock
 
-import eth_abi.abi
 import pytest
 
 from degenbot._ffi import Bot as _Engine
+from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
@@ -80,10 +80,10 @@ def _v2_offline_provider(
     `getReserves()` for the pool (with `slot0()` recorded as a redirect/revert
     so `probe_pool_type` resolves V2, not V3).
     """
-    factory_enc = eth_abi.abi.encode(types=["address"], args=[factory_addr]).hex()
-    token0_enc = eth_abi.abi.encode(types=["address"], args=[weth_addr]).hex()
-    token1_enc = eth_abi.abi.encode(types=["address"], args=[usdc_addr]).hex()
-    reserves_enc = eth_abi.abi.encode(
+    factory_enc = abi_encode(types=["address"], args=[factory_addr]).hex()
+    token0_enc = abi_encode(types=["address"], args=[weth_addr]).hex()
+    token1_enc = abi_encode(types=["address"], args=[usdc_addr]).hex()
+    reserves_enc = abi_encode(
         types=["uint112", "uint112", "uint32"], args=[1000 * 10**18, 2_000_000 * 10**6, 0]
     ).hex()
     to = pool_addr.lower()

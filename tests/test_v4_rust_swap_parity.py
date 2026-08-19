@@ -15,10 +15,10 @@ from __future__ import annotations
 import json
 import pathlib
 
-import eth_abi.abi
 import pytest
 
 from degenbot._ffi import Bot
+from degenbot.abi import encode as abi_encode
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
@@ -45,7 +45,7 @@ def _compute_v4_pool_id(
     return (
         "0x"
         + keccak256(
-            eth_abi.abi.encode(
+            abi_encode(
                 types=["address", "address", "uint24", "int24", "address"],
                 args=[currency0, currency1, fee, tick_spacing, hooks],
             ),
@@ -247,7 +247,7 @@ def _build_pool_from_corpus(
     pool_id = (
         "0x"
         + keccak256(
-            eth_abi.abi.encode(
+            abi_encode(
                 ["address", "address", "uint24", "int24", "address"],
                 [token0.address, token1.address, state["fee"], state["tick_spacing"], ZERO_ADDRESS],
             ),

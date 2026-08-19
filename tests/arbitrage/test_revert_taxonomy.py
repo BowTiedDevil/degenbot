@@ -12,8 +12,7 @@ the verbose per-fail diagnostic string (that stays in ``[sim-fail]`` lines).
 
 from __future__ import annotations
 
-import eth_abi.abi as eth_abi
-
+from degenbot.abi import encode as abi_encode
 from degenbot.runner.config import (
     _EXECUTOR_REVERT_SELECTORS,
     _V4_REVERT_SELECTORS,
@@ -35,11 +34,11 @@ def _panic_sel() -> bytes:
 
 
 def _encode_error_string(message: str) -> bytes:
-    return _error_string_sel() + eth_abi.encode(["string"], [message])
+    return _error_string_sel() + abi_encode(["string"], [message])
 
 
 def _encode_panic(code: int) -> bytes:
-    return _panic_sel() + eth_abi.encode(["uint256"], [code])
+    return _panic_sel() + abi_encode(["uint256"], [code])
 
 
 # ── _classify_revert ────────────────────────────────────────────────────
@@ -57,7 +56,7 @@ def test_classify_executor_custom_error_strips_params() -> None:
     InsufficientProfit(actual, expected) → bucket ``InsufficientProfit`` so all
     param variations tally together rather than fragmenting per amount.
     """
-    data = bytes.fromhex("4e88422a") + eth_abi.encode(["uint256", "uint256"], [123, 456])
+    data = bytes.fromhex("4e88422a") + abi_encode(["uint256", "uint256"], [123, 456])
     assert classify_revert(data) == "InsufficientProfit"
 
 

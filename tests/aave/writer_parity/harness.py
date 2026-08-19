@@ -257,7 +257,7 @@ def make_collateral_configuration_changed_log(
 # liquidationThreshold, uint256 liquidationBonus, address oracle, string label)
 # — emitted by the Pool Configurator. The `oracle` data word + the dynamic
 # `string label` are abi-encoded (the string needs the offset+length+data
-# tail; `eth_abi.encode` builds it cleanly).
+# tail; `degenbot.abi.encode` builds it cleanly).
 _EMODE_CATEGORY_ADDED_TOPIC = "0x0acf8b4a3cace10779798a89a206a0ae73a71b63acdd3be2801d39c2ef7ab3cb"
 
 
@@ -273,11 +273,11 @@ def make_e_mode_category_added_log(
     log_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for an EModeCategoryAdded event."""
-    import eth_abi
+    from degenbot.abi import encode as abi_encode
 
     data = (
         "0x"
-        + eth_abi.abi.encode(
+        + abi_encode(
             ["uint256", "uint256", "uint256", "address", "string"],
             [ltv, liquidation_threshold, liquidation_bonus, oracle_address or ZERO_ADDRESS, label],
         ).hex()

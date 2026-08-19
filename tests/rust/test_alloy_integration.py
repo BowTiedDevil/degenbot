@@ -4,11 +4,11 @@ These tests demonstrate that the Rust-based Alloy integration is functional,
 covering provider operations, contract interactions, and connection management.
 """
 
-import eth_abi
 import pytest
 import web3
 
 from degenbot._ffi.abi import decode_single, encode_single
+from degenbot.abi import encode as abi_encode
 from degenbot.contract import (
     Contract,
     decode_return_data,
@@ -25,7 +25,7 @@ WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 def _ping_calldata() -> bytes:
     selector = keccak256(b"ping(uint256,bytes32)")[:4]
-    return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
+    return selector + abi_encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 
 @pytest.fixture

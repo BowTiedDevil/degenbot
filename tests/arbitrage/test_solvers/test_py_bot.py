@@ -503,10 +503,7 @@ class TestV2SwapEncoding:
         assert to_hex == self.POOL_ADDR
 
     def test_encode_swap_matches_python_reference(self):
-        """Full byte-level comparison against Python eth_abi output."""
-        import eth_abi
-
-        from degenbot.crypto import function_selector
+        """Full byte-level comparison against pinned eth_abi-derived reference bytes."""
 
         core, pool_id = self._make_core_with_pool()
         result = core.encode_swap(
@@ -515,21 +512,20 @@ class TestV2SwapEncoding:
         assert result is not None
         _, calldata_hex, _ = result
 
-        # Generate reference calldata from Python eth_abi
-        selector = function_selector("swap(uint256,uint256,address,bytes)")
-        reference_data = eth_abi.abi.encode(
-            types=["uint256", "uint256", "address", "bytes"],
-            args=[0, 181, self.RECIPIENT, b""],
+        # Pinned reference calldata: the ABI encoding of
+        # swap(amount0_out=0, amount1_out=181, recipient=RECIPIENT,
+        # data=b''). Pinned from eth_abi 5.x + Rust function_selector
+        # (keccak pinned in 5JKNQH) at the EC6ZXG sweep; bytes permanent.
+        expected = (
+            "0x022c0d9f000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            "000000000000000000000000000000000000000000000000b5000000000000000000000000bbbbbbbbbbbbbb"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbb00000000000000000000000000000000000000000000000000000000000000"
+            "800000000000000000000000000000000000000000000000000000000000000000"
         )
-        reference_calldata = selector + reference_data
-
-        assert calldata_hex == "0x" + reference_calldata.hex()
+        assert calldata_hex == expected
 
     def test_encode_swap_one_for_zero(self):
         """Encode a token1→token0 swap (amount0Out nonzero)."""
-        import eth_abi
-
-        from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()
         result = core.encode_swap(
@@ -538,15 +534,17 @@ class TestV2SwapEncoding:
         assert result is not None
         _, calldata_hex, _ = result
 
-        # Generate reference calldata from Python eth_abi
-        selector = function_selector("swap(uint256,uint256,address,bytes)")
-        reference_data = eth_abi.abi.encode(
-            types=["uint256", "uint256", "address", "bytes"],
-            args=[181, 0, self.RECIPIENT, b""],
+        # Pinned reference calldata: the ABI encoding of
+        # swap(amount0_out=181, amount1_out=0, recipient=RECIPIENT,
+        # data=b''). Pinned from eth_abi 5.x + Rust function_selector
+        # (keccak pinned in 5JKNQH) at the EC6ZXG sweep; bytes permanent.
+        expected = (
+            "0x022c0d9f00000000000000000000000000000000000000000000000000000000000000b500000000000000"
+            "00000000000000000000000000000000000000000000000000000000000000000000000000bbbbbbbbbbbbbb"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbb00000000000000000000000000000000000000000000000000000000000000"
+            "800000000000000000000000000000000000000000000000000000000000000000"
         )
-        reference_calldata = selector + reference_data
-
-        assert calldata_hex == "0x" + reference_calldata.hex()
+        assert calldata_hex == expected
 
     def test_encode_swap_unknown_pool_returns_none(self):
         """encode_swap returns None for unknown pool ID."""
@@ -556,9 +554,6 @@ class TestV2SwapEncoding:
 
     def test_pool_handle_encode_swap(self):
         """Pool handle can also encode swaps."""
-        import eth_abi
-
-        from degenbot.crypto import function_selector
 
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
@@ -568,15 +563,17 @@ class TestV2SwapEncoding:
         assert result is not None
         _, calldata_hex, _ = result
 
-        # Generate reference calldata from Python eth_abi
-        selector = function_selector("swap(uint256,uint256,address,bytes)")
-        reference_data = eth_abi.abi.encode(
-            types=["uint256", "uint256", "address", "bytes"],
-            args=[0, 181, self.RECIPIENT, b""],
+        # Pinned reference calldata: the ABI encoding of
+        # swap(amount0_out=0, amount1_out=181, recipient=RECIPIENT,
+        # data=b''). Pinned from eth_abi 5.x + Rust function_selector
+        # (keccak pinned in 5JKNQH) at the EC6ZXG sweep; bytes permanent.
+        expected = (
+            "0x022c0d9f000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            "000000000000000000000000000000000000000000000000b5000000000000000000000000bbbbbbbbbbbbbb"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbb00000000000000000000000000000000000000000000000000000000000000"
+            "800000000000000000000000000000000000000000000000000000000000000000"
         )
-        reference_calldata = selector + reference_data
-
-        assert calldata_hex == "0x" + reference_calldata.hex()
+        assert calldata_hex == expected
 
 
 class TestV2ReorgJournal:

@@ -8,10 +8,10 @@ emitted on the seeded standalone chain (no upstream RPC).
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-import eth_abi
 import pytest
 import web3
 
+from degenbot.abi import encode as abi_encode
 from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
@@ -28,7 +28,7 @@ class EmittedTx:
 
 def _ping_calldata() -> bytes:
     selector = keccak256(b"ping(uint256,bytes32)")[:4]
-    return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
+    return selector + abi_encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 
 @pytest.fixture
@@ -135,7 +135,7 @@ class TestbytesConversion:
         assert isinstance(log["logIndex"], int)
 
     def test_eth_call_returns_bytes(self, alloy_provider: AlloyProvider):
-        """Test that call returns bytes (for eth_abi compatibility)."""
+        """Test that call returns bytes (ABI-decodable raw bytes)."""
         # Call balanceOf for the seeded token (uint256 read; same selector as ERC20).
         result = alloy_provider.call(
             to=seed_catalog.TOKEN,
@@ -197,7 +197,7 @@ class TestbytesConversion:
         assert isinstance(block["gas_limit"], int)
 
     def test_get_code_returns_bytes(self, alloy_provider: AlloyProvider):
-        """Test that get_code returns bytes (for eth_abi compatibility)."""
+        """Test that get_code returns bytes (ABI-decodable raw bytes)."""
         # Get code for the seeded token contract
         code = alloy_provider.get_code(seed_catalog.TOKEN)
 

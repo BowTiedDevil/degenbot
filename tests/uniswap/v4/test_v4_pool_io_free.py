@@ -2,9 +2,8 @@
 
 import pathlib
 
-import eth_abi.abi
-
 from degenbot._ffi import Bot as _Engine
+from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
@@ -97,19 +96,15 @@ def _v4_offline_provider(
     compressed = tick // V4_TICK_SPACING
     word = compressed >> 8
     tick_bitmap_calldata = encode_function_calldata("getTickBitmap(bytes32,int16)", [pid, word])
-    slot0_encoded = eth_abi.abi.encode(
+    slot0_encoded = abi_encode(
         types=["uint160", "int24", "uint24", "uint24"],
         args=[sqrt_price, tick, protocol_fee, lp_fee],
     )
     sv = get_checksum_address(state_view).lower()
     calls = {
         f"{sv}:0x{slot0_calldata.hex()}": slot0_encoded.hex(),
-        f"{sv}:0x{liquidity_calldata.hex()}": eth_abi.abi.encode(
-            types=["uint256"], args=[liquidity]
-        ).hex(),
-        f"{sv}:0x{tick_bitmap_calldata.hex()}": eth_abi.abi.encode(
-            types=["uint256"], args=[0]
-        ).hex(),
+        f"{sv}:0x{liquidity_calldata.hex()}": abi_encode(types=["uint256"], args=[liquidity]).hex(),
+        f"{sv}:0x{tick_bitmap_calldata.hex()}": abi_encode(types=["uint256"], args=[0]).hex(),
     }
     return OfflineProvider(
         chain_id=1,

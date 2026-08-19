@@ -3,9 +3,8 @@
 import pathlib
 from unittest.mock import MagicMock
 
-import eth_abi.abi
-
 from degenbot._ffi import Bot as _Engine
+from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.operations import create_new_sqlite_database
@@ -130,13 +129,13 @@ class TestBotBuildErc20Token:
                     "timestamp": 1700000000,
                     "calls": {
                         f"{token_address.lower()}:0x06fdde03": (  # name()
-                            eth_abi.abi.encode(["string"], ["Wrapped Ether"]).hex()
+                            abi_encode(["string"], ["Wrapped Ether"]).hex()
                         ),
                         f"{token_address.lower()}:0x95d89b41": (  # symbol()
-                            eth_abi.abi.encode(["string"], ["WETH"]).hex()
+                            abi_encode(["string"], ["WETH"]).hex()
                         ),
                         f"{token_address.lower()}:0x313ce567": (  # decimals()
-                            eth_abi.abi.encode(["uint256"], [18]).hex()
+                            abi_encode(["uint256"], [18]).hex()
                         ),
                     },
                     "code": {token_address.lower(): "01"},
@@ -221,9 +220,9 @@ class TestBotTokenIOMethods:
         # non-alloy MagicMock fallback is retired with the seam; ADR-005).
         # Record one block (200) returning the balanceOf for the holder.
         balance_of_calldata = (
-            bytes.fromhex("70a08231") + eth_abi.abi.encode(types=["address"], args=[holder])
+            bytes.fromhex("70a08231") + abi_encode(types=["address"], args=[holder])
         ).hex()
-        encoded_balance = eth_abi.abi.encode(types=["uint256"], args=[expected_balance])
+        encoded_balance = abi_encode(types=["uint256"], args=[expected_balance])
         offline = OfflineProvider(
             chain_id=1,
             blocks={

@@ -2,10 +2,10 @@
 
 from collections.abc import Iterator
 
-import eth_abi
 import pytest
 import web3
 
+from degenbot.abi import encode as abi_encode
 from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import (
@@ -30,7 +30,7 @@ def alloy_provider(fork_mainnet_full: AnvilFork) -> Iterator[AlloyProvider]:
 
 def _ping_calldata() -> bytes:
     selector = keccak256(b"ping(uint256,bytes32)")[:4]
-    return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
+    return selector + abi_encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 
 @pytest.fixture

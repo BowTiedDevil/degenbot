@@ -6,8 +6,9 @@
 from fractions import Fraction
 from unittest.mock import MagicMock
 
-import eth_abi.abi
 import pytest
+
+from degenbot.abi import encode as abi_encode
 
 pytest.skip(
     "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
@@ -108,12 +109,10 @@ def _v2_common_responses(
 ) -> dict[str, bytes]:
     """Build responses for common V2 data (factory, token0, token1, getReserves)."""
     return {
-        _selector("factory()"): eth_abi.abi.encode(["address"], [factory]),
-        _selector("token0()"): eth_abi.abi.encode(["address"], [token0]),
-        _selector("token1()"): eth_abi.abi.encode(["address"], [token1]),
-        _selector("getReserves()"): eth_abi.abi.encode(
-            ["uint256", "uint256"], [reserves0, reserves1]
-        ),
+        _selector("factory()"): abi_encode(["address"], [factory]),
+        _selector("token0()"): abi_encode(["address"], [token0]),
+        _selector("token1()"): abi_encode(["address"], [token1]),
+        _selector("getReserves()"): abi_encode(["uint256", "uint256"], [reserves0, reserves1]),
     }
 
 
@@ -132,10 +131,10 @@ def _camelot_provider(
         reserves0=reserves0,
         reserves1=reserves1,
     )
-    responses[_selector("stableSwap()")] = eth_abi.abi.encode(["bool"], [stable_swap])
-    responses[_selector("FEE_DENOMINATOR()")] = eth_abi.abi.encode(["uint256"], [fee_denominator])
-    responses[_selector("token0FeePercent()")] = eth_abi.abi.encode(["uint16"], [fee_token0])
-    responses[_selector("token1FeePercent()")] = eth_abi.abi.encode(["uint16"], [fee_token1])
+    responses[_selector("stableSwap()")] = abi_encode(["bool"], [stable_swap])
+    responses[_selector("FEE_DENOMINATOR()")] = abi_encode(["uint256"], [fee_denominator])
+    responses[_selector("token0FeePercent()")] = abi_encode(["uint16"], [fee_token0])
+    responses[_selector("token1FeePercent()")] = abi_encode(["uint16"], [fee_token1])
     return FakeProvider(responses)
 
 
