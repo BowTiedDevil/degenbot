@@ -75,3 +75,98 @@ pub(crate) fn project_balancer_stable(
         state.state_nonce,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::MissingHopReason;
+    use super::project_balancer_stable;
+    use crate::bot_core::{BotState, RegisterBalancerStablePoolParams};
+    use alloy::primitives::{Address, U256};
+    use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
+
+    fn bs_ref(pool_key: u64, zero_for_one: bool) -> MixedPoolRef {
+        MixedPoolRef {
+            hop_type: HopType::BalancerStable,
+            pool_key,
+            zero_for_one,
+        }
+    }
+
+    fn register_balancer_stable(
+        core: &mut BotState,
+        addr_byte: u8,
+        balance0: u128,
+        balance1: u128,
+    ) -> u64 {
+        let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+        core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
+            address: Address::from([addr_byte; 20]),
+            vault: Address::repeat_byte(0xba),
+            pool_id: [0u8; 32],
+            tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+            // amp=200_000 = raw_amp(200) * AMP_PRECISION(1000).
+            amp: 200_000,
+            scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+            swap_fee: 10_000_000_000_000u128, // 0.01% of 1e18
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: vec![
+                U256::from(balance0) * one_e18,
+                U256::from(balance1) * one_e18,
+            ],
+            update_block: 0,
+            rate_provider: None,
+        })
+    }
+
+    #[test]
+    fn project_balancer_stable_builds_hop_with_invariant() {
+        let mut core = BotState::new();
+        let bs_id = register_balancer_stable(&mut core, 0xe1, 1000, 2000);
+
+        let (hop, _) = project_balancer_stable(&core, &bs_ref(bs_id, true)).unwrap();
+        let ResolvedHop::BalancerStable { state: s } = hop else {
+            panic!("hop is not BalancerStable");
+        };
+        let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+        assert_eq!(s.amp, U256::from(200_000u64));
+        assert_eq!(s.token_index_in, 0);
+        assert_eq!(s.token_index_out, 1);
+        assert_eq!(
+            s.balances,
+            vec![U256::from(1000u64) * one_e18, U256::from(2000u64) * one_e18]
+        );
+        assert!(s.invariant > U256::ZERO, "invariant of positive balances");
+        assert_eq!(s.swap_fee, U256::from(10_000_000_000_000u64));
+
+        // Orientation flips the pairwise indices.
+        let (hop, nonce) = project_balancer_stable(&core, &bs_ref(bs_id, false)).unwrap();
+        let ResolvedHop::BalancerStable { state: s } = hop else {
+            panic!("hop is not BalancerStable");
+        };
+        assert_eq!(s.token_index_in, 1);
+        assert_eq!(s.token_index_out, 0);
+        assert_eq!(
+            nonce,
+            core.get_balancer_stable_pool(bs_id)
+                .expect("state")
+                .state_nonce
+        );
+    }
+
+    #[test]
+    fn project_balancer_stable_reason_qa() {
+        // QA of the reachable failure -> variant mapping.
+        // Unregistered pool: identity is checked FIRST in this arm ->
+        // MissingIdentity.
+        // Not constructible via the registration API (documented here so the
+        // QA stays honest): TooFewTokens (registration validates the vector
+        // shapes), OutOfRange (the bpt-skip bounds track the upscaled length
+        // for a well-formed pool), InvariantError (the invariant math does
+        // not err on sane positive balances). Those three remain the
+        // defensive mappings for malformed or future state.
+        let core = BotState::new();
+        let reason = project_balancer_stable(&core, &bs_ref(888_888, true)).unwrap_err();
+        assert_eq!(reason, MissingHopReason::MissingIdentity);
+    }
+}
