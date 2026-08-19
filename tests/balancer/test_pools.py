@@ -14,7 +14,7 @@ from degenbot.fork import AnvilFork
 from degenbot.utils.bytes import to_bytes
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
-from tests.helpers.w3_contract import make_contract
+from tests.helpers.contract_compat import make_contract
 
 pytestmark = pytest.mark.online_rpc
 

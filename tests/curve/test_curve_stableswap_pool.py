@@ -23,7 +23,7 @@ from degenbot.provider import AlloyProvider
 from degenbot.types.rpc_types import TxParams
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.bot_factory import make_bot_with_provider
-from tests.helpers.w3_contract import W3ContractCompat, make_contract
+from tests.helpers.contract_compat import ContractCompat, make_contract
 
 pytestmark = pytest.mark.online_rpc
 
@@ -49,7 +49,7 @@ def tripool(fork_mainnet_full: AnvilFork) -> CurveStableswapPool:
 
 def _test_calculations(lp: CurveStableswapPool, provider: AlloyProvider):
     state_block = lp.update_block
-    w3_contract = W3ContractCompat(lp.address, CURVE_V1_POOL_ABI, provider)
+    contract_compat = ContractCompat(lp.address, CURVE_V1_POOL_ABI, provider)
 
     for token_in_index, token_out_index in itertools.permutations(range(len(lp.tokens)), 2):
         token_in = lp.tokens[token_in_index]
@@ -95,7 +95,7 @@ def _test_calculations(lp: CurveStableswapPool, provider: AlloyProvider):
                         types=["uint256"],
                     )
                 else:
-                    contract_amount = w3_contract.functions.get_dy(
+                    contract_amount = contract_compat.functions.get_dy(
                         token_in_index,
                         token_out_index,
                         amount,
@@ -136,7 +136,7 @@ def _test_calculations(lp: CurveStableswapPool, provider: AlloyProvider):
                     continue
 
                 try:
-                    contract_amount = w3_contract.functions.get_dy_underlying(
+                    contract_amount = contract_compat.functions.get_dy_underlying(
                         token_in_index,
                         token_out_index,
                         amount,
@@ -391,7 +391,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
 
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
     """Test the user-deployed pools deployed by the factory"""
-    stableswap_factory = W3ContractCompat(
+    stableswap_factory = ContractCompat(
         CURVE_V1_FACTORY_ADDRESS, CURVE_V1_FACTORY_ABI, fork_mainnet_full.provider
     )
     pool_count = stableswap_factory.functions.pool_count().call()

@@ -51,7 +51,7 @@ from degenbot.balancer.math import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.fork import AnvilFork
-from tests.helpers.w3_contract import W3ContractCompat
+from tests.helpers.contract_compat import ContractCompat
 
 pytestmark = pytest.mark.online_rpc
 
@@ -115,12 +115,12 @@ META_STABLE_POOLS = {
 
 def _build_pool_data(fork: AnvilFork, pool_address: str) -> dict:
     """Fetch all needed on-chain data for a stable pool."""
-    vault = W3ContractCompat(
+    vault = ContractCompat(
         get_checksum_address(BALANCER_V2_VAULT_ADDRESS),
         VAULT_ABI,
         fork.provider,
     )
-    pool = W3ContractCompat(
+    pool = ContractCompat(
         get_checksum_address(pool_address),
         POOL_ABI,
         fork.provider,
@@ -141,7 +141,7 @@ def _build_pool_data(fork: AnvilFork, pool_address: str) -> dict:
     base_scaling_factors = []
     fresh_rates = []
     for i, rp in enumerate(rate_providers):
-        erc20 = W3ContractCompat(
+        erc20 = ContractCompat(
             get_checksum_address(tokens[i]),
             ERC20_ABI,
             fork.provider,
@@ -151,7 +151,7 @@ def _build_pool_data(fork: AnvilFork, pool_address: str) -> dict:
         base_scaling_factors.append(base_sf)
 
         if rp != "0x0000000000000000000000000000000000000000":
-            rp_contract = W3ContractCompat(
+            rp_contract = ContractCompat(
                 get_checksum_address(rp),
                 RATE_PROVIDER_ABI,
                 fork.provider,
@@ -195,7 +195,7 @@ def _query_swap(
     kind: int,  # 0=GIVEN_IN, 1=GIVEN_OUT
 ) -> int:
     """Query the BalancerQueries contract for a swap result."""
-    queries = W3ContractCompat(
+    queries = ContractCompat(
         get_checksum_address(BALANCERQUERIES_CONTRACT_ADDRESS),
         QUERIES_ABI,
         fork.provider,
@@ -735,12 +735,12 @@ def _build_composable_pool_data(fork: AnvilFork, pool_address: str) -> dict:
     The deployed contract's _scalingFactors() computes base_sf.mulDown(getTokenRate(token))
     where getTokenRate reads from _tokenRateCaches, which was JUST refreshed.
     """
-    vault = W3ContractCompat(
+    vault = ContractCompat(
         get_checksum_address(BALANCER_V2_VAULT_ADDRESS),
         VAULT_ABI,
         fork.provider,
     )
-    pool = W3ContractCompat(
+    pool = ContractCompat(
         get_checksum_address(pool_address),
         POOL_ABI,
         fork.provider,
@@ -758,7 +758,7 @@ def _build_composable_pool_data(fork: AnvilFork, pool_address: str) -> dict:
     base_scaling_factors = []
     fresh_rates = []
     for i, rp in enumerate(rate_providers):
-        erc20 = W3ContractCompat(
+        erc20 = ContractCompat(
             get_checksum_address(tokens[i]),
             ERC20_ABI,
             fork.provider,
@@ -768,7 +768,7 @@ def _build_composable_pool_data(fork: AnvilFork, pool_address: str) -> dict:
         base_scaling_factors.append(base_sf)
 
         if rp != "0x0000000000000000000000000000000000000000":
-            rp_contract = W3ContractCompat(
+            rp_contract = ContractCompat(
                 get_checksum_address(rp),
                 RATE_PROVIDER_ABI,
                 fork.provider,

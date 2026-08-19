@@ -17,7 +17,7 @@ from degenbot.exceptions.pool import ExternalUpdateError
 from degenbot.fork import AnvilFork
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.helpers.bot_factory import make_bot_with_provider
-from tests.helpers.w3_contract import make_contract
+from tests.helpers.contract_compat import make_contract
 
 WETH_CONTRACT_ADDRESS = get_checksum_address(
     "0x4200000000000000000000000000000000000006",
@@ -180,7 +180,9 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = make_contract(fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI)
+        contract_compat = make_contract(
+            fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI
+        )
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -194,7 +196,7 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
                         token_in=lp.token0,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = w3_contract.functions.getAmountOut(
+                    contract_amount_out = contract_compat.functions.getAmountOut(
                         token_in_amount,
                         lp.token0.address,
                     ).call()
@@ -215,7 +217,7 @@ def test_calculation_volatile(fork_base_full: AnvilFork, test_pools: list[Any]):
                         token_in=lp.token1,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = w3_contract.functions.getAmountOut(
+                    contract_amount_out = contract_compat.functions.getAmountOut(
                         token_in_amount,
                         lp.token1.address,
                     ).call()
@@ -253,7 +255,9 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
         max_reserves_token0 = lp.reserves_token0
         max_reserves_token1 = lp.reserves_token1
 
-        w3_contract = make_contract(fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI)
+        contract_compat = make_contract(
+            fork_base_full.http_url, pool_address, AERODROME_V2_POOL_ABI
+        )
 
         if max_reserves_token1 >= 2:
             for token_mult in token_amount_multipliers:
@@ -266,7 +270,7 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
                         token_in=lp.token0,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = w3_contract.functions.getAmountOut(
+                    contract_amount_out = contract_compat.functions.getAmountOut(
                         token_in_amount,
                         lp.token0.address,
                     ).call()
@@ -286,7 +290,7 @@ def test_calculation_stable(fork_base_full: AnvilFork, test_pools: list[Any]):
                         token_in=lp.token1,
                         token_in_quantity=token_in_amount,
                     )
-                    contract_amount_out = w3_contract.functions.getAmountOut(
+                    contract_amount_out = contract_compat.functions.getAmountOut(
                         token_in_amount,
                         lp.token1.address,
                     ).call()

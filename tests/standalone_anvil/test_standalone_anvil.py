@@ -6,7 +6,7 @@ the seeded non-forking chain with no upstream RPC.
 """
 
 from degenbot.fork import AnvilFork
-from tests.helpers.w3_contract import make_contract
+from tests.helpers.contract_compat import make_contract
 from tests.standalone_anvil import seed as seed_catalog
 
 

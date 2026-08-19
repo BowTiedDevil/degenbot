@@ -54,9 +54,9 @@ from degenbot.constants import MAX_INT128, ZERO_ADDRESS
 from degenbot.exceptions.pool import IncompleteSwap
 from degenbot.fork import AnvilFork
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
-from tests.helpers.w3_contract import make_contract
 from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
     UNISWAP_V4_QUOTER_ABI,
     UNISWAP_V4_QUOTER_ADDRESS,

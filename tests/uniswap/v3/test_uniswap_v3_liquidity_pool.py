@@ -46,8 +46,8 @@ from degenbot.uniswap.v3_types import (
 from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.w3_contract import make_contract
 
 WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")
 WETH_CONTRACT_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

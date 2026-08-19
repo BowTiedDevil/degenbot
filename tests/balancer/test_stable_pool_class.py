@@ -33,8 +33,8 @@ from degenbot.exceptions.pool import StaleRateResult
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
+from tests.helpers.contract_compat import ContractCompat
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.w3_contract import W3ContractCompat
 
 pytestmark = pytest.mark.online_rpc
 
@@ -118,7 +118,7 @@ class CacheAwareRateProvider:
         *,
         zero_addr: str = "0x0000000000000000000000000000000000000000",
     ) -> None:
-        self._pool = W3ContractCompat(
+        self._pool = ContractCompat(
             get_checksum_address(pool_address),
             pool_abi,
             provider,
@@ -133,7 +133,7 @@ class CacheAwareRateProvider:
                 self._rate_contracts.append(None)
             else:
                 self._rate_contracts.append(
-                    W3ContractCompat(get_checksum_address(rp), RATE_ABI, provider),
+                    ContractCompat(get_checksum_address(rp), RATE_ABI, provider),
                 )
         self._token_addresses = token_addresses
 
@@ -189,12 +189,12 @@ def _build_stable_pool(
     that replicates the on-chain _cacheTokenRateIfNecessary flow for
     exact-integer matching.
     """
-    vault = W3ContractCompat(
+    vault = ContractCompat(
         get_checksum_address(BALANCER_V2_VAULT_ADDRESS),
         VAULT_ABI,
         fork.provider,
     )
-    pool = W3ContractCompat(
+    pool = ContractCompat(
         get_checksum_address(pool_address),
         POOL_ABI,
         fork.provider,
@@ -211,7 +211,7 @@ def _build_stable_pool(
     base_scaling_factors: list[int] = []
     fresh_rates: list[int] = []
     for i, t in enumerate(tokens):
-        erc20_c = W3ContractCompat(get_checksum_address(t), ERC20_ABI, fork.provider)
+        erc20_c = ContractCompat(get_checksum_address(t), ERC20_ABI, fork.provider)
         decimals = erc20_c.functions.decimals().call()
         symbol = erc20_c.functions.symbol().call()
         name = erc20_c.functions.name().call()
@@ -220,7 +220,7 @@ def _build_stable_pool(
 
         rp = rate_providers[i]
         if rp != "0x0000000000000000000000000000000000000000":
-            rp_c = W3ContractCompat(get_checksum_address(rp), RATE_ABI, fork.provider)
+            rp_c = ContractCompat(get_checksum_address(rp), RATE_ABI, fork.provider)
             rate = rp_c.functions.getRate().call()
         else:
             rate = ONE
@@ -277,7 +277,7 @@ def _query_swap(
     kind: int,
 ) -> int:
     """Query the BalancerQueries contract for a swap result."""
-    queries = W3ContractCompat(
+    queries = ContractCompat(
         get_checksum_address(BALANCERQUERIES_CONTRACT_ADDRESS),
         QUERIES_ABI,
         fork.provider,

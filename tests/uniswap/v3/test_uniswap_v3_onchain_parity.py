@@ -60,9 +60,9 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 # RPC URI is overridable via tests.env (see ETHEREUM_ARCHIVE_NODE_HTTP_URI);
 # only contacted in record mode — replay is fully offline.
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
+from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
-from tests.helpers.w3_contract import make_contract
 
 UNISWAP_V3_PARITY_BLOCK = 24_407_242  # tip minus ~1M
 

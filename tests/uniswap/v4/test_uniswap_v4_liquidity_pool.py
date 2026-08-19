@@ -21,7 +21,7 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
-from tests.helpers.w3_contract import W3ContractCompat, make_contract
+from tests.helpers.contract_compat import ContractCompat, make_contract
 
 if TYPE_CHECKING:
     from degenbot.types.chain import HexStr
@@ -90,7 +90,7 @@ def liquidity_snapshot() -> dict[str, Any]:
 def _test_pool_exact_input(
     pool: dict[str, Any],
     fork: AnvilFork,
-    quoter: W3ContractCompat,
+    quoter: ContractCompat,
     snapshot: dict[str, Any] | None = None,
 ):
 
@@ -209,7 +209,7 @@ def _test_pool_exact_input(
 def _test_pool_exact_output(
     pool: dict[str, Any],
     fork: AnvilFork,
-    quoter: W3ContractCompat,
+    quoter: ContractCompat,
     snapshot: dict[str, Any] | None = None,
 ):
     pool_id: HexStr = pool["pool_id"]

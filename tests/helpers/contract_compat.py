@@ -1,10 +1,10 @@
-"""web3.eth.contract compatibility wrapper using AlloyProvider + degenbot.abi.
+"""eth.contract-style contract-call wrapper using AlloyProvider + degenbot.abi.
 
-Replaces ``web3.Web3(url).eth.contract(address=addr, abi=ABI)`` with a
-shim that uses the Rust ``AlloyProvider`` for ``eth_call`` and the Rust-
-backed ``degenbot.abi`` core for ABI encoding/decoding, eliminating both
-the ``web3`` and ``eth_abi`` runtime dependencies from the on-chain parity
-tests.
+Historical note: this replaced the retired ``web3.Web3(url).eth.contract``
+
+wrapper from the parity tests: it uses the Rust ``AlloyProvider`` for
+``eth_call`` and the Rust-backed ``degenbot.abi`` core for ABI
+encoding/decoding, so no ``web3``/``eth_abi`` runtime dependency is needed.
 
 Supports both positional and keyword arguments (web3's contract interface
 accepts both ``.functions.foo(a, b)`` and ``.functions.foo(arg1=a, arg2=b)``).
@@ -101,8 +101,8 @@ class _FunctionsAccessor:
         return _call
 
 
-class W3ContractCompat:
-    """web3.eth.contract replacement backed by AlloyProvider + degenbot.abi."""
+class ContractCompat:
+    """eth.contract-style function-call surface backed by AlloyProvider + degenbot.abi."""
 
     def __init__(self, address: str, abi: list[dict[str, Any]], provider: AlloyProvider) -> None:
         self._provider = provider
@@ -132,14 +132,14 @@ def make_contract(
     provider_url: str,
     address: str,
     abi: list[dict[str, Any]],
-) -> W3ContractCompat:
+) -> ContractCompat:
     """Create a web3-compatible contract wrapper.
 
     Usage::
 
-        w3_contract = make_contract(fork.http_url, POOL_ADDR, POOL_ABI)
-        result = w3_contract.functions.getAmountOut(amountIn=100, tokenIn=addr).call()
+        contract_compat = make_contract(fork.http_url, POOL_ADDR, POOL_ABI)
+        result = contract_compat.functions.getAmountOut(amountIn=100, tokenIn=addr).call()
 
     """
     provider = AlloyProvider(provider_url)
-    return W3ContractCompat(address, abi, provider)
+    return ContractCompat(address, abi, provider)

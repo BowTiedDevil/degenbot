@@ -48,8 +48,8 @@ from degenbot.fork import AnvilFork
 from degenbot.utils.bytes import to_bytes
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
+from tests.helpers.contract_compat import ContractCompat
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.w3_contract import W3ContractCompat
 
 if TYPE_CHECKING:
     from degenbot.balancer.pools import BalancerV2Pool
@@ -210,7 +210,7 @@ def _query_swap_callable(
 
     def _call() -> int:
         assert fork.fork is not None
-        query_contract = W3ContractCompat(
+        query_contract = ContractCompat(
             BALANCERQUERIES_CONTRACT_ADDRESS,
             _BALANCERQUERIES_ABI,
             fork.fork.provider,
