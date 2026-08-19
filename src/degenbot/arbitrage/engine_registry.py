@@ -296,7 +296,17 @@ class EngineRegistry:
                 self._verify_snapshot_block,
             )
         except BaseException as exc:
-            claim.set_exception(exc)
+            if isinstance(exc, asyncio.CancelledError):
+                claim.cancel()
+            else:
+                claim.set_exception(exc)
+                # Mark the exception retrieved: the claim below is released so
+                # a failed lifecycle can be retried, and with no sibling
+                # waiter the future is discarded — an unretrieved exception
+                # would log 'Future exception was never retrieved' at GC. A
+                # sibling that already awaited this claim still receives the
+                # exception regardless.
+                claim.exception()
             raise
         finally:
             if self._v3_inflight.get(pool.address) is claim:
@@ -361,7 +371,14 @@ class EngineRegistry:
                 self._verify_snapshot_block,
             )
         except BaseException as exc:
-            claim.set_exception(exc)
+            if isinstance(exc, asyncio.CancelledError):
+                claim.cancel()
+            else:
+                claim.set_exception(exc)
+                # Mark the exception retrieved (see register_v3_pool) — the
+                # claim is discarded after release with no waiter unless a
+                # sibling is already awaiting it.
+                claim.exception()
             raise
         finally:
             if self._v4_inflight.get(pool_id_hex) is claim:

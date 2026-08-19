@@ -199,6 +199,53 @@ def test_register_v4_pool_delegates_to_core_lifecycle(monkeypatch) -> None:
     }
 
 
+@pytest.mark.parametrize("family", ["v3", "v4"])
+def test_register_fail_fast_surfaces_error_to_racing_sibling(
+    monkeypatch,
+    family: str,
+) -> None:
+    """A sibling that claims the DMZ3DD inflight entry while a tripwired
+    lifecycle is in flight must receive the VerificationMismatchError DIRECTLY
+    from the shared claim (not a hang, cancel, or dropped future)."""
+    registry, fake = _registry_started_with_snapshots(monkeypatch)
+    inflight = (registry._v3_inflight, "0xV3POOL") if family == "v3" else (
+        registry._v4_inflight, "0xV4POOLID",
+    )
+    inflight, key = inflight
+    register = getattr(registry, f"register_{family}_pool")
+    pool = _FakeV3Pool() if family == "v3" else _FakeV4Pool()
+    seen: dict[str, object] = {}
+
+    async def _sibling() -> None:
+        try:
+            await inflight[key]
+        except BaseException as exc:  # noqa: BLE001 - record whatever surfaces
+            seen["exc"] = exc
+
+    async def _failing_lifecycle(*_args, **_kwargs):
+        # Start the sibling, then yield once so it grabs the live claim BEFORE
+        # the mismatch trips (ready-queue FIFO makes this deterministic).
+        seen["sibling"] = asyncio.get_running_loop().create_task(_sibling())
+        await asyncio.sleep(0)
+        raise VerificationMismatchError(f"synthetic {family} seed tick mismatch")
+
+    setattr(fake, f"run_{family}_registration_lifecycle", _failing_lifecycle)
+
+    async def _go() -> None:
+        with pytest.raises(
+            VerificationMismatchError,
+            match=f"synthetic {family} seed",
+        ):
+            await register(pool)
+        await seen["sibling"]
+        assert isinstance(seen["exc"], VerificationMismatchError), (
+            f"racing sibling must receive the mismatch error directly, "
+            f"got: {seen.get('exc')!r}"
+        )
+
+    asyncio.run(_go())
+
+
 def test_register_v3_pool_fail_fast_surfaces_mismatch(monkeypatch) -> None:
     """The verification tripwire (D-A) propagates as VerificationMismatchError
     from the core lifecycle, surfacing from build_paths — not 18k pools later.
