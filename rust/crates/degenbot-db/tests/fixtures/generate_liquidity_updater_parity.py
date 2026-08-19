@@ -44,10 +44,10 @@ import shutil
 
 from eth_abi import encode as abi_encode
 from degenbot._ffi import ChecksummedAddress
+from degenbot.types.rpc_types import LogReceipt
 from hexbytes import HexBytes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli.pool import (

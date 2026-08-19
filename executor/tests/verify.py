@@ -6,22 +6,16 @@ Each ERC20 Transfer event (topic0 = ddf252ad…) and V4 Take event corresponds
 to one physical ERC20 transfer() call — ground truth for transfer-count claims.
 """
 
-from web3 import Web3
-
-
 # ERC20 Transfer(address indexed, address indexed, uint256)
-# keccak256("Transfer(address,address,uint256)") = 0xddf252ad1be2c89b69b2c47b9cf6a3c7a4c6c7d0b2e5f3a1c8d5e7b9a0f2c4d6
+# keccak256("Transfer(address,address,uint256)") =
+#   0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
 # We match on the first 8 hex chars of topic0
-_TRANSFER_TOPIC0_PREFIX = Web3.keccak(text="Transfer(address,address,uint256)")[
-    :4
-].hex()
+_TRANSFER_TOPIC0_PREFIX = "ddf252ad"
 
 # ERC6909 Transfer(address indexed, address indexed, address, uint256, uint256)
 # Emitted by PM.mint() when converting a positive delta to ERC6909 balance.
 # Counts as a "transfer" for the purpose of verifying token flow correctness.
-_ERC6909_TRANSFER_TOPIC0_PREFIX = Web3.keccak(
-    text="Transfer(address,address,address,uint256,uint256)"
-)[:4].hex()
+_ERC6909_TRANSFER_TOPIC0_PREFIX = "1b3d7edb"
 
 
 def _event_name(log) -> str:

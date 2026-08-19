@@ -3,7 +3,7 @@
 After the Rust engine takes ownership of canonical pool/token state, the Bot's
 Python-side caches (tracker `_tracked_pools`/`_untracked_pools` + snapshots,
 the pool + token registries) are scaffolding that should be dropped so the hot
-loop only holds the engine + the async web3 handle. This encodes the 15-line
+loop only holds the engine + the async Alloy provider handle. This encodes the 15-line
 hand-rolled trim block from `main()` behind a single Bot method, so the example
 stops reverse-engineering Bot internals.
 

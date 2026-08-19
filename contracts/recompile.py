@@ -56,7 +56,7 @@ import shutil
 import subprocess
 import sys
 
-from web3 import Web3
+from degenbot.crypto import keccak256
 
 # ── Paths ──────────────────────────────────────────────────────────
 EXECUTOR_SRC = pathlib.Path.home() / "code" / "executor"
@@ -97,7 +97,7 @@ def _compute_delta_slot(target: str, currency: str) -> bytes:
     """
     target_bytes = bytes.fromhex(target[2:].lower().zfill(64))
     currency_bytes = bytes.fromhex(currency[2:].lower().zfill(64))
-    return Web3.keccak(target_bytes + currency_bytes)
+    return keccak256(target_bytes + currency_bytes)
 
 
 def main() -> None:
