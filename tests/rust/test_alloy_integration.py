@@ -5,7 +5,6 @@ covering provider operations, contract interactions, and connection management.
 """
 
 import pytest
-import web3
 
 from degenbot._ffi.abi import decode_single, encode_single
 from degenbot.abi import encode as abi_encode
@@ -19,6 +18,7 @@ from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider, LogFilter
 from tests.standalone_anvil import seed as seed_catalog
+from tests.standalone_anvil.emit import emit_tx
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
@@ -37,15 +37,16 @@ def standalone_provider(standalone_anvil: AnvilFork) -> AlloyProvider:
 @pytest.fixture
 def emitted_block(standalone_anvil: AnvilFork) -> int:
     """Emit a real ``Ping`` log and return its block number (for get_logs)."""
-    w3 = web3.Web3(web3.HTTPProvider(standalone_anvil.http_url))
-    sender = w3.eth.accounts[0]
-    tx = w3.eth.send_transaction({
-        "from": sender,
-        "to": seed_catalog.EVENT_EMITTER,
-        "data": _ping_calldata(),
-        "chainId": seed_catalog.CHAIN_ID,
-    })
-    return w3.eth.wait_for_transaction_receipt(tx, timeout=10)["blockNumber"]
+    provider = AlloyProvider(standalone_anvil.http_url)
+    try:
+        return emit_tx(
+            provider,
+            to=seed_catalog.EVENT_EMITTER,
+            data=_ping_calldata(),
+            chain_id=seed_catalog.CHAIN_ID,
+        ).block
+    finally:
+        provider.close()
 
 
 class TestContractUtilities:

@@ -6,24 +6,15 @@ emitted on the seeded standalone chain (no upstream RPC).
 """
 
 from collections.abc import Iterator
-from dataclasses import dataclass
 
 import pytest
-import web3
 
 from degenbot.abi import encode as abi_encode
 from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
-
-
-@dataclass
-class EmittedTx:
-    """A real emitted transaction: its block number + hash (for shape assertions)."""
-
-    block: int
-    tx_hash: str
+from tests.standalone_anvil.emit import EmittedTx, emit_tx
 
 
 def _ping_calldata() -> bytes:
@@ -48,17 +39,17 @@ def emitted_tx(standalone_anvil: AnvilFork) -> EmittedTx:
     Sets a mixed-case coinbase so the mined block's ``miner`` is a checksummed
     address (satisfies the Kasto address-shape assertions).
     """
-    w3 = web3.Web3(web3.HTTPProvider(standalone_anvil.http_url))
-    w3.provider.make_request("anvil_setCoinbase", [seed_catalog.FUNDED_EOA])
-    sender = w3.eth.accounts[0]
-    tx = w3.eth.send_transaction({
-        "from": sender,
-        "to": seed_catalog.EVENT_EMITTER,
-        "data": _ping_calldata(),
-        "chainId": seed_catalog.CHAIN_ID,
-    })
-    receipt = w3.eth.wait_for_transaction_receipt(tx, timeout=10)
-    return EmittedTx(block=receipt["blockNumber"], tx_hash=tx.hex())
+    provider = AlloyProvider(standalone_anvil.http_url)
+    try:
+        return emit_tx(
+            provider,
+            to=seed_catalog.EVENT_EMITTER,
+            data=_ping_calldata(),
+            chain_id=seed_catalog.CHAIN_ID,
+            coinbase=seed_catalog.FUNDED_EOA,
+        )
+    finally:
+        provider.close()
 
 
 class TestbytesConversion:
