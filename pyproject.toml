@@ -238,6 +238,7 @@ markers = [
 dev = [
     "hypothesis",
     "maturin",
+    "numpy",
     "prek",
     "pytest-asyncio",
     "pytest-order",
@@ -246,7 +247,6 @@ dev = [
     "pytest",
     "python-dotenv",
     "ruff",
-    "scipy", # tests import numpy directly; numpy is scipy's transitive dep, noted to keep the undeclared-import audit honest
     "sybil",
     "ty",
     "vyper",
