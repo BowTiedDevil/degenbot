@@ -20,10 +20,16 @@
 //! shared surface is only the file + the thin `ResolvedHop` wrap + nonce
 //! return.
 
+pub(crate) mod balancer_stable;
+pub(crate) mod balancer_weighted;
 pub(crate) mod cl;
+pub(crate) mod curve;
 pub(crate) mod solidly;
+pub(crate) mod v2;
 
-use degenbot_solvers::mixed::MixedPoolRef;
+use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath};
+
+use super::BotState;
 
 /// Why a `project_<family>` hop could not be projected. Granular-but-grouped:
 /// each variant maps 1:1 to a failure mode the flat match today encodes as a
@@ -37,32 +43,17 @@ pub(crate) enum MissingHopReason {
     MissingIdentity,
     /// A token-registry (decimals) entry for one side of the pair was missing.
     MissingTokenPair,
-    /// The pool has fewer than two tokens; no pairwise hop can be formed.
-    #[expect(
-        dead_code,
-        reason = "constructed in T2 (epic MKRKNB): Balancer/Curve arms"
-    )]
+    /// Fewer than two elements available: a pool with <2 tokens (no pairwise
+    /// hop can be formed) or a path with <2 hops.
     TooFewTokens,
     /// A variant byte (pow version, Curve y/d variant, ...) decoded to nothing.
-    #[expect(
-        dead_code,
-        reason = "constructed in T2 (epic MKRKNB): Balancer/Curve arms"
-    )]
     UnknownVariant,
     /// A pairwise index fell outside the token list.
-    #[expect(
-        dead_code,
-        reason = "constructed in T2 (epic MKRKNB): Balancer/Curve arms"
-    )]
     OutOfRange,
     /// `build_int_v*_sequence` returned `None` (no integer tick-range sequence
     /// for the direction, e.g. tick-range cache miss).
     SequenceUnavailable,
     /// The balancer-stable invariant calculation errored.
-    #[expect(
-        dead_code,
-        reason = "constructed in T2 (epic MKRKNB): BalancerStable arm"
-    )]
     InvariantError,
 }
 
@@ -72,7 +63,7 @@ impl std::fmt::Display for MissingHopReason {
             Self::MissingState => "missing pool state",
             Self::MissingIdentity => "missing pool identity",
             Self::MissingTokenPair => "missing token entry",
-            Self::TooFewTokens => "pool has fewer than 2 tokens",
+            Self::TooFewTokens => "pool has fewer than 2 tokens, or path has fewer than 2 hops",
             Self::UnknownVariant => "unknown variant byte",
             Self::OutOfRange => "pairwise index out of range",
             Self::SequenceUnavailable => "integer tick-range sequence unavailable",
@@ -94,4 +85,58 @@ pub(crate) fn log_invalidation(
         %reason,
         "[resolve-path] hop invalidates the path"
     );
+}
+
+/// The cross-family projection dispatcher -- the body of the former flat
+/// `resolve_path` loop (T2 of epic MKRKNB collapsed the engine method to a
+/// thin wrapper over this). Owns the accumulators (`max_update_block`,
+/// `state_nonces`), the `valid` flag, and the stop-at-first-`Err`
+/// invalidation; returns the `MissingHopReason` of the first unprojectable
+/// hop (its hop-level detail also goes to `debug` via `log_invalidation`),
+/// or `None` when the whole path projected.
+pub(crate) fn resolve_hops(
+    core: &BotState,
+    pool_refs: &[MixedPoolRef],
+    resolved: &mut ResolvedMixedPath,
+) -> Option<MissingHopReason> {
+    resolved.hops.clear();
+    resolved.valid = false;
+    resolved.state_nonces.clear();
+
+    if pool_refs.len() < 2 {
+        return Some(MissingHopReason::TooFewTokens);
+    }
+
+    resolved.hops.reserve(pool_refs.len());
+    resolved.state_nonces.reserve(pool_refs.len());
+
+    for (hop_index, pool_ref) in pool_refs.iter().enumerate() {
+        // Capture the max price-clock `update_block` across all hops.
+        resolved.max_update_block = resolved
+            .max_update_block
+            .max(core.pool_update_block(pool_ref.pool_key));
+        let projection = match pool_ref.hop_type {
+            HopType::V2 => v2::project_v2(core, pool_ref),
+            HopType::V3 => cl::project_v3(core, pool_ref),
+            HopType::V4 => cl::project_v4(core, pool_ref),
+            HopType::SolidlyStable => solidly::project_solidly(core, pool_ref),
+            HopType::BalancerWeighted => {
+                balancer_weighted::project_balancer_weighted(core, pool_ref)
+            }
+            HopType::BalancerStable => balancer_stable::project_balancer_stable(core, pool_ref),
+            HopType::CurveStableswap => curve::project_curve(core, pool_ref),
+        };
+        let (hop, nonce) = match projection {
+            Ok(hop) => hop,
+            Err(reason) => {
+                log_invalidation(pool_ref, hop_index, reason);
+                return Some(reason);
+            }
+        };
+        resolved.hops.push(hop);
+        resolved.state_nonces.push(nonce);
+    }
+
+    resolved.valid = true;
+    None
 }

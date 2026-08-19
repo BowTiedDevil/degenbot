@@ -34,10 +34,7 @@ use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 fn hop_is_future(update_block: u64, solve_block: u64) -> bool {
     update_block > solve_block
 }
-use ::degenbot_solvers::mixed::{
-    BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
-    MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolvePathResult,
-};
+use ::degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
 
 impl ArbitrageEngine {
     /// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
@@ -397,7 +394,9 @@ impl ArbitrageEngine {
                     continue;
                 }
                 let mut resolved = ResolvedMixedPath::default();
-                Self::resolve_path(&core, &path.pools, &mut resolved);
+                if let Some(reason) = Self::resolve_path(&core, &path.pools, &mut resolved) {
+                    tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
+                }
                 self.path_resolved.insert(path_id, resolved);
             }
         }
@@ -544,297 +543,22 @@ impl ArbitrageEngine {
     }
 
     ///
-    /// `core` is the locked [`BotState`] snapshot that all family state is read
-    /// from (ADR-003). The CL (V3/V4) arms and the Solidly-stable arm project
-    /// through `crate::bot_core::resolve` — the first unprojectable hop
-    /// (`...resolve::MissingHopReason`, logged at `debug`) leaves `valid ==
-    /// false`, exactly as today's bare `return` did. The V2 / Balancer /
-    /// Curve arms still sit inline below until T2 of epic MKRKNB completes
-    /// the per-family split.
-    #[expect(clippy::too_many_lines)]
-    pub fn resolve_path(
+    /// Project every hop of a path into its `ResolvedHop` solver intake type —
+    /// the sole entry point, a thin wrapper over the per-family projections
+    /// in `crate::bot_core::resolve` (T2 of epic MKRKNB completed the split).
+    /// The dispatcher owns the accumulators and the stop-at-first-failure
+    /// semantics: the first unprojectable hop stops the loop, prior successful
+    /// hops remain pushed, and `valid` stays false (the caller discards).
+    /// Returns the `MissingHopReason` of the first failed hop so each caller
+    /// can log it with the `path_id` context this signature deliberately does
+    /// not receive; the dispatcher additionally logs the hop-level detail at
+    /// `debug`.
+    pub(crate) fn resolve_path(
         core: &crate::bot_core::BotState,
         pool_refs: &[MixedPoolRef],
         resolved: &mut ResolvedMixedPath,
-    ) {
-        resolved.hops.clear();
-        resolved.valid = false;
-        resolved.state_nonces.clear();
-
-        if pool_refs.len() < 2 {
-            return;
-        }
-
-        resolved.hops.reserve(pool_refs.len());
-        resolved.state_nonces.reserve(pool_refs.len());
-
-        for (hop_index, pool_ref) in pool_refs.iter().enumerate() {
-            // Capture the max price-clock `update_block` across all hops.
-            resolved.max_update_block = resolved
-                .max_update_block
-                .max(core.pool_update_block(pool_ref.pool_key));
-            match pool_ref.hop_type {
-                HopType::V2 => {
-                    // Read V2 state from BotState and build the orientation-specific
-                    // `IntHopState` at resolve time from `zero_for_one` (ADR-003
-                    // "Swap Orientation": single PoolEntry per address, orientation
-                    // derived at solve — the engine never mutates this state).
-                    let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(identity) = core.get_v2_identity(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
-                    {
-                        (
-                            state.reserve0.to::<U256>(),
-                            state.reserve1.to::<U256>(),
-                            identity.fee_token0.0,
-                            identity.fee_token0.1,
-                        )
-                    } else {
-                        (
-                            state.reserve1.to::<U256>(),
-                            state.reserve0.to::<U256>(),
-                            identity.fee_token1.0,
-                            identity.fee_token1.1,
-                        )
-                    };
-                    let hop_state = degenbot_v2_math::IntHopState::new(
-                        reserve_in,
-                        reserve_out,
-                        gamma_numer,
-                        fee_denom,
-                    );
-                    resolved.hops.push(ResolvedHop::V2 { state: hop_state });
-                    resolved.state_nonces.push(state.state_nonce);
-                }
-                HopType::V3 => match crate::bot_core::resolve::cl::project_v3(core, pool_ref) {
-                    Ok((hop, nonce)) => {
-                        resolved.hops.push(hop);
-                        resolved.state_nonces.push(nonce);
-                    }
-                    Err(reason) => {
-                        crate::bot_core::resolve::log_invalidation(pool_ref, hop_index, reason);
-                        return;
-                    }
-                },
-                HopType::V4 => match crate::bot_core::resolve::cl::project_v4(core, pool_ref) {
-                    Ok((hop, nonce)) => {
-                        resolved.hops.push(hop);
-                        resolved.state_nonces.push(nonce);
-                    }
-                    Err(reason) => {
-                        crate::bot_core::resolve::log_invalidation(pool_ref, hop_index, reason);
-                        return;
-                    }
-                },
-                // Solidly-stable (Aerodrome stable / Camelot stable_swap) resolve. Reads
-                // reserves + identity off the per-family `PoolEntry` arm, then
-                // fetches token decimals via the token registry (never stored
-                // on the identity — ADR-003 single source of truth).
-                HopType::SolidlyStable => {
-                    match crate::bot_core::resolve::solidly::project_solidly(core, pool_ref) {
-                        Ok((hop, nonce)) => {
-                            resolved.hops.push(hop);
-                            resolved.state_nonces.push(nonce);
-                        }
-                        Err(reason) => {
-                            crate::bot_core::resolve::log_invalidation(pool_ref, hop_index, reason);
-                            return;
-                        }
-                    }
-                }
-                HopType::BalancerWeighted => {
-                    let Some(id) = core.get_balancer_weighted_identity(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(state) = core.get_balancer_weighted_pool(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    // N-token pool: zero_for_one selects token[0]→token[1]
-                    // (i=0, j=1) or token[1]→token[0] (i=1, j=0). The engine
-                    // only handles the pairwise (0/1) case; N>2 pair selection
-                    // is a Python-side concern (BalancerPairView) that fixes
-                    // the pair before registration.
-                    if id.n_tokens() < 2 {
-                        return; // Can't form a pairwise hop
-                    }
-                    // Upscale balances to 18-decimal fixed-point (Balancer
-                    // convention: the math leaf operates at ONE = 1e18 scale).
-                    // scaling_factors[i] = 10^(18 - token_decimals_i).
-                    let (balance_in, balance_out, weight_in, weight_out, sf_in, sf_out) =
-                        if pool_ref.zero_for_one {
-                            (
-                                state.balances[0].saturating_mul(id.scaling_factors[0]),
-                                state.balances[1].saturating_mul(id.scaling_factors[1]),
-                                id.weights[0],
-                                id.weights[1],
-                                id.scaling_factors[0],
-                                id.scaling_factors[1],
-                            )
-                        } else {
-                            (
-                                state.balances[1].saturating_mul(id.scaling_factors[1]),
-                                state.balances[0].saturating_mul(id.scaling_factors[0]),
-                                id.weights[1],
-                                id.weights[0],
-                                id.scaling_factors[1],
-                                id.scaling_factors[0],
-                            )
-                        };
-                    let Some(pow_version) =
-                        degenbot_balancer_math::PowVersion::from_u8(id.pow_version)
-                    else {
-                        return; // Unknown pow_version → invalid
-                    };
-                    resolved.hops.push(ResolvedHop::BalancerWeighted {
-                        state: BalancerWeightedHopState {
-                            balance_in,
-                            balance_out,
-                            weight_in,
-                            weight_out,
-                            swap_fee: U256::from(id.swap_fee),
-                            pow_version,
-                            scaling_factor_in: sf_in,
-                            scaling_factor_out: sf_out,
-                        },
-                    });
-                    resolved.state_nonces.push(state.state_nonce);
-                }
-                HopType::BalancerStable => {
-                    let Some(id) = core.get_balancer_stable_identity(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(state) = core.get_balancer_stable_pool(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    if id.n_tokens() < 2 {
-                        return; // Can't form a pairwise hop
-                    }
-                    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
-                        (0, 1)
-                    } else {
-                        (1, 0)
-                    };
-                    let skip_bpt = |idx: usize| -> usize {
-                        match id.bpt_idx {
-                            Some(bpt) if idx >= bpt => idx - 1,
-                            _ => idx,
-                        }
-                    };
-                    let token_index_in = skip_bpt(raw_idx_in);
-                    let token_index_out = skip_bpt(raw_idx_out);
-                    let upscaled_balances: Vec<U256> = {
-                        let mut ub = Vec::with_capacity(id.n_tokens());
-                        for (i, &bal) in state.balances.iter().enumerate() {
-                            if id.bpt_idx.is_some_and(|bpt| bpt == i) {
-                                continue;
-                            }
-                            ub.push(bal.saturating_mul(id.scaling_factors[i]));
-                        }
-                        ub
-                    };
-                    if token_index_in >= upscaled_balances.len()
-                        || token_index_out >= upscaled_balances.len()
-                    {
-                        return;
-                    }
-                    let amp_u256 = U256::from(id.amp);
-                    let invariant = if id.invariant_version == 1 {
-                        degenbot_balancer_math::stable_math::calculate_invariant(
-                            amp_u256,
-                            &upscaled_balances,
-                        )
-                    } else {
-                        degenbot_balancer_math::stable_math::calculate_invariant_deployed(
-                            amp_u256,
-                            &upscaled_balances,
-                            true,
-                        )
-                    };
-                    let Ok(invariant) = invariant else {
-                        return;
-                    };
-                    resolved.hops.push(ResolvedHop::BalancerStable {
-                        state: BalancerStableHopState {
-                            amp: amp_u256,
-                            balances: upscaled_balances,
-                            token_index_in,
-                            token_index_out,
-                            invariant,
-                            swap_fee: U256::from(id.swap_fee),
-                            scaling_factor_in: id.scaling_factors[raw_idx_in],
-                            scaling_factor_out: id.scaling_factors[raw_idx_out],
-                        },
-                    });
-                    resolved.state_nonces.push(state.state_nonce);
-                }
-                HopType::CurveStableswap => {
-                    let Some(id) = core.get_curve_identity(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(state) = core.get_curve_pool(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    if id.tokens.len() < 2 {
-                        return; // Can't form a pairwise hop
-                    }
-                    let (raw_idx_in, raw_idx_out) = if pool_ref.zero_for_one {
-                        (0, 1)
-                    } else {
-                        (1, 0)
-                    };
-                    // Curve constants
-                    let precision = U256::from(10u64).pow(U256::from(18u64));
-                    let fee_denom = U256::from(10u64).pow(U256::from(10u64));
-                    let a_precision = U256::from(100u64);
-                    let amp = U256::from(id.a_coefficient).saturating_mul(a_precision);
-                    let n_coins = U256::from(id.tokens.len() as u64);
-                    // Build rate-adjusted XP: xp[i] = balances[i] * rate_multipliers[i] / PRECISION
-                    let xp: Vec<U256> = state
-                        .balances
-                        .iter()
-                        .zip(id.rate_multipliers.iter())
-                        .map(|(b, rm)| b.saturating_mul(*rm) / precision)
-                        .collect();
-                    if raw_idx_in >= xp.len() || raw_idx_out >= xp.len() {
-                        return;
-                    }
-                    let Some(y_variant) =
-                        degenbot_curve_math::stableswap::YVariant::try_from_u8(id.y_variant)
-                    else {
-                        return;
-                    };
-                    let Some(d_variant) =
-                        degenbot_curve_math::stableswap::DVariant::try_from_u8(id.d_variant)
-                    else {
-                        return;
-                    };
-                    resolved.hops.push(ResolvedHop::CurveStableswap {
-                        state: CurveStableswapHopState {
-                            amp,
-                            a_precision,
-                            xp,
-                            token_index_in: raw_idx_in,
-                            token_index_out: raw_idx_out,
-                            n_coins,
-                            fee: U256::from(id.fee),
-                            fee_denom,
-                            precision,
-                            rate_multiplier_in: id.rate_multipliers[raw_idx_in],
-                            rate_multiplier_out: id.rate_multipliers[raw_idx_out],
-                            y_variant,
-                            d_variant,
-                        },
-                    });
-                    resolved.state_nonces.push(state.state_nonce);
-                }
-            }
-        }
-
-        resolved.valid = true;
+    ) -> Option<crate::bot_core::resolve::MissingHopReason> {
+        crate::bot_core::resolve::resolve_hops(core, pool_refs, resolved)
     }
 }
 

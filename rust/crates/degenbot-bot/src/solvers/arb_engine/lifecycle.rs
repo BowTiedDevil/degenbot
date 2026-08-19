@@ -105,7 +105,9 @@ impl ArbitrageEngine {
         let mut resolved = ResolvedMixedPath::default();
         if let Some(path) = self.path_pools.get(&path_id) {
             let core = self.core.read();
-            Self::resolve_path(&core, &path.pools, &mut resolved);
+            if let Some(reason) = Self::resolve_path(&core, &path.pools, &mut resolved) {
+                tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
+            }
         }
         self.path_resolved.insert(path_id, resolved);
 
@@ -250,8 +252,8 @@ impl ArbitrageEngine {
     /// and `src/degenbot/`).
     #[tracing::instrument(skip(self), fields(block_number, path_count = self.path_pools.len()))]
     pub fn solve_all_paths(&mut self, block_number: u64) {
-        // Resolve all paths under the core lock (single consistent V2
-        // snapshot). V3/V4 state still reads the per-family block engines.
+        // Resolve all paths under the core lock (single consistent snapshot of
+        // all family state — ADR-003).
         {
             let core = self.core.read();
             for (&path_id, path) in &self.path_pools {
