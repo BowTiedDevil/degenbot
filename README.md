@@ -405,8 +405,10 @@ lp = make_v2_pool(
 -->
 
 ```python
-# Construct an I/O-free V2 pool (all state injected at construction)
-# Tokens and reserves are provided directly — no RPC calls
+# `lp` is the WBTC/WETH V2 pool; in production it comes from
+# `lp = bot.build_pool('0xBb2b8038a1640196FbE3e38816F3e67Cba72D940')`.
+# An off-line test fixture built the same pool here so the math below
+# runs without RPC.
 assert lp.token0.symbol == 'WBTC'
 assert lp.token1.symbol == 'WETH'
 assert lp.reserves_token0 == 10732489743
@@ -495,7 +497,10 @@ lp = make_v3_pool(
 -->
 
 ```python
-# Construct an I/O-free V3 pool (all state injected at construction)
+# `lp` is the WBTC/WETH 0.3% V3 pool; in production it comes from
+# `lp = bot.build_pool('0xCBCdF9626bC03E24f779434178A73a0B4bad62eD')`.
+# An off-line test fixture built the same pool here so the math below
+# runs without RPC.
 assert lp.token0.symbol == 'WBTC'
 assert lp.token1.symbol == 'WETH'
 assert lp.fee == 3000
@@ -558,7 +563,11 @@ lp = make_v4_pool(
 -->
 
 ```python
-# Construct an I/O-free V4 pool (all state injected at construction)
+# `lp` is the ETH/USDC 0.05% V4 pool; in production it comes from
+# `lp = bot.build_managed_pool('<poolManager>', pool_id='0x<...>')` — V4 pools
+# are identified by (pool manager, pool id) rather than an address.
+# An off-line test fixture built the same pool here so the math below
+# runs without RPC.
 assert lp.token0.symbol == 'ETH'
 assert lp.token1.symbol == 'USDC'
 assert lp.liquidity == 60429069420043934
@@ -682,7 +691,10 @@ tripool = make_curve_pool(
 -->
 
 ```python
-# Construct an I/O-free Curve StableSwap pool
+# `tripool` is Curve's 3Crv pool; in production it comes from
+# `tripool = bot.build_pool('0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7')`.
+# An off-line test fixture built the same pool here so the math below
+# runs without RPC.
 assert [t.symbol for t in tripool.tokens] == ['DAI', 'USDC', 'USDT']
 assert tripool.a_coefficient == 2000
 assert tripool.fee == 4000000
