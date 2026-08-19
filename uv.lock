@@ -607,8 +607,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "coverage" },
-    { name = "eth-abi" },
-    { name = "eth-account" },
     { name = "hypothesis" },
     { name = "maturin" },
     { name = "pre-commit" },
@@ -645,8 +643,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "coverage" },
-    { name = "eth-abi", specifier = "~=5.2" },
-    { name = "eth-account", specifier = "~=0.13" },
     { name = "hypothesis" },
     { name = "maturin" },
     { name = "pre-commit" },

@@ -1,16 +1,17 @@
 """Tests for the Rust-based ABI decoder.
 
-This module tests the degenbot_rs.decode module against eth_abi.abi
-to ensure compatibility and correctness.
+This module tests the Rust decoder against pinned byte vectors pinned
+from eth_abi 5.x at EMAU46 time, plus Hypothesis round-trips for the
+fuzz-widths (cross-encoder comparison retired with eth_abi).
 """
 
-import eth_abi.abi
 import hypothesis
 import hypothesis.strategies as st
 import pytest
 
 from degenbot._ffi.abi import decode as decode_rs
 from degenbot._ffi.abi import decode_single as decode_single_rs
+from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import (
     MAX_INT16,
@@ -48,48 +49,56 @@ class TestBasicTypes:
     def test_uint256(self):
         """Test decoding uint256 values."""
         # Test zero
-        data = eth_abi.abi.encode(["uint256"], [0])
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("uint256", data)
         assert result == 0
-        assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
         # Test 100
-        data = eth_abi.abi.encode(["uint256"], [100])
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000064"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("uint256", data)
         assert result == 100
-        assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
         # Test max value
-        data = eth_abi.abi.encode(["uint256"], [MAX_UINT256])
+        data = bytes.fromhex(
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("uint256", data)
         assert result == 2**256 - 1
-        assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
     def test_uint8(self):
         """Test decoding uint8 values."""
-        data = eth_abi.abi.encode(["uint8"], [MAX_UINT8])
+        data = bytes.fromhex(
+            "00000000000000000000000000000000000000000000000000000000000000ff"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("uint8", data)
         assert result == 255
-        assert result == eth_abi.abi.decode(["uint8"], data)[0]
 
     def test_int256(self):
         """Test decoding int256 values."""
         # Test positive
-        data = eth_abi.abi.encode(["int256"], [100])
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000064"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("int256", data)
         assert result == 100
-        assert result == eth_abi.abi.decode(["int256"], data)[0]
 
         # Test negative (two's complement)
-        data = eth_abi.abi.encode(["int256"], [-1])
+        data = bytes.fromhex(
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("int256", data)
         assert result == -1
-        assert result == eth_abi.abi.decode(["int256"], data)[0]
 
     def test_address(self):
         """Test decoding address values."""
-        address = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
-        address_bytes = eth_abi.abi.encode(types=["address"], args=[address])
+        address = "0xd3cda913deb6f67967b99d67acdfa1712c293601"  # ruff: ignore[unused-variable] - provenance for the pin below
+        address_bytes = bytes.fromhex(
+            "000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601"
+        )  # pinned eth_abi 5.x
 
         checksum_result = decode_single_rs(
             abi_type="address",
@@ -102,10 +111,7 @@ class TestBasicTypes:
             checksum=False,
         )
 
-        (eth_abi_result,) = eth_abi.abi.decode(
-            types=["address"],
-            data=address_bytes,
-        )
+        eth_abi_result = "0xd3cda913deb6f67967b99d67acdfa1712c293601"  # pinned (lowercase)
 
         # Rust decoder returns EIP-55 checksummed addresses
         assert checksum_result == get_checksum_address(eth_abi_result)
@@ -114,24 +120,27 @@ class TestBasicTypes:
     def test_bool(self):
         """Test decoding bool values."""
         # Test True
-        data = eth_abi.abi.encode(["bool"], [True])
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000001"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("bool", data)
         assert result is True
-        assert result == eth_abi.abi.decode(["bool"], data)[0]
 
         # Test False
-        data = eth_abi.abi.encode(["bool"], [False])
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("bool", data)
         assert result is False
-        assert result == eth_abi.abi.decode(["bool"], data)[0]
 
     def test_bytes32(self):
         """Test decoding bytes32 values."""
         test_value = b"test" + b"\x00" * 28
-        data = eth_abi.abi.encode(["bytes32"], [test_value])
+        data = bytes.fromhex(
+            "7465737400000000000000000000000000000000000000000000000000000000"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("bytes32", data)
         assert result == test_value
-        assert result == eth_abi.abi.decode(["bytes32"], data)[0]
 
 
 class TestDynamicTypes:
@@ -139,49 +148,56 @@ class TestDynamicTypes:
 
     def test_bytes_empty(self):
         """Test decoding empty bytes."""
-        data = eth_abi.abi.encode(["bytes"], [b""])
+        data = bytes.fromhex(
+            "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("bytes", data)
         assert result == b""
-        assert result == eth_abi.abi.decode(["bytes"], data)[0]
 
     def test_bytes_non_empty(self):
         """Test decoding non-empty bytes."""
         test_value = bytes.fromhex("deadbeef")
-        data = eth_abi.abi.encode(["bytes"], [test_value])
+        data = bytes.fromhex(
+            "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000004deadbeef00000000000000000000000000000000000000000000000000000000"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("bytes", data)
         assert result == test_value
-        assert result == eth_abi.abi.decode(["bytes"], data)[0]
 
     def test_string(self):
         """Test decoding string values."""
         test_value = "test"
-        data = eth_abi.abi.encode(["string"], [test_value])
+        data = bytes.fromhex(
+            "000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000047465737400000000000000000000000000000000000000000000000000000000"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("string", data)
         assert result == test_value
-        assert result == eth_abi.abi.decode(["string"], data)[0]
 
     def test_dynamic_array_uint256(self):
         """Test decoding dynamic uint256 arrays."""
         test_value = [1, 2, 3]
-        data = eth_abi.abi.encode(["uint256[]"], [test_value])
+        data = bytes.fromhex(
+            "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("uint256[]", data)
         assert result == test_value
-        assert result == list(eth_abi.abi.decode(["uint256[]"], data)[0])
 
     def test_fixed_array_uint256(self):
         """Test decoding fixed-size uint256 arrays."""
         test_value = [1, 2, 3]
-        data = eth_abi.abi.encode(["uint256[3]"], [test_value])
+        data = bytes.fromhex(
+            "000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("uint256[3]", data)
         assert result == test_value
-        assert result == list(eth_abi.abi.decode(["uint256[3]"], data)[0])
 
     def test_dynamic_array_address(self):
         """Test decoding dynamic address arrays."""
         addr1 = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
         addr2 = "0x66f9664f97f2b50f62d13ea064982f936de76657"
         test_value = [addr1, addr2]
-        data = eth_abi.abi.encode(["address[]"], [test_value])
+        data = bytes.fromhex(
+            "00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c29360100000000000000000000000066f9664f97f2b50f62d13ea064982f936de76657"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("address[]", data)
         # Compare lowercase to avoid case differences in EIP-55 checksums
         expected_lower = [addr.lower() for addr in test_value]
@@ -194,22 +210,26 @@ class TestMultipleTypes:
 
     def test_uint256_and_address(self):
         """Test decoding uint256 and address together."""
-        test_values = [100, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]
-        data = eth_abi.abi.encode(["uint256", "address"], test_values)
+        test_values = [100, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]  # ruff: ignore[unused-variable] - provenance for the pin below
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601"
+        )  # pinned eth_abi 5.x
         rust_num, rust_addr = decode_rs(types=["uint256", "address"], data=data, checksum=False)
 
         assert rust_num == 100
         assert rust_addr == "0xd3cda913deb6f67967b99d67acdfa1712c293601"
 
         # Compare with eth_abi
-        py_num, py_addr = eth_abi.abi.decode(["uint256", "address"], data)
+        py_num, py_addr = 100, "0xd3cda913deb6f67967b99d67acdfa1712c293601"  # pinned eth_abi 5.x
         assert rust_num == py_num
         assert rust_addr.lower() == py_addr
 
     def test_multiple_static_types(self):
         """Test decoding multiple static types."""
-        test_values = [100, True, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]
-        data = eth_abi.abi.encode(["uint256", "bool", "address"], test_values)
+        test_values = [100, True, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]  # ruff: ignore[unused-variable] - provenance for the pin below
+        data = bytes.fromhex(
+            "00000000000000000000000000000000000000000000000000000000000000640000000000000000000000000000000000000000000000000000000000000001000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601"
+        )  # pinned eth_abi 5.x
         result = decode_rs(["uint256", "bool", "address"], data)
         assert result[0] == 100
         assert result[1] is True
@@ -221,17 +241,19 @@ class TestTypeAliases:
 
     def test_uint_alias(self):
         """Test that 'uint' is an alias for 'uint256'."""
-        data = eth_abi.abi.encode(["uint256"], [100])
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000064"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("uint", data)
         assert result == 100
-        assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
     def test_int_alias(self):
         """Test that 'int' is an alias for 'int256'."""
-        data = eth_abi.abi.encode(["int256"], [100])
+        data = bytes.fromhex(
+            "0000000000000000000000000000000000000000000000000000000000000064"
+        )  # pinned eth_abi 5.x
         result = decode_single_rs("int", data)
         assert result == 100
-        assert result == eth_abi.abi.decode(["int256"], data)[0]
 
 
 class TestErrorHandling:
@@ -261,28 +283,51 @@ class TestErrorHandling:
 
 
 class TestEthAbiCompatibility:
-    """Test that our decoder produces the same results as eth_abi.abi."""
+    """Pinned reference vectors for the basic static types."""
 
     def test_all_basic_types(self):
-        """Test all basic static types match eth_abi."""
-        test_cases = [
-            ("uint256", 100),
-            ("uint8", 255),
-            ("int256", 100),
-            ("address", "0xd3cda913deb6f67967b99d67acdfa1712c293601"),
-            ("bool", True),
-            ("bytes32", b"test" + b"\x00" * 28),
+        """Decode pinned eth_abi 5.x vectors for all basic static types."""
+        # (type, pinned data hex, expected) - pinned from eth_abi 5.x at EMAU46 time
+        pinned_cases = [
+            (
+                "uint256",
+                "0000000000000000000000000000000000000000000000000000000000000064",
+                100,
+            ),
+            (
+                "uint8",
+                "00000000000000000000000000000000000000000000000000000000000000ff",
+                255,
+            ),
+            (
+                "int256",
+                "0000000000000000000000000000000000000000000000000000000000000064",
+                100,
+            ),
+            (
+                "address",
+                "000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601",
+                "0xd3cda913deb6f67967b99d67acdfa1712c293601",
+            ),
+            (
+                "bool",
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                True,
+            ),
+            (
+                "bytes32",
+                "7465737400000000000000000000000000000000000000000000000000000000",
+                b"test\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            ),
         ]
 
-        for type_, value in test_cases:
-            data = eth_abi.abi.encode([type_], [value])
+        for type_, data_hex, expected in pinned_cases:
+            data = bytes.fromhex(data_hex)
             rust_result = decode_single_rs(type_, data)
-            python_result = eth_abi.abi.decode([type_], data)[0]
-
             if type_ == "address":
-                assert rust_result.lower() == python_result, f"Mismatch for type {type_}"
+                assert rust_result.lower() == expected, f"Mismatch for type {type_}"
             else:
-                assert rust_result == python_result, f"Mismatch for type {type_}"
+                assert rust_result == expected, f"Mismatch for type {type_}"
 
 
 class TestHypothesisStaticTypes:
@@ -291,149 +336,112 @@ class TestHypothesisStaticTypes:
     @hypothesis.given(value=st.integers(min_value=MIN_UINT8, max_value=MAX_UINT8))
     def test_uint8_hypothesis(self, value: int) -> None:
         """Test uint8 decoding with random values."""
-        data = eth_abi.abi.encode(["uint8"], [value])
+        data = abi_encode(["uint8"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("uint8", data)
-        python_result = eth_abi.abi.decode(["uint8"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT16, max_value=MAX_UINT16))
     def test_uint16_hypothesis(self, value: int) -> None:
         """Test uint16 decoding with random values."""
-        data = eth_abi.abi.encode(["uint16"], [value])
+        data = abi_encode(["uint16"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("uint16", data)
-        python_result = eth_abi.abi.decode(["uint16"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT24, max_value=MAX_UINT24))
     def test_uint24_hypothesis(self, value: int) -> None:
         """Test uint24 decoding with random values."""
-        data = eth_abi.abi.encode(["uint24"], [value])
+        data = abi_encode(["uint24"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("uint24", data)
-        python_result = eth_abi.abi.decode(["uint24"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT128, max_value=MAX_UINT128))
     def test_uint128_hypothesis(self, value: int) -> None:
         """Test uint128 decoding with random values."""
-        data = eth_abi.abi.encode(["uint128"], [value])
+        data = abi_encode(["uint128"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("uint128", data)
-        python_result = eth_abi.abi.decode(["uint128"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT256, max_value=MAX_UINT256))
     def test_uint256_hypothesis(self, value: int) -> None:
         """Test uint256 decoding with random values."""
-        data = eth_abi.abi.encode(["uint256"], [value])
+        data = abi_encode(["uint256"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("uint256", data)
-        python_result = eth_abi.abi.decode(["uint256"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT16, max_value=MAX_INT16))
     def test_int16_hypothesis(self, value: int) -> None:
         """Test int16 decoding with random values."""
-        data = eth_abi.abi.encode(["int16"], [value])
+        data = abi_encode(["int16"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("int16", data)
-        python_result = eth_abi.abi.decode(["int16"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT24, max_value=MAX_INT24))
     def test_int24_hypothesis(self, value: int) -> None:
         """Test int24 decoding with random values."""
-        data = eth_abi.abi.encode(["int24"], [value])
+        data = abi_encode(["int24"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("int24", data)
-        python_result = eth_abi.abi.decode(["int24"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT32, max_value=MAX_INT32))
     def test_int32_hypothesis(self, value: int) -> None:
         """Test int32 decoding with random values."""
-        data = eth_abi.abi.encode(["int32"], [value])
+        data = abi_encode(["int32"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("int32", data)
-        python_result = eth_abi.abi.decode(["int32"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT64, max_value=MAX_INT64))
     def test_int64_hypothesis(self, value: int) -> None:
         """Test int64 decoding with random values."""
-        data = eth_abi.abi.encode(["int64"], [value])
+        data = abi_encode(["int64"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("int64", data)
-        python_result = eth_abi.abi.decode(["int64"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT128, max_value=MAX_INT128))
     def test_int128_hypothesis(self, value: int) -> None:
         """Test int128 decoding with random values."""
-        data = eth_abi.abi.encode(["int128"], [value])
+        data = abi_encode(["int128"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("int128", data)
-        python_result = eth_abi.abi.decode(["int128"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT256, max_value=MAX_INT256))
     def test_int256_hypothesis(self, value: int) -> None:
         """Test int256 decoding with random values."""
-        data = eth_abi.abi.encode(["int256"], [value])
+        data = abi_encode(["int256"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("int256", data)
-        python_result = eth_abi.abi.decode(["int256"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT32, max_value=MAX_UINT32))
     def test_uint32_hypothesis(self, value: int) -> None:
         """Test uint32 decoding with random values."""
-        data = eth_abi.abi.encode(["uint32"], [value])
+        data = abi_encode(["uint32"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("uint32", data)
-        python_result = eth_abi.abi.decode(["uint32"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT64, max_value=MAX_UINT64))
     def test_uint64_hypothesis(self, value: int) -> None:
         """Test uint64 decoding with random values."""
-        data = eth_abi.abi.encode(["uint64"], [value])
+        data = abi_encode(["uint64"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("uint64", data)
-        python_result = eth_abi.abi.decode(["uint64"], data)[0]
         assert rust_result == value
-        assert rust_result == python_result
 
     @hypothesis.given(address_bytes=st.binary(min_size=20, max_size=20))
     def test_address_hypothesis(self, address_bytes: bytes) -> None:
         """Test address decoding with random values."""
-        byte_encoded_address = eth_abi.abi.encode(
-            types=["address"],
-            args=[address_bytes.hex()],
-        )
-        (eth_abi_result,) = eth_abi.abi.decode(
-            types=["address"],
-            data=byte_encoded_address,
-        )
-        rust_result = decode_single_rs(abi_type="address", data=byte_encoded_address)
+        byte_encoded_address = abi_encode(["address"], [address_bytes])
+        rust_result = decode_single_rs(abi_type="address", data=byte_encoded_address)  # round-trip
         # Rust decoder returns EIP-55 checksummed addresses
-        assert rust_result.lower() == eth_abi_result.lower()
+        assert rust_result.lower() == "0x" + address_bytes.hex()  # decode of pinned layout
 
     def test_bool_hypothesis(self) -> None:
         """Test bool decoding with random values."""
         for value in (True, False):
-            data = eth_abi.abi.encode(["bool"], [value])
+            data = abi_encode(["bool"], [value])  # encode/decode round-trip
             rust_result = decode_single_rs("bool", data)
-            (python_result,) = eth_abi.abi.decode(["bool"], data)
             assert rust_result is value
-            assert rust_result == python_result
 
     @hypothesis.given(value=st.binary(min_size=32, max_size=32))
     def test_bytes32_hypothesis(self, value: bytes) -> None:
         """Test bytes32 decoding with random values."""
-        data = eth_abi.abi.encode(["bytes32"], [value])
+        data = abi_encode(["bytes32"], [value])  # encode/decode round-trip
         rust_result = decode_single_rs("bytes32", data)
-        (python_result,) = eth_abi.abi.decode(["bytes32"], data)
         assert rust_result == value
-        assert rust_result == python_result
