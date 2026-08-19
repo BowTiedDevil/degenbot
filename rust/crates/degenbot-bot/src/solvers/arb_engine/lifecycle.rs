@@ -1,6 +1,7 @@
 //! Path registration, buffer management, and engine accessors.
 
 use super::{Address, ArbitrageEngine, HashMap};
+use crate::bot_core::resolve::resolve_hops;
 use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{
     HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
@@ -105,7 +106,7 @@ impl ArbitrageEngine {
         let mut resolved = ResolvedMixedPath::default();
         if let Some(path) = self.path_pools.get(&path_id) {
             let core = self.core.read();
-            if let Some(reason) = Self::resolve_path(&core, &path.pools, &mut resolved) {
+            if let Some(reason) = resolve_hops(&core, &path.pools, &mut resolved) {
                 tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
             }
         }
@@ -258,7 +259,7 @@ impl ArbitrageEngine {
             let core = self.core.read();
             for (&path_id, path) in &self.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                Self::resolve_path(&core, &path.pools, &mut resolved);
+                resolve_hops(&core, &path.pools, &mut resolved);
                 self.path_resolved.insert(path_id, resolved);
             }
         }

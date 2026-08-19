@@ -176,12 +176,11 @@ mod tests {
             assert_eq!(hop0.decimals_0, U256::from(10u64).pow(U256::from(6u64)));
             assert_eq!(hop0.decimals_1, U256::from(10u64).pow(U256::from(18u64)));
             assert_eq!(hop0.token_in, token_in, "zero_for_one → token_in = !zfo");
-            assert!(
-                nonce
-                    == core
-                        .get_aerodrome_pool(aero_id)
-                        .expect("pool state")
-                        .state_nonce
+            assert_eq!(
+                nonce,
+                core.get_aerodrome_pool(aero_id)
+                    .expect("pool state")
+                    .state_nonce
             );
         }
     }

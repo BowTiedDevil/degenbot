@@ -34,7 +34,8 @@ use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 fn hop_is_future(update_block: u64, solve_block: u64) -> bool {
     update_block > solve_block
 }
-use ::degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
+use crate::bot_core::resolve::resolve_hops;
+use ::degenbot_solvers::mixed::{HopType, ResolvedMixedPath, SolvePathResult};
 
 impl ArbitrageEngine {
     /// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
@@ -394,7 +395,7 @@ impl ArbitrageEngine {
                     continue;
                 }
                 let mut resolved = ResolvedMixedPath::default();
-                if let Some(reason) = Self::resolve_path(&core, &path.pools, &mut resolved) {
+                if let Some(reason) = resolve_hops(&core, &path.pools, &mut resolved) {
                     tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
                 }
                 self.path_resolved.insert(path_id, resolved);
@@ -540,25 +541,6 @@ impl ArbitrageEngine {
                 (path_id, r)
             })
             .collect()
-    }
-
-    ///
-    /// Project every hop of a path into its `ResolvedHop` solver intake type —
-    /// the sole entry point, a thin wrapper over the per-family projections
-    /// in `crate::bot_core::resolve` (T2 of epic MKRKNB completed the split).
-    /// The dispatcher owns the accumulators and the stop-at-first-failure
-    /// semantics: the first unprojectable hop stops the loop, prior successful
-    /// hops remain pushed, and `valid` stays false (the caller discards).
-    /// Returns the `MissingHopReason` of the first failed hop so each caller
-    /// can log it with the `path_id` context this signature deliberately does
-    /// not receive; the dispatcher additionally logs the hop-level detail at
-    /// `debug`.
-    pub(crate) fn resolve_path(
-        core: &crate::bot_core::BotState,
-        pool_refs: &[MixedPoolRef],
-        resolved: &mut ResolvedMixedPath,
-    ) -> Option<crate::bot_core::resolve::MissingHopReason> {
-        crate::bot_core::resolve::resolve_hops(core, pool_refs, resolved)
     }
 }
 

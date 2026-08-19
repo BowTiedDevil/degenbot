@@ -87,9 +87,10 @@ pub(crate) fn log_invalidation(
     );
 }
 
-/// The cross-family projection dispatcher -- the body of the former flat
-/// `resolve_path` loop (T2 of epic MKRKNB collapsed the engine method to a
-/// thin wrapper over this). Owns the accumulators (`max_update_block`,
+/// The cross-family projection dispatcher — the body of the former flat
+/// `#[expect(too_many_lines)]` `resolve_path` loop. Callers log the returned
+/// reason at `debug` with the path context this signature deliberately does
+/// not receive. Owns the accumulators (`max_update_block`,
 /// `state_nonces`), the `valid` flag, and the stop-at-first-`Err`
 /// invalidation; returns the `MissingHopReason` of the first unprojectable
 /// hop (its hop-level detail also goes to `debug` via `log_invalidation`),

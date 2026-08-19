@@ -1878,7 +1878,7 @@ mod tests {
             let core = engine.core.read();
             for (&path_id, path) in &engine.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                let _ = ArbitrageEngine::resolve_path(&core, &path.pools, &mut resolved);
+                let _ = crate::bot_core::resolve::resolve_hops(&core, &path.pools, &mut resolved);
                 engine.path_resolved.insert(path_id, resolved);
             }
         }
