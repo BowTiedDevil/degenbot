@@ -26,7 +26,7 @@ class V4PoolState:
 
     Immutable data set at construction:
     - _token0, _token1: the paired ERC-20 tokens
-    - _pool_id: the pool identifier (HexBytes)
+    - _pool_id: the pool identifier (bytes)
     - _pool_key: the V4 PoolKey struct
     - _sparse_liquidity_map: whether full tick data was provided at construction
     """

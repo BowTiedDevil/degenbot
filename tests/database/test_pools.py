@@ -1,6 +1,5 @@
 import time
 
-from hexbytes import HexBytes
 from sqlalchemy import case, distinct, func, or_, select
 
 from degenbot.checksum_cache import get_checksum_address
@@ -11,6 +10,7 @@ from degenbot.database.models.pools import (
     PoolManagerTable,
     UniswapV4PoolTable,
 )
+from degenbot.utils.bytes import to_0x_hex, to_bytes
 
 
 def test_query_base_class(test_db):
@@ -134,7 +134,7 @@ def test_find_unique_tokens_paired_with_weth(test_db):
 
 
 def test_get_uniswap_v4_pool(test_db):
-    pool_hash = HexBytes("0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a")
+    pool_hash = to_bytes("0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a")
     pool_manager_address = get_checksum_address("0x498581fF718922c3f8e6A244956aF099B2652b2b")
     chain_id = 8453
 
@@ -151,7 +151,7 @@ def test_get_uniswap_v4_pool(test_db):
 
         pool_in_db = session.scalar(
             select(UniswapV4PoolTable).where(
-                UniswapV4PoolTable.pool_hash == pool_hash.to_0x_hex(),
+                UniswapV4PoolTable.pool_hash == to_0x_hex(pool_hash),
                 UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
             ),
         )

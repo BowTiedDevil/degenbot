@@ -1,11 +1,11 @@
 import pytest
-from hexbytes import HexBytes
 from pydantic import ValidationError
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
+from degenbot.utils.bytes import to_bytes
 
 from .conftest import (
     BASE_FULL_NODE_HTTP_URI,
@@ -33,7 +33,7 @@ def test_web3_endpoints():
 
 
 def test_set_bytecode():
-    fake_bytecode = HexBytes("0x42069")
+    fake_bytecode = to_bytes("0x42069")
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
         storage_caching=False,
@@ -46,7 +46,7 @@ def test_set_bytecode():
 
 def test_set_storage():
     storage_position = 0
-    new_storage_value = HexBytes("0x42069")
+    new_storage_value = to_bytes("0x42069")
     new_storage_value_padded = new_storage_value.hex().zfill(64)
 
     fork = AnvilFork(
@@ -56,13 +56,13 @@ def test_set_storage():
     assert fork.provider.get_storage_at(
         account=WETH_ADDRESS,
         position=storage_position,
-    ) != HexBytes(new_storage_value_padded)
+    ) != to_bytes(new_storage_value_padded)
     fork.set_storage(WETH_ADDRESS, position=storage_position, value=new_storage_value)
 
     assert fork.provider.get_storage_at(
         account=WETH_ADDRESS,
         position=storage_position,
-    ) == HexBytes(new_storage_value_padded)
+    ) == to_bytes(new_storage_value_padded)
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
@@ -72,7 +72,7 @@ def test_set_storage():
     assert fork.provider.get_storage_at(
         account=WETH_ADDRESS,
         position=storage_position,
-    ) == HexBytes(new_storage_value_padded)
+    ) == to_bytes(new_storage_value_padded)
 
 
 def test_rpc_methods(fork_mainnet_full: AnvilFork):
@@ -218,7 +218,7 @@ def test_nonce_overrides_in_constructor():
 
 def test_bytecode_overrides_in_constructor():
     fake_address = get_checksum_address("0x6969696969696969696969696969696969696969")
-    fake_bytecode = HexBytes("0x0420")
+    fake_bytecode = to_bytes("0x0420")
 
     fork = AnvilFork(
         fork_url=ETHEREUM_FULL_NODE_HTTP_URI,

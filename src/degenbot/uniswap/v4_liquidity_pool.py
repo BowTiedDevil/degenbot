@@ -33,8 +33,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
-from hexbytes import HexBytes
-
 from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -66,6 +64,7 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolState,
     UniswapV4PoolStateUpdated,
 )
+from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
@@ -174,7 +173,7 @@ class UniswapV4Pool(
 
     # Instance attributes set in `_from_py_pool` (the only construction seam).
     _py_pool: LiquidityPool
-    _pool_id: HexBytes
+    _pool_id: bytes
     _pool_manager_address: ChecksummedAddress
     hook_address: ChecksummedAddress
     _state_view_address: ChecksummedAddress
@@ -255,7 +254,7 @@ class UniswapV4Pool(
             raise DegenbotValueError(message=msg)
 
         # Identity — all read off the handle (no shadow kwargs).
-        self._pool_id = HexBytes(bytes.fromhex(py_pool.pool_id_hex.removeprefix("0x")))
+        self._pool_id = bytes.fromhex(py_pool.pool_id_hex.removeprefix("0x"))
         self._pool_manager_address = get_checksum_address(py_pool.pool_manager_address)
         raw_hook = py_pool.hook_address
         self.hook_address = get_checksum_address(raw_hook) if raw_hook else ZERO_ADDRESS
@@ -298,10 +297,10 @@ class UniswapV4Pool(
                 ),
             )
         ), (
-            f"Supplied pool ID {self.pool_id.to_0x_hex()} does not match calculated ID {calculated_id.to_0x_hex()}, {self.pool_key=}"  # ruff:ignore[line-too-long]
+            f"Supplied pool ID {to_0x_hex(self.pool_id)} does not match calculated ID {to_0x_hex(calculated_id)}, {self.pool_key=}"  # ruff:ignore[line-too-long]
         )
 
-        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # ruff:ignore[line-too-long]
+        self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={to_0x_hex(self.pool_id)})"  # ruff:ignore[line-too-long]
 
         # Protocol fee / LP fee / initial state block — builder-supplied values
         # the seam defaults; the builder overrides after _from_py_pool.
@@ -343,7 +342,7 @@ class UniswapV4Pool(
             The string representation of the pool.
 
         """
-        return f"{self.__class__.__name__}(id={self.pool_id.to_0x_hex()}, token0={self._token0}, token1={self._token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # ruff:ignore[line-too-long]
+        return f"{self.__class__.__name__}(id={to_0x_hex(self.pool_id)}, token0={self._token0}, token1={self._token1}, fee={self.fee}, tick spacing={self.tick_spacing})"  # ruff:ignore[line-too-long]
 
     def __str__(self) -> str:
         """Return the canonical string representation.
@@ -604,7 +603,7 @@ class UniswapV4Pool(
         return self._py_pool.liquidity
 
     @property
-    def pool_id(self) -> HexBytes:
+    def pool_id(self) -> bytes:
         """Pool id.
 
         Returns:

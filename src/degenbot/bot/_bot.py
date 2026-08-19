@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Self, cast
 
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from hexbytes import HexBytes
 
 from degenbot._ffi import Bot as _Engine
 from degenbot._ffi import BotIo
@@ -56,6 +55,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate
+from degenbot.utils.bytes import to_0x_hex, to_bytes
 from degenbot.version import __version__
 
 if TYPE_CHECKING:
@@ -648,7 +648,7 @@ class Bot:
 
     def _make_v4_tick_data_fetcher(
         self,
-        pool_id: HexBytes,
+        pool_id: bytes,
         pool_manager_address: str,
         state_view_address: str,
         chain_id: ChainId,
@@ -895,7 +895,7 @@ class Bot:
         chain_id = self.chain_id
 
         # Check managed pool registry — return existing pool if already built
-        pool_id_bytes = HexBytes(pool_id)
+        pool_id_bytes = to_bytes(pool_id)
         existing = self.managed_pools.get(
             chain_id=chain_id,
             pool_manager_address=address,
@@ -955,7 +955,7 @@ class Bot:
                 in the database.
 
         """
-        pool_id_bytes = HexBytes(request.pool_id)
+        pool_id_bytes = to_bytes(request.pool_id)
         pool_manager_address = get_checksum_address(address)
 
         state_block = (
@@ -987,7 +987,7 @@ class Bot:
             ) = self._py_bot.resolve_v4_identity(
                 chain_id=int(chain_id),
                 pool_manager=pool_manager_address,
-                pool_id_hex=pool_id_bytes.to_0x_hex(),
+                pool_id_hex=to_0x_hex(pool_id_bytes),
                 currency0=over_currency0,
                 currency1=over_currency1,
                 fee=int(request.fee) if request.fee is not None else None,
@@ -1038,7 +1038,7 @@ class Bot:
             b_lp_fee,
         ) = self._py_bot.build_v4_pool(
             pool_manager=pool_manager_address,
-            pool_id_hex=pool_id_bytes.to_0x_hex(),
+            pool_id_hex=to_0x_hex(pool_id_bytes),
             currency0=currency0_address,
             currency1=currency1_address,
             fee=fee_for_pool,
@@ -1064,7 +1064,7 @@ class Bot:
             int(b_fee) == int(fee_for_pool),
             int(b_ts) == int(tick_spacing_for_pool),
             int(b_hf) == int(hook_flags),
-            b_pool_id_hex.lower() == pool_id_bytes.to_0x_hex().lower(),
+            b_pool_id_hex.lower() == to_0x_hex(pool_id_bytes).lower(),
         ])
         if not b_identity_ok:
             raise DegenbotValueError(
@@ -1102,7 +1102,7 @@ class Bot:
 
         if not request.silent:
             logger.info(pool.name)
-            logger.info(f"• ID: {pool.pool_id.to_0x_hex()}")
+            logger.info(f"• ID: {to_0x_hex(pool.pool_id)}")
             logger.info(f"• Token 0: {token0}")
             logger.info(f"• Token 1: {token1}")
             logger.info(f"• Liquidity: {pool.liquidity}")

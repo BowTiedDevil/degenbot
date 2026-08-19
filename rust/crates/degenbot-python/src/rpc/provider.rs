@@ -6,7 +6,7 @@
 //! - Input validation errors (invalid address, invalid position) → `PyValueError`
 //! - Serialization/conversion errors during Python object creation → `PyValueError`
 
-use crate::conversion::cache::create_hexbytes;
+use crate::conversion::cache::to_py_bytes;
 use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
@@ -229,7 +229,7 @@ impl PyAlloyProvider {
         };
 
         // Create HexBytes from result
-        let result_hb = create_hexbytes(py, &result)?;
+        let result_hb = to_py_bytes(py, &result)?;
 
         Ok(result_hb.into())
     }
@@ -256,7 +256,7 @@ impl PyAlloyProvider {
             .map_err(Into::<PyErr>::into)?;
 
         // Create HexBytes from result
-        let result_hb = create_hexbytes(py, &result)?;
+        let result_hb = to_py_bytes(py, &result)?;
 
         Ok(result_hb.into())
     }
@@ -511,7 +511,7 @@ impl PyAlloyProvider {
             .map_err(Into::<PyErr>::into)?;
 
         // Create HexBytes from result (32-byte storage slot)
-        let result_hb = create_hexbytes(py, result.as_slice())?;
+        let result_hb = to_py_bytes(py, result.as_slice())?;
 
         Ok(result_hb.into())
     }

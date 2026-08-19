@@ -17,8 +17,6 @@ from degenbot.uniswap.v3_types import (
 )
 
 if TYPE_CHECKING:
-    from hexbytes import HexBytes
-
     from degenbot._ffi import ChecksummedAddress
     from degenbot.types.aliases import BlockNumber
 
@@ -35,7 +33,7 @@ class UniswapV4PoolState(AbstractPoolState):
     tick: Tick
     tick_bitmap: dict[BitmapWord, BitmapAtWord]
     tick_data: dict[Tick, LiquidityAtTick]
-    id: HexBytes
+    id: bytes
     block: BlockNumber | None
 
 

@@ -1,5 +1,4 @@
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
@@ -15,6 +14,7 @@ from degenbot.provider.call_helpers import (
     raw_call,
 )
 from degenbot.types.aliases import BlockNumber
+from degenbot.utils.bytes import to_bytes
 
 
 def test_extract_argument_types_from_function_prototype():
@@ -41,7 +41,7 @@ def test_extract_argument_types_from_function_prototype():
 def test_encode_function_calldata():
     assert (
         encode_function_calldata(function_prototype="factory()", function_arguments=[])
-        == HexBytes("0xc45a01550ceb4bc5c6b2e6f722b5033a03078f9bd6673457375ba94c26ac1cf0")[:4]
+        == to_bytes("0xc45a01550ceb4bc5c6b2e6f722b5033a03078f9bd6673457375ba94c26ac1cf0")[:4]
     )
     assert encode_function_calldata(
         function_prototype="transfer(address,uint256)",
@@ -49,7 +49,7 @@ def test_encode_function_calldata():
             "0xA69babEF1cA67A37Ffaf7a485DfFF3382056e78C",
             26535330612692929974,
         ],
-    ) == HexBytes(
+    ) == to_bytes(
         "0xa9059cbb000000000000000000000000a69babef1ca67a37ffaf7a485dfff3382056e78c00000000000000000000000000000000000000000000000170406e9a1f1c4db6",
     )
 
@@ -176,8 +176,8 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
         BlockNumber.__value__,
     )
 
-    # HexBytes
-    assert isinstance(get_number_for_block_identifier(HexBytes(1), provider), BlockNumber.__value__)
+    # bytes
+    assert isinstance(get_number_for_block_identifier(to_bytes(1), provider), BlockNumber.__value__)
 
     # int
     assert isinstance(get_number_for_block_identifier(1, provider), BlockNumber.__value__)

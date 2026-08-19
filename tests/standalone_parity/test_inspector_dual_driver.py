@@ -37,9 +37,7 @@ from pathlib import Path
 
 from degenbot._ffi.simulation import simulate_in_process_revert_probe
 
-_FIXTURE_PATH = (
-    Path(__file__).parent / "fixtures" / "inspector_cafebabe_revert.json"
-)
+_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "inspector_cafebabe_revert.json"
 
 
 def _load_fixture() -> dict:

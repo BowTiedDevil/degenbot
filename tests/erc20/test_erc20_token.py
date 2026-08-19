@@ -1,5 +1,4 @@
 import pytest
-from hexbytes import HexBytes
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
@@ -10,6 +9,7 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.fork import AnvilFork
+from degenbot.utils.bytes import to_bytes
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 from tests.standalone_anvil import seed as seed_catalog
@@ -100,21 +100,21 @@ def test_erc20token_comparisons(wbtc: Erc20Token, weth: Erc20Token):
     assert weth == WETH_ADDRESS.lower()
     assert weth == WETH_ADDRESS.upper()
     assert weth == get_checksum_address(WETH_ADDRESS)
-    assert weth == HexBytes(WETH_ADDRESS)
+    assert weth == to_bytes(WETH_ADDRESS)
     assert weth == bytes.fromhex(WETH_ADDRESS[2:])
 
     assert wbtc == WBTC_ADDRESS
     assert wbtc == WBTC_ADDRESS.lower()
     assert wbtc == WBTC_ADDRESS.upper()
     assert wbtc == get_checksum_address(WBTC_ADDRESS)
-    assert wbtc == HexBytes(WBTC_ADDRESS)
+    assert wbtc == to_bytes(WBTC_ADDRESS)
 
     assert weth > wbtc
     assert weth > WBTC_ADDRESS
     assert weth > WBTC_ADDRESS.lower()
     assert weth > WBTC_ADDRESS.upper()
     assert weth > get_checksum_address(WBTC_ADDRESS)
-    assert weth > HexBytes(WBTC_ADDRESS)
+    assert weth > to_bytes(WBTC_ADDRESS)
     assert weth > bytes.fromhex(WBTC_ADDRESS[2:])
 
     assert wbtc < weth
@@ -122,7 +122,7 @@ def test_erc20token_comparisons(wbtc: Erc20Token, weth: Erc20Token):
     assert wbtc < WETH_ADDRESS.lower()
     assert wbtc < WETH_ADDRESS.upper()
     assert wbtc < get_checksum_address(WETH_ADDRESS)
-    assert wbtc < HexBytes(WETH_ADDRESS)
+    assert wbtc < to_bytes(WETH_ADDRESS)
     assert wbtc < bytes.fromhex(WETH_ADDRESS[2:])
 
 

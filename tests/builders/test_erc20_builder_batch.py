@@ -38,9 +38,7 @@ class _RecFakeIo:
     def fetch_erc20_token(self, chain_id: int, address: str) -> None:
         return None
 
-    def update_erc20_token_metadata(
-        self, *args: object, **kwargs: object
-    ) -> None:
+    def update_erc20_token_metadata(self, *args: object, **kwargs: object) -> None:
         return None
 
     def fetch_erc20_metadata_batch(self, addresses: list[str]) -> list[tuple[str, str, int] | None]:

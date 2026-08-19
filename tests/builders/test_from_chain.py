@@ -15,7 +15,6 @@ pytest.skip(
 )
 from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.camelot.pools import CamelotLiquidityPool
-from hexbytes import HexBytes
 
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
@@ -25,6 +24,7 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.utils.bytes import to_bytes
 
 """Tests for CamelotBuilder variant-specific construction.
 
@@ -48,10 +48,10 @@ class FakeProvider:
     def __init__(self, responses: dict[str, bytes]) -> None:
         self._responses = responses
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         selector = data[:4].hex()
         if selector in self._responses:
-            return HexBytes(self._responses[selector])
+            return to_bytes(self._responses[selector])
         msg = f"No mock response for selector 0x{selector}"
         raise _MockProviderError(msg)
 

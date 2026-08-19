@@ -11,9 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from hexbytes import HexBytes
-
 from degenbot.exceptions.base import DegenbotError
+from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
@@ -274,5 +273,5 @@ class UnknownPoolId(LiquidityPoolError):
 
     def __init__(self, pool_id: bytes | str) -> None:
         """Initialize the instance."""
-        pool_id = HexBytes(pool_id).to_0x_hex()
+        pool_id = to_0x_hex(pool_id)
         super().__init__(message=f"A liquidity update for unknown pool ID {pool_id} was provided.")

@@ -13,10 +13,10 @@ from degenbot._ffi.abi import decode_single as rs_decode_single
 from degenbot._ffi.abi import encode as rs_encode
 from degenbot._ffi.abi import encode_packed as rs_encode_packed
 from degenbot.exceptions.base import DegenbotError
-from degenbot.utils.bytes import HexBytesLike, to_bytes
+from degenbot.utils.bytes import to_bytes
 
 # Re-exported for consumers that still reference the bytes-like alias.
-type BytesLike = HexBytesLike
+type BytesLike = bytes
 
 __all__ = (
     "AbiDecodeError",
@@ -86,7 +86,7 @@ def decode(types: Sequence[str], data: BytesLike) -> tuple[Any, ...]:
 
     Args:
         types: ABI type strings (e.g., ``["uint256", "address"]``).
-        data: ABI-encoded bytes or ``HexBytes``.
+        data: ABI-encoded bytes.
 
     Returns:
         Tuple of decoded values.
@@ -108,7 +108,7 @@ def decode_single(abi_type: str, data: BytesLike) -> Any:  # ruff:ignore[any-typ
 
     Args:
         abi_type: ABI type string (e.g., ``"uint256"``).
-        data: ABI-encoded bytes or ``HexBytes``.
+        data: ABI-encoded bytes.
 
     Returns:
         The decoded value.

@@ -49,7 +49,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Self
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot._ffi import Bot
 from degenbot.balancer.deployments import (
@@ -60,6 +59,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.fork import AnvilFork
+from degenbot.utils.bytes import to_bytes
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
@@ -183,7 +183,7 @@ def _build_stable_pool(cassette: dict[str, Any]) -> BalancerV2StablePool:
     invariant_version = INVARIANT_V1 if cassette["invariant_version"] == 1 else INVARIANT_V2
     return make_balancer_stable_pool(
         address=cassette["address"],
-        pool_id=HexBytes(cassette["pool_id"]),
+        pool_id=to_bytes(cassette["pool_id"]),
         vault=cassette["vault"],
         tokens=tokens,
         balances=cassette["balances"],
@@ -241,7 +241,7 @@ def _query_swap_callable(
             abi=_BALANCERQUERIES_ABI,
         )
         return query_contract.functions.querySwap(
-            (HexBytes(pool_id_hex), swap_kind, token_in, token_out, amount, b""),
+            (to_bytes(pool_id_hex), swap_kind, token_in, token_out, amount, b""),
             (VITALIK_ADDRESS, False, VITALIK_ADDRESS, False),
         ).call()
 

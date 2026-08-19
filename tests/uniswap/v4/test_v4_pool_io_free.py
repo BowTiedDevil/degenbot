@@ -3,7 +3,6 @@
 import pathlib
 
 import eth_abi.abi
-from hexbytes import HexBytes
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
@@ -19,6 +18,7 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
 )
+from degenbot.utils.bytes import to_bytes
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -91,7 +91,7 @@ def _v4_offline_provider(
     (tick ÷ spacing, then word = `compressed >> 8`) so the recorded
     `getTickBitmap` calldata exactly matches the builder's request.
     """
-    pid = HexBytes(pool_id)
+    pid = to_bytes(pool_id)
     slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pid])
     liquidity_calldata = encode_function_calldata("getLiquidity(bytes32)", [pid])
     compressed = tick // V4_TICK_SPACING
@@ -152,7 +152,7 @@ class TestV4PoolIOFreeConstructor:
         )
 
         assert pool.address == get_checksum_address(V4_POOL_MANAGER)
-        assert pool.pool_id == HexBytes(V4_POOL_ID)
+        assert pool.pool_id == to_bytes(V4_POOL_ID)
         assert pool.token0 == native_eth
         assert pool.token1 == usdc
         assert pool.fee == V4_FEE
@@ -339,7 +339,7 @@ class TestBotBuildV4Pool:
         )
 
         assert isinstance(pool, UniswapV4Pool)
-        assert pool.pool_id == HexBytes(V4_POOL_ID)
+        assert pool.pool_id == to_bytes(V4_POOL_ID)
         assert pool.address == get_checksum_address(V4_POOL_MANAGER)
         assert pool.fee == V4_FEE
         assert pool.tick_spacing == V4_TICK_SPACING
@@ -352,6 +352,6 @@ class TestBotBuildV4Pool:
         found = bot.managed_pools.get(
             chain_id=1,
             pool_manager_address=V4_POOL_MANAGER,
-            pool_id=HexBytes(V4_POOL_ID),
+            pool_id=to_bytes(V4_POOL_ID),
         )
         assert found is pool

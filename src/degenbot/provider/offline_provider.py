@@ -31,9 +31,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hexbytes import HexBytes
-
 from degenbot.provider import RustAlloyProvider
+from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
     from degenbot.types.rpc_types import BlockData, TxParams
@@ -184,7 +183,7 @@ class OfflineProvider:
         to: str,
         data: bytes,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Execute a contract call using recorded data.
 
         Delegates to the Rust offline transport. A recorded revert (``null``
@@ -200,13 +199,13 @@ class OfflineProvider:
             Raw return data from the contract call
 
         """
-        return self._alloy.call(to, HexBytes(data), block_number=block)
+        return self._alloy.call(to, to_bytes(data), block_number=block)
 
     def get_code(
         self,
         address: str,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Get contract bytecode at an address.
 
         Args:
@@ -271,7 +270,7 @@ class OfflineProvider:
         address: str,
         position: int,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Get storage at a given position.
 
         Note: Storage tracking is not implemented in OfflineProvider.
@@ -350,7 +349,7 @@ class OfflineProvider:
         """
         return True
 
-    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
+    def call_raw(self, tx: TxParams, block: int | None = None) -> bytes:
         """Execute an eth_call with a raw transaction dict.
 
         Args:
@@ -361,9 +360,9 @@ class OfflineProvider:
             The raw return data from the contract call.
 
         """
-        return self.call(tx["to"], HexBytes(tx["data"]), block=block)
+        return self.call(tx["to"], to_bytes(tx["data"]), block=block)
 
-    def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[HexBytes]:
+    def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[bytes]:
         """Execute multiple eth_calls sequentially.
 
         Args:

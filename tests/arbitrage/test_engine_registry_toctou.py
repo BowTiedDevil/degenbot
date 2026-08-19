@@ -23,9 +23,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from hexbytes import HexBytes
-
 from degenbot.arbitrage.engine_registry import EngineRegistry
+from degenbot.utils.bytes import to_0x_hex, to_bytes
 
 V3_ADDR = "0x" + "1" * 40
 V4_MANAGER = "0x" + "2" * 40
@@ -61,7 +60,7 @@ def _fake_v3_pool(pool_id: int) -> SimpleNamespace:
 def _fake_v4_pool(pool_id: int) -> SimpleNamespace:
     return SimpleNamespace(
         address=V4_MANAGER,
-        pool_id=HexBytes(b"\x01" * 32),
+        pool_id=to_bytes(b"\x01" * 32),
         _py_pool=SimpleNamespace(pool_id=pool_id),
     )
 
@@ -85,7 +84,7 @@ async def test_v4_verify_lifecycle_runs_exactly_once_under_concurrent_workers() 
     engine = _CountingFakeEngine()
     registry = EngineRegistry(engine=engine)  # type: ignore[arg-type]
     pool = _fake_v4_pool(V4_POOL_ID)
-    pid_hex = pool.pool_id.to_0x_hex()
+    pid_hex = to_0x_hex(pool.pool_id)
 
     results = await asyncio.gather(*(registry.register_v4_pool(pool) for _ in range(N_WORKERS)))
 

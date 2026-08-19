@@ -37,11 +37,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol
 
-from hexbytes import HexBytes
-
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractRegistry
+from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -375,8 +374,8 @@ class MultiKeyAddressRegistry[T](AbstractAddressRegistry[T]):
                 raise ValueError(msg)
             value = address_args[field]
             if field == "pool_id":
-                # pool_id is kept as HexBytes, not checksummed
-                key_parts.append(HexBytes(value))
+                # pool_id is kept as raw bytes, not checksummed
+                key_parts.append(to_bytes(value))
             else:
                 key_parts.append(self._checksum_fn(value))
 

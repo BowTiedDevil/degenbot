@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 from eth_abi import encode as abi_encode
-from hexbytes import HexBytes
 from sqlalchemy import select
 
 from degenbot.checksum_cache import get_checksum_address
@@ -47,6 +46,7 @@ from degenbot.database.models.pools import (
 )
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.types.rpc_types import LogReceipt
+from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, scoped_session
@@ -62,7 +62,7 @@ CHAIN = 1
 V3_POOL_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "a" * 40)
 V4_POOL_MANAGER_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "b" * 40)
 V4_POOL_HASH = "0x" + "c" * 64
-V4_MODIFY_TOPIC = HexBytes("0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec")
+V4_MODIFY_TOPIC = to_bytes("0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec")
 
 
 def _v3_mint_log(
@@ -79,11 +79,11 @@ def _v3_mint_log(
             "address": V3_POOL_ADDRESS,
             "topics": [
                 UNISWAP_V3_MINT_EVENT_HASH,
-                HexBytes(b"\x00" * 12 + V3_POOL_ADDRESS.encode()),
-                HexBytes(abi_encode(["int24"], [tick_lower])),
-                HexBytes(abi_encode(["int24"], [tick_upper])),
+                to_bytes(b"\x00" * 12 + V3_POOL_ADDRESS.encode()),
+                to_bytes(abi_encode(["int24"], [tick_lower])),
+                to_bytes(abi_encode(["int24"], [tick_upper])),
             ],
-            "data": HexBytes(
+            "data": to_bytes(
                 abi_encode(
                     ["address", "uint128", "uint256", "uint256"],
                     ["0x" + "1" * 40, amount, 0, 0],
@@ -107,11 +107,11 @@ def _v3_burn_log(
             "address": V3_POOL_ADDRESS,
             "topics": [
                 UNISWAP_V3_BURN_EVENT_HASH,
-                HexBytes(b"\x00" * 12 + V3_POOL_ADDRESS.encode()),
-                HexBytes(abi_encode(["int24"], [tick_lower])),
-                HexBytes(abi_encode(["int24"], [tick_upper])),
+                to_bytes(b"\x00" * 12 + V3_POOL_ADDRESS.encode()),
+                to_bytes(abi_encode(["int24"], [tick_lower])),
+                to_bytes(abi_encode(["int24"], [tick_upper])),
             ],
-            "data": HexBytes(
+            "data": to_bytes(
                 abi_encode(
                     ["uint128", "uint256", "uint256"],
                     [amount, 0, 0],
@@ -135,10 +135,10 @@ def _v4_modify_log(
             "address": V4_POOL_MANAGER_ADDRESS,
             "topics": [
                 V4_MODIFY_TOPIC,
-                HexBytes(b"\x00" * 12 + V4_POOL_MANAGER_ADDRESS.encode()),
-                HexBytes(b"\x00" * 12 + V4_POOL_HASH[2:].encode()),
+                to_bytes(b"\x00" * 12 + V4_POOL_MANAGER_ADDRESS.encode()),
+                to_bytes(b"\x00" * 12 + V4_POOL_HASH[2:].encode()),
             ],
-            "data": HexBytes(
+            "data": to_bytes(
                 abi_encode(
                     ["int24", "int24", "int256", "bytes32"],
                     [tick_lower, tick_upper, delta, b"\x00" * 32],
@@ -334,7 +334,7 @@ def test_apply_v4_seam_matches_expected_oracle(v4_apply_copy: pathlib.Path) -> N
     _dispose(session)
 
     apply_v4_liquidity_updates(
-        pool_id=HexBytes(V4_POOL_HASH),
+        pool_id=to_bytes(V4_POOL_HASH),
         liquidity_events=events,
         pool_manager=manager,
         database_path=str(v4_apply_copy),

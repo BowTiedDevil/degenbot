@@ -35,6 +35,7 @@ from degenbot.exceptions import (
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -90,7 +91,7 @@ def _pool_identity(pool: ArbPathPool) -> str:
 
     """
     if isinstance(pool, UniswapV4Pool):
-        return pool.pool_id.to_0x_hex()
+        return to_0x_hex(pool.pool_id)
     return get_checksum_address(pool.address)
 
 

@@ -7,7 +7,6 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import pydantic_core
-from hexbytes import HexBytes
 
 from degenbot._ffi.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.checksum_cache import get_checksum_address
@@ -20,6 +19,7 @@ from degenbot.uniswap.v4_types import (
     UniswapV4LiquidityEvent,
     UniswapV4PoolLiquidityMappingUpdate,
 )
+from degenbot.utils.bytes import to_0x_hex
 
 type PoolId = str
 
@@ -118,7 +118,7 @@ class MonolithicJsonFileSnapshot:
             The liquidity map for the pool, or None if the pool is not found.
 
         """
-        pool_id = HexBytes(pool_id).to_0x_hex()
+        pool_id = to_0x_hex(pool_id)
 
         if pool_id not in self._file_snapshot:
             return None
@@ -321,7 +321,7 @@ class UniswapV4LiquiditySnapshot:
         ] = KeyedDefaultDict(
             lambda key: self._source.get_liquidity_map(
                 get_checksum_address(key[0]),
-                HexBytes(key[1]).to_0x_hex(),
+                to_0x_hex(key[1]),
             ),
         )
 
@@ -348,7 +348,7 @@ class UniswapV4LiquiditySnapshot:
             Tuple of pending liquidity mapping updates for the pool.
 
         """
-        pool_key = get_checksum_address(pool_manager), HexBytes(pool_id).to_0x_hex()
+        pool_key = get_checksum_address(pool_manager), to_0x_hex(pool_id)
         pending_events = tuple(self._liquidity_events[pool_key])
         self._liquidity_events[pool_key] = []
 
@@ -375,7 +375,7 @@ class UniswapV4LiquiditySnapshot:
         """
         pool_key: ManagedPoolIdentifier = (
             get_checksum_address(pool_manager),
-            HexBytes(pool_id).to_0x_hex(),
+            to_0x_hex(pool_id),
         )
 
         pool_snapshot = self._liquidity_snapshot[pool_key]
@@ -399,7 +399,7 @@ class UniswapV4LiquiditySnapshot:
         """
         pool_key: ManagedPoolIdentifier = (
             get_checksum_address(pool_manager),
-            HexBytes(pool_id).to_0x_hex(),
+            to_0x_hex(pool_id),
         )
 
         pool_snapshot = self._liquidity_snapshot[pool_key]
@@ -425,7 +425,7 @@ class UniswapV4LiquiditySnapshot:
         """
         pool_key: ManagedPoolIdentifier = (
             get_checksum_address(pool_manager),
-            HexBytes(pool_id).to_0x_hex(),
+            to_0x_hex(pool_id),
         )
 
         pool_snapshot = self._liquidity_snapshot[pool_key]

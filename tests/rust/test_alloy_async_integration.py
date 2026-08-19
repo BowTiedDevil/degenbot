@@ -7,7 +7,6 @@ pyo3-async-runtimes, run against the seeded standalone anvil (no upstream RPC).
 import eth_abi
 import pytest
 import web3
-from hexbytes import HexBytes
 
 from degenbot._ffi.provider import AsyncAlloyProvider
 from degenbot.crypto import keccak256
@@ -87,20 +86,20 @@ class TestAsyncProviderWithConnection:
         assert isinstance(result, int), f"Expected int, got {type(result)}"
         assert result >= 0
 
-    async def test_async_call_returns_hexbytes(self, async_provider: AsyncAlloyProvider):
-        """Async call should return HexBytes."""
+    async def test_async_call_returns_bytes(self, async_provider: AsyncAlloyProvider):
+        """Async call should return bytes."""
         # SimpleToken.totalSupply() (matches the ERC20 totalSupply selector 0x18160ddd).
         result = await async_provider.call(
             to=seed_catalog.TOKEN,
             data=bytes.fromhex("18160ddd"),
         )
-        assert isinstance(result, HexBytes)
+        assert isinstance(result, bytes)
         assert len(result) == 32
 
-    async def test_async_get_code_returns_hexbytes(self, async_provider: AsyncAlloyProvider):
-        """Async get_code should return HexBytes."""
+    async def test_async_get_code_returns_bytes(self, async_provider: AsyncAlloyProvider):
+        """Async get_code should return bytes."""
         code = await async_provider.get_code(seed_catalog.TOKEN)
-        assert isinstance(code, HexBytes)
+        assert isinstance(code, bytes)
         assert len(code) > 0
 
     async def test_async_get_balance_of(self, async_provider: AsyncAlloyProvider):
@@ -111,7 +110,7 @@ class TestAsyncProviderWithConnection:
             to=seed_catalog.TOKEN,
             data=calldata,
         )
-        assert isinstance(result, HexBytes)
+        assert isinstance(result, bytes)
         # Should be able to decode as int
         balance = int.from_bytes(result, "big")
         assert balance >= 0

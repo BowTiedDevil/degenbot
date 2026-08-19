@@ -7,11 +7,11 @@ interface with correct method signatures and default values.
 import inspect
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
+from degenbot.utils.bytes import to_bytes
 from tests.standalone_anvil import seed as seed_catalog
 
 
@@ -136,10 +136,10 @@ class TestAlloyProviderReturnTypes:
         result = alloy_provider.get_chain_id()
         assert isinstance(result, int)
 
-    def test_get_storage_at_returns_hexbytes(self, alloy_provider: AlloyProvider):
-        """get_storage_at should return HexBytes (functional, not stub)."""
+    def test_get_storage_at_returns_bytes(self, alloy_provider: AlloyProvider):
+        """get_storage_at should return bytes (functional, not stub)."""
         result = alloy_provider.get_storage_at("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 0)
-        assert isinstance(result, HexBytes)
+        assert isinstance(result, bytes)
         assert len(result) == 32
 
     def test_get_transaction_returns_dict_or_none(self, alloy_provider: AlloyProvider):
@@ -151,7 +151,7 @@ class TestAlloyProviderReturnTypes:
         """estimate_gas should return int."""
         result = alloy_provider.estimate_gas(
             to="0x742d35Cc6634C0532925a3b8D4C9db96590d6B75",
-            data=HexBytes(b""),
+            data=to_bytes(b""),
         )
         assert isinstance(result, int)
         assert result >= 0

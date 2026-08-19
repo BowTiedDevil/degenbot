@@ -4,11 +4,11 @@ import math
 from fractions import Fraction
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_types import UniswapV3PoolState
+from degenbot.utils.bytes import to_bytes
 from tests.arbitrage.generator.pool_generator import PoolStateGenerator
 from tests.arbitrage.generator.types import (
     PoolGenerationConfig,
@@ -142,7 +142,7 @@ class TestV4PoolStateGeneration:
     def test_generate_v4_pool_state_basic(self, generator: PoolStateGenerator) -> None:
         """Test basic V4 pool state generation."""
         address = "0x0000000000000000000000000000000000000FFF"
-        pool_id = HexBytes("0x" + "01" * 32)
+        pool_id = to_bytes("0x" + "01" * 32)
 
         state = generator.generate_v4_pool_state(
             address=address,
@@ -199,8 +199,8 @@ class TestProfitablePairGeneration:
         pool_a, pool_b = generator.generate_profitable_v4_pair(
             pool_a_address="0x0000000000000000000000000000000000000FFF",
             pool_b_address="0x0000000000000000000000000000000000000FFF",
-            pool_a_id=HexBytes("0x" + "01" * 32),
-            pool_b_id=HexBytes("0x" + "02" * 32),
+            pool_a_id=to_bytes("0x" + "01" * 32),
+            pool_b_id=to_bytes("0x" + "02" * 32),
             tick_spacing=60,
             price_ratio=1.02,
             liquidity=10**18,

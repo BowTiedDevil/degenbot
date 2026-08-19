@@ -6,7 +6,6 @@ import hypothesis
 import hypothesis.strategies
 import pydantic_core
 import pytest
-from hexbytes import HexBytes
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
@@ -44,6 +43,7 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
+from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_erc20
@@ -148,7 +148,7 @@ def convert_unsigned_integer_to_signed(num: int):
     """Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
     integers in a tuple to their unsigned representation
     """
-    return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
+    return int.from_bytes(to_bytes(num), byteorder="big", signed=True)
 
 
 @pytest.mark.slow

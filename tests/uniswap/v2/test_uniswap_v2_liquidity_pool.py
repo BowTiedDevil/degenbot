@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
@@ -25,6 +24,7 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
+from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_erc20
@@ -222,11 +222,11 @@ def test_dunder_methods(
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == bytes.fromhex(
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.address[2:],
     )
-    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == HexBytes(
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool == to_bytes(
         ethereum_uniswap_v2_wbtc_weth_liquiditypool.address,
     )
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > ZERO_ADDRESS
-    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > HexBytes(ZERO_ADDRESS)
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > to_bytes(ZERO_ADDRESS)
     assert ethereum_uniswap_v2_wbtc_weth_liquiditypool > bytes.fromhex(ZERO_ADDRESS[2:])
 
     assert (
@@ -234,7 +234,7 @@ def test_dunder_methods(
     ) is False
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool
-        > HexBytes(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address)
+        > to_bytes(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address)
     ) is False
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool
@@ -246,7 +246,7 @@ def test_dunder_methods(
     ) is False
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool
-        < HexBytes(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address)
+        < to_bytes(ethereum_uniswap_v2_wbtc_weth_liquiditypool.address)
     ) is False
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool

@@ -3,7 +3,6 @@ import json
 from fractions import Fraction
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
@@ -12,6 +11,7 @@ from degenbot.balancer.deployments import (
 from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
+from degenbot.utils.bytes import to_bytes
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.w3_contract import make_contract
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.online_rpc
 BALANCER_V2_WETH_BAL_POOL_ADDRESS = get_checksum_address(
     "0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56",
 )
-BALANCER_V2_WETH_BAL_POOL_ID = HexBytes(
+BALANCER_V2_WETH_BAL_POOL_ID = to_bytes(
     "0x5c6ee304399dbdb9c8ef030ab642b10820db8f56000200000000000000000014",
 )
 
@@ -35,7 +35,7 @@ BALANCER_V2_WETH_BAL_POOL_ID = HexBytes(
 BALANCER_V2_USDC_WETH_POOL_ADDRESS = get_checksum_address(
     "0x3e5fa9518ea95c3e533eb377c001702a9aacaa32",
 )
-BALANCER_V2_USDC_WETH_POOL_ID = HexBytes(
+BALANCER_V2_USDC_WETH_POOL_ID = to_bytes(
     "0x3e5fa9518ea95c3e533eb377c001702a9aacaa32000200000000000000000052",
 )
 
@@ -44,7 +44,7 @@ BALANCER_V2_USDC_WETH_POOL_ID = HexBytes(
 BALANCER_V2_WETH_RPL_POOL_ADDRESS = get_checksum_address(
     "0xff083f57a556bfb3bbe46ea1b4fa154b2b1fbe88",
 )
-BALANCER_V2_WETH_RPL_POOL_ID = HexBytes(
+BALANCER_V2_WETH_RPL_POOL_ID = to_bytes(
     "0xff083f57a556bfb3bbe46ea1b4fa154b2b1fbe88000200000000000000000030",
 )
 

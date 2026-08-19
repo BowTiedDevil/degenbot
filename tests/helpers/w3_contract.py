@@ -14,11 +14,11 @@ from __future__ import annotations
 from typing import Any
 
 import eth_abi
-from hexbytes import HexBytes
 
 from degenbot.crypto import function_selector
 from degenbot.exceptions import ContractLogicError
 from degenbot.provider import AlloyProvider
+from degenbot.utils.bytes import to_bytes
 
 
 class _FunctionsResult:
@@ -56,7 +56,7 @@ class _FunctionsResult:
 
         # Execute eth_call
         raw = self._provider.call(self._address, calldata, block_identifier)
-        raw_bytes = HexBytes(raw)
+        raw_bytes = to_bytes(raw)
 
         # Handle reverts (empty data means revert)
         if raw_bytes is None or len(raw_bytes) == 0:

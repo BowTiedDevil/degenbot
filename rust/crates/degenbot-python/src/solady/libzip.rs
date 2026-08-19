@@ -21,7 +21,7 @@ pub fn flz_compress<'py>(py: Python<'py>, data: &Bound<'_, PyAny>) -> PyResult<B
     let bytes = extract_bytes_or_hex(data)?;
     // FastLZ compress is CPU-bound; release the GIL for large inputs.
     let compressed = py.detach(|| degenbot_core::libzip::compress(&bytes))?;
-    cache::create_hexbytes(py, &compressed)
+    cache::to_py_bytes(py, &compressed)
 }
 
 /// Decompress data using Solady's `FastLZ` algorithm.
@@ -41,7 +41,7 @@ pub fn flz_decompress<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let bytes = extract_bytes_or_hex(data)?;
     let decompressed = py.detach(|| degenbot_core::libzip::decompress(&bytes))?;
-    cache::create_hexbytes(py, &decompressed)
+    cache::to_py_bytes(py, &decompressed)
 }
 
 /// Extract a byte slice from a Python `str` (hex), `bytes`/`bytearray`/`HexBytes`.

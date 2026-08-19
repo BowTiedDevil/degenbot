@@ -28,6 +28,7 @@ from degenbot.logging import logger as bot_logger
 # the Chain arm (RPC) at registration; `start()` only sets the snapshot seed
 # block `S`.
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.utils.bytes import to_0x_hex
 
 from .policy import NoOpPathPredicate, PathCompositionPredicate
 
@@ -336,7 +337,7 @@ class EngineRegistry:
             The registered pool's engine ``pool_id``.
 
         """
-        pool_id_hex = pool.pool_id.to_0x_hex()
+        pool_id_hex = to_0x_hex(pool.pool_id)
 
         if pool_id_hex in self._v4_keys:
             return self._v4_keys[pool_id_hex]
@@ -442,7 +443,7 @@ class EngineRegistry:
         engine_hops: list[tuple[int, bool]] = []
         for pool, zfo in pools_and_zfos:
             if isinstance(pool, UniswapV4Pool):
-                key = self._v4_keys.get(pool.pool_id.to_0x_hex())
+                key = self._v4_keys.get(to_0x_hex(pool.pool_id))
             elif isinstance(pool, AerodromeV2Pool):
                 # Aerodrome shares the same address→pool_id map as V2 (pool
                 # contract addresses are globally unique). The engine's

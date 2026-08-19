@@ -125,7 +125,7 @@ def test_v3_known_onchain_address() -> None:
 
 
 def test_bytes_inputs_match_hex_inputs() -> None:
-    # The delegation preserves the original HexBytes-based contract: a
+    # The delegation preserves the original bytes-based contract: a
     # str|bytes input pair must produce the same address as the hex-string
     # form. Regression guard for the `str(bytes)` cast that would yield a
     # `"b'...'""` parse failure (WLJD2Y cleanup).

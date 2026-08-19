@@ -32,8 +32,6 @@ Example:
 from dataclasses import dataclass, field
 from typing import Any, Self
 
-from hexbytes import HexBytes
-
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi.provider import AlloySubscription
 from degenbot._ffi.provider import AsyncAlloyProvider as RustAsyncAlloyProvider
@@ -54,6 +52,7 @@ from degenbot.types.rpc_types import (
     TransactionReceiptData,
     TxParams,
 )
+from degenbot.utils.bytes import to_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +193,7 @@ class AlloyProvider:
             block_identifier: Block number, or one of 'latest', 'earliest', 'pending'.
 
         Returns:
-            Block data as dictionary with HexBytes for hash fields, or None if not found.
+            Block data as dictionary with plain bytes for hash fields, or None if not found.
 
         Raises:
             ValueError: If ``block_identifier`` is an unsupported string.
@@ -212,7 +211,7 @@ class AlloyProvider:
                 raise ValueError(msg)
         return self._provider.get_block(block_identifier)
 
-    def get_code(self, address: str, block: int | None = None) -> HexBytes:
+    def get_code(self, address: str, block: int | None = None) -> bytes:
         """Get contract code at an address.
 
         Args:
@@ -220,7 +219,7 @@ class AlloyProvider:
             block: Block number to get code at (default: latest)
 
         Returns:
-            Contract bytecode as HexBytes
+            Contract bytecode as bytes
 
         """
         return self._provider.get_code(address, block)
@@ -230,7 +229,7 @@ class AlloyProvider:
         to: str,
         data: bytes,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Execute an eth_call to a contract.
 
         Args:
@@ -239,7 +238,7 @@ class AlloyProvider:
             block: Block number to execute call at (default: latest)
 
         Returns:
-            Raw return data from the contract call as HexBytes
+            Raw return data from the contract call as bytes
 
         Example:
             >>> # Call ERC20 balanceOf
@@ -324,7 +323,7 @@ class AlloyProvider:
             raise ValueError(msg)
 
         # Call Rust provider's get_logs with keyword arguments
-        # The Rust provider returns list[LogData] with HexBytes for hex fields
+        # The Rust provider returns list[LogData] with bytes for hex fields
         return self._provider.get_logs(
             from_block=from_block_val,
             to_block=to_block_val,
@@ -339,7 +338,7 @@ class AlloyProvider:
             tx_hash: Transaction hash as hex string
 
         Returns:
-            Transaction data as dictionary with HexBytes for hash fields,
+            Transaction data as dictionary with plain bytes for hash fields,
             or None if not found.
 
         """
@@ -352,7 +351,7 @@ class AlloyProvider:
             tx_hash: Transaction hash as hex string
 
         Returns:
-            Receipt data as dictionary with HexBytes for hash fields,
+            Receipt data as dictionary with plain bytes for hash fields,
             or None if not found.
 
         """
@@ -386,7 +385,7 @@ class AlloyProvider:
         address: str,
         position: int,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Get storage at a given position.
 
         Args:
@@ -395,7 +394,7 @@ class AlloyProvider:
             block: Block number to get storage at (default: latest)
 
         Returns:
-            Storage value at the position as HexBytes (32 bytes)
+            Storage value at the position as bytes (32)
 
         """
         return self._provider.get_storage_at(address, position, block)
@@ -464,7 +463,7 @@ class AlloyProvider:
             params: The parameters as a list
 
         Returns:
-            The raw result (deserialized from JSON with HexBytes for hex values)
+            The raw result (deserialized from JSON with plain bytes for hex values)
 
         Example:
             >>> # Call debug_traceTransaction
@@ -475,7 +474,7 @@ class AlloyProvider:
         """
         return self._provider.make_request(method, params)
 
-    def call_raw(self, tx: TxParams, block: int | None = None) -> HexBytes:
+    def call_raw(self, tx: TxParams, block: int | None = None) -> bytes:
         """Execute an eth_call with a raw transaction dict.
 
         This is the low-level counterpart to :meth:`call`. The dict must
@@ -491,9 +490,9 @@ class AlloyProvider:
             The raw return data from the contract call.
 
         """
-        return self._provider.call(tx["to"], HexBytes(tx["data"]), block)
+        return self._provider.call(tx["to"], to_bytes(tx["data"]), block)
 
-    def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[HexBytes]:
+    def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[bytes]:
         """Execute multiple eth_calls sequentially and return results in order.
 
         Args:
@@ -805,7 +804,7 @@ class AsyncAlloyProvider:
         to: str,
         data: bytes,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Execute an eth_call.
 
         Returns:
@@ -818,20 +817,20 @@ class AsyncAlloyProvider:
         self,
         tx: TxParams,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Execute an eth_call with a raw transaction dict.
 
         Returns:
             The raw return data from the contract call.
 
         """
-        return await self._provider.call(tx["to"], HexBytes(tx["data"]), block)
+        return await self._provider.call(tx["to"], to_bytes(tx["data"]), block)
 
     async def batch_call(
         self,
         calls: list[TxParams],
         block: int | None = None,
-    ) -> list[HexBytes]:
+    ) -> list[bytes]:
         """Execute multiple eth_calls sequentially.
 
         Returns:
@@ -859,7 +858,7 @@ class AsyncAlloyProvider:
             raise ValueError(msg)
         return block_data["timestamp"]
 
-    async def get_code(self, address: str, block: int | None = None) -> HexBytes:
+    async def get_code(self, address: str, block: int | None = None) -> bytes:
         """Get the bytecode at an address.
 
         Returns:
@@ -889,7 +888,7 @@ class AsyncAlloyProvider:
         address: str,
         position: int,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         """Get storage at a given position.
 
         Returns:

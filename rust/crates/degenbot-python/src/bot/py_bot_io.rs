@@ -437,7 +437,7 @@ impl PyBotIo {
         let code = py
             .detach(|| get_runtime().block_on(async { io.get_code(addr, block_num).await }))
             .map_err(Into::<PyErr>::into)?;
-        crate::conversion::cache::create_hexbytes(py, code.as_ref())
+        crate::conversion::cache::to_py_bytes(py, code.as_ref())
             .map(pyo3::Bound::into_any)
             .map(pyo3::Bound::unbind)
     }

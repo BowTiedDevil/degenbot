@@ -7,7 +7,6 @@ import hypothesis
 import hypothesis.strategies
 import pydantic_core
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_INT128, ZERO_ADDRESS
@@ -19,6 +18,7 @@ from degenbot.exceptions.pool import (
 )
 from degenbot.fork import AnvilFork
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.w3_contract import W3ContractCompat, make_contract
@@ -325,7 +325,7 @@ def _test_pool_exact_output(
 
 
 def test_pool_creation(eth_usdc_v4: UniswapV4Pool):
-    assert eth_usdc_v4.pool_id == HexBytes(ETH_USDC_V4_POOL_ID)
+    assert eth_usdc_v4.pool_id == to_bytes(ETH_USDC_V4_POOL_ID)
     assert eth_usdc_v4.address == V4_POOL_MANAGER_ADDRESS
     assert eth_usdc_v4.tokens[0].address == NATIVE_CURRENCY_ADDRESS
     assert eth_usdc_v4.tokens[1].address == USDC_CONTRACT_ADDRESS

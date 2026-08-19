@@ -16,7 +16,7 @@
 //! If attach fails because the interpreter is shutting down, `try_attach`
 //! returns None and we propagate a clear error.
 
-use crate::conversion::cache::create_hexbytes;
+use crate::conversion::cache::to_py_bytes;
 use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher};
@@ -213,7 +213,7 @@ impl PyAsyncAlloyProvider {
                 .eth_call(&to_address, data_bytes, block_number)
                 .await
             {
-                Ok(result) => Python::attach(|py| create_hexbytes(py, &result).map(Bound::unbind)),
+                Ok(result) => Python::attach(|py| to_py_bytes(py, &result).map(Bound::unbind)),
                 Err(degenbot_core::errors::ProviderError::ExecutionReverted {
                     message, ..
                 }) => Python::attach(|py| -> PyResult<Py<PyAny>> {
@@ -242,7 +242,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| create_hexbytes(py, &result).map(Bound::unbind))
+            Python::attach(|py| to_py_bytes(py, &result).map(Bound::unbind))
         })
     }
 
@@ -373,7 +373,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| create_hexbytes(py, result.as_slice()).map(Bound::unbind))
+            Python::attach(|py| to_py_bytes(py, result.as_slice()).map(Bound::unbind))
         })
     }
 

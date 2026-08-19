@@ -61,8 +61,7 @@ def test_no_ffi_imports_outside_init_files() -> None:
                 continue
             m = _FFI_NAMES_RE.match(line)
             if m:
-                names = {n.split(" as ")[0].strip()
-                         for n in m.group(1).split(",") if n.strip()}
+                names = {n.split(" as ")[0].strip() for n in m.group(1).split(",") if n.strip()}
                 if names and names <= ENGINE_HANDLES:
                     continue  # exempt: engine-handle types (ADR-032 fork)
             violations.append(f"{rel}:{lineno}: {line.strip()}")

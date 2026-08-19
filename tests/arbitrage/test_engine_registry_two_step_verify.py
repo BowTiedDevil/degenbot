@@ -23,6 +23,9 @@ import pytest
 
 import degenbot.arbitrage.engine_registry as runner
 from degenbot.exceptions import VerificationMismatchError
+from degenbot.utils.bytes import to_0x_hex
+
+_V4_POOL_ID_HEX = to_0x_hex(b"V4POOLID")
 
 
 class _RecordingVerifyEngine:
@@ -79,9 +82,7 @@ class _RecordingVerifyEngine:
     # IKGQ6F / ADR-022 D1: the single core-owned lifecycle entry point. A
     # mismatch (fail_next set) surfaces as VerificationMismatchError — the
     # tripwire propagates from build_paths without auto-repair.
-    async def run_v3_registration_lifecycle(
-        self, address: str, snapshot_block: int | None
-    ) -> None:
+    async def run_v3_registration_lifecycle(self, address: str, snapshot_block: int | None) -> None:
         self.run_calls.append({
             "family": "v3",
             "address": address,
@@ -127,11 +128,7 @@ class _FakeV3Pool:
 class _FakeV4Pool:
     """Minimal V4 pool double exposing the attributes register_v4_pool reads."""
 
-    class _PoolId:
-        def to_0x_hex(self) -> str:
-            return "0xV4POOLID"
-
-    pool_id = _PoolId()
+    pool_id = b"V4POOLID"
     address = "0xV4PM"
 
     class _PyPool:
@@ -196,7 +193,7 @@ def test_register_v4_pool_delegates_to_core_lifecycle(monkeypatch) -> None:
     assert fake.run_calls[0] == {
         "family": "v4",
         "address": "0xV4PM",
-        "pool_id": "0xV4POOLID",
+        "pool_id": _V4_POOL_ID_HEX,
         "snapshot_block": 18_000_050,
     }
 
@@ -210,8 +207,13 @@ def test_register_fail_fast_surfaces_error_to_racing_sibling(
     lifecycle is in flight must receive the VerificationMismatchError DIRECTLY
     from the shared claim (not a hang, cancel, or dropped future)."""
     registry, fake = _registry_started_with_snapshots(monkeypatch)
-    inflight = (registry._v3_inflight, "0xV3POOL") if family == "v3" else (
-        registry._v4_inflight, "0xV4POOLID",
+    inflight = (
+        (registry._v3_inflight, "0xV3POOL")
+        if family == "v3"
+        else (
+            registry._v4_inflight,
+            _V4_POOL_ID_HEX,
+        )
     )
     inflight, key = inflight
     register = getattr(registry, f"register_{family}_pool")
@@ -242,8 +244,7 @@ def test_register_fail_fast_surfaces_error_to_racing_sibling(
             await register(pool)
         await seen["sibling"]
         assert isinstance(seen["exc"], VerificationMismatchError), (
-            f"racing sibling must receive the mismatch error directly, "
-            f"got: {seen.get('exc')!r}"
+            f"racing sibling must receive the mismatch error directly, got: {seen.get('exc')!r}"
         )
 
     asyncio.run(_go())

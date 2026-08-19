@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from hexbytes import HexBytes
-
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick
@@ -23,6 +21,7 @@ from degenbot.uniswap.v3_types import (
 from degenbot.uniswap.v4_types import (
     UniswapV4PoolState,
 )
+from degenbot.utils.bytes import to_0x_hex, to_bytes
 
 from .pool_generator import PoolStateGenerator
 from .types import LIQUIDITY_MULTIPLIERS, PoolGenerationConfig, V3PoolGenerationConfig
@@ -268,7 +267,7 @@ def _deserialize_pool_state(data: dict[str, Any]) -> AbstractPoolState:
         return UniswapV4PoolState(
             address=cast("ChecksummedAddress", data["address"]),
             block=data["block"],
-            id=HexBytes(data["id"]),
+            id=to_bytes(data["id"]),
             liquidity=data["liquidity"],
             sqrt_price_x96=data["sqrt_price_x96"],
             tick=data["tick"],
@@ -488,8 +487,8 @@ class FixtureFactory:
         pool_manager_address: ChecksummedAddress = cast(
             "ChecksummedAddress", "0x0000000000000000000000000000000000000FFF"
         )
-        pool_a_id = HexBytes("0x" + "01" * 32)
-        pool_b_id = HexBytes("0x" + "02" * 32)
+        pool_a_id = to_bytes("0x" + "01" * 32)
+        pool_b_id = to_bytes("0x" + "02" * 32)
         input_token_address: ChecksummedAddress = cast(
             "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
@@ -508,8 +507,8 @@ class FixtureFactory:
             id="simple_v4_arb",
             cycle_type="v4_v4",
             pool_states={
-                cast("ChecksummedAddress", pool_a_id.to_0x_hex()): pool_a,
-                cast("ChecksummedAddress", pool_b_id.to_0x_hex()): pool_b,
+                cast("ChecksummedAddress", to_0x_hex(pool_a_id)): pool_a,
+                cast("ChecksummedAddress", to_0x_hex(pool_b_id)): pool_b,
             },
             input_token_address=input_token_address,
         )
@@ -525,7 +524,7 @@ class FixtureFactory:
         v3_pool_address: ChecksummedAddress = cast(
             "ChecksummedAddress", "0x000000000000000000000000000000000000000B"
         )
-        pool_a_id = HexBytes("0x" + "03" * 32)
+        pool_a_id = to_bytes("0x" + "03" * 32)
         input_token_address: ChecksummedAddress = cast(
             "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
@@ -535,7 +534,7 @@ class FixtureFactory:
             pool_a_address=pool_manager_address,
             pool_b_address=pool_manager_address,
             pool_a_id=pool_a_id,
-            pool_b_id=HexBytes("0x" + "04" * 32),
+            pool_b_id=to_bytes("0x" + "04" * 32),
             tick_spacing=60,
             price_ratio=1.02,
             liquidity=10**18,
@@ -554,7 +553,7 @@ class FixtureFactory:
             id="simple_v4_vs_v3",
             cycle_type="v3_v4",
             pool_states={
-                cast("ChecksummedAddress", pool_a_id.to_0x_hex()): v4_pool,
+                cast("ChecksummedAddress", to_0x_hex(pool_a_id)): v4_pool,
                 v3_pool_address: v3_pool,
             },
             input_token_address=input_token_address,
@@ -697,8 +696,8 @@ class FixtureFactory:
         pool_manager_address: ChecksummedAddress = cast(
             "ChecksummedAddress", "0x0000000000000000000000000000000000000FFF"
         )
-        pool_a_id = HexBytes(f"0x{seed:064x}")
-        pool_b_id = HexBytes(f"0x{(seed + 1):064x}")
+        pool_a_id = to_bytes(f"0x{seed:064x}")
+        pool_b_id = to_bytes(f"0x{(seed + 1):064x}")
         input_token_address: ChecksummedAddress = cast(
             "ChecksummedAddress", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         )
@@ -720,8 +719,8 @@ class FixtureFactory:
             id=f"random_v4_pair_seed_{seed}",
             cycle_type="v4_v4",
             pool_states={
-                cast("ChecksummedAddress", pool_a_id.to_0x_hex()): pool_a,
-                cast("ChecksummedAddress", pool_b_id.to_0x_hex()): pool_b,
+                cast("ChecksummedAddress", to_0x_hex(pool_a_id)): pool_a,
+                cast("ChecksummedAddress", to_0x_hex(pool_b_id)): pool_b,
             },
             input_token_address=input_token_address,
         )
@@ -811,7 +810,7 @@ class FixtureFactory:
                 pool_manager_address: ChecksummedAddress = cast(
                     "ChecksummedAddress", "0x0000000000000000000000000000000000000FFF"
                 )
-                pool_id = HexBytes(f"0x{(seed + i):064x}")
+                pool_id = to_bytes(f"0x{(seed + i):064x}")
                 v4_config = V3PoolGenerationConfig(
                     fee=Fraction(3, 1000),
                     tick_spacing=60,
@@ -824,7 +823,7 @@ class FixtureFactory:
                 tick = round(tick / v4_config.tick_spacing) * v4_config.tick_spacing
                 sqrt_price_x96 = get_sqrt_ratio_at_tick(tick)
 
-                pool_states[cast("ChecksummedAddress", pool_id.to_0x_hex())] = (
+                pool_states[cast("ChecksummedAddress", to_0x_hex(pool_id))] = (
                     self._generator.generate_v4_pool_state(
                         address=pool_manager_address,
                         pool_id=pool_id,

@@ -17,6 +17,7 @@ import pytest
 
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
+from degenbot.utils.bytes import to_0x_hex
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,
@@ -66,7 +67,7 @@ def test_register_path_v4_keyed_by_pool_id_hex() -> None:
     registry = EngineRegistry(bot=None, engine=fake)
 
     v4 = _make_uniswap_v4_pool()
-    pool_id_hex = v4.pool_id.to_0x_hex()
+    pool_id_hex = to_0x_hex(v4.pool_id)
     registry._v4_keys[pool_id_hex] = 999
 
     path_id = registry.register_path([(v4, True)])

@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from hexbytes import HexBytes
-
 from degenbot._ffi import event_topic as _ffi_event_topic
 from degenbot._ffi import keccak256 as _ffi_keccak256
 from degenbot.contract import get_function_selector
@@ -51,21 +49,21 @@ def function_selector(signature: str) -> bytes:
     return bytes.fromhex(get_function_selector(signature).removeprefix("0x"))
 
 
-def keccak256(data: bytes) -> HexBytes:
+def keccak256(data: bytes) -> bytes:
     """Return the 32-byte keccak256 digest of ``data``.
 
     Args:
         data: The input bytes to hash.
 
     Returns:
-        The 32-byte digest as :class:`~hexbytes.HexBytes` (so callers retain
-        the ``to_0x_hex()`` / ``hex()`` surface ``Web3.keccak`` provided).
+        The 32-byte digest as plain ``bytes`` (callers wanting the 0x-prefixed string
+        use :func:`degenbot.utils.bytes.to_0x_hex`).
 
     """
-    return HexBytes(_ffi_keccak256(data))
+    return _ffi_keccak256(data)
 
 
-def event_topic(event_abi_entry: ABIEvent) -> HexBytes:
+def event_topic(event_abi_entry: ABIEvent) -> bytes:
     r"""Return the 32-byte event topic hash for an ABI event entry.
 
     Replaces ``Web3().eth.contract(abi=...).events.<Name>().topic``.
@@ -78,7 +76,7 @@ def event_topic(event_abi_entry: ABIEvent) -> HexBytes:
         event_abi_entry: A single ABI dict with ``"type": "event"``.
 
     Returns:
-        The 32-byte topic as :class:`~hexbytes.HexBytes`.
+        The 32-byte topic as plain ``bytes``.
 
     """
-    return HexBytes(_ffi_event_topic(event_abi_entry))
+    return _ffi_event_topic(event_abi_entry)

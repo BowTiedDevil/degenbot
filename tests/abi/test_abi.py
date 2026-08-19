@@ -9,7 +9,6 @@ fixtures.
 import eth_abi.abi
 import eth_abi.packed
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.abi import (
     AbiDecodeError,
@@ -19,6 +18,7 @@ from degenbot.abi import (
     encode,
     encode_packed,
 )
+from degenbot.utils.bytes import to_bytes
 
 
 class TestEncode:
@@ -103,9 +103,9 @@ class TestEncodePacked:
         expected = eth_abi.packed.encode_packed(("bytes32",), [value])
         assert result == expected
 
-    def test_packed_hexbytes_as_address(self) -> None:
-        """20-byte HexBytes is accepted as ``address`` (eth_abi parity)."""
-        addr_bytes = HexBytes("0x" + "11" * 20)
+    def test_packed_bytes_as_address(self) -> None:
+        """20-byte bytes is accepted as ``address`` (eth_abi parity)."""
+        addr_bytes = to_bytes("0x" + "11" * 20)
         result = encode_packed(["address", "address"], [addr_bytes, addr_bytes])
         expected = eth_abi.packed.encode_packed(
             ("address", "address"),
@@ -139,10 +139,10 @@ class TestDecode:
         result = decode(["uint256"], data)
         assert result == (12345,)
 
-    def test_decode_uint256_hexbytes(self) -> None:
-        """Decode accepts HexBytes input."""
+    def test_decode_uint256_bytes(self) -> None:
+        """Decode accepts bytes input."""
         data = eth_abi.abi.encode(["uint256"], [12345])
-        result = decode(["uint256"], HexBytes(data))
+        result = decode(["uint256"], to_bytes(data))
         assert result == (12345,)
 
     def test_decode_address_checksum(self) -> None:
@@ -212,11 +212,11 @@ class TestDecode:
         with pytest.raises(AbiDecodeError, match="ABI decoding failed"):
             decode([], b"some data")
 
-    def test_decode_hexbytes_and_bytes_same_result(self) -> None:
-        """HexBytes and plain bytes produce the same result."""
+    def test_decode_normalized_bytes_same_result(self) -> None:
+        """bytes and plain bytes produce the same result."""
         raw = eth_abi.abi.encode(["uint256", "bool"], [100, True])
         from_bytes = decode(["uint256", "bool"], raw)
-        from_hex = decode(["uint256", "bool"], HexBytes(raw))
+        from_hex = decode(["uint256", "bool"], to_bytes(raw))
         assert from_bytes == from_hex
 
 
@@ -238,10 +238,10 @@ class TestDecodeSingle:
         result = decode_single("address", data)
         assert result == get_checksum_address(addr)
 
-    def test_decode_single_hexbytes(self) -> None:
-        """Decode single with HexBytes input."""
+    def test_decode_single_bytes(self) -> None:
+        """Decode single with bytes input."""
         data = eth_abi.abi.encode(["uint256"], [999])
-        result = decode_single("uint256", HexBytes(data))
+        result = decode_single("uint256", to_bytes(data))
         assert result == 999
 
 

@@ -15,12 +15,11 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from hexbytes import HexBytes
-
 from degenbot._ffi import BotIo
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.utils.bytes import to_bytes
 
 
 class _RecordingProvider:
@@ -39,19 +38,19 @@ class _RecordingProvider:
     def get_block_timestamp(self, block: int | None = None) -> int:
         return 1_700_000_000
 
-    def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        return HexBytes(b"\x60\x80")
+    def get_code(self, address: str, block: int | None = None) -> bytes:
+        return to_bytes(b"\x60\x80")
 
     def get_balance(self, address: str, block: int | None = None) -> int:
         return 0
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.call_log.append(("call", to, data.hex()))
-        return HexBytes(b"\x00" * 32)
+        return to_bytes(b"\x00" * 32)
 
-    def call_raw(self, tx: Any, block: int | None = None) -> HexBytes:
+    def call_raw(self, tx: Any, block: int | None = None) -> bytes:
         self.call_log.append(("call_raw", tx["to"], tx["data"].hex()))
-        return HexBytes(b"\x00" * 32)
+        return to_bytes(b"\x00" * 32)
 
 
 class TestBotDispatchesPyBotIo:

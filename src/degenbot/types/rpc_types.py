@@ -1,7 +1,7 @@
 """TypedDict definitions for Ethereum RPC response data returned by the Rust extension provider.
 
 Field types correspond to the Rust converters in ``rust/src/py_converters.rs``. All hash/data fields
-use ``HexBytes``, all addresses are EIP-55 checksummed strings, and all numeric values are Python
+use ``bytes``, all addresses are EIP-55 checksummed strings, and all numeric values are Python
 ints.
 
 Key naming: Block/transaction dicts use snake_case (produced by the typed Rust converters). Log
@@ -17,8 +17,6 @@ full web3py retirement epic (Pass C) without type-check churn.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypedDict
-
-from hexbytes import HexBytes
 
 from degenbot.types.chain import HexStr
 
@@ -51,11 +49,11 @@ TxParams = TypedDict(
         "maxFeePerGas": int,
         "maxPriorityFeePerGas": int,
         "value": int,
-        "data": bytes | HexStr | HexBytes,
+        "data": bytes | HexStr,
         "nonce": int,
         "chainId": int,
         "accessList": list[Any],
-        "input": bytes | HexStr | HexBytes,
+        "input": bytes | HexStr,
         "type": int,
     },
     total=False,
@@ -64,15 +62,15 @@ TxParams = TypedDict(
 
 class _AccessListEntry(TypedDict, total=True):
     address: str
-    storageKeys: list[HexBytes]
+    storageKeys: list[bytes]
 
 
 class _AuthorizationEntry(TypedDict, total=True):
     chain_id: int
     address: str
     nonce: int
-    r: HexBytes
-    s: HexBytes
+    r: bytes
+    s: bytes
     v: int
 
 
@@ -92,11 +90,11 @@ class _WithdrawalData(TypedDict, total=True):
 TransactionData = TypedDict(
     "TransactionData",
     {
-        "hash": HexBytes,
+        "hash": bytes,
         "type": int,
         "from": str,
         "block_number": int | None,
-        "block_hash": HexBytes | None,
+        "block_hash": bytes | None,
         "transaction_index": int | None,
         "effective_gas_price": int | None,
         "block_timestamp": int | None,
@@ -106,14 +104,14 @@ TransactionData = TypedDict(
         "gas": int,
         "to": str | None,
         "value": int,
-        "input": HexBytes,
+        "input": bytes,
         "max_fee_per_gas": int,
         "max_priority_fee_per_gas": int,
         "access_list": list[_AccessListEntry],
         "max_fee_per_blob_gas": int,
-        "blob_versioned_hashes": list[HexBytes],
-        "r": HexBytes,
-        "s": HexBytes,
+        "blob_versioned_hashes": list[bytes],
+        "r": bytes,
+        "s": bytes,
         "v": int,
         "y_parity": bool,
         "authorization_list": list[_AuthorizationEntry],
@@ -134,34 +132,34 @@ class BlockData(TypedDict, total=False):
     ``nonce`` are always present for post-merge blocks.
     """
 
-    hash: HexBytes
-    parent_hash: HexBytes
-    sha3_uncles: HexBytes
+    hash: bytes
+    parent_hash: bytes
+    sha3_uncles: bytes
     miner: str
-    state_root: HexBytes
-    transactions_root: HexBytes
-    receipts_root: HexBytes
-    logs_bloom: HexBytes
+    state_root: bytes
+    transactions_root: bytes
+    receipts_root: bytes
+    logs_bloom: bytes
     difficulty: int
     number: int
     gas_limit: int
     gas_used: int
     timestamp: int
-    extra_data: HexBytes
-    mix_hash: HexBytes
-    nonce: HexBytes
+    extra_data: bytes
+    mix_hash: bytes
+    nonce: bytes
     base_fee_per_gas: int | None
-    withdrawals_root: HexBytes | None
+    withdrawals_root: bytes | None
     blob_gas_used: int | None
     excess_blob_gas: int | None
-    parent_beacon_block_root: HexBytes | None
-    requests_hash: HexBytes | None
-    block_access_list_hash: HexBytes | None
+    parent_beacon_block_root: bytes | None
+    requests_hash: bytes | None
+    block_access_list_hash: bytes | None
     slot_number: int | None
     total_difficulty: int | None
     size: int | None
-    uncles: list[HexBytes]
-    transactions: list[HexBytes] | list[TransactionData] | None
+    uncles: list[bytes]
+    transactions: list[bytes] | list[TransactionData] | None
     withdrawals: list[_WithdrawalData] | None
 
 
@@ -170,8 +168,8 @@ class BlockData(TypedDict, total=False):
 TransactionReceiptData = TypedDict(
     "TransactionReceiptData",
     {
-        "transaction_hash": HexBytes,
-        "block_hash": HexBytes | None,
+        "transaction_hash": bytes,
+        "block_hash": bytes | None,
         "block_number": int | None,
         "transaction_index": int | None,
         "from": str,
@@ -181,8 +179,8 @@ TransactionReceiptData = TypedDict(
         "gas_used": int,
         "contract_address": str | None,
         "logs": list["LogData"],
-        "logs_bloom": HexBytes,
-        "root": HexBytes,
+        "logs_bloom": bytes,
+        "root": bytes,
         "status": int,
         "transaction_type": int,
     },
@@ -198,11 +196,11 @@ class LogData(TypedDict, total=False):
     """
 
     address: str
-    topics: list[HexBytes]
-    data: HexBytes
+    topics: list[bytes]
+    data: bytes
     blockNumber: int | None
-    blockHash: HexBytes | None
-    transactionHash: HexBytes | None
+    blockHash: bytes | None
+    transactionHash: bytes | None
     transactionIndex: int | None
     logIndex: int | None
     removed: bool
@@ -218,11 +216,11 @@ class LogReceipt(TypedDict, total=True):
     """
 
     address: ChecksummedAddress
-    blockHash: HexBytes
+    blockHash: bytes
     blockNumber: int
-    data: HexBytes
+    data: bytes
     logIndex: int
     removed: bool
-    topics: list[HexBytes]
-    transactionHash: HexBytes
+    topics: list[bytes]
+    transactionHash: bytes
     transactionIndex: int

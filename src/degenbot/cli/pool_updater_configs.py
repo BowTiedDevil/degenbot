@@ -4,7 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import tqdm
-from hexbytes import HexBytes
 
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
@@ -27,16 +26,17 @@ from degenbot.updater import (
     V3PoolRowInput,
     V4PoolRowInput,
 )
+from degenbot.utils.bytes import to_0x_hex
 
 # V3 liquidity event topic0 hashes (Mint/Burn). Used by the V3 decode shell
 # (`apply_v3_liquidity_updates`) to recognize the Burn signature + negate the
 # delta. Kept here (not in `cli/pool.py`) so the chunk loop's removal in
 # task JJ232N leaves these decode shells with their topic constants.
-UNISWAP_V3_MINT_EVENT_HASH = HexBytes(
-    "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
+UNISWAP_V3_MINT_EVENT_HASH = bytes.fromhex(
+    "7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
 )
-UNISWAP_V3_BURN_EVENT_HASH = HexBytes(
-    "0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c",
+UNISWAP_V3_BURN_EVENT_HASH = bytes.fromhex(
+    "0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c",
 )
 
 
@@ -291,7 +291,7 @@ def update_v4_pools(
         (currency0,) = abi_decode(["address"], new_pool_event["topics"][2])
         (currency1,) = abi_decode(["address"], new_pool_event["topics"][3])
 
-        pool_hash = HexBytes(pool_hash).to_0x_hex()
+        pool_hash = to_0x_hex(pool_hash)
         currency0 = get_checksum_address(currency0)
         currency1 = get_checksum_address(currency1)
 
@@ -378,7 +378,7 @@ def apply_v3_liquidity_updates(
 
 
 def apply_v4_liquidity_updates(
-    pool_id: HexBytes,
+    pool_id: bytes,
     liquidity_events: list[LogReceipt],
     pool_manager: PoolManagerTable,
     *,
@@ -414,7 +414,7 @@ def apply_v4_liquidity_updates(
 
     db_apply_v4_liquidity_updates(
         database_path=database_path,
-        pool_hash_hex=pool_id.to_0x_hex(),
+        pool_hash_hex=to_0x_hex(pool_id),
         pool_manager_chain=pool_manager.chain,
         events=decoded_events,
     )

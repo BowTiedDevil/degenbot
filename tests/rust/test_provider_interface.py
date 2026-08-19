@@ -5,7 +5,6 @@ from collections.abc import Iterator
 import eth_abi
 import pytest
 import web3
-from hexbytes import HexBytes
 
 from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
@@ -13,6 +12,7 @@ from degenbot.provider import (
     AlloyProvider,
     LogFilter,
 )
+from degenbot.utils.bytes import to_bytes
 from tests.standalone_anvil import seed as seed_catalog
 
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -125,7 +125,7 @@ class TestAlloyProviderWithLiveConnection:
     def test_get_code(self, standalone_provider: AlloyProvider):
         """Test getting contract code."""
         code = standalone_provider.get_code(seed_catalog.TOKEN)
-        assert isinstance(code, (bytes, HexBytes))
+        assert isinstance(code, (bytes, bytes))
         assert len(code) > 0
 
     def test_call(self, standalone_provider: AlloyProvider):
@@ -133,9 +133,9 @@ class TestAlloyProviderWithLiveConnection:
         # SimpleToken.totalSupply() (ERC20 totalSupply selector 0x18160ddd).
         result = standalone_provider.call(
             to=seed_catalog.TOKEN,
-            data=HexBytes("0x18160ddd"),
+            data=to_bytes("0x18160ddd"),
         )
-        assert isinstance(result, (bytes, HexBytes))
+        assert isinstance(result, (bytes, bytes))
         assert len(result) == 32  # uint256 return
 
     def test_get_logs(self, standalone_provider: AlloyProvider, emitted_block: int):
@@ -151,14 +151,14 @@ class TestAlloyProviderWithLiveConnection:
     def test_get_storage_at(self, standalone_provider: AlloyProvider):
         """Test getting storage."""
         storage = standalone_provider.get_storage_at(seed_catalog.TOKEN, 0)
-        assert isinstance(storage, (bytes, HexBytes))
+        assert isinstance(storage, (bytes, bytes))
         assert len(storage) == 32
 
     def test_get_storage_at_large_position(self, standalone_provider: AlloyProvider):
         """Test getting storage with large position."""
         large_position = 0x6C34D219A4B1E5E2F2E3D4C5B6A7F8E9D0C1B2A3F4E5D6C7B8A9F0E1D2C3B4A5
         storage = standalone_provider.get_storage_at(seed_catalog.TOKEN, large_position)
-        assert isinstance(storage, (bytes, HexBytes))
+        assert isinstance(storage, (bytes, bytes))
         assert len(storage) == 32
 
     def test_properties(self, standalone_provider: AlloyProvider):
@@ -234,14 +234,14 @@ class TestForkProvider:
         """Test eth_call through the fork provider."""
         adapter = fork_mainnet_full.provider
 
-        calldata = HexBytes("0x18160ddd")
+        calldata = to_bytes("0x18160ddd")
         result = adapter.call(
             to=WETH_ADDRESS,
             data=calldata,
             block=18_000_000,
         )
 
-        assert isinstance(result, (bytes, HexBytes))
+        assert isinstance(result, (bytes, bytes))
         assert len(result) == 32
 
     @pytest.mark.online_rpc
@@ -250,7 +250,7 @@ class TestForkProvider:
         adapter = fork_mainnet_full.provider
 
         code = adapter.get_code(WETH_ADDRESS, 18_000_000)
-        assert isinstance(code, (bytes, HexBytes))
+        assert isinstance(code, (bytes, bytes))
         assert len(code) > 0
 
     @pytest.mark.online_rpc
@@ -279,7 +279,7 @@ class TestForkProvider:
         adapter = fork_mainnet_full.provider
 
         storage = adapter.get_storage_at(WETH_ADDRESS, 0, 18_000_000)
-        assert isinstance(storage, (bytes, HexBytes))
+        assert isinstance(storage, (bytes, bytes))
         assert len(storage) == 32
 
     @pytest.mark.online_rpc

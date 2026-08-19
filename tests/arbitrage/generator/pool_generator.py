@@ -30,8 +30,6 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from hexbytes import HexBytes
-
     from degenbot._ffi import ChecksummedAddress
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.uniswap.v3_types import InitializedTickMap, LiquidityMap
@@ -150,7 +148,7 @@ class PoolStateGenerator:
     def generate_v4_pool_state(
         self,
         address: ChecksummedAddress,
-        pool_id: HexBytes,
+        pool_id: bytes,
         sqrt_price_x96: SqrtPriceX96,
         liquidity: Liquidity,
         tick: Tick,
@@ -169,7 +167,7 @@ class PoolStateGenerator:
         ----------
         address : ChecksummedAddress
             The PoolManager address.
-        pool_id : HexBytes
+        pool_id : bytes
             The pool identifier.
         sqrt_price_x96 : SqrtPriceX96
             The current sqrt price in Q128.96 format.
@@ -553,8 +551,8 @@ class PoolStateGenerator:
         self,
         pool_a_address: ChecksummedAddress,
         pool_b_address: ChecksummedAddress,
-        pool_a_id: HexBytes,
-        pool_b_id: HexBytes,
+        pool_a_id: bytes,
+        pool_b_id: bytes,
         tick_spacing: int,
         price_ratio: float,
         liquidity: Liquidity,
@@ -569,9 +567,9 @@ class PoolStateGenerator:
             PoolManager address.
         pool_b_address : ChecksummedAddress
             PoolManager address (same as pool_a for V4).
-        pool_a_id : HexBytes
+        pool_a_id : bytes
             Pool ID for pool A.
-        pool_b_id : HexBytes
+        pool_b_id : bytes
             Pool ID for pool B.
         tick_spacing : int
             Tick spacing for both pools.

@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.types.address_comparable import AddressComparable
+from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
@@ -38,11 +38,11 @@ class TestAddressComparableEquality:
         a = _FakeOnChainEntity(addr, "A")
         assert a == addr
 
-    def test_equal_to_hexbytes_of_address(self):
-        """An AddressComparable object is equal to its address as HexBytes."""
+    def test_equal_to_bytes_of_address(self):
+        """An AddressComparable object is equal to its address as bytes."""
         addr = "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
         a = _FakeOnChainEntity(addr, "A")
-        assert a == HexBytes(addr)
+        assert a == to_bytes(addr)
 
     def test_equal_to_bytes_of_address(self):
         """An AddressComparable object is equal to its address as bytes."""

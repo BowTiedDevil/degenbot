@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import eth_abi.abi
 import pytest
-from hexbytes import HexBytes
 
 from degenbot._ffi import BotIo
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
+from degenbot.utils.bytes import to_bytes
 
 # A minimal real offline provider (recorded JSON, no RPC) for tests that need a
 # valid `BotIo` provider but don't exercise specific RPC responses (DB handle
@@ -101,9 +101,9 @@ class _FactoryCallProvider:
         self._encoded = eth_abi.abi.encode(types=["address"], args=[factory_raw])
         self.calls: list[tuple[str, bytes]] = []  # (to, data)
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append((to, data))
-        return HexBytes(self._encoded)
+        return to_bytes(self._encoded)
 
 
 class _Erc20MetadataProvider:
@@ -120,9 +120,9 @@ class _Erc20MetadataProvider:
         }
         self.calls: list[bytes] = []  # data received
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
-        return HexBytes(self._responses[data[:4]])
+        return to_bytes(self._responses[data[:4]])
 
 
 class _AddressArgProvider:
@@ -132,9 +132,9 @@ class _AddressArgProvider:
         self._response = response
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
-        return HexBytes(self._response)
+        return to_bytes(self._response)
 
 
 def _uint256_encoded(value: int) -> bytes:
@@ -162,9 +162,9 @@ class _V2PoolProvider:
         }
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
-        return HexBytes(self._responses[data[:4]])
+        return to_bytes(self._responses[data[:4]])
 
 
 def _eip55(addr: str) -> str:
@@ -206,9 +206,9 @@ class _V3PoolProvider:
         }
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
-        return HexBytes(self._responses[data[:4]])
+        return to_bytes(self._responses[data[:4]])
 
 
 class _AerodromeProvider:
@@ -219,17 +219,17 @@ class _AerodromeProvider:
         self._fee_raw = fee_raw
         self.calls: list[tuple[str, bytes]] = []  # (to, data) audit trail
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append((to, data))
         sel = data[:4]
         # keccak256("stable()")[..4]
         stable_sel = function_selector("stable()")
         if sel == stable_sel:
-            return HexBytes(eth_abi.abi.encode(types=["bool"], args=[self._stable]))
+            return to_bytes(eth_abi.abi.encode(types=["bool"], args=[self._stable]))
         # keccak256("getFee(address,bool)")[..4]
         get_fee_sel = function_selector("getFee(address,bool)")
         if sel == get_fee_sel:
-            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._fee_raw]))
+            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._fee_raw]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -240,8 +240,8 @@ class _StringFieldProvider:
     def __init__(self, response: bytes) -> None:
         self._response = response
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        return HexBytes(self._response)
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
+        return to_bytes(self._response)
 
 
 def _probe_offline_provider(succeed: set[str]) -> RustAlloyProvider:
@@ -319,15 +319,15 @@ class _TickDataProvider:
         self._ln = liquidity_net
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
         sel = data[:4]
         # tickBitmap(int16) selector = 0x5339c296
         if sel == function_selector("tickBitmap(int16)"):
-            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
+            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
         # ticks(int24) selector = 0xf30dba93
         if sel == function_selector("ticks(int24)"):
-            return HexBytes(
+            return to_bytes(
                 eth_abi.abi.encode(types=["uint128", "int128"], args=[self._lg, self._ln])
             )
         msg = f"unexpected selector {sel.hex()}"
@@ -343,13 +343,13 @@ class _V4TickDataProvider:
         self._ln = liquidity_net
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
         sel = data[:4]
         if sel == function_selector("getTickBitmap(bytes32,int16)"):
-            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
+            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
         if sel == function_selector("getTickLiquidity(bytes32,int24)"):
-            return HexBytes(
+            return to_bytes(
                 eth_abi.abi.encode(types=["uint128", "int128"], args=[self._lg, self._ln])
             )
         msg = f"unexpected selector {sel.hex()}"
@@ -434,13 +434,13 @@ class _V4Slot0Provider:
         self._liq = liquidity
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
         sel = data[:4]
         if sel == function_selector("getSlot0(bytes32)"):
-            return HexBytes(self._slot0)
+            return to_bytes(self._slot0)
         if sel == function_selector("getLiquidity(bytes32)"):
-            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._liq]))
+            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._liq]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -458,11 +458,11 @@ class _CamelotProvider:
         }
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
         sel = data[:4]
         if sel in self._responses:
-            return HexBytes(self._responses[sel])
+            return to_bytes(self._responses[sel])
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -480,11 +480,11 @@ class _CurveProvider:
         }
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
         sel = data[:4]
         if sel in self._r:
-            return HexBytes(self._r[sel])
+            return to_bytes(self._r[sel])
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -496,13 +496,13 @@ class _CurveBalancesProvider:
         self._balances = balances
         self.calls: list[bytes] = []
 
-    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
+    def call(self, to: str, data: bytes, block: int | None = None) -> bytes:
         self.calls.append(data)
         sel = data[:4]
         if sel == function_selector("balances(uint256)"):
             # uint256 arg is in word 0 (bytes 4..36). Decode it as the index.
             idx = int.from_bytes(data[4:36], "big")
-            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._balances[idx]]))
+            return to_bytes(eth_abi.abi.encode(types=["uint256"], args=[self._balances[idx]]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
 
@@ -554,7 +554,7 @@ def test_pybot_io_native_alloy_poolio_surface():
 
     pool_address = "0x" + "ab" * 20
     code = io.get_code(pool_address)
-    assert code == HexBytes(bytes.fromhex("60806040"))
+    assert code == to_bytes(bytes.fromhex("60806040"))
 
 
 def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():

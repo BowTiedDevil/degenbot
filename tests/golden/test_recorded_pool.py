@@ -9,8 +9,8 @@ the wrong block, these fail loudly offline.
 from pathlib import Path
 
 import pytest
-from hexbytes import HexBytes
 
+from degenbot.utils.bytes import to_bytes
 from tests.golden.recorded_pool import PoolGoldenError, load_pool
 from tests.uniswap.v4.test_uniswap_v4_liquidity_pool import (
     ETH_USDC_V4_POOL_ID,
@@ -66,7 +66,7 @@ def test_v3_golden_carries_full_tick_data() -> None:
 
 def test_v4_round_trip_reproduces_identity() -> None:
     pool = load_pool(V4_ETH_USDC, chain_id=1, block=V4_BLOCK)
-    assert pool.pool_id == HexBytes(ETH_USDC_V4_POOL_ID)
+    assert pool.pool_id == to_bytes(ETH_USDC_V4_POOL_ID)
     assert pool.address == V4_POOL_MANAGER_ADDRESS
     assert pool.liquidity > 0
     assert pool.sqrt_price_x96 > 0

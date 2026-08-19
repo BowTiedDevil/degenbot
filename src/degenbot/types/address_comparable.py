@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from hexbytes import HexBytes
+from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress
@@ -29,10 +29,8 @@ class AddressComparable:
         match other:
             case AddressComparable():
                 return self.address == other.address
-            case HexBytes():
-                return self.address.lower() == other.to_0x_hex().lower()
             case bytes():
-                return self.address.lower() == "0x" + other.hex().lower()
+                return self.address.lower() == to_0x_hex(other).lower()
             case str():
                 return self.address.lower() == other.lower()
             case _:
@@ -48,10 +46,8 @@ class AddressComparable:
         match other:
             case AddressComparable():
                 return self.address < other.address
-            case HexBytes():
-                return self.address.lower() < other.to_0x_hex().lower()
             case bytes():
-                return self.address.lower() < "0x" + other.hex().lower()
+                return self.address.lower() < to_0x_hex(other).lower()
             case str():
                 return self.address.lower() < other.lower()
             case _:
@@ -67,10 +63,8 @@ class AddressComparable:
         match other:
             case AddressComparable():
                 return self.address > other.address
-            case HexBytes():
-                return self.address.lower() > other.to_0x_hex().lower()
             case bytes():
-                return self.address.lower() > "0x" + other.hex().lower()
+                return self.address.lower() > to_0x_hex(other).lower()
             case str():
                 return self.address.lower() > other.lower()
             case _:

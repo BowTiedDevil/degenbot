@@ -29,11 +29,6 @@ use pyo3::{Bound, Py, PyAny, PyResult, Python};
 /// Used for U256/I256 to Python int conversion without intermediate allocations.
 static INT_FROM_BYTES: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
 
-/// Cached Python `HexBytes` class.
-///
-/// Used for creating `HexBytes` objects from raw bytes.
-static HEXBYTES_CLASS: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
-
 /// Get the cached `int.from_bytes` function, initializing if needed.
 fn get_int_from_bytes(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
     INT_FROM_BYTES
@@ -42,17 +37,6 @@ fn get_int_from_bytes(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
             let int_class = builtins.getattr("int")?;
             let from_bytes = int_class.getattr("from_bytes")?;
             Ok(from_bytes.unbind())
-        })
-        .map(|cached| cached.bind(py))
-}
-
-/// Get the cached `HexBytes` class, initializing if needed.
-fn get_hexbytes_class(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
-    HEXBYTES_CLASS
-        .get_or_try_init(py, || {
-            let hexbytes_module = py.import("hexbytes")?;
-            let hexbytes_class = hexbytes_module.getattr("HexBytes")?;
-            Ok(hexbytes_class.unbind())
         })
         .map(|cached| cached.bind(py))
 }
@@ -91,15 +75,14 @@ pub fn bytes_to_int_signed<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound
     from_bytes.call((py_bytes, "big"), Some(&kwargs))
 }
 
-/// Create a `HexBytes` object from bytes using the cached class.
+/// Convert raw bytes to a plain Python `bytes` object.
 ///
-/// # Errors
-///
-/// Returns `PyErr` if the `HexBytes` class is unavailable or construction fails.
-pub fn create_hexbytes<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound<'py, PyAny>> {
-    let hexbytes_class = get_hexbytes_class(py)?;
+/// The `HexBytes` wrapper type was abolished (ergo JWXZ4A, option D): the
+/// boundary container crosses FFI as plain `bytes`, and the `py.import`
+/// class-lookup machinery this helper used to need is gone.
+pub fn to_py_bytes<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound<'py, PyAny>> {
     let py_bytes = PyBytes::new(py, bytes);
-    hexbytes_class.call1((py_bytes,))
+    Ok(py_bytes.into_any())
 }
 
 #[cfg(test)]
@@ -156,25 +139,25 @@ mod tests {
     }
 
     #[test]
-    fn test_create_hexbytes() {
+    fn test_to_py_bytes() {
         pyo3::Python::attach(|py| {
-            // Skip test if hexbytes is not installed
-            if py.import("hexbytes").is_err() {
-                eprintln!("Skipping test_create_hexbytes: hexbytes module not installed");
-                return;
-            }
-
-            // Test empty bytes. `HexBytes.hex()` returns a bare hex string
-            // with no `0x` prefix (hexbytes 1.x); empty bytes → empty string.
-            let empty_hb = create_hexbytes(py, &[]).unwrap();
+            // Plain bytes: `.hex()` is the bare (unprefixed) hex string.
+            let empty_hb = to_py_bytes(py, &[]).unwrap();
             let hex_str: String = empty_hb.call_method0("hex").unwrap().extract().unwrap();
             assert_eq!(hex_str, "");
 
-            // Test some bytes
             let test_bytes = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
-            let hb = create_hexbytes(py, &test_bytes).unwrap();
+            let hb = to_py_bytes(py, &test_bytes).unwrap();
             let hex_str: String = hb.call_method0("hex").unwrap().extract().unwrap();
             assert_eq!(hex_str, "0123456789abcdef");
+
+            // It is a plain `bytes` instance (not a subclass, not str).
+            let is_bytes: bool = hb
+                .call_method1("isinstance", (py.eval("bytes").unwrap(),))
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert!(is_bytes);
         });
     }
 

@@ -58,6 +58,7 @@ from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
+from degenbot.utils.bytes import to_0x_hex
 
 # ──────────────────────────────────────────────────────────────────
 # Permutation filter helpers
@@ -660,7 +661,7 @@ class PathRegistrationPipeline:
         pool_sigs: list[str] = []
         for p in pools:
             if isinstance(p, UniswapV4Pool):
-                pool_sigs.append(p.pool_id.to_0x_hex())
+                pool_sigs.append(to_0x_hex(p.pool_id))
             else:
                 pool_sigs.append(p.address)
         path_sig = tuple(v for pair in zip(pool_sigs, zfo_list, strict=True) for v in pair)

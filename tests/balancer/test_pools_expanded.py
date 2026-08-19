@@ -17,7 +17,6 @@ import json
 from fractions import Fraction
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
@@ -28,6 +27,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.fork import AnvilFork
+from degenbot.utils.bytes import to_bytes
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.w3_contract import make_contract
@@ -441,7 +441,7 @@ def test_two_token_pool_construction(
     lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
 
     assert lp.address == get_checksum_address(pool_address)
-    assert lp.pool_id == HexBytes(pool_id_hex)
+    assert lp.pool_id == to_bytes(pool_id_hex)
     assert lp.vault == BALANCER_V2_VAULT_ADDRESS
     assert len(lp.tokens) == 2
     assert len(lp.state.balances) == 2
@@ -463,7 +463,7 @@ def test_multi_token_pool_construction(
     lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
 
     assert lp.address == get_checksum_address(pool_address)
-    assert lp.pool_id == HexBytes(pool_id_hex)
+    assert lp.pool_id == to_bytes(pool_id_hex)
     assert lp.vault == BALANCER_V2_VAULT_ADDRESS
     n = len(lp.tokens)
     assert n >= 3

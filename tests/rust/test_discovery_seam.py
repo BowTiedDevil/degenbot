@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 from eth_abi import encode as abi_encode
-from hexbytes import HexBytes
 from sqlalchemy import select
 
 from degenbot.checksum_cache import get_checksum_address
@@ -50,6 +49,7 @@ from degenbot.db import (
     db_upsert_pool_manager,
 )
 from degenbot.types.rpc_types import LogReceipt
+from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
     import pathlib
@@ -63,13 +63,13 @@ UNISWAP_V2_FACTORY: ChecksummedAddress = get_checksum_address("0x" + "f" * 40)
 V2_POOL_MANAGER_ADDRESS: ChecksummedAddress = get_checksum_address("0x" + "b" * 40)
 V4_POOL_HASH = "0x" + "c" * 64
 
-V2_POOL_CREATED_TOPIC = HexBytes(
+V2_POOL_CREATED_TOPIC = to_bytes(
     "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9",
 )
-V3_POOL_CREATED_TOPIC = HexBytes(
+V3_POOL_CREATED_TOPIC = to_bytes(
     "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118",
 )
-V4_POOL_CREATED_TOPIC = HexBytes(
+V4_POOL_CREATED_TOPIC = to_bytes(
     "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438",
 )
 
@@ -88,11 +88,11 @@ def _v2_pool_created_log(
             "address": UNISWAP_V2_FACTORY,
             "topics": [
                 V2_POOL_CREATED_TOPIC,
-                HexBytes.fromhex(token0[2:].rjust(64, "0")),
-                HexBytes.fromhex(token1[2:].rjust(64, "0")),
-                HexBytes(abi_encode(["bool"], [stable])),
+                bytes.fromhex(token0[2:].rjust(64, "0")),
+                bytes.fromhex(token1[2:].rjust(64, "0")),
+                to_bytes(abi_encode(["bool"], [stable])),
             ],
-            "data": HexBytes(
+            "data": to_bytes(
                 abi_encode(["address", "uint256"], [pool_address, 0]),
             ),
         }
@@ -113,12 +113,12 @@ def _v3_pool_created_log(
             "address": UNISWAP_V2_FACTORY,
             "topics": [
                 V3_POOL_CREATED_TOPIC,
-                HexBytes.fromhex(token0[2:].rjust(64, "0")),
-                HexBytes.fromhex(token1[2:].rjust(64, "0")),
-                HexBytes(abi_encode(["uint24"], [fee])),
+                bytes.fromhex(token0[2:].rjust(64, "0")),
+                bytes.fromhex(token1[2:].rjust(64, "0")),
+                to_bytes(abi_encode(["uint24"], [fee])),
             ],
             # V3 PoolCreated data: (int24 tick_spacing, address pool_address)
-            "data": HexBytes(
+            "data": to_bytes(
                 abi_encode(["int24", "address"], [tick_spacing, pool_address]),
             ),
         }
@@ -140,12 +140,12 @@ def _v4_pool_created_log(
             "address": V2_POOL_MANAGER_ADDRESS,
             "topics": [
                 V4_POOL_CREATED_TOPIC,
-                HexBytes(bytes.fromhex(pool_hash[2:])),
-                HexBytes.fromhex(currency0[2:].rjust(64, "0")),
-                HexBytes.fromhex(currency1[2:].rjust(64, "0")),
+                to_bytes(bytes.fromhex(pool_hash[2:])),
+                bytes.fromhex(currency0[2:].rjust(64, "0")),
+                bytes.fromhex(currency1[2:].rjust(64, "0")),
             ],
             # V4 PoolCreated data: (uint24 fee, int24 tick_spacing, address hooks)
-            "data": HexBytes(
+            "data": to_bytes(
                 abi_encode(["uint24", "int24", "address"], [fee, tick_spacing, hooks]),
             ),
         }

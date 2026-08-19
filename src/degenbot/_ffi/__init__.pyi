@@ -10,8 +10,6 @@ Python package.
 from collections.abc import Callable, Coroutine
 from typing import Any, overload
 
-from hexbytes import HexBytes
-
 from degenbot.types.chain import HexAddress
 
 from . import aave as aave
@@ -107,7 +105,7 @@ from .submission import (
 
 # ── Solady LibZip (FastLZ) (degenbot-core, no feature gate). ──
 # Thin wrappers over `degenbot_core::libzip`. Accept a hex string (with
-# optional `0x` prefix), `bytes`, `bytearray`, or `HexBytes`; return `HexBytes`.
+# optional `0x` prefix), `bytes`, `bytearray`, or `str` (hex); return `bytes`.
 # Truncated/invalid back-references surface as `ValueError`. The Python
 # companion `degenbot.utils.solady.libzip` delegates here (sub-step C routing).
 def build_path_graph(
@@ -642,7 +640,7 @@ class BotIo:
     def probe_pool_type(self, address: str, block: int | None = None) -> str: ...
     def probe_balancer_pool_type(self, address: str, block: int | None = None) -> str: ...
     def get_block_number(self) -> int: ...
-    def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+    def get_code(self, address: str, block: int | None = None) -> bytes: ...
     def get_balance(self, address: str, block: int | None = None) -> int: ...
 
 class Bot:

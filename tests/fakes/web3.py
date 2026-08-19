@@ -9,14 +9,14 @@ without requiring a live RPC connection.
 import asyncio
 from typing import Any
 
-from hexbytes import HexBytes
+from degenbot.utils.bytes import to_bytes
 
 # Shared fake data
-TEST_BLOCK = {"number": 18_000_000, "hash": HexBytes(b"\x01" * 32), "timestamp": 1690000000}
+TEST_BLOCK = {"number": 18_000_000, "hash": to_bytes(b"\x01" * 32), "timestamp": 1690000000}
 TEST_LOG = {"address": "0x1234", "topics": ["0xabcd"]}
-TEST_CODE = HexBytes(b"\x00" * 100)
-TEST_CALL_RESULT = HexBytes(b"\x01" * 32)
-TEST_STORAGE = HexBytes(b"\x02" * 32)
+TEST_CODE = to_bytes(b"\x00" * 100)
+TEST_CALL_RESULT = to_bytes(b"\x01" * 32)
+TEST_STORAGE = to_bytes(b"\x02" * 32)
 
 
 class FakeW3Eth:
@@ -36,10 +36,10 @@ class FakeW3Eth:
     def get_logs(self, filter_param: dict[str, Any]) -> list[dict[str, Any]]:
         return [TEST_LOG]
 
-    def call(self, tx: dict[str, Any], block: int | None = None) -> HexBytes:
+    def call(self, tx: dict[str, Any], block: int | None = None) -> bytes:
         return TEST_CALL_RESULT
 
-    def get_code(self, address: str, block: int | None = None) -> HexBytes:
+    def get_code(self, address: str, block: int | None = None) -> bytes:
         return TEST_CODE
 
     def get_balance(self, address: str, block: int | None = None) -> int:
@@ -50,7 +50,7 @@ class FakeW3Eth:
         address: str,
         position: int,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         return TEST_STORAGE
 
     def get_transaction_count(self, address: str, block: int | None = None) -> int:
@@ -96,10 +96,10 @@ class FakeAsyncW3Eth(FakeW3Eth):
     async def get_logs(self, filter_param: dict[str, Any]) -> list[dict[str, Any]]:
         return [TEST_LOG]
 
-    async def call(self, tx: dict[str, Any], block: int | None = None) -> HexBytes:
+    async def call(self, tx: dict[str, Any], block: int | None = None) -> bytes:
         return TEST_CALL_RESULT
 
-    async def get_code(self, address: str, block: int | None = None) -> HexBytes:
+    async def get_code(self, address: str, block: int | None = None) -> bytes:
         return TEST_CODE
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
@@ -110,7 +110,7 @@ class FakeAsyncW3Eth(FakeW3Eth):
         address: str,
         position: int,
         block: int | None = None,
-    ) -> HexBytes:
+    ) -> bytes:
         return TEST_STORAGE
 
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:

@@ -3,10 +3,10 @@
 from dataclasses import dataclass
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
+from degenbot.utils.bytes import to_bytes
 
 
 @dataclass(frozen=True)
@@ -229,13 +229,13 @@ class TestMultiKeyAddressRegistry:
             )
 
     def test_pool_id_not_checksummed(self):
-        """Verify pool_id is kept as HexBytes, not checksummed."""
+        """Verify pool_id is kept as bytes, not checksummed."""
         registry = MultiKeyAddressRegistry(
             address_fields=("pool_manager_address", "pool_id"),
         )
         item = FakeItem(TEST_ADDRESS_1)
 
-        pool_id_bytes = HexBytes(TEST_POOL_ID)
+        pool_id_bytes = to_bytes(TEST_POOL_ID)
 
         registry._add(
             item=item,
@@ -244,7 +244,7 @@ class TestMultiKeyAddressRegistry:
             pool_id=pool_id_bytes,
         )
 
-        # Should retrieve correctly (pool_id is kept as HexBytes)
+        # Should retrieve correctly (pool_id is kept as bytes)
         retrieved = registry._get(
             chain_id=1,
             pool_manager_address=TEST_MANAGER_ADDRESS,

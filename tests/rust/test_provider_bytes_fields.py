@@ -1,6 +1,6 @@
-"""Tests for HexBytes and address conversion in AlloyProvider against a standalone anvil.
+"""Tests for bytes and address conversion in AlloyProvider against a standalone anvil.
 
-These verify the provider returns HexBytes for hash/data fields and checksummed
+These verify the provider returns bytes for hash/data fields and checksummed
 strings for address fields, validated against a real transaction + `Ping` log
 emitted on the seeded standalone chain (no upstream RPC).
 """
@@ -11,7 +11,6 @@ from dataclasses import dataclass
 import eth_abi
 import pytest
 import web3
-from hexbytes import HexBytes
 
 from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
@@ -62,8 +61,8 @@ def emitted_tx(standalone_anvil: AnvilFork) -> EmittedTx:
     return EmittedTx(block=receipt["blockNumber"], tx_hash=tx.hex())
 
 
-class TestHexBytesConversion:
-    """Test that appropriate fields are converted to HexBytes or checksummed strings."""
+class TestbytesConversion:
+    """Test that appropriate fields are converted to bytes or checksummed strings."""
 
     def test_get_logs_returns_checksummed_address(
         self,
@@ -87,12 +86,12 @@ class TestHexBytesConversion:
         assert log["address"] != log["address"].lower()
         assert log["address"] != log["address"].upper()
 
-    def test_get_logs_returns_hexbytes_for_hash_fields(
+    def test_get_logs_returns_bytes_for_hash_fields(
         self,
         alloy_provider: AlloyProvider,
         emitted_tx: EmittedTx,
     ):
-        """Test that get_logs returns HexBytes for topics, blockHash, and transactionHash."""
+        """Test that get_logs returns bytes for topics, blockHash, and transactionHash."""
         logs = alloy_provider.get_logs(
             from_block=0,
             to_block=emitted_tx.block,
@@ -104,15 +103,15 @@ class TestHexBytesConversion:
 
         assert isinstance(log["topics"], list)
         for topic in log["topics"]:
-            assert isinstance(topic, HexBytes)
+            assert isinstance(topic, bytes)
 
-        assert isinstance(log["data"], HexBytes)
+        assert isinstance(log["data"], bytes)
 
         if log.get("blockHash"):
-            assert isinstance(log["blockHash"], HexBytes)
+            assert isinstance(log["blockHash"], bytes)
 
         if log.get("transactionHash"):
-            assert isinstance(log["transactionHash"], HexBytes)
+            assert isinstance(log["transactionHash"], bytes)
 
     def test_get_logs_returns_int_for_numeric_fields(
         self,
@@ -135,8 +134,8 @@ class TestHexBytesConversion:
         # Verify logIndex is int
         assert isinstance(log["logIndex"], int)
 
-    def test_eth_call_returns_hexbytes(self, alloy_provider: AlloyProvider):
-        """Test that call returns HexBytes (for eth_abi compatibility)."""
+    def test_eth_call_returns_bytes(self, alloy_provider: AlloyProvider):
+        """Test that call returns bytes (for eth_abi compatibility)."""
         # Call balanceOf for the seeded token (uint256 read; same selector as ERC20).
         result = alloy_provider.call(
             to=seed_catalog.TOKEN,
@@ -145,7 +144,7 @@ class TestHexBytesConversion:
             ),
         )
 
-        assert isinstance(result, HexBytes)
+        assert isinstance(result, bytes)
         assert len(result) == 32  # uint256 return value
 
     def test_get_block_returns_checksummed_address_for_miner(
@@ -164,22 +163,22 @@ class TestHexBytesConversion:
         assert block["miner"] != block["miner"].lower()
         assert block["miner"] != block["miner"].upper()
 
-    def test_get_block_returns_hexbytes_for_hash_fields(
+    def test_get_block_returns_bytes_for_hash_fields(
         self,
         alloy_provider: AlloyProvider,
         emitted_tx: EmittedTx,
     ):
-        """Test that get_block returns HexBytes for hash fields."""
+        """Test that get_block returns bytes for hash fields."""
         block = alloy_provider.get_block(emitted_tx.block)
 
         assert block is not None
 
-        # Verify hash fields are HexBytes
-        assert isinstance(block["hash"], HexBytes)
-        assert isinstance(block["parent_hash"], HexBytes)
-        assert isinstance(block["state_root"], HexBytes)
-        assert isinstance(block["transactions_root"], HexBytes)
-        assert isinstance(block["receipts_root"], HexBytes)
+        # Verify hash fields are bytes
+        assert isinstance(block["hash"], bytes)
+        assert isinstance(block["parent_hash"], bytes)
+        assert isinstance(block["state_root"], bytes)
+        assert isinstance(block["transactions_root"], bytes)
+        assert isinstance(block["receipts_root"], bytes)
 
     def test_get_block_returns_int_for_numeric_fields(
         self,
@@ -197,12 +196,12 @@ class TestHexBytesConversion:
         assert isinstance(block["gas_used"], int)
         assert isinstance(block["gas_limit"], int)
 
-    def test_get_code_returns_hexbytes(self, alloy_provider: AlloyProvider):
-        """Test that get_code returns HexBytes (for eth_abi compatibility)."""
+    def test_get_code_returns_bytes(self, alloy_provider: AlloyProvider):
+        """Test that get_code returns bytes (for eth_abi compatibility)."""
         # Get code for the seeded token contract
         code = alloy_provider.get_code(seed_catalog.TOKEN)
 
-        assert isinstance(code, HexBytes)
+        assert isinstance(code, bytes)
         assert len(code) > 0
 
     def test_transaction_has_checksummed_addresses(
@@ -255,12 +254,12 @@ class TestAddressBehavior:
         assert len(address) == 42
         assert address.startswith("0x")
 
-    def test_hexbytes_has_hex_method(
+    def test_result_has_hex_method(
         self,
         alloy_provider: AlloyProvider,
         emitted_tx: EmittedTx,
     ):
-        """Test that HexBytes has hex() method that returns hex string."""
+        """Test that bytes has hex() method that returns hex string."""
         logs = alloy_provider.get_logs(
             from_block=0,
             to_block=emitted_tx.block,
@@ -270,9 +269,9 @@ class TestAddressBehavior:
         assert len(logs) > 0
         topic = logs[0]["topics"][0]
 
-        # Topics should be HexBytes
-        assert isinstance(topic, HexBytes)
+        # Topics should be bytes
+        assert isinstance(topic, bytes)
 
-        # HexBytes.hex() returns hex string without 0x prefix
+        # bytes.hex() returns hex string without 0x prefix
         hex_str = topic.hex()
         assert len(hex_str) == 64  # 32 bytes = 64 hex chars

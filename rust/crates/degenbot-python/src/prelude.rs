@@ -11,8 +11,8 @@
 //! - The [`conversion`] module surface: `alloy as alloy_py` (the alias name is kept
 //!   to avoid shadowing the external `alloy` crate — `alloy::hex` /
 //!   `alloy::primitives` must keep resolving), plus `cache`, `json`, `rpc_types` as
-//!   bare module namespaces so `crate::conversion::cache::create_hexbytes` can be
-//!   written `cache::create_hexbytes` via the glob.
+//!   bare module namespaces so `crate::conversion::cache::to_py_bytes` can be
+//!   written `cache::to_py_bytes` via the glob.
 //! - The most-used crate-root re-exports of `degenbot_core` modules:
 //!   [`address_utils`], [`errors`], [`runtime`].
 //!

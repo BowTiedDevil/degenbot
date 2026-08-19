@@ -4,10 +4,10 @@ Uses I/O-free token construction without requiring a live RPC.
 """
 
 import pytest
-from hexbytes import HexBytes
 
 from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.utils.bytes import to_bytes
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = Bot()
@@ -63,21 +63,21 @@ class TestErc20TokenComparisons:
         assert weth == weth.address.lower()
         assert weth == weth.address.upper()
         assert weth == get_checksum_address(weth.address)
-        assert weth == HexBytes(weth.address)
+        assert weth == to_bytes(weth.address)
         assert weth == bytes.fromhex(weth.address[2:])
 
         assert wbtc == wbtc.address
         assert wbtc == wbtc.address.lower()
         assert wbtc == wbtc.address.upper()
         assert wbtc == get_checksum_address(wbtc.address)
-        assert wbtc == HexBytes(wbtc.address)
+        assert wbtc == to_bytes(wbtc.address)
 
         assert weth > wbtc
         assert weth > wbtc.address
         assert weth > wbtc.address.lower()
         assert weth > wbtc.address.upper()
         assert weth > get_checksum_address(wbtc.address)
-        assert weth > HexBytes(wbtc.address)
+        assert weth > to_bytes(wbtc.address)
         assert weth > bytes.fromhex(wbtc.address[2:])
 
         assert wbtc < weth
@@ -85,7 +85,7 @@ class TestErc20TokenComparisons:
         assert wbtc < weth.address.lower()
         assert wbtc < weth.address.upper()
         assert wbtc < get_checksum_address(weth.address)
-        assert wbtc < HexBytes(weth.address)
+        assert wbtc < to_bytes(weth.address)
         assert wbtc < bytes.fromhex(weth.address[2:])
 
 

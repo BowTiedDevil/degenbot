@@ -1,8 +1,6 @@
 from collections.abc import Coroutine
 from typing import Any
 
-from hexbytes import HexBytes
-
 from degenbot.types.rpc_types import (
     BlockData,
     LogData,
@@ -51,12 +49,12 @@ class AlloyProvider:
         to: str,
         data: bytes,
         block_number: int | None = None,
-    ) -> HexBytes: ...
+    ) -> bytes: ...
     def get_code(
         self,
         address: str,
         block_number: int | None = None,
-    ) -> HexBytes: ...
+    ) -> bytes: ...
     def estimate_gas(
         self,
         to: str,
@@ -70,7 +68,7 @@ class AlloyProvider:
         address: str,
         position: int,
         block_number: int | None = None,
-    ) -> HexBytes: ...
+    ) -> bytes: ...
     def get_balance(
         self,
         address: str,
@@ -156,12 +154,12 @@ class AsyncAlloyProvider:
         to: str,
         data: bytes,
         block_number: int | None = None,
-    ) -> Coroutine[Any, Any, HexBytes]: ...
+    ) -> Coroutine[Any, Any, bytes]: ...
     def get_code(
         self,
         address: str,
         block_number: int | None = None,
-    ) -> Coroutine[Any, Any, HexBytes]: ...
+    ) -> Coroutine[Any, Any, bytes]: ...
     def estimate_gas(
         self,
         to: str,
@@ -175,7 +173,7 @@ class AsyncAlloyProvider:
         address: str,
         position: int,
         block_number: int | None = None,
-    ) -> Coroutine[Any, Any, HexBytes]: ...
+    ) -> Coroutine[Any, Any, bytes]: ...
     def get_balance(
         self,
         address: str,
