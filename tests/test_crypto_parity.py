@@ -1,6 +1,7 @@
 """Golden-vector parity tests for the Rust keccak256 / event_topic FFI.
 
-Vectors pinned from eth_utils before its removal (5JKNQH): keccak256 is
+Vectors pinned from the removed keccak library before its removal
+(5JKNQH): keccak256 is
 SHA-3 variant of Keccak (NOT SHA-3), and event topics are keccak256 of the
 canonical event signature (all inputs, declared order; struct params
 expanded to paren-groups, e.g. ``Deposit(address,(address,uint256))``).
