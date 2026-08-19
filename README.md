@@ -43,10 +43,10 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 - [License](#license)
 - [Donation](#donation)
 
-> **Investigating a failing settlement-arbitrage path / building a revm harness?** See
-> **[`INVESTIGATIONS.md`](INVESTIGATIONS.md)** — the reusable
-> `degenbot_simulation::oracle` driver, the per-contract scaffolder, and
-> degenbot's path-fixture toolkit.
+> **Debugging a failing settlement-arbitrage path, or building your own
+> simulation harness?** See [`INVESTIGATIONS.md`](INVESTIGATIONS.md)** —
+> the simulation oracle driver, the per-contract scaffolder, and the
+> path-fixture toolkit.
 
 ## Overview
 
@@ -160,7 +160,7 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 - **Reliability**: No async complexity in pool logic
 - **State Management**: Pools can be snapshotted, pickled, and restored
 
-**Current status:** All pool types (Curve, V2, V3, V4, Aerodrome, Camelot) are fully I/O-free — no pool class imports a provider or carries provider-dependent methods. Construction and updates flow through the Rust `PoolBuilder` (V2/V3/V4/Aerodrome/Balancer) or the remaining Python builders (Curve, tokens), and all state changes enter pools via `external_update()` — for the V2/V3/V4 families, refresh runs through `bot.update(pool)` with state fetched by `BotIo`. The remaining Python builders expose `build()`/`update()` whose I/O is confined to the `io` parameter, enforced by the `PoolBuilder` protocol type signature. Curve calculators receive a `DyCalculationInputs` frozen dataclass carrying pre-resolved data, eliminating all private member access (no `pool._xxx` patterns).
+**Current status:** all pool types (V2, V3, V4, Aerodrome, Camelot, Balancer, Curve) are fully I/O-free — no pool class carries provider-dependent methods. For the Uniswap V2/V3/V4 families (including Aerodrome and Balancer), `Bot.build_pool()` performs the full fetch-and-register choreography and `bot.update(pool)` refreshes state from chain; Curve pools and token metadata use the remaining Python builders. Either way, state changes enter a pool only as a validated `external_update()` message — the pool itself never does I/O.
 
 ### The Bot Class
 
@@ -223,7 +223,7 @@ approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415
 | Uniswap V4 | `bot.build_managed_pool(address, pool_id=...)` | Singleton architecture with hooks |
 | Curve V1 | `bot.build_pool(address)` | StableSwap, metapools, lending pools |
 
-When `build_pool` is called, type resolution proceeds in order: (1) pool registry for existing pools, (2) database `kind` column, (3) pool type registry mapping `(chain_id, factory_address) → pool class`, (4) on-chain probing via `slot0()`, `getReserves()`, or `coins()`.
+When `build_pool` is called, the pool type is auto-resolved — in order, from the pool registry, the database, and (as a last resort) on-chain probing of the pool contract.
 
 ### External Updates
 
@@ -624,41 +624,7 @@ b'\x45'
 
 #### Anvil Options
 
-The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anvil/). The most common ones are exposed by constructor options to `AnvilFork`.
-
-Users wanting fine-grained control over **all** client options may pass them through the `anvil_opts` argument, which takes a list of strings. These will be passed directly to the client after all of the managed options.
-
-```python
-# Launch with the Optimism feature set, which enables special transaction types.
->>> fork = degenbot.AnvilFork(
-    fork_url='http://localhost:8544',
-    anvil_opts=['--optimism']
-)
-
-# Launch with a non-default hardfork, which may be necessary for accurate simulation on a
-# historical block.
->>> fork = degenbot.AnvilFork(
-    fork_url='http://localhost:8545',
-    fork_block=12_980_000,
-    anvil_opts=['--hardfork=london']
-)
-
-# Launch with a non-default transaction pool ordering scheme
->>> fork = degenbot.AnvilFork(
-    fork_url='http://localhost:8545',
-    anvil_opts=['--order=fifo']
-)
-
-# Launch with certain debugging features enabled
->>> fork = degenbot.AnvilFork(
-    fork_url='http://localhost:8545',
-    anvil_opts=[
-        '--disable-block-gas-limit',
-        '--disable-code-size-limit',
-        '--disable-min-priority-fee',
-    ]
-)
-```
+The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anvil/); the most common ones are exposed as `AnvilFork` constructor options. For fine-grained control, pass any raw anvil flag through the `anvil_opts` argument (a list of strings, e.g. `anvil_opts=['--optimism']` or `anvil_opts=['--hardfork=london']`) — they are appended after all managed options.
 
 <!-- skip: end -->
 
@@ -721,9 +687,8 @@ assert [t.symbol for t in tripool.tokens] == ['DAI', 'USDC', 'USDT']
 assert tripool.a_coefficient == 2000
 assert tripool.fee == 4000000
 
-# For lending pools (cTokens), rates are resolved before calculation
-# Pool's get_dy() pre-resolves all I/O via CurveDataProvider, then passes
-# pre-resolved data to calculators via DyCalculationInputs (pure math, no private access)
+# For lending pools (cTokens), rates are resolved before calculation;
+# get_dy() resolves all on-chain inputs upfront, then computes with pure math
 ```
 
 ### Balancer V2 Weighted Pools
@@ -1529,7 +1494,7 @@ assert values == ["0x0000000000000000000000000000000000000001", "100"]
 
 ### Provider Classes
 
-The extension includes synchronous and async Ethereum RPC providers:
+`bot.provider` is the normal way to reach chain data. The extension also exposes the raw synchronous/async RPC provider classes directly for the cases where the `Bot` conveniences don't fit:
 
 <!-- invisible-code-block: python
 from degenbot._ffi.contract import Contract
@@ -1662,7 +1627,7 @@ Verified Solidity source code for all supported protocols is in [`contract_refer
 | Uniswap V4 | `contract_reference/uniswap/V4/` | PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909, etc. |
 | Aave V3 | `contract_reference/aave/` | Pool (10 revisions), AToken (5 revisions), VariableDebtToken, GhoVariableDebtToken (6 revisions), GhoDiscountRateStrategy, AaveOracle, stkAAVE, RewardsController |
 
-These are the ground truth for matching on-chain behavior in Python. See [`contract_reference/README.md`](contract_reference/README.md) for the full index.
+Useful when auditing, or when you need to understand the exact on-chain behavior of a supported protocol. See [`contract_reference/README.md`](contract_reference/README.md) for the full index.
 
 ## Contributing
 
