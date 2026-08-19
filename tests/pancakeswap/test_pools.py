@@ -18,8 +18,6 @@ from degenbot.fork import AnvilFork
 from degenbot.pancakeswap.pools import PancakeswapV2Pool
 from tests.helpers.w3_contract import make_contract
 
-
-
 PANCAKE_V2_ROUTER = get_checksum_address("0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb")
 PANCAKE_V2_ROUTER_ABI = pydantic_core.from_json(
     """

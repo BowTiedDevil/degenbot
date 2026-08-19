@@ -1,10 +1,10 @@
 import pytest
-from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address
+from degenbot.crypto import keccak256
 from degenbot.exceptions import DegenbotValueError
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
@@ -83,7 +83,7 @@ def test_create2():
         create2_address(
             deployer="0x0000000000000000000000000000000000000000",
             salt="0x0000000000000000000000000000000000000000000000000000000000000000",
-            init_code_hash=keccak(hexstr="0x00"),
+            init_code_hash=keccak256(bytes.fromhex("00")),
         )
         == "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38"
     )
@@ -91,7 +91,7 @@ def test_create2():
         create2_address(
             deployer="0xdeadbeef00000000000000000000000000000000",
             salt="0x0000000000000000000000000000000000000000000000000000000000000000",
-            init_code_hash=keccak(hexstr="0x00"),
+            init_code_hash=keccak256(bytes.fromhex("00")),
         )
         == "0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3"
     )
@@ -99,7 +99,7 @@ def test_create2():
         create2_address(
             deployer="0xdeadbeef00000000000000000000000000000000",
             salt="0x000000000000000000000000feed000000000000000000000000000000000000",
-            init_code_hash=keccak(hexstr="0x00"),
+            init_code_hash=keccak256(bytes.fromhex("00")),
         )
         == "0xD04116cDd17beBE565EB2422F2497E06cC1C9833"
     )
@@ -107,7 +107,7 @@ def test_create2():
         create2_address(
             deployer="0x0000000000000000000000000000000000000000",
             salt="0x0000000000000000000000000000000000000000000000000000000000000000",
-            init_code_hash=keccak(hexstr="0xdeadbeef"),
+            init_code_hash=keccak256(bytes.fromhex("deadbeef")),
         )
         == "0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e"
     )
@@ -115,7 +115,7 @@ def test_create2():
         create2_address(
             deployer="0x00000000000000000000000000000000deadbeef",
             salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
-            init_code_hash=keccak(hexstr="0xdeadbeef"),
+            init_code_hash=keccak256(bytes.fromhex("deadbeef")),
         )
         == "0x60f3f640a8508fC6a86d45DF051962668E1e8AC7"
     )
@@ -123,8 +123,10 @@ def test_create2():
         create2_address(
             deployer="0x00000000000000000000000000000000deadbeef",
             salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
-            init_code_hash=keccak(
-                hexstr="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            init_code_hash=keccak256(
+                bytes.fromhex(
+                    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                )
             ),
         )
         == "0x1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C"

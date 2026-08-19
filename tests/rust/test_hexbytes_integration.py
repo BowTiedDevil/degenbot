@@ -11,9 +11,9 @@ from dataclasses import dataclass
 import eth_abi
 import pytest
 import web3
-from eth_utils import keccak
 from hexbytes import HexBytes
 
+from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
@@ -28,7 +28,7 @@ class EmittedTx:
 
 
 def _ping_calldata() -> bytes:
-    selector = keccak(text="ping(uint256,bytes32)")[:4]
+    selector = keccak256(b"ping(uint256,bytes32)")[:4]
     return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 

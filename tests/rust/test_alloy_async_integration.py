@@ -7,10 +7,10 @@ pyo3-async-runtimes, run against the seeded standalone anvil (no upstream RPC).
 import eth_abi
 import pytest
 import web3
-from eth_utils import keccak
 from hexbytes import HexBytes
 
 from degenbot._ffi.provider import AsyncAlloyProvider
+from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from tests.standalone_anvil import seed as seed_catalog
 
@@ -18,7 +18,7 @@ WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 def _ping_calldata() -> bytes:
-    selector = keccak(text="ping(uint256,bytes32)")[:4]
+    selector = keccak256(b"ping(uint256,bytes32)")[:4]
     return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 

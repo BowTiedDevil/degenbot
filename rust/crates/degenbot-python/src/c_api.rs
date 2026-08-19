@@ -36,6 +36,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "concentrated-liquidity-math")]
     crate::concentrated_liquidity_math::add_concentrated_liquidity_math_module(m)?;
 
+    // Keccak256 + event topic (always a dependency; ergo 5JKNQH)
+    m.add_function(wrap_pyfunction!(crate::crypto::keccak256, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::crypto::event_topic, m)?)?;
+
     // Address utilities (feature = "uniswap")
     #[cfg(feature = "uniswap")]
     {

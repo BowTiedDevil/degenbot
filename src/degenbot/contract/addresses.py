@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot._ffi import keccak256
 from degenbot.checksum_cache import get_checksum_address
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ def create2_address(
 
     """
     return get_checksum_address(
-        keccak(HexBytes(0xFF) + HexBytes(deployer) + HexBytes(salt) + HexBytes(init_code_hash))[
+        keccak256(HexBytes(0xFF) + HexBytes(deployer) + HexBytes(salt) + HexBytes(init_code_hash))[
             -20:
         ],  # Contract address is the least significant 20 bytes from the 32 byte hash
     )

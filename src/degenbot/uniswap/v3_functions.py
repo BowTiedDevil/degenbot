@@ -5,11 +5,11 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.abi import encode
 from degenbot.contract.addresses import create2_address
+from degenbot.crypto import keccak256
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -53,7 +53,7 @@ def generate_v3_pool_address(
     """
     token_addresses = sorted([HexBytes(address) for address in token_addresses])
 
-    salt = keccak(
+    salt = keccak256(
         encode(
             ("address", "address", "uint24"),
             (*token_addresses, fee),

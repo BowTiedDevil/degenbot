@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from eth_utils import to_checksum_address
+from degenbot._ffi import to_checksum_address
 
 if TYPE_CHECKING:
     from degenbot.fork import AnvilFork

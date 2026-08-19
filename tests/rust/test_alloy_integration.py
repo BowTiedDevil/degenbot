@@ -7,7 +7,6 @@ covering provider operations, contract interactions, and connection management.
 import eth_abi
 import pytest
 import web3
-from eth_utils import keccak
 
 from degenbot._ffi.abi import decode_single, encode_single
 from degenbot.contract import (
@@ -16,6 +15,7 @@ from degenbot.contract import (
     encode_function_call,
     get_function_selector,
 )
+from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider, LogFilter
 from tests.standalone_anvil import seed as seed_catalog
@@ -24,7 +24,7 @@ WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 def _ping_calldata() -> bytes:
-    selector = keccak(text="ping(uint256,bytes32)")[:4]
+    selector = keccak256(b"ping(uint256,bytes32)")[:4]
     return selector + eth_abi.encode(["uint256", "bytes32"], [42, b"\x00" * 32])
 
 

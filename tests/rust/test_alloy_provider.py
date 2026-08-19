@@ -7,9 +7,9 @@ interface with correct method signatures and default values.
 import inspect
 
 import pytest
-from eth_utils import keccak
 from hexbytes import HexBytes
 
+from degenbot.crypto import keccak256
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
@@ -254,7 +254,7 @@ class TestAlloyProviderRevertRaisesContractLogicError:
         Always reverts with "boom" — a reliable, portable revert trigger that
         needs no upstream RPC.
         """
-        return keccak(text="alwaysRevert()")[:4]
+        return keccak256(b"alwaysRevert()")[:4]
 
     def test_sync_call_revert_raises_contract_logic_error(self, alloy_provider):
         """AlloyProvider.call raises ContractLogicError on an EVM revert."""

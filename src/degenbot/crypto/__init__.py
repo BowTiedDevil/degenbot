@@ -7,21 +7,22 @@ Provides three public functions:
   (alloy ``keccak256`` under the hood) so the selector computation is owned
   by Rust, not by a Python keccak re-export.
 - :func:`keccak256` — the full 32-byte keccak digest of a byte string.
-  Currently wraps :func:`eth_utils.crypto.keccak`. This is the one remaining
-  non-Rust hashing surface; a follow-up will expose a Rust ``keccak256``
-  pyfunction and this wrapper will delegate to it, dropping the
-  ``eth_utils`` dependency from the hashing path.
+  Delegates to the Rust FFI ``keccak256`` pyfunction; parity with the
+  pre-removal eth_utils vectors is pinned in
+  ``tests/test_crypto_parity.py`` (ergo 5JKNQH).
 - :func:`event_topic` — the 32-byte event topic hash for an ABI event entry.
+  Computes ``keccak256(canonical_event_signature)`` in Rust from the ABI
+  entry dict.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from eth_utils.abi import event_abi_to_log_topic
-from eth_utils.crypto import keccak as _keccak
 from hexbytes import HexBytes
 
+from degenbot._ffi import event_topic as _ffi_event_topic
+from degenbot._ffi import keccak256 as _ffi_keccak256
 from degenbot.contract import get_function_selector
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ def keccak256(data: bytes) -> HexBytes:
         the ``to_0x_hex()`` / ``hex()`` surface ``Web3.keccak`` provided).
 
     """
-    return HexBytes(_keccak(data))
+    return HexBytes(_ffi_keccak256(data))
 
 
 def event_topic(event_abi_entry: ABIEvent) -> HexBytes:
@@ -80,4 +81,4 @@ def event_topic(event_abi_entry: ABIEvent) -> HexBytes:
         The 32-byte topic as :class:`~hexbytes.HexBytes`.
 
     """
-    return HexBytes(event_abi_to_log_topic(event_abi_entry))
+    return HexBytes(_ffi_event_topic(event_abi_entry))

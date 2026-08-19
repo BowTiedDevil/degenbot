@@ -40,6 +40,7 @@ pub mod cancel;
 #[cfg(feature = "concentrated-liquidity-math")]
 pub mod concentrated_liquidity_math;
 pub mod conversion;
+pub mod crypto;
 #[cfg(feature = "curve-math")]
 pub mod curve_dy;
 #[cfg(feature = "curve-math")]

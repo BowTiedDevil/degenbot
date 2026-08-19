@@ -182,6 +182,8 @@ class PathIterator:
 # ``isinstance`` distinction (there is none).
 type ChecksummedAddress = HexAddress
 
+def keccak256(data: bytes) -> bytes: ...
+def event_topic(event_abi: Any) -> bytes: ...  # ruff:ignore[any-type] — pyo3 accepts the ABI dict
 @overload
 def to_checksum_address(address: str) -> ChecksummedAddress: ...
 @overload

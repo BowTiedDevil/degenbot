@@ -14,10 +14,10 @@ from __future__ import annotations
 import dataclasses
 import math
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from degenbot._ffi import ChecksummedAddress

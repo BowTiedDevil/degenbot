@@ -23,11 +23,10 @@ registry list, only requires the reads below; every other detection probe
 
 from __future__ import annotations
 
-from eth_utils import keccak
-
 from degenbot._ffi import Bot
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
+from degenbot.crypto import keccak256
 
 # 20-byte (40 hex) addresses matching the Rust plain-pool test.
 POOL = "0x" + "a1" + "00" * 19
@@ -41,7 +40,7 @@ _TIMESTAMP = 1_700_000_000
 
 def _selector(signature: str) -> str:
     """4-byte function selector (lowercase hex, no ``0x``)."""
-    return "0x" + keccak(text=signature)[:4].hex()
+    return "0x" + keccak256(signature.encode())[:4].hex()
 
 
 def _call_key(to: str, signature: str, arg: int | None = None) -> str:
