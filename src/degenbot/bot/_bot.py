@@ -94,8 +94,9 @@ def _update_pool(
 
     Raises:
         TypeError: If ``pool`` is not a V2/V3/V4 pool (callers dispatch only
-            those families here; Aerodrome/Curve/Balancer keep the builder's
-            `update()` until SSSXG6).
+            those families here; Aerodrome/Curve/Balancer refresh permanently
+            through their Python builders' `update()` — SSSXG6 delegated the
+            build path only).
 
     """
     if not isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
@@ -580,9 +581,11 @@ class Bot:
         # beyond the single word the Rust builder bootstraps — full parity with
         # the retired builder's attached fetcher.
         #
-        # Curve/Aerodrome/Balancer keep their builders (non-goal, retired under
-        # SSSXG6) — except Aerodrome V2 and both Balancer families, which
-        # delegate through the Rust PoolBuilder (their own PoolEntry families).
+        # Aerodrome V2 and both Balancer families delegate through the Rust
+        # PoolBuilder (their own PoolEntry families) per SSSXG6 (done);
+        # Curve keeps its Python builder. Python `update()` refresh for these
+        # families stays on the builders — update() was out of SSSXG6's
+        # build-delegation scope, so this split is the permanent design.
         if issubclass(
             pool_class,
             (UniswapV2Pool, UniswapV3Pool, AerodromeV2Pool, BalancerV2Pool, BalancerV2StablePool),
@@ -1220,8 +1223,10 @@ class Bot:
         )
         io = self._io
         # T4 / 4GQWZ4: V2/V3/V4 refresh lives in the delegating shell
-        # (`_update_pool`), no longer on the retired builders; Aerodrome /
-        # Curve / Balancer keep their builders' `update()` until SSSXG6.
+        # (`_update_pool`), no longer on the retired builders. Aerodrome /
+        # Curve / Balancer refresh stays on their Python builders'
+        # `update()` — update() was out of SSSXG6's (done) build-delegation
+        # scope, so this split is the permanent design.
         if isinstance(pool, (UniswapV2Pool, UniswapV3Pool, UniswapV4Pool)):
             return _update_pool(
                 pool,
