@@ -47,26 +47,6 @@ Twitter = "https://twitter.com/BowTiedDevil"
 [project.scripts]
 degenbot = "degenbot.cli:cli"
 
-[tool.coverage.report]
-exclude_also = [
-    "if TYPE_CHECKING:", # exclude type checking imports and checks
-    "return NotImplemented", # required for __eq__, __lt__, __gt__
-    "def __hash__",
-    "def __repr__",
-    "def __str__",
-    "logger.debug",
-    "assert_never",
-    "case _",
-]
-
-[tool.coverage.run]
-source = ["src/degenbot"]
-parallel = true
-branch = true
-omit = [
-    "**/migrations/**/*.py",
-]
-
 [tool.ruff]
 line-length = 100
 indent-width = 4
@@ -233,9 +213,6 @@ addopts = [
     "--numprocesses", "auto",
     "--dist", "loadgroup",
     "--import-mode", "importlib",
-    "--cov", "src/degenbot",
-    "--cov-branch",
-    "--cov-report", "html",
     "-m", "not slow and not base and not online_rpc",
 ]
 asyncio_mode = "auto"
@@ -259,12 +236,10 @@ markers = [
 
 [dependency-groups]
 dev = [
-    "coverage",
     "hypothesis",
     "maturin",
     "prek",
     "pytest-asyncio",
-    "pytest-cov",
     "pytest-order",
     "pytest-randomly",
     "pytest-xdist",
