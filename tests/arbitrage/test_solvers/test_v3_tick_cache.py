@@ -9,13 +9,18 @@ The cache provides:
 4. Shared cache across all arbitrage helpers
 """
 
+from __future__ import annotations
+
 import dataclasses
 import math
 import time
 
 import numpy as np
 import pytest
-from degenbot._ffi import ChecksummedAddress
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_types import UniswapV3PoolState
@@ -422,7 +427,7 @@ class TestMockV3PoolWithCache:
     def pool_state(self) -> UniswapV3PoolState:
         """Create sample pool state."""
         return UniswapV3PoolState(
-            address=ChecksummedAddress("0x0000000000000000000000000000000000000001"),
+            address="0x0000000000000000000000000000000000000001",
             block=0,
             liquidity=1_000_000,
             sqrt_price_x96=2**96,  # Price = 1.0
@@ -452,7 +457,7 @@ class TestMockV3PoolWithCache:
     def pool(self, pool_state: UniswapV3PoolState) -> MockV3PoolWithCache:
         """Create a mock pool with cache."""
         return MockV3PoolWithCache(
-            address=ChecksummedAddress("0x0000000000000000000000000000000000000001"),
+            address="0x0000000000000000000000000000000000000001",
             tick_spacing=60,
             initial_state=pool_state,
         )
@@ -573,7 +578,7 @@ class TestCacheInArbitrage:
     def pool(self) -> MockV3PoolWithCache:
         """Create a mock pool for arbitrage testing."""
         state = UniswapV3PoolState(
-            address=ChecksummedAddress("0x0000000000000000000000000000000000000001"),
+            address="0x0000000000000000000000000000000000000001",
             block=0,
             liquidity=1_000_000_000_000,
             sqrt_price_x96=2**96,
@@ -595,7 +600,7 @@ class TestCacheInArbitrage:
             },
         )
         return MockV3PoolWithCache(
-            address=ChecksummedAddress("0x0000000000000000000000000000000000000001"),
+            address="0x0000000000000000000000000000000000000001",
             tick_spacing=60,
             initial_state=state,
         )

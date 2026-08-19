@@ -15,15 +15,14 @@ carry), registration + solve only (subscribe/stream/backfill/resume need RPC).
 
 from __future__ import annotations
 
-import pathlib
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
 from eth_typing import ChainId
 
-from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot._ffi import Bot
+from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.database.models import Erc20TokenTable, UniswapV2PoolTable
 from degenbot.database.models.base import ExchangeTable
@@ -38,6 +37,8 @@ from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
+    import pathlib
+
     from degenbot.erc20 import Erc20Token
 
 CHAIN = ChainId.ETH

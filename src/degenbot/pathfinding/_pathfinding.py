@@ -1,16 +1,14 @@
 """Pathfinding utilities for discovering arbitrage routes."""
 
+from __future__ import annotations
+
 import asyncio
 import enum
 import itertools
 import time
-from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from sqlalchemy.orm import Session
-
-from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import (
     LiquidityPoolTable,
@@ -19,10 +17,17 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
 )
 from degenbot.database.operations import resolve_token_ids
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.pathfinding import build_path_graph, find_paths_rust
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
+
+    from sqlalchemy.orm import Session
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.database.session_manager import DatabaseSessionManager
 
 type PoolId = int
 type TokenId = int

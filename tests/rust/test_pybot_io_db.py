@@ -21,8 +21,8 @@ from __future__ import annotations
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi import BotIo
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Base
 from degenbot.database.models.erc20 import Erc20TokenTable

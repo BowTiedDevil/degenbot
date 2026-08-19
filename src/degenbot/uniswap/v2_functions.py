@@ -4,15 +4,21 @@ See: contract_reference/uniswap/V2/UniswapV2Factory.sol
 (UniswapV2Pair, UniswapV2Factory, Math, UQ112x112)
 """
 
-from collections.abc import Iterable
-from fractions import Fraction
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from hexbytes import HexBytes
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.abi import encode_packed
 from degenbot.contract.addresses import create2_address
 from degenbot.crypto import keccak256
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from fractions import Fraction
+
+    from degenbot._ffi import ChecksummedAddress
 
 
 def generate_v2_pool_address(

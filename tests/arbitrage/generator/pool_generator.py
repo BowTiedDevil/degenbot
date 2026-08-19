@@ -4,14 +4,12 @@ Generates V2, V3, and V4 pool states with configurable parameters
 and guaranteed arbitrage opportunities.
 """
 
+from __future__ import annotations
+
 import math
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import ChecksummedAddress
-from hexbytes import HexBytes
-
-from degenbot.types.abstract import AbstractPoolState
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick
@@ -32,6 +30,10 @@ from .types import (
 )
 
 if TYPE_CHECKING:
+    from hexbytes import HexBytes
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.abstract import AbstractPoolState
     from degenbot.uniswap.v3_types import InitializedTickMap, LiquidityMap
 
 
@@ -94,8 +96,8 @@ class PoolStateGenerator:
         tick: Tick,
         *,
         tick_spacing: int = 60,
-        tick_bitmap: "InitializedTickMap | None" = None,
-        tick_data: "LiquidityMap | None" = None,
+        tick_bitmap: InitializedTickMap | None = None,
+        tick_data: LiquidityMap | None = None,
         block: int = 0,
     ) -> UniswapV3PoolState:
         """Generate a V3 pool state with the given parameters.
@@ -154,8 +156,8 @@ class PoolStateGenerator:
         tick: Tick,
         *,
         tick_spacing: int = 60,
-        tick_bitmap: "dict[int, BitmapAtWord] | None" = None,
-        tick_data: "dict[int, LiquidityAtTick] | None" = None,
+        tick_bitmap: dict[int, BitmapAtWord] | None = None,
+        tick_data: dict[int, LiquidityAtTick] | None = None,
         block: int = 0,
     ) -> UniswapV4PoolState:
         """Generate a V4 pool state with the given parameters.
@@ -226,7 +228,7 @@ class PoolStateGenerator:
         tick: Tick,
         tick_spacing: int,
         liquidity: Liquidity,
-    ) -> tuple["InitializedTickMap", "LiquidityMap"]:
+    ) -> tuple[InitializedTickMap, LiquidityMap]:
         """Generate minimal tick bitmap and tick data for a pool.
 
         Creates boundary ticks that allow swaps in both directions

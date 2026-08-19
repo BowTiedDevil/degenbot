@@ -1,15 +1,21 @@
 """Uniswap V3 swap and burn amount calculations."""
 
-from collections.abc import Iterable
+from __future__ import annotations
+
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.abi import encode
 from degenbot.contract.addresses import create2_address
-from degenbot.uniswap.v3_types import Pip
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.uniswap.v3_types import Pip
 
 
 def exchange_rate_from_sqrt_price_x96(sqrt_price_x96: int) -> Fraction:

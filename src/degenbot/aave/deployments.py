@@ -1,11 +1,16 @@
 """Aave V3 deployment addresses and chain-specific configuration."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import eth_typing
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 
 @dataclass(slots=True, frozen=True)

@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from degenbot._ffi import Bot
 from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool

@@ -4,12 +4,12 @@ Implements the Curve StableSwap invariant for V1-style pools including
 plain pools, metapools, lending pools, and crypto pools.
 """
 
+from __future__ import annotations
+
 import contextlib
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.per_block_cache import PerBlockCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
@@ -33,14 +33,19 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
-from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
 )
-from degenbot.types.rpc_types import BlockIdentifier
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types import LiquidityPool
+    from degenbot.types.aliases import BlockNumber
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 def _compute_rate_and_precision_multipliers(

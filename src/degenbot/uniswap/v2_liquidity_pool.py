@@ -1,11 +1,12 @@
 """UniswapV2Pool: constant-product AMM with reserve tracking."""
 
+from __future__ import annotations
+
 import dataclasses
 from fractions import Fraction
-from typing import Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 from weakref import WeakSet
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.aerodrome.math import (
     calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
 )
@@ -13,9 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import ExternalUpdateError, NoPoolStateAvailable
-from degenbot.types import DexIdentity, LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
@@ -25,6 +24,11 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolState,
     UniswapV2PoolStateUpdated,
 )
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types import DexIdentity, LiquidityPool
+    from degenbot.types.aliases import BlockNumber
 
 
 class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):

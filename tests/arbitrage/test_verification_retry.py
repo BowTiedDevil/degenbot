@@ -52,7 +52,8 @@ class TestRetryVerificationCall:
             nonlocal calls
             calls += 1
             if calls < 3:
-                raise VerificationRpcError(f"tickBitmap(0) RPC call failed (blip {calls})")
+                msg = f"tickBitmap(0) RPC call failed (blip {calls})"
+                raise VerificationRpcError(msg)
             return "ok"
 
         policy = VerificationRetryPolicy(max_attempts=4, base_delay=0.0)
@@ -100,7 +101,8 @@ class TestRetryVerificationCall:
         def mismatches() -> None:
             nonlocal calls
             calls += 1
-            raise VerificationMismatchError("tick 5 lg mismatch: on-chain=1 vs engine=2")
+            msg = "tick 5 lg mismatch: on-chain=1 vs engine=2"
+            raise VerificationMismatchError(msg)
 
         policy = VerificationRetryPolicy(max_attempts=10, base_delay=0.0)
         with pytest.raises(VerificationMismatchError, match="lg mismatch"):
@@ -124,7 +126,8 @@ class TestRetryVerificationCall:
         def raises_value_error() -> None:
             nonlocal calls
             calls += 1
-            raise ValueError("bad pool address")
+            msg = "bad pool address"
+            raise ValueError(msg)
 
         policy = VerificationRetryPolicy(max_attempts=5, base_delay=0.0)
         with pytest.raises(ValueError, match="bad pool address"):

@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
+    from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import LiquidityPool
     from degenbot.types.aliases import BlockNumber
 

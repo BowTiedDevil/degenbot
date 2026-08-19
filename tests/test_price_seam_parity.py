@@ -136,8 +136,7 @@ def _mock_rpc_server() -> Generator[str, None, None]:
 @pytest.fixture
 def mock_provider() -> Generator[AlloyProvider, None, None]:
     with _mock_rpc_server() as url:
-        alloy = AlloyProvider(url, 0)
-        yield alloy
+        yield AlloyProvider(url, 0)
 
 
 @pytest.fixture

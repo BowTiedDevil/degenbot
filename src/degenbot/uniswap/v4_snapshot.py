@@ -1,22 +1,19 @@
 """Uniswap V4 pool snapshot and subscription handler."""
 
+from __future__ import annotations
+
 import pathlib
 from collections import defaultdict
-from typing import Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import pydantic_core
-from eth_typing import HexAddress, HexStr
 from hexbytes import HexBytes
-from sqlalchemy.orm import Session, scoped_session
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot._ffi.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPoolId
 from degenbot.logging import logger
-from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_types import (
@@ -24,9 +21,18 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolLiquidityMappingUpdate,
 )
 
-type PoolManagerAddress = ChecksummedAddress
 type PoolId = str
-type ManagedPoolIdentifier = tuple[PoolManagerAddress, PoolId]
+
+if TYPE_CHECKING:
+    from eth_typing import HexAddress, HexStr
+    from sqlalchemy.orm import Session, scoped_session
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.types.aliases import BlockNumber, ChainId
+
+    type PoolManagerAddress = ChecksummedAddress
+    type ManagedPoolIdentifier = tuple[PoolManagerAddress, PoolId]
 
 
 class LiquidityMap(TypedDict):

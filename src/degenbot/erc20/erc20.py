@@ -1,15 +1,19 @@
 """Erc20Token: on-chain token with metadata, balance, and approval tracking."""
 
-from typing import Any, Self
+from __future__ import annotations
 
-from degenbot._ffi import ChecksummedAddress
-from degenbot._ffi import Erc20Token as _TokenHandle
+from typing import TYPE_CHECKING, Any, Self
+
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.types.abstract import AbstractErc20Token
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot._ffi import Erc20Token as _TokenHandle
+    from degenbot.types.aliases import BlockNumber
 
 UNKNOWN_NAME = "Unknown Token"
 UNKNOWN_SYMBOL = "UNKNOWN"

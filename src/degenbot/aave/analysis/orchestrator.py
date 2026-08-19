@@ -13,18 +13,23 @@ by the §4.2 parity gate before deletion). The ``PositionAnalysisResult``
 bucket-sorter stays here (it's trivial Python, not math).
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot._ffi.db import DatabasePositionQuery as _EnginePositionQuery
 from degenbot.aave import AavePriceOracle
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import UserPositionSummary, analyze_aave_user_position
 from degenbot.logging import logger
-from degenbot.provider import AlloyProvider
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.provider import AlloyProvider
 
 
 class DatabasePositionQuery:

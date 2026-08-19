@@ -4,14 +4,19 @@ Thin wrappers around AlloyProvider.call() that handle
 ABI encoding/decoding and block identifier resolution.
 """
 
-from collections.abc import Sequence
-from typing import Any
+from __future__ import annotations
 
-from degenbot._ffi import ChecksummedAddress
+from typing import TYPE_CHECKING, Any
+
 from degenbot.abi import decode, encode
 from degenbot.crypto import function_selector
-from degenbot.provider import AlloyProvider
-from degenbot.types.rpc_types import BlockIdentifier
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.provider import AlloyProvider
+    from degenbot.types.rpc_types import BlockIdentifier
 
 
 def encode_function_calldata(

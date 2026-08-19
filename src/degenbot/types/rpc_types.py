@@ -14,12 +14,15 @@ loose (``total=False`` TypedDicts with the fields actually produced/consumed) so
 full web3py retirement epic (Pass C) without type-check churn.
 """
 
-from typing import Any, TypedDict
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from eth_typing import HexStr
 from hexbytes import HexBytes
 
-from degenbot._ffi import ChecksummedAddress
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 # ── RPC primitive aliases (C1 — replaces ``web3.types`` primitives) ───────
 
@@ -40,8 +43,8 @@ BlockIdentifier = int | str
 TxParams = TypedDict(
     "TxParams",
     {
-        "from": ChecksummedAddress | str,
-        "to": ChecksummedAddress | str,
+        "from": str,
+        "to": str,
         "gas": int,
         "gasPrice": int,
         "maxFeePerGas": int,

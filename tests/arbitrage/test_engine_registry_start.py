@@ -174,8 +174,8 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
     The whole-batch `verify_liquidity_maps` (and V3/V4 twins) was REMOVED as
     redundant + racy (the per-pool two-step lifecycle is the verify authority),
     so those must NOT be present."""
-    from degenbot.arbitrage.engine_registry import ArbitrageEngine
     from degenbot._ffi import Bot
+    from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
     bot = Bot()
     ArbitrageEngine(py_bot=bot)  # attaches shared PumpState
@@ -203,8 +203,8 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     (J3FMDO). The non-DB path uses the `snapshot_seed_block` setter to record
     `S` so the core auto-backfill picks it up.
     """
-    from degenbot.arbitrage.engine_registry import ArbitrageEngine
     from degenbot._ffi import Bot
+    from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
     bot = Bot()
     # Constructing the engine against the bot attaches the shared PumpState.

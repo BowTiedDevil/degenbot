@@ -3,18 +3,17 @@
 Provides fixtures for testing arbitrage calculations with deterministic results.
 """
 
+from __future__ import annotations
+
 import json
 import math
 import random
 from dataclasses import dataclass
 from fractions import Fraction
-from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-from degenbot._ffi import ChecksummedAddress
 from hexbytes import HexBytes
 
-from degenbot.types.abstract import AbstractPoolState
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick
@@ -27,6 +26,12 @@ from degenbot.uniswap.v4_types import (
 
 from .pool_generator import PoolStateGenerator
 from .types import LIQUIDITY_MULTIPLIERS, PoolGenerationConfig, V3PoolGenerationConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.abstract import AbstractPoolState
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +91,7 @@ class ArbitrageCycleFixture:
         return json.dumps(data, indent=2)
 
     @classmethod
-    def from_json(cls, json_str: str) -> "ArbitrageCycleFixture":
+    def from_json(cls, json_str: str) -> ArbitrageCycleFixture:
         """Deserialize fixture from JSON string.
 
         Parameters
@@ -128,7 +133,7 @@ class ArbitrageCycleFixture:
         path.write_text(self.to_json(), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: Path) -> "ArbitrageCycleFixture":
+    def load(cls, path: Path) -> ArbitrageCycleFixture:
         """Load fixture from a JSON file.
 
         Parameters

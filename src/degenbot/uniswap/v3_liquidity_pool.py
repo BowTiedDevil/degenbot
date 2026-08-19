@@ -24,11 +24,12 @@ present-but-zero (not missing), breaking the fetch loop. Mirrors how V2 has no
 sparse-map concept at all.
 """
 
+from __future__ import annotations
+
 import dataclasses
-from typing import Any, ClassVar, Self, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict
 from weakref import WeakSet
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -37,15 +38,12 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
 )
-from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
 from degenbot.uniswap.v3_types import (
@@ -57,6 +55,12 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolState,
     UniswapV3PoolStateUpdated,
 )
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types import LiquidityPool
+    from degenbot.types.aliases import BlockNumber
+    from degenbot.uniswap.types import UniswapPoolSwapVector
 
 type Token0Amount = int
 type Token1Amount = int

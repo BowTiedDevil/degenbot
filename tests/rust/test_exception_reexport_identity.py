@@ -72,7 +72,8 @@ def test_verification_rpc_error_caught_from_rust_raised_instance() -> None:
     same type so ``except`` matches.
     """
     try:
-        raise RsVerificationRpcError("transport blip")
+        msg = "transport blip"
+        raise RsVerificationRpcError(msg)
     except VerificationRpcError as exc:
         assert isinstance(exc, VerificationRpcError)
         assert "transport blip" in str(exc)
@@ -81,6 +82,7 @@ def test_verification_rpc_error_caught_from_rust_raised_instance() -> None:
 def test_verification_mismatch_error_caught_from_rust_raised_instance() -> None:
     """An instance the Rust pyclass would raise is catchable by the alias."""
     try:
-        raise RsVerificationMismatchError("tick data mismatch")
+        msg = "tick data mismatch"
+        raise RsVerificationMismatchError(msg)
     except VerificationMismatchError as exc:
         assert isinstance(exc, VerificationMismatchError)

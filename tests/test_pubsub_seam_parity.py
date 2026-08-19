@@ -45,8 +45,8 @@ import weakref
 
 import pytest
 
-from degenbot._ffi.subscriber import register_subscriber
 from degenbot._ffi import Bot
+from degenbot._ffi.subscriber import register_subscriber
 
 _SUBSCRIBER_FLUSH_S = (
     0.15  # max seconds to wait for subscriber drainer flush (2x interval + margin)
@@ -138,7 +138,8 @@ class TestPySubscriberAdapterParity:
             if result:
                 return
             time.sleep(0.01)
-        raise AssertionError(f"Condition not met within {timeout}s: {condition!r}")
+        msg = f"Condition not met within {timeout}s: {condition!r}"
+        raise AssertionError(msg)
 
     def test_register_subscriber_receives_pool_id_on_dispatch(self):
         """A Python callback registered via `register_subscriber` receives

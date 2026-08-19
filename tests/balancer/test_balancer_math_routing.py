@@ -19,20 +19,23 @@ harness — no second live implementation remains.
 from __future__ import annotations
 
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import pytest
 
 import degenbot.balancer.pools as pools_mod
 import degenbot.balancer.stable_pools as sp_mod
-from degenbot.balancer.libraries.constants import ONE
-from degenbot.balancer.pools import BalancerV2Pool
-from degenbot.balancer.stable_pools import INVARIANT_V2
 from degenbot._ffi import Bot
+from degenbot.balancer.libraries.constants import ONE
+from degenbot.balancer.stable_pools import INVARIANT_V2
 from tests.helpers.balancer_pool_factory import (
     make_balancer_stable_pool,
     make_balancer_weighted_pool,
 )
 from tests.helpers.erc20_factory import make_erc20
+
+if TYPE_CHECKING:
+    from degenbot.balancer.pools import BalancerV2Pool
 
 
 @pytest.fixture

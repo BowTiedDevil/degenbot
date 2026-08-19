@@ -1,12 +1,11 @@
 """Uniswap V4-specific data types and state definitions."""
 
+from __future__ import annotations
+
 import dataclasses
+from typing import TYPE_CHECKING
 
-from hexbytes import HexBytes
-
-from degenbot._ffi import ChecksummedAddress
 from degenbot.types.abstract import AbstractPoolState
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PoolStateMessage
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import (
@@ -16,6 +15,12 @@ from degenbot.uniswap.v3_types import (
     SqrtPriceX96,
     Tick,
 )
+
+if TYPE_CHECKING:
+    from hexbytes import HexBytes
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.aliases import BlockNumber
 
 type FeeToProtocol = int
 type SwapFee = int

@@ -36,8 +36,8 @@ from typing import Any, Self
 
 import pytest
 
-from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot._ffi import Bot
+from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO

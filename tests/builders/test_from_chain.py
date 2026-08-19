@@ -3,25 +3,16 @@
 # at module level unblocks the offline collection; pending a full rewrite under
 # anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md.
+from fractions import Fraction
+from unittest.mock import MagicMock
+
+import eth_abi.abi
 import pytest
 
 pytest.skip(
     "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
     allow_module_level=True,
 )
-
-"""Tests for CamelotBuilder variant-specific construction.
-
-The I/O that was previously in pool.from_chain() classmethods, and then in
-V2PoolBuilder._build_*() methods, is now handled by dedicated builders.
-Each builder's build() method fetches common data via V2BuilderBase._fetch_v2_common_data(),
-then variant-specific data from chain, then constructs the pool.
-"""
-
-from fractions import Fraction
-from unittest.mock import MagicMock
-
-import eth_abi.abi
 from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.camelot.pools import CamelotLiquidityPool
 from hexbytes import HexBytes
@@ -34,6 +25,14 @@ from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+
+"""Tests for CamelotBuilder variant-specific construction.
+
+The I/O that was previously in pool.from_chain() classmethods, and then in
+V2PoolBuilder._build_*() methods, is now handled by dedicated builders.
+Each builder's build() method fetches common data via V2BuilderBase._fetch_v2_common_data(),
+then variant-specific data from chain, then constructs the pool.
+"""
 
 
 class _MockProviderError(Exception):

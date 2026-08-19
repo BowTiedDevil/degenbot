@@ -1,11 +1,15 @@
 """EVM and Uniswap constants (MAX_UINT256, fee tiers, etc.)."""
 
+from __future__ import annotations
+
 import typing
 
 from eth_typing import ChainId
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
+
+if typing.TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 
 def _min_uint(_: int) -> int:

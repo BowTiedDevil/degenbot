@@ -88,7 +88,8 @@ class _RecordingVerifyEngine:
             "snapshot_block": snapshot_block,
         })
         if self.fail_next == "v3":
-            raise VerificationMismatchError("synthetic V3 seed tick mismatch")
+            msg = "synthetic V3 seed tick mismatch"
+            raise VerificationMismatchError(msg)
 
     async def run_v4_registration_lifecycle(
         self,
@@ -103,7 +104,8 @@ class _RecordingVerifyEngine:
             "snapshot_block": snapshot_block,
         })
         if self.fail_next == "v4":
-            raise VerificationMismatchError("synthetic V4 seed tick mismatch")
+            msg = "synthetic V4 seed tick mismatch"
+            raise VerificationMismatchError(msg)
 
 
 class _FakeSnapshot:
@@ -219,7 +221,7 @@ def test_register_fail_fast_surfaces_error_to_racing_sibling(
     async def _sibling() -> None:
         try:
             await inflight[key]
-        except BaseException as exc:  # noqa: BLE001 - record whatever surfaces
+        except BaseException as exc:  # ruff: ignore[blind-except] - record whatever surfaces
             seen["exc"] = exc
 
     async def _failing_lifecycle(*_args, **_kwargs):
@@ -227,7 +229,8 @@ def test_register_fail_fast_surfaces_error_to_racing_sibling(
         # the mismatch trips (ready-queue FIFO makes this deterministic).
         seen["sibling"] = asyncio.get_running_loop().create_task(_sibling())
         await asyncio.sleep(0)
-        raise VerificationMismatchError(f"synthetic {family} seed tick mismatch")
+        msg = f"synthetic {family} seed tick mismatch"
+        raise VerificationMismatchError(msg)
 
     setattr(fake, f"run_{family}_registration_lifecycle", _failing_lifecycle)
 

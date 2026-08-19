@@ -1,14 +1,16 @@
 """SQLAlchemy base model classes and column types."""
 
+from __future__ import annotations
+
 from typing import Annotated, ClassVar
 
 from sqlalchemy import Dialect, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
-from degenbot._ffi import ChecksummedAddress
-
-from .types import PrimaryKeyInt
+# SQLAlchemy resolves Mapped[...] annotations at runtime via
+# typing.get_type_hints, so this name must be importable (not TYPE_CHECKING-only).
+from .types import PrimaryKeyInt  # ruff: ignore[typing-only-first-party-import]
 
 
 class IntMappedToString(TypeDecorator[int]):
@@ -48,7 +50,7 @@ class IntMappedToString(TypeDecorator[int]):
         return None if value is None else int(value)
 
 
-Address = Annotated[ChecksummedAddress, mapped_column(String(42))]
+Address = Annotated[str, mapped_column(String(42))]
 BigInteger = Annotated[int, IntMappedToString]
 
 

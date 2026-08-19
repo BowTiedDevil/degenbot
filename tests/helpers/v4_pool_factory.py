@@ -10,14 +10,16 @@ tests (the constructor takes a handle, not scalars).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
+
+if TYPE_CHECKING:
+    from degenbot.erc20 import Erc20Token
 
 # No shared Bot — V4 tests frequently reuse the same pool_id (V4 pool_id is
 # derived from the pool_key, so tests sharing a pool_key collide on a shared

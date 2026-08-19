@@ -234,7 +234,7 @@ class TestBlockClockFromStream:
         batch["fresh"] = [
             (1, 100, 50, (1, 2), (3,), (0,))
         ]  # one profitable result (state_nonces=(0,) — AV42C7)
-        dispatcher, _w3, dispatched = await _run(
+        _dispatcher, _w3, dispatched = await _run(
             blocks=[_block(301), _block(302)],
             batches=[batch],
         )

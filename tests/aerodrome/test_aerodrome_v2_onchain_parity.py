@@ -40,9 +40,9 @@ from typing import Any, Self
 
 import pytest
 
+from degenbot._ffi import Bot
 from degenbot.aerodrome.abi import AERODROME_V2_POOL_ABI
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool

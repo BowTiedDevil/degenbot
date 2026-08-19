@@ -123,7 +123,8 @@ async def test_empty_producer_completes() -> None:
             yield None
 
     async def consume(item: object) -> None:
-        raise AssertionError("consume should never run for an empty producer")
+        msg = "consume should never run for an empty producer"
+        raise AssertionError(msg)
 
     await run_registration_pipeline(
         producer=producer(),
@@ -165,7 +166,6 @@ async def test_fatal_error_cancels_siblings_and_reraises() -> None:
     worker — the crash-loudly verification contract must survive concurrency.
     """
     started: asyncio.Event = asyncio.Event()
-    cancelled_worker: list[bool] = [False]
 
     async def producer():
         for i in range(50):
@@ -174,7 +174,8 @@ async def test_fatal_error_cancels_siblings_and_reraises() -> None:
     async def consume(item: int) -> None:
         if item == 5:
             started.set()
-            raise _FatalError("verification mismatch")
+            msg = "verification mismatch"
+            raise _FatalError(msg)
         # make sure a sibling worker is mid-sleep when the fatal fires
         await asyncio.sleep(0.01)
 
@@ -244,7 +245,8 @@ async def test_non_fatal_exceptions_do_not_abort() -> None:
         if item % 2 == 0:
             handled.append(item)
         else:
-            raise ValueError("skipped path")  # caught by consume's caller normally
+            msg = "skipped path"
+            raise ValueError(msg)  # caught by consume's caller normally
 
     # consume itself must swallow; here we simulate by try/except inside.
     async def safe_consume(item: int) -> None:

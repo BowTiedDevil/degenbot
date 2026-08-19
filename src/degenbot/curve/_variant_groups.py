@@ -7,9 +7,15 @@ The builder resolves variant group membership at construction time and passes
 the result as strategy enums to the pool constructor.
 """
 
-from degenbot._ffi import ChecksummedAddress
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.types import DVariant, YDVariant, YVariant
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 _D_VARIANT_GROUP_0: frozenset[ChecksummedAddress] = frozenset(
     get_checksum_address(addr)

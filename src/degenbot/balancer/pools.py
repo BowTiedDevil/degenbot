@@ -1,10 +1,11 @@
 """Balancer V2 weighted pool implementation."""
 
+from __future__ import annotations
+
 from fractions import Fraction
-from typing import Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 from weakref import WeakSet
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
@@ -34,9 +35,12 @@ from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types import LiquidityPool
 
 # Hex representation of the TWO constant (2e18 = 0x1bc16d674ec80000)
 # This value only appears in the bytecode of V2 WeightedPool contracts that include

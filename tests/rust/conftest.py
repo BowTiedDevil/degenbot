@@ -1,15 +1,20 @@
+from __future__ import annotations
+
 import random
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import pytest
-from degenbot._ffi import ChecksummedAddress
 from eth_utils.address import to_checksum_address
 
-from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot._ffi import Bot
+from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 
 @pytest.fixture(scope="module")

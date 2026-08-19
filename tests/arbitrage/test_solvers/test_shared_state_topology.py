@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import threading
 
-from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot._ffi import Bot
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 
 USDC = 10**6
 WETH = 10**18

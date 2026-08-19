@@ -8,14 +8,19 @@ accessor. get_cached_virtual_price() resolves its own dependencies inline
 eliminating the need for side-effect mirrors or call-ordering contracts.
 """
 
-import contextlib
+from __future__ import annotations
 
-from degenbot._ffi import ChecksummedAddress
+import contextlib
+from typing import TYPE_CHECKING
+
 from degenbot.exceptions.pool import MissingCurveData
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
 
-from .types import CurveDataProvider
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.aliases import BlockNumber
+
+    from .types import CurveDataProvider
 
 
 class PerBlockCache:

@@ -8,14 +8,15 @@ the ``Bot.build_pool()`` flow (ADR-005 Aerodrome state port).
 
 from __future__ import annotations
 
-from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot._ffi import Bot
+from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
     from degenbot.erc20 import Erc20Token
 
 

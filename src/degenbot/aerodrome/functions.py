@@ -11,9 +11,10 @@ S5SJXF / WLJD2Y — the Python functions are now thin pass-throughs; the Rust
 ``#[cfg(test)]`` corpus is the §4.2 regression set).
 """
 
-from collections.abc import Sequence
+from __future__ import annotations
 
-from degenbot._ffi import ChecksummedAddress
+from typing import TYPE_CHECKING
+
 from degenbot.aerodrome.address import (
     compute_aerodrome_v2_pool_address as _rs_compute_aerodrome_v2_pool_address,
 )
@@ -21,6 +22,11 @@ from degenbot.aerodrome.address import (
     compute_aerodrome_v3_pool_address as _rs_compute_aerodrome_v3_pool_address,
 )
 from degenbot.checksum_cache import get_checksum_address
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from degenbot._ffi import ChecksummedAddress
 
 
 def generate_aerodrome_v2_pool_address(

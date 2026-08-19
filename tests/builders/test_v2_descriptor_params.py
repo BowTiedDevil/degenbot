@@ -11,14 +11,14 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot._ffi.dex_identity import dex_identity
 from degenbot._ffi import Bot
-from degenbot.types import LiquidityPool
+from degenbot._ffi.dex_identity import dex_identity
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
+    from degenbot.types import LiquidityPool
 
 _PY_BOT = Bot()
 

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from degenbot._ffi import Bot
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
@@ -26,7 +27,6 @@ from degenbot.balancer.stable_pools import (
     BalancerRateProvider,
     BalancerV2StablePool,
 )
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import StaleRateResult

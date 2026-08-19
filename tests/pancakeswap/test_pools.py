@@ -3,23 +3,22 @@
 # at module level unblocks the offline collection; pending a full rewrite under
 # anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md.
-import pytest
-
-pytest.skip(
-    "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
-    allow_module_level=True,
-)
-
 import pathlib
 from typing import Any
 
 import pydantic_core
 import pytest
 
+pytest.skip(
+    "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
+    allow_module_level=True,
+)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from degenbot.pancakeswap.pools import PancakeswapV2Pool
 from tests.helpers.w3_contract import make_contract
+
+
 
 PANCAKE_V2_ROUTER = get_checksum_address("0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb")
 PANCAKE_V2_ROUTER_ABI = pydantic_core.from_json(

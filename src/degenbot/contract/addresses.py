@@ -1,10 +1,16 @@
 """Deterministic contract address derivation."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.checksum_cache import get_checksum_address
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 
 def create2_address(

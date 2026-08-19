@@ -20,8 +20,8 @@ import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
 
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi import BotIo
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
 
@@ -223,12 +223,12 @@ class _AerodromeProvider:
         self.calls.append((to, data))
         sel = data[:4]
         # keccak256("stable()")[..4]
-        _stable_sel = function_selector("stable()")
-        if sel == _stable_sel:
+        stable_sel = function_selector("stable()")
+        if sel == stable_sel:
             return HexBytes(eth_abi.abi.encode(types=["bool"], args=[self._stable]))
         # keccak256("getFee(address,bool)")[..4]
-        _get_fee_sel = function_selector("getFee(address,bool)")
-        if sel == _get_fee_sel:
+        get_fee_sel = function_selector("getFee(address,bool)")
+        if sel == get_fee_sel:
             return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._fee_raw]))
         msg = f"unexpected selector {sel.hex()}"
         raise ValueError(msg)
@@ -533,7 +533,6 @@ def test_pybot_io_native_alloy_fetch_factory_address():
     provider round-trip (the offline shell holds the `PyAlloyProvider`)."""
     from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 
-    factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
     expected = "0x66f9664f97F2b50F62D13eA064982f936dE76657"
     pool_address = "0x" + "ab" * 20
 

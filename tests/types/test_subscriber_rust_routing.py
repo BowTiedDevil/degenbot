@@ -47,11 +47,11 @@ import time
 from fractions import Fraction
 
 from degenbot._ffi import Bot
-
-_SUBSCRIBER_FLUSH_S = 0.15  # max seconds to wait for subscriber drainer flush
 from tests.fakes.subscribers import FakeSubscriber
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+
+_SUBSCRIBER_FLUSH_S = 0.15  # max seconds to wait for subscriber drainer flush
 
 # keccak256("Sync(uint112,uint112)") — the V2 Sync event signature.
 _V2_SYNC_TOPIC = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"

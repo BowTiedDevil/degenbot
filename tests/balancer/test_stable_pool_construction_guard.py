@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot._ffi import Bot
+from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.exceptions import DegenbotValueError
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool

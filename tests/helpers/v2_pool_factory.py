@@ -17,14 +17,14 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
-from degenbot._ffi.dex_identity import DexIdentity
 from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.types import LiquidityPool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
+    from degenbot._ffi.dex_identity import DexIdentity
     from degenbot.erc20 import Erc20Token
+    from degenbot.types import LiquidityPool
     from degenbot.types.aliases import ChainId
 
 

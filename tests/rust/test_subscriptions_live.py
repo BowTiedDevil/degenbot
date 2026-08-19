@@ -111,7 +111,7 @@ class TestLiveWSAdapterLogSubscription:
         """Subscribe to blocks via live WS and verify the subscription yields headers."""
         provider = RustAlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_blocks()
-        subscription = Subscription(_inner=sub)
+        Subscription(_inner=sub)
 
         try:
             header = None
@@ -129,7 +129,7 @@ class TestLiveWSAdapterLogSubscription:
         """Subscribe to unfiltered logs; verify the WS subscription yields log dicts."""
         provider = RustAlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_logs()
-        subscription = Subscription(_inner=sub)
+        Subscription(_inner=sub)
 
         all_logs: list[dict] = []
 

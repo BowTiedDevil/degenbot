@@ -16,7 +16,7 @@ misconfiguration surfaces immediately instead of crashing later on a connect.
 from __future__ import annotations
 
 import tomllib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -27,6 +27,9 @@ from degenbot.config import (
     resolve_rpc_uris,
     resolve_ws_rpc_uri,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +67,7 @@ def _write_config(
             lines.append(f'{cid} = "{uri}"')
     cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
     # sanity: round-trips through tomllib
-    assert tomllib.loads(cfg.read_text())
+    assert tomllib.loads(cfg.read_text(encoding="utf-8"))
 
 
 # ── envvar names by chain id ──────────────────────────────────────

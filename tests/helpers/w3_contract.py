@@ -51,10 +51,7 @@ class _FunctionsResult:
 
         # Encode args — merge positional and keyword (in ABI order)
         all_args = [*self._args, *self._kwargs.values()]
-        if input_types:
-            encoded_args = eth_abi.abi.encode(types=input_types, args=all_args)
-        else:
-            encoded_args = b""
+        encoded_args = eth_abi.abi.encode(types=input_types, args=all_args) if input_types else b""
         calldata = selector + encoded_args
 
         # Execute eth_call

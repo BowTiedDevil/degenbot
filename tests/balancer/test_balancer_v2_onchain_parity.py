@@ -37,11 +37,11 @@ from typing import TYPE_CHECKING, Any, Self
 import pytest
 from hexbytes import HexBytes
 
+from degenbot._ffi import Bot
 from degenbot.balancer.deployments import (
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
 from degenbot.balancer.libraries.constants import PowVersion
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError

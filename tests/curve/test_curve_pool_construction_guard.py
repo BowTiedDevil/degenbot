@@ -180,7 +180,7 @@ class TestStubBasePoolSatisfiesPort:
         stub = StubBasePool()
         assert isinstance(stub, BasePoolPort)
         # A DyCalculationInputs carrying the stub type-checks structurally.
-        _inputs = DyCalculationInputs(
+        inputs = DyCalculationInputs(
             PRECISION=10**18,
             FEE_DENOMINATOR=10**10,
             fee=stub.fee,
@@ -200,4 +200,4 @@ class TestStubBasePoolSatisfiesPort:
             amp=100,
             base_pool=stub,
         )
-        assert _inputs.base_pool is stub
+        assert inputs.base_pool is stub

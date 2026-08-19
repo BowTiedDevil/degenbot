@@ -49,8 +49,9 @@ from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.types.rpc_types import LogReceipt
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
     from sqlalchemy.orm import Session, scoped_session
+
+    from degenbot._ffi import ChecksummedAddress
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / (
     "rust/crates/degenbot-db/tests/fixtures"

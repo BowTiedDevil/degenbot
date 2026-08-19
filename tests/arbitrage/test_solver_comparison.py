@@ -3,15 +3,15 @@
 Uses production UniswapV2Pool for swap calculations instead of MockV2Pool.
 """
 
+from __future__ import annotations
+
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import pytest
-from degenbot._ffi import ChecksummedAddress
 from scipy.optimize import minimize_scalar
 
 from degenbot.exceptions import DegenbotError
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.arbitrage.generator import FixtureFactory
 from tests.fakes.tokens import FakeToken
@@ -20,13 +20,16 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+
 
 # Standard V2 fee: 0.3% (matches the fee used in simple_v2_arb_profitable fixture)
 V2_FEE = Fraction(3, 1000)
 
 # Token addresses used by the fixture
-USDC_ADDRESS: ChecksummedAddress = ChecksummedAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
-WETH_ADDRESS: ChecksummedAddress = ChecksummedAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+USDC_ADDRESS: ChecksummedAddress = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+WETH_ADDRESS: ChecksummedAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 def build_pools_from_fixture(
@@ -94,7 +97,7 @@ class TestSolverMethodComparison:
         return build_pools_from_fixture(v2_fixture)
 
     @pytest.fixture
-    def profit_function(self, mock_pools) -> "Callable[[float], float]":
+    def profit_function(self, mock_pools) -> Callable[[float], float]:
         """Create a profit function using UniswapV2Pool.calculate_tokens_out_from_tokens_in().
 
         Returns negative profit (since minimize_scalar finds minima).
@@ -141,7 +144,7 @@ class TestSolverMethodComparison:
 
     def test_brent_vs_bounded_finds_same_optimum(
         self,
-        profit_function: "Callable[[float], float]",
+        profit_function: Callable[[float], float],
     ) -> None:
         """Test that both Brent (with bracket) and Bounded methods find same optimum."""
         # Brent: use bracket (initial search interval: a, b, c where f(b) < f(a), f(c))
@@ -175,7 +178,7 @@ class TestSolverMethodComparison:
 
     def test_golden_vs_bounded_finds_same_optimum(
         self,
-        profit_function: "Callable[[float], float]",
+        profit_function: Callable[[float], float],
     ) -> None:
         """Test that both Golden (with bracket) and Bounded methods find same optimum."""
         # Golden: use bracket (like Brent but simpler algorithm)
@@ -209,7 +212,7 @@ class TestSolverMethodComparison:
 
     def test_brent_fewer_evaluations_than_golden(
         self,
-        profit_function: "Callable[[float], float]",
+        profit_function: Callable[[float], float],
     ) -> None:
         """Test that Brent uses fewer function evaluations than Golden."""
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
@@ -233,7 +236,7 @@ class TestSolverMethodComparison:
 
     def test_all_three_methods_profit_accuracy(
         self,
-        profit_function: "Callable[[float], float]",
+        profit_function: Callable[[float], float],
     ) -> None:
         """Test that Brent, Golden, and Bounded achieve similar profit accuracy."""
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)

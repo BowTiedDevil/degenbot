@@ -9,6 +9,15 @@ pytest.skip(
     "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
     allow_module_level=True,
 )
+from degenbot.sushiswap.pools import SushiswapV2Pool
+
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.fork import AnvilFork
+from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
+from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.helpers.bot_factory import make_bot_with_provider
 
 """Tests that verify pool managers return the correct pool subclass for each DEX variant.
 
@@ -22,15 +31,6 @@ This ensures that:
 - AerodromeV3PoolTracker returns AerodromeV3Pool
 """
 
-from degenbot.sushiswap.pools import SushiswapV2Pool
-
-from degenbot.checksum_cache import get_checksum_address
-from degenbot.fork import AnvilFork
-from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
-from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from tests.helpers.bot_factory import make_bot_with_provider
 
 pytestmark = pytest.mark.online_rpc
 

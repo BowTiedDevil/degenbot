@@ -4,14 +4,19 @@ Replaces the former FACTORY_DEPLOYMENTS/register_exchange tests.
 pool_type_registry is now the sole source of truth for deployment data.
 """
 
+from __future__ import annotations
+
 import random
+from typing import TYPE_CHECKING
 
 import pytest
-from degenbot._ffi import ChecksummedAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 
 def _generate_random_address() -> ChecksummedAddress:

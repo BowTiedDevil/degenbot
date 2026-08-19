@@ -7,15 +7,17 @@ Includes exceptions for:
 - Pool trackers (TrackerError, PoolNotAssociated, ...)
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Any
 
 from hexbytes import HexBytes
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.exceptions.base import DegenbotError
-from degenbot.types.aliases import BlockNumber
 
 if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types.aliases import BlockNumber
     from degenbot.uniswap.v4_liquidity_pool import Hooks
 
 # --- EVM ---
@@ -204,7 +206,7 @@ class HookedPoolResult(PossibleInaccurateResult):
     The set of conflicting hooks is available on the ``hooks`` attribute.
     """
 
-    def __init__(self, amount_in: int, amount_out: int, hooks: set["Hooks"]) -> None:
+    def __init__(self, amount_in: int, amount_out: int, hooks: set[Hooks]) -> None:
         """Initialize the instance."""
         self.hooks = hooks
         super().__init__(

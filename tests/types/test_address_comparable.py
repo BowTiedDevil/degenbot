@@ -1,10 +1,16 @@
 """Tests verifying AddressComparable mixin provides address-based comparison and hashing."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import pytest
-from degenbot._ffi import ChecksummedAddress
 from hexbytes import HexBytes
 
 from degenbot.types.address_comparable import AddressComparable
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 
 class _FakeOnChainEntity(AddressComparable):

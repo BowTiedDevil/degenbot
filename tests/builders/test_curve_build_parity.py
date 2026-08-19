@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from eth_utils import keccak
 
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi import Bot
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 
 # 20-byte (40 hex) addresses matching the Rust plain-pool test.

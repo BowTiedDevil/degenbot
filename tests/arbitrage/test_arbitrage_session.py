@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from degenbot.runner import BotRunner as BotRunner
+from degenbot.runner import BotRunner
 from degenbot.runner.config import ArbitrageConfig
 
 

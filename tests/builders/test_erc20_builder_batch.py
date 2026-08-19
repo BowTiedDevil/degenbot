@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import json
 
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi import Bot
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.registry import TokenRegistry
@@ -55,10 +55,12 @@ class _RecFakeIo:
         return
 
     def fetch_erc20_string_field(self, address: str, prototype: str) -> str:
-        raise ValueError("revert")
+        msg = "revert"
+        raise ValueError(msg)
 
     def fetch_erc20_uint_field(self, address: str, prototype: str) -> int:
-        raise ValueError("revert")
+        msg = "revert"
+        raise ValueError(msg)
 
 
 def test_build_many_issues_single_batched_fetch() -> None:

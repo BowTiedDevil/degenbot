@@ -1,11 +1,16 @@
 """Checksum address conversion with LRU caching."""
 
+from __future__ import annotations
+
 import functools
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from eth_typing import HexAddress
+from degenbot._ffi import to_checksum_address
 
-from degenbot._ffi import ChecksummedAddress, to_checksum_address
+if TYPE_CHECKING:
+    from eth_typing import HexAddress
+
+    from degenbot._ffi import ChecksummedAddress
 
 _HEX_PREFIX_LENGTH = 2
 

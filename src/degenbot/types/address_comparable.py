@@ -1,8 +1,13 @@
 """AddressComparable: address wrapper with equality by checksum."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from hexbytes import HexBytes
 
-from degenbot._ffi import ChecksummedAddress
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
 
 
 class AddressComparable:

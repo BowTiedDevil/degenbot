@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from degenbot._ffi import Bot
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V2, BalancerV2StablePool
-from degenbot._ffi import Bot
 from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 

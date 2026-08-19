@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot._ffi import Bot
+from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,

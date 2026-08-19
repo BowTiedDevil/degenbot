@@ -39,7 +39,7 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
     recorded: list[dict] = []
 
     class _Rec(_RecordingCandidate):
-        def __init__(self, **kwargs) -> None:  # noqa: D107
+        def __init__(self, **kwargs) -> None:
             super().__init__(**kwargs)
             recorded.append(kwargs)
 

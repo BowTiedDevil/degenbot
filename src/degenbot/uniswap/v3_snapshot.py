@@ -1,24 +1,29 @@
 """Uniswap V3 pool snapshot and subscription handler."""
 
+from __future__ import annotations
+
 import pathlib
 from collections import defaultdict, deque
-from typing import Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import pydantic_core
-from eth_typing import HexAddress
-from sqlalchemy.orm import Session, scoped_session
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot._ffi.db import DatabaseSnapshot as _EngineSnapshot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.operations import get_scoped_sqlite_session
-from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.logging import logger
-from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent, UniswapV3PoolLiquidityMappingUpdate
+
+if TYPE_CHECKING:
+    from eth_typing import HexAddress
+    from sqlalchemy.orm import Session, scoped_session
+
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.types.aliases import BlockNumber, ChainId
 
 
 class LiquidityMap(TypedDict):

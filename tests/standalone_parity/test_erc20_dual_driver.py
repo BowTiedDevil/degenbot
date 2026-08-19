@@ -27,8 +27,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot._ffi import Bot
+from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.crypto import function_selector
 
 # ---- the shared canonical fixture (loaded, not copied) ----

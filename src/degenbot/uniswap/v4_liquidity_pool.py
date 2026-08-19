@@ -26,14 +26,15 @@ Rust-derived bitmap so a snapshot's on-chain bitmap is preserved verbatim AND
 a fetcher-checked empty word is seen as present-but-zero.
 """
 
+from __future__ import annotations
+
 import dataclasses
 from enum import Enum
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
 from hexbytes import HexBytes
 
-from degenbot._ffi import ChecksummedAddress
 from degenbot.abi import encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
@@ -47,15 +48,12 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     NoPoolStateAvailable,
 )
-from degenbot.types import LiquidityPool
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.math import (
     get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
 )
-from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
@@ -68,6 +66,12 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolState,
     UniswapV4PoolStateUpdated,
 )
+
+if TYPE_CHECKING:
+    from degenbot._ffi import ChecksummedAddress
+    from degenbot.types import LiquidityPool
+    from degenbot.types.aliases import BlockNumber
+    from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
 @dataclasses.dataclass(slots=True)
@@ -174,7 +178,7 @@ class UniswapV4Pool(
     _pool_manager_address: ChecksummedAddress
     hook_address: ChecksummedAddress
     _state_view_address: ChecksummedAddress
-    active_hooks: frozenset["Hooks"]
+    active_hooks: frozenset[Hooks]
     _token0: Erc20Token
     _token1: Erc20Token
     _pool_key: UniswapV4PoolKey
