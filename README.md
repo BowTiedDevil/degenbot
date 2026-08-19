@@ -294,7 +294,7 @@ pool.external_update(update)  # Pure logic — no I/O
 | SushiSwap | V2, V3 | Ethereum, Base |
 | Curve | V1 | Ethereum |
 | Solidly | V2 | Ethereum, Base | *(utility functions only, no pool class)*
-| Balancer | V2 | Ethereum | Weighted & stable pools, PowVersion detection, StableMath V1/V2 invariant |
+| Balancer | V2 | Ethereum | Weighted & stable pools (MetaStable, Composable) |
 | Camelot | V2 | Arbitrum |
 | SwapBased | V2 | Base |
 
@@ -695,12 +695,6 @@ assert tripool.fee == 4000000
 
 Balancer V2 weighted pools use the weighted product invariant with configurable token weights and a singleton Vault architecture. The math libraries are ported from the [Balancer V2 Solidity monorepo](https://github.com/balancer/balancer-v2-monorepo) with exact integer-level matching against on-chain results.
 
-Key design points:
-- **PowVersion detection**: Different deployed pool contracts embed different versions of the FixedPoint library. `WeightedPool2Tokens` (V1) uses the general LogExpMath path with error bounds; `WeightedPool` (V2) includes fast paths for y == ONE/TWO/FOUR. The version is detected from bytecode at construction time.
-- **Rounding direction**: GIVEN_IN rounds down (seller gets less), GIVEN_OUT rounds up (buyer pays more).
-- **Fee ordering**: GIVEN_OUT applies downscale-up first, then add swap fee — matching Solidity's exact operation order.
-- **Scaling**: Tokens with non-18 decimals are normalized via scaling factors computed as `ONE * 10**(18 - decimals)`.
-
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
 _BOT = Bot()
@@ -741,30 +735,20 @@ weighted_pool = make_balancer_weighted_pool(
 -->
 
 ```python
-from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
-from degenbot.balancer.libraries.constants import PowVersion
+from degenbot.balancer.pools import BalancerV2Pool
 
-# `detect_pow_version(bytecode)` resolves the PowVersion from deployed pool
-# bytecode: V2 (WeightedPool) embeds the FixedPoint TWO fast-path constant
-# (0x1bc16d674ec80000) for y == ONE/TWO/FOUR fast paths; V1 (WeightedPool2Tokens)
-# omits it and uses the general LogExpMath path. `Bot.build_pool()` runs this
-# internally; here it is exercised directly so the example stays I/O-free.
-v1_bytecode = bytes(range(0, 32)).hex()          # arbitrary V1 bytecode (no TWO constant)
-assert detect_pow_version(v1_bytecode) == PowVersion.V1
-v2_bytecode = '1bc16d674ec80000' + '00' * 16     # V2 bytecode: TWO constant present
-assert detect_pow_version(v2_bytecode) == PowVersion.V2
-
-# `weighted_pool` was built offline by the fixture above; production code uses
-# `bot.build_pool(address)` which runs the same registration against live RPC.
+# `weighted_pool` is the real mainnet "80 BAL 20 WETH" pool, built off-line by
+# the fixture above so the math below runs without RPC. In production the same
+# object comes from:
+#     weighted_pool = bot.build_pool('0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56')
 assert isinstance(weighted_pool, BalancerV2Pool)
 assert weighted_pool.address == '0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56'
 assert weighted_pool.vault == '0xBA12222222228d8Ba445958a75a0704d566BF2C8'
 assert [t.symbol for t in weighted_pool.tokens] == ['BAL', 'WETH']
 assert weighted_pool.fee == Fraction(1, 100)                 # 1% swap fee
 assert weighted_pool.weights == (8 * 10**17, 2 * 10**17)    # 80 BAL / 20 WETH
-assert weighted_pool.pow_version == PowVersion.V1           # WeightedPool2Tokens
 
-# GIVEN_IN rounds DOWN (seller gets less) — pure math, no I/O
+# Swap math is pure after construction — no I/O
 amount_out = weighted_pool.calculate_tokens_out_from_tokens_in(
     token_in=weighted_pool.tokens[1],   # WETH in
     token_out=weighted_pool.tokens[0],  # BAL out
@@ -772,7 +756,6 @@ amount_out = weighted_pool.calculate_tokens_out_from_tokens_in(
 )
 assert amount_out == 61874980427000000  # ≈ 0.0619 BAL per WETH at 80/20 + 1% fee
 
-# GIVEN_OUT rounds UP (buyer pays more): input needed for a target output
 amount_in = weighted_pool.calculate_tokens_in_from_tokens_out(
     token_in=weighted_pool.tokens[1],   # WETH in
     token_out=weighted_pool.tokens[0],  # BAL out
@@ -794,8 +777,8 @@ from degenbot.balancer.deployments import (
 assert BALANCER_V2_VAULT_ADDRESS == '0xBA12222222228d8Ba445958a75a0704d566BF2C8'
 assert BALANCERQUERIES_CONTRACT_ADDRESS == '0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5'
 
-# BROKEN_BALANCER_V2_POOLS is a frozenset of pools with swaps disabled on-chain
-# (BAL#327 SWAPS_DISABLED). Filter before constructing:
+# BROKEN_BALANCER_V2_POOLS is a frozenset of pools with swaps disabled on-chain.
+# Filter before constructing:
 broken = '0x753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB'  # YUME/WETH 1/99
 assert broken in BROKEN_BALANCER_V2_POOLS
 assert weighted_pool.address not in BROKEN_BALANCER_V2_POOLS  # 80 BAL 20 WETH is healthy
@@ -805,12 +788,10 @@ assert weighted_pool.address not in BROKEN_BALANCER_V2_POOLS  # 80 BAL 20 WETH i
 
 Balancer V2 stable pools (MetaStablePool and ComposableStablePool) use the StableSwap invariant with rate caching. The math libraries are ported from deployed contracts with exact integer-level matching against on-chain results.
 
-Key design points:
-- **MetaStablePool**: 2-token stable pool with rate providers. No BPT token. Uses V2 invariant (`round_up=True` for swaps). Near-static rates produce exact 0-wei matching without a rate provider.
-- **ComposableStablePool**: Multi-token stable pool including its own BPT token. Uses V1 invariant (always-roundDown). Time-varying rates (e.g., bb-a-* yield tokens) require a `BalancerRateProvider` for exact matching; without one, `StaleRateResult` is raised.
-- **Cache-aware rate resolution**: The `CacheAwareRateProvider` replicates the on-chain `_cacheTokenRateIfNecessary` flow exactly — reads `getTokenRateCache()`, checks cache expiry against block timestamp, and only calls `getRate()` when the cache has expired. This produces exact 0-wei matching against on-chain `querySwap` results.
-- **Invariant versions**: Deployed contracts use two different StableMath implementations. V1 (`INVARIANT_V1`) always rounds down with D_P accumulation — matches the monorepo `_calculate_invariant`. V2 (`INVARIANT_V2`) has a `roundUp` parameter with P_D accumulation — matches `_calculate_invariant_deployed`. Using the wrong version gives a systematic 1-wei error.
-- **BPT handling**: ComposableStablePools include their own BPT token in the token list. The `bpt_idx` parameter identifies the BPT position so it can be dropped from invariant and swap calculations. `bpt_idx=None` (MetaStable) vs `bpt_idx=int` (Composable).
+Two pool shapes share the same `BalancerV2StablePool` interface:
+
+- **MetaStablePool** — a 2-token stable pool with no BPT token and near-static rates: exact swap math needs no rate provider and no extra I/O.
+- **ComposableStablePool** — a multi-token stable pool that includes its own BPT token; time-varying rates (e.g., bb-a-* yield tokens) require a live `BalancerRateProvider`, and without one a swap call raises `StaleRateResult` (the approximate result is still readable on the exception).
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -890,20 +871,19 @@ comp_pool = make_balancer_stable_pool(
 -->
 
 ```python
-from degenbot.balancer.stable_pools import BalancerV2StablePool, INVARIANT_V1, INVARIANT_V2
+from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.exceptions.pool import StaleRateResult
 
-# MetaStablePool: V2 invariant, no BPT, near-static rates → no rate provider needed.
+# Both pools were built off-line by the fixture above so the math runs
+# without RPC; production obtains the same objects via `bot.build_pool(address)`.
+
+# MetaStablePool: 2-token, no BPT, near-static rates — exact swap math
+# needs no rate provider and no live RPC.
 assert isinstance(meta_pool, BalancerV2StablePool)
 assert [t.symbol for t in meta_pool.tokens] == ['wstETH', 'WETH']
-assert meta_pool.bpt_idx is None                 # MetaStable has no BPT
-assert meta_pool.invariant_version == INVARIANT_V2
 assert meta_pool.fee == Fraction(4, 10000)        # 0.04%
 assert meta_pool.amp == 50_000
-# scaling factors embed the near-static wstETH:ETH rate (1.1)
-assert meta_pool.scaling_factors == (11 * 10**17, 10**18)
 
-# Exact 0-wei swap math — no rate provider, no live RPC
 amount_out = meta_pool.calculate_tokens_out_from_tokens_in(
     token_in=meta_pool.tokens[1],   # WETH in
     token_out=meta_pool.tokens[0],  # wstETH out
@@ -911,13 +891,11 @@ amount_out = meta_pool.calculate_tokens_out_from_tokens_in(
 )
 assert amount_out == 908727110808623404  # ≈ 0.9087 wstETH per WETH @ 1.1 rate
 
-# ComposableStablePool: V1 invariant, BPT in the token list (dropped from
-# invariant/swap math via bpt_idx), time-varying rates → a live rate provider
-# is required for exact matching. Without one, swaps raise StaleRateResult.
+# ComposableStablePool: time-varying rates require a live rate provider;
+# without one the call raises StaleRateResult (the approximate result is
+# still readable on the exception).
 assert isinstance(comp_pool, BalancerV2StablePool)
 assert [t.symbol for t in comp_pool.tokens] == ['TUSD', '50TUSD50USDC', 'USDC']
-assert comp_pool.bpt_idx == 1                      # BPT at index 1
-assert comp_pool.invariant_version == INVARIANT_V1
 assert comp_pool.fee == Fraction(3, 10000)         # 0.03%
 
 try:
@@ -930,21 +908,6 @@ except StaleRateResult as e:
     # StaleRateResult wraps the approximate result so callers can still read it
     assert e.amount_in == 10**18
     assert e.amount_out == 1001103
-
-# For exact 0-wei matching on a ComposableStablePool, construct with a live
-# `BalancerRateProvider` (e.g. ``CacheAwareRateProvider``) and pass
-# ``block_identifier`` so rates resolve at that block. With a *static* rate
-# provider (or none at all, as here) the call raises regardless:
-try:
-    comp_pool.calculate_tokens_out_from_tokens_in(
-        token_in=comp_pool.tokens[0],
-        token_out=comp_pool.tokens[2],
-        token_in_quantity=10**18,
-        block_identifier=18_900_000,
-    )
-    raise AssertionError("expected StaleRateResult without a live rate provider")
-except StaleRateResult:
-    pass  # exact matching requires a non-static BalancerRateProvider
 ```
 
 ### Uniswap Arbitrage
