@@ -7,7 +7,7 @@ Degenbot has two equally first-class consumers sharing one Rust core:
 - **Pure-Rust MEV bot** — `cargo add degenbot` (the umbrella crate re-exporting the cores; a git/path dependency until the workspace is published to crates.io) and build a fully functional MEV bot in Rust only.
 - **Python-driven MEV bot** — drive the same Rust core from Python through a thin [PyO3](https://pyo3.rs) layer that translates Python calls into Rust calls.
 
-The Rust core is the engine; Python is a driver shell, not a co-implementation. Pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding all live in Rust core crates; the Python layer provides the user-facing API, orchestration, and immutable config dual-tracking. See [`AGENTS.md`](AGENTS.md) and [`docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md) for the full architectural vision.
+The Rust core is the engine; Python is a driver shell, not a co-implementation. Pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding all live in Rust core crates; the Python layer provides the user-facing API, orchestration, and configuration. See [`docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md) for the architectural vision.
 
 ## Contents
 
@@ -58,39 +58,7 @@ These classes serve as building blocks for the lessons published by [BowTiedDevi
 
 ## Architecture: The Python-Rust Split
 
-Degenbot follows a Polars-inspired three-layer architecture (ADR-005). Every concern belongs to exactly one layer:
-
-| Layer | Where it lives | Holds |
-|-------|----------------|-------|
-| **Rust core** | `rust/crates/degenbot-{core,-concentrated-liquidity-math,-curve-math,-balancer-math,-abi,-decoders,-uniswap,-rpc,-bot,-pools,-solvers,…}` — **zero `pyo3`** by default | data + state-machine logic + pure math + protocols (DexIdentity, encoders, decoders) |
-| **PyO3 wrapper** | `rust/crates/degenbot-python/src/<domain>/**` (the `degenbot._ffi` extension module) | `#[pyclass]`/`#[pyfunction]` only — arg extraction → GIL release → core call → result wrap. **No business logic.** |
-| **Python companion** | `src/degenbot/**` | user-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display |
-
-**The standalone-Rust-core constraint:** anything a standalone Rust consumer (`cargo add degenbot`) needs to build an MEV bot lives in a core crate from day one — never stranded on the Python side. The no-pyo3-in-cores invariant is enforced by `just check-no-pyo3-in-cores`.
-
-### Rust Core Crates
-
-The Rust workspace under `rust/crates/` exposes focused, independently consumable crates:
-
-| Crate | Responsibility |
-|-------|----------------|
-| `degenbot-core` | Shared types, `DexIdentity`, EIP-1559 fee primitives, protocols |
-| `degenbot-v2-math` / `degenbot-concentrated-liquidity-math` / `degenbot-curve-math` / `degenbot-balancer-math` / `degenbot-solidly-math` | Per-protocol pure swap/invariant math |
-| `degenbot-pools` | I/O-free pool state machines |
-| `degenbot-decoders` / `degenbot-abi` | Event + ABI decode/encode |
-| `degenbot-uniswap` | Uniswap V2/V3/V4 domain types |
-| `degenbot-rpc` / `degenbot-fork` | RPC interaction + anvil forking |
-| `degenbot-solvers` / `degenbot-pathfinding` | Pure multi-hop arb solve math / zero-dependency path-discovery graph |
-| `degenbot-bot` | The `Bot` state owner, pump/engine lifecycle, and the EVM-exact `ArbitrageEngine` |
-| `degenbot-arbitrage` | The settlement-arbitrage searcher strategy over the simulation engine |
-| `degenbot-db` | SQLite persistence substrate + Rust-owned schema DDL (cutover target, ADR-010/011) |
-| `degenbot-pool-updater` / `degenbot-aave` | DB-aware state updaters (pool chunk loop; Aave V3 updater + position analysis) |
-| `degenbot-price` / `degenbot-executor` / `degenbot-submission` / `degenbot-simulation` | On-chain price readers, cmd-executor calldata grammar, EIP-1559 signing/submission, in-process revm simulation |
-| `degenbot-execution` / `degenbot-order-index` | User-owned `ExecutionStrategy` seam (ADR-025); net-profit order index (ADR-024) |
-| `degenbot-python` | The PyO3 binding layer (`degenbot._ffi` Python module, `degenbot_rs` Rust crate) |
-| `degenbot` | Umbrella crate re-exporting the cores for standalone Rust consumers |
-
-The current state layer is specified by the ADR design log — notably [ADR-003](docs/adr/ADR-003-botcore-state-layer.md) (Rust `Bot` state ownership) and [ADR-005](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md) (the FFI topology) — with the crate sources as the last word. [`docs/architecture/rust-owned-bot.md`](docs/architecture/rust-owned-bot.md) documents the original `ArbitrageEngine` design (Plans 079–082) and is kept as a design-history reference.
+Ownership is strict, which is what makes both consumption paths first-class: the Rust core owns everything stateful and performance-critical — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python side owns the user-facing API, orchestration, and configuration. The core crates contain **no PyO3 code at all**, so a pure-Rust bot (`cargo add degenbot`) runs without any Python machinery; an in-repo proof is `rust/crates/degenbot/examples/standalone_consumer.rs`. Architectural decisions — state ownership (ADR-003), FFI topology (ADR-005), schema cutover (ADR-010) — are recorded in the [ADR design log](docs/adr/), with the crate sources as the last word.
 
 ## Installation
 
@@ -1484,18 +1452,6 @@ The Rust core is the engine of degenbot — it owns all performance-critical and
 
 The extension is built automatically during installation using [maturin](https://www.maturin.rs/) (or `uv sync`, which invokes maturin under the hood).
 
-### Key Dependencies
-
-| Crate | Purpose |
-|-------|--------|
-| [alloy](https://github.com/alloy-rs/alloy) | Ethereum primitives (Address, U256, B256), RPC types, keccak256 |
-| [pyo3](https://pyo3.rs) | Python bindings with `abi3-py312` for Python 3.12+ support |
-| [tokio](https://tokio.rs) | Multi-threaded async runtime for concurrent RPC calls |
-| [parking_lot](https://github.com/Amanieu/parking_lot) | High-performance RwLock for thread-safe caching |
-| [thiserror](https://github.com/dtolnay/thiserror) | Derivative error types |
-| [serde](https://serde.rs) | Serialization/deserialization |
-| [lru](https://github.com/jaemk/lru) | LRU cache implementation |
-
 ### Available Functions
 
 #### Tick Math
@@ -1659,15 +1615,7 @@ log_filter = LogFilter(
 
 ### Engine and Dispatch Surface
 
-Beyond the leaf primitives, the extension exposes the operator-facing engine seams the bot driver consumes:
-
-- **`degenbot._ffi.Bot`** — the shared Rust `BotState` handle (`load_snapshot_from_db`, `build_v2/v3/v4_pool`, `register_*_pool`, …); every Python pool/token companion wraps one of its handles.
-- **`degenbot._ffi.BotIo`** — the single construction/refresh I/O seam (RPC + DB choreography, GIL released).
-- **`degenbot._ffi.ArbitrageEngine`** — the settlement-arbitrage engine (`subscribe` / `resume` / `stop`, path registration, `latest_results()`, `inspect_path`, `block_stream()`).
-- **`degenbot._ffi.LiquidityPool` / `degenbot._ffi.Erc20Token`** — thin pyclass handles over the Rust-owned state; not directly constructible.
-- **`dispatch_profitable_py` + `degenbot._ffi.executor`** — the cmd-executor encode funnel (`composers::encode_cmd_stream`).
-- **`degenbot._ffi.submission`** — `TxSigner` / `Dispatcher` / `SubmitCandidate` + `dispatch_and_submit_py` (EIP-1559).
-- **`degenbot._ffi.price` / `degenbot._ffi.subscriber` / `degenbot._ffi.db`** — on-chain price readers, pool-state subscriptions, and the `db_*` Rust-backed operations (create/backup/compact/upgrade, schema-state inspection, cutover/heal, pool-row upsert, Aave position analysis).
+Advanced drivers can also reach the engine directly through the `degenbot._ffi` module — the settlement-arbitrage engine (`ArbitrageEngine`), the shared `Bot` state handle, plus the I/O, submission, and price seams — instead of going through the `degenbot.*` conveniences. Its type stubs (`src/degenbot/_ffi/*.pyi`) are the reference surface.
 
 ### Why Rust for the Hot Path
 
