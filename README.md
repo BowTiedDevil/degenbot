@@ -44,8 +44,8 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 - [Donation](#donation)
 
 > **Debugging a failing settlement-arbitrage path, or building your own
-> simulation harness?** See [`INVESTIGATIONS.md`](INVESTIGATIONS.md)** —
-> the simulation oracle driver, the per-contract scaffolder, and the
+> simulation harness?** See [`INVESTIGATIONS.md`](INVESTIGATIONS.md) — the
+> simulation oracle driver, the per-contract scaffolder, and the
 > path-fixture toolkit.
 
 ## Overview
@@ -152,7 +152,7 @@ pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 
 ### I/O-Free Architecture
 
-Degenbot pools follow an **I/O-free architecture** where on-chain data is fetched at construction time and injected into pool objects. After construction, pools are pure calculation objects with no network dependencies. For the Uniswap V2/V3/V4 families (including Aerodrome and Balancer), `Bot.build_pool()` delegates the full I/O choreography — DB lookup → RPC fetch → decode → construct → register — to the **Rust core's `PoolBuilder`**, and the Python shell only wraps the returned Rust-owned pool handle and registers the pool's ERC-20 tokens. Curve keeps a Python `CurvePoolBuilder`; token metadata goes through `Erc20Builder`. All construction/refresh I/O runs through the Rust [`BotIo`](#engine-and-dispatch-surface) seam (`degenbot._ffi.BotIo`).
+Degenbot pools follow an **I/O-free architecture** where on-chain data is fetched at construction time and injected into pool objects. After construction, pools are pure calculation objects with no network dependencies. For the Uniswap V2/V3/V4 families (including Aerodrome and Balancer), `Bot.build_pool()` performs that full choreography on the Rust side; Curve pools and token metadata use the equivalent Python-side builders. Either way, the pool you receive needs no network access at construction time.
 
 **Benefits:**
 - **Testability**: Easy to create test fixtures with mocked data
@@ -184,7 +184,7 @@ bot = degenbot.Bot(
 )
 # The RPC provider is built from config; eth_chainId is enforced to equal
 # default_chain_id at construction.
-bot.provider  # ProviderAdapter for chain 1
+bot.provider  # the chain's AlloyProvider (chain_id enforced at construction)
 bot.chain_id  # 1
 ```
 
@@ -210,7 +210,7 @@ approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415
 - `bot.managed_pools` - ManagedPoolRegistry for V4 pools
 - `bot.db` - DatabaseSessionManager for state snapshots
 
-**Lifecycle & refresh:** `Bot` is a context manager — `with degenbot.Bot(config=...) as bot:` (or an explicit, idempotent `bot.close()`) tears down the provider, the scoped DB session, and the Rust engine handles. `bot.update(pool, block_number=...)` is the canonical refresh entry point for the V2/V3/V4 families: it fetches current chain state via the Rust `BotIo` seam and pushes `pool.external_update()` (returns `True` only when state changed). `bot.release_python_state()` drops the Python-side tracker/snapshot caches once the Rust engine owns canonical state. Builders are internal to Bot and not exposed publicly. All pool/token creation goes through `Bot.build_pool()`.
+**Lifecycle & refresh:** `Bot` is a context manager — `with degenbot.Bot(config=...) as bot:` (or an explicit, idempotent `bot.close()`) tears down the provider, the scoped DB session, and the Rust engine handles. `bot.update(pool, block_number=...)` is the canonical refresh entry point for the V2/V3/V4 families: it fetches current chain state from the Rust core and pushes `pool.external_update()` (returns `True` only when state changed). `bot.release_python_state()` drops the Python-side tracker/snapshot caches once the Rust engine owns canonical state. Builders are internal to Bot and not exposed publicly. All pool/token creation goes through `Bot.build_pool()`.
 
 ### Pool Types and Builders
 
@@ -227,7 +227,7 @@ When `build_pool` is called, the pool type is auto-resolved — in order, from t
 
 ### External Updates
 
-Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. I/O never touches the pool itself: for the V2/V3/V4 families `bot.update(pool)` fetches current reserves/slot0/liquidity through the Rust `BotIo` seam (Curve/Balancer refresh runs through the remaining Python builders), constructs the family's `ExternalUpdate` message, and pushes it to the pool:
+Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. I/O never touches the pool itself: for the V2/V3/V4 families `bot.update(pool)` fetches current reserves/slot0/liquidity from the Rust core (Curve/Balancer refresh runs through the remaining Python builders), constructs the family's `ExternalUpdate` message, and pushes it to the pool:
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -587,7 +587,7 @@ assert lp.pool_key == UniswapV4PoolKey(
 
 ### Forking With Anvil
 
-The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The fork subprocess itself is spawned and driven by the Rust core crate `degenbot-fork` (`degenbot._ffi.AnvilFork`); the Python class is a thin companion over it. The object provides a `provider` attribute — an `AlloyProvider` — which can be used to communicate with the fork like any typical RPC client.
+The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](https://github.com/foundry-rs/foundry) toolkit. The fork subprocess is spawned and driven by the Rust core; the Python `AnvilFork` is a thin companion over it. The object provides a `provider` attribute — an `AlloyProvider` — which can be used to communicate with the fork like any typical RPC client.
 
 <!-- skip: start "requires running anvil process" -->
 
@@ -639,7 +639,7 @@ The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anv
 
 ### Curve StableSwap Pools (I/O-Free)
 
-Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
+Curve pools follow the same I/O-free architecture: the Bot resolves metapool detection, lending-token identification, and all on-chain inputs before the pool runs pure math:
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -1545,7 +1545,7 @@ just dev  # Build and install Python extension
 Additional documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture/)**: High-level architectural patterns
-  - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — The CurveDataProvider seam for decoupled I/O
+  - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — how pools keep I/O out of the calculation path
   - [Rust-Owned Settlement-Arbitrage Bot](docs/architecture/rust-owned-bot.md) — the original `ArbitrageEngine` design (Plans 079–082); marked historical, kept as a design-history reference (the current state layer follows the ADR log)
   - [Operator Add-Path Surface](docs/architecture/operator-add-path-surface.md) — steering a live bot (mid-run add-path + bounded on-demand discovery) over the Unix-socket JSON-lines operator channel
   - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
