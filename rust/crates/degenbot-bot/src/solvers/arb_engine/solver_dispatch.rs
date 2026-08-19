@@ -36,7 +36,7 @@ fn hop_is_future(update_block: u64, solve_block: u64) -> bool {
 }
 use ::degenbot_solvers::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType,
-    MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult,
+    MixedPoolRef, ResolvedHop, ResolvedMixedPath, SolvePathResult,
 };
 
 impl ArbitrageEngine {
@@ -544,9 +544,13 @@ impl ArbitrageEngine {
     }
 
     ///
-    /// `core` is the locked [`BotState`] snapshot to read V2 state from
-    /// (ADR-003). V3/V4 hops still read the per-family block engines; their
-    /// state migrates into `core` in Slices 2/3.
+    /// `core` is the locked [`BotState`] snapshot that all family state is read
+    /// from (ADR-003). The CL (V3/V4) arms and the Solidly-stable arm project
+    /// through `crate::bot_core::resolve` — the first unprojectable hop
+    /// (`...resolve::MissingHopReason`, logged at `debug`) leaves `valid ==
+    /// false`, exactly as today's bare `return` did. The V2 / Balancer /
+    /// Curve arms still sit inline below until T2 of epic MKRKNB completes
+    /// the per-family split.
     #[expect(clippy::too_many_lines)]
     pub fn resolve_path(
         core: &crate::bot_core::BotState,
@@ -564,7 +568,7 @@ impl ArbitrageEngine {
         resolved.hops.reserve(pool_refs.len());
         resolved.state_nonces.reserve(pool_refs.len());
 
-        for pool_ref in pool_refs {
+        for (hop_index, pool_ref) in pool_refs.iter().enumerate() {
             // Capture the max price-clock `update_block` across all hops.
             resolved.max_update_block = resolved
                 .max_update_block
@@ -606,162 +610,40 @@ impl ArbitrageEngine {
                     resolved.hops.push(ResolvedHop::V2 { state: hop_state });
                     resolved.state_nonces.push(state.state_nonce);
                 }
-                HopType::V3 => {
-                    // Look up V3 pool state (now owned by BotState — ADR-003) and
-                    // build the integer tick-range sequence used by the CL solver.
-                    let Some(pool_state) = core.get_v3_pool(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(identity) = core.get_v3_identity(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(int_seq) = pool_state.build_int_v3_sequence(
-                        identity.tick_spacing,
-                        identity.fee,
-                        pool_ref.zero_for_one,
-                        // T47PPB: 24 = the active-set walk feed depth. The
-                        // enumeration-era value was 10 (tuple cap); the walk
-                        // has no tuple cap, so depth is bounded by data
-                        // availability (the range cache stores 24).
-                        24,
-                    ) else {
-                        return; // No integer sequence → invalid
-                    };
-
-                    resolved.hops.push(ResolvedHop::V3 { int_seq });
-                    resolved.state_nonces.push(pool_state.state_nonce);
-                }
-                HopType::V4 => {
-                    // V4 pools use identical CL math as V3 (BotState-owned, ADR-003).
-                    let Some(pool_state) = core.get_v4_pool(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(identity) = core.get_v4_identity(pool_ref.pool_key) else {
-                        return; // Missing pool → invalid
-                    };
-                    let Some(int_seq) = pool_state.build_int_v4_sequence(
-                        identity.pool_key.tick_spacing,
-                        identity.pool_key.fee,
-                        pool_ref.zero_for_one,
-                        // T47PPB: 24 = the active-set walk feed depth (twin of
-                        // the V3 site above).
-                        24,
-                    ) else {
-                        return; // No integer sequence → invalid
-                    };
-
-                    // AV42C7-debug: dump V4 solver intermediates for the
-                    // closed-form vs on-chain divergence hunt. Conservative
-                    // default ON (`crate::bot_core::bot_env_flag_default_on`);
-                    // set `DEGENBOT_DEBUG_V4_SOLVE=0` to disable. grep the log
-                    // for the failing pool_id (from the [sim-fixture] dump) to
-                    // localize the over-prediction to drain/coverage/range.
-                    if crate::bot_core::bot_env_flag_default_on("DEGENBOT_DEBUG_V4_SOLVE") {
-                        let pid_hex = alloy::hex::encode(identity.pool_id);
-                        let drain: i128 = if pool_ref.zero_for_one {
-                            pool_state
-                                .tick_data
-                                .get(&pool_state.tick)
-                                .map_or(0, |info| {
-                                    let bytes = info.liquidity_net.to_be_bytes::<32>();
-                                    let low: [u8; 16] =
-                                        bytes[16..32].try_into().unwrap_or([0u8; 16]);
-                                    i128::from_be_bytes(low)
-                                })
-                        } else {
-                            0
-                        };
-                        tracing::debug!(
-                            pool_manager = ?identity.pool_manager,
-                            pool_id = %pid_hex,
-                            zero_for_one = %pool_ref.zero_for_one,
-                            tick = pool_state.tick,
-                            liquidity = pool_state.liquidity,
-                            sqrt_price_x96 = %pool_state.sqrt_price_x96,
-                            protocol_fee = pool_state.protocol_fee,
-                            coverage = ?pool_state.coverage,
-                            n_ranges = int_seq.ranges.len(),
-                            drain = %drain,
-                            "[debug-v4-solve] pool details"
-                        );
+                HopType::V3 => match crate::bot_core::resolve::cl::project_v3(core, pool_ref) {
+                    Ok((hop, nonce)) => {
+                        resolved.hops.push(hop);
+                        resolved.state_nonces.push(nonce);
                     }
-
-                    resolved.hops.push(ResolvedHop::V4 { int_seq });
-                    resolved.state_nonces.push(pool_state.state_nonce);
-                }
+                    Err(reason) => {
+                        crate::bot_core::resolve::log_invalidation(pool_ref, hop_index, reason);
+                        return;
+                    }
+                },
+                HopType::V4 => match crate::bot_core::resolve::cl::project_v4(core, pool_ref) {
+                    Ok((hop, nonce)) => {
+                        resolved.hops.push(hop);
+                        resolved.state_nonces.push(nonce);
+                    }
+                    Err(reason) => {
+                        crate::bot_core::resolve::log_invalidation(pool_ref, hop_index, reason);
+                        return;
+                    }
+                },
                 // Solidly-stable (Aerodrome stable / Camelot stable_swap) resolve. Reads
                 // reserves + identity off the per-family `PoolEntry` arm, then
                 // fetches token decimals via the token registry (never stored
                 // on the identity — ADR-003 single source of truth).
                 HopType::SolidlyStable => {
-                    if let Some(id) = core.get_aerodrome_identity(pool_ref.pool_key) {
-                        let Some(state) = core.get_aerodrome_pool(pool_ref.pool_key) else {
-                            return; // Missing pool → invalid
-                        };
-                        let (decimals_0, decimals_1) =
-                            match (core.token_entry(&id.token0), core.token_entry(&id.token1)) {
-                                (Some(t0), Some(t1)) => (
-                                    U256::from(10u64).pow(U256::from(t0.decimals)),
-                                    U256::from(10u64).pow(U256::from(t1.decimals)),
-                                ),
-                                _ => return, // Missing token entry → invalid
-                            };
-                        // Aerodrome fee is stored as the fee fraction directly
-                        // (cf. Camelot below).
-                        resolved.hops.push(ResolvedHop::SolidlyStable {
-                            state: SolidlyHopState {
-                                reserves_0: state.reserve0.to::<U256>(),
-                                reserves_1: state.reserve1.to::<U256>(),
-                                decimals_0,
-                                decimals_1,
-                                token_in: u8::from(!pool_ref.zero_for_one),
-                                fee_numer: U256::from(id.fee.0),
-                                fee_denom: U256::from(id.fee.1),
-                                stable: id.stable,
-                                variant: id.variant,
-                            },
-                        });
-                        resolved.state_nonces.push(state.state_nonce);
-                    } else if let Some(id) = core.get_v2_identity(pool_ref.pool_key) {
-                        // Camelot stable_swap path (V2PoolIdentity with
-                        // `stable_swap=true`).
-                        let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
-                            return; // Missing pool → invalid
-                        };
-                        let (decimals_0, decimals_1) =
-                            match (core.token_entry(&id.token0), core.token_entry(&id.token1)) {
-                                (Some(t0), Some(t1)) => (
-                                    U256::from(10u64).pow(U256::from(t0.decimals)),
-                                    U256::from(10u64).pow(U256::from(t1.decimals)),
-                                ),
-                                _ => return, // Missing token entry → invalid
-                            };
-                        // Camelot stores the per-direction RETAINED fraction
-                        // `(gamma_numer, fee_denom)`; the solidly math takes the
-                        // FEE fraction, so invert: `fee_numer = denom - gamma`,
-                        // `fee_denom = denom`. Selected by `zero_for_one`
-                        // (token0 in → fee_token0; token1 in → fee_token1).
-                        let (gamma, denom) = if pool_ref.zero_for_one {
-                            id.fee_token0
-                        } else {
-                            id.fee_token1
-                        };
-                        resolved.hops.push(ResolvedHop::SolidlyStable {
-                            state: SolidlyHopState {
-                                reserves_0: state.reserve0.to::<U256>(),
-                                reserves_1: state.reserve1.to::<U256>(),
-                                decimals_0,
-                                decimals_1,
-                                token_in: u8::from(!pool_ref.zero_for_one),
-                                fee_numer: U256::from(denom.saturating_sub(gamma)),
-                                fee_denom: U256::from(denom),
-                                stable: id.stable_swap,
-                                variant: id.variant,
-                            },
-                        });
-                        resolved.state_nonces.push(state.state_nonce);
-                    } else {
-                        return; // Not an Aerodrome/Camelot pool → invalid
+                    match crate::bot_core::resolve::solidly::project_solidly(core, pool_ref) {
+                        Ok((hop, nonce)) => {
+                            resolved.hops.push(hop);
+                            resolved.state_nonces.push(nonce);
+                        }
+                        Err(reason) => {
+                            crate::bot_core::resolve::log_invalidation(pool_ref, hop_index, reason);
+                            return;
+                        }
                     }
                 }
                 HopType::BalancerWeighted => {

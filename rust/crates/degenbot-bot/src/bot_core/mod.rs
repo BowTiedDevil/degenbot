@@ -34,6 +34,7 @@ pub mod pump_telemetry;
 pub mod registration_lifecycle;
 pub mod reorg_coordinator;
 pub mod reserve_pair_orchestration;
+pub(crate) mod resolve;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
 pub mod solver_state_verifier;
