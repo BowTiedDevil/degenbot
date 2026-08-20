@@ -718,7 +718,11 @@ impl BlockPump {
     /// `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes). Also shuts
     /// down on a
     /// late-forward log on a tombstoned block (unreliable WS, ADR-008 D3).
-    #[expect(clippy::too_many_lines, clippy::cast_possible_truncation)]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation,
+        clippy::used_underscore_binding
+    )]
     #[tracing::instrument(skip(self, combined), fields(first_observed_block))]
     pub async fn run_with_stream(
         &mut self,
@@ -1124,6 +1128,12 @@ impl BlockPump {
                     gas_used,
                     gas_limit,
                 })) => {
+                    // MQUKB6 (epic KDUED5): the per-block beat — one entered
+                    // span per observed header. Future solver/submission spans
+                    // fired within this arm inherit it as parent for free.
+                    let _block_span =
+                        tracing::info_span!("degenbot.pump.block", block.number = number);
+                    let _entered = _block_span.enter();
                     // [DIAG] newHeads-liveness: HEADER count, gap, and 20s stall
                     // warning → one call on the telemetry seam.
                     telemetry.on_header(number);
@@ -4929,5 +4939,85 @@ mod tests {
                 eprintln!("C PRODUCTION: HUNG (60s timeout) — `build_provider` config regression");
             }
         }
+    }
+
+    /// MQUKB6 (epic KDUED5): one entered `degenbot.pump.block` span per
+    /// observed header, carrying a `block.number` field, parented under the
+    /// `run_with_stream` instrument span. In-memory exporter +
+    /// `set_global_default` (the repo convention: the thread-local `set_default`
+    /// is unsafe in a parallel test process - stale `DefaultGuard` restores
+    /// corrupt it). No other lib test sets a global subscriber, so this test
+    /// wins the once-per-process slot; the `OTel` layer itself is covered by the
+    /// `otel_plumbing` integration tests.
+    #[cfg(feature = "otel")]
+    #[tokio::test]
+    async fn header_arms_per_block_span_with_number_and_parent() {
+        use crate::otel;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        // Unique block number (0xDEADBEEF): with a global subscriber,
+        // concurrent tests' pump spans land in this exporter too, so assert
+        // on THIS test's header by number, not on total span counts.
+        const MY_BLOCK: u64 = 0xDEAD_BEEF;
+        const MY_BLOCK_I64: i64 = 0xDEAD_BEEF;
+
+        let (mut pump, _sink) = pump_for_test(None);
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+        // Global subscriber (repo convention, `set_global_default` - the
+        // thread-local `set_default` is process-unsafe in parallel tests). No
+        // other lib test takes the once-per-process global slot.
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("global default already set by another test");
+
+        let events: Vec<WsEvent> = vec![WsEvent::BlockHeader {
+            number: MY_BLOCK,
+            timestamp: 1,
+            base_fee_per_gas: Some(1),
+            gas_used: 1,
+            gas_limit: 1,
+        }];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, MY_BLOCK - 1).await;
+
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+
+        // Select THIS test's header span by its unique number (tracing-
+        // opentelemetry 0.33 maps u64 fields to strings; an OTel bump may
+        // switch to I64 - accept both representations).
+        let my_spans: Vec<_> = spans
+            .iter()
+            .filter(|sp| {
+                sp.name.as_ref() == "degenbot.pump.block"
+                    && sp.attributes.iter().any(|kv| {
+                        kv.key == opentelemetry::Key::from_static_str("block.number")
+                            && (matches!(kv.value, opentelemetry::Value::I64(v) if v == MY_BLOCK_I64)
+                                || matches!(kv.value, opentelemetry::Value::String(ref v) if v.as_str() == MY_BLOCK.to_string().as_str()))
+                    })
+            })
+            .collect();
+        assert_eq!(
+            my_spans.len(),
+            1,
+            "expected exactly one span for block {}; got names: {:?}",
+            MY_BLOCK,
+            spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
+        );
+        let block_span = &my_spans[0];
+
+        // Parented under the run_with_stream span (the loop's own frame).
+        let parent_found = spans.iter().any(|sp| {
+            sp.name.as_ref() == "run_with_stream"
+                && sp.span_context.span_id() == block_span.parent_span_id
+        });
+        assert!(
+            parent_found,
+            "per-block span for block {} not parented under run_with_stream; parent_span_id: {:?}",
+            MY_BLOCK, block_span.parent_span_id
+        );
     }
 }

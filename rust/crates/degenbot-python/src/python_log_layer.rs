@@ -24,9 +24,10 @@ use std::time::{Duration, Instant};
 use crossbeam_queue::ArrayQueue;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::layer::{Context, Layer, Layered};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Registry;
 
 /// Maximum number of log records buffered before dropping oldest.
 const QUEUE_CAPACITY: usize = 1024;
@@ -339,7 +340,21 @@ pub fn shutdown_log_drainer() {
     if let Some(state) = GLOBAL_LAYER_STATE.get() {
         state.shutdown.store(true, Ordering::Release);
     }
+    // K6PCKP: flush + kill the OTel provider (None-safe when the
+    // DEGENBOT_OTEL env gate was off).
+    #[cfg(feature = "otel")]
+    if let Some(handle) = OTEL_PROVIDER.get() {
+        let _ = handle.flush();
+        let _ = handle.shutdown();
+    }
 }
+
+/// K6PCKP: process-lifetime `OTel` tracer provider for the Python-driven
+/// registry. Set by `init_logging_subscriber` when `DEGENBOT_OTEL=1`;
+/// `shutdown_log_drainer` flushes/kills it.
+#[cfg(feature = "otel")]
+static OTEL_PROVIDER: std::sync::OnceLock<degenbot_bot::otel::OtelHandle> =
+    std::sync::OnceLock::new();
 
 /// Global reference to the layer state so `shutdown_log_drainer` can
 /// signal it. Set during `init_logging_subscriber`.
@@ -397,10 +412,92 @@ fn default_env_filter() -> EnvFilter {
 /// Must be called from the `#[pymodule]` init (where Python is initialized
 /// and the GIL is held). Safe to call multiple times — subsequent calls
 /// are no-ops.
+/// The base registry stack that [`build_base_registry`] returns: the
+/// Python slot `P` on top of the `fmt` writer layer on top of
+/// `EnvFilter`.
+type MiddleRegistry = Layered<
+    tracing_subscriber::fmt::Layer<
+        Layered<EnvFilter, Registry>,
+        tracing_subscriber::fmt::format::DefaultFields,
+        tracing_subscriber::fmt::format::Format<tracing_subscriber::fmt::format::Full>,
+        tracing_subscriber::fmt::writer::BoxMakeWriter,
+    >,
+    Layered<EnvFilter, Registry>,
+>;
+
+type BaseRegistry<P> = Layered<P, MiddleRegistry>;
+
+/// Assembles the base logging registry: `EnvFilter` + stderr `fmt`
+/// + a final Python-forwarding slot `P` (K6PCKP extraction). Byte-
+/// equivalent to the pre-K6PCKP inline assembly in
+/// `init_logging_subscriber`; extracted so the `OTel` layer can layer
+/// on top and the stack is testable without a `Python::attach`-
+/// capable drainer (seam C).
+#[must_use]
+pub(crate) fn build_base_registry<P>(env_filter: EnvFilter, python_layer: P) -> BaseRegistry<P>
+where
+    P: Layer<MiddleRegistry> + 'static,
+{
+    use tracing_subscriber::layer::SubscriberExt;
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(tracing_subscriber::fmt::writer::BoxMakeWriter::new(
+                    std::io::stderr,
+                ))
+                .with_ansi(true),
+        )
+        .with(python_layer)
+}
+
+#[cfg(feature = "otel")]
+type MiddleRegistryOtel<L> = Layered<
+    tracing_subscriber::fmt::Layer<
+        Layered<EnvFilter, Layered<L, Registry>>,
+        tracing_subscriber::fmt::format::DefaultFields,
+        tracing_subscriber::fmt::format::Format<tracing_subscriber::fmt::format::Full>,
+        tracing_subscriber::fmt::writer::BoxMakeWriter,
+    >,
+    Layered<EnvFilter, Layered<L, Registry>>,
+>;
+
+#[cfg(feature = "otel")]
+type BaseRegistryOtel<P, L> = Layered<P, MiddleRegistryOtel<L>>;
+
+/// Assembles the base registry with the `OTel` span layer pinned at the
+/// bottom of the stack (the SDK layer can only layer onto the bare
+/// Registry): `OTel + EnvFilter + fmt + the Python slot`.
+#[must_use]
+#[cfg(feature = "otel")]
+#[cfg(feature = "otel")]
+pub(crate) fn build_base_registry_with_otel<P, L>(
+    env_filter: EnvFilter,
+    otel_layer: L,
+    python_layer: P,
+) -> BaseRegistryOtel<P, L>
+where
+    P: Layer<MiddleRegistryOtel<L>> + 'static,
+    L: Layer<Registry> + 'static,
+{
+    use tracing_subscriber::layer::SubscriberExt;
+    tracing_subscriber::registry()
+        .with(otel_layer)
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(tracing_subscriber::fmt::writer::BoxMakeWriter::new(
+                    std::io::stderr,
+                ))
+                .with_ansi(true),
+        )
+        .with(python_layer)
+}
+
 pub fn init_logging_subscriber() {
+    use tracing_subscriber::util::SubscriberInitExt;
+
     let () = INIT_DONE.get_or_init(|| {
-        use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::util::SubscriberInitExt;
 
         // Build the Python-forwarding layer.
         let python_layer = PythonLogLayer::new();
@@ -419,17 +516,39 @@ pub fn init_logging_subscriber() {
         // unconditional forwarding — Python `logging` handles its own
         // per-logger level filtering).
         let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter());
-        let subscriber = tracing_subscriber::registry()
-            .with(env_filter)
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr)
-                    .with_ansi(true),
-            )
-            .with(python_layer);
 
-        // Set as the global default.
-        subscriber.init();
+        #[cfg(feature = "otel")]
+        {
+            // K6PCKP: OTel OTLP span layer. Import-time env gate (same
+            // rationale as DEGENBOT_HOTPATH): the pymodule init is the one
+            // justified implicit call site. Layered third on the base
+            // registry; the provider lives in OTEL_PROVIDER for
+            // `shutdown_log_drainer` flush/kill.
+            let otel_layer = if let Ok("1") = std::env::var("DEGENBOT_OTEL").as_deref() { match degenbot_bot::otel::provider_from_env_endpoint() {
+                Ok((provider, tracer)) => {
+                    let _ = OTEL_PROVIDER.set(degenbot_bot::otel::OtelHandle::new(provider));
+                    tracing::info!("OTel OTLP span layer active (endpoint from OTEL_EXPORTER_OTLP_* or http://localhost:4318)");
+                    Some(degenbot_bot::otel::layer(tracer))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "OTel layer disabled: OTLP exporter build failed");
+                    None
+                }
+            } } else {
+                tracing::debug!("OTel span layer inactive (set DEGENBOT_OTEL=1 to enable)");
+                None
+            };
+            match otel_layer {
+                Some(ol) =>
+                    build_base_registry_with_otel(env_filter, ol, python_layer).init(),
+                None => build_base_registry(env_filter, python_layer).init(),
+            }
+        }
+
+        #[cfg(not(feature = "otel"))]
+        {
+            build_base_registry(env_filter, python_layer).init();
+        }
     });
 }
 
@@ -470,6 +589,50 @@ mod tests {
         let ret = tracing::dispatcher::with_default(&tracing::Dispatch::new(subscriber), f);
         let records = capture.0.lock().unwrap().clone();
         (ret, records)
+    }
+    /// K6PCKP seam C: the "`OTel`" layer composes onto the base logging
+    /// registry (`EnvFilter` + fmt + the Python slot) and receives spans
+    /// without a "`Python::attach"-capable` drainer thread. A "Capture"
+    /// stand-in plays the Python slot (the real drainer needs the
+    /// interpreter); this also proves both layers live in one registry.
+    /// The global slot is per-process and no other lib test sets one,
+    /// so this test owns it deterministically (repo convention).
+    #[cfg(feature = "otel")]
+    #[test]
+    fn otel_layer_composes_into_the_base_registry() {
+        use degenbot_bot::otel;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+
+        let capture = Capture::default();
+        let subscriber = build_base_registry_with_otel(
+            EnvFilter::new("info"),
+            otel::layer(tracer),
+            capture.clone(),
+        );
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("this test owns the lib-binary global slot");
+
+        tracing::info_span!("seam.c.span").in_scope(|| {
+            tracing::info!(target: "degenbot_bot::bot_core::block_pump", "seam c event");
+        });
+        provider.force_flush().expect("flush");
+
+        let spans = exporter.get_finished_spans().expect("spans");
+        assert!(
+            spans.iter().any(|sp| sp.name.as_ref() == "seam.c.span"),
+            "seam.c.span missing from the OTel exporter; got {:?}",
+            spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
+        );
+        let records = capture.0.lock().expect("test lock").clone();
+        assert!(
+            records
+                .iter()
+                .any(|(target, level)| { *level == Level::INFO && target.contains("block_pump") }),
+            "event did not reach the Python-slot layer; records: {records:?}"
+        );
     }
 
     #[test]

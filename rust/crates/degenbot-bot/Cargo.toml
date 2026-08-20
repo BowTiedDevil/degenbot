@@ -36,6 +36,19 @@ futures-util = { version = "^0.3", default-features = false, features = ["async-
 # `lib_off.rs`) — zero compile-time or runtime cost in default builds. Enable
 # the `hotpath` / `hotpath-cpu` / `hotpath-alloc` features below (or in a
 # consumer crate) to turn the macros into real instrumentation.
+# OpenTelemetry tracer bullet (epic KDUED5). All four are optional: default
+# builds compile zero OTel code. Version-locked trio: tracing-opentelemetry
+# 0.33 is built against opentelemetry(-sdk) 0.32; bump them together.
+# opentelemetry-otlp: OTLP/HTTP-protobuf over rustls (no OpenSSL system dep);
+# http-proto pulls in the trace (+metrics proto) signal set.
+opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls"] }
+opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace", "experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio-current-thread"] }
+tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
+# Regular (optional) counterpart of the dev-dependency below: init_otel_tracing
+# composes a tracing-subscriber registry at the call site, so the crate needs
+# it at runtime, not just in tests.
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
 hotpath = { version = "^0.23", default-features = false }
 parking_lot = { version = "^0.12" }
 rand = { version = "^0.10" }
@@ -47,6 +60,14 @@ thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
+# OpenTelemetry tracer bullet (see src/otel.rs). Enable with --features otel.
+# Unlike the hotpath bullet this feature has no env gate: init_otel_tracing()
+# is an explicit call site (pure-Rust consumers); the Python-driven path
+# (degenbot-python, epic task K6PCKP) adds the layer to its own registry behind
+# DEGENBOT_OTEL=1. Release wheels and just build-rust-extension do NOT enable
+# this feature (the PyPI maturin build overrides the dev feature list, same
+# story as hotpath), so shipped artifacts carry zero OTel footprint.
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 # Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
@@ -60,6 +81,12 @@ proptest = "^1.11"
 # Test-only constructors (e.g. AlloyProvider::from_provider) used by the
 # bot_core block-pump tests.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
+# In-memory span exporter seam for asserting exported spans without a live
+# collector (epic KDUED5): the `testing` feature exposes
+# opentelemetry_sdk::trace::InMemorySpanExporter. Feature-unified with the
+# optional opentelemetry_sdk dep in test builds.
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "testing"] }
+
 # Captures alloy/tungstenite tracing for the `ws_getlogs_large_filter_diagnostic`
 # ignored test (reconnect-cycle investigation, 2026-07-12).
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter"] }

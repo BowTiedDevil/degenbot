@@ -55,6 +55,33 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 
 **Extending:** the pattern for new instrumentation is `#[hotpath::measure]` on a function (`impl_type = "Type"` for inherent methods, `label = "..."` for trait impls), or `hotpath::measure_block!("phase_name", { ... })` for sub-function phases. They're no-ops unless `hotpath` Cargo feature + `DEGENBOT_HOTPATH=1` are both on, so sprinkle liberally — same discipline as `log::debug!`. To widen coverage to a library crate, add the crate as a non-optional dep with `default-features = false` and gate the real `hotpath/hotpath` feature behind a Cargo feature on that crate (see `degenbot-bot/Cargo.toml` for the pattern).
 
+## OTel Spans (Python-driven path)
+
+The `degenbot-python` global tracing subscriber can export OTLP spans
+(epic `KDUED5`): Rust-core span sources (e.g. `degenbot.pump.block`
+around the pump drain loop) flow through the same subscriber that
+forwards records to Python `logging`, so one registry carries logs +
+trace context.
+
+```bash
+DEGENBOT_OTEL=1 \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
+```
+
+- **Dev-only, like `hotpath`.** The `otel` entry in `[tool.maturin]`
+  `features` compiles the layer into every dev `uv sync` build. The
+  PyPI `maturin-action` passes its own `--features pyo3/extension-module`
+  list, which overrides it, so release wheels ship without the OTLP
+  client footprint.
+- **Import-time gate.** `DEGENBOT_OTEL=1` is read in pymodule init (the
+  one justified implicit call site). The endpoint comes from the
+  standard `OTEL_EXPORTER_OTLP_*` env vars, defaulting to
+  `http://localhost:4318`.
+- **Fail-open.** If the OTLP exporter build fails, the layer logs a
+  warning and the bot continues on the no-otel assembly (byte-
+  equivalent to the historical subscriber).
+
 ### Schema ownership & Alembic retention (see [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md))
 
 The database schema is **Alembic-owned during the 0.6.x point releases** and becomes **Rust-owned** in a 0.7 release. The cutover mechanism (`degenbot database cutover` + the `ensure_schema` `RustOwned` branch) is built and opt-in during 0.6.x so `pip` users can upgrade a stale database through the final Alembic revision and then cutover at a time of their choosing. Dropping the Alembic dependency and deleting the migration scripts is gated to 0.7 (ergo task `JFFQV2`).

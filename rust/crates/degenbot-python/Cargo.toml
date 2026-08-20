@@ -26,6 +26,7 @@ alloy = { version = "^2.4", features = ["full", "transport-throttle"] }
 # Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
 # conversions from core are available at this binding layer.
 degenbot-rpc = { path = "../degenbot-rpc", optional = true }
+
 degenbot-bot = { path = "../degenbot-bot", optional = true }
 degenbot-solvers = { path = "../degenbot-solvers", optional = true }
 degenbot-pools = { path = "../degenbot-pools" }
@@ -99,6 +100,11 @@ uniswap = ["dep:degenbot-uniswap"]
 decoders = ["dep:degenbot-decoders"]
 pathfinding = ["dep:degenbot-pathfinding"]
 async = []
+# OTel span export for the Python-driven path (K6PCKP): pulls degenbot-bot
+# with its `otel` feature (OTLP exporter + layer). NOT in `default` -
+# release/CI wheels must not ship the OTLP client footprint (same
+# exclusion story as hotpath; pyproject [tool.maturin] dev builds enable it).
+otel = ['bot', 'degenbot-bot/otel']
 
 [dev-dependencies]
 ctor = "^1"
@@ -107,6 +113,10 @@ proptest = "^1.11"
 # the root crate's tests. Production builds pull degenbot-rpc without this
 # feature.
 degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+
+# Seam-C test seam: InMemorySpanExporter (K6PCKP). Same version lock as
+# degenbot-bot (tracing-opentelemetry 0.33 <-> opentelemetry(-sdk) 0.32).
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "testing"] }
 
 [[test]]
 name = "python_integration"
