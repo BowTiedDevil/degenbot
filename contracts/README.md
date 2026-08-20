@@ -7,8 +7,8 @@ On-chain executor contracts for MEV arbitrage.
 ```
 contracts/
 ├── README.md                            ← you are here
-├── cmd_executor_bytecode.txt            ← Init bytecode (for deployment)
-├── cmd_executor_init_bytecode.txt       ← Init bytecode (pre-constructor-args)
+├── cmd_executor_bytecode.txt            ← Creation bytecode (deployment + constructor args)
+├── cmd_executor_init_bytecode.txt       ← Identical to `*_bytecode.txt` (legacy name, no consumer)
 ├── cmd_executor_runtime_bytecode.txt    ← Runtime bytecode + CBOR + immutables (for code injection)
 ├── cmd_executor_abi.json                ← ABI (for web3.py contract objects)
 └── tests/                               ← Ape + Foundry test suite
@@ -18,7 +18,7 @@ contracts/
 
 | File | Contents | Use |
 |------|----------|-----|
-| `*_bytecode.txt` | `vyper -f bytecode` output (artifact creation hex) | Deployment (`cast send --create`) |
+| `*_bytecode.txt` | `vyper -f bytecode` output (artifact creation hex) | Deployment (`cast send --create` + constructor args `(weth, pool_manager)`) |
 | `*_init_bytecode.txt` | Same creation hex as `*_bytecode.txt` (reference copy) | (no code consumer) |
 | `*_runtime_bytecode.txt` | Runtime bytecode + CBOR + 5 x 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
 
@@ -27,8 +27,8 @@ contracts/
 Vyper immutables are loaded via `CODECOPY` from fixed offsets in the deployed
 code. The Vyper compiler outputs runtime bytecode as
 `[code_section][CBOR_metadata]`, where the CBOR bytes serve dual purpose:
-compiler identification AND runtime data (function dispatch jump table at
-offset `0x404a`, JUMPDEST target at `0x4046`).
+compiler identification AND runtime data (the function dispatch jump table
+and its JUMPDEST targets, at compiler-generated offsets)
 
 The deployed bytecode appends immutable data **after** the CBOR:
 
@@ -43,8 +43,8 @@ immutables tail is appended AFTER the runtime (i.e. after the CBOR).
 **The CBOR metadata must NOT be stripped** --- removing it breaks the jump
 table, JUMPDEST targets, and CODECOPY offsets.
 
-The `*_runtime_bytecode.txt` files have immutables pre-appended (after the
-CBOR) so no storage overrides are needed.
+The `*_runtime_bytecode.txt` file has the immutable tail appended after the
+CBOR, so injection needs no storage overrides.
 
 ### cmd_executor immutables (5 × 32 bytes, appended after CBOR metadata)
 
@@ -64,19 +64,19 @@ were removed --- those tokens now go through `t_addresses` via `SET_ADDRESS`.
 
 > ⚠️ **Critical**: The `POOL_MANAGER_ADDR` immutable in the runtime bytecode file **must
 > match the PoolManager address on the target chain**. On Ethereum mainnet, this is
-> `0x000000000004444c5dc75cB358380D2e3De08A90`. The recompile.py script patches it
-> automatically. If wrong, all V4-hybrid paths will revert immediately inside
+> `0x000000000004444c5dc75cB358380D2e3De08A90`. The bake (`contracts/recompile.py`)
+> writes it in by default; `--no-patch` bakes a zero PM (testnet/dev) If wrong, all V4-hybrid paths will revert immediately inside
 > `execute()` with an empty revert at ~38K gas --- the `V4_UNLOCK` command calls
 > `extcall IPoolManager(POOL_MANAGER_ADDR).unlock()` against the wrong address.
 > V2-only and V3-only paths work regardless because they never touch the PoolManager.
 
-### Patching immutables
+### Patching the injected-code tail
 
-If the runtime bytecode was compiled with wrong immutables (e.g., a throwaway PM address),
-you can patch the 5 × 32-byte tail without recompiling:
+After an unpatched bake (`--no-patch`, PM slot zero), point the PoolManager at the
+target chain by patching slot 2 of the 160-byte tail — no re-bake needed:
 
 ```python
-# Patch POOL_MANAGER_ADDR in the runtime bytecode tail
+# Patch POOL_MANAGER_ADDR in the injected runtime tail
 pm = "0x000000000004444C5dc75cB358380D2e3De08A90"  # mainnet PM
 pm_padded = "0" * 24 + pm[2:].lower()  # left-pad to 32 bytes
 
@@ -92,6 +92,10 @@ new_tail = tail[:pm_offset] + pm_padded + tail[pm_offset + 64:]
 with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
     f.write("0x" + code[:-320] + new_tail + "\n")
 ```
+
+A real (non-injected) deployment needs NO file patching: the constructor is
+`__init__(weth, pool_manager)`, `OWNER_ADDR` is `msg.sender` (the deployer),
+and the two delta slots are computed on-chain from the deployed address.
 
 ### Rebaking the injected bytecode (X6OKMV re-sync)
 
@@ -126,7 +130,7 @@ Compact command-stream executor. All execution decisions are made off-chain and 
 1. **Explicit** — off-chain pre-computes amounts (`V4_TAKE`, `ERC20_TRANSFER`)
 2. **Dynamic** — on-chain reads from PM exttload (`V4_TAKE_DELTA`, `V4_SETTLE_DELTA`, `V4_SETTLE_ALL`)
 
-Full documentation: `~/code/executor/README.md`
+Full documentation: `executor/README.md`
 
 ### Interface
 

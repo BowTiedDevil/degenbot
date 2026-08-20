@@ -244,8 +244,9 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[test]
 fn nonbatch_capture_stream_bytes_are_stable() {
     // TGUZCT/TAZXHN acceptance: the 0x43 flip may not perturb the proven
-    // non-batch erc6909 capture stream — full-byte fnv1a pins, captured
-    // pre-flip (they must equal the post-flip bytes exactly).
+    // non-batch erc6909 capture stream — full-byte fnv1a pins, captured at
+    // flip time from the non-batch flow (which the 0x43 flip does not
+    // touch); the pins guard against future drift of that proven stream.
     let two = {
         let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
         let req = EncodeRequest::new(

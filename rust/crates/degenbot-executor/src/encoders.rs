@@ -1,5 +1,5 @@
-//! Command-stream primitives — opcode constants, `AddressTable`, and a `pub fn enc_*` builder.
-//! and a `pub fn enc_*` builder for every opcode (`0x00`–`0x59`, `0xFF`).
+//! Command-stream primitives — opcode constants, `AddressTable`, and a `pub fn enc_*` builder
+//! for every opcode (`0x00`–`0x59`, `0xFF`).
 //!
 //! A pyo3-free *core leaf* implementing the tightly-packed command-bytecode
 //! layout. The authoritative contract layout is `contracts/README.md`

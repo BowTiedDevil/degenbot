@@ -18,7 +18,8 @@ Files written (existing file format: 0x-prefixed lowercase hex + trailing
 newline; the ABI is copied verbatim):
     cmd_executor_runtime_bytecode.txt  = 0x + runtime hex + 5 x 32B immutables
     cmd_executor_bytecode.txt          = 0x + creation hex (deployment)
-    cmd_executor_init_bytecode.txt     = 0x + creation hex (pre-constructor-args)
+    cmd_executor_init_bytecode.txt     = 0x + creation hex (legacy filename,
+                                                    #   identical to the deployment file)
     cmd_executor_abi.json              = the artifact ABI
 
 Vyper bytecode layout (re-derived for the current artifact — the code section
