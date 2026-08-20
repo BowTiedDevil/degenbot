@@ -222,3 +222,70 @@ fn v4v4v4_erc6909_capture_without_batch_still_encodes() {
     );
     assert!(encode_cmd_stream(&ctx, &req).is_some());
 }
+
+// ── TGUZCT/TAZXHN: byte-stability guard for the NON-BATCH capture stream ──
+// The flip (bdde6759b) must not move the proven non-batch erc6909 capture
+// stream — pin its full-byte hash (the "non-batch capture unchanged
+// byte-for-byte" acceptance bullet, mechanically enforced).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(1099511628211);
+    }
+    h
+}
+
+#[test]
+fn nonbatch_capture_stream_bytes_are_stable() {
+    // TGUZCT/TAZXHN acceptance: the 0x43 flip may not perturb the proven
+    // non-batch erc6909 capture stream — full-byte fnv1a pins, captured
+    // pre-flip (they must equal the post-flip bytes exactly).
+    let two = {
+        let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+        let req = EncodeRequest::new(
+            v4v4_weth_terminal(),
+            1_000_000_000_000_000_000,
+            vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
+            vec![999_999_999_999_999_999, 999_999_999_999_999_999],
+            EncodeOptions {
+                erc6909_profit: true,
+                ..Default::default()
+            },
+        );
+        encode_cmd_stream(&ctx, &req).expect("non-batch erc6909 must encode")
+    };
+    let three_path = PathInfo::new(vec![
+        v4_hop(WETH, TOK2, true),
+        v4_hop(TOK2, USDC, true),
+        v4_hop(USDC, WETH, true),
+    ]);
+    let three = {
+        let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
+        let req = EncodeRequest::new(
+            three_path.clone(),
+            1_000_000_000_000_000_000,
+            vec![
+                1_000_000_000_000_000_000,
+                1_100_000_000_000_000_000,
+                1_300_000_000_000_000_000,
+            ],
+            vec![999_999_999_999_999_999; 3],
+            EncodeOptions {
+                erc6909_profit: true,
+                ..Default::default()
+            },
+        );
+        encode_cmd_stream(&ctx, &req).expect("non-batch erc6909 3-hop must encode")
+    };
+    assert_eq!(
+        fnv1a(&two),
+        0x5168eabb6b08d9ee,
+        "2-hop non-batch erc6909 capture stream moved (flip regression)"
+    );
+    assert_eq!(
+        fnv1a(&three),
+        0x0638197a66c17168,
+        "3-hop non-batch erc6909 capture stream moved (flip regression)"
+    );
+}
