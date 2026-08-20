@@ -36,7 +36,7 @@ jobs:
           echo "Tag ${{ github.ref_name }} is on main branch"
 
   publish:
-    name: Publish 22 crates (topological order)
+    name: Publish (cargo-native order + new-crate rate-limit retries)
     needs: validate-branch
     runs-on: ubuntu-latest
     env:
@@ -83,76 +83,43 @@ jobs:
         # clean verification of the tag's exact tree.
         run: cargo publish --workspace --dry-run --allow-dirty --manifest-path rust/Cargo.toml
 
-      - name: Publish in topological order
+      - name: Publish (cargo-native order + waits; new-crate rate-limit retry rounds)
+        # First-release mechanics: docs/releases/2026-08-19-first-crates-io-release.md.
+        # `cargo publish --workspace` orders the publishable members itself (dependency
+        # order) and polls the registry until each crate AND its local deps are
+        # index-visible before proceeding — no hand-rolled topo list, no curl index
+        # polling. crates.io's PublishNew bucket (1 NEW NAME per 10 min, burst 5)
+        # rate-limits brand-new crate names, so each round publishes the
+        # not-yet-live members and, on 429, sleeps until the server-stated
+        # retry-after. Version-bump releases (PublishUpdate: 1/min, burst 30)
+        # complete in round 1.
         run: |
-          set -euo pipefail
-          # Canonical publish order (computed 2026-08-20 from `cargo metadata`
-          # normal-dependency edges, alphabetical tiebreak; ergo MYYV2X).
-          # Every crate's workspace siblings are published BEFORE it, so the
-          # real `cargo publish` (which verifies, resolving sibling version
-          # deps from the registry) always succeeds.
-          # REGENERATE this list after ANY dependency-graph change (drop new
-          # crates in topo order). The ci.yml `publish-dry-run` job catches
-          # stale lists on PRs.
-          crates=(
-            degenbot-core
-            degenbot-decoders
-            degenbot-order-index
-            degenbot-pathfinding
-            degenbot-abi
-            degenbot-fork
-            degenbot-math
-            degenbot-db
-            degenbot-executor
-            degenbot-uniswap
-            degenbot-pools
-            degenbot-rpc
-            degenbot-aave
-            degenbot-pool-updater
-            degenbot-price
-            degenbot-solvers
-            degenbot-submission
-            degenbot-bot
-            degenbot-execution
-            degenbot-simulation
-            degenbot-arbitrage
-            degenbot
-          )
-          # Sanity: the list must be exactly the set of publishable members.
-          # (node parses packages[] properly — grep on the metadata JSON
-          # double-counts names from the resolve graph.)
-          from_meta=$(cd rust && cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.packages.map(p=>p.name).filter(n=>n!=="degenbot_rs"&&n!=="degenbot-execution-sample").sort().join("\n"))})')
-          listed=$(printf '%s\n' "${crates[@]}" | sort)
-          if [ "$listed" != "$from_meta" ]; then
-            echo "::error::Publish list is stale — it does not match the publishable workspace members" >&2
-            echo '--- listed in workflow'; echo "$listed"
-            echo '--- actual publishable members'; echo "$from_meta"
-            exit 1
-          fi
-          trap 'echo "::error::Publish halted — the crates listed earlier are already live on crates.io. Fix and re-tag: the remaining crates publish at the same version (a partial release is recoverable; to abandon, yank the published set)."' ERR
-          for c in "${crates[@]}"; do
-            echo "=== publishing $c (verified) ===" >&2
-            cargo publish -p "$c" --manifest-path rust/Cargo.toml --allow-dirty
-            # Wait until the just-published crate is VISIBLE on the sparse
-            # index before publishing the next one: sibling crates' verify
-            # builds resolve it from the registry, and index propagation
-            # lags the upload ack by seconds (S7R5K4 runbook does the same).
-            n=$c
-            case ${#n} in
-              1) ip="1/$n" ;;
-              2) ip="2/$n" ;;
-              3) ip="3/$n" ;;
-              *) ip="${n:0:2}/${n:2:1}/$n" ;;
-            esac
-            visible=0
-            for i in $(seq 1 60); do
-              if curl -fsSL "https://index.crates.io/$ip" 2>/dev/null | grep -q "\"$n\""; then visible=1; break; fi
-              sleep 5
+          set -uo pipefail
+          cd rust
+          ver="${GITHUB_REF_NAME#v}"
+          members=$(cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.packages.map(p=>p.name).filter(n=>n!=="degenbot_rs"&&n!=="degenbot-execution-sample").join(" "))})')
+          log=/tmp/crates-publish.log
+          : > "$log"
+          for round in $(seq 1 30); do
+            excludes=""
+            for m in $members; do
+              if cargo search "$m" --limit 3 2>/dev/null | grep -q "^$m = \"$ver\""; then excludes="$excludes --exclude $m"; fi
             done
-            if [ "$visible" != "1" ]; then
-              echo "::error::$n not visible on the crates.io sparse index after 5 min. It IS uploaded — re-tag once it propagates; the remaining crates publish at the same version." >&2
-              exit 1
+            if [ -z "$excludes" ]; then echo "all $ver members already live"; exit 0; fi
+            echo "=== round $round: $(( ($(echo $excludes) | wc -w) / 2 )) members already live — publishing the rest ==="
+            if cargo publish --workspace --allow-dirty $excludes >>"$log" 2>&1; then
+              echo "=== publish complete at $ver ==="; exit 0
             fi
-            echo "$n visible on the crates.io index" >&2
+            ra=$(grep -o 'try again after [A-Za-z]*, [0-9]* [A-Za-z]* [0-9]* [0-9:]* GMT' "$log" | tail -n 1 | sed 's/try again after //')
+            if [ -n "$ra" ]; then
+              ra_epoch=$(date -d "$ra" +%s) || { echo "::error::unparseable retry-after: $ra"; exit 1; }
+              sleep_s=$(( ra_epoch - $(date +%s) + 120 ))
+              echo "429 new-crate rate limit — retry-after $ra (sleeping ${sleep_s}s)"
+              [ "$sleep_s" -gt 0 ] && sleep "$sleep_s" && continue
+            fi
+            echo "::error::cargo publish failed without a 429 retry-after — last 50 log lines:"
+            tail -n 50 "$log"
+            exit 1
           done
-          echo "All ${#crates[@]} crates published and index-visible at $ws_ver"
+          echo "::error::30 rounds exhausted (new-crate rate limit longer than expected) — re-tag to continue; partial releases are recoverable at the same version"
+          exit 1
