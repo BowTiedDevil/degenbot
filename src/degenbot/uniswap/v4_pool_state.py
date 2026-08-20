@@ -28,13 +28,12 @@ class V4PoolState:
     - _token0, _token1: the paired ERC-20 tokens
     - _pool_id: the pool identifier (bytes)
     - _pool_key: the V4 PoolKey struct
-    - _sparse_liquidity_map: whether full tick data was provided at construction
+    (sparseness is no longer stored here — Rust coverage is the fact, T2 FBJTUM)
     """
 
     # Immutable — set once at construction
     _token0: Erc20Token
     _token1: Erc20Token
-    _sparse_liquidity_map: bool
 
     @property
     def token0(self) -> Erc20Token:
@@ -48,8 +47,13 @@ class V4PoolState:
 
     @property
     def sparse_liquidity_map(self) -> bool:
-        """Determine sparse liquidity map."""
-        return self._sparse_liquidity_map
+        """Determine sparse liquidity map.
+
+        Rust ``coverage`` is the fact (T2 FBJTUM: the double-tracked Python
+        flag is retired; the V3/V4 state owns the read).
+
+        """
+        return self._py_pool.coverage == "sparse"
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:

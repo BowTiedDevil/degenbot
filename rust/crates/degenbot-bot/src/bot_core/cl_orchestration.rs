@@ -911,6 +911,37 @@ impl BotState {
         state.invalidate_tick_range_cache();
     }
 
+    /// Backfill an unknown tick-bitmap word for a registered V3/V4 pool
+    /// (T2 FBJTUM — the write-path twin of the fetch+retry calc seam).
+    ///
+    /// Invokes the state's stored fetcher for `word` at `block` (the
+    /// companion passes `state_block - 1` as the fetch context), and on
+    /// success merges the word through [`Self::merge_tick_word`] — the SAME
+    /// core merge the sim loop uses (ticks overlay, word marked known,
+    /// cache invalidated; a checked-empty fetch marks the word known with no
+    /// ticks).
+    ///
+    /// Returns `false` when the pool has no stored fetcher OR the fetch
+    /// failed — the caller (the Python companion gate) RAISES on `false`
+    /// rather than applying the event over an unknown word. `true` only on a
+    /// successful merge (checked-empty included).
+    pub fn ensure_word_known_by_pool_id(&mut self, pool_id: u64, word: i32, block: u64) -> bool {
+        // Clone the stored fetcher off the state first: the fetch call must
+        // not hold the pool borrow, and `merge_tick_word` re-borrows `self`.
+        let fetcher = match self.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
+            Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
+            _ => None,
+        };
+        let Some(fetcher) = fetcher else {
+            return false;
+        };
+        let Ok(fetched) = fetcher.fetch_missing_tick_word(pool_id, word, block) else {
+            return false;
+        };
+        self.merge_tick_word(pool_id, &fetched)
+    }
+
     /// Merge a fetched tick-bitmap word into a V3/V4 pool's state.
     ///
     /// Adds the word's initialized ticks to `tick_data` (overlaying any

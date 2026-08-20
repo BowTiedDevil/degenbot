@@ -942,8 +942,8 @@ class Bot:
         The thin delegating shell formerly `V4PoolBuilder.build()`: resolves
         the caller-supplied V4 identity (DB two-step, else caller kwargs),
         fetches the slot0 scalars for the Python-side companion overrides
-        (`protocol_fee`/`lp_fee`/`state_view`/`_sparse_liquidity_map`, which
-        the Rust handle does not expose), then delegates the actual build
+        (`protocol_fee`/`lp_fee`/`state_view`, which the Rust handle does not
+        expose), then delegates the actual build
         (live scalars + Db→Chain tick assembly + admission + registration)
         to `the `Bot` engine.build_v4_pool`.
 
@@ -1021,12 +1021,13 @@ class Bot:
         # precedence) + registers into BotState atomically, using the
         # CORE-resolved identity above. Returns `(pool_id, coverage,
         # identity..., protocol_fee, lp_fee)` — coverage drives the companion's
-        # `_sparse_liquidity_map`, and the fee overrides (protocol_fee / lp_fee)
-        # ride back from the SAME head-stamped slot0 read, so the companion no
-        # longer issues a second fetch_v4_slot0_liquidity per pool (CDJEPJ-1).
+        # sparse gate (Rust coverage is the fact, T2 FBJTUM), and the fee
+        # overrides ride back from the SAME head-stamped slot0 read, so the
+        # companion no longer issues a second fetch_v4_slot0_liquidity per
+        # pool (CDJEPJ-1).
         (
             pool_handle_pool_id,
-            coverage,
+            _coverage,
             b_cur0,
             b_cur1,
             b_pm,
@@ -1074,7 +1075,6 @@ class Bot:
                     "tick_spacing, hook_flags, pool_id)."
                 )
             )
-        tick_map_is_tracked = coverage == "tracked"
         py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
         assert py_pool_handle is not None, "build_v4_pool returned a pool_id with no handle"
         pool = UniswapV4Pool._from_py_pool(py_pool_handle)  # ruff:ignore[private-member-access]
@@ -1087,7 +1087,6 @@ class Bot:
             one_for_zero=b_protocol_fee >> 12,
         )
         pool.lp_fee = int(b_lp_fee)
-        pool._sparse_liquidity_map = not tick_map_is_tracked  # ruff:ignore[private-member-access]
 
         # Register pool in managed pool registry
         pool = cast(

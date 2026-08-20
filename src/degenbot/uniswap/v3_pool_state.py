@@ -24,7 +24,6 @@ class V3PoolState:
     - _token0, _token1: the paired ERC-20 tokens
     - _fee: pool fee in hundredths of a bip (e.g. 3000 = 0.3%)
     - _tick_spacing: granularity of the tick bitmap
-    - _sparse_liquidity_map: whether full tick data was provided at construction
 
     Mutable state (CL scalars + liquidity distribution):
     - liquidity, sqrt_price_x96, tick, tick_bitmap, tick_data
@@ -35,7 +34,6 @@ class V3PoolState:
     _token1: Erc20Token
     _fee: int
     _tick_spacing: int
-    _sparse_liquidity_map: bool
 
     @property
     def token0(self) -> Erc20Token:
@@ -59,8 +57,13 @@ class V3PoolState:
 
     @property
     def sparse_liquidity_map(self) -> bool:
-        """Determine sparse liquidity map."""
-        return self._sparse_liquidity_map
+        """Determine sparse liquidity map.
+
+        Rust ``coverage`` is the fact (T2 FBJTUM: the double-tracked Python
+        flag is retired; the V3/V4 state owns the read).
+
+        """
+        return self._py_pool.coverage == "sparse"
 
     @property
     def tokens(self) -> tuple[Erc20Token, Erc20Token]:

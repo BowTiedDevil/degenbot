@@ -40,35 +40,23 @@ from degenbot.crypto import keccak256
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
-    ExternalUpdateError,
     HookedPoolResult,
     IncompleteSwap,
     LiquidityPoolError,
-    NoPoolStateAvailable,
 )
-from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.math import (
-    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
-)
+from degenbot.uniswap.cl_companion import ConcentratedLiquidityCompanion
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
-    InitializedTickMap,
-    LiquidityMap,
     Pip,
-    UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
-    UniswapV4PoolLiquidityMappingUpdate,
     UniswapV4PoolState,
 )
 from degenbot.utils.bytes import to_0x_hex
 
 if TYPE_CHECKING:
     from degenbot.types import LiquidityPool
-    from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
-    from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
 @dataclasses.dataclass(slots=True)
@@ -143,7 +131,7 @@ class Hooks(Enum):
 class UniswapV4Pool(
     V4PoolState,
     UniswapV4PoolCalc,
-    AbstractLiquidityPool,
+    ConcentratedLiquidityCompanion,
 ):
     """A Uniswap V4 concentrated-liquidity pool companion over a ``LiquidityPool`` handle.
 
@@ -182,8 +170,6 @@ class UniswapV4Pool(
     protocol_fee: ProtocolFee
     lp_fee: int
     _initial_state_block: int
-    _sparse_liquidity_map: bool
-    _tick_data_fetcher: Any
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
@@ -303,9 +289,6 @@ class UniswapV4Pool(
         self.lp_fee = self.pool_key.fee
         self._initial_state_block = self._py_pool.update_block
 
-        self._sparse_liquidity_map = len(self._py_pool.tick_data_snapshot()) == 0
-
-        self._tick_data_fetcher = None
         return self
 
     def __eq__(self, other: object) -> bool:
@@ -586,16 +569,6 @@ class UniswapV4Pool(
         return self._pool_manager_address
 
     @property
-    def liquidity(self) -> int:
-        """Liquidity.
-
-        Returns:
-            The current active liquidity (from Rust via the handle).
-
-        """
-        return self._py_pool.liquidity
-
-    @property
     def pool_id(self) -> bytes:
         """Pool id.
 
@@ -655,58 +628,6 @@ class UniswapV4Pool(
         )
 
     @property
-    def tick(self) -> int:
-        """Tick.
-
-        Returns:
-            The current tick (from Rust via the handle).
-
-        """
-        return self._py_pool.tick
-
-    @property
-    def tick_bitmap(self) -> InitializedTickMap:
-        """Tick bitmap.
-
-        A deep-copy snapshot of the Rust-side tick bitmap: derived from
-        ``tick_data`` keys, + for Sparse pools the checked-but-empty words
-        from Rust ``known_bitmap_words`` as ``(0, block)`` entries (a word
-        checked via ``update_tick_data``/fetch-merge survives as
-        present-but-zero — the fetch loop breaks). Tracked pools return the
-        pure derivation (absent word = known-empty). Mirrors the V3
-        companion.
-        """
-        raw = self._py_pool.tick_bitmap_snapshot()
-        return {
-            int(word): (
-                BitmapAtWord(bitmap=int(row[0]), block=int(row[1]))
-                if not isinstance(row, BitmapAtWord)
-                else row
-            )
-            for word, row in raw.items()
-        }
-
-    @property
-    def tick_data(self) -> LiquidityMap:
-        """Tick data.
-
-        Returns a deep-copy snapshot of the Rust-side tick data (mirrors V3).
-        """
-        raw = self._py_pool.tick_data_snapshot()
-        return {
-            int(tick): (
-                LiquidityAtTick(
-                    liquidity_net=int(row[1]),
-                    liquidity_gross=int(row[0]),
-                    block=int(row[2]),
-                )
-                if not isinstance(row, LiquidityAtTick)
-                else row
-            )
-            for tick, row in raw.items()
-        }
-
-    @property
     def tick_spacing(self) -> int:
         """Tick spacing.
 
@@ -725,215 +646,3 @@ class UniswapV4Pool(
 
         """
         return self.pool_key.fee
-
-    @property
-    def update_block(self) -> BlockNumber:
-        """Update block.
-
-        Returns:
-            The block number of the most recent state update (from Rust).
-
-        """
-        return self._py_pool.update_block
-
-    @property
-    def initial_state_block(self) -> int:
-        """Block number at which the pool's initial state was captured.
-
-        Returns:
-            The block number from construction (DB snapshot or RPC fetch).
-
-        """
-        return self._initial_state_block
-
-    def swap_is_viable(  # ruff:ignore[no-self-use]
-        self,
-        state: UniswapV4PoolState,
-        vector: UniswapPoolSwapVector,  # ruff:ignore[unused-method-argument]
-    ) -> bool:
-        """Swap is viable.
-
-        Returns:
-            True if a swap can proceed with the given state, False otherwise.
-
-        """
-        if state.liquidity == 0:
-            return False
-        return state.sqrt_price_x96 > 1
-
-    def update_tick_data(
-        self,
-        tick_bitmap: dict[int, Any],
-        tick_data: dict[int, Any],
-        block: int,
-    ) -> None:
-        """Apply updated tick bitmap and data from the tick data fetcher.
-
-        Delegates to ``LiquidityPool.update_tick_data`` (replaces the
-        Rust-side ``tick_data`` HashMap; scalars unchanged). The
-        ``tick_bitmap`` KEYS are the checked words: for Sparse pools the FFI
-        records them in Rust ``known_bitmap_words`` (a checked word is never
-        re-fetched); the VALUES are NOT stored (the bitmap derives from the
-        tick rows). Tracked pools record nothing (their bitmap is complete).
-        Mirrors the V3 companion.
-        """
-        normalized: dict[int, tuple[int, int, int]] = {}
-        for tick, info in tick_data.items():
-            if isinstance(info, LiquidityAtTick):
-                normalized[int(tick)] = (
-                    int(info.liquidity_gross),
-                    int(info.liquidity_net),
-                    int(info.block),
-                )
-            elif isinstance(info, dict):
-                normalized[int(tick)] = (
-                    int(info["liquidity_gross"]),
-                    int(info["liquidity_net"]),
-                    int(info.get("block", 0)),
-                )
-            else:
-                normalized[int(tick)] = (
-                    int(info[0]),
-                    int(info[1]),
-                    int(info[2]) if len(info) > 2 else block,  # ruff:ignore[magic-value-comparison]
-                )
-        self._py_pool.update_tick_data(tick_bitmap, normalized, block)
-        # NOTE: ``_sparse_liquidity_map`` NOT flipped — fetcher's incremental
-        # backfill must keep the pool sparse. See V3 companion for rationale.
-
-    def _apply_fetched_tick_word(self, word: int, block: BlockNumber) -> bool:
-        """Fetch a tick-bitmap word via ``_tick_data_fetcher`` and merge it.
-
-        ADR-005 slice 3b: the fetcher RETURNS the word's ticks (return-data
-        contract — the Rust ``simulate_swap_with_fetch`` seam uses the same
-        callback). Merge them into the pool state via ``update_tick_data``;
-        the bitmap is derived from the tick_data keys (V3/V4 invariant), so no
-        verbatim bitmap value is needed.
-
-        Returns:
-            ``True`` if the fetch succeeded, ``False`` if no fetcher or the
-            fetch returned ``None``.
-
-        """
-        if self._tick_data_fetcher is None:
-            return False
-        fetched = self._tick_data_fetcher(word, block)
-        if fetched is None:
-            return False
-        merged = {**self.tick_data, **fetched}
-        self.update_tick_data(
-            tick_bitmap={word: BitmapAtWord(bitmap=0, block=block)},
-            tick_data=merged,
-            block=block,
-        )
-        return True
-
-    def external_update(
-        self,
-        update: UniswapV4PoolExternalUpdate,
-    ) -> bool:
-        """Process a `UniswapV4PoolExternalUpdate` (Swap event).
-
-        Delegates the scalar write to ``LiquidityPool.apply_swap``. Mirrors
-        the V3 companion.
-
-        Returns:
-            True if any updated state value was recorded, False otherwise.
-
-        Raises:
-            ExternalUpdateError: If the update is for an invalid block.
-
-        """
-        if (
-            update.block_number <= self._initial_state_block
-            or update.block_number < self.update_block
-        ):
-            raise ExternalUpdateError(message=f"Rejected update for block {update.block_number}")
-
-        if (
-            update.liquidity == self.liquidity
-            and update.sqrt_price_x96 == self.sqrt_price_x96
-            and update.tick == self.tick
-        ):
-            return False
-
-        self._py_pool.apply_swap(
-            sqrt_price_x96=update.sqrt_price_x96,
-            liquidity=update.liquidity,
-            tick=update.tick,
-            block_number=update.block_number,
-        )
-        return True
-
-    def update_liquidity_map(
-        self,
-        update: UniswapV4PoolLiquidityMappingUpdate,
-    ) -> None:
-        """Apply an update to the liquidity map (ModifyLiquidity event).
-
-        Delegates the tick mutation to ``LiquidityPool.apply_liquidity_update``
-        (Rust does the tick bitmap + tick_data mutation under one write guard).
-        The active ``liquidity`` scalar adjustment (when ``current_tick`` is in
-        range) is landed via a separate ``apply_swap``. Mirrors the V3 companion.
-        """
-        if update.liquidity == 0:
-            return
-
-        state_block = update.block_number
-
-        if self._sparse_liquidity_map and self._tick_data_fetcher is not None:
-            for tick in (update.tick_lower, update.tick_upper):
-                word, _ = cl_get_tick_word_and_bit_position(tick, self.tick_spacing)
-                if word not in self.tick_bitmap:
-                    self._apply_fetched_tick_word(word, state_block - 1)
-
-        applied = self._py_pool.apply_liquidity_update(
-            tick_lower=update.tick_lower,
-            tick_upper=update.tick_upper,
-            liquidity_delta=update.liquidity,
-            block_number=state_block,
-        )
-
-        if (
-            applied
-            and update.tick_lower <= self.tick < update.tick_upper
-            and state_block > self._initial_state_block
-        ):
-            new_active = self.liquidity + update.liquidity
-            assert new_active >= 0, (
-                f"In-range liquidity adjustment violated invariant: pool {self.address} "
-                f"{self.tick=} {self.liquidity=} {self.update_block=} {update=}"
-            )
-            self._py_pool.apply_swap(
-                sqrt_price_x96=self.sqrt_price_x96,
-                liquidity=new_active,
-                tick=self.tick,
-                block_number=state_block,
-            )
-
-    def discard_states_before_block(self, block: BlockNumber) -> None:
-        """Discard cached states earlier than the given block.
-
-        Raises:
-            NoPoolStateAvailable: If the target is past the newest delta.
-
-        """
-        try:
-            self._py_pool.discard_v3_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
-
-    def restore_state_before_block(self, block: BlockNumber) -> None:
-        """Restore the last pool state recorded prior to a target block.
-
-        Delegates to ``LiquidityPool.restore_v3_before_block`` (V3/V4-generic).
-        Mirrors the V3 companion.
-
-        Raises:
-            NoPoolStateAvailable: If no state exists prior to the target block.
-
-        """
-        try:
-            self._py_pool.restore_v3_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e

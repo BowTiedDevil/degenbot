@@ -5598,6 +5598,208 @@ mod tests {
         );
     }
 
+    // --- T2 (FBJTUM): write-path sparse backfill — ensure_word_known ---
+
+    #[test]
+    fn ensure_word_known_no_fetcher_returns_false() {
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+
+        assert!(
+            !core.ensure_word_known_by_pool_id(pool_id, 0, 99),
+            "no stored fetcher → False (the Python gate raises)"
+        );
+    }
+
+    #[test]
+    fn ensure_word_known_merges_ticks_and_marks_word_known() {
+        use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+        use ::degenbot_pools::TickInfo;
+        use alloy::primitives::{I256, U128};
+
+        #[derive(Debug)]
+        struct WordFetcher;
+        impl TickWordFetcher for WordFetcher {
+            fn fetch_missing_tick_word(
+                &self,
+                _pool_id: u64,
+                word: i32,
+                _block: u64,
+            ) -> Result<FetchedTickWord, FetchTickWordError> {
+                Ok(FetchedTickWord {
+                    word,
+                    ticks: HashMap::from_iter([(
+                        60,
+                        TickInfo {
+                            liquidity_gross: U128::from(100u128),
+                            liquidity_net: I256::try_from(100i128).unwrap(),
+                            block: 99,
+                        },
+                    )]),
+                })
+            }
+        }
+
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: Some(std::sync::Arc::new(WordFetcher)),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+
+        let ok = core.ensure_word_known_by_pool_id(pool_id, 0, 99);
+        assert!(ok, "a successful fetch must return True");
+
+        let tick_data: HashMap<i32, TickInfo> = match core.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => state.tick_data().clone(),
+            _ => panic!("test setup: V3 pool missing"),
+        };
+        assert!(
+            tick_data.contains_key(&60),
+            "the fetched word's ticks must land in tick_data (core merge reused)"
+        );
+        let known: Vec<i32> = match core.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => state.known_bitmap_words().iter().copied().collect(),
+            _ => panic!("test setup: V3 pool missing"),
+        };
+        assert!(known.contains(&0), "the fetched word must be marked known");
+    }
+
+    #[test]
+    fn ensure_word_known_fetch_error_returns_false() {
+        use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+
+        #[derive(Debug)]
+        struct FailingWordFetcher;
+        impl TickWordFetcher for FailingWordFetcher {
+            fn fetch_missing_tick_word(
+                &self,
+                _pool_id: u64,
+                _word: i32,
+                _block: u64,
+            ) -> Result<FetchedTickWord, FetchTickWordError> {
+                Err(FetchTickWordError::FetchFailed)
+            }
+        }
+
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: Some(std::sync::Arc::new(FailingWordFetcher)),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+
+        assert!(
+            !core.ensure_word_known_by_pool_id(pool_id, 0, 99),
+            "a fetch failure must return False (the Python gate RAISES, never applies)"
+        );
+        let (len, known) = match core.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => {
+                (state.tick_data().len(), state.known_bitmap_words().len())
+            }
+            _ => panic!("test setup: V3 pool missing"),
+        };
+        assert_eq!((len, known), (0, 0), "no state mutation on a failed fetch");
+    }
+
+    #[test]
+    fn ensure_word_known_checked_empty_marks_word_known() {
+        use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+
+        #[derive(Debug)]
+        struct EmptyWordFetcher;
+        impl TickWordFetcher for EmptyWordFetcher {
+            fn fetch_missing_tick_word(
+                &self,
+                _pool_id: u64,
+                word: i32,
+                _block: u64,
+            ) -> Result<FetchedTickWord, FetchTickWordError> {
+                Ok(FetchedTickWord {
+                    word,
+                    ticks: HashMap::new(),
+                })
+            }
+        }
+
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: Some(std::sync::Arc::new(EmptyWordFetcher)),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+
+        assert!(
+            core.ensure_word_known_by_pool_id(pool_id, 3, 99),
+            "a checked-empty fetch is a success: the word is known (T1 semantics)"
+        );
+        let known: Vec<i32> = match core.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => state.known_bitmap_words().iter().copied().collect(),
+            _ => panic!("test setup: V3 pool missing"),
+        };
+        assert!(known.contains(&3), "checked-empty word 3 must be known");
+    }
+
     // --- ADR-005 sparse-map parity, slice 2: fetch-callback seam ---
 
     #[test]

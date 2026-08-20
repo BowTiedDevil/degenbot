@@ -398,6 +398,9 @@ class LiquidityPool:
         liquidity_delta: int,
         block_number: int,
     ) -> bool: ...
+    def ensure_word_known(self, word: int, block: int) -> bool: ...
+    @property
+    def coverage(self) -> str | None: ...
     def update_tick_data(
         self,
         tick_bitmap: dict[int, Any],

@@ -117,7 +117,6 @@ def make_v4_pool(
     for tok in (token0, token1):
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
-    sparse = tick_data is None or len(tick_data) == 0
     pool = UniswapV4Pool._from_py_pool(handle)
     # Builder-supplied values the seam defaults; override from test args.
     pool._state_view_address = (
@@ -131,7 +130,6 @@ def make_v4_pool(
     # ``tick_bitmap`` keys are recorded Rust-side as checked words at the
     # construction seed (T1 3WTDFK — the companion override is retired);
     # nothing to overlay here.
-    pool._sparse_liquidity_map = sparse
     return pool
 
 

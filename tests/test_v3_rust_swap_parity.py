@@ -109,9 +109,10 @@ def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
     )
 
     # Sparse pool: identical scalars + position, but NO tick_data seeded.
-    # The pool's ``_tick_data_fetcher`` is the Rust-side callback the routing
-    # invokes on a miss. The starting tick 0 lives in word 0; the zfo walk
-    # descends to tick -60 which lives in word -1 (tick_spacing 60).
+    # The pool's sparse-word fetcher is the RUST-stored callback the routing
+    # invokes on a miss (T2 FBJTUM: the companion-side fetcher is retired).
+    # The starting tick 0 lives in word 0; the zfo walk descends to tick -60
+    # which lives in word -1 (tick_spacing 60).
     fetched_words: list[int] = []
 
     def fetcher(word: int, block: int):

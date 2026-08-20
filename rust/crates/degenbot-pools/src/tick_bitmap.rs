@@ -654,6 +654,75 @@ mod tests {
         }
     }
 
+    // T2 (FBJTUM, epic OU4SYZ) — RED test 3. Flip-equivalence: the apply path
+    // maintains `bit ⟺ row`. Under derivation (the FFI
+    // `tick_bitmap_snapshot` sets a bit for every `tick_data` key), the
+    // archived `flip_tick` discipline is free: a liquidity event that FLIPS a
+    // tick (initializes 0↔nonzero gross) must add/remove the row so the
+    // derived bit flips in lockstep. This pins that transition — the T3
+    // intake gate trusts it (a row with gross>0 is an initialized tick whose
+    // bit is set; a full burn removes the row, clearing the bit).
+    #[test]
+    fn flip_equivalence_apply_maintains_bit_row_consistency() {
+        let spacing = 60i32; // tick 0 → word0 bit0; tick 60 → word0 bit1
+                             // Mirror the FFI derivation: bit position per initialized-row key.
+        let derived_bits = |map: &HashMap<i32, TickInfo>| -> HashMap<i64, U256> {
+            let mut out: HashMap<i64, U256> = HashMap::new();
+            for tick in map.keys().copied() {
+                let compressed = tick / spacing;
+                let word = (compressed >> 8) as i64;
+                let bit = compressed.rem_euclid(256) as u32;
+                *out.entry(word).or_default() |= U256::from(1u64) << bit;
+            }
+            out
+        };
+        let mut map: HashMap<i32, TickInfo> = HashMap::new();
+
+        // Initialize [60] (a position opening at tick 60): the tick FLIPS
+        // from gross 0 → nonzero, so the row must materialize + bit set.
+        apply_liquidity_to_tick_range(&mut map, 60, 120, 100, 5);
+        assert!(map.contains_key(&60), "initialize must materialize the row");
+        assert_eq!(
+            map[&60].liquidity_gross,
+            U128::from(100u128),
+            "initialize gross = |delta|"
+        );
+        assert!(
+            derived_bits(&map).get(&0).is_some_and(|b| b.bit(1)),
+            "the derived bit must be set for the initialized tick (bit 1)"
+        );
+        assert!(
+            !map.contains_key(&120) || map[&120].liquidity_gross > U128::ZERO,
+            "no zero-gross row may survive the apply (bit ⟺ row)"
+        );
+
+        // Full burn flips [60] back to gross 0: the row must be REMOVED and
+        // the derived bit cleared (the archived flip_tick discipline).
+        apply_liquidity_to_tick_range(&mut map, 60, 120, -100, 9);
+        assert!(
+            !map.contains_key(&60),
+            "a fully-burned (gross→0) tick row must be removed — the bit clears"
+        );
+        assert!(
+            !derived_bits(&map).get(&0).is_some_and(|b| b.bit(1)),
+            "the derived bit must clear when the row is removed"
+        );
+
+        // Partial burn never flips: an overlapping second position keeps
+        // gross > 0, so the row + bit survive (the flip is all-or-nothing per
+        // tick's gross).
+        apply_liquidity_to_tick_range(&mut map, 60, 120, 100, 12);
+        apply_liquidity_to_tick_range(&mut map, 60, 120, -50, 13);
+        assert!(
+            map.contains_key(&60),
+            "partial burn keeps the row (gross > 0)"
+        );
+        assert!(
+            derived_bits(&map).get(&0).is_some_and(|b| b.bit(1)),
+            "the derived bit must stay set while gross > 0"
+        );
+    }
+
     #[test]
     fn test_gen_ticks_initialized_on_word_boundary_descending() {
         // Regression test: when an initialized tick sits exactly on a word

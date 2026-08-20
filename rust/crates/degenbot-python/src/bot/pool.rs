@@ -1798,6 +1798,45 @@ impl PyLiquidityPool {
         Ok(applied.is_some())
     }
 
+    /// Backfill an unknown tick-bitmap word for this pool (T2 FBJTUM — the
+    /// write-path gate's fetch seam).
+    ///
+    /// Calls the state's stored tick-word fetcher for `word` at `block` (the
+    /// companion passes `state_block - 1`) and, on success, merges the word's
+    /// ticks into the pool state via the core merge routine the sim loop
+    /// uses and marks the word known (a checked-empty fetch marks it known
+    /// with no ticks). Returns `False` when no fetcher is stored OR the
+    /// fetch failed — the caller RAISES rather than applying the event over
+    /// an unknown word.
+    fn ensure_word_known(&self, word: i64, block: u64) -> PyResult<bool> {
+        let word_i32 = i32::try_from(word)
+            .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("word must fit in i32"))?;
+        let ok = self
+            .core
+            .write()
+            .ensure_word_known_by_pool_id(self.pool_id, word_i32, block);
+        Ok(ok)
+    }
+
+    /// The pool's tick-map coverage (T2 FBJTUM): `"sparse"` or `"tracked"`
+    /// for a registered V3/V4 pool, `None` for any other pool family. The
+    /// Python companion's sparse-word gate reads this — Rust's coverage is
+    /// the fact (the companion's double-tracked sparseness flag is retired).
+    #[getter]
+    fn coverage(&self) -> PyResult<Option<String>> {
+        let core = self.core.read();
+        let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            match s.coverage() {
+                PoolTickCoverage::Sparse => "sparse",
+                PoolTickCoverage::Tracked => "tracked",
+            }
+            .to_string(),
+        ))
+    }
+
     /// Replace this pool's `tick_data` with an external snapshot (Python
     /// sparse-map backfill). Mirrors the Python `UniswapV3Pool.update_tick_data`
     /// — the companion delegates here once it's rewritten over the handle

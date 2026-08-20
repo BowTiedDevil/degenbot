@@ -190,8 +190,7 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
         coverage="sparse",
         tick_data_fetcher=fetcher,
     )
-    sparse._sparse_liquidity_map = True
-    assert sparse.sparse_liquidity_map, "sparse-registered companion is sparse"
+    assert sparse.sparse_liquidity_map, "sparse-registered companion is sparse (Rust coverage)"
 
     result = sparse.calculate_tokens_out_from_tokens_in(
         token_in=sparse.token0,
@@ -273,8 +272,6 @@ def _build_pool_from_corpus(
         coverage="sparse" if sparse else "tracked",
         tick_data_fetcher=fetcher if sparse else None,
     )
-    if sparse:
-        pool._sparse_liquidity_map = True
     return pool
 
 
@@ -473,8 +470,7 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
         tick_data_fetcher=fetcher,
     )
     sparse._py_pool.update_tick_data({}, {}, 0)
-    sparse._sparse_liquidity_map = True
-    assert sparse.sparse_liquidity_map, "cleared tick_data ⇒ sparse companion"
+    assert sparse.sparse_liquidity_map, "sparse-registered companion is sparse (Rust coverage)"
 
     rust_outcome = sparse._py_pool.simulate_swap_with_fetch(
         zero_for_one=True,
