@@ -120,7 +120,7 @@ after SRMMM7 — + runtime harness probes)
 - No new crate edges; no pyo3 surface change (the `DispatchCandidate` kwarg
   pre-existed — ADR-033 D4 kept it first-class; this ADR wires the driver).
 
-## Amendment (2026-08-20 — TGUZCT epic `XO2G8C`)
+## Amendment (2026-08-20 — epic `TGUZCT`)
 
 Decision 4 and finding 3 were recorded against the *injected* bytecode of
 the time (the July `contracts/` bake — 15,605 B runtime, pre-U3WVLL/767TN5),
