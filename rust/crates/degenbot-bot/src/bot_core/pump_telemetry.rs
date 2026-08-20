@@ -19,9 +19,10 @@
 //! the inline instrumentation it replaces.
 //!
 //! Psst — naming: this seals the *block-pump* telemetry. The solver-state
-//! verifier's own env-gated probes (`solve_anchor_probe`, `staged_clock_probe`,
-//! `divergence_scan`) stay grouped in `solver_state_verifier.rs`; they are
-//! already self-contained gated functions and are not part of the pump's hot
+//! tripwire's config-gated probes (`solve_anchor_probe`, `staged_clock_probe`,
+//! `divergence_scan`) stay grouped in `solver_state_tripwire.rs` (behind the
+//! `judge` interface, packed by the pump into its `TripwireConfig`) and are
+//! not part of the pump's hot
 //! loop.
 
 use std::time::Duration;

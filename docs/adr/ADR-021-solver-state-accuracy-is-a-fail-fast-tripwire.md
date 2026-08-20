@@ -150,6 +150,64 @@ to scalar-state repair.
 - [`docs/exploration-live-debug-session.md`](../exploration-live-debug-session.md)
   — the 2026-08-02 slow-connected-WS failure class and the "open discriminator"
   gap this ADR's D2 closes.
-- `rust/crates/degenbot-bot/src/bot_core/solver_state_verifier.rs` +
-  `block_pump.rs` (`verify_solver_state_against_chain`) — the AV42C7 gate the
-  posture governs.
+- `rust/crates/degenbot-bot/src/bot_core/solver_state_tripwire.rs` (renamed from
+  `solver_state_verifier.rs` at the D3 cutover) + `block_pump.rs
+  (solver_state_verify_loop + trip_and_exit) — the AV42C7 gate the posture
+  governs.
+
+### D3 slice 1 — single judge interface (done 2026-08-20; ergo G4DGX2)
+
+The gate is now a single in-module call — `judge(provider, config,
+path_hop_states, anchor) -> GateVerdict { Ok, Divergent(TripwireDivergence) }`
+— with the pump reduced to trip + exit (`trip_and_exit`: eprintln the
+byte-identical `[SOLVER-STATE] ABORT` breadcrumb + `class={:?}` token, then
+`std::process::abort`; no panic, no task unwind). The module reads ZERO env:
+the pump packs `TripwireConfig { enabled, divergence_scan, anchor_probe,
+staged_clock_probe }` at construction (default-on gate via
+`bot_env_flag_default_on`; default-off diagnostics via the new
+`bot_env_flag_default_off`). Strict-gate failures now carry their
+`TripwireClass` (StorageMutated / MissedLog per the D2 mapping; read
+failures stay Unclassified). The trip SET is unchanged (behaviour-parity
+contract); D2's remaining classes (UnhandledReorg, DeliveryLag-as-trip)
+and — at slice 1's time — the registration/sim-revert seam convergence was
+the D3 remainder.
+
+### D3 slice 2 — one tick-map verify seam (done 2026-08-20; ergo X6I3LN)
+
+"Does the stored CL tick-map state match the chain at block B?" now has ONE
+implementation. Design decisions (user-confirmed):
+
+- **Coverage stays per-consumer** (OQ1): the pure compare takes a
+  caller-supplied tick set — registration keeps its whole-stored-map forensics
+  (full divergent set under DEGENBOT_VERIFY_DBG), the solve-time probe keeps
+  stored ∪ bitmap-discovered (the UO3JM4 off-range class).
+- **Seam home** (OQ2): the pure per-tick compare
+  (`degenbot_pools::tick_map_verify::compare_tick_maps -> Vec<TickDivergence>`,
+  ascending-tick deterministic, one shared `Slot0HeadScalars` fact type) lives
+  in degenbot-pools next to the ADR-004 `TickMap` trait; the provider-bound
+  batch reads (`batched_v3/v4_tick_reads`, one Multicall3 per tick set) stay in
+  `bot_core::liquidity_verifier`. The dangling `crate::liquidity_verifier`
+  intra-doc links in `degenbot-pools/src/tick_map.rs` now point at the real
+  seam.
+- **sim-revert finding** (OQ3): the `[sim-revert-swap]` diagnostic is NOT a
+  tick-diff — it attributes captured reverted swaps to path hops by emitter
+  and compares actual swap output vs the solver's predicted `hop_outputs[i]`.
+  Its convergence is the fact type only: `RevertedSwapMatch.sim_scalars` is
+  now `Slot0HeadScalars` (degenbot-pools), so this log and the tripwire's
+  scalar state speak one type language. Log literals byte-identical.
+- **Verdict, not reaction** (unchanged): registration keeps the typed terminal
+  `VerificationMismatchError` (ADR-022, never aborts), the Python engine
+  verify keeps its bridged error, the judge keeps `GateVerdict::Divergent` +
+  trip + exit, sim-revert stays a non-aborting log. The batch shells
+  (`verify_v3/v4_pools`, `verify_v3/v4_liquidity_map`) are now thin loops over
+  one shared read + compare. Behaviour parity: byte-pinned first-mismatch
+  messages, `[SOLVER-STATE] ABORT` / `[sim-revert-swap]` literals, batch-call
+  counts (asserter-pinned) all unchanged. One documented delta: the
+  historical first-mismatch choice followed `HashMap` iteration order
+  (nondeterministic with multiple divergences); it is now deterministic
+  ascending tick, same class precedence (stored gross > net > on-chain-only).
+
+D3 remainder after slice 2: D2's remaining classes (UnhandledReorg evidence
+via the reorg coordinator, DeliveryLag-as-trip policy per the ADR's "Deferred"
+decision) — the seam-convergence scope of D3 is complete.
+

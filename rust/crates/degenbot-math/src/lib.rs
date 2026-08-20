@@ -5,7 +5,7 @@
 //!
 //! - [`v2`] — Uniswap V2 constant-product (x·y=k) swap math
 //! - [`cl`] — Uniswap V3/V4 concentrated-liquidity math libraries (`tick`, `sqrt_price_math`, `swap_math`, `liquidity_mapping`)
-//! - [`curve`] — Curve StableSwap invariant math (`CurveDyCalculator`, `calc_dy`, `calc_y`)
+//! - [`curve`] — `Curve StableSwap invariant math` (`CurveDyCalculator`, `calc_dy`, `calc_y`)
 //! - [`balancer`] — Balancer V2 `FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath`
 //! - [`solidly`] — Solidly / Aerodrome / Camelot stable-pool invariants
 //!

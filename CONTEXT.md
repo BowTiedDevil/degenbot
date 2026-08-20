@@ -88,8 +88,8 @@ per-pool `Quarantined → drain+verify → Live` sequence owned by the Rust core
   verify config)`.
 - **State tripwire** (this task's D-A) — the verification `MismatchError`
   raised as the terminal gate so `Live` is unreachable on unverified state;
-  never auto-repair. NOT ADR-021's solve-time scalar tripwire
-  (`solver_state_verifier`), which is out of registration scope.
+  never auto-repair. NOT the **Solver-state tripwire** (ADR-021's
+  solve-time scalar gate, section below), which is out of registration scope.
 - **Orphan sweep** — `release_all_v3_v4_quarantined` as cleanup for pools
   built but whose path never registered; never a productivity dependency.
 
@@ -118,6 +118,39 @@ concern (ADR-003), separate from construction: `pool_builder` only takes
 `&ConstructionIo` and never touches core state, while the lifecycle mutates
 core AND does RPC — so it needs the engine/core handle + a passed-in
 `&AlloyProvider`. Lives alongside `liquidity_verifier.rs`/`snapshot_verify.rs`.
+
+### Solver-state tripwire (ADR-021 D3)
+
+The publish-point solver-state accuracy gate as one deep module — the
+solve-time scalar tripwire ADR-021 owns. **Not** the registration
+**State tripwire** above (the verify-lifecycle `MismatchError` gate);
+the two share "tripwire" only as family vocabulary — one gates
+*registration*, the other gates *publish*.
+
+- **Solver-state tripwire** — the module the pump's verifier task judges
+  once per published block: for each hop of the block's change set it
+  diffs the solver's stored scalar state against the canonical on-chain
+  state and returns one typed verdict. The module owns the whole
+  pipeline — the dev-only divergence dry-run scanner, the aggregated
+  lagging-hop reporter, the observational solve-anchor / staged-clock
+  probes, and the strict per-hop gate — and reads no environment: the
+  pump packs the env stances into one config value at construction. The
+  pump keeps only the trip and the exit: on a divergent verdict it
+  prints the verdict's breadcrumb and aborts the process (ADR-021 D1:
+  detect, classify, stop loudly, never heal).
+- **Tripwire class** — the ADR-021 D2 defect class a verdict names:
+  `MissedLog`, `StorageMutated`, `DeliveryLag{blocks}`, `UnhandledReorg`,
+  `Unclassified`. A trip names the class, not just the scalar diff;
+  classes the current on-chain evidence cannot distinguish land in
+  `Unclassified` rather than a forced label. A trip set that differs
+  from today's would be a policy change, not a classification change.
+- **D3 convergence (staged)** — this module is the first of the three
+  ADR-021 verifiers converged onto the shared on-chain probe backend
+  (`degenbot-rpc::abi`); the registration **liquidity verifier** and the
+  sim-revert diagnostics converge onto the same seam as follow-up work
+  (same probe, different triggers — the two-adapter signal that makes
+  the seam real).
+
 
 ### Pool structural families
 

@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use alloy::primitives::{Address, Bytes, U256};
 
 use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
+use degenbot_pools::tick_map_verify::compare_tick_maps;
 use degenbot_rpc::abi::{
     decode_tick_bitmap, decode_tick_data, decode_v4_tick_bitmap, decode_v4_tick_data,
     encode_tick_bitmap, encode_tick_data, encode_v4_tick_bitmap, encode_v4_tick_data,
@@ -172,48 +173,45 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     phase: &str,
 ) -> Result<(), LiquidityVerifyError> {
     let block_tag = format!("block={block_number}");
-    // Batch-fetch all `ticks(tick)` in ONE Multicall3 `aggregate3` eth_call.
+    // Coverage: the WHOLE stored map (registration forensics scan every stored
+    // tick) — the compare policy decision documented at X6I3LN OQ1. One
+    // shared batch read + the pure `degenbot_pools::tick_map_verify` compare.
     let mut ticks: Vec<i32> = tick_data.keys().copied().collect();
     ticks.sort_unstable();
-    let ticks_calls: Vec<(Address, Bytes)> = ticks
-        .iter()
-        .map(|&tick_idx| (pool_address, Bytes::from(encode_tick_data(tick_idx))))
-        .collect();
-    let results = multicall3_batch(provider, &ticks_calls, Some(block_number))
-        .await
-        .map_err(|e| LiquidityVerifyError::Rpc {
-            message: format!("V3 pool {pool_address} {block_tag}: ticks batch failed: {e}"),
-        })?;
-    let on_chain: std::collections::HashMap<i32, &MulticallResult> =
-        ticks.iter().copied().zip(&results).collect();
+    let rows = batched_v3_tick_reads(
+        provider,
+        pool_address,
+        &ticks,
+        Some(block_number),
+        &block_tag,
+    )
+    .await?;
+    let stored = stored_tick_map(tick_data);
+    let observed: HashMap<i32, (u128, i128)> = rows.into_iter().collect();
     // Scan EVERY tick (not just until the first divergence) so a single
     // verify failure surfaces the FULL divergence set under
     // `DEGENBOT_VERIFY_DBG`. A Mint-without-its-Burn leaves the upper tick
     // divergent while the lower tick is +L vs 0 — one row per divergent tick
     // reveals that pairing without re-running. The returned error keeps the
     // EXACT historical message for the first mismatch (tests pin it); only
-    // the diagnostic log is additive.
+    // the diagnostic log is additive. Divergences are ascending-tick ordered
+    // (deterministic; the historical first-mismatch choice was map-order
+    // arbitrary).
+    let divergences = compare_tick_maps(&stored, &observed);
     let mut first_mismatch: Option<String> = None;
     let mut all_mismatches: Vec<String> = Vec::new();
-    for (&tick_idx, our_info) in tick_data {
-        let our_gross = our_info.liquidity_gross.to::<u128>();
-        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
-        #[expect(clippy::expect_used)] // invariant-guarded (documented)
-        let result = on_chain
-            .get(&tick_idx)
-            .copied()
-            .expect("tick in tick_data is in the batch");
-        let (on_chain_gross, on_chain_net) =
-            decode_v3_ticks_result(result, pool_address, tick_idx, &block_tag)?;
-        if our_gross != on_chain_gross || our_net != on_chain_net {
-            all_mismatches.push(format!(
-                "tick {tick_idx}: snapshot (lg={our_gross}, ln={our_net}) vs on-chain (lg={on_chain_gross}, ln={on_chain_net})"
+    for d in &divergences {
+        let (our_gross, our_net) = d.stored.unwrap_or((0, 0));
+        let (on_chain_gross, on_chain_net) = d.on_chain.unwrap_or((0, 0));
+        all_mismatches.push(format!(
+            "tick {}: snapshot (lg={}, ln={}) vs on-chain (lg={}, ln={})",
+            d.tick, our_gross, our_net, on_chain_gross, on_chain_net
+        ));
+        if first_mismatch.is_none() {
+            first_mismatch = Some(format!(
+                "V3 pool {pool_address} at {phase} block {block_number}: tick {} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})",
+                d.tick
             ));
-            if first_mismatch.is_none() {
-                first_mismatch = Some(format!(
-                    "V3 pool {pool_address} at {phase} block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
-                ));
-            }
         }
     }
     if let Some(msg) = first_mismatch {
@@ -269,45 +267,32 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
 ) -> Result<(), LiquidityVerifyError> {
     let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
     let block_tag = format!("block={block_number}");
-    // Batch all `StateView.getTickLiquidity(poolId, tick)` calls in ONE
-    // Multicall3 `aggregate3` eth_call (replacing one serial eth_call per tick).
+    // Coverage: the WHOLE stored map (registration forensics) — see
+    // `verify_v3_liquidity_map` for the OQ1 coverage policy. One shared
+    // batch read + the pure `degenbot_pools::tick_map_verify` compare.
     let mut ticks: Vec<i32> = tick_data.keys().copied().collect();
     ticks.sort_unstable();
-    let calls: Vec<(Address, Bytes)> = ticks
-        .iter()
-        .map(|&tick_idx| {
-            (
-                state_view,
-                Bytes::from(encode_v4_tick_data(&pool_id, tick_idx)),
-            )
-        })
-        .collect();
-    let results = multicall3_batch(provider, &calls, Some(block_number))
-        .await
-        .map_err(|e| LiquidityVerifyError::Rpc {
+    let rows = batched_v4_tick_reads(
+        provider,
+        state_view,
+        pool_id,
+        &ticks,
+        Some(block_number),
+        &block_tag,
+    )
+    .await?;
+    let stored = stored_tick_map(tick_data);
+    let observed: HashMap<i32, (u128, i128)> = rows.into_iter().collect();
+    let divergences = compare_tick_maps(&stored, &observed);
+    if let Some(d) = divergences.first() {
+        let (our_gross, our_net) = d.stored.unwrap_or((0, 0));
+        let (on_chain_gross, on_chain_net) = d.on_chain.unwrap_or((0, 0));
+        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
-                "V4 pool {pool_id_hex} {block_tag}: getTickLiquidity batch failed: {e}"
+                "V4 pool {pool_id_hex} at {phase} block {block_number}: tick {} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})",
+                d.tick
             ),
-        })?;
-    let on_chain: HashMap<i32, &MulticallResult> = ticks.iter().copied().zip(&results).collect();
-    for (&tick_idx, our_info) in tick_data {
-        let our_gross = our_info.liquidity_gross.to::<u128>();
-        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
-        #[expect(clippy::expect_used)] // invariant-guarded (documented)
-        let result = on_chain
-            .get(&tick_idx)
-            .copied()
-            .expect("tick in tick_data is in the batch");
-        let (on_chain_gross, on_chain_net) =
-            decode_v4_tick_liquidity_result(result, &pool_id_hex, &block_tag, tick_idx)?;
-        if our_gross != on_chain_gross || our_net != on_chain_net {
-            let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
-            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
-                message: format!(
-                    "V4 pool {pool_id_hex} at {phase} block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
-                ),
-            }));
-        }
+        }));
     }
     Ok(())
 }
@@ -341,8 +326,7 @@ pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
 /// per-pool entry point of [`verify_v3_pools`]. The scan covers the engine's
 /// own bitmap words plus ±2 around the active tick; a divergence (per-tick
 /// gross/net mismatch, or an on-chain tick the engine does not hold) is a
-/// [`LiquidityVerifyError::Mismatch`]. Reused by the solve-time tripwire's
-/// tick-map fidelity probe ([`crate::bot_core::solver_state_verifier`]).
+/// [`LiquidityVerifyError::Mismatch`]. Reused by the judge's tick-map fidelity probe (the `solver_state_tripwire` judge).
 ///
 /// # Panics
 ///
@@ -440,41 +424,30 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
     }
     let mut ticks: Vec<i32> = ticks_to_fetch.into_iter().collect();
     ticks.sort_unstable();
-    let ticks_calls: Vec<(Address, Bytes)> = ticks
-        .iter()
-        .map(|&tick_idx| (pool_addr, Bytes::from(encode_tick_data(tick_idx))))
-        .collect();
-    let ticks_results = multicall3_batch(provider, &ticks_calls, block_number)
-        .await
-        .map_err(|e| LiquidityVerifyError::Rpc {
-            message: format!("V3 pool {pool_addr} {block_tag}: ticks batch failed: {e}"),
-        })?;
-    // tick_index → (gross, net) from the batch (for O(1) lookup in the
-    // comparison loop). unwrap_or_default() is unreachable: `ticks` and
-    // `ticks_results` are the same length (multicall3_batch returns one
-    // result per call, in order).
-    let on_chain_ticks: std::collections::HashMap<i32, (u128, i128)> = ticks
-        .iter()
-        .zip(&ticks_results)
-        .map(|(&tick_idx, result)| {
-            let (gross, net) = decode_v3_ticks_result(result, pool_addr, tick_idx, &block_tag)?;
-            Ok::<_, LiquidityVerifyError>((tick_idx, (gross, net)))
-        })
-        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+    // One shared batch read (coverage = stored union bitmap-discovered above).
+    let rows = batched_v3_tick_reads(provider, pool_addr, &ticks, block_number, &block_tag).await?;
 
-    // 2. Verify each tick in our tick_data against the batched on-chain values.
-    for (&tick_idx, our_info) in tick_data {
-        let our_gross = our_info.liquidity_gross.to::<u128>();
-        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
-        let (on_chain_gross, on_chain_net) =
-            on_chain_ticks.get(&tick_idx).copied().unwrap_or((0, 0));
+    // 2. Per-tick verdicts via the shared pure compare
+    // (`degenbot_pools::tick_map_verify`), ascending tick order. Historical
+    // precedence preserved: a stored tick's gross > net > an on-chain-only
+    // discovery; the historical "first" followed HashMap iteration order, now
+    // deterministic.
+    let stored_map = stored_tick_map(tick_data);
+    let observed_map: HashMap<i32, (u128, i128)> = rows.iter().copied().collect();
+    let divergences = compare_tick_maps(&stored_map, &observed_map);
 
+    for d in &divergences {
+        if d.stored.is_none() {
+            continue;
+        }
+        let (our_gross, our_net) = d.stored.unwrap_or((0, 0));
+        let (on_chain_gross, on_chain_net) = d.on_chain.unwrap_or((0, 0));
         if our_gross != on_chain_gross {
             // TEMP DEBUG: dump journal depth + update_block for the failing pool
             // so we can tell whether ANY events were applied since the snapshot seed.
             tracing::info!(
                 pool_addr = %pool_addr,
-                tick_idx,
+                tick_idx = d.tick,
                 block_tag = %block_tag,
                 engine_gross = our_gross,
                 onchain_gross = on_chain_gross,
@@ -486,30 +459,32 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
             );
             return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
-                    "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}"
+                    "V3 pool {pool_addr} {block_tag}: tick {} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}",
+                    d.tick
                 ),
             }));
         }
         if our_net != on_chain_net {
             return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
-                    "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}"
+                    "V3 pool {pool_addr} {block_tag}: tick {} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}",
+                    d.tick
                 ),
             }));
         }
-
-        // Remove from on-chain set (we've verified this tick).
-        on_chain_tick_indices.remove(&tick_idx);
     }
 
-    // 3. Check for on-chain ticks we're missing (any remaining discovered tick
-    // not in engine). Its (lg, ln) is already in the batched map — no extra RPC.
-    if let Some(&tick_idx) = on_chain_tick_indices.iter().next() {
-        let (on_chain_gross, on_chain_net) =
-            on_chain_ticks.get(&tick_idx).copied().unwrap_or((0, 0));
+    // 3. Check for on-chain ticks we're missing (any discovered tick not in
+    // engine). Its (lg, ln) is already in the batched read — no extra RPC.
+    for d in &divergences {
+        if d.stored.is_some() {
+            continue;
+        }
+        let (on_chain_gross, on_chain_net) = d.on_chain.unwrap_or((0, 0));
         return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
-                "V3 pool {pool_addr} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"
+                "V3 pool {pool_addr} {block_tag}: tick {} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine",
+                d.tick
             ),
         }));
     }
@@ -768,70 +743,72 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     }
     let mut ticks: Vec<i32> = ticks_to_fetch.into_iter().collect();
     ticks.sort_unstable();
-    let ticks_calls: Vec<(Address, Bytes)> = ticks
-        .iter()
-        .map(|&tick_idx| {
-            (
-                state_view,
-                Bytes::from(encode_v4_tick_data(&pool_id_bytes, tick_idx)),
-            )
-        })
-        .collect();
-    let ticks_results = multicall3_batch(provider, &ticks_calls, block_number)
-        .await
-        .map_err(|e| LiquidityVerifyError::Rpc {
-            message: format!(
-                "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity batch failed: {e}"
-            ),
-        })?;
-    let on_chain_ticks: HashMap<i32, (u128, i128)> = ticks
-        .iter()
-        .zip(&ticks_results)
-        .map(|(&tick_idx, result)| {
-            let (gross, net) =
-                decode_v4_tick_liquidity_result(result, &pool_id_hex, &block_tag, tick_idx)?;
-            Ok::<_, LiquidityVerifyError>((tick_idx, (gross, net)))
-        })
-        .collect::<Result<HashMap<_, _>, _>>()?;
+    // One shared batch read (coverage = stored union bitmap-discovered above).
+    let rows = batched_v4_tick_reads(
+        provider,
+        state_view,
+        pool_id_bytes,
+        &ticks,
+        block_number,
+        &block_tag,
+    )
+    .await?;
 
-    // 2. Compare every tick in our tick_data against on-chain
-    for (&tick_idx, our_info) in tick_data {
-        let our_gross = our_info.liquidity_gross.to::<u128>();
-        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
+    // 2. Per-tick verdicts via the shared pure compare
+    // (`degenbot_pools::tick_map_verify`), ascending tick order. Historical
+    // precedence preserved: a stored tick's gross > net > a stored tick missing
+    // on-chain > an on-chain-only discovery.
+    let stored_map = stored_tick_map(tick_data);
+    let observed_map: HashMap<i32, (u128, i128)> = rows.iter().copied().collect();
+    let divergences = compare_tick_maps(&stored_map, &observed_map);
 
-        if let Some(&(on_chain_gross, on_chain_net)) = on_chain_ticks.get(&tick_idx) {
-            if our_gross != on_chain_gross {
+    for d in &divergences {
+        if d.stored.is_none() {
+            continue;
+        }
+        let (our_gross, our_net) = d.stored.unwrap_or((0, 0));
+        match d.on_chain {
+            Some((on_chain_gross, on_chain_net)) => {
+                if our_gross != on_chain_gross {
+                    return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+                        message: format!(
+                            "V4 pool 0x{pool_id_hex} {block_tag}: tick {} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}",
+                            d.tick
+                        ),
+                    }));
+                }
+                if our_net != on_chain_net {
+                    return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+                        message: format!(
+                            "V4 pool 0x{pool_id_hex} {block_tag}: tick {} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}",
+                            d.tick
+                        ),
+                    }));
+                }
+            }
+            None => {
                 return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                     message: format!(
-                        "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}"
+                        "V4 pool 0x{pool_id_hex} {block_tag}: tick {} exists in engine (lg={our_gross}, ln={our_net}) but NOT on-chain",
+                        d.tick
                     ),
                 }));
             }
-            if our_net != on_chain_net {
-                return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
-                    message: format!(
-                        "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}"
-                    ),
-                }));
-            }
-        } else {
-            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
-                message: format!(
-                    "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists in engine (lg={our_gross}, ln={our_net}) but NOT on-chain"
-                ),
-            }));
         }
     }
 
     // 3. Check for on-chain ticks we're missing
-    for (&tick_idx, &(on_chain_gross, on_chain_net)) in &on_chain_ticks {
-        if !tick_data.contains_key(&tick_idx) {
-            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
-                message: format!(
-                    "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"
-                ),
-            }));
+    for d in &divergences {
+        if d.stored.is_some() {
+            continue;
         }
+        let (on_chain_gross, on_chain_net) = d.on_chain.unwrap_or((0, 0));
+        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
+            message: format!(
+                "V4 pool 0x{pool_id_hex} {block_tag}: tick {} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine",
+                d.tick
+            ),
+        }));
     }
 
     Ok(())
@@ -855,6 +832,91 @@ fn collect_bitmap_words<S: std::hash::BuildHasher>(
     for w in (current_word - 2)..=(current_word + 2) {
         words.insert(w);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shared batched tick reads — one Multicall3 `aggregate3` per tick set, one
+// decode. Shared by the per-pool kernel (coverage = stored union
+// bitmap-discovered) and the registration whole-map batch (coverage = whole
+// stored map); the per-tick COMPARE lives in
+// `degenbot_pools::tick_map_verify` (ADR-021 D3 slice 2).
+// ---------------------------------------------------------------------------
+
+/// Batch-read V3 `ticks(tick)` for `ticks` (pre-sorted by the caller for
+/// reproducible sub-call order) in ONE Multicall3 call, returning
+/// `((tick, (liquidity_gross, liquidity_net)))` rows in input order.
+async fn batched_v3_tick_reads(
+    provider: &AlloyProvider,
+    pool_addr: Address,
+    ticks: &[i32],
+    block_number: Option<u64>,
+    block_tag: &str,
+) -> Result<Vec<(i32, (u128, i128))>, LiquidityVerifyError> {
+    let ticks_calls: Vec<(Address, Bytes)> = ticks
+        .iter()
+        .map(|&t| (pool_addr, Bytes::from(encode_tick_data(t))))
+        .collect();
+    let results = multicall3_batch(provider, &ticks_calls, block_number)
+        .await
+        .map_err(|e| LiquidityVerifyError::Rpc {
+            message: format!("V3 pool {pool_addr} {block_tag}: ticks batch failed: {e}"),
+        })?;
+    let mut out = Vec::with_capacity(ticks.len());
+    for (t, result) in ticks.iter().zip(&results) {
+        let (gross, net) = decode_v3_ticks_result(result, pool_addr, *t, block_tag)?;
+        out.push((*t, (gross, net)));
+    }
+    Ok(out)
+}
+
+/// Batch-read V4 `StateView.getTickLiquidity(poolId, tick)` for `ticks`
+/// (pre-sorted) in ONE Multicall3 call — V4 twin of
+/// [`batched_v3_tick_reads`].
+async fn batched_v4_tick_reads(
+    provider: &AlloyProvider,
+    state_view: Address,
+    pool_id: [u8; 32],
+    ticks: &[i32],
+    block_number: Option<u64>,
+    block_tag: &str,
+) -> Result<Vec<(i32, (u128, i128))>, LiquidityVerifyError> {
+    let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id);
+    let calls: Vec<(Address, Bytes)> = ticks
+        .iter()
+        .map(|&t| (state_view, Bytes::from(encode_v4_tick_data(&pool_id, t))))
+        .collect();
+    let results = multicall3_batch(provider, &calls, block_number)
+        .await
+        .map_err(|e| LiquidityVerifyError::Rpc {
+            message: format!(
+                "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity batch failed: {e}"
+            ),
+        })?;
+    let mut out = Vec::with_capacity(ticks.len());
+    for (t, result) in ticks.iter().zip(&results) {
+        let (gross, net) = decode_v4_tick_liquidity_result(result, &pool_id_hex, block_tag, *t)?;
+        out.push((*t, (gross, net)));
+    }
+    Ok(out)
+}
+
+/// Build the pure-compare input from a bot-core `TickInfo` map:
+/// `tick -> (liquidity_gross as u128, liquidity_net as i128)`.
+fn stored_tick_map<S: std::hash::BuildHasher>(
+    tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
+) -> HashMap<i32, (u128, i128)> {
+    tick_data
+        .iter()
+        .map(|(&t, info)| {
+            (
+                t,
+                (
+                    info.liquidity_gross.to::<u128>(),
+                    info.liquidity_net.try_into().unwrap_or_default(),
+                ),
+            )
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

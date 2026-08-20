@@ -2110,6 +2110,7 @@ dependencies = [
  "degenbot-decoders",
  "degenbot-executor",
  "degenbot-order-index",
+ "degenbot-pools",
  "degenbot-rpc",
  "degenbot-simulation",
  "degenbot-submission",

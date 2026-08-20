@@ -26,7 +26,7 @@ Investigation surfaced three facts that drove the decisions:
    (`Arc::clone`) — cheap to clone, shares the transport.
 2. Core pool/`BotState` structs are deliberately I/O-free (ADR-001) — they must
    not hold a provider.
-3. ADR-021's `solver_state_verifier` is a **solve-time** scalar-state tripwire
+3. ADR-021's `solver_state_tripwire` is a **solve-time** scalar-state tripwire
    with a whole-bot shutdown reaction — no registration analogue. The word
    "tripwire" was being overloaded across the two.
 
@@ -50,7 +50,7 @@ Python `register_v3/v4_pool` becomes a thin delegating shell.
 "State tripwire as the final gate" before `Live` means: the verification
 `MismatchError` is raised as a typed `VerificationMismatchError` at the terminal
 step so `Live` is unreachable on unverified state — never auto-repair. ADR-021's
-`solver_state_verifier::verify_solver_hop_states` is a distinct, solve-time,
+`solver_state_tripwire::judge` is a distinct, solve-time,
 per-hop scalar diff with a whole-bot shutdown reaction; it has no registration
 analogue and is explicitly NOT part of this lifecycle. The two "tripwires" must
 not be conflated.

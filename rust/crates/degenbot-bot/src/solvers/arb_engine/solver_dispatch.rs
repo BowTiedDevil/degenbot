@@ -18,7 +18,7 @@ use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 // distinguish "quiet but current" from "genuinely moved but only moderately
 // behind" (AV42C7 — the zero-tolerance retread was already REVERTED for the same
 // over-deferral). The accurate discriminator requires a fresh on-chain read, which
-// the ADR-021 verifier (`verify_solver_state_against_chain`) already performs at
+// the ADR-021 tripwire (`solver_state_tripwire::judge`) already performs at
 // the publish point, diffing each hop at its OWN `update_block` anchor and
 // `std::process::abort`ing on the first real desync before simulation. That
 // tripwire — not an age heuristic — is the sole chain/solver-mismatch guard; on a

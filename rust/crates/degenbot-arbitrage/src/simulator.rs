@@ -1625,13 +1625,14 @@ struct RevertedSwapMatch {
     /// swap matched no hop on the path.
     pool_id: Option<String>,
     /// Post-swap active-liquidity scalars captured at SIM time (the moment
-    /// `actual_out` was produced). This is the fix-enabler: it pins the exact
-    /// pool state the oracle (`v4_simulate_swap`) must be driven at to
-    /// reproduce a recurrence, closing the solve-vs-sim state gap the log's
-    /// solve-time values cannot close (see docs/tracked-failures-log-review-2026-08-03.md).
-    sim_sqrt_price_x96: U256,
-    sim_tick: i32,
-    sim_liquidity: U256,
+    /// `actual_out` was produced), as the shared slot0 head-scalar fact type
+    /// (`degenbot_pools::tick_map_verify::Slot0HeadScalars` — the same family
+    /// the solve-time tripwire's `SolverHopScalarState` pins; ADR-021 D3
+    /// slice 2). This is the fix-enabler: it pins the exact pool state the
+    /// oracle (`v4_simulate_swap`) must be driven at to reproduce a
+    /// recurrence, closing the solve-vs-sim state gap the log's solve-time
+    /// values cannot close (see docs/tracked-failures-log-review-2026-08-03.md).
+    sim_scalars: degenbot_pools::tick_map_verify::Slot0HeadScalars,
     /// The exact-in amount the swap consumed (the negative-side delta
     /// magnitude) — the `amountSpecified` that produced `actual_out`.
     actual_in: Option<U256>,
@@ -1693,9 +1694,11 @@ fn match_reverted_swaps_to_hops(
             family: swap.family,
             emitter: swap.emitter,
             pool_id: hop_index.and_then(|i| hop_pool_id(hops, i)),
-            sim_sqrt_price_x96: swap.sqrt_price_x96,
-            sim_tick: swap.tick,
-            sim_liquidity: swap.liquidity,
+            sim_scalars: degenbot_pools::tick_map_verify::Slot0HeadScalars {
+                sqrt_price_x96: swap.sqrt_price_x96,
+                tick: swap.tick,
+                liquidity: swap.liquidity,
+            },
             actual_in: negative_side_magnitude(swap.amount0, swap.amount1),
             actual_out: actual,
             captured_amount0: swap.amount0,
@@ -1761,9 +1764,9 @@ fn log_reverted_swaps_vs_hop_outputs(
             captured_amount0 = %m.captured_amount0,
             captured_amount1 = %m.captured_amount1,
             predicted = %m.predicted.map_or_else(|| "none".into(), |v| v.to_string()),
-            sim_sqrt_price_x96 = %m.sim_sqrt_price_x96,
-            sim_tick = m.sim_tick,
-            sim_liquidity = %m.sim_liquidity,
+            sim_sqrt_price_x96 = %m.sim_scalars.sqrt_price_x96,
+            sim_tick = m.sim_scalars.tick,
+            sim_liquidity = %m.sim_scalars.liquidity,
             matched = m.matched,
             "{SIM_REVERT_SWAP_LOG_PREFIX}"
         );
@@ -2564,11 +2567,17 @@ mod tests {
         );
         assert_eq!(m.actual_in, Some(U256::from(3_135u128)));
         assert_eq!(m.actual_out, Some(U256::from(772_076_574_181_336u128)));
-        assert_eq!(m.sim_tick, -262_346);
-        assert_eq!(m.sim_liquidity, U256::from(1_432_650_976_603_835_442u128));
+        // The pinned fix-enabler scalars ride the shared slot0 head-scalar
+        // fact type (degenbot_pools::tick_map_verify::Slot0HeadScalars) so
+        // the [sim-revert-swap] log and the solve-time tripwire speak one
+        // type language.
         assert_eq!(
-            m.sim_sqrt_price_x96,
-            U256::from(159_369_389_255_773_083_394_993u128)
+            m.sim_scalars,
+            degenbot_pools::tick_map_verify::Slot0HeadScalars {
+                sqrt_price_x96: U256::from(159_369_389_255_773_083_394_993u128),
+                tick: -262_346,
+                liquidity: U256::from(1_432_650_976_603_835_442u128),
+            }
         );
         assert!(m.matched);
     }

@@ -116,6 +116,7 @@ pub use v4_storage_slots::{
 pub mod tick_bitmap;
 pub mod tick_fetch;
 pub mod tick_map;
+pub mod tick_map_verify;
 pub mod v2_state;
 pub mod v3_pancakeswap_storage_slots;
 pub mod v3_state;

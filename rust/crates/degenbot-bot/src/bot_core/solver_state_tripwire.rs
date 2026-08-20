@@ -1,5 +1,7 @@
-//! Solver-state accuracy gate — diff the solver's stored pool state against
-//! the chain (the ADR-005 Option-A state-accuracy assertion).
+//! Solver-state tripwire — the ADR-021 D3 state-accuracy gate, one module.
+//!
+//! The solver's stored per-hop pool state is diffed against the canonical
+//! on-chain state (the ADR-005 Option-A state-accuracy assertion).
 //!
 //! The mutation-nonce staleness gate (`candidate_is_stale`) verifies that a
 //! pool's local state was *updated* — it proves the nonce changed, NOT that
@@ -13,8 +15,18 @@
 //! Verified fields are the MUTABLE scalar state the solver predicts from:
 //! V2 `(reserve0, reserve1)`, V3/V4 `(sqrtPriceX96, liquidity, tick)` — the
 //! same fields the existing `liquidity_verifier` deliberately does NOT touch
-//! (it only checks the immutable-init tick *map*). Env-gated; on any mismatch
-//! the caller panics immediately (see `AV42C7` Option A).
+//! (it only checks the immutable-init tick *map*).
+//!
+//! The module owns the whole pipeline behind [`judge`]: the dev-only
+//! divergence dry-run scanner, the aggregated lagging-hop reporter, the
+//! observational solve-anchor / staged-clock probes, and the strict per-hop
+//! gate, and it discriminates the ADR-021 D2 defect classes
+//! ([`TripwireClass`]). It reads NO environment: the pump packs the env
+//! stances into [`TripwireConfig`] at construction (the Z4KQXF per-pump
+//! opt-out pattern) and passes it per judgement. The caller keeps only the
+//! trip and the exit: on [`GateVerdict::Divergent`] it prints the verdict
+//! breadcrumb and aborts the process (ADR-021 D1: detect, classify, stop
+//! loudly — never heal; the AV42C7 Option-A reaction).
 //!
 //! The anchor diff (each hop at its OWN `update_block`) catches reorgs /
 //! same-block sub-tick corruption but tolerates normal latency — a pool honest
@@ -34,6 +46,416 @@ use degenbot_solvers::mixed::{HopType, MixedPoolRef};
 
 use super::liquidity_verifier::{verify_v3_pool, verify_v4_pool, LiquidityVerifyError};
 use super::BotState;
+
+/// The env-derived stances, packed by the pump at construction — the module
+/// reads NO env itself (the Z4KQXF per-pump opt-out pattern: tests construct
+/// the config directly, immune to the global env).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the four ADR-021 D3 stance flags (the gate + three default-off diagnostics) are the packed per-pump config (Z4KQXF) — one bool per env-named stance is the deliberate shape"
+)]
+pub struct TripwireConfig {
+    /// Whether the gate runs at all (ex `DEGENBOT_ASSERT_SOLVER_STATE`,
+    /// conservative default ON in production).
+    pub enabled: bool,
+    /// Dev-only, NON-ABORTING divergence dry-run scanner that short-circuits
+    /// the strict gate (ex `DEGENBOT_SOLVER_DIVERGENCE_SCAN`, default off).
+    /// Must never be enabled to silence the production abort.
+    pub divergence_scan: bool,
+    /// Observational solve-anchor consistency probe for lagging-outlier hops
+    /// (ex `DEGENBOT_TRACE_SOLVE_ANCHOR`, default off).
+    pub anchor_probe: bool,
+    /// Observational staged-clock scalar probe for in-progress hops
+    /// (ex `DEGENBOT_TRACE_STAGED_CLOCK`, default off).
+    pub staged_clock_probe: bool,
+}
+
+impl TripwireConfig {
+    /// Gate ON, every observability probe OFF (the red/green unit-test shape).
+    #[must_use]
+    pub const fn enabled_only() -> Self {
+        Self {
+            enabled: true,
+            divergence_scan: false,
+            anchor_probe: false,
+            staged_clock_probe: false,
+        }
+    }
+
+    /// Every stance off (the test-constructor pump default, Z4KQXF).
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self {
+            enabled: false,
+            divergence_scan: false,
+            anchor_probe: false,
+            staged_clock_probe: false,
+        }
+    }
+}
+
+/// The ADR-021 D2 defect class a divergent verdict names — a trip should
+/// name the class, not just the scalar diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TripwireClass {
+    /// A swap/liquidity event moved on-chain but was never applied before the
+    /// solver consumed the pool (the strict gate's STALE flag: honest at the
+    /// hop's own anchor, on-chain moved past the staleness threshold).
+    MissedLog,
+    /// A reorg was not rolled back before solve. Reserved — NOT emittable at
+    /// this evidence budget (needs reorg-coordinator evidence); refinement
+    /// path only.
+    UnhandledReorg,
+    /// On-chain storage diverges from the solver's stored state even AT the
+    /// hop's own anchor — direct storage mutation, a decode bug, and an
+    /// unhandled reorg are indistinguishable from the scalar reads (coarse
+    /// by design).
+    StorageMutated,
+    /// State is honest at the hop's own anchor but trails the solve block by
+    /// `blocks` (WS slow-but-connected). The aggregate reporter LOGS this
+    /// class (WARN); the strict gate does not trip on it (the trip set is
+    /// byte-for-byte today's).
+    DeliveryLag { blocks: u64 },
+    /// A hard stop the coarse on-chain evidence cannot classify (the FUTURE
+    /// guard, an `eth_call` read failure, a tick-map fidelity divergence).
+    /// The divergence's message carries the detail.
+    Unclassified,
+}
+
+/// One hard stop: which class, where, and the full grep-able diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TripwireDivergence {
+    pub class: TripwireClass,
+    pub path_idx: usize,
+    pub hop_idx: usize,
+    /// The full fatal diagnostic — the grep-able `[SOLVER-STATE] ABORT:`
+    /// prefix kept byte-identical to the pre-extraction message, with the
+    /// class appended. The caller prints it, then aborts.
+    pub breadcrumb: String,
+}
+
+/// The verdict of one published-block judgement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateVerdict {
+    /// No divergence at any hop (or the dev-only dry-run scanner
+    /// short-circuited — it never trips).
+    Ok,
+    /// A verified desync — the caller must print `breadcrumb` and
+    /// `abort()` the process (ADR-021 D1).
+    Divergent(TripwireDivergence),
+}
+
+/// Judge one published block's change set against the chain — the ADR-021 D3
+/// single-call interface. Owns the whole stage pipeline (scanner → reporter
+/// → probes → strict gate); never reads env; never aborts (the caller does).
+///
+/// `path_hop_states` is the per-path scalar state extracted under the caller's
+/// short read guard (the pump drops the guard BEFORE this awaits); `anchor` is
+/// the pump-resolved [`crate::bot_core::solve_anchor::SolveAnchor`].
+pub async fn judge(
+    provider: &AlloyProvider,
+    config: &TripwireConfig,
+    path_hop_states: &[Vec<SolverHopScalarState>],
+    anchor: crate::bot_core::solve_anchor::SolveAnchor,
+) -> GateVerdict {
+    let block = anchor.block();
+    if path_hop_states.is_empty() {
+        return GateVerdict::Ok;
+    }
+    // The anchor is resolved by the CALLER at the pool-state head (the rule
+    // owner + full re-anchor history live in `crate::bot_core::solve_anchor`):
+    // during a backfill/drain desync the pools sit AHEAD of the lagging
+    // publish block, and a hop at the head is LIVE state, not a future price.
+    if config.divergence_scan {
+        // Stage 1 (dev-only) short-circuits the strict gate (today's bypass,
+        // preserved as-is) — see `divergence_scan_stage`'s docs.
+        divergence_scan_stage(provider, path_hop_states, block).await;
+        return GateVerdict::Ok;
+    }
+    // Stage 2: the aggregated lagging-hop reporter (ADR-021 supplement,
+    // observational, non-tripping) — see `lagging_hop_report_stage`'s docs.
+    lagging_hop_report_stage(block, path_hop_states);
+
+    // Stage 3: the solve-anchor consistency probe (observational, config-
+    // gated default off) — see `solve_anchor_probe_stage`'s docs.
+    if config.anchor_probe {
+        solve_anchor_probe_stage(provider, path_hop_states, block).await;
+    }
+    // Stage 4: the strict per-hop scalar gate — the ONLY trip.
+    for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
+        if let Err(f) = verify_solver_hop_states(provider, config, hop_states, anchor).await {
+            return GateVerdict::Divergent(breadcrumb_divergence(path_idx, f, hop_states, block));
+        }
+    }
+    GateVerdict::Ok
+}
+
+/// Stage 1 — the dev-only, non-aborting divergence scanner (dry-run low-MTBF
+/// failure hunting). Logs every lagging Tracked CL hop's stored-vs-on-chain
+/// fidelity (HONEST vs the rare REAL DIVERGENT desync) WITHOUT aborting, so
+/// one long dry-run accumulates all genuine desyncs instead of dying on the
+/// first. The UO3JM4 abort is bypassed ONLY while this opt-in is set — the
+/// stage must never be enabled to silence the production abort (judge
+/// short-circuits with `Ok` right after this stage).
+async fn divergence_scan_stage(
+    provider: &AlloyProvider,
+    path_hop_states: &[Vec<SolverHopScalarState>],
+    block: u64,
+) {
+    let mut seen = std::collections::HashSet::new();
+    let mut uniq: Vec<&SolverHopScalarState> = Vec::new();
+    for hop_states in path_hop_states {
+        for hop in hop_states {
+            // Dedupe by generalized identity (one on-chain read per unique
+            // pool).
+            let key = match hop.hop_type {
+                HopType::V3 => hop.v3.as_ref().map(|(a, ..)| format!("v3:{a}")),
+                HopType::V4 => hop.v4.as_ref().map(|(_, id, ..)| {
+                    let mut h = String::with_capacity(8);
+                    for b in &id[..4] {
+                        let _ = std::fmt::Write::write_fmt(&mut h, format_args!("{b:02x}"));
+                    }
+                    format!("v4:{h}")
+                }),
+                _ => None,
+            };
+            if let Some(k) = key {
+                if seen.insert(k) {
+                    uniq.push(hop);
+                }
+            }
+        }
+    }
+    let mut n_scanned = 0usize;
+    let mut n_honest = 0usize;
+    let mut n_divergent = 0usize;
+    for r in scan_lagging_hops_for_divergence(provider, &uniq, block).await {
+        n_scanned += 1;
+        match r.verdict {
+            DivergenceVerdict::Honest => {
+                n_honest += 1;
+                tracing::debug!(
+                    hop_idx = r.hop_index,
+                    %r.pool,
+                    update_block = r.update_block,
+                    tick_data_block = r.tick_data_block,
+                    stale_by = r.stale_by,
+                    "solver-state divergence scan: HONEST (quiet-but-correct)"
+                );
+            }
+            DivergenceVerdict::Divergent => {
+                n_divergent += 1;
+                tracing::error!(
+                    hop_idx = r.hop_index,
+                    %r.pool,
+                    block,
+                    update_block = r.update_block,
+                    tick_data_block = r.tick_data_block,
+                    stale_by = r.stale_by,
+                    solver_sqrt = ?r.solver_sqrt,
+                    chain_sqrt = ?r.chain_sqrt,
+                    "solver-state divergence scan: REAL-DESYNC — pool moved on-chain \
+                     but its stored state was not advanced (missed/delayed swap)."
+                );
+            }
+        }
+    }
+    if n_scanned > 0 {
+        tracing::info!(
+            block,
+            n_scanned,
+            n_honest,
+            n_divergent,
+            "solver-state divergence scan: summary"
+        );
+    }
+}
+
+/// Stage 2 — the generalized lagging-hop reporter (ADR-021 supplement),
+/// AGGREGATED. BEFORE the strict gate, surfaces ANY Tracked Live CL hop whose
+/// `update_block` trails the promoted solve anchor past
+/// `MAX_CL_STALENESS_BLOCKS` — the ADR-021 D2 `DeliveryLag{blocks}`
+/// population. Pool-agnostic; observational only — does NOT weaken the
+/// UO3JM4 strict gate.
+///
+/// The natural WS settle lag (~4 blocks) sits just past the threshold, so
+/// a naive per-hop WARN re-reported the SAME benign pools ~100× per block
+/// across paths (≈143 WARNs/block, 0 desyncs in a 5k-WARN run). We
+/// therefore aggregate across all paths into ONE per-block summary (dedupe
+/// per pool, keep max `stale_by`) and WARN individually only for genuine
+/// outliers (`stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS`, well above
+/// the baseline); the quiet-but-benign bulk stays at `DEBUG`.
+fn lagging_hop_report_stage(block: u64, path_hop_states: &[Vec<SolverHopScalarState>]) {
+    let lags_by_pool = aggregate_lagging_hops(block, path_hop_states);
+    if !lags_by_pool.is_empty() {
+        let n_pools = lags_by_pool.len();
+        let max_stale_by = lags_by_pool.values().map(|l| l.stale_by).max().unwrap_or(0);
+        tracing::warn!(
+            block,
+            n_pools,
+            max_stale_by,
+            "[solver-state] Tracked Live CL hop pools trail the solve anchor past the staleness \
+             threshold (summarized — genuine-outlier pools logged below, benign settle-lag \
+             baseline at debug)"
+        );
+        for lag in lags_by_pool.values() {
+            let update_block = lag.update_block;
+            let tick_data_block = lag.tick_data_block;
+            let stale_by = lag.stale_by;
+            let pool = &lag.pool;
+            if lag.stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS {
+                tracing::warn!(
+                    block,
+                    hop_type = ?lag.hop_type,
+                    coverage = %lag.coverage,
+                    lifecycle = %lag.lifecycle,
+                    update_block,
+                    tick_data_block,
+                    stale_by,
+                    %pool,
+                    "[solver-state] DeliveryLag{{blocks}} outlier: Tracked Live CL hop pool \
+                     is a genuine staleness outlier (well past the natural settle lag) — the \
+                     strict gate may escalate this to an abort"
+                );
+            } else {
+                tracing::debug!(
+                    block,
+                    hop_type = ?lag.hop_type,
+                    coverage = %lag.coverage,
+                    lifecycle = %lag.lifecycle,
+                    update_block,
+                    tick_data_block,
+                    stale_by,
+                    %pool,
+                    "[solver-state] Tracked Live CL hop pool trails the solve anchor \
+                     (benign settle-lag baseline, folded into the summary above)"
+                );
+            }
+        }
+    }
+}
+
+/// Stage 3 — the solve-anchor consistency probe (observational; config-gated
+/// default off): discriminates the lagging-outlier population into QUIET
+/// (benign-inactive — correct-but-old) vs MOVED-IN-BLOCK-NOT-APPLIED (on-chain
+/// moved AT the solve anchor but the pool's in-block Swap was not applied
+/// before the solver consumed it — the improper header-promote-ahead-of-
+/// apply transition behind the 0x99ac8c abort). NON-aborting and does NOT
+/// bypass the production abort — it accumulates observability so the ordering
+/// race isn't only visible as a process kill. Only abnormal outliers are
+/// read, one read per unique pool per anchor, so cost is bounded.
+async fn solve_anchor_probe_stage(
+    provider: &AlloyProvider,
+    path_hop_states: &[Vec<SolverHopScalarState>],
+    block: u64,
+) {
+    // D2 classification pre-scan (pure metadata, no reads): how many hops
+    // are Laggards vs Consensus relative to the solve anchor — the probe
+    // below reads only the laggards.
+    let (mut laggards, mut consensus) = (0u64, 0u64);
+    for hs in path_hop_states {
+        for hop in hs {
+            if hop.update_block == 0 || hop.update_block >= block {
+                continue;
+            }
+            match solve_anchor_advancement(
+                hop.update_block,
+                block,
+                SOLVER_STATE_ABNORMAL_STALE_BLOCKS,
+            ) {
+                SolveAnchorAdvancement::Laggard { .. } => laggards += 1,
+                SolveAnchorAdvancement::Consensus => consensus += 1,
+            }
+        }
+    }
+    tracing::debug!(
+        block,
+        laggards,
+        consensus,
+        cutoff = SOLVER_STATE_ABNORMAL_STALE_BLOCKS,
+        "solve-anchor advance classification (pre-probe)"
+    );
+    let probe = probe_solve_anchor_consistency(
+        provider,
+        path_hop_states,
+        block,
+        SOLVER_STATE_ABNORMAL_STALE_BLOCKS,
+    )
+    .await;
+    for r in probe {
+        let verdict = match r.verdict {
+            LaggardProbeVerdict::Quiet => "QUIET (benign-inactive, correct-but-old)",
+            LaggardProbeVerdict::MovedInBlockNotApplied => {
+                "MOVED-IN-BLOCK-NOT-APPLIED (on-chain moved at the solve anchor but the \
+                 in-block Swap was not applied before solve — header-promote-ahead-of-apply)"
+            }
+            LaggardProbeVerdict::ReadFailed => "READ-FAILED (unclassified)",
+        };
+        tracing::warn!(
+            block,
+            hop_type = ?r.hop_type,
+            %r.pool,
+            update_block = r.update_block,
+            tick_data_block = r.tick_data_block,
+            stale_by = r.stale_by,
+            %verdict,
+            "[solve-anchor-probe] lagging Tracked Live CL hop classified at solve anchor"
+        );
+    }
+}
+
+/// Format the full fatal breadcrumb (ADR-021 D1: stop loudly with enough
+/// breadcrumb to name the defect class). The literal prefix
+/// `[SOLVER-STATE] ABORT: solver used desynced pool state at solve block
+/// {block} (path_idx={path_idx}` is byte-identical to the pre-extraction
+/// message; the D2 class is appended after it. The OB7UNY two-stamp
+/// diagnostic surfaces BOTH per-hop clocks so a staged-clock desync (fresh
+/// price, stale tick map — the `0x5653` class the scalar-only diff cannot
+/// see) stays visible in the fatal message.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Copy usize used twice (struct field + breadcrumb format); a &usize triggers the inverse trivially_copy_pass_by_ref"
+)]
+fn breadcrumb_divergence(
+    path_idx: usize,
+    f: GateFailure,
+    hop_states: &[SolverHopScalarState],
+    block: u64,
+) -> TripwireDivergence {
+    let hops_diag: Vec<String> = hop_states
+        .iter()
+        .filter(|h| h.update_block != 0)
+        .map(|h| {
+            let meta = h
+                .cl_meta
+                .as_ref()
+                .map(|(c, l)| format!(" cov={c}, lifecycle={l}"))
+                .unwrap_or_default();
+            format!(
+                "hop {:?} update_block={} tick_data_block={} stale_by={}{}",
+                h.hop_type,
+                h.update_block,
+                h.tick_data_block,
+                block.saturating_sub(h.update_block),
+                meta
+            )
+        })
+        .collect();
+    TripwireDivergence {
+        class: f.class,
+        path_idx,
+        hop_idx: f.hop_idx,
+        breadcrumb: format!(
+            "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block {block} \
+             (path_idx={path_idx}, class={:?}, hops: {}) {}. Do NOT reuse desynced state or \
+             silence this (UO3JM4).",
+            f.class,
+            hops_diag.join(", "),
+            f.message,
+        ),
+    }
+}
 
 /// The solver's stored per-hop scalar state, pre-extracted from `BotState`
 /// so the raw (non-`Clone`, non-`Send`) state can be dropped BEFORE the async
@@ -108,7 +530,7 @@ pub struct ClTickMapSnapshot {
 /// [`verify_solver_hop_states`]. Hops whose family is not a CL/V2 scalar diff
 /// (Solidly / Balancer / Curve) or whose state is missing are skipped.
 #[must_use]
-pub fn extract_solver_hop_states(
+pub(crate) fn extract_solver_hop_states(
     core: &BotState,
     pools: &[MixedPoolRef],
 ) -> Vec<SolverHopScalarState> {
@@ -205,22 +627,6 @@ pub fn extract_solver_hop_states(
         .collect()
 }
 
-/// A per-hop chain-vs-solver state mismatch (or read failure), rendered as an
-/// actionable message the pump can panic with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SolverStateMismatch {
-    /// The human-readable failure detail (the panic message body).
-    pub message: String,
-}
-
-impl std::fmt::Display for SolverStateMismatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for SolverStateMismatch {}
-
 /// Whether a V2 pair's solver-stored reserves match the on-chain reserves.
 /// `reserve0`/`reserve1` are uint112 on-chain; compared exactly.
 #[must_use]
@@ -259,7 +665,7 @@ pub fn cl_state_matches(
 /// read from the hop itself (never a pool literal), so lag is observable on ANY
 /// participating pool, not just the one that happens to abort.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaggingHop {
+struct LaggingHop {
     /// Index of the hop within its path.
     pub hop_index: usize,
     /// V3 or V4.
@@ -315,7 +721,7 @@ fn is_lagging_tracked(hop: &SolverHopScalarState, anchor: u64) -> bool {
 /// (the invariant guarantees every lagging CL hop has CL metadata; the `expect`
 /// below is the canary for that invariant).
 #[must_use]
-pub fn lagging_tracked_hops(anchor: u64, hops: &[SolverHopScalarState]) -> Vec<LaggingHop> {
+fn lagging_tracked_hops(anchor: u64, hops: &[SolverHopScalarState]) -> Vec<LaggingHop> {
     hops.iter()
         .enumerate()
         .filter_map(|(hop_index, h)| {
@@ -363,7 +769,7 @@ pub fn lagging_tracked_hops(anchor: u64, hops: &[SolverHopScalarState]) -> Vec<L
 /// entry per pool (max staleness), which the pump turns into a single per-block
 /// summary plus outlier WARNs.
 #[must_use]
-pub fn aggregate_lagging_hops(
+fn aggregate_lagging_hops(
     anchor: u64,
     path_hop_states: &[Vec<SolverHopScalarState>],
 ) -> HashMap<String, LaggingHop> {
@@ -384,21 +790,13 @@ pub fn aggregate_lagging_hops(
     by_pool
 }
 
-/// Opt-in dev-only divergence scanner (dry-run low-MTBF failure hunting). When
-/// `DEGENBOT_SOLVER_DIVERGENCE_SCAN=1`, for every lagging Tracked Live CL hop the
-/// pump logs whether its stored state is HONEST (quiet-but-correct) or DIVERGENT
-/// (a REAL desync — the pool moved on-chain but the stored price was not
-/// advanced). NO aborting. Default off ensures the UO3JM4 abort is fully
-/// preserved; this is a pure dry-run diagnostic and must never be used to
-/// silence the production abort.
-#[must_use]
-pub fn divergence_scan_enabled() -> bool {
-    std::env::var("DEGENBOT_SOLVER_DIVERGENCE_SCAN").as_deref() == Ok("1")
-}
+// The dev-only divergence-scan stance now lives on
+// [`TripwireConfig::divergence_scan`] — the module reads no env (the pump
+// packs it at construction, the Z4KQXF per-pump pattern).
 
 /// Verdict of a single divergence scan on one lagging Tracked CL hop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DivergenceVerdict {
+enum DivergenceVerdict {
     /// Stored state matches on-chain at the solve block (quiet-but-correct).
     Honest,
     /// Stored state differs from on-chain at the solve block — a REAL desync.
@@ -407,7 +805,7 @@ pub enum DivergenceVerdict {
 
 /// Result of scanning one lagging Tracked CL hop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DivergenceScanResult {
+struct DivergenceScanResult {
     pub hop_index: usize,
     /// Generalized pool identity (`v3:<addr>` / `v4:0x<leading-hex>…`).
     pub pool: String,
@@ -428,7 +826,7 @@ pub struct DivergenceScanResult {
 /// onto the rare real desync. An RPC read that fails is skipped (best-effort; a
 /// transport hiccup must not mis-flag a pool), per the liquidity-verifier `Rpc`
 /// contract.
-pub async fn scan_lagging_hops_for_divergence(
+async fn scan_lagging_hops_for_divergence(
     provider: &AlloyProvider,
     hops: &[&SolverHopScalarState],
     block: u64,
@@ -532,7 +930,7 @@ fn solver_anchor_block(update_block: u64, block: u64) -> u64 {
 /// hop at/within `tol`, or never-updated (`0`, verified at the anchor instead),
 /// is [`SolveAnchorAdvancement::Consensus`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SolveAnchorAdvancement {
+enum SolveAnchorAdvancement {
     /// The pool has advanced to/at the anchor or within the normal settle
     /// tolerance — solving through it at `anchor` is a legal transition.
     Consensus,
@@ -546,11 +944,7 @@ pub enum SolveAnchorAdvancement {
 /// [`is_lagging_tracked`]'s tolerance notion but is hop-metadata-free: it takes
 /// the raw `update_block` + `anchor` + `tol`, so a test can drive it directly.
 #[must_use]
-pub fn solve_anchor_advancement(
-    update_block: u64,
-    anchor: u64,
-    tol: u64,
-) -> SolveAnchorAdvancement {
+fn solve_anchor_advancement(update_block: u64, anchor: u64, tol: u64) -> SolveAnchorAdvancement {
     if update_block > 0 && anchor.saturating_sub(update_block) > tol {
         SolveAnchorAdvancement::Laggard {
             stale_by: anchor.saturating_sub(update_block),
@@ -564,7 +958,7 @@ pub fn solve_anchor_advancement(
 /// lagging-hop reporter cannot make ([`lagging_tracked_hops`] only says *how* a
 /// Tracked hop trails the anchor, not *whether on-chain moved at the anchor*).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaggardProbeVerdict {
+enum LaggardProbeVerdict {
     /// On-chain scalar state at the anchor MATCHES the solver's stored state —
     /// a benign-inactive pool (correct-but-old). NOT the defect.
     Quiet,
@@ -580,7 +974,7 @@ pub enum LaggardProbeVerdict {
 
 /// One lagging hop's solve-anchor probe result.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SolveAnchorProbeResult {
+struct SolveAnchorProbeResult {
     /// Generalized pool identity (`v3:<addr>` / `v4:0x<leading-hex>…`).
     pub pool: String,
     pub hop_type: HopType,
@@ -590,19 +984,14 @@ pub struct SolveAnchorProbeResult {
     pub verdict: LaggardProbeVerdict,
 }
 
-/// Opt-in solve-anchor consistency probe stance: `DEGENBOT_TRACE_SOLVE_ANCHOR=1`.
-/// Default off — zero cost (a single cheap getenv) unless set. It is a pure
-/// observational probe and never weakens the UO3JM4 abort.
-#[must_use]
-pub fn solve_anchor_probe_enabled() -> bool {
-    std::env::var("DEGENBOT_TRACE_SOLVE_ANCHOR").as_deref() == Ok("1")
-}
+// The solve-anchor probe stance now lives on [`TripwireConfig::anchor_probe`]
+// — the module reads no env.
 
 /// The `stale_by` cutoff that distinguishes a *genuine* lagging outlier (worth a
-/// solve-anchor read to classify) from the benign WS settle-lag baseline. Must
-/// match the `block_pump` `SOLVER_STATE_ABNORMAL_STALE_BLOCKS` reporter cutoff so
-/// the probe and the reporter agree on what is "abnormal".
-pub const SOLVER_STATE_ABNORMAL_STALE_BLOCKS: u64 = 10;
+/// solve-anchor read to classify) from the benign WS settle-lag baseline — the
+/// single home shared by the aggregated reporter and the solve-anchor probe
+/// (they must agree on what is "abnormal").
+const SOLVER_STATE_ABNORMAL_STALE_BLOCKS: u64 = 10;
 
 /// The solve-anchor consistency probe. For every genuinely-abnormal lagging
 /// Tracked Live CL hop (`stale_by >= abnormal_tol`), read on-chain at the solve
@@ -613,7 +1002,7 @@ pub const SOLVER_STATE_ABNORMAL_STALE_BLOCKS: u64 = 10;
 /// dev-only `DIVERGENCE_SCAN`). In-progress (`update_block >= anchor`) and
 /// never-updated hops are skipped; a failed read is `ReadFailed` (never
 /// mis-classified). Observational only — the production abort runs regardless.
-pub async fn probe_solve_anchor_consistency(
+async fn probe_solve_anchor_consistency(
     provider: &AlloyProvider,
     path_hop_states: &[Vec<SolverHopScalarState>],
     anchor: u64,
@@ -703,21 +1092,15 @@ pub async fn probe_solve_anchor_consistency(
 // `liquidity()` scalar.
 // -----------------------------------------------------------------------------
 
-/// Opt-in staged-clock probe stance: `DEGENBOT_TRACE_STAGED_CLOCK=1`. Default
-/// off — zero cost unless set. Observational (non-aborting): it surfaces the
-/// fresh-price + stale-in-range-liquidity desync at solve time instead of
-/// letting the gate silently skip it. Never weakens or bypasses the hard abort.
-#[must_use]
-pub fn staged_clock_probe_enabled() -> bool {
-    std::env::var("DEGENBOT_TRACE_STAGED_CLOCK").as_deref() == Ok("1")
-}
+// The staged-clock probe stance now lives on
+// [`TripwireConfig::staged_clock_probe`] — the module reads no env.
 
 /// The two-stamp clock gap (`update_block - tick_data_block`) above which a
 /// skipped CL hop is worth a staged-clock probe read. A healthy pool advances
 /// both clocks together (every `apply_swap` advances both), so a pronounced
 /// price-ahead-of-map gap is genuinely anomalous — the map clock stopped
 /// advancing while the price clock kept moving.
-pub const STAGED_CLOCK_GAP_BLOCKS: u64 = 3;
+const STAGED_CLOCK_GAP_BLOCKS: u64 = 3;
 
 /// Pure classifier: is a CL hop a **staged-clock candidate** — SKIPPED by the
 /// gate (`update_block >= block`, its price clock reached the solve block) with
@@ -902,14 +1285,17 @@ fn skip_in_progress_hop(update_block: u64, block: u64) -> bool {
 ///
 /// # Errors
 ///
-/// Returns [`SolverStateMismatch`] on any hop whose stored state diverges
-/// from the chain at its anchor, or on an `eth_call` transport/decode failure.
+/// Returns a [`GateFailure`] (carrying its ADR-021 D2 [`TripwireClass`]) on
+/// any hop whose stored state diverges from the chain at its anchor, or on an
+/// `eth_call` transport/decode failure (both class `Unclassified` — a read
+/// failure must never look like an honest pass).
 #[expect(clippy::too_many_lines)]
-pub async fn verify_solver_hop_states(
+async fn verify_solver_hop_states(
     provider: &AlloyProvider,
+    config: &TripwireConfig,
     hops: &[SolverHopScalarState],
     solve_anchor: crate::bot_core::solve_anchor::SolveAnchor,
-) -> Result<(), SolverStateMismatch> {
+) -> Result<(), GateFailure> {
     // The pump resolved the anchor at publish (see `crate::bot_core::solve_anchor`);
     // the body reads the plain block for staleness math + messages.
     let block = solve_anchor.block();
@@ -935,6 +1321,7 @@ pub async fn verify_solver_hop_states(
         if solve_anchor.is_future(hop.update_block) {
             return Err(mismatch(
                 i,
+                TripwireClass::Unclassified,
                 &format!(
                     "CL hop FUTURE at solve anchor {} (solver update_block={}, ahead by {} blocks): \
                      the price clock runs past the block being solved — solving with a future price is \
@@ -958,7 +1345,7 @@ pub async fn verify_solver_hop_states(
             // `liquidity()` at the hop's completed tick-data anchor. This turns
             // the silently-skipped stale-liquidity class into an observable
             // `[staged-clock]` WARN without weakening or bypassing the abort.
-            if staged_clock_probe_enabled() {
+            if config.staged_clock_probe {
                 probe_staged_clock_scalar(provider, hop, block, i).await;
             }
             continue;
@@ -970,10 +1357,17 @@ pub async fn verify_solver_hop_states(
                 };
                 let (c0, c1) = fetch_v2_reserves(provider, &pool, Some(anchor))
                     .await
-                    .map_err(|e| mismatch(i, &format!("V2 eth_call at block {anchor}: {e}")))?;
+                    .map_err(|e| {
+                        mismatch(
+                            i,
+                            TripwireClass::Unclassified,
+                            &format!("V2 eth_call at block {anchor}: {e}"),
+                        )
+                    })?;
                 if !v2_state_matches(s0, s1, c0, c1) {
                     return Err(mismatch(
                         i,
+                        TripwireClass::StorageMutated,
                         &format!(
                             "V2 pool {pool} state mismatch at its anchor block {anchor} \
                              (solve block {block}, solver update_block={ub}, behind by {}): \
@@ -991,10 +1385,17 @@ pub async fn verify_solver_hop_states(
                 let (c_sqrt, c_tick, c_liq) =
                     fetch_v3_slot0_liquidity(provider, &pool, Some(anchor))
                         .await
-                        .map_err(|e| mismatch(i, &format!("V3 eth_call at block {anchor}: {e}")))?;
+                        .map_err(|e| {
+                            mismatch(
+                                i,
+                                TripwireClass::Unclassified,
+                                &format!("V3 eth_call at block {anchor}: {e}"),
+                            )
+                        })?;
                 if !cl_state_matches(s_sqrt, s_liq, s_tick, c_sqrt, c_liq, c_tick) {
                     return Err(mismatch(
                         i,
+                        TripwireClass::StorageMutated,
                         &format!(
                             "V3 pool {pool} state mismatch at its anchor block {anchor} \
                              (solve block {block}, solver update_block={ub}, behind by {}): \
@@ -1017,11 +1418,16 @@ pub async fn verify_solver_hop_states(
                         fetch_v3_slot0_liquidity(provider, &pool, Some(block))
                             .await
                             .map_err(|e| {
-                                mismatch(i, &format!("V3 solve-block eth_call at {block}: {e}"))
+                                mismatch(
+                                    i,
+                                    TripwireClass::Unclassified,
+                                    &format!("V3 solve-block eth_call at {block}: {e}"),
+                                )
                             })?;
                     if !cl_state_matches(s_sqrt, s_liq, s_tick, b_sqrt, b_liq, b_tick) {
                         return Err(mismatch(
                             i,
+                            TripwireClass::MissedLog,
                             &format!(
                                 "V3 pool {pool} STALE at solve block {block} (solver \
                                  update_block={ub}, behind by {} blocks): solver snapshot \
@@ -1065,10 +1471,17 @@ pub async fn verify_solver_hop_states(
                 let (c_sqrt, c_tick, _protocol_fee, _lp_fee, c_liq) =
                     fetch_v4_slot0_liquidity(provider, &state_view, &pool_id, Some(anchor))
                         .await
-                        .map_err(|e| mismatch(i, &format!("V4 eth_call at block {anchor}: {e}")))?;
+                        .map_err(|e| {
+                            mismatch(
+                                i,
+                                TripwireClass::Unclassified,
+                                &format!("V4 eth_call at block {anchor}: {e}"),
+                            )
+                        })?;
                 if !cl_state_matches(s_sqrt, s_liq, s_tick, c_sqrt, c_liq, c_tick) {
                     return Err(mismatch(
                         i,
+                        TripwireClass::StorageMutated,
                         &format!(
                             "V4 pool {pm} (id {:02x}…) state mismatch at its anchor block {anchor} \
                              (solve block {block}, solver update_block={ub}, behind by {}): solver \
@@ -1085,11 +1498,16 @@ pub async fn verify_solver_hop_states(
                         fetch_v4_slot0_liquidity(provider, &state_view, &pool_id, Some(block))
                             .await
                             .map_err(|e| {
-                                mismatch(i, &format!("V4 solve-block eth_call at {block}: {e}"))
+                                mismatch(
+                                    i,
+                                    TripwireClass::Unclassified,
+                                    &format!("V4 solve-block eth_call at {block}: {e}"),
+                                )
                             })?;
                     if !cl_state_matches(s_sqrt, s_liq, s_tick, b_sqrt, b_liq, b_tick) {
                         return Err(mismatch(
                             i,
+                            TripwireClass::MissedLog,
                             &format!(
                                 "V4 pool {pm} (id {:02x}…) STALE at solve block {block} (solver \
                                  update_block={ub}, behind by {} blocks): solver snapshot \
@@ -1124,8 +1542,19 @@ pub async fn verify_solver_hop_states(
     Ok(())
 }
 
-fn mismatch(index: usize, message: &str) -> SolverStateMismatch {
-    SolverStateMismatch {
+/// A strict-gate failure carrying its ADR-021 D2 class, wrapped into a
+/// [`GateVerdict::Divergent`] by [`judge`].
+#[derive(Debug, Clone)]
+struct GateFailure {
+    hop_idx: usize,
+    class: TripwireClass,
+    message: String,
+}
+
+fn mismatch(index: usize, class: TripwireClass, message: &str) -> GateFailure {
+    GateFailure {
+        hop_idx: index,
+        class,
         message: format!("hop {index}: {message}"),
     }
 }
@@ -1185,7 +1614,7 @@ async fn probe_cl_tick_map_fidelity(
     v4_state_view: Address,
     v4_pool_id: [u8; 32],
     i: usize,
-) -> Result<(), SolverStateMismatch> {
+) -> Result<(), GateFailure> {
     let tick_anchor = if hop.tick_data_block > 0 {
         hop.tick_data_block
     } else {
@@ -1218,6 +1647,7 @@ async fn probe_cl_tick_map_fidelity(
         Ok(()) => Ok(()),
         Err(LiquidityVerifyError::Mismatch(m)) => Err(mismatch(
             i,
+            TripwireClass::Unclassified,
             &format!(
                 "tick-map fidelity probe at tick-data anchor {tick_anchor}: {} (the scalar gate \
                  diffs active liquidity only and can miss off-range missing positions — a thin/\
@@ -1241,13 +1671,197 @@ async fn probe_cl_tick_map_fidelity(
     }
 }
 
-#[expect(clippy::expect_used)]
+#[expect(clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy::primitives::{I256, U256};
     use alloy::transports::mock::Asserter;
     use std::sync::Arc;
+
+    // -----------------------------------------------------------------
+    // `judge` — the ADR-021 D3 single-call interface (red phase).
+    // These pin the stage pipeline through the public interface only.
+    // -----------------------------------------------------------------
+
+    /// A V2 hop for the judge tests (no tick clock, no CL metadata).
+    fn v2_hop(s0: u64, s1: u64, update_block: u64) -> SolverHopScalarState {
+        SolverHopScalarState {
+            hop_type: HopType::V2,
+            update_block,
+            tick_data_block: 0,
+            cl_meta: None,
+            v2: Some((Address::from([0x44u8; 20]), U256::from(s0), U256::from(s1))),
+            v3: None,
+            v4: None,
+            cl_tick_map: None,
+        }
+    }
+
+    /// One `getReserves` `eth_call` result: (reserve0, reserve1, block32).
+    fn v2_reserves_response(s0: u64, s1: u64) -> String {
+        let mut buf = Vec::with_capacity(96);
+        for v in [U256::from(s0), U256::from(s1), U256::ZERO] {
+            let w: [u8; 32] = v.to_be_bytes();
+            buf.extend_from_slice(&w);
+        }
+        format!("0x{}", alloy::primitives::hex::encode(buf))
+    }
+
+    /// One Uniswap V3 `slot0` `eth_call` result: 7 words (sqrt, tick, tail).
+    fn v3_slot0_response(sqrt: U256, tick: i32) -> String {
+        let mut buf = vec![0u8; 7 * 32];
+        let sqrt_w: [u8; 32] = sqrt.to_be_bytes();
+        buf[0..32].copy_from_slice(&sqrt_w);
+        let tick_w: [u8; 4] = tick.to_be_bytes();
+        buf[44..48].copy_from_slice(&tick_w);
+        format!("0x{}", alloy::primitives::hex::encode(buf))
+    }
+
+    /// One `liquidity()` `eth_call` result: uint128 (upper 16 bytes).
+    fn liq_response(liq: u128) -> String {
+        let mut buf = [0u8; 32];
+        let w: [u8; 16] = liq.to_be_bytes();
+        buf[16..32].copy_from_slice(&w);
+        format!("0x{}", alloy::primitives::hex::encode(buf))
+    }
+
+    /// (i) A V2 hop honest at its own anchor is `Ok` — one strict-gate read,
+    /// nothing else.
+    #[tokio::test]
+    async fn judge_honest_v2_at_anchor_is_ok() {
+        let hop = v2_hop(1000, 2000, 190);
+        let provider = mock_provider(vec![v2_reserves_response(1000, 2000)]);
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+        )
+        .await;
+        assert!(
+            matches!(v, GateVerdict::Ok),
+            "honest at own anchor must pass"
+        );
+    }
+
+    /// (ii) A scalar mismatch AT the hop's own anchor trips as
+    /// `StorageMutated` with the grep-able literal prefix + class token.
+    #[tokio::test]
+    async fn judge_own_anchor_mismatch_triages_storage_mutated_with_literal() {
+        let hop = v2_hop(1000, 2000, 190);
+        let provider = mock_provider(vec![v2_reserves_response(777, 888)]);
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+        )
+        .await;
+        let GateVerdict::Divergent(d) = v else {
+            panic!("gate must trip on an own-anchor mismatch");
+        };
+        assert_eq!(d.class, TripwireClass::StorageMutated);
+        assert_eq!(d.path_idx, 0);
+        assert_eq!(d.hop_idx, 0);
+        assert!(
+            d.breadcrumb.starts_with(
+                "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block 200 (path_idx=0"
+            ),
+            "literal prefix must stay byte-identical; got: {}",
+            d.breadcrumb,
+        );
+        assert!(
+            d.breadcrumb.contains("StorageMutated"),
+            "the class must be named in the breadcrumb; got: {}",
+            d.breadcrumb,
+        );
+    }
+
+    /// (iii) Own-anchor honest + CL STALE flag (on-chain moved past the
+    /// staleness threshold) trips as `MissedLog`.
+    #[tokio::test]
+    async fn judge_own_anchor_honest_stale_cl_moves_to_missed_log() {
+        let sqrt = U256::from(1u128) << 96;
+        let liq = 1_000_000u128;
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V3,
+            update_block: 190,
+            tick_data_block: 190,
+            cl_meta: None,
+            v2: None,
+            v3: Some((Address::from([0xaau8; 20]), sqrt, liq, 0)),
+            v4: None,
+            cl_tick_map: None,
+        };
+        let moved = U256::from(2u128) << 96;
+        let provider = mock_provider(vec![
+            v3_slot0_response(sqrt, 0),
+            liq_response(liq),
+            v3_slot0_response(moved, 0),
+            liq_response(liq),
+        ]);
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+        )
+        .await;
+        let GateVerdict::Divergent(d) = v else {
+            panic!("the STALE flag must trip");
+        };
+        assert_eq!(d.class, TripwireClass::MissedLog);
+    }
+
+    /// (iv) The dev-only divergence scanner short-circuits the strict gate
+    /// (today's bypass, preserved as-is): a V2 hop (invisible to the CL-only
+    /// scanner) yields ZERO reads and `Ok`.
+    #[tokio::test]
+    async fn judge_divergence_scan_short_circuits_strict_gate() {
+        let hop = v2_hop(1000, 2000, 200);
+        // No responses queued: ANY eth_call (strict gate or scan) would fail
+        // the mock transport's asserter.
+        let provider = mock_provider(vec![]);
+        let cfg = TripwireConfig {
+            divergence_scan: true,
+            ..TripwireConfig::enabled_only()
+        };
+        let v = judge(
+            &provider,
+            &cfg,
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+        )
+        .await;
+        assert!(matches!(v, GateVerdict::Ok), "dry-run scan must never trip");
+    }
+
+    /// (v) With every probe default-off, a fresh CL hop issues exactly the
+    /// strict-gate reads (slot0 + liquidity at its own anchor) — no extras.
+    #[tokio::test]
+    async fn judge_default_config_issues_only_strict_gate_reads() {
+        let sqrt = U256::from(1u128) << 96;
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V3,
+            update_block: 199,
+            tick_data_block: 199,
+            cl_meta: Some(("Tracked".to_string(), "Live".to_string())),
+            v2: None,
+            v3: Some((Address::from([0xaau8; 20]), sqrt, 1_000_000, 0)),
+            v4: None,
+            cl_tick_map: None,
+        };
+        let provider = mock_provider(vec![v3_slot0_response(sqrt, 0), liq_response(1_000_000)]);
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+        )
+        .await;
+        assert!(matches!(v, GateVerdict::Ok));
+    }
 
     #[test]
     fn anchor_block_uses_update_block_when_set() {
@@ -1381,25 +1995,6 @@ mod tests {
             format!("{:?}", V::MovedInBlockNotApplied),
             "MovedInBlockNotApplied"
         );
-    }
-
-    #[test]
-    fn probe_default_off_single_env_get() {
-        // Default is OFF (probe must be opt-in).
-        std::env::remove_var("DEGENBOT_TRACE_SOLVE_ANCHOR");
-        assert!(!solve_anchor_probe_enabled());
-        std::env::set_var("DEGENBOT_TRACE_SOLVE_ANCHOR", "1");
-        assert!(solve_anchor_probe_enabled());
-        std::env::remove_var("DEGENBOT_TRACE_SOLVE_ANCHOR");
-    }
-
-    #[test]
-    fn staged_clock_default_off_single_env_get() {
-        std::env::remove_var("DEGENBOT_TRACE_STAGED_CLOCK");
-        assert!(!staged_clock_probe_enabled());
-        std::env::set_var("DEGENBOT_TRACE_STAGED_CLOCK", "1");
-        assert!(staged_clock_probe_enabled());
-        std::env::remove_var("DEGENBOT_TRACE_STAGED_CLOCK");
     }
 
     #[test]
@@ -1632,6 +2227,7 @@ mod tests {
         // turns this into an Err (the RED assertion).
         let err = verify_solver_hop_states(
             &provider,
+            &TripwireConfig::enabled_only(),
             &[hop],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(102, 0),
         )
@@ -1709,6 +2305,7 @@ mod tests {
 
         let err = verify_solver_hop_states(
             &provider,
+            &TripwireConfig::enabled_only(),
             &[hop],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(102, 0),
         )

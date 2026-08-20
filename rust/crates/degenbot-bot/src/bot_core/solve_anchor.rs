@@ -63,7 +63,7 @@ impl SolveAnchor {
 
     /// The anchored block.
     #[must_use]
-    pub fn block(&self) -> u64 {
+    pub fn block(self) -> u64 {
         self.block
     }
 
@@ -71,11 +71,12 @@ impl SolveAnchor {
     /// future and never legitimate; a hop *at* the anchor is a mid-block
     /// capture and is NOT future.
     #[must_use]
-    pub fn is_future(&self, update_block: u64) -> bool {
+    pub fn is_future(self, update_block: u64) -> bool {
         update_block > self.block
     }
 }
 
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::SolveAnchor;

@@ -6,9 +6,10 @@
 //! (needed for the ±2-word bitmap scan during verification), and the
 //! `tick_data` map itself. The slot0 head's mutable scalars
 //! (`sqrt_price_x96`, `liquidity`) are deliberately out of reach: callers
-//! that take `&impl TickMap` (the [`verify_v3_pool`](crate::liquidity_verifier::verify_v3_pool)
-//! / [`verify_v4_pool`](crate::liquidity_verifier::verify_v4_pool)
-//! verifier entry points, and the `apply_v3_liquidity_update` /
+//! that take `&impl TickMap` (the `verify_v3_pool` / `verify_v4_pool` verifier
+//! entry points in the bot layer, whose pure per-tick compare lives in
+//! [`crate::tick_map_verify`](crate::tick_map_verify) since ADR-021 D3 slice 2,
+//! and the `apply_v3_liquidity_update` /
 //! `apply_v4_liquidity_update` apply entry points) cannot accidentally read
 //! or mutate them — the rule is carried by the type, not a module doc comment.
 //!

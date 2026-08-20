@@ -56,7 +56,10 @@ pub const ONE: alloy::primitives::U256 =
 pub const MAX_UINT256: alloy::primitives::U256 = alloy::primitives::U256::MAX;
 
 pub mod camelot;
-pub mod solidly;
+pub mod solidly_math;
+// Path alias: the family API stays at solidly::solidly::… for consumers
+// (module_inception-safe file name).
+pub use solidly_math as solidly;
 
 pub use camelot::{calc_exact_in_stable_camelot, f_camelot, get_y_camelot, k_camelot};
 pub use solidly::{

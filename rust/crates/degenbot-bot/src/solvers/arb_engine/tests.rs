@@ -1622,9 +1622,9 @@ mod tests {
     /// (stored state byte-identical to on-chain), so it is SOLVED, not deferred.
     /// The old gate deferred it because `update_block` age looks like staleness —
     /// the quiet-pool false positive QNFYR5 proved live. Genuine chain/solver
-    /// divergence is caught by the ADR-021 verifier
-    /// (`verify_solver_state_against_chain`), which fatal-aborts loudly, NOT by
-    /// a solve-time defer.
+    /// divergence is caught by the ADR-021 tripwire
+    /// (`solver_state_tripwire::judge`) before the pump's trip + exit,
+    /// which fatal-aborts loudly, NOT by a solve-time defer.
     #[test]
     fn quiet_pool_frozen_far_behind_is_solved_not_deferred() {
         let mut engine = ArbitrageEngine::new();

@@ -45,16 +45,12 @@ use crate::bot_core::pump_fsm::{PumpDecision, PumpFSM};
 
 use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
-use degenbot_solvers::mixed::HopType;
 use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
 
 use crate::bot_core::event_dispatch::{DispatchOwner, DrainWork, SolverVerifyRequest};
-use crate::bot_core::solver_state_verifier::{
-    aggregate_lagging_hops, divergence_scan_enabled, extract_solver_hop_states,
-    probe_solve_anchor_consistency, scan_lagging_hops_for_divergence, solve_anchor_probe_enabled,
-    verify_solver_hop_states, DivergenceVerdict, LaggardProbeVerdict, SolverHopScalarState,
-    SolverStateMismatch,
+use crate::bot_core::solver_state_tripwire::{
+    extract_solver_hop_states, judge, GateVerdict, TripwireConfig, TripwireDivergence,
 };
 use crate::bot_core::LogDecision;
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
@@ -68,15 +64,6 @@ use degenbot_rpc::provider::AlloyProvider;
 
 /// How long to wait with no activity before assuming the connection is dead.
 const BACKFILL_TIMEOUT_SECS: u64 = 60;
-
-/// Staleness (in blocks) at which a Tracked Live CL hop is treated as a genuine
-/// outlier in the aggregated lagging-hop reporter, vs. the benign natural WS
-/// settle-lag baseline (~4-5 blocks). The reporter WARNs individually only for
-/// hops at/above this; everything beneath is folded into the single per-block
-/// summary (and logged at DEBUG). Set well above the baseline so the common,
-/// harmless settle lag never floods the log — observed true outliers in the
-/// 2026-08-09 run were 12-20 blocks.
-const SOLVER_STATE_ABNORMAL_STALE_BLOCKS: u64 = 10;
 
 /// After the first dirty WS log for a block, wait this long for more logs
 /// before solving and dispatching results to Python. Each new log resets
@@ -190,11 +177,14 @@ pub struct BlockPump {
     /// the sub) so the liveness watchdog is test-observable without depending
     /// on log-capture infrastructure.
     log_silence_alarms: u64,
-    /// Whether the ADR-021 solver-state accuracy gate runs at the publish
-    /// point. Conservative default ON (`DEGENBOT_ASSERT_SOLVER_STATE`, via
-    /// `bot_env_flag_default_on`): set `=0` to disable. Held as a field (not a
-    /// global env read) so tests deterministically opt out per-pump (Z4KQXF).
-    solver_state_verify: bool,
+    /// The packed ADR-021 solver-state tripwire stances (the publish-point
+    /// accuracy gate + its observation stages). `enabled` is conservative
+    /// default ON (`DEGENBOT_ASSERT_SOLVER_STATE`, via
+    /// `bot_env_flag_default_on`); the three diagnostics default off (via
+    /// `bot_env_flag_default_off`). Held as a field (not per-call env reads)
+    /// so tests deterministically opt out per-pump (Z4KQXF); the tripwire
+    /// module itself reads no env.
+    tripwire_config: crate::bot_core::solver_state_tripwire::TripwireConfig,
     /// Whether the per-block WS-delivery completeness cross-check runs
     /// (`assert_ws_block_complete` — aborts on any relevant-topic log that
     /// `eth_getLogs` has but the live websocket dropped). Conservative default
@@ -274,9 +264,18 @@ impl BlockPump {
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
             log_silence: Duration::from_secs(LOG_SILENCE_SECS),
             log_silence_alarms: 0,
-            solver_state_verify: crate::bot_core::bot_env_flag_default_on(
-                "DEGENBOT_ASSERT_SOLVER_STATE",
-            ),
+            tripwire_config: crate::bot_core::solver_state_tripwire::TripwireConfig {
+                enabled: crate::bot_core::bot_env_flag_default_on("DEGENBOT_ASSERT_SOLVER_STATE"),
+                divergence_scan: crate::bot_core::bot_env_flag_default_off(
+                    "DEGENBOT_SOLVER_DIVERGENCE_SCAN",
+                ),
+                anchor_probe: crate::bot_core::bot_env_flag_default_off(
+                    "DEGENBOT_TRACE_SOLVE_ANCHOR",
+                ),
+                staged_clock_probe: crate::bot_core::bot_env_flag_default_off(
+                    "DEGENBOT_TRACE_STAGED_CLOCK",
+                ),
+            },
             ws_completeness_enabled: crate::bot_core::bot_env_flag_default_on(
                 "DEGENBOT_WS_COMPLETENESS",
             ),
@@ -603,19 +602,18 @@ impl BlockPump {
             .await
     }
 
-    /// Dedicated solver-state verifier task (ADR-021 relocation). Loops over
-    /// solve-block notifications from the pump via a LATEST-WINS `watch` channel:
-    /// only the most recently published block is ever verified — a superseded
-    /// block is dropped, never queued, so the verifier can neither pile up an
-    /// unbounded backlog of full-path snapshots nor stall the pump's
-    /// `run_with_stream` on the `O(registered_paths × hops × RPC)` cost (the
-    /// confirmed freeze). On a desync it `abort()`s the whole process (unchanged
-    /// ADR-021 semantics) — the abort kills the bot before any on-chain
-    /// submission, regardless of where the pump is in its advance.
+    /// Judges the published block's change set against the chain (the ADR-021
+    /// option-A tripwire). Loops over solve-block notifications from the pump
+    /// via a LATEST-WINS `watch` channel: only the most recently published
+    /// block is ever judged — a superseded block is dropped, never queued, so
+    /// the judge can neither pile up an unbounded backlog of full-path
+    /// snapshots nor stall the pump's `run_with_stream` on the
+    /// `O(registered_paths × hops × RPC)` cost (the confirmed freeze).
     async fn solver_state_verify_loop(
         mut rx: tokio::sync::watch::Receiver<Option<SolverVerifyRequest>>,
         bot: Arc<Bot>,
         provider: Arc<AlloyProvider>,
+        config: TripwireConfig,
     ) {
         while rx.changed().await.is_ok() {
             let Some((block, path_refs)) = (*rx.borrow_and_update()).clone() else {
@@ -627,282 +625,48 @@ impl BlockPump {
             tracing::debug!(
                 block,
                 paths = path_refs.len(),
-                "solver-state verifier: verifying published block change set"
+                "solver-state tripwire: judging published block change set"
             );
-            Self::verify_solver_state_against_chain(&bot, &provider, &path_refs, block).await;
+            // Extract + resolve the anchor under the SHORT read guard — the
+            // guard is dropped before `judge` awaits its on-chain reads.
+            let (path_hop_states, anchor) = {
+                let state = bot.state_arc();
+                let core = state.read();
+                let phs: Vec<_> = path_refs
+                    .iter()
+                    .map(|pools| extract_solver_hop_states(&core, pools))
+                    .collect();
+                (
+                    phs,
+                    crate::bot_core::solve_anchor::SolveAnchor::resolve(block, &core),
+                )
+            };
+            if let GateVerdict::Divergent(d) =
+                judge(&provider, &config, &path_hop_states, anchor).await
+            {
+                Self::trip_and_exit(&d);
+            }
         }
     }
 
-    #[expect(clippy::too_many_lines)] // the ADR-021 divergence dry-run scanner
-    async fn verify_solver_state_against_chain(
-        bot: &Arc<Bot>,
-        provider: &Arc<AlloyProvider>,
-        path_refs: &[Vec<degenbot_solvers::mixed::MixedPoolRef>],
-        block: u64,
-    ) {
-        if path_refs.is_empty() {
-            return;
-        }
-        // Extract per-path scalar states under a short read guard, then drop
-        // the guard BEFORE awaiting the RPC reads.
-        // Resolve the solve anchor at the pool-state head (B2 — rule owner and
-        // full re-anchor history in `crate::bot_core::solve_anchor`): during a
-        // backfill/drain desync the pools sit AHEAD of the lagging `block`,
-        // and a hop at head is LIVE state, not a future price.
-        let mut path_hop_states = Vec::with_capacity(path_refs.len());
-        let anchor: crate::bot_core::solve_anchor::SolveAnchor;
+    /// The pump's entire executor-side reaction to a verified desync — the trip
+    /// and the exit (ADR-021 D1: "The pump loop keeps only the trip and the
+    /// exit"). Prints the grep-able `[SOLVER-STATE] ABORT` marker (unbuffered
+    /// stderr) after the structured `tracing::error!`, then aborts the PROCESS
+    /// — no task unwind, no wedge, no teardown hang (see the tripwire module
+    /// docs for the panic/shutdown-wedge history; UO3JM4).
+    fn trip_and_exit(d: &TripwireDivergence) -> ! {
+        tracing::error!(
+            class = ?d.class,
+            path_idx = d.path_idx,
+            hop_idx = d.hop_idx,
+            "DEGENBOT_ASSERT_SOLVER_STATE: verified desync — ABORT"
+        );
+        #[expect(clippy::print_stderr)] // fatal diagnostic emitted before abort
         {
-            let state_arc = bot.state_arc();
-            let core = state_arc.read();
-            for pools in path_refs {
-                path_hop_states.push(extract_solver_hop_states(&core, pools));
-            }
-            anchor = crate::bot_core::solve_anchor::SolveAnchor::resolve(block, &core);
+            eprintln!("{}", d.breadcrumb);
         }
-        let block = anchor.block();
-        if divergence_scan_enabled() {
-            // **Dev-only** non-aborting divergence scanner (dry-run low-MTBF failure
-            // hunting). When `DEGENBOT_SOLVER_DIVERGENCE_SCAN=1` we log every lagging
-            // Tracked CL hop's stored-vs-on-chain fidelity (HONEST vs the rare REAL
-            // DIVERGENT desync) WITHOUT aborting, so one long dry-run accumulates all
-            // genuine desyncs instead of dying on the first. The UO3JM4 abort is
-            // bypassed ONLY while this opt-in env is set — it must never be enabled to
-            // silence the production abort.
-            let mut seen = std::collections::HashSet::new();
-            let mut uniq: Vec<&SolverHopScalarState> = Vec::new();
-            for hop_states in &path_hop_states {
-                for hop in hop_states {
-                    // Dedupe by generalized identity (one on-chain read per unique pool).
-                    let key = match hop.hop_type {
-                        HopType::V3 => hop.v3.as_ref().map(|(a, ..)| format!("v3:{a}")),
-                        HopType::V4 => hop.v4.as_ref().map(|(_, id, ..)| {
-                            let mut h = String::with_capacity(8);
-                            for b in &id[..4] {
-                                let _ = std::fmt::Write::write_fmt(&mut h, format_args!("{b:02x}"));
-                            }
-                            format!("v4:{h}")
-                        }),
-                        _ => None,
-                    };
-                    if let Some(k) = key {
-                        if seen.insert(k) {
-                            uniq.push(hop);
-                        }
-                    }
-                }
-            }
-            let mut n_scanned = 0usize;
-            let mut n_honest = 0usize;
-            let mut n_divergent = 0usize;
-            for r in scan_lagging_hops_for_divergence(provider, &uniq, block).await {
-                n_scanned += 1;
-                match r.verdict {
-                    DivergenceVerdict::Honest => {
-                        n_honest += 1;
-                        tracing::debug!(
-                            hop_idx = r.hop_index,
-                            %r.pool,
-                            update_block = r.update_block,
-                            tick_data_block = r.tick_data_block,
-                            stale_by = r.stale_by,
-                            "solver-state divergence scan: HONEST (quiet-but-correct)"
-                        );
-                    }
-                    DivergenceVerdict::Divergent => {
-                        n_divergent += 1;
-                        tracing::error!(
-                            hop_idx = r.hop_index,
-                            %r.pool,
-                            block,
-                            update_block = r.update_block,
-                            tick_data_block = r.tick_data_block,
-                            stale_by = r.stale_by,
-                            solver_sqrt = ?r.solver_sqrt,
-                            chain_sqrt = ?r.chain_sqrt,
-                            "solver-state divergence scan: REAL-DESYNC — pool moved on-chain \
-                             but its stored state was not advanced (missed/delayed swap)."
-                        );
-                    }
-                }
-            }
-            if n_scanned > 0 {
-                tracing::info!(
-                    block,
-                    n_scanned,
-                    n_honest,
-                    n_divergent,
-                    "solver-state divergence scan: summary"
-                );
-            }
-            return;
-        }
-        // ═ Generalized lagging-hop reporter (ADR-021 supplement), AGGREGATED ═
-        // BEFORE the strict gate, surface ANY Tracked Live CL hop whose
-        // `update_block` trails the promoted solve anchor past
-        // `MAX_CL_STALENESS_BLOCKS`. Pool-agnostic; observational only — it does
-        // NOT weaken the UO3JM4 abort below.
-        //
-        // The natural WS settle lag (~4 blocks) sits just past the threshold, so
-        // a naive per-hop WARN re-reported the SAME benign pools ~100× per block
-        // across paths (≈143 WARNs/block, 0 desyncs in a 5k-WARN run). We
-        // therefore aggregate across all paths into ONE per-block summary (dedupe
-        // per pool, keep max stale_by) and WARN individually only for genuine
-        // outliers (`stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS`, well above
-        // the baseline); the quiet-but-benign bulk stays at DEBUG.
-        let lags_by_pool = aggregate_lagging_hops(block, &path_hop_states);
-        if !lags_by_pool.is_empty() {
-            let n_pools = lags_by_pool.len();
-            let max_stale_by = lags_by_pool.values().map(|l| l.stale_by).max().unwrap_or(0);
-            tracing::warn!(
-                block,
-                n_pools,
-                max_stale_by,
-                "[solver-state] Tracked Live CL hop pools trail the solve anchor past the staleness \
-                 threshold (summarized — genuine-outlier pools logged below, benign settle-lag \
-                 baseline at debug)"
-            );
-            for lag in lags_by_pool.values() {
-                let update_block = lag.update_block;
-                let tick_data_block = lag.tick_data_block;
-                let stale_by = lag.stale_by;
-                let pool = &lag.pool;
-                if lag.stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS {
-                    tracing::warn!(
-                        block,
-                        hop_type = ?lag.hop_type,
-                        coverage = %lag.coverage,
-                        lifecycle = %lag.lifecycle,
-                        update_block,
-                        tick_data_block,
-                        stale_by,
-                        %pool,
-                        "[solver-state] Tracked Live CL hop pool is a genuine staleness outlier \
-                         (well past the natural settle lag) — the strict gate may escalate this \
-                         to an abort"
-                    );
-                } else {
-                    tracing::debug!(
-                        block,
-                        hop_type = ?lag.hop_type,
-                        coverage = %lag.coverage,
-                        lifecycle = %lag.lifecycle,
-                        update_block,
-                        tick_data_block,
-                        stale_by,
-                        %pool,
-                        "[solver-state] Tracked Live CL hop pool trails the solve anchor \
-                         (benign settle-lag baseline, folded into the summary above)"
-                    );
-                }
-            }
-        }
-
-        // Solve-anchor consistency probe (observational; env-gated default off):
-        // discriminate the lagging-outlier population into QUIET (benign-
-        // inactive — correct-but-old) vs MOVED-IN-BLOCK-NOT-APPLIED (on-chain
-        // moved AT the solve anchor but the pool's in-block Swap was not applied
-        // before the solver consumed it — the improper header-promote-ahead-of-
-        // apply transition behind the 0x99ac8c abort). The lagging reporter
-        // above cannot make this distinction (it only measures stale_by); the
-        // probe reads on-chain at the anchor to classify. NON-aborting and does
-        // NOT bypass the production abort below — it accumulates observability
-        // so the ordering race isn't only visible as a process kill. Only
-        // abnormal outliers (`stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS`)
-        // are read, one read per unique pool per anchor, so cost is bounded.
-        if solve_anchor_probe_enabled() {
-            let probe = probe_solve_anchor_consistency(
-                provider,
-                &path_hop_states,
-                block,
-                SOLVER_STATE_ABNORMAL_STALE_BLOCKS,
-            )
-            .await;
-            for r in probe {
-                let verdict = match r.verdict {
-                    LaggardProbeVerdict::Quiet => "QUIET (benign-inactive, correct-but-old)",
-                    LaggardProbeVerdict::MovedInBlockNotApplied => {
-                        "MOVED-IN-BLOCK-NOT-APPLIED (on-chain moved at the solve anchor but the \
-                         in-block Swap was not applied before solve — header-promote-ahead-of-apply)"
-                    }
-                    LaggardProbeVerdict::ReadFailed => "READ-FAILED (unclassified)",
-                };
-                tracing::warn!(
-                    block,
-                    hop_type = ?r.hop_type,
-                    %r.pool,
-                    update_block = r.update_block,
-                    tick_data_block = r.tick_data_block,
-                    stale_by = r.stale_by,
-                    %verdict,
-                    "[solve-anchor-probe] lagging Tracked Live CL hop classified at solve anchor"
-                );
-            }
-        }
-
-        for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
-            if let Err(mismatch) = verify_solver_hop_states(provider, hop_states, anchor).await {
-                // Diagnose the cause class before panicking: log every hop's
-                // solver-stored update_block and its staleness vs. the solve
-                // block. `stale == 0` on the failing hop is the sub-tick
-                // corruption signal (state advanced to solve_block but the
-                // within-tick scalar still diverges); `stale > 0` is a WS
-                // delivery/backfill lag. The first hop reported by the verifier
-                // is also in this log, but this captures the whole path at once.
-                let hops_diag: Vec<String> = hop_states
-                    .iter()
-                    .filter(|h| h.update_block != 0)
-                    .map(|h| {
-                        let meta = h
-                            .cl_meta
-                            .as_ref()
-                            .map(|(c, l)| format!(" cov={c}, lifecycle={l}"))
-                            .unwrap_or_default();
-                        // OB7UNY two-stamp: surface BOTH clocks in the abort
-                        // diagnostic so a staged-clock desync (fresh price,
-                        // stale tick map — the `0x5653` class the scalar-only
-                        // diff cannot see) is visible in the fatal message.
-                        format!(
-                            "hop {:?} update_block={} tick_data_block={} stale_by={}{}",
-                            h.hop_type,
-                            h.update_block,
-                            h.tick_data_block,
-                            block.saturating_sub(h.update_block),
-                            meta
-                        )
-                    })
-                    .collect();
-                let SolverStateMismatch { message } = mismatch;
-                // Fail HARD & LOUDLY (UO3JM4/DFQYM5): a verified solver-state
-                // desync means the solver solved on stale/corrupt pool state —
-                // never trade on it and never linger half-alive. The original
-                // `panic!` (2026-08-02) UNWOUND only the pump tokio task while
-                // the process kept running → no-progress busy loop; the later
-                // `shutdown.store(true)` fallback returned silently → the
-                // process idled on discovery/probe threads unnoticed. Both are
-                // silent-ish failures. Match the WS-INVARIANT precedent
-                // (`std::process::abort` guarantees termination): print the
-                // grep-able literal to stderr (unbuffered), then abort so the
-                // whole process dies on the spot — no task unwind, no wedge,
-                // no teardown hang.
-                let fatal = format!(
-                    "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block {block} \
-                     (path_idx={path_idx}, hops: {}) {message}. Do NOT reuse desynced state or \
-                     silence this (UO3JM4).",
-                    hops_diag.join(", "),
-                );
-                tracing::error!(
-                    path_idx,
-                    block,
-                    %fatal,
-                    "DEGENBOT_ASSERT_SOLVER_STATE: verified desync — ABORT"
-                );
-                #[expect(clippy::print_stderr)] // fatal diagnostic emitted before abort
-                {
-                    eprintln!("{fatal}");
-                }
-                std::process::abort();
-            }
-        }
+        std::process::abort()
     }
 
     /// Run the main pump loop with an existing WS stream.
@@ -1079,7 +843,7 @@ impl BlockPump {
         // Conservative default ON (`self.solver_state_verify` from
         // `DEGENBOT_ASSERT_SOLVER_STATE`); set `=0` to disable. Adds an RPC read
         // per path per solve on the hot loop (only at the publish point).
-        let solver_state_verify_enabled = self.solver_state_verify;
+        let tripwire_config = self.tripwire_config;
 
         // ADR-021 relocation (pump-freeze fix): the solver-state verify is NOT
         // awaited inline on `run_with_stream`. It runs on a dedicated verifier
@@ -1091,12 +855,13 @@ impl BlockPump {
         // The verifier abort()s the whole process on desync (unchanged ADR-021
         // fail-stop); only the most recent published block is ever verified.
         let verify_tx: Option<tokio::sync::watch::Sender<Option<SolverVerifyRequest>>> =
-            if solver_state_verify_enabled {
+            if tripwire_config.enabled {
                 let (tx, rx) = tokio::sync::watch::channel(None);
                 tokio::spawn(Self::solver_state_verify_loop(
                     rx,
                     Arc::clone(&self.bot),
                     Arc::clone(&self.provider),
+                    tripwire_config,
                 ));
                 Some(tx)
             } else {
@@ -2017,8 +1782,8 @@ impl BlockPump {
             log_silence_alarms: 0,
             // ADR-021 tripwire OFF in tests (deterministic per-pump opt-out; see
             // the struct field doc). Tests arm it explicitly when they exercise
-            // the verifier (e.g. the desync-abort tests).
-            solver_state_verify: false,
+            // the tripwire (e.g. the desync-abort tests).
+            tripwire_config: crate::bot_core::solver_state_tripwire::TripwireConfig::disabled(),
             // Same per-pump opt-out for the WS-delivery completeness cross-check:
             // default-ON in production, deterministically OFF in tests so the
             // synthetic log streams (which use relevant-topic logs as pure block
@@ -2320,7 +2085,7 @@ mod tests {
         // env. Tests that exercise the verifier arm it explicitly.
         let (pump, _sink) = pump_for_test(None);
         assert!(
-            !pump.solver_state_verify,
+            !pump.tripwire_config.enabled,
             "test pumps must disable the tripwire"
         );
     }
@@ -4192,9 +3957,9 @@ mod tests {
     /// UO3JM4 child half: no-op unless spawned by
     /// `solver_state_desync_aborts_process` (env `DEGENBOT_SELF_ABORT_TEST`).
     /// Drives the gate against a registered V2 pool whose on-chain
-    /// `getReserves` (mocked) MISMATCHES the solver's stored reserves → the
-    /// verifier returns `SolverStateMismatch` → the gate must `abort()`
-    /// before this function can return.
+    /// `getReserves` (mocked) MISMATCHES the solver's stored reserves →
+    /// `judge` returns `GateVerdict::Divergent` → `trip_and_exit` must
+    /// `abort()` before this function can return.
     #[tokio::test]
     async fn solver_state_desync_aborts_self() {
         use degenbot_solvers::mixed::HopType;
@@ -4248,7 +4013,28 @@ mod tests {
         asserter.push_success(&hex_resp);
 
         let refs = pump.sink.solver_path_pool_refs();
-        BlockPump::verify_solver_state_against_chain(&pump.bot, &pump.provider, &refs, 200).await;
+        let (path_hop_states, anchor) = {
+            let state = pump.bot.state_arc();
+            let core = state.read();
+            (
+                refs.iter()
+                    .map(|pools| extract_solver_hop_states(&core, pools))
+                    .collect::<Vec<_>>(),
+                crate::bot_core::solve_anchor::SolveAnchor::resolve(200, &core),
+            )
+        };
+        let verdict = judge(
+            &pump.provider,
+            &crate::bot_core::solver_state_tripwire::TripwireConfig::enabled_only(),
+            &path_hop_states,
+            anchor,
+        )
+        .await;
+        // The reaction (the whole executor-side surface) is trip + exit:
+        // eprintln the loud marker, then abort the process.
+        if let GateVerdict::Divergent(d) = verdict {
+            BlockPump::trip_and_exit(&d);
+        }
         unreachable!("the solver-state gate MUST abort the process on a verified desync (UO3JM4)");
     }
 

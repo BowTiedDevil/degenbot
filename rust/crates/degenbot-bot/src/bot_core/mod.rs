@@ -38,7 +38,7 @@ pub(crate) mod resolve;
 pub mod snapshot_verify;
 pub(crate) mod solve_anchor;
 pub mod solve_coordinator;
-pub mod solver_state_verifier;
+pub mod solver_state_tripwire;
 pub mod tick_assembly;
 pub mod v3_state;
 
@@ -492,6 +492,18 @@ pub(crate) fn bot_env_flag_default_on(name: &str) -> bool {
     }
 }
 
+/// default-off environment flag (the inverse of the default-on variant above):
+/// true only when the named var is set to an explicit truthy value
+/// (per `parse_bot_flag_value`). For opt-in diagnostics that a hand-run or
+/// harness must never silently activate — unset/false env means the
+/// diagnostic is absent, at zero cost.
+pub(crate) fn bot_env_flag_default_off(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => parse_bot_flag_value(&v),
+        Err(_) => false,
+    }
+}
+
 /// Whether the verify-diagnostics probes are enabled.
 ///
 /// Conservative default ON (`DEGENBOT_VERIFY_DBG`, via [`bot_env_flag_default_on`]);
@@ -555,7 +567,7 @@ impl BotState {
     /// that last mutated N blocks ago is quiet (its stored state is byte-
     /// identical to on-chain), not stale. The former TQ43TU solve-time staleness
     /// gate (ergo YXHHKR, resolved QNFYR5) mis-used it to defer quiet paths and
-    /// was REMOVED. The verifier (`verify_solver_state_against_chain`) diffs each
+    /// was REMOVED. The tripwire (`solver_state_tripwire::judge`) diffs each
     /// hop against the chain at its OWN `update_block` anchor and fatal-aborts on
     /// a real desync; a never-updated pool (`update_block == 0`) is diffed at the
     /// solve block instead.

@@ -76,7 +76,7 @@ impl ArbitrageEngine {
     }
 
     /// Snapshot every registered path's per-hop pool refs for the Option-A
-    /// solver-state accuracy gate (`solver_state_verifier`). The pump extracts
+    /// solver-state accuracy gate (`solver_state_tripwire`). The pump extracts
     /// the `BotState` scalar state + diffs it against the chain at the solve
     /// block; engines with non-scalar-diffable paths override the default.
     #[must_use]

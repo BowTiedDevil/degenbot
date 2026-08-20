@@ -78,7 +78,7 @@ pub trait Engine: Send + Sync {
     fn notify_block(&self, block: u64, metadata: &BlockMetadata);
 
     /// Snapshot every registered path's per-hop pool refs (the Option-A
-    /// solver-state accuracy gate — see `solver_state_verifier`). Engines
+    /// solver-state accuracy gate — see `solver_state_tripwire`). Engines
     /// whose paths are not scalar-diffable (Solidly/Balancer/Curve) return
     /// empty; the arbitrage engine overrides with its `path_pools`.
     fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
