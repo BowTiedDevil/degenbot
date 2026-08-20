@@ -1910,6 +1910,146 @@ mod tests {
     /// whose V4 hop is fed an absurdly large committed input. Then drive
     /// `clamp_cl_hop_capacity` directly and assert it caps the V4 hop's
     /// `consumed_inputs[1]` to the pools twin's `input_consumed - 1` (the 1-wei
+    /// Forward-clamp staleness (the path-182449/110302 1-wei over-prediction
+    /// class): when the upstream CL hop's twin forward-clamps the DOWNSTREAM
+    /// V2 hop's committed input, the V2 hop's REPORTED output must be
+    /// re-derived byte-exact at the clamped input. Pre-fix the V2 branch of
+    /// the clamp loop was a bare `continue`, so the V2 `hop_outputs[i]` kept
+    /// the pre-clamp input's output — over-predicting by exactly the 1 wei of
+    /// clamped input (the live bot then failed on-chain with
+    /// `UniswapV2: K`).
+    #[expect(clippy::too_many_lines)]
+    #[test]
+    fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
+        use crate::bot_core::TickInfo;
+        use crate::solvers::arb_engine::PoolTickCoverage;
+        use alloy::primitives::I256;
+        use degenbot_math::v2::IntHopState;
+
+        let mut engine = ArbitrageEngine::new();
+
+        // Terminal V2 pool: token0=USDC, token1=WETH; hop zfo=false → WETH
+        // in, USDC out.
+        let v2 = engine.register_v2_pool(
+            Address::from([0x22u8; 20]),
+            U112::from(1_500_000_000_000u128),
+            U112::from(1_000_000_000_000u128),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // Leading V4 hop: single narrow position (±60 ticks), 1e6 liquidity —
+        // its twin output at a 1e6-scale input is bounded (≪ 5e6), so a 5e6
+        // committed forward into the V2 hop must forward-clamp.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(300),
+                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(200),
+                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                block: 0,
+            },
+        );
+        let v4_id = engine
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: Address::from([0x45u8; 20]),
+                pool_id: [0xcdu8; 32],
+                pool_key: crate::bot_core::V4PoolKey {
+                    currency0: Address::from([0x32u8; 20]),
+                    currency1: Address::from([0x33u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+            })
+            .expect("V4 registration failed");
+
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v4_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
+
+        // Committed values: the V2-input forward is deliberately above the
+        // V4 twin's actual output; the V2 output is the STALE value the walk
+        // reported for the un-clamped forward.
+        let x0 = U256::from(1_000_000_000u64);
+        let committed_forward = U256::from(5_000_000_000u64);
+        let mut result = SolvePathResult {
+            optimal_input: x0,
+            profit: U256::from(1_000u64),
+            hop_outputs: vec![committed_forward, U256::from(9_999_999u64)],
+            consumed_inputs: vec![x0, committed_forward],
+            state_nonces: vec![0, 0],
+            solver_pool_states: Vec::new(),
+        };
+
+        engine.clamp_cl_hop_capacity(path_id, &mut result);
+
+        // Test premise: the forward into the V2 hop was actually clamped.
+        let clamped = result.consumed_inputs[1];
+        assert!(
+            clamped < committed_forward,
+            "premise: upstream forward clamp must fire (clamped={clamped} vs committed={committed_forward})"
+        );
+
+        // The terminal V2 hop's REPORTED output must equal its byte-exact
+        // twin at the CLAMPED input (zfo=false → reserve_in=token1, fee_token1).
+        let core = engine.core.read();
+        let state = core.get_v2_pool_state(v2).unwrap();
+        let identity = core.get_v2_identity(v2).unwrap();
+        let expected = IntHopState::new(
+            state.reserve1.to::<U256>(),
+            state.reserve0.to::<U256>(),
+            identity.fee_token1.0,
+            identity.fee_token1.1,
+        )
+        .swap(clamped)
+        .expect("V2 twin does not overflow");
+        // Sizing premise: the re-derived output is a meaningful (non-zero)
+        // amount, so the stale-vs-corrected assertion is non-degenerate.
+        assert!(
+            !expected.is_zero(),
+            "test sizing: expected V2 output must be non-zero"
+        );
+        assert_eq!(
+            result.hop_outputs[1],
+            expected,
+            "terminal V2 hop_outputs must be re-derived at the clamped input \n\n(path-182449/110302 1-wei over-prediction class)"
+        );
+        // ...and the selection profit reflects the corrected final output.
+        assert_eq!(
+            result.profit,
+            result.hop_outputs[1].saturating_sub(result.consumed_inputs[0]),
+            "post-clamp profit must be recomputed from the corrected outputs"
+        );
+    }
+
     /// VAASFM margin) — the UO3JM4 empty-march clamp, now enforced in
     /// production at the solve→result merge seam.
     #[expect(clippy::too_many_lines)]
@@ -1924,11 +2064,13 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
 
         // V2 pool: reserves sized so its output (fed to V4) is enormous
-        // relative to the V4 pool's capacity.
+        // relative to the V4 pool's capacity (token1 ≫ the V4 twin's
+        // input_consumed, so the V2 hop's forward-clamp cannot fire before the
+        // V4's own input clamp — this test isolates (a)).
         let v2 = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
             usdc(1_500_000),
-            weth(800),
+            weth(20_000_000_000),
             GAMMA_03,
             FEE_DENOM_03,
         );

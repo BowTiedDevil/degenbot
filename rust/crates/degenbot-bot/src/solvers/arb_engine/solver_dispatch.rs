@@ -99,16 +99,22 @@ impl ArbitrageEngine {
         let core = self.core.read();
         for (i, pool_ref) in pools.iter().enumerate() {
             let requested = result.consumed_inputs[i];
-            // Run the tier-3-validated twin once per CL hop so we can (a) clamp
-            // this hop's INPUT (marching empty-word EMPTY-HALT class) AND (b)
-            // clamp this hop's FORWARD (`consumed_inputs[i+1]` = the next hop's
-            // input, which the composer's V4 take/exchange derives from this
-            // hop's OUTPUT) to the byte-exact twin output. (b) closes the
-            // path-73385 class: the solver OVer-predicted the V4 output by 3 wei,
-            // so the take (`consumed_inputs[i+1]`) over-took the pool's actual
-            // output and the trailing V4_SETTLE_ALL repaid the 3-wei residual via
-            // a `USDT.transfer(PM,3)` that halted (0xfe).
-            let twin: Option<degenbot_pools::v3_state::V3SwapOutcome> = match pool_ref.hop_type {
+            // Run the tier-3-validated twin once per clamped family so we can
+            // (a) clamp this hop's INPUT (CL marching empty-word EMPTY-HALT
+            // class), (b) clamp this hop's FORWARD (`consumed_inputs[i+1]` =
+            // the next hop's input, which the composer's V4 take/exchange
+            // derives from this hop's OUTPUT) to the byte-exact twin output,
+            // and (c) re-align this hop's REPORTED output. (b)/(c) close the
+            // path-73385 class: the solver OVer-predicted the V4 output by
+            // 3 wei, so the take (`consumed_inputs[i+1]`) over-took the pool's
+            // actual output and the trailing V4_SETTLE_ALL repaid the 3-wei
+            // residual via a `USDT.transfer(PM,3)` that halted (0xfe). (c) is
+            // equally load-bearing for a V2 hop whose INPUT the upstream hop's
+            // (b) just reduced: the walk-frozen `hop_outputs[i]` would
+            // otherwise keep the pre-clamp input's output — the
+            // path-182449/110302 1-wei over-prediction that failed on-chain
+            // with `UniswapV2: K`.
+            let (out, input_clamp): (U256, Option<U256>) = match pool_ref.hop_type {
                 HopType::V3 => {
                     let (Some(state), Some(identity)) = (
                         core.get_v3_pool(pool_ref.pool_key),
@@ -120,7 +126,7 @@ impl ArbitrageEngine {
                         continue; // Input too large for i256 → skip
                     };
                     let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
-                    v3_simulate_swap(
+                    let Some(twin) = v3_simulate_swap(
                         state,
                         identity.fee,
                         identity.tick_spacing,
@@ -128,7 +134,15 @@ impl ArbitrageEngine {
                         amount,
                         limit,
                     )
-                    .ok()
+                    .ok() else {
+                        continue;
+                    };
+                    let out = if pool_ref.zero_for_one {
+                        twin.amount1
+                    } else {
+                        twin.amount0
+                    };
+                    (out, twin.exact_input_clamp_bound(requested, margin))
                 }
                 HopType::V4 => {
                     let (Some(state), Some(identity)) = (
@@ -145,7 +159,7 @@ impl ArbitrageEngine {
                         continue; // MIN_i256 (no positive twin) → skip
                     };
                     let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
-                    v4_simulate_swap(
+                    let Some(twin) = v4_simulate_swap(
                         state,
                         identity.pool_key.fee,
                         identity.pool_key.tick_spacing,
@@ -153,26 +167,62 @@ impl ArbitrageEngine {
                         neg,
                         limit,
                     )
-                    .ok()
+                    .ok() else {
+                        continue;
+                    };
+                    let out = if pool_ref.zero_for_one {
+                        twin.amount1
+                    } else {
+                        twin.amount0
+                    };
+                    (out, twin.exact_input_clamp_bound(requested, margin))
                 }
-                // V2 / Curve / Balancer / Solidly — no empty-march class; the
-                // solver's `consumed_inputs[i]` (= full forward) is already
-                // correct at the boundary.
+                HopType::V2 => {
+                    // V2 has no empty-march class (no input clamp), but its
+                    // byte-exact twin output must still be the authoritative
+                    // report once (b) has forward-clamped its input upstream.
+                    // Orientation mirrors `simulate_swap`'s V2 arm.
+                    let (Some(state), Some(identity)) = (
+                        core.get_v2_pool_state(pool_ref.pool_key),
+                        core.get_v2_identity(pool_ref.pool_key),
+                    ) else {
+                        continue; // Pool state unavailable → can't clamp
+                    };
+                    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
+                    {
+                        (
+                            state.reserve0.to::<U256>(),
+                            state.reserve1.to::<U256>(),
+                            identity.fee_token0.0,
+                            identity.fee_token0.1,
+                        )
+                    } else {
+                        (
+                            state.reserve1.to::<U256>(),
+                            state.reserve0.to::<U256>(),
+                            identity.fee_token1.0,
+                            identity.fee_token1.1,
+                        )
+                    };
+                    let Some(out) = degenbot_math::v2::IntHopState::new(
+                        reserve_in,
+                        reserve_out,
+                        gamma_numer,
+                        fee_denom,
+                    )
+                    .swap(requested)
+                    .ok() else {
+                        continue; // overflow reverts on-chain → nothing to align
+                    };
+                    (out, None)
+                }
+                // Curve / Balancer / Solidly — no byte-exact twin at this
+                // seam; their reported outputs stand (see module note).
                 _ => continue,
-            };
-            let Some(twin) = twin else { continue };
-            // The output-token amount this CL hop actually yields for its input
-            // (`amount1` when zfo — the pool sells currency0 — else `amount0`);
-            // the byte-exact twin value, authoritative over the solver's
-            // frozen-int prediction which can drift by a few wei on tiny pools.
-            let out = if pool_ref.zero_for_one {
-                twin.amount1
-            } else {
-                twin.amount0
             };
             // (a) Input clamp: cap this CL hop's committed input at
             // `input_consumed - margin` when over-fed (the empty-march class).
-            if let Some(clamped) = twin.exact_input_clamp_bound(requested, margin) {
+            if let Some(clamped) = input_clamp {
                 if clamped < requested {
                     tracing::info!(
                         "[clamp-cl] path_id={path_id} hop={i} family={:?} input requested={requested} \
