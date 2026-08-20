@@ -89,3 +89,13 @@ degenbot-uniswap.workspace = true
 # hop outputs from the seeded reserves (mirroring the tier-3 V2 oracle) so the
 # encoded path round-trips cleanly (UQOAHA).
 degenbot-v2-math.workspace = true
+# `proptest` — property-driven fixtures for the relocated Tier-3 CL parity
+# oracles (tier3_v3 / v4 / pancake_v3 swap-vs-revm, moved from degenbot-pools
+# in 5D3YVK). They live here because they drive `degenbot_simulation::oracle`;
+# a dev-dep back from degenbot-pools would be a publish-blocking cycle
+# (pools -> simulation -> bot -> pools), and the release policy is to never
+# publish with --no-verify.
+proptest = "^1.11"
+# `hex` — revert-reason hex formatting in the relocated tier-3 CL parity oracles
+# (inline `hex::encode`, moved from degenbot-pools in 5D3YVK).
+hex = "^0.4"
