@@ -4,6 +4,11 @@
 //! production encode (byte-identity itself is pinned by `glopcn_bytepin` +
 //! the revm matrix).
 
+#![expect(
+    clippy::panic,
+    reason = "test assertions on must-encode paths panic on failure (repo convention: honesty_invariant.rs)"
+)]
+
 use alloy::primitives::{address, Address};
 use degenbot_executor::composers::{
     encode_cmd_stream, EncodeContext, EncodeOptions, EncodeRequest, HopInfo, PathInfo, V2HopInfo,
@@ -137,8 +142,8 @@ fn batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
             ..Default::default()
         },
     );
-    let bytes =
-        encode_cmd_stream(&ctx, &req).expect("batch + erc6909 capture must compose (TGUZCT)");
+    let bytes = encode_cmd_stream(&ctx, &req)
+        .unwrap_or_else(|| panic!("batch + erc6909 capture must compose (TGUZCT)"));
     assert!(
         bytes.windows(2).any(|w| w[0] == 0x43 && w[1] == 2),
         "stream must carry the open-weth batch command (0x43, 2 entries)"
@@ -188,8 +193,8 @@ fn v4v4v4_batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
             ..Default::default()
         },
     );
-    let bytes =
-        encode_cmd_stream(&ctx, &req).expect("3-hop batch + erc6909 capture must compose (TGUZCT)");
+    let bytes = encode_cmd_stream(&ctx, &req)
+        .unwrap_or_else(|| panic!("3-hop batch + erc6909 capture must compose (TGUZCT)"));
     assert!(
         bytes.windows(2).any(|w| w[0] == 0x43 && w[1] == 3),
         "stream must carry the open-weth batch command (0x43, 3 entries)"
@@ -228,10 +233,10 @@ fn v4v4v4_erc6909_capture_without_batch_still_encodes() {
 // stream — pin its full-byte hash (the "non-batch capture unchanged
 // byte-for-byte" acceptance bullet, mechanically enforced).
 fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 14695981039346656037;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 64 offset basis
     for b in bytes {
         h ^= u64::from(*b);
-        h = h.wrapping_mul(1099511628211);
+        h = h.wrapping_mul(1_099_511_628_211);
     }
     h
 }
@@ -253,7 +258,7 @@ fn nonbatch_capture_stream_bytes_are_stable() {
                 ..Default::default()
             },
         );
-        encode_cmd_stream(&ctx, &req).expect("non-batch erc6909 must encode")
+        encode_cmd_stream(&ctx, &req).unwrap_or_else(|| panic!("non-batch erc6909 must encode"))
     };
     let three_path = PathInfo::new(vec![
         v4_hop(WETH, TOK2, true),
@@ -276,16 +281,17 @@ fn nonbatch_capture_stream_bytes_are_stable() {
                 ..Default::default()
             },
         );
-        encode_cmd_stream(&ctx, &req).expect("non-batch erc6909 3-hop must encode")
+        encode_cmd_stream(&ctx, &req)
+            .unwrap_or_else(|| panic!("non-batch erc6909 3-hop must encode"))
     };
     assert_eq!(
         fnv1a(&two),
-        0x5168eabb6b08d9ee,
+        0x5168_eabb_6b08_d9ee,
         "2-hop non-batch erc6909 capture stream moved (flip regression)"
     );
     assert_eq!(
         fnv1a(&three),
-        0x0638197a66c17168,
+        0x0638_197a_66c1_7168,
         "3-hop non-batch erc6909 capture stream moved (flip regression)"
     );
 }

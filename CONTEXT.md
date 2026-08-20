@@ -411,14 +411,19 @@ the [execution-strategy guide](docs/execution-strategy.md).
 - **Stream effect is pure-V4 only** — per `family_axis_support`, the capture
   axis branches the stream only for `v4_v4`/`v4_v4_v4`; other families keep
   custody capture with only the mode-2 floor armed.
-- **batch×capture decline (interim)** — `use_v4_batch` + `erc6909_profit`
-  on a WETH terminal is unexecutable on the *current* executor artifact
-  (the batch tail-settle takes the WETH delta into custody; the follow-up
-  mint reverts `D0`) — the funnel declines the combination
-  (`erc6909_batch_capture_declines`). The executor is **pre-deployment**
-  (operated via state-override code injection, `INJECT_EXECUTOR_CODE=1`
-  default) with in-repo Vyper source, so composing the two at the source is
-  **TGUZCT** — the decline is a fail-closed interim until it ships.
+- **batch×capture combination (shipped — TGUZCT, 2026-08-20)** — the
+  original interim decline (`erc6909_batch_capture_declines`) was premised on
+  a *stale injected artifact*: the bot operates the executor purely via
+  state-override code injection (`INJECT_EXECUTOR_CODE=1`), and the
+  `contracts/cmd_executor*` bake (15,605 B runtime) predated the settle-skip
+  variant — the ADR-034 premise of a "currently undeployed" fixed artifact
+  was wrong. The current executor source has `V4_BATCH_OPEN_WETH` (0x43)
+  (same as `V4_BATCH` minus the final WETH settle, leaving the positive WETH
+  delta open for the follow-up `V4_MINT_COMPACT` mint), the batch×capture
+  stream is EMITTED (`v4_v4`/`v4_v4_v4`), and the declarative harness
+  asserts the vault delta under capture armed. The decline and its
+  encode-fail routing are gone (hard cutover); ADR-034 carries the
+  amendment.
 
 ### Execution strategy seam (ADR-025)
 

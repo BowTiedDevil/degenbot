@@ -119,3 +119,40 @@ after SRMMM7 — + runtime harness probes)
   it ships.
 - No new crate edges; no pyo3 surface change (the `DispatchCandidate` kwarg
   pre-existed — ADR-033 D4 kept it first-class; this ADR wires the driver).
+
+## Amendment (2026-08-20 — TGUZCT epic `XO2G8C`)
+
+Decision 4 and finding 3 were recorded against the *injected* bytecode of
+the time (the July `contracts/` bake — 15,605 B runtime, pre-U3WVLL/767TN5),
+which lacked the settle-skip batch variant. The premise that a "currently
+undeployed" fixed artifact foreclosed the fix was wrong: the executor is
+operated entirely through state-override code injection
+(`INJECT_EXECUTOR_CODE=1`, `rust-owned-bot.md` §11.4), so "the current
+executor" is exactly whatever `contracts/` bakes — and it lagged the in-repo
+Vyper source by precisely this feature. **TGUZCT has shipped**
+(2026-08-20): the source (and the re-baked artifact, X6OKMV) now carries
+`V4_BATCH_OPEN_WETH` (0x43) — `V4_BATCH` semantics with the final settle
+skipped, leaving the positive WETH (and, when the native currency is WETH,
+native) delta open for the follow-up `V4_MINT_COMPACT`; the U3WVLL profit
+assert and the 767TN5 sweep still apply.
+
+Corrections this amendment makes, superseding the original text:
+
+1. **Decision 4 — the decline is REVERSED** (hard cutover, no parallel
+   flag). `grammar_shape::erc6909_batch_capture_declines` is deleted; the
+   `v4_v4`/`v4_v4_v4` plans emit `V4_BATCH_OPEN_WETH` + the trailing
+   `V4_MINT_COMPACT` under `erc6909_profit`, and the declarative harness
+   pins the pair executing with the vault delta asserted (`check_mode=2`
+   floor armed). The `encode-failed` decline route no longer exists.
+2. **Finding 3 — the combined stream is executable.** The runtime harness
+   probe on the new artifact (revm, `harness_artifact_probes.rs`) pins
+   execution, `check_mode=2` pass under `erc6909_profit`, positive ERC6909
+   delta, native-balance non-regression; `verify-tier3-executor-artifact.sh`
+   now re-runs that probe after every fresh compile.
+3. **Consequences** — "the interim decline stays until it ships" is
+   superseded: the decline is removed, and the opt-matrix parity tests pin
+   the emission instead. The gas/quality trade-off is now a pure operator
+   choice between 0x43 (batch + capture) and the non-batched mint flow, and
+   is no longer a fail-closed exclusion.
+
+The original text is retained as the record of the then-current facts.

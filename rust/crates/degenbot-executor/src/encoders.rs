@@ -4,7 +4,7 @@
 //! A pyo3-free *core leaf* implementing the tightly-packed command-bytecode
 //! layout. The authoritative contract layout is `contracts/README.md`
 //! "Command-Stream Executor" (opcode | name | encoding | description); Vyper
-//! source `~/code/executor/contracts/cmd_executor.vy` is the single source of
+//! source `executor/contracts/cmd_executor.vy` is the single source of
 //! truth for the wire format. These Rust `enc_*` builders are canonical
 //! (ADR-005); the per-opcode encoding tables below describe every field.
 //!
