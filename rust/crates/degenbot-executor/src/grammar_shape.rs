@@ -1467,6 +1467,13 @@ mod tests {
         // The gap branch is opt-invariant (use_v4_batch + erc6909_profit are
         // inoperative across a gap — the derive forces individual swaps + a
         // physical take). Sweep all 4 opt modes for both gap topologies.
+        // TGUZCT gap adjudication (3JNVM3): the 0x43 open-weth batch can never
+        // apply here — (a) a gap forces the individual-swap path (the batch
+        // command is issued only for `!any_gap`), and (b) the gap twin's
+        // terminal is non-WETH, so the erc6909 mint path (the only
+        // `open_weth` producer) never fires. A WETH-terminal gap+batch+
+        // erc6909 request composes as individual swaps + mint (byte-identical
+        // to the non-batch capture shape) — no 0x43, no decline.
         use crate::composers::EncodeOptions;
         let modes = [
             ("default", EncodeOptions::default()),
