@@ -50,7 +50,8 @@ use tokio::time::timeout;
 
 use crate::bot_core::event_dispatch::{DispatchOwner, DrainWork, SolverVerifyRequest};
 use crate::bot_core::solver_state_tripwire::{
-    extract_solver_hop_states, judge, GateVerdict, TripwireConfig, TripwireDivergence,
+    extract_solver_hop_states, judge, GateVerdict, TripReorgWindow, TripwireConfig,
+    TripwireDivergence,
 };
 use crate::bot_core::LogDecision;
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
@@ -157,6 +158,10 @@ pub struct BlockPump {
     /// routed through the `DrainSink` — reorg is a `Bot` concern, parallel
     /// to `dispatch_log`).
     reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
+    /// ADR-021 D2 Part A — the bounded reorg-window evidence list
+    /// (recorded at the FSM reorg decisions; snapshotted as Copies before
+    /// each `judge()` await, never held across it).
+    trip_reorg_windows: Arc<parking_lot::Mutex<std::collections::VecDeque<TripReorgWindow>>>,
     /// The Alloy provider (created from the RPC URL)
     provider: Arc<AlloyProvider>,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
@@ -224,6 +229,14 @@ impl BlockPump {
     /// observes until
     /// both a newHeads notification and a log for the same block arrive,
     /// confirming the logs subscription is live and caught up.
+    /// ADR-021 D2 Part B — parse the delivery-lag trip threshold (pure):
+    /// unset/empty/unparseable/zero = `None` = off (today's report-only
+    /// parity).
+    #[must_use]
+    fn delivery_lag_trip_threshold(raw: Option<&str>) -> Option<u64> {
+        raw?.trim().parse::<u64>().ok().filter(|n| *n > 0)
+    }
+
     #[expect(clippy::missing_errors_doc)]
     pub async fn subscribe(
         rpc_url: &str,
@@ -259,6 +272,9 @@ impl BlockPump {
             bot,
             sink,
             reorg_coordinator,
+            trip_reorg_windows: Arc::new(
+                parking_lot::Mutex::new(std::collections::VecDeque::new()),
+            ),
             provider: Arc::new(provider),
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
@@ -274,6 +290,11 @@ impl BlockPump {
                 ),
                 staged_clock_probe: crate::bot_core::bot_env_flag_default_off(
                     "DEGENBOT_TRACE_STAGED_CLOCK",
+                ),
+                delivery_lag_trip_blocks: Self::delivery_lag_trip_threshold(
+                    std::env::var("DEGENBOT_DELIVERY_LAG_TRIP_BLOCKS")
+                        .ok()
+                        .as_deref(),
                 ),
             },
             ws_completeness_enabled: crate::bot_core::bot_env_flag_default_on(
@@ -614,6 +635,7 @@ impl BlockPump {
         bot: Arc<Bot>,
         provider: Arc<AlloyProvider>,
         config: TripwireConfig,
+        reorg_windows: Arc<parking_lot::Mutex<std::collections::VecDeque<TripReorgWindow>>>,
     ) {
         while rx.changed().await.is_ok() {
             let Some((block, path_refs)) = (*rx.borrow_and_update()).clone() else {
@@ -641,8 +663,19 @@ impl BlockPump {
                     crate::bot_core::solve_anchor::SolveAnchor::resolve(block, &core),
                 )
             };
-            if let GateVerdict::Divergent(d) =
-                judge(&provider, &config, &path_hop_states, anchor).await
+            // ADR-021 D2 Part A — snapshot the reorg evidence (Copies out
+            // under the lock) BEFORE the judge awaits; no guard is held
+            // across the await.
+            let reorg_evidence: Vec<TripReorgWindow> =
+                reorg_windows.lock().iter().copied().collect();
+            if let GateVerdict::Divergent(d) = judge(
+                &provider,
+                &config,
+                &path_hop_states,
+                anchor,
+                &reorg_evidence,
+            )
+            .await
             {
                 Self::trip_and_exit(&d);
             }
@@ -862,6 +895,7 @@ impl BlockPump {
                     Arc::clone(&self.bot),
                     Arc::clone(&self.provider),
                     tripwire_config,
+                    Arc::clone(&self.trip_reorg_windows),
                 ));
                 Some(tx)
             } else {
@@ -1262,6 +1296,14 @@ impl BlockPump {
                                 self.shutdown.store(true, Ordering::Relaxed);
                                 return;
                             }
+                            // ADR-021 D2 Part A — record the reorg window for the
+                            // tripwire's UnhandledReorg evidence (cheap; the
+                            // judge snapshots it at solve time).
+                            crate::bot_core::solver_state_tripwire::reorg_window_open(
+                                &mut self.trip_reorg_windows.lock(),
+                                reorg_block,
+                                log_block,
+                            );
                             // Cancel any pending publish: results accumulated
                             // from pre-reorg state are invalid (the FSM disarmed
                             // the publish in `on_log`).
@@ -1281,6 +1323,11 @@ impl BlockPump {
                                 self.shutdown.store(true, Ordering::Relaxed);
                                 return;
                             }
+                            // ADR-021 D2 Part A — widen the open window's rollback.
+                            crate::bot_core::solver_state_tripwire::reorg_window_continue(
+                                &mut self.trip_reorg_windows.lock(),
+                                log_block,
+                            );
                             continue;
                         }
                         LogDecision::CloseReorg { new_head } => {
@@ -1290,6 +1337,11 @@ impl BlockPump {
                             tracing::info!(
                                 new_head,
                                 "BlockPump: reorg window closed — resuming forward tracking"
+                            );
+                            // ADR-021 D2 Part A — close the evidence window.
+                            crate::bot_core::solver_state_tripwire::reorg_window_close(
+                                &mut self.trip_reorg_windows.lock(),
+                                new_head,
                             );
                             // Fall through to dispatch this forward log (the FSM
                             // moved the cursor to `new_head` in `on_log`).
@@ -1775,6 +1827,9 @@ impl BlockPump {
             bot,
             sink,
             reorg_coordinator,
+            trip_reorg_windows: Arc::new(
+                parking_lot::Mutex::new(std::collections::VecDeque::new()),
+            ),
             provider,
             shutdown,
             header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
@@ -4023,11 +4078,14 @@ mod tests {
                 crate::bot_core::solve_anchor::SolveAnchor::resolve(200, &core),
             )
         };
+        let reorg_evidence: Vec<TripReorgWindow> =
+            pump.trip_reorg_windows.lock().iter().copied().collect();
         let verdict = judge(
             &pump.provider,
             &crate::bot_core::solver_state_tripwire::TripwireConfig::enabled_only(),
             &path_hop_states,
             anchor,
+            &reorg_evidence,
         )
         .await;
         // The reaction (the whole executor-side surface) is trip + exit:

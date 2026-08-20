@@ -69,6 +69,13 @@ pub struct TripwireConfig {
     /// Observational staged-clock scalar probe for in-progress hops
     /// (ex `DEGENBOT_TRACE_STAGED_CLOCK`, default off).
     pub staged_clock_probe: bool,
+    /// ADR-021 D2 Part B (settled policy): the delivery-lag trip threshold.
+    /// `None` (default) = lag stays report-only (today's byte-identical trip
+    /// set); `Some(N)` = a Tracked CL hop whose `stale_by` exceeds `N` at the
+    /// solve block trips the gate as `DeliveryLag{blocks}` even though the
+    /// state is honest at its own anchor. The strict gate still wins when it
+    /// fires. Set from `DEGENBOT_DELIVERY_LAG_TRIP_BLOCKS` (unset = off).
+    pub delivery_lag_trip_blocks: Option<u64>,
 }
 
 impl TripwireConfig {
@@ -80,6 +87,7 @@ impl TripwireConfig {
             divergence_scan: false,
             anchor_probe: false,
             staged_clock_probe: false,
+            delivery_lag_trip_blocks: None,
         }
     }
 
@@ -91,6 +99,7 @@ impl TripwireConfig {
             divergence_scan: false,
             anchor_probe: false,
             staged_clock_probe: false,
+            delivery_lag_trip_blocks: None,
         }
     }
 }
@@ -103,9 +112,11 @@ pub enum TripwireClass {
     /// solver consumed the pool (the strict gate's STALE flag: honest at the
     /// hop's own anchor, on-chain moved past the staleness threshold).
     MissedLog,
-    /// A reorg was not rolled back before solve. Reserved — NOT emittable at
-    /// this evidence budget (needs reorg-coordinator evidence); refinement
-    /// path only.
+    /// A reorg was not rolled back before solve. Emitted by the reorg
+    /// refinement (ADR-021 D2 Part A): a strict-gate own-anchor mismatch
+    /// (coarse `StorageMutated`) is re-labelled to this class when a
+    /// recorded [`TripReorgWindow`] rollback crossed the hop's anchor — a
+    /// replaced historical block is the only mechanism that can move it.
     UnhandledReorg,
     /// On-chain storage diverges from the solver's stored state even AT the
     /// hop's own anchor — direct storage mutation, a decode bug, and an
@@ -114,14 +125,37 @@ pub enum TripwireClass {
     StorageMutated,
     /// State is honest at the hop's own anchor but trails the solve block by
     /// `blocks` (WS slow-but-connected). The aggregate reporter LOGS this
-    /// class (WARN); the strict gate does not trip on it (the trip set is
-    /// byte-for-byte today's).
+    /// class (WARN); by default nothing trips on it (the trip set is
+    /// byte-for-byte today's). The config-gated `delivery_lag_trip_blocks`
+    /// stance (ADR-021 D2 Part B) trips when the worst lag exceeds the
+    /// operator threshold.
     DeliveryLag { blocks: u64 },
     /// A hard stop the coarse on-chain evidence cannot classify (the FUTURE
     /// guard, an `eth_call` read failure, a tick-map fidelity divergence).
     /// The divergence's message carries the detail.
     Unclassified,
 }
+
+/// One reorg window as observed by the pump (FSM
+/// `EnterReorg`/`ContinueReorg`/`CloseReorg`) — the ADR-021 D2 Part A
+/// evidence record the pump passes to [`judge`]. A rollback to
+/// `deepest_removed_block` replaced every block strictly above it, so any
+/// anchor `B > deepest_removed_block` sat on a now-discarded fork.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TripReorgWindow {
+    /// The deepest (lowest) removed block seen in this window — the rollback
+    /// replaced blocks `(deepest_removed_block, ...]`.
+    pub deepest_removed_block: u64,
+    /// The block number of the opening (first removed) log.
+    pub opened_at: u64,
+    /// The new head at which the window closed (first forward log); `None`
+    /// while the window is still open.
+    pub closed_at: Option<u64>,
+}
+
+/// Cap on the reorg windows retained as trip evidence (bounded memory under
+/// reorg traffic; the oldest window evicts past this).
+pub const TRIP_REORG_WINDOW_CAP: usize = 16;
 
 /// One hard stop: which class, where, and the full grep-able diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,16 +182,21 @@ pub enum GateVerdict {
 
 /// Judge one published block's change set against the chain — the ADR-021 D3
 /// single-call interface. Owns the whole stage pipeline (scanner → reporter
-/// → probes → strict gate); never reads env; never aborts (the caller does).
+/// → probes → strict gate → delivery-lag trip); never reads env; never aborts
+/// (the caller does).
 ///
 /// `path_hop_states` is the per-path scalar state extracted under the caller's
 /// short read guard (the pump drops the guard BEFORE this awaits); `anchor` is
-/// the pump-resolved [`crate::bot_core::solve_anchor::SolveAnchor`].
+/// the pump-resolved [`crate::bot_core::solve_anchor::SolveAnchor`];
+/// `reorg_evidence` is the pump's recorded reorg windows (ADR-021 D2 Part A)
+/// — an own-anchor mismatch is re-labelled `UnhandledReorg` when a recorded
+/// rollback crossed the hop's anchor (tests pass `&[]`).
 pub async fn judge(
     provider: &AlloyProvider,
     config: &TripwireConfig,
     path_hop_states: &[Vec<SolverHopScalarState>],
     anchor: crate::bot_core::solve_anchor::SolveAnchor,
+    reorg_evidence: &[TripReorgWindow],
 ) -> GateVerdict {
     let block = anchor.block();
     if path_hop_states.is_empty() {
@@ -173,19 +212,49 @@ pub async fn judge(
         divergence_scan_stage(provider, path_hop_states, block).await;
         return GateVerdict::Ok;
     }
-    // Stage 2: the aggregated lagging-hop reporter (ADR-021 supplement,
-    // observational, non-tripping) — see `lagging_hop_report_stage`'s docs.
-    lagging_hop_report_stage(block, path_hop_states);
+    // Stage 2: the aggregated lagging-hop reporter (ADR-021 supplement;
+    // report-only by default) — see `lagging_hop_report_stage`'s docs. Its
+    // worst laggard feeds Stage 5 (the config-gated delivery-lag trip).
+    let lag = lagging_hop_report_stage(block, path_hop_states);
 
     // Stage 3: the solve-anchor consistency probe (observational, config-
     // gated default off) — see `solve_anchor_probe_stage`'s docs.
     if config.anchor_probe {
         solve_anchor_probe_stage(provider, path_hop_states, block).await;
     }
-    // Stage 4: the strict per-hop scalar gate — the ONLY trip.
+    // Stage 4: the strict per-hop scalar gate — the primary trip (the reorg
+    // evidence re-labels its own-anchor divergences; see
+    // `reorg_refine_failure`).
     for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
-        if let Err(f) = verify_solver_hop_states(provider, config, hop_states, anchor).await {
+        if let Err(f) =
+            verify_solver_hop_states(provider, config, hop_states, anchor, reorg_evidence).await
+        {
             return GateVerdict::Divergent(breadcrumb_divergence(path_idx, f, hop_states, block));
+        }
+    }
+    // Stage 5 (ADR-021 D2 Part B, settled 2026-08-20; config-gated, default
+    // off): the strict gate PASSED — every hop honest at its own anchor — but
+    // delivery itself trails the solve block past the operator threshold.
+    // Below the threshold trailing is the designed mode (report-only);
+    // beyond it the solver would price on a blind snapshot, so the verdict
+    // is Divergent. The strict gate still wins above when it fired.
+    if let (Some(limit), Some(l)) = (config.delivery_lag_trip_blocks, lag) {
+        if l.stale_by > limit {
+            return GateVerdict::Divergent(TripwireDivergence {
+                class: TripwireClass::DeliveryLag {
+                    blocks: l.stale_by,
+                },
+                path_idx: 0,
+                hop_idx: 0,
+                breadcrumb: format!(
+                    "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block {block} (path_idx=0, class=DeliveryLag {{ blocks: {} }}, hops: delivery-lag aggregate) Tracked Live CL hop pool {} is honest at its own anchor but trails the solve anchor by {} blocks (update_block={}) — past the operator-configured delivery-lag trip threshold {} (DEGENBOT_DELIVERY_LAG_TRIP_BLOCKS). This pool is DeliveryLag{{blocks}} at the solve block — delivery is slow-but-connected; solving would price on a stale snapshot. Do NOT reuse desynced state or silence this (UO3JM4).",
+                    l.stale_by,
+                    l.pool,
+                    l.stale_by,
+                    l.update_block,
+                    limit
+                ),
+            });
         }
     }
     GateVerdict::Ok
@@ -286,8 +355,12 @@ async fn divergence_scan_stage(
 /// per pool, keep max `stale_by`) and WARN individually only for genuine
 /// outliers (`stale_by >= SOLVER_STATE_ABNORMAL_STALE_BLOCKS`, well above
 /// the baseline); the quiet-but-benign bulk stays at `DEBUG`.
-fn lagging_hop_report_stage(block: u64, path_hop_states: &[Vec<SolverHopScalarState>]) {
+fn lagging_hop_report_stage(
+    block: u64,
+    path_hop_states: &[Vec<SolverHopScalarState>],
+) -> Option<LaggingHop> {
     let lags_by_pool = aggregate_lagging_hops(block, path_hop_states);
+    let worst = lags_by_pool.values().max_by_key(|l| l.stale_by).cloned();
     if !lags_by_pool.is_empty() {
         let n_pools = lags_by_pool.len();
         let max_stale_by = lags_by_pool.values().map(|l| l.stale_by).max().unwrap_or(0);
@@ -334,6 +407,7 @@ fn lagging_hop_report_stage(block: u64, path_hop_states: &[Vec<SolverHopScalarSt
             }
         }
     }
+    worst
 }
 
 /// Stage 3 — the solve-anchor consistency probe (observational; config-gated
@@ -1295,6 +1369,7 @@ async fn verify_solver_hop_states(
     config: &TripwireConfig,
     hops: &[SolverHopScalarState],
     solve_anchor: crate::bot_core::solve_anchor::SolveAnchor,
+    reorg_evidence: &[TripReorgWindow],
 ) -> Result<(), GateFailure> {
     // The pump resolved the anchor at publish (see `crate::bot_core::solve_anchor`);
     // the body reads the plain block for staleness math + messages.
@@ -1365,16 +1440,20 @@ async fn verify_solver_hop_states(
                         )
                     })?;
                 if !v2_state_matches(s0, s1, c0, c1) {
-                    return Err(mismatch(
-                        i,
-                        TripwireClass::StorageMutated,
-                        &format!(
-                            "V2 pool {pool} state mismatch at its anchor block {anchor} \
-                             (solve block {block}, solver update_block={ub}, behind by {}): \
-                             solver reserve0/1 = ({s0},{s1}), on-chain = ({c0},{c1})",
-                            block.saturating_sub(hop.update_block),
-                            ub = hop.update_block,
+                    return Err(reorg_refine_failure(
+                        mismatch(
+                            i,
+                            TripwireClass::StorageMutated,
+                            &format!(
+                                "V2 pool {pool} state mismatch at its anchor block {anchor} \
+                                 (solve block {block}, solver update_block={ub}, behind by {}): \
+                                 solver reserve0/1 = ({s0},{s1}), on-chain = ({c0},{c1})",
+                                block.saturating_sub(hop.update_block),
+                                ub = hop.update_block,
+                            ),
                         ),
+                        anchor,
+                        reorg_evidence,
                     ));
                 }
             }
@@ -1393,17 +1472,21 @@ async fn verify_solver_hop_states(
                             )
                         })?;
                 if !cl_state_matches(s_sqrt, s_liq, s_tick, c_sqrt, c_liq, c_tick) {
-                    return Err(mismatch(
-                        i,
-                        TripwireClass::StorageMutated,
-                        &format!(
-                            "V3 pool {pool} state mismatch at its anchor block {anchor} \
-                             (solve block {block}, solver update_block={ub}, behind by {}): \
-                             solver (sqrt={s_sqrt}, liq={s_liq}, tick={s_tick}), on-chain \
-                             (sqrt={c_sqrt}, liq={c_liq}, tick={c_tick})",
-                            block.saturating_sub(hop.update_block),
-                            ub = hop.update_block,
+                    return Err(reorg_refine_failure(
+                        mismatch(
+                            i,
+                            TripwireClass::StorageMutated,
+                            &format!(
+                                "V3 pool {pool} state mismatch at its anchor block {anchor} \
+                                 (solve block {block}, solver update_block={ub}, behind by {}): \
+                                 solver (sqrt={s_sqrt}, liq={s_liq}, tick={s_tick}), on-chain \
+                                 (sqrt={c_sqrt}, liq={c_liq}, tick={c_tick})",
+                                block.saturating_sub(hop.update_block),
+                                ub = hop.update_block,
+                            ),
                         ),
+                        anchor,
+                        reorg_evidence,
                     ));
                 }
                 // Staleness re-check: a hop accurate at its OWN (old) anchor can
@@ -1479,18 +1562,22 @@ async fn verify_solver_hop_states(
                             )
                         })?;
                 if !cl_state_matches(s_sqrt, s_liq, s_tick, c_sqrt, c_liq, c_tick) {
-                    return Err(mismatch(
-                        i,
-                        TripwireClass::StorageMutated,
-                        &format!(
-                            "V4 pool {pm} (id {:02x}…) state mismatch at its anchor block {anchor} \
-                             (solve block {block}, solver update_block={ub}, behind by {}): solver \
-                             (sqrt={s_sqrt}, liq={s_liq}, tick={s_tick}), on-chain \
-                             (sqrt={c_sqrt}, liq={c_liq}, tick={c_tick})",
-                            pool_id[0],
-                            block.saturating_sub(hop.update_block),
-                            ub = hop.update_block,
+                    return Err(reorg_refine_failure(
+                        mismatch(
+                            i,
+                            TripwireClass::StorageMutated,
+                            &format!(
+                                "V4 pool {pm} (id {:02x}…) state mismatch at its anchor block {anchor} \
+                                 (solve block {block}, solver update_block={ub}, behind by {}): \
+                                 solver (sqrt={s_sqrt}, liq={s_liq}, tick={s_tick}), on-chain \
+                                 (sqrt={c_sqrt}, liq={c_liq}, tick={c_tick})",
+                                pool_id[0],
+                                block.saturating_sub(hop.update_block),
+                                ub = hop.update_block,
+                            ),
                         ),
+                        anchor,
+                        reorg_evidence,
                     ));
                 }
                 if is_cl_pool_stale(hop.update_block, block) {
@@ -1556,6 +1643,80 @@ fn mismatch(index: usize, class: TripwireClass, message: &str) -> GateFailure {
         hop_idx: index,
         class,
         message: format!("hop {index}: {message}"),
+    }
+}
+
+/// ADR-021 D2 Part A — the reorg refinement of a strict-gate failure: an
+/// own-anchor mismatch classed coarse `StorageMutated` is re-labelled
+/// `UnhandledReorg` when a recorded reorg window's rollback crossed the hop's
+/// anchor. At a historical block the chain state is immutable — a replaced
+/// block is the only mechanism that can move chain@anchor away from the value
+/// an honest apply recorded — so the refinement is conservative: it only
+/// re-labels (the trip is unchanged), and a decode/apply bug that wrote a
+/// wrong value at derivation keeps the `StorageMutated` label.
+fn reorg_refine_failure(
+    f: GateFailure,
+    hop_anchor: u64,
+    reorg_evidence: &[TripReorgWindow],
+) -> GateFailure {
+    if f.class != TripwireClass::StorageMutated {
+        return f;
+    }
+    let Some(w) = reorg_evidence
+        .iter()
+        .find(|w| w.deepest_removed_block < hop_anchor)
+    else {
+        return f;
+    };
+    GateFailure {
+        hop_idx: f.hop_idx,
+        class: TripwireClass::UnhandledReorg,
+        message: format!(
+            "{} [reorg evidence] a reorg window (deepest removed block {} < hop anchor {}, opened at block {}, closed at {}) crossed this hop's anchor before the state was re-derived — class UnhandledReorg (a replaced anchor is the only mechanism that moves historical state).",
+            f.message,
+            w.deepest_removed_block,
+            hop_anchor,
+            w.opened_at,
+            w.closed_at.map_or("open".to_string(), |b| b.to_string()),
+        ),
+    }
+}
+
+/// ADR-021 D2 Part A — record an `EnterReorg` on the pump's bounded evidence
+/// list (the oldest window evicts past [`TRIP_REORG_WINDOW_CAP`]).
+pub(crate) fn reorg_window_open(
+    windows: &mut std::collections::VecDeque<TripReorgWindow>,
+    removed_block: u64,
+    seen_at: u64,
+) {
+    if windows.len() >= TRIP_REORG_WINDOW_CAP {
+        windows.pop_front();
+    }
+    windows.push_back(TripReorgWindow {
+        deepest_removed_block: removed_block,
+        opened_at: seen_at,
+        closed_at: None,
+    });
+}
+
+/// A `ContinueReorg` log inside the currently open window widens its rollback
+/// to the minimum removed block (order-insensitive, like the journal restore).
+pub(crate) fn reorg_window_continue(
+    windows: &mut std::collections::VecDeque<TripReorgWindow>,
+    removed_block: u64,
+) {
+    if let Some(w) = windows.iter_mut().rev().find(|w| w.closed_at.is_none()) {
+        w.deepest_removed_block = w.deepest_removed_block.min(removed_block);
+    }
+}
+
+/// A `CloseReorg { new_head }` closes the currently open reorg window.
+pub(crate) fn reorg_window_close(
+    windows: &mut std::collections::VecDeque<TripReorgWindow>,
+    new_head: u64,
+) {
+    if let Some(w) = windows.iter_mut().rev().find(|w| w.closed_at.is_none()) {
+        w.closed_at = Some(new_head);
     }
 }
 
@@ -1737,6 +1898,7 @@ mod tests {
             &TripwireConfig::enabled_only(),
             &[vec![hop]],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
         )
         .await;
         assert!(
@@ -1756,6 +1918,7 @@ mod tests {
             &TripwireConfig::enabled_only(),
             &[vec![hop]],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
         )
         .await;
         let GateVerdict::Divergent(d) = v else {
@@ -1806,12 +1969,309 @@ mod tests {
             &TripwireConfig::enabled_only(),
             &[vec![hop]],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
         )
         .await;
         let GateVerdict::Divergent(d) = v else {
             panic!("the STALE flag must trip");
         };
         assert_eq!(d.class, TripwireClass::MissedLog);
+    }
+
+    /// ADR-021 D2 Part A — an own-anchor mismatch (coarse `StorageMutated`)
+    /// with a recorded reorg window whose rollback crossed the hop's anchor is
+    /// re-labelled `UnhandledReorg`, keeping the trip + literal prefix +
+    /// quantified evidence in the breadcrumb.
+    #[tokio::test]
+    async fn judge_own_anchor_mismatch_with_crossing_reorg_window_is_unhandled_reorg() {
+        let hop = v2_hop(1000, 2000, 190);
+        let provider = mock_provider(vec![v2_reserves_response(777, 888)]);
+        let window = TripReorgWindow {
+            deepest_removed_block: 150,
+            opened_at: 210,
+            closed_at: Some(205),
+        };
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[window],
+        )
+        .await;
+        let GateVerdict::Divergent(d) = v else {
+            panic!("gate must trip on an own-anchor mismatch");
+        };
+        assert_eq!(d.class, TripwireClass::UnhandledReorg);
+        assert!(
+            d.breadcrumb.starts_with(
+                "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block 200 (path_idx=0"
+            ),
+            "literal prefix must stay byte-identical; got: {}",
+            d.breadcrumb
+        );
+        assert!(
+            d.breadcrumb.contains("UnhandledReorg"),
+            "the class must be named; got: {}",
+            d.breadcrumb
+        );
+        assert!(
+            d.breadcrumb.contains("[reorg evidence]"),
+            "the crossing window must be named; got: {}",
+            d.breadcrumb
+        );
+        assert!(
+            d.breadcrumb.contains("deepest removed block 150"),
+            "the crossing must be quantified; got: {}",
+            d.breadcrumb
+        );
+    }
+
+    /// A reorg window that did NOT cross the hop's anchor (the rollback
+    /// stopped above it) must not re-label: the mismatch stays coarse
+    /// `StorageMutated`, no evidence line.
+    #[tokio::test]
+    async fn judge_own_anchor_mismatch_with_noncrossing_reorg_window_stays_storage_mutated() {
+        let hop = v2_hop(1000, 2000, 190);
+        let provider = mock_provider(vec![v2_reserves_response(777, 888)]);
+        let window = TripReorgWindow {
+            deepest_removed_block: 195, // > anchor 190 — the rollback stopped above the anchor
+            opened_at: 210,
+            closed_at: Some(205),
+        };
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[window],
+        )
+        .await;
+        let GateVerdict::Divergent(d) = v else {
+            panic!("gate must trip on an own-anchor mismatch");
+        };
+        assert_eq!(d.class, TripwireClass::StorageMutated);
+        assert!(
+            !d.breadcrumb.contains("[reorg evidence]"),
+            "a non-crossing window must not re-label; got: {}",
+            d.breadcrumb
+        );
+    }
+
+    /// Reorg evidence NEVER re-labels a `MissedLog` verdict (honest at the
+    /// anchor, on-chain moved later — the refinement applies to own-anchor
+    /// divergence only).
+    #[tokio::test]
+    async fn judge_missed_log_is_not_relabelled_by_reorg_evidence() {
+        let sqrt = U256::from(1u128) << 96;
+        let liq = 1_000_000u128;
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V3,
+            update_block: 190,
+            tick_data_block: 190,
+            cl_meta: None,
+            v2: None,
+            v3: Some((Address::from([0xaau8; 20]), sqrt, liq, 0)),
+            v4: None,
+            cl_tick_map: None,
+        };
+        let moved = U256::from(2u128) << 96;
+        let provider = mock_provider(vec![
+            v3_slot0_response(sqrt, 0),
+            liq_response(liq),
+            v3_slot0_response(moved, 0),
+            liq_response(liq),
+        ]);
+        let window = TripReorgWindow {
+            deepest_removed_block: 150,
+            opened_at: 210,
+            closed_at: Some(205),
+        };
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[window],
+        )
+        .await;
+        let GateVerdict::Divergent(d) = v else {
+            panic!("the STALE flag must trip");
+        };
+        assert_eq!(d.class, TripwireClass::MissedLog);
+        assert!(
+            !d.breadcrumb.contains("[reorg evidence]"),
+            "MissedLog must never carry the reorg label; got: {}",
+            d.breadcrumb
+        );
+    }
+
+    /// ADR-021 D2 Part B (settled policy) — the strict gate PASSES (honest at
+    /// the anchor) but the aggregate worst delivery lag exceeds the operator
+    /// threshold: the verdict is Divergent `DeliveryLag{blocks}`.
+    #[tokio::test]
+    async fn judge_honest_lag_beyond_threshold_trips_delivery_lag() {
+        let sqrt = U256::from(1u128) << 96;
+        let liq = 1_000_000u128;
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V3,
+            update_block: 180, // 20 blocks behind the solve block 200
+            tick_data_block: 180,
+            cl_meta: Some(("Tracked".to_string(), "Live".to_string())),
+            v2: None,
+            v3: Some((Address::from([0xaau8; 20]), sqrt, liq, 0)),
+            v4: None,
+            cl_tick_map: None,
+        };
+        let provider = mock_provider(vec![
+            v3_slot0_response(sqrt, 0), // strict gate: anchor read (honest)
+            liq_response(liq),
+            v3_slot0_response(sqrt, 0), // staleness re-read at the solve block (honest)
+            liq_response(liq),
+        ]);
+        let cfg = TripwireConfig {
+            delivery_lag_trip_blocks: Some(10),
+            ..TripwireConfig::enabled_only()
+        };
+        let v = judge(
+            &provider,
+            &cfg,
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
+        )
+        .await;
+        let GateVerdict::Divergent(d) = v else {
+            panic!("lag past the operator threshold must trip");
+        };
+        assert_eq!(d.class, TripwireClass::DeliveryLag { blocks: 20 });
+        assert!(
+            d.breadcrumb.starts_with(
+                "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block 200 (path_idx=0"
+            ),
+            "literal prefix must stay byte-identical; got: {}",
+            d.breadcrumb
+        );
+        assert!(
+            d.breadcrumb
+                .contains("trails the solve anchor by 20 blocks"),
+            "the lag must be quantified; got: {}",
+            d.breadcrumb
+        );
+        assert!(
+            d.breadcrumb.contains("at the solve block"),
+            "the ADR-021 trip phrasing must survive; got: {}",
+            d.breadcrumb
+        );
+    }
+
+    /// The same honest lag WITHIN the threshold must NOT trip (parity with
+    /// today's trip set below the operator's bar).
+    #[tokio::test]
+    async fn judge_honest_lag_within_threshold_does_not_trip() {
+        let sqrt = U256::from(1u128) << 96;
+        let liq = 1_000_000u128;
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V3,
+            update_block: 180,
+            tick_data_block: 180,
+            cl_meta: Some(("Tracked".to_string(), "Live".to_string())),
+            v2: None,
+            v3: Some((Address::from([0xaau8; 20]), sqrt, liq, 0)),
+            v4: None,
+            cl_tick_map: None,
+        };
+        let provider = mock_provider(vec![
+            v3_slot0_response(sqrt, 0),
+            liq_response(liq),
+            v3_slot0_response(sqrt, 0),
+            liq_response(liq),
+        ]);
+        let cfg = TripwireConfig {
+            delivery_lag_trip_blocks: Some(100),
+            ..TripwireConfig::enabled_only()
+        };
+        let v = judge(
+            &provider,
+            &cfg,
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
+        )
+        .await;
+        assert!(
+            matches!(v, GateVerdict::Ok),
+            "a lag within the operator threshold must not trip"
+        );
+    }
+
+    /// The DEFAULT (threshold unset) keeps today's byte-identical trip set:
+    /// a 20-block honest lag is report-only observability, not a trip.
+    #[tokio::test]
+    async fn judge_honest_lag_default_off_is_parity() {
+        let sqrt = U256::from(1u128) << 96;
+        let liq = 1_000_000u128;
+        let hop = SolverHopScalarState {
+            hop_type: HopType::V3,
+            update_block: 180,
+            tick_data_block: 180,
+            cl_meta: Some(("Tracked".to_string(), "Live".to_string())),
+            v2: None,
+            v3: Some((Address::from([0xaau8; 20]), sqrt, liq, 0)),
+            v4: None,
+            cl_tick_map: None,
+        };
+        let provider = mock_provider(vec![
+            v3_slot0_response(sqrt, 0),
+            liq_response(liq),
+            v3_slot0_response(sqrt, 0),
+            liq_response(liq),
+        ]);
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
+        )
+        .await;
+        assert!(
+            matches!(v, GateVerdict::Ok),
+            "default parity: delivery lag alone must not trip today's trip set"
+        );
+    }
+
+    /// The pump-side window record helpers: open / continue (min-widening) /
+    /// close / bounded cap (bounded memory under reorg traffic).
+    #[test]
+    fn reorg_window_record_open_continue_close_and_cap() {
+        let mut w: std::collections::VecDeque<TripReorgWindow> = std::collections::VecDeque::new();
+        reorg_window_open(&mut w, 100, 210);
+        reorg_window_continue(&mut w, 95);
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].deepest_removed_block, 95, "continue widens to the min");
+        assert_eq!(w[0].opened_at, 210);
+        assert_eq!(w[0].closed_at, None);
+        reorg_window_continue(&mut w, 101); // shallower — must not shrink the window
+        assert_eq!(w[0].deepest_removed_block, 95);
+        reorg_window_close(&mut w, 215);
+        assert_eq!(w[0].closed_at, Some(215));
+        // A continue after close must not resurrect the closed window.
+        reorg_window_continue(&mut w, 50);
+        assert_eq!(w[0].deepest_removed_block, 95);
+        assert_eq!(w[0].closed_at, Some(215));
+        // Cap: a 17th open evicts the oldest window.
+        let mut full: std::collections::VecDeque<TripReorgWindow> =
+            std::collections::VecDeque::new();
+        for i in 0..TRIP_REORG_WINDOW_CAP {
+            reorg_window_open(&mut full, 1000 + i as u64, 300 + i as u64);
+        }
+        reorg_window_open(&mut full, 2000, 400);
+        assert_eq!(full.len(), TRIP_REORG_WINDOW_CAP, "bounded to the cap");
+        assert_eq!(
+            full[0].deepest_removed_block, 1001,
+            "the oldest window evict"
+        );
     }
 
     /// (iv) The dev-only divergence scanner short-circuits the strict gate
@@ -1832,6 +2292,7 @@ mod tests {
             &cfg,
             &[vec![hop]],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
         )
         .await;
         assert!(matches!(v, GateVerdict::Ok), "dry-run scan must never trip");
@@ -1858,6 +2319,7 @@ mod tests {
             &TripwireConfig::enabled_only(),
             &[vec![hop]],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
         )
         .await;
         assert!(matches!(v, GateVerdict::Ok));
@@ -2230,6 +2692,7 @@ mod tests {
             &TripwireConfig::enabled_only(),
             &[hop],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(102, 0),
+            &[],
         )
         .await
         .expect_err("gate must trip: on-chain tick 60 is missing from the solver's map");
@@ -2308,6 +2771,7 @@ mod tests {
             &TripwireConfig::enabled_only(),
             &[hop],
             crate::bot_core::solve_anchor::SolveAnchor::for_head(102, 0),
+            &[],
         )
         .await
         .expect_err("gate must trip: V4 on-chain tick 60 missing from the solver's map");

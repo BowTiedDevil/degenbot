@@ -129,13 +129,14 @@ to scalar-state repair.
 
 ## Deferred
 
-- **The extraction itself** (one tripwire module, typed verdict, converge the
-  three verifiers onto the `degenbot-rpc::abi` home) — recorded as the intended
-  shape here; the code change is a separate task.
-- **Per-class thresholds/policy** (e.g. whether `DeliveryLag{N}` for different
-  N should trip immediately or only past an anchor-exact mismatch) — a policy
-  detail to settle when the tripwire module lands, within the hard boundary
-  that it never heals.
+- ~~**The extraction itself** (one tripwire module, typed verdict, converge the
+  three verifiers onto the `degenbot-rpc::abi` home)~~ — **settled**: the
+  tripwire module landed (D3 slices 1+2, above). The probe backend is the
+  pump's shared `AlloyProvider` path (the ADR-003 `degenbot-rpc` home is
+  unchanged — the module consumes it, it does not own it).
+- ~~**Per-class thresholds/policy** (e.g. whether `DeliveryLag{N}` for different
+  N should trip immediately or only past an anchor-exact mismatch)~~ —
+  **settled** in "D2 complete" below (default-off operator opt-in).
 
 ## References
 
@@ -211,3 +212,41 @@ D3 remainder after slice 2: D2's remaining classes (UnhandledReorg evidence
 via the reorg coordinator, DeliveryLag-as-trip policy per the ADR's "Deferred"
 decision) — the seam-convergence scope of D3 is complete.
 
+
+### D2 complete — UnhandledReorg evidence + settled DeliveryLag policy (done 2026-08-20; ergo IKKKWU)
+
+**UnhandledReorg is now emittable (Part A, user-confirmed (a)).** The pump
+already observed every reorg window (FSM `EnterReorg`/`ContinueReorg`/
+`CloseReorg` → `ReorgCoordinator::dispatch_reorg_log` →
+`restore_before_block`); it now also records them as a bounded
+(`TRIP_REORG_WINDOW_CAP = 16`) `TripReorgWindow { deepest_removed_block,
+opened_at, closed_at }` evidence list, snapshotted (Copies) before each
+`judge()` await. The refinement is deliberate and conservative: a
+strict-gate own-anchor mismatch (coarse `StorageMutated`) is re-labelled
+`UnhandledReorg` only when a recorded rollback crossed the hop's anchor
+(`deepest_removed_block < anchor`). Soundness: at a historical block the
+chain state is immutable — a replaced block is the only mechanism that can
+move chain@anchor away from the value an honest apply recorded — so the
+refinement only re-labels (the trip is unchanged) and a decode/apply bug
+that wrote a wrong value at derivation keeps the `StorageMutated` label.
+`MissedLog` (honest at the anchor, moved later) is never re-labelled.
+
+**DeliveryLag-as-trip is settled (Part B, user-confirmed (a) — default-off
+operator opt-in).** Policy: lagging-but-honest trailing is the designed
+operating mode below the operator's bar (report-only; the ~143
+WARNs/block benign baseline is aggregated, not tripped); tripping on lag
+is an explicit operator stance, not a default. Mechanism:
+`TripwireConfig::delivery_lag_trip_blocks: Option<u64>` (env
+`DEGENBOT_DELIVERY_LAG_TRIP_BLOCKS`, unset/empty/unparseable/zero = off):
+when `Some(N)`, a new stage 5 of `judge` trips the gate as
+`DeliveryLag{blocks: worst}` when the stage-2 aggregate worst `stale_by`
+exceeds `N` — evaluated only after the strict gate passes, which still
+wins when it fires. The default (`None`) keeps the trip set byte-for-byte
+today's. The threshold is chain-dependent (37 blocks ≈ minutes on a 12s
+chain, seconds on a 200ms L2), so no chain-agnostic constant is shipped —
+that is the stated decision.
+
+All red/green (7 new tests: crossing/non-crossing reorg re-label,
+MissedLog non-refinement, beyond/within/default lag trip, window-record
+helpers). Verified: degenbot-bot 509 green, `just test-rust` green, clippy
+clean on degenbot-bot, extension rebuilt + engine-verify pytest green (10).
