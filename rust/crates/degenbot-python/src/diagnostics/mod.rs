@@ -2,6 +2,7 @@
 //! (ergo 66H3KJ). See [`gil_probe`] for the deadlock measurement rationale.
 
 pub mod gil_probe;
+pub mod thread_registry;
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;

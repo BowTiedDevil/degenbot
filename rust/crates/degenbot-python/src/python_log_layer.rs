@@ -113,6 +113,21 @@ impl<S> Layer<S> for PythonLogLayer
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
 {
+    /// TPMFLV: every span creation records the creating thread into the
+    /// diagnostics thread-registry (std thread-id -> OS TID + last span).
+    /// Runs on the span-creating thread; cheap (map lookup, one /proc read
+    /// per thread lifetime) and feeds the GIL-deadlock self-dump.
+    fn on_new_span(
+        &self,
+        attr: &tracing::span::Attributes<'_>,
+        _id: &tracing::span::Id,
+        _ctx: Context<'_, S>,
+    ) {
+        // Span source-location is not exposed by this tracing version's
+        // Metadata; the Jaeger spans already carry code.file.path / line.
+        crate::diagnostics::thread_registry::note_current_thread(attr.metadata().name(), None);
+    }
+
     fn on_event(&self, event: &tracing::Event, _ctx: Context<'_, S>) {
         let meta = event.metadata();
 

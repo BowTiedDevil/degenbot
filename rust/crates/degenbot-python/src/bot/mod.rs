@@ -11,6 +11,8 @@ pub mod pool;
 pub mod pump;
 pub mod py_bot_io;
 pub mod subscriber;
+#[cfg(feature = "auto-initialize")]
+pub mod test_gil;
 pub mod token;
 
 // === PyBot (moved from the former root `py_bot.rs`) ===
@@ -197,7 +199,7 @@ impl PyBot {
 impl PyBot {
     #[new]
     #[pyo3(signature = (chain_id = 0))]
-    fn new(chain_id: u64) -> Self {
+    pub fn new(chain_id: u64) -> Self {
         // ADR-006 slice 8b: the Python ``Bot`` facade is now single-chain,
         // so it passes its ``config.default_chain_id`` here. The ``chain_id = 0``
         // default keeps the bare ``PyBot()`` lower-level test fixtures (which
@@ -1308,7 +1310,12 @@ impl PyBot {
     ///     `ValueError`: If `address` cannot be parsed.
     #[pyo3(signature = (address, pool_id=None))]
     #[expect(clippy::needless_pass_by_value)] // PyO3 binding idiom for optional bytes
-    fn unregister_pool(&self, address: &str, pool_id: Option<Vec<u8>>) -> PyResult<bool> {
+    fn unregister_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        pool_id: Option<Vec<u8>>,
+    ) -> PyResult<bool> {
         let addr = parse_address(address)?;
         // V4 on PyBot is intentionally not exposed: registration for V4 lives
         // on ArbitrageEngine (bot::engine), so the symmetric V4 unregister
@@ -1320,7 +1327,13 @@ impl PyBot {
                  V4 unregister is engine-side — use the engine’s unregister path.",
             ));
         }
-        Ok(self.bot.state_arc().write().unregister_pool(addr, None))
+        let state = self.bot.state_arc();
+        // Incident 2026-08-20 (GIL/BotState inversion): never hold the GIL
+        // while parked on the BotState write - the dispatch fan-out reader
+        // can hold the read end across provider RPCs for seconds, and a
+        // parked GIL-writer freezes the main asyncio loop (the observed
+        // 'GIL deadlock').
+        Ok(py.detach(move || state.write().unregister_pool(addr, None)))
     }
 
     /// Assemble a V3 pool's tick map from the stored DB snapshot (`Store → Db`
@@ -1962,7 +1975,10 @@ impl PyBot {
                 get_runtime().block_on(builder::build_curve_pool(addr, &registry, &io, block))
             })
             .map_err(map_builder_err)?;
-        Ok(self.bot.state_arc().write().register_curve_pool(&params))
+        let state = self.bot.state_arc();
+        // Incident 2026-08-20: see unregister_pool (no GIL while parked on
+        // the BotState write).
+        Ok(py.detach(move || state.write().register_curve_pool(&params)))
     }
 
     /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
@@ -2064,6 +2080,7 @@ impl PyBot {
     ))]
     fn register_balancer_stable_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         vault: &str,
         pool_id_hex: &str,
@@ -2085,22 +2102,24 @@ impl PyBot {
         let bal_vals = extract_u256_list(balances)?;
         let provider =
             rate_provider.map(|b| crate::bot::pool::make_balancer_rate_provider(b.unbind()));
-        Ok(self.bot.state_arc().write().register_balancer_stable_pool(
-            &RegisterBalancerStablePoolParams {
-                address: addr,
-                vault: vault_addr,
-                pool_id: pool_id_bytes,
-                tokens: token_addrs,
-                amp,
-                scaling_factors: scaling_vals,
-                swap_fee,
-                bpt_idx,
-                invariant_version,
-                balances: bal_vals,
-                update_block,
-                rate_provider: provider,
-            },
-        ))
+        let params = RegisterBalancerStablePoolParams {
+            address: addr,
+            vault: vault_addr,
+            pool_id: pool_id_bytes,
+            tokens: token_addrs,
+            amp,
+            scaling_factors: scaling_vals,
+            swap_fee,
+            bpt_idx,
+            invariant_version,
+            balances: bal_vals,
+            update_block,
+            rate_provider: provider,
+        };
+        let state = self.bot.state_arc();
+        // Incident 2026-08-20: see unregister_pool (no GIL while parked on
+        // the BotState write).
+        Ok(py.detach(move || state.write().register_balancer_stable_pool(&params)))
     }
 
     /// Register an Aerodrome V2 pool by contract address (ADR-005 Aerodrome
@@ -2226,16 +2245,20 @@ impl PyBot {
     /// No-op if the earliest delta is at/after the target; errors if the target
     /// is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
     #[pyo3(signature = (pool_id, block))]
-    fn v3_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
+    fn v3_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
         let state = self.bot.state_arc();
-        let mut core = state.write();
-        // Family guard: no-op for non-V3/V4 (V3's contract).
-        if core.get_v3_or_v4_pool(pool_id).is_none() {
-            return Ok(());
-        }
-        core.discard_pool_before_block(pool_id, block)
-            .unwrap_or(Ok(()))
-            .map_err(journal_err_to_py)
+        // Incident 2026-08-20: the whole write scope runs detached - the GIL
+        // is released while parked behind a live reader.
+        py.detach(move || {
+            let mut core = state.write();
+            // Family guard: no-op for non-V3/V4 (V3's contract).
+            if core.get_v3_or_v4_pool(pool_id).is_none() {
+                return Ok(());
+            }
+            core.discard_pool_before_block(pool_id, block)
+                .unwrap_or(Ok(()))
+                .map_err(journal_err_to_py)
+        })
     }
 
     /// Restore V3 pool state prior to a target block.
@@ -2253,28 +2276,34 @@ impl PyBot {
         // returns `()`; the post-restore scalar fields ARE the before-values
         // the `V3RestoreResult.scalar_priors` previously carried. Copy out
         // under the write guard, then marshal after release.
-        let (sqrt_p, liq, tick, blk) = {
-            let state = self.bot.state_arc();
+        let state = self.bot.state_arc();
+        // Incident 2026-08-20: the whole write scope runs detached - the GIL
+        // is released while parked behind a live reader. Owned scalars come
+        // out (the parking_lot write guard is !Send and never leaves).
+        let restored = py.detach(move || {
             let mut core = state.write();
             if core.get_v3_or_v4_pool(pool_id).is_none() {
                 return Ok(None);
             }
             match core.restore_pool_before_block(pool_id, block) {
-                None => return Ok(None),
-                Some(Err(e)) => return Err(journal_err_to_py(e)),
+                None => Ok(None),
+                Some(Err(e)) => Err(journal_err_to_py(e)),
                 Some(Ok(())) => {
                     #[expect(clippy::expect_used)] // invariant-guarded (documented)
                     let state = core
                         .get_v3_or_v4_pool(pool_id)
                         .expect("V3/V4 pool confirmed above");
-                    (
+                    Ok(Some((
                         state.sqrt_price_x96(),
                         state.liquidity(),
                         state.tick(),
                         state.update_block(),
-                    )
+                    )))
                 }
             }
+        })?;
+        let Some((sqrt_p, liq, tick, blk)) = restored else {
+            return Ok(None);
         };
         let tuple = pyo3::types::PyTuple::new(
             py,
@@ -2449,16 +2478,20 @@ impl PyBot {
     /// Raises:
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (pool_id, block))]
-    fn v2_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
+    fn v2_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
         let state = self.bot.state_arc();
-        let mut core = state.write();
-        // Family guard: no-op for non-V2 (V2's contract).
-        if core.get_v2_pool_state(pool_id).is_none() {
-            return Ok(());
-        }
-        core.discard_pool_before_block(pool_id, block)
-            .unwrap_or(Ok(()))
-            .map_err(journal_err_to_py)
+        // Incident 2026-08-20: the whole write scope runs detached - the GIL
+        // is released while parked behind a live reader.
+        py.detach(move || {
+            let mut core = state.write();
+            // Family guard: no-op for non-V2 (V2's contract).
+            if core.get_v2_pool_state(pool_id).is_none() {
+                return Ok(());
+            }
+            core.discard_pool_before_block(pool_id, block)
+                .unwrap_or(Ok(()))
+                .map_err(journal_err_to_py)
+        })
     }
 
     /// Restore V2 pool state prior to a target block.
@@ -2483,27 +2516,33 @@ impl PyBot {
         // Read-after-restore (ADR-016): the trait returns `()`; the
         // post-restore reserves ARE the before-values the per-family tuple
         // previously carried. Copy out under the guard, marshal after release.
-        let (r0, r1, blk) = {
-            let state = self.bot.state_arc();
+        let state = self.bot.state_arc();
+        // Incident 2026-08-20: the whole write scope runs detached - the GIL
+        // is released while parked behind a live reader. Owned scalars come
+        // out (the parking_lot write guard is !Send and never leaves).
+        let restored = py.detach(move || {
             let mut core = state.write();
             if core.get_v2_pool_state(pool_id).is_none() {
                 return Ok(None);
             }
             match core.restore_pool_before_block(pool_id, block) {
-                None => return Ok(None),
-                Some(Err(e)) => return Err(journal_err_to_py(e)),
+                None => Ok(None),
+                Some(Err(e)) => Err(journal_err_to_py(e)),
                 Some(Ok(())) => {
                     #[expect(clippy::expect_used)] // invariant-guarded (documented)
                     let state = core
                         .get_v2_pool_state(pool_id)
                         .expect("V2 pool confirmed above");
-                    (
+                    Ok(Some((
                         state.reserve0.to::<alloy::primitives::U256>(),
                         state.reserve1.to::<alloy::primitives::U256>(),
                         state.update_block,
-                    )
+                    )))
                 }
             }
+        })?;
+        let Some((r0, r1, blk)) = restored else {
+            return Ok(None);
         };
         let tuple = pyo3::types::PyTuple::new(
             py,

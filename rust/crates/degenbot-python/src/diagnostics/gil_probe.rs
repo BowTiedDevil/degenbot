@@ -179,6 +179,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                 "[gil-probe] stuck-watchdog armed"
             );
             let stuck_ms = u64::try_from(stuck.as_millis()).unwrap_or(u64::MAX);
+            let mut alarm_count: u32 = 0;
             loop {
                 thread::sleep(Duration::from_secs(5));
                 let progress = LAST_PROGRESS_MS.load(Ordering::Relaxed);
@@ -197,12 +198,28 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                     WatchdogVerdict::Deadlocked {
                         since_progress,
                         since_sample,
-                    } => tracing::error!(
-                        since_progress,
-                        since_sample,
-                        stuck = ?stuck,
-                        "[gil-probe] GIL DEADLOCK confirmed"
-                    ),
+                    } => {
+                        // TPMFLV: on the first confirmed alarm (and every 10
+                        // alarms after) self-record the thread table. The
+                        // watchdog never takes the GIL, so this runs even
+                        // during a hard GIL deadlock; /proc reads + a file
+                        // write are non-blocking.
+                        alarm_count += 1;
+                        if alarm_count == 1 || alarm_count % 10 == 0 {
+                            if let Some(p) = crate::diagnostics::thread_registry::dump_to_file() {
+                                tracing::error!(
+                                    path = %p.display(),
+                                    "[gil-probe] thread-registry + futex table dumped"
+                                );
+                            }
+                        }
+                        tracing::error!(
+                            since_progress,
+                            since_sample,
+                            stuck = ?stuck,
+                            "[gil-probe] GIL DEADLOCK confirmed"
+                        )
+                    }
                 }
             }
         })

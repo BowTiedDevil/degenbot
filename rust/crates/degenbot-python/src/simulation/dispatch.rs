@@ -115,7 +115,14 @@ pub fn dispatch_profitable_py<'py>(
 
     // SimulateContext borrows the provider (cloned arc — the 'a borrow is
     // block-local to the future).
-    let provider: Arc<AlloyProvider> = Arc::clone(&context.provider);
+    //
+    // Incident 2026-08-20: the core fan-out holds a BotState READ guard
+    // across these provider fetches, and GIL-held FFI writers park behind
+    // that reader (holding the GIL while parked). The default 30s x N-attempt
+    // retry budget under the guard stalled the GIL for minutes; the sim path
+    // uses the fail-fast `sim_bounded` budget instead (slow cold miss =>
+    // `rpc-failed` tally, no multi-second guard hold).
+    let provider: Arc<AlloyProvider> = Arc::new(context.provider.sim_bounded());
     let executor_owner = context.executor_owner;
     let executor_address = context.executor_address;
     let weth_address = context.weth_address;
