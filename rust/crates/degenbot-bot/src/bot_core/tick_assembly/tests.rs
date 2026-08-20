@@ -148,7 +148,7 @@ fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], spacing: i32) {
             },
         );
         let compressed = tick.div_euclid(spacing);
-        let word = (compressed >> 8) as i32;
+        let word = compressed >> 8;
         let bit = compressed.rem_euclid(256) as u64;
         tick_bitmap
             .entry(word)
@@ -180,7 +180,7 @@ fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32], spacing: 
             },
         );
         let compressed = tick.div_euclid(spacing);
-        let word = (compressed >> 8) as i32;
+        let word = compressed >> 8;
         let bit = compressed.rem_euclid(256) as u64;
         tick_bitmap
             .entry(word)
@@ -585,7 +585,7 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
 //  is never checked.
 
 /// Seed a V3 pool with a DIVERGENT (bitmap, rows) pair — the corruption
-/// shapes the reconciliation must reject. `rows`: (tick, liquidity_gross);
+/// shapes the reconciliation must reject. `rows`: (tick, `liquidity_gross`);
 /// gross 0 = a de-initialized tick row still present in the table.
 fn seed_v3_divergent(db: &DegenbotDb, pool_id: i64, bitmap: U256, rows: &[(i32, u128)]) {
     let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();

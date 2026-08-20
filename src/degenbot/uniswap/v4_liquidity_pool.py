@@ -24,7 +24,7 @@ Checked words (a tick-data fetcher probed `tickBitmap(word)` and the on-chain
 bitmap was zero) are tracked in Rust `known_bitmap_words` (Sparse only — see
 the V3 companion's sparse-map note); `tick_bitmap_snapshot()` surfaces a
 checked-but-empty word as `(0, block)` so the fetch loop breaks with no
-client-side shadow (T1 3WTDFK retired the companion's `_bitmap_override`).
+client-side bitmap shadow.
 """
 
 from __future__ import annotations

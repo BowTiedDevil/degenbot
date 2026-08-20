@@ -670,7 +670,7 @@ mod tests {
             let mut out: HashMap<i64, U256> = HashMap::new();
             for tick in map.keys().copied() {
                 let compressed = tick / spacing;
-                let word = (compressed >> 8) as i64;
+                let word = i64::from(compressed >> 8);
                 let bit = compressed.rem_euclid(256) as u32;
                 *out.entry(word).or_default() |= U256::from(1u64) << bit;
             }

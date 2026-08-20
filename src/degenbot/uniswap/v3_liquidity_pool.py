@@ -168,9 +168,9 @@ class UniswapV3Pool(
 
         The sparse-tick fetcher is stored Rust-side on ``V3PoolState``
         (ADR-006 I/O trait object, task MLJT4V) — not a constructor arg.
-        The companion-side ``_bitmap_override`` cache is retired (T1 3WTDFK):
-        checked words live in Rust ``known_bitmap_words`` and the snapshot
-        surfaces them.
+        Checked words (bitmap words the caller has verified) live in Rust
+        ``known_bitmap_words``; ``tick_bitmap_snapshot()`` surfaces them, so
+        there is no client-side bitmap shadow.
 
         Returns:
             A ``cls`` instance wrapping ``py_pool``.

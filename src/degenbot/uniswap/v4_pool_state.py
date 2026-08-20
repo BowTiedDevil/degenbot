@@ -15,7 +15,7 @@ V4-specific state:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
@@ -34,6 +34,9 @@ class V4PoolState:
     # Immutable — set once at construction
     _token0: Erc20Token
     _token1: Erc20Token
+    # The CL handle (set by the companion's _from_py_pool); the
+    # sparse_liquidity_map property reads Rust coverage through it.
+    _py_pool: Any
 
     @property
     def token0(self) -> Erc20Token:

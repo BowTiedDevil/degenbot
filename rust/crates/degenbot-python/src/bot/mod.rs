@@ -2914,7 +2914,7 @@ mod tests {
 
     /// T3 (OMDCIY, epic OU4SYZ): a Tracked snapshot whose bitmap and tick
     /// rows disagree (bit 2 set, row only at tick 10 / bit 1) must be
-    /// REJECTED at intake with a typed error (Python ValueError), not
+    /// REJECTED at intake with a typed error (Python `ValueError`), not
     /// registered. Sparse / Chain-arm data is indeterminate and never
     /// reconciled.
     #[test]

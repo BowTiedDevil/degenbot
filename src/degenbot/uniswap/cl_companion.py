@@ -27,20 +27,18 @@ from degenbot.uniswap.math import (
 )
 
 if TYPE_CHECKING:
-    from typing import Protocol
-
     from degenbot._ffi import LiquidityPool
-    from degenbot.types import BlockNumber
+    from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.types import UniswapPoolSwapVector
-
-    class LiquidityMappingUpdate(Protocol):
-        """Structural shape of the family Mint/Burn/ModifyLiquidity updates."""
-
-        block_number: int
-        liquidity: int
-        tick_lower: int
-        tick_upper: int
+    from degenbot.uniswap.v3_types import (
+        UniswapV3PoolExternalUpdate,
+        UniswapV3PoolLiquidityMappingUpdate,
+    )
+    from degenbot.uniswap.v4_types import (
+        UniswapV4PoolExternalUpdate,
+        UniswapV4PoolLiquidityMappingUpdate,
+    )
 
 
 # A CL state (the family NamedTuple the ``state`` property builds).
@@ -201,7 +199,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
 
     def external_update(
         self,
-        update: LiquidityMappingUpdate,
+        update: UniswapV3PoolExternalUpdate | UniswapV4PoolExternalUpdate,
     ) -> bool:
         """Process a family-external update (Swap event).
 
@@ -239,7 +237,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
 
     def update_liquidity_map(
         self,
-        update: LiquidityMappingUpdate,
+        update: UniswapV3PoolLiquidityMappingUpdate | UniswapV4PoolLiquidityMappingUpdate,
     ) -> None:
         """Apply an update to the liquidity map (Mint/Burn/ModifyLiquidity).
 

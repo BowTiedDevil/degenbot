@@ -94,7 +94,7 @@ pub enum TickMapAssemblyError {
     /// liquidity rows disagree about an initialization (T3 OMDCIY, epic
     /// OU4SYZ). Registration is rejected AT INTAKE — the two-step verify
     /// (IKGQ6F) is the on-chain oracle, but a corrupted snapshot must never
-    /// register. `tick` is the conflicting position (i32::MIN marks an
+    /// register. `tick` is the conflicting position (`i32::MIN` marks an
     /// out-of-range corrupted word position).
     #[error(
         "Tracked tick map inconsistent at intake: word {word} bit {bit} (tick {tick}) — bitmap_bit = {bitmap_bit}, row_gross_positive = {row_gross_positive}"
