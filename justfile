@@ -49,7 +49,20 @@ test-rust: test-standalone
     #!/usr/bin/env bash
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # vendored deployments.json (degenbot-uniswap) must match the canonical
+    # Python-tree registry file byte-for-byte (TGO5ZY: a crate can only
+    # embed in-tarball files, so the embed uses the in-crate mirror)
+    cmp -s src/degenbot/registry/deployments.json rust/crates/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
     cargo test --manifest-path rust/Cargo.toml --workspace
+
+# crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
+# verification-builds every publishable workspace member in dependency order.
+# ~20-40 min cold. CI's PR gate (check-publish) runs the clean-tree form.
+publish-dry-run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd rust
+    cargo publish --workspace --dry-run --allow-dirty
 
 # Run Rust tests via cargo-nextest (dev only; CI uses `test-rust` above because
 # the CI runner does not install nextest). ~20% faster build+run than cargo test

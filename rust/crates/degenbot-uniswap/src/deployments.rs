@@ -10,11 +10,14 @@
 //!
 //! ## The single source
 //!
-//! `include_str!` resolves to `src/degenbot/registry/deployments.json` — the
-//! exact file the Python [`DeploymentRecord`] loader / `pool_type_registry`
-//! consume. **There is no second copy.** The pyfunctions exposed by the binding
-//! crate (`init_hash_for` / `deployer_for`) are thin views; the truth lives
-//! here so the Rust builder and the Python registry cannot drift.
+//! The canonical registry file is `src/degenbot/registry/deployments.json` in
+//! the Python tree — what the Python `DeploymentRecord` loader /
+//! `pool_type_registry` consume. It is mirrored byte-identically at
+//! `src/deployments.json` in this crate (a crate can only `include_str!` files
+//! inside its own directory — the published tarball), and `just test-rust`
+//! byte-compares the two, so this is a single logical source with zero drift
+//! enforced: the pyfunctions exposed by the binding crate
+//! (`init_hash_for` / `deployer_for`) are thin views over it.
 //!
 //! ## The separate-deployer case (why this is `(chain, factory)`-keyed)
 //!
@@ -115,12 +118,15 @@ pub fn resolve_v3_init_hash(chain_id: u64, factory: Address) -> alloy::primitive
     }
 }
 
-/// The canonical deployment data file, embedded at compile time.
+/// The canonical deployment data, embedded at compile time.
 ///
-/// Resolves to `src/degenbot/registry/deployments.json` — the single source the
-/// Python `deployment_loader` loader and `pool_type_registry` consume (see
-/// `src/degenbot/registry/deployment_loader.py`).
-const DEPLOYMENTS_JSON: &str = include_str!("../../../../src/degenbot/registry/deployments.json");
+/// `src/deployments.json` is a vendored, byte-identical mirror of the canonical
+/// `src/degenbot/registry/deployments.json` (Python tree — the file the
+/// `deployment_loader` and `pool_type_registry` consume). The include points at
+/// the mirror because a published crate may only embed files from inside its
+/// own directory (the tarball); `just test-rust` cmps the two copies, so the
+/// mirror cannot drift from the canonical registry.
+const DEPLOYMENTS_JSON: &str = include_str!("deployments.json");
 
 /// The raw JSON record shape (mirrors the Python loader's schema).
 ///
