@@ -267,8 +267,16 @@ class OperatorServer:
         except Exception as exc:  # ruff: ignore[blind-except] - never leak a connection error
             logger.error(f"[operator] connection error: {exc}")
             return
-        writer.write((json.dumps(resp) + "\n").encode("utf-8"))
-        await writer.drain()
+        try:
+            writer.write((json.dumps(resp) + "\n").encode("utf-8"))
+            await writer.drain()
+        except (ConnectionError, OSError) as exc:
+            # The peer may have gone away (e.g. a readiness probe that
+            # closes immediately): dropping the response is safe — the
+            # protocol is one-request-one-response, so there is nothing
+            # left to salvage on this connection.
+            logger.warning(f"[operator] dropping response to {peer}: {exc}")
+            return
         writer.close()
         await writer.wait_closed()
 

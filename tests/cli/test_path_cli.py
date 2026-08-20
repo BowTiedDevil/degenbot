@@ -9,6 +9,7 @@ routing into the session is covered by `tests/operator/test_operator_channel.py`
 
 import asyncio
 import contextlib
+import socket
 import threading
 import time
 from pathlib import Path
@@ -20,9 +21,110 @@ from degenbot.cli.path import _parse_hop, path_add, path_discover
 from degenbot.operator.operator_channel import OperatorServer
 
 
-def _socket_bound(path: str) -> bool:
-    """Return True once the server has bound its Unix socket file."""
-    return Path(path).exists()
+def _is_listening(path: str) -> bool:
+    """Return True if a Unix socket at ``path`` is accepting connections.
+
+    ``Path(path).exists()`` is NOT a readiness signal: the socket file
+    appears at ``bind()`` and ``connect(2)`` is refused with ECONNREFUSED
+    until ``listen()`` completes. A real (immediately-closed) connect is the
+    kernel-level readiness signal; the server treats a zero-byte connection
+    as an "empty request" (see ``OperatorServer._on_client``).
+    """
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(0.25)
+    try:
+        probe.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def _wait_until_listening(path: str, timeout: float = 5.0) -> None:
+    """Block until the server at ``path`` is actually LISTENING.
+
+    The socket FILE appears at ``bind()``; a client that connects in the
+    bind-to-listen gap gets ``ConnectionRefusedError`` (errno 111) — and the
+    server thread can be preempted in that gap under load (CPython releases
+    the GIL around socket syscalls, so the ``bind()`` and ``listen()``
+    callsites in ``loop.create_unix_server`` are separate preemption
+    points). Polling file existence therefore races the listener and caused
+    a sporadic CI failure in ``test_path_add_*``.
+
+    Args:
+        path: Unix socket path of the server.
+        timeout: seconds to keep probing before raising.
+
+    Raises:
+        RuntimeError: if the socket still refuses connections after
+            ``timeout`` seconds.
+
+    """
+    deadline = time.monotonic() + timeout
+    while not _is_listening(path):
+        if time.monotonic() >= deadline:
+            msg = f"unix socket at {path} not listening after {timeout}s"
+            raise RuntimeError(msg)
+        time.sleep(0.005)
+
+
+def test_socket_file_existence_is_not_listen_readiness(tmp_path) -> None:
+    """Kernel gate: a bound unix socket file REFUSES connects until listen.
+
+    Pins why :func:`_start_server` cannot use ``Path.exists()`` as readiness
+    (the flake's root cause): the file exists before the socket listens, and
+    a connect in that window is refused with ECONNREFUSED.
+
+    """
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    path = str(tmp_path / "bindonly.sock")
+    listener.bind(path)
+    try:
+        # The old readiness signal already reports "ready" at this point...
+        assert Path(path).exists()
+        # ...and the old _start_server flow would connect now: refused.
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            with pytest.raises(ConnectionRefusedError):
+                probe.connect(path)
+        finally:
+            probe.close()
+        # ...and the connect-probe predicate knows the difference, both
+        # before and after listen().
+        assert not _is_listening(path)
+        listener.listen(8)
+        assert _is_listening(path)
+    finally:
+        listener.close()
+        Path(path).unlink(missing_ok=True)
+
+
+def test_wait_until_listening_gates_on_listen_not_bind(tmp_path) -> None:
+    """``_wait_until_listening`` returns only after ``listen()`` ran."""
+    path = str(tmp_path / "late.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(path)
+    ready = threading.Event()
+
+    def _late_listen() -> None:
+        time.sleep(0.3)
+        listener.listen(8)
+        ready.set()
+
+    thread = threading.Thread(target=_late_listen, daemon=True)
+    thread.start()
+    try:
+        started = time.monotonic()
+        _wait_until_listening(path, timeout=5.0)
+        waited = time.monotonic() - started
+        # Gated on the 0.3s-delayed listen(), not on the immediate bind().
+        assert ready.is_set()
+        assert waited >= 0.2
+    finally:
+        thread.join(timeout=5)
+        listener.close()
+        Path(path).unlink(missing_ok=True)
 
 
 def _start_server(handler, socket_path):
@@ -46,10 +148,7 @@ def _start_server(handler, socket_path):
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    for _ in range(500):
-        if _socket_bound(socket_path):
-            break
-        time.sleep(0.01)
+    _wait_until_listening(socket_path)
     return server, loop, thread, state
 
 
