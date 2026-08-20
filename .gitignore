@@ -210,3 +210,5 @@ tests/standalone_anvil/out/build-info/
 
 # Architectural reviews
 **/architecture-review*
+# Local crates.io publish token (S7R5K4); CI uses the CRATES_IO_TOKEN secret.
+.crates-io-token
