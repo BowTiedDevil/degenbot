@@ -900,8 +900,10 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
         LiquidityMap {
             tick_bitmap: HashMap::from([(
                 0i64,
+                // bit 1 = tick 60 at spacing 60 (T3 OMDCIY intake
+                // reconciliation: bit position = tick / spacing).
                 BitmapAtWord {
-                    bitmap: U256::from(1u128 << 60),
+                    bitmap: U256::from(1u128) << 1,
                 },
             )]),
             tick_data: HashMap::from([(
@@ -972,8 +974,10 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
         LiquidityMap {
             tick_bitmap: HashMap::from([(
                 0i64,
+                // bit 1 = tick 60 at spacing 60 (T3 OMDCIY intake
+                // reconciliation: bit position = tick / spacing).
                 BitmapAtWord {
-                    bitmap: U256::from(1u128 << 60),
+                    bitmap: U256::from(1u128) << 1,
                 },
             )]),
             tick_data: HashMap::from([(

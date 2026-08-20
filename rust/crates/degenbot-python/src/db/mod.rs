@@ -225,6 +225,9 @@ pub(crate) fn assembly_err_to_py(
     match err {
         TickMapAssemblyError::Db(e) => db_err_to_py(e),
         TickMapAssemblyError::Chain(e) => pyo3::exceptions::PyRuntimeError::new_err(e.to_string()),
+        TickMapAssemblyError::InconsistentTickMap { .. } => {
+            pyo3::exceptions::PyValueError::new_err(err.to_string())
+        }
     }
 }
 

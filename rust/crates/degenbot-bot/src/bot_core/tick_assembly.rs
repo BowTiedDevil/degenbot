@@ -64,7 +64,7 @@ use std::collections::HashMap;
 use alloy::primitives::Address;
 
 use degenbot_db::error::DbError;
-use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
+use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 // `PoolTickCoverage` + `TickInfo` live in `degenbot_pools` but aren't at its
 // crate root; `bot_core::mod` re-exports them via `pub use v3_state::…` +
@@ -90,6 +90,22 @@ pub enum TickMapAssemblyError {
     /// typed exception rather than silently degrading.
     #[error(transparent)]
     Chain(#[from] BootstrapTickError),
+    /// A Tracked Db snapshot that contradicts itself: a bitmap bit and the
+    /// liquidity rows disagree about an initialization (T3 OMDCIY, epic
+    /// OU4SYZ). Registration is rejected AT INTAKE — the two-step verify
+    /// (IKGQ6F) is the on-chain oracle, but a corrupted snapshot must never
+    /// register. `tick` is the conflicting position (i32::MIN marks an
+    /// out-of-range corrupted word position).
+    #[error(
+        "Tracked tick map inconsistent at intake: word {word} bit {bit} (tick {tick}) — bitmap_bit = {bitmap_bit}, row_gross_positive = {row_gross_positive}"
+    )]
+    InconsistentTickMap {
+        word: i64,
+        bit: u32,
+        tick: i32,
+        bitmap_bit: bool,
+        row_gross_positive: bool,
+    },
 }
 
 /// The helper's return shape: an optional hit (`Some((ticks, coverage))` on
@@ -136,7 +152,7 @@ pub fn assemble_v3_tick_map(
     // 1. Db arm — held `SnapshotDb` tx (or per-call `DegenbotDb`), no BotState
     // guard.
     if let Some(db) = db {
-        if let Some(db_hit) = fetch_v3_tick_map_from_db(db, address)? {
+        if let Some(db_hit) = fetch_v3_tick_map_from_db(db, address, tick_spacing)? {
             return Ok(Some(db_hit));
         }
     }
@@ -180,7 +196,7 @@ pub fn assemble_v4_tick_map(
 ) -> TickMapAssemblyResult {
     // 1. Db arm.
     if let Some(db) = db {
-        if let Some(db_hit) = fetch_v4_tick_map_from_db(db, pool_manager, pool_id)? {
+        if let Some(db_hit) = fetch_v4_tick_map_from_db(db, pool_manager, pool_id, tick_spacing)? {
             return Ok(Some(db_hit));
         }
     }
@@ -193,16 +209,18 @@ pub fn assemble_v4_tick_map(
     Ok(chain_hit.map(|bt_word| (bt_word.ticks, PoolTickCoverage::Sparse)))
 }
 
-/// Db arm for V3: convert a `LiquidityMap` into the helper's hit/miss shape.
-/// Returns `Ok(None)` on an empty map (falls through to the Chain arm).
+/// Db arm for V3: convert a `LiquidityMap` into the helper's hit/miss shape,
+/// rejecting a self-inconsistent Tracked snapshot (T3 OMDCIY). Returns
+/// `Ok(None)` on an empty map (falls through to the Chain arm).
 fn fetch_v3_tick_map_from_db(
     db: &dyn degenbot_db::snapshot::TickMapDb,
     address: Address,
+    tick_spacing: i32,
 ) -> TickMapAssemblyResult {
     let Some(map) = db.fetch_liquidity_map(address)? else {
         return Ok(None);
     };
-    Ok(liquidity_map_to_tick_info(map))
+    liquidity_map_to_tick_info(map, tick_spacing)
 }
 
 /// Db arm for V4: identical to V3 but routes through the V4 fetch.
@@ -211,6 +229,7 @@ fn fetch_v4_tick_map_from_db(
     db: &dyn degenbot_db::snapshot::TickMapDb,
     pool_manager: Address,
     pool_id: V4PoolId,
+    tick_spacing: i32,
 ) -> TickMapAssemblyResult {
     // `fetch_liquidity_map_v4` takes a `B256`; `V4PoolId` is `[u8; 32]` and
     // `B256` is `FixedBytes<32>` — same layout, so the conversion is infallible.
@@ -218,7 +237,7 @@ fn fetch_v4_tick_map_from_db(
     let Some(map) = db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)? else {
         return Ok(None);
     };
-    Ok(liquidity_map_to_tick_info(map))
+    liquidity_map_to_tick_info(map, tick_spacing)
 }
 
 /// Convert a Db `LiquidityMap` into the helper's hit/miss shape.
@@ -234,12 +253,86 @@ fn fetch_v4_tick_map_from_db(
 /// `convert_tick_map` in `bot_core::mod.rs`).
 pub(crate) fn liquidity_map_to_tick_info(
     map: LiquidityMap,
-) -> Option<(HashMap<i32, TickInfo>, PoolTickCoverage)> {
+    tick_spacing: i32,
+) -> Result<Option<(HashMap<i32, TickInfo>, PoolTickCoverage)>, TickMapAssemblyError> {
     if map.tick_bitmap.is_empty() || map.tick_data.is_empty() {
-        return None;
+        return Ok(None);
     }
+    // Tracked intake reconciliation (T3 OMDCIY) — a self-contradictory
+    // snapshot is rejected before registration, not discovered mid-solve.
+    verify_tracked_tick_map(&map.tick_bitmap, &map.tick_data, tick_spacing)?;
     let ticks = convert_liquidity_at_tick(map.tick_data);
-    Some((ticks, PoolTickCoverage::Tracked))
+    Ok(Some((ticks, PoolTickCoverage::Tracked)))
+}
+
+/// Tracked intake reconciliation (T3 OMDCIY, epic OU4SYZ): the on-chain
+/// invariant, checked per word the snapshot supplied — a bit is set iff a
+/// tick row with `liquidity_gross > 0` exists at that position. The row side
+/// checks every gross>0 row whose word the snapshot carries (the bit must be
+/// set); the bitmap side checks every set bit of a supplied word (a gross>0
+/// row must exist at that position's grid tick). Rows in words the snapshot
+/// did NOT supply are skipped (an incremental snapshot may carry a word
+/// subset). A fully-zero word is legal (a checked-empty word — T1) so long
+/// as no gross>0 row sits in it.
+pub(crate) fn verify_tracked_tick_map(
+    tick_bitmap: &HashMap<i64, BitmapAtWord>,
+    tick_data: &HashMap<i32, LiquidityAtTick>,
+    tick_spacing: i32,
+) -> Result<(), TickMapAssemblyError> {
+    let spacing = tick_spacing.max(1);
+    // Row side: a gross>0 row in a supplied word must have its bit set.
+    for (&tick, row) in tick_data {
+        if row.liquidity_gross.is_zero() {
+            continue;
+        }
+        let compressed = tick.div_euclid(spacing);
+        let word = i64::from(compressed >> 8);
+        let Some(entry) = tick_bitmap.get(&word) else {
+            continue;
+        };
+        let bit = compressed.rem_euclid(256) as usize;
+        if !entry.bitmap.bit(bit) {
+            return Err(TickMapAssemblyError::InconsistentTickMap {
+                word,
+                bit: bit as u32,
+                tick,
+                bitmap_bit: false,
+                row_gross_positive: true,
+            });
+        }
+    }
+    // Bitmap side: every set bit of a supplied word needs a gross>0 row at
+    // that position's grid tick.
+    for (&word, entry) in tick_bitmap {
+        for bit in 0..256usize {
+            if !entry.bitmap.bit(bit) {
+                continue;
+            }
+            let compressed = word * 256 + i64::try_from(bit).unwrap(); // bit < 256
+            let Some(tick) = (compressed * i64::from(spacing)).try_into().ok() else {
+                return Err(TickMapAssemblyError::InconsistentTickMap {
+                    word,
+                    bit: bit as u32,
+                    tick: i32::MIN,
+                    bitmap_bit: true,
+                    row_gross_positive: false,
+                });
+            };
+            let row_gross_positive = tick_data
+                .get(&tick)
+                .is_some_and(|r| !r.liquidity_gross.is_zero());
+            if !row_gross_positive {
+                return Err(TickMapAssemblyError::InconsistentTickMap {
+                    word,
+                    bit: bit as u32,
+                    tick,
+                    bitmap_bit: true,
+                    row_gross_positive: false,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Convert `HashMap<i32, LiquidityAtTick>` → `HashMap<i32, TickInfo>`.

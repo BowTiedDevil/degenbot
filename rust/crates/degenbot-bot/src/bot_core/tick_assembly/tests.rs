@@ -132,8 +132,9 @@ fn v4_db_with_pool() -> (DegenbotDb, i64, [u8; 32]) {
 }
 
 /// Seed V3 ticks (both the init map + the liquidity position) — the 1:1 shape
-/// a healthy DB carries.
-fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32]) {
+/// a healthy DB carries. Bitmap bits are derived from each tick at `spacing`
+/// (T3 OMDCIY: the snapshot must pass the intake reconciliation).
+fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], spacing: i32) {
     let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
     for &tick in ticks {
@@ -146,10 +147,16 @@ fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32]) {
                 block: 0,
             },
         );
-        tick_bitmap.entry(0).or_insert(ApplyBitmapAtWord {
-            bitmap: U256::from(1u64),
-            block: 0,
-        });
+        let compressed = tick.div_euclid(spacing);
+        let word = (compressed >> 8) as i32;
+        let bit = compressed.rem_euclid(256) as u64;
+        tick_bitmap
+            .entry(word)
+            .or_insert_with(|| ApplyBitmapAtWord {
+                bitmap: U256::from(0u64),
+                block: 0,
+            });
+        tick_bitmap.get_mut(&word).unwrap().bitmap |= U256::from(1u64) << bit;
     }
     db.upsert_v3_liquidity_positions(pool_id, &tick_data)
         .unwrap();
@@ -157,8 +164,9 @@ fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32]) {
         .unwrap();
 }
 
-/// Seed V4 ticks (`managed_pool_id` version of `seed_v3_ticks`).
-fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32]) {
+/// Seed V4 ticks (`managed_pool_id` version of `seed_v3_ticks`). Bitmap bits
+/// are derived from each tick at `spacing` (T3 OMDCIY intake reconciliation).
+fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32], spacing: i32) {
     let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
     let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
     for &tick in ticks {
@@ -171,10 +179,16 @@ fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32]) {
                 block: 0,
             },
         );
-        tick_bitmap.entry(0).or_insert(ApplyBitmapAtWord {
-            bitmap: U256::from(1u64),
-            block: 0,
-        });
+        let compressed = tick.div_euclid(spacing);
+        let word = (compressed >> 8) as i32;
+        let bit = compressed.rem_euclid(256) as u64;
+        tick_bitmap
+            .entry(word)
+            .or_insert_with(|| ApplyBitmapAtWord {
+                bitmap: U256::from(0u64),
+                block: 0,
+            });
+        tick_bitmap.get_mut(&word).unwrap().bitmap |= U256::from(1u64) << bit;
     }
     db.upsert_v4_liquidity_positions(managed_pool_id, &tick_data)
         .unwrap();
@@ -188,7 +202,7 @@ fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32]) {
 #[test]
 fn v3_store_miss_db_hit_non_empty_returns_tracked_ticks() {
     let (db, pool_id) = v3_db_with_pool();
-    seed_v3_ticks(&db, pool_id, &[10, 20]);
+    seed_v3_ticks(&db, pool_id, &[10, 20], 10);
     let addr = make_pool_addr();
 
     let result = assemble_v3_tick_map(Some(&db), addr, 0, 10, 0, None).unwrap();
@@ -227,7 +241,7 @@ fn v3_store_miss_db_error_is_propagated_not_swallowed() {
     // query returns `Err(DbError::Decode)`; the helper MUST propagate it
     // (Decision 8 (A) — behavior change from Python's contextlib.suppress).
     let (db, pool_id) = v3_db_with_pool();
-    seed_v3_ticks(&db, pool_id, &[10]);
+    seed_v3_ticks(&db, pool_id, &[10], 10);
     {
         let conn = db.lock();
         conn.execute(
@@ -264,7 +278,7 @@ fn v3_db_none_cold_start_returns_miss() {
 #[test]
 fn v4_store_miss_db_hit_non_empty_returns_tracked_ticks() {
     let (db, managed_id, pool_id) = v4_db_with_pool();
-    seed_v4_ticks(&db, managed_id, &[-10, 10]);
+    seed_v4_ticks(&db, managed_id, &[-10, 10], 10);
     let mgr = make_manager();
 
     let result =
@@ -316,7 +330,7 @@ fn v4_store_miss_db_miss_pool_not_found_returns_miss() {
 #[test]
 fn v4_store_miss_db_error_is_propagated_not_swallowed() {
     let (db, managed_id, pool_id) = v4_db_with_pool();
-    seed_v4_ticks(&db, managed_id, &[10]);
+    seed_v4_ticks(&db, managed_id, &[10], 10);
     {
         let conn = db.lock();
         conn.execute(
@@ -558,4 +572,203 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
         matches!(err, TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),
         "expected Chain(BootstrapTickError::Rpc), got {err:?}"
     );
+}
+
+// ── Tracked intake reconciliation (T3 OMDCIY, epic OU4SYZ) ─────────────────
+//
+//  A Tracked Db snapshot must be self-consistent: for every word the
+//  snapshot supplied, the on-chain invariant must hold — bit set ⟺ a tick
+//  row with liquidity_gross > 0 at that position. A corrupted snapshot is
+//  REJECTED at intake with a typed InconsistentTickMap error (the two-step
+//  verify IKGQ6F is the on-chain oracle; this is the cheap intake-time
+//  self-check). Sparse / Chain-arm data is indeterminate by construction and
+//  is never checked.
+
+/// Seed a V3 pool with a DIVERGENT (bitmap, rows) pair — the corruption
+/// shapes the reconciliation must reject. `rows`: (tick, liquidity_gross);
+/// gross 0 = a de-initialized tick row still present in the table.
+fn seed_v3_divergent(db: &DegenbotDb, pool_id: i64, bitmap: U256, rows: &[(i32, u128)]) {
+    let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
+    tick_bitmap.insert(0, ApplyBitmapAtWord { bitmap, block: 0 });
+    let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
+    for (tick, gross) in rows {
+        tick_data.insert(
+            *tick,
+            ApplyLiquidityAtTick {
+                liquidity_gross: U128::from(*gross),
+                liquidity_net: I256::try_from(*gross as i64).unwrap(),
+                block: 0,
+            },
+        );
+    }
+    db.upsert_v3_liquidity_positions(pool_id, &tick_data)
+        .unwrap();
+    db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
+        .unwrap();
+}
+
+fn seed_v4_divergent(db: &DegenbotDb, managed_pool_id: i64, bitmap: U256, rows: &[(i32, u128)]) {
+    let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
+    tick_bitmap.insert(0, ApplyBitmapAtWord { bitmap, block: 0 });
+    let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
+    for (tick, gross) in rows {
+        tick_data.insert(
+            *tick,
+            ApplyLiquidityAtTick {
+                liquidity_gross: U128::from(*gross),
+                liquidity_net: I256::try_from(*gross as i64).unwrap(),
+                block: 0,
+            },
+        );
+    }
+    db.upsert_v4_liquidity_positions(managed_pool_id, &tick_data)
+        .unwrap();
+    db.upsert_v4_initialization_maps(managed_pool_id, &tick_bitmap)
+        .unwrap();
+}
+
+#[test]
+fn v3_tracked_db_bit_without_row_rejected_at_intake() {
+    // word 0 bit 2 (tick 20 @ spacing 10) is set, but the only row is tick 10
+    // (bit 1). Corrupted: a set bit must imply a gross>0 row at that position.
+    let (db, pool_id) = v3_db_with_pool();
+    seed_v3_divergent(&db, pool_id, U256::from(1u64) << 2, &[(10, 1_000_000)]);
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None)
+        .expect_err("a bit without a row must be rejected at intake");
+    assert!(
+        matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
+        "expected InconsistentTickMap, got {err:?}"
+    );
+}
+
+#[test]
+fn v3_tracked_db_row_without_bit_rejected_at_intake() {
+    // word 0 bit 1 (tick 10) is set; rows at 10 (bit ok) AND 20 (no bit).
+    // Corrupted: a gross>0 row in a supplied word must have its bit set.
+    let (db, pool_id) = v3_db_with_pool();
+    seed_v3_divergent(
+        &db,
+        pool_id,
+        U256::from(1u64) << 1,
+        &[(10, 1_000_000), (20, 2_000_000)],
+    );
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None)
+        .expect_err("a gross>0 row without its bit must be rejected at intake");
+    assert!(
+        matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
+        "expected InconsistentTickMap, got {err:?}"
+    );
+}
+
+#[test]
+fn v3_tracked_db_consistent_snapshot_accepted() {
+    // word 0 bits 1+2 (ticks 10, 20) ↔ rows at 10, 20 (gross>0).
+    let (db, pool_id) = v3_db_with_pool();
+    seed_v3_divergent(
+        &db,
+        pool_id,
+        (U256::from(1u64) << 1) | (U256::from(1u64) << 2),
+        &[(10, 1_000_000), (20, 2_000_000)],
+    );
+    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
+    let Some((ticks, coverage)) = result else {
+        panic!("a consistent snapshot must return Some");
+    };
+    assert_eq!(coverage, PoolTickCoverage::Tracked);
+    assert_eq!(ticks.len(), 2);
+    assert_eq!(
+        ticks.get(&10),
+        Some(&TickInfo {
+            liquidity_gross: U128::from(1_000_000u128),
+            liquidity_net: I256::try_from(1_000_000i64).unwrap(),
+            block: 0,
+        })
+    );
+}
+
+#[test]
+fn v3_tracked_db_gross_zero_row_matches_clear_bit() {
+    // bit 1 set (tick 10, gross>0); the tick 20 row has gross == 0 (fully
+    // de-initialized) and its bit (2) is clear — on-chain consistent.
+    let (db, pool_id) = v3_db_with_pool();
+    seed_v3_divergent(
+        &db,
+        pool_id,
+        U256::from(1u64) << 1,
+        &[(10, 1_000_000), (20, 0)],
+    );
+    let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
+    let Some((ticks, coverage)) = result else {
+        panic!("a gross=0 row with a clear bit is consistent");
+    };
+    assert_eq!(coverage, PoolTickCoverage::Tracked);
+    assert_eq!(ticks.len(), 2);
+}
+
+#[test]
+fn v3_tracked_db_bit_set_with_gross_zero_row_rejected() {
+    // bit 2 set, but the tick 20 row has gross == 0 — on-chain the bit would
+    // be clear; the snapshot contradicts itself.
+    let (db, pool_id) = v3_db_with_pool();
+    seed_v3_divergent(&db, pool_id, U256::from(1u64) << 2, &[(20, 0)]);
+    let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None)
+        .expect_err("a set bit over a gross=0 row must be rejected at intake");
+    assert!(
+        matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
+        "expected InconsistentTickMap, got {err:?}"
+    );
+}
+
+#[test]
+fn v4_tracked_db_bit_without_row_rejected_at_intake() {
+    // V4 twin: word 0 bit 2 set, only tick 10 has a row.
+    let (db, managed_pool_id, pool_id) = v4_db_with_pool();
+    seed_v4_divergent(
+        &db,
+        managed_pool_id,
+        U256::from(1u64) << 2,
+        &[(10, 1_000_000)],
+    );
+    let err = assemble_v4_tick_map(
+        Some(&db),
+        make_manager(),
+        make_state_view(),
+        pool_id,
+        0,
+        10,
+        0,
+        None,
+    )
+    .expect_err("V4: a bit without a row must be rejected at intake");
+    assert!(
+        matches!(err, TickMapAssemblyError::InconsistentTickMap { .. }),
+        "expected InconsistentTickMap, got {err:?}"
+    );
+}
+
+#[test]
+fn v4_tracked_db_consistent_snapshot_accepted() {
+    let (db, managed_pool_id, pool_id) = v4_db_with_pool();
+    seed_v4_divergent(
+        &db,
+        managed_pool_id,
+        (U256::from(1u64) << 1) | (U256::from(1u64) << 2),
+        &[(10, 1_000_000), (20, 2_000_000)],
+    );
+    let result = assemble_v4_tick_map(
+        Some(&db),
+        make_manager(),
+        make_state_view(),
+        pool_id,
+        0,
+        10,
+        0,
+        None,
+    )
+    .unwrap();
+    let Some((ticks, coverage)) = result else {
+        panic!("V4 consistent snapshot must return Some");
+    };
+    assert_eq!(coverage, PoolTickCoverage::Tracked);
+    assert_eq!(ticks.len(), 2);
 }

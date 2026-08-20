@@ -377,5 +377,10 @@ pub(crate) fn map_builder_err(
         degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::MissingIdentity {
             message,
         } => pyo3::exceptions::PyValueError::new_err(format!("V4 identity incomplete: {message}")),
+        degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError::TickAssembly(e) => {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Tracked tick map rejected at intake: {e}"
+            ))
+        }
     }
 }

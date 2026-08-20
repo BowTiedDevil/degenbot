@@ -69,6 +69,11 @@ pub enum PoolBuilderError {
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
     MissingIdentity { message: String },
+    /// A Tracked Db snapshot failed the intake reconciliation (T3 OMDCIY):
+    /// the bitmap and tick rows contradict each other. Registration is
+    /// rejected with a typed error; the message names the conflict.
+    #[error("tick map assembly failure: {0}")]
+    TickAssembly(#[from] crate::bot_core::tick_assembly::TickMapAssemblyError),
 }
 
 /// Sentinels returned when an ERC-20 metadata field cannot be resolved,
@@ -759,7 +764,12 @@ async fn assemble_db_or_chain_v3(
 ) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), PoolBuilderError> {
     if let Some(db) = db {
         if let Some(map) = db.fetch_liquidity_map(address)? {
-            if let Some(hit) = crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map) {
+            // The Tracked intake reconciliation (T3 OMDCIY) runs inside
+            // `liquidity_map_to_tick_info` — a self-contradictory snapshot
+            // aborts the build with a typed error, never registers.
+            if let Some(hit) =
+                crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)?
+            {
                 return Ok(hit); // (ticks, Tracked)
             }
         }
@@ -784,7 +794,11 @@ async fn assemble_db_or_chain_v4(
 ) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), PoolBuilderError> {
     if let Some(db) = db {
         if let Some(map) = db.fetch_liquidity_map_v4(pool_manager, B256::from(pool_id))? {
-            if let Some(hit) = crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map) {
+            // Tracked intake reconciliation (T3 OMDCIY) — V4 twin of the V3
+            // guard above.
+            if let Some(hit) =
+                crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)?
+            {
                 return Ok(hit); // (ticks, Tracked)
             }
         }

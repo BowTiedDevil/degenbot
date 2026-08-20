@@ -2861,10 +2861,12 @@ mod tests {
                     block: 0,
                 },
             );
+            // bit 1 = tick 10 at spacing 10 (T3 OMDCIY intake reconciliation
+            // requires the bit to match the row position).
             tick_bitmap.insert(
                 0,
                 ApplyBitmapAtWord {
-                    bitmap: U256::from(1u64),
+                    bitmap: U256::from(1u64) << 1,
                     block: 0,
                 },
             );
@@ -2907,6 +2909,108 @@ mod tests {
         });
 
         // 4. Cleanup.
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    /// T3 (OMDCIY, epic OU4SYZ): a Tracked snapshot whose bitmap and tick
+    /// rows disagree (bit 2 set, row only at tick 10 / bit 1) must be
+    /// REJECTED at intake with a typed error (Python ValueError), not
+    /// registered. Sparse / Chain-arm data is indeterminate and never
+    /// reconciled.
+    #[test]
+    fn assemble_v3_tick_map_inconsistent_tracked_snapshot_rejected() {
+        use alloy::primitives::{address, aliases::U128, Address, I256, U256};
+        use degenbot_db::discovery::V3PoolRowInput;
+        use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
+        use std::collections::HashMap;
+
+        let temp_path = std::env::temp_dir().join(format!(
+            "degenbot_assemble_inconsistent_{}_{:x}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        {
+            let (db, _state) = degenbot_db::connection::DegenbotDb::open_for_writes(&temp_path)
+                .expect("open_for_writes on temp");
+            let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+            db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
+            let pool_address = Address::from([0xaa; 20]);
+            db.upsert_v3_pools(
+                1,
+                "uniswap_v3",
+                1,
+                1_000_000,
+                &[V3PoolRowInput {
+                    address: pool_address,
+                    token0_address: Address::from([0x11; 20]),
+                    token1_address: Address::from([0x22; 20]),
+                    fee: 0,
+                    tick_spacing: 10,
+                }],
+            )
+            .unwrap();
+            let pool_id: i64 = db
+                .lock()
+                .query_row(
+                    "SELECT id FROM pools WHERE address = ?1 LIMIT 1",
+                    [&pool_address.to_checksum(None)],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            // Inconsistent: word 0 bit 2 (tick 20) set; the only row is tick 10.
+            let mut tick_data: HashMap<i32, ApplyLiquidityAtTick> = HashMap::new();
+            tick_data.insert(
+                10,
+                ApplyLiquidityAtTick {
+                    liquidity_gross: U128::from(1_000_000u64),
+                    liquidity_net: I256::try_from(500i64).unwrap(),
+                    block: 0,
+                },
+            );
+            let mut tick_bitmap: HashMap<i32, ApplyBitmapAtWord> = HashMap::new();
+            tick_bitmap.insert(
+                0,
+                ApplyBitmapAtWord {
+                    bitmap: U256::from(1u64) << 2,
+                    block: 0,
+                },
+            );
+            db.upsert_v3_liquidity_positions(pool_id, &tick_data)
+                .unwrap();
+            db.upsert_v3_initialization_maps(pool_id, &tick_bitmap)
+                .unwrap();
+        }
+        pyo3::Python::attach(|py| {
+            let py_bot = PyBot::new(1);
+            py_bot
+                .load_snapshot_from_db(&temp_path.to_string_lossy(), 1)
+                .expect("snapshot load must succeed against the seeded temp DB");
+            let result = py_bot.assemble_v3_tick_map(
+                py,
+                "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa",
+                0,
+                10,
+                0,
+                None,
+            );
+            let err =
+                result.expect_err("an inconsistent Tracked snapshot must be rejected at intake");
+            assert!(
+                err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
+                "the intake rejection surfaces as a ValueError"
+            );
+            let message = err.to_string();
+            // Either conflicting position may be reported first (bitmap-side:
+            // tick 10 has a bit without a row; row-side: tick 20 has a row
+            // without a bit) — require a named conflict, not a specific side.
+            assert!(
+                message.contains("(tick 10)") || message.contains("(tick 20)"),
+                "the error must name the conflicting tick: {message}"
+            );
+        });
         let _ = std::fs::remove_file(&temp_path);
     }
 
