@@ -719,13 +719,13 @@ impl V3PoolState {
         // liquidity. ofz uses `gt` (exclusive) and does NOT re-cross the
         // current tick, so no net applies there.
         let current_tick_net: i128 = if zero_for_one {
-            self.tick_data.get(&self.tick).map_or(0, |info| {
-                // liquidity_net is I256; extract the low 128 bits as
-                // i128 (same extraction as `compute_tick_ranges`).
-                let bytes = info.liquidity_net.to_be_bytes::<32>();
-                let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-                i128::from_be_bytes(low)
-            })
+            // liquidity_net is I256; the low-128-bit int128 projection
+            // (the shared `TickInfo::liquidity_net_i128` — the extraction
+            // `compute_tick_ranges` uses too; documents the path-13827
+            // 1-wei over-prediction trap).
+            self.tick_data
+                .get(&self.tick)
+                .map_or(0, TickInfo::liquidity_net_i128)
         } else {
             0
         };

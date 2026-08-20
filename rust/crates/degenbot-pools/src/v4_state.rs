@@ -628,11 +628,11 @@ impl V4PoolState {
             // logs/fixtures/v2_v3_v3_solver_divergence_25641093.md. ofz uses
             // `gt` (exclusive) and does NOT re-cross the current tick.
             let current_tick_drain: i128 = if zero_for_one {
-                self.tick_data.get(&self.tick).map_or(0, |info| {
-                    let bytes = info.liquidity_net.to_be_bytes::<32>();
-                    let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-                    i128::from_be_bytes(low)
-                })
+                // The low-128-bit int128 projection (shared
+                // `TickInfo::liquidity_net_i128`).
+                self.tick_data
+                    .get(&self.tick)
+                    .map_or(0, TickInfo::liquidity_net_i128)
             } else {
                 0
             };

@@ -453,12 +453,9 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
             // liquidity. This matches the real PM, which floors
             // `computeSwapStep` at the boundary without changing liquidity.
             || 0i128,
-            |info| {
-                // liquidity_net is I256 — extract the low 128 bits as i128
-                let bytes = info.liquidity_net.to_be_bytes::<32>();
-                let low_bytes: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-                i128::from_be_bytes(low_bytes)
-            },
+            // liquidity_net is I256 — the shared low-128-bit int128
+            // projection (TickInfo::liquidity_net_i128).
+            TickInfo::liquidity_net_i128,
         );
 
         let sqrt_price_lower =

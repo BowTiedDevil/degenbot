@@ -413,12 +413,11 @@ fn derive_tick_storage_slot(tick: i32, base: U256) -> U256 {
 /// net in the high 128 bits as a two's-complement int128).
 fn pack_tick_info_word(info: &degenbot_pools::TickInfo) -> B256 {
     let gross = U256::from(info.liquidity_gross.to::<u128>());
-    // The int128 liquidity_net: the engine stores it as I256; the on-chain slot
-    // holds the LOW 128 bits of the two's-complement (the value fits in int128).
-    // Take the low 16 bytes of the 256-bit two's-complement BE repr.
-    let net_bytes = info.liquidity_net.to_be_bytes::<32>();
-    let net_low = U256::from_be_slice(&net_bytes[16..32]);
-    let net = net_low << 128u32;
+    // The int128 liquidity_net: the on-chain slot holds the LOW 128 bits of
+    // the two's-complement. The shared low-16-byte projection
+    // (`TickInfo::liquidity_net_i128`), re-unsigned into the slot's high
+    // half via the width-preserving `cast_unsigned()` bit-pattern cast.
+    let net = U256::from(info.liquidity_net_i128().cast_unsigned()) << 128u32;
     (gross | net).into()
 }
 
