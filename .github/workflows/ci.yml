@@ -204,6 +204,47 @@ jobs:
       - name: Build
         run: just build-rust-extension
 
+  publish-dry-run:
+    name: Publish dry-run (crates.io gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Gate on rust/ changes
+        # Path-filtering without workflow path inputs: skip the dry run when
+        # the event's diff does not touch rust/. PRs diff against the base
+        # branch; pushes against before..HEAD; a brand-new branch (all-zero
+        # `before`) skips — its PR (if any) gates the rust/ content.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            before="${{ github.event.before }}"
+            if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              echo "New branch push (no before SHA) — skipping dry run."
+              exit 0
+            fi
+            base="$before"
+          fi
+          if [ -z "$(git diff --name-only "$base" HEAD -- rust/ 2>/dev/null)" ]; then
+            echo "No rust/ changes in this event — skipping publish dry-run."
+            exit 0
+          fi
+          echo "rust/ changed — running publish dry-run."
+
+      - name: Dry-run publish of all publishable members
+        # Catches manifest/file-inclusion regressions on every rust/ change,
+        # long before a tag. --no-verify keeps the PR gate fast (no isolated
+        # build); the verified publish itself is publish-to-crates-io.yml's
+        # pre-publish step plus the real `cargo publish` (always verified —
+        # release policy forbids --no-verify on publishes).
+        run: cargo publish --workspace --dry-run --no-verify --allow-dirty --manifest-path rust/Cargo.toml
+
   python-lint:
     name: Python Lint
     runs-on: ubuntu-latest

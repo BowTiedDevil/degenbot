@@ -1,0 +1,158 @@
+name: Publish to crates.io
+
+# Tag-driven crates.io release (ergo MYYV2X, publishing epic 5UWNO3).
+# Mirrors .github/workflows/publish-to-pypi.yaml: validate-branch -> publish.
+# No `test-*` tags for crates.io — a test crates.io release would be
+# irreversibly public; pre-releases are handled by the tag<->version match
+# guard (the FIRST release is the 0.6.0-alpha.5 pre-release itself).
+#
+# Token: repo secret `CRATES_IO_TOKEN` (crates.io -> Account -> API Tokens),
+# exposed as CARGO_REGISTRY_TOKEN (cargo's native env name).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: publish-crates-io-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-branch:
+    name: Verify tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check tag is on main branch
+        run: |
+          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
+            echo "Tag ${{ github.ref_name }} is not on main branch"
+            exit 1
+          fi
+          echo "Tag ${{ github.ref_name }} is on main branch"
+
+  publish:
+    name: Publish 22 crates (topological order)
+    needs: validate-branch
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        # Pinned to the workspace `rust-version` (1.97), not @stable — the
+        # published crates must build with the MSRV a consumer can have.
+        uses: dtolnay/rust-toolchain@1.97
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check tag matches workspace version
+        # Release-policy guard (pre-release safe): the tag (minus leading v)
+        # must equal the single [workspace.package] version literal (ADR-009).
+        # e.g. tag v0.6.0-alpha.5 requires version = "0.6.0-alpha.5"; a
+        # v0.6.0 tag against an alpha workspace fails fast, before upload.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ws_ver=$(sed -n 's/^version = //p' rust/Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
+          if [ "$tag" != "$ws_ver" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match [workspace.package] version '$ws_ver'" >&2
+            exit 1
+          fi
+          echo "Tag/version match: $ws_ver"
+
+      - name: Pre-publish verification (full verify, all members)
+        # Release policy: never publish without verify. `cargo publish
+        # --workspace --dry-run` packages every publishable member and
+        # verifies each tarball's build (the two non-publishable members,
+        # degenbot_rs + degenbot-execution-sample, are skipped by cargo).
+        # A fresh CI runner has no stale local-registry state, so this is a
+        # clean verification of the tag's exact tree.
+        run: cargo publish --workspace --dry-run --allow-dirty --manifest-path rust/Cargo.toml
+
+      - name: Publish in topological order
+        run: |
+          set -euo pipefail
+          # Canonical publish order (computed 2026-08-20 from `cargo metadata`
+          # normal-dependency edges, alphabetical tiebreak; ergo MYYV2X).
+          # Every crate's workspace siblings are published BEFORE it, so the
+          # real `cargo publish` (which verifies, resolving sibling version
+          # deps from the registry) always succeeds.
+          # REGENERATE this list after ANY dependency-graph change (drop new
+          # crates in topo order). The ci.yml `publish-dry-run` job catches
+          # stale lists on PRs.
+          crates=(
+            degenbot-core
+            degenbot-decoders
+            degenbot-order-index
+            degenbot-pathfinding
+            degenbot-abi
+            degenbot-fork
+            degenbot-math
+            degenbot-db
+            degenbot-executor
+            degenbot-uniswap
+            degenbot-pools
+            degenbot-rpc
+            degenbot-aave
+            degenbot-pool-updater
+            degenbot-price
+            degenbot-solvers
+            degenbot-submission
+            degenbot-bot
+            degenbot-execution
+            degenbot-simulation
+            degenbot-arbitrage
+            degenbot
+          )
+          # Sanity: the list must be exactly the set of publishable members.
+          # (node parses packages[] properly — grep on the metadata JSON
+          # double-counts names from the resolve graph.)
+          from_meta=$(cd rust && cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.packages.map(p=>p.name).filter(n=>n!=="degenbot_rs"&&n!=="degenbot-execution-sample").sort().join("\n"))})')
+          listed=$(printf '%s\n' "${crates[@]}" | sort)
+          if [ "$listed" != "$from_meta" ]; then
+            echo "::error::Publish list is stale — it does not match the publishable workspace members" >&2
+            echo '--- listed in workflow'; echo "$listed"
+            echo '--- actual publishable members'; echo "$from_meta"
+            exit 1
+          fi
+          trap 'echo "::error::Publish halted — the crates listed earlier are already live on crates.io. Fix and re-tag: the remaining crates publish at the same version (a partial release is recoverable; to abandon, yank the published set)."' ERR
+          for c in "${crates[@]}"; do
+            echo "=== publishing $c (verified) ===" >&2
+            cargo publish -p "$c" --manifest-path rust/Cargo.toml --allow-dirty
+            # Wait until the just-published crate is VISIBLE on the sparse
+            # index before publishing the next one: sibling crates' verify
+            # builds resolve it from the registry, and index propagation
+            # lags the upload ack by seconds (S7R5K4 runbook does the same).
+            n=$c
+            case ${#n} in
+              1) ip="1/$n" ;;
+              2) ip="2/$n" ;;
+              3) ip="3/$n" ;;
+              *) ip="${n:0:2}/${n:2:1}/$n" ;;
+            esac
+            visible=0
+            for i in $(seq 1 60); do
+              if curl -fsSL "https://index.crates.io/$ip" 2>/dev/null | grep -q "\"$n\""; then visible=1; break; fi
+              sleep 5
+            done
+            if [ "$visible" != "1" ]; then
+              echo "::error::$n not visible on the crates.io sparse index after 5 min. It IS uploaded — re-tag once it propagates; the remaining crates publish at the same version." >&2
+              exit 1
+            fi
+            echo "$n visible on the crates.io index" >&2
+          done
+          echo "All ${#crates[@]} crates published and index-visible at $ws_ver"
