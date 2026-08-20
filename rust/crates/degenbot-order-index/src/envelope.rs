@@ -13,13 +13,13 @@
 //! with `T = kth_hull_net(X, k)` (the k-th largest net among hull vertices).
 //! `upper_bound(p, X) < T  =>  net(p, X) < kth_overall_net  =>  p ∉ top-K`, so a
 //! result can be provably evicted to the cold set without ever losing a top-K
-//! result. `top_k` exact-sorts only the hot set.
+//! result. `top_k` exact-ranks only the hot set.
 //!
 //! ## Dynamic maintenance (GRFRXI)
 //!
-//! The **hull is X-independent** (pure geometry of `gas`/`gross`) and is held as
-//! a **snapshot** independent of the live `points` indices, so mutations that do
-//! not touch a hull vertex are O(1) with no index invalidation:
+//! The **hull is X-independent** (pure geometry of `gas`/`gross`) and is held
+//! as a **snapshot** independent of the live `points` indices, so mutations
+//! that do not touch a hull vertex are O(1) with no index invalidation:
 //!
 //! - `insert` / non-hull `update`: splice the point into the hull *only if it
 //!   pokes above* (lossless-critical), else leave the hull unchanged.
@@ -27,15 +27,47 @@
 //!   (below-hull) point, so removing it cannot expose any gap.
 //! - **hull-vertex `update`/`remove`**: full `rebuild()` — correct, and bounded
 //!   by the (small) fraction of points that are actually on the frontier. The
-//!   S2 strategy's *deferred demotion* plus a periodic `rebuild()` to tighten is
-//!   the refinement layered on top of this in a later pass.
+//!   S2 strategy's *deferred demotion* plus a periodic `rebuild()` to tighten
+//!   is the refinement layered on top of this in a later pass.
+//!
+//! ## Per-block `top_k`: gas-ordered hot range (A33CRA)
+//!
+//! The hot set is classified **per gas value, not per point**: `upper_bound`
+//! depends on a point only through the hull edge bracketing `p.gas`, so a gas
+//! `g` is hot iff `bound(g, X) >= T` where
+//!
+//! ```text
+//! g <  v_0.gas               ->  net(v_0)
+//! g == v_i.gas               ->  net(v_i)
+//! v_i.gas < g < v_{i+1}.gas  ->  max(net(v_i), net(v_{i+1}))
+//! g >  v_{h-1}.gas            ->  net(v_{h-1})
+//! ```
+//!
+//! `v_{L..R}` denoting the hot vertices (`net(v_i, X) >= T`; the vertex nets of
+//! a convex envelope are unimodal at fixed `X`, so `L..R` is a contiguous
+//! block — the min/max scan below is exact even without that): the hot gas
+//! values form the **single interval** `(v_{L-1}.gas, v_{R+1}.gas)` (unbounded
+//! on an end at the hull extremes; `v_{L-1}`/`v_{R+1}` excluded because at a
+//! vertex's own gas only that vertex's net counts, and the neighbor is cold by
+//! definition). Points with the same gas as a hot vertex stay in; points at a
+//! cold vertex's gas drop out — matching the per-point `upper_bound` filter
+//! bit-for-bit, so the lossless superset invariant is preserved unchanged.
+//!
+//! The live points are therefore mirrored in a **gas-ordered index**
+//! (`gas_points: BTreeMap<U256, Vec<Id>>`, `O(log N)` to maintain per
+//! mutation), and per-block reclassification is one `BTreeMap` range walk —
+//! `O(log N + P_hot)` to enumerate exactly the hot points (worst case
+//! `P_hot = N`, a linear merge) instead of the former `O(N log h)` per-point
+//! hull search — followed by a bounded k-heap rank (`O(P_hot log k)`).
+//! Mutations touch `O(1)` gas buckets ("touched-buckets").
 //!
 //! All arithmetic is Alloy `U256`/`I256`, exact under the seam guard.
 
 use alloy_primitives::{I256, U256};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::fmt::Debug;
+use std::ops::Bound;
 
 use crate::order_index::{clamp_gas, clamp_gross, net_of, IdKey, OrderIndex};
 
@@ -60,6 +92,35 @@ pub struct EnvelopeIndex<Id> {
     hull: Vec<Entry<Id>>,
     /// Which live ids are currently upper-hull vertices.
     hull_ids: HashSet<Id>,
+    /// Gas-ordered mirror of `points` (every live id keyed by its clamped gas):
+    /// the per-block hot-range walk enumerates whole gas buckets, so the bucket
+    /// lists are the unit of reclassification. Maintained O(log N) per mutation.
+    gas_points: BTreeMap<U256, Vec<Id>>,
+}
+
+/// A ranked hot-set row for the bounded k-heap. `Ord` is ordered so that the
+/// heap MAXIMUM is the WORST row (net ascending; on net ties, id descending —
+/// i.e. the reverse of the output order), letting `pop()` evict the worst row
+/// the moment the heap exceeds `k`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Row<Id> {
+    net: I256,
+    id: Id,
+}
+
+impl<Id: Ord> PartialOrd for Row<Id> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<Id: Ord> Ord for Row<Id> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .net
+            .cmp(&self.net)
+            .then_with(|| self.id.cmp(&other.id))
+    }
 }
 
 impl<Id: IdKey> EnvelopeIndex<Id> {
@@ -70,11 +131,13 @@ impl<Id: IdKey> EnvelopeIndex<Id> {
             ids: HashMap::new(),
             hull: Vec::new(),
             hull_ids: HashSet::new(),
+            gas_points: BTreeMap::new(),
         }
     }
 
     /// Force a full exact hull rebuild from the current live points (the periodic
-    /// tightening pass of the production design; also used by tests).
+    /// tightening pass of the production design; also used by tests). The
+    /// `gas_points` mirror is unaffected (ids/gases unchanged).
     pub fn rebuild(&mut self) {
         self.rebuild_hull();
     }
@@ -95,10 +158,11 @@ impl<Id: IdKey> EnvelopeIndex<Id> {
     /// top-K of `k`. Measures pruning effectiveness.
     #[must_use]
     pub fn hot_len(&self, x: U256, k: usize) -> usize {
-        let t = self.kth_hull_net(x, k);
-        (0..self.points.len())
-            .filter(|&i| self.upper_bound(i, x) >= t)
-            .count()
+        if k == 0 || self.points.is_empty() {
+            return 0;
+        }
+        let (lo, hi) = self.hot_gas_bounds(x, k);
+        self.gas_points.range((lo, hi)).map(|(_, v)| v.len()).sum()
     }
 }
 
@@ -113,6 +177,7 @@ impl<Id: IdKey> OrderIndex<Id> for EnvelopeIndex<Id> {
         self.points.push(Entry { id, gas, gross });
         let idx = self.points.len() - 1;
         self.ids.insert(id, idx);
+        self.gas_points.entry(gas).or_default().push(id);
         // Splice only if this new point pokes above the current hull.
         self.consider_splice(id, gas, gross);
     }
@@ -123,7 +188,20 @@ impl<Id: IdKey> OrderIndex<Id> for EnvelopeIndex<Id> {
         let Some(&idx) = self.ids.get(&id) else {
             return false;
         };
+        let old = self.points[idx];
         self.points[idx] = Entry { id, gas, gross };
+        // Gas move: the id keys exactly one bucket before and after.
+        if old.gas != gas {
+            if let Some(bucket) = self.gas_points.get_mut(&old.gas) {
+                if let Some(pos) = bucket.iter().position(|i| *i == id) {
+                    bucket.swap_remove(pos);
+                }
+                if bucket.is_empty() {
+                    self.gas_points.remove(&old.gas);
+                }
+            }
+            self.gas_points.entry(gas).or_default().push(id);
+        }
         if self.hull_ids.contains(&id) {
             // A frontier vertex changed: recompute the hull (correct; bounded by
             // the small hull-vertex churn).
@@ -140,11 +218,21 @@ impl<Id: IdKey> OrderIndex<Id> for EnvelopeIndex<Id> {
             return false;
         };
         let was_vertex = self.hull_ids.contains(id);
+        let entry = self.points[idx];
         self.points.swap_remove(idx);
         // `swap_remove` moved the last element into `idx`; fix its map entry.
         if idx < self.points.len() {
             let moved = self.points[idx];
             self.ids.insert(moved.id, idx);
+        }
+        // Gas-bucket bookkeeping (touched-buckets = 1):
+        if let Some(bucket) = self.gas_points.get_mut(&entry.gas) {
+            if let Some(pos) = bucket.iter().position(|i| i == id) {
+                bucket.swap_remove(pos);
+            }
+            if bucket.is_empty() {
+                self.gas_points.remove(&entry.gas);
+            }
         }
         if was_vertex {
             // A frontier vertex is gone: recompute the hull snapshot.
@@ -176,44 +264,11 @@ impl<Id: IdKey> OrderIndex<Id> for EnvelopeIndex<Id> {
     }
 
     fn top_k(&self, x: U256, k: usize) -> Vec<Id> {
-        if self.points.is_empty() || k == 0 {
-            return Vec::new();
-        }
-        let t = self.kth_hull_net(x, k);
-        let mut ranked: Vec<(I256, Id)> = (0..self.points.len())
-            .filter(|&i| self.upper_bound(i, x) >= t)
-            .map(|i| {
-                (
-                    net_of(self.points[i].gross, self.points[i].gas, x),
-                    self.points[i].id,
-                )
-            })
-            .collect();
-        ranked.sort_by(|a, b| rank(a, b));
-        ranked.truncate(k);
-        ranked.into_iter().map(|(_, id)| id).collect()
+        self.top_k_inner(x, k, None)
     }
 
     fn top_k_floor(&self, x: U256, k: usize, min_net: I256) -> Vec<Id> {
-        if self.points.is_empty() || k == 0 {
-            return Vec::new();
-        }
-        // Hot set is floor-independent (a below-threshold point can never be in
-        // the floored top-k either); filter the floor inside the hot set.
-        let t = self.kth_hull_net(x, k);
-        let mut ranked: Vec<(I256, Id)> = (0..self.points.len())
-            .filter(|&i| self.upper_bound(i, x) >= t)
-            .map(|i| {
-                (
-                    net_of(self.points[i].gross, self.points[i].gas, x),
-                    self.points[i].id,
-                )
-            })
-            .filter(|(n, _)| *n >= min_net)
-            .collect();
-        ranked.sort_by(|a, b| rank(a, b));
-        ranked.truncate(k);
-        ranked.into_iter().map(|(_, id)| id).collect()
+        self.top_k_inner(x, k, Some(min_net))
     }
 
     fn len(&self) -> usize {
@@ -237,6 +292,45 @@ fn rank<Id: Ord>(a: &(I256, Id), b: &(I256, Id)) -> Ordering {
 }
 
 impl<Id: IdKey> EnvelopeIndex<Id> {
+    /// The per-block top-k: enumerate exactly the hot points (the single gas
+    /// range of `hot_gas_bounds`) and rank them with a bounded k-heap.
+    ///
+    /// Cost: `O(h + h' + log N + P_hot · log k)` where `h'` is the hull scan
+    /// and `P_hot` the hot-point count (worst case N — a linear merge; the
+    /// former implementation paid `O(N log h)` regardless). The floor variant filters
+    /// `net >= min_net` inside the hot set (a below-threshold point can never
+    /// be in the floored top-k either).
+    fn top_k_inner(&self, x: U256, k: usize, min_net: Option<I256>) -> Vec<Id> {
+        if self.points.is_empty() || k == 0 {
+            return Vec::new();
+        }
+        let (lo, hi) = self.hot_gas_bounds(x, k);
+        let mut heap: BinaryHeap<Row<Id>> = BinaryHeap::with_capacity(k.min(64));
+        for (_, ids) in self.gas_points.range((lo, hi)) {
+            for &id in ids {
+                // The id is live (the mirror is maintained per mutation); the
+                // points lookup is the ground-truth (gross, gas) for `net`.
+                let Some(&pidx) = self.ids.get(&id) else {
+                    continue;
+                };
+                let p = self.points[pidx];
+                let n = net_of(p.gross, p.gas, x);
+                if let Some(f) = min_net {
+                    if n < f {
+                        continue;
+                    }
+                }
+                heap.push(Row { net: n, id });
+                if heap.len() > k {
+                    heap.pop();
+                }
+            }
+        }
+        let mut out: Vec<(I256, Id)> = heap.into_iter().map(|r| (r.net, r.id)).collect();
+        out.sort_by(rank);
+        out.into_iter().map(|(_, id)| id).collect()
+    }
+
     /// The `k`-th largest net among hull vertices at `X`. For `k == 0` returns
     /// `I256::MAX`; for `k > hull.len()` returns `I256::MIN` (disables pruning —
     /// everything stays hot, complete and conservative).
@@ -255,37 +349,44 @@ impl<Id: IdKey> EnvelopeIndex<Id> {
         nets[k - 1]
     }
 
-    /// Lower bound on `net(p, X)` from the hull snapshot edge bracketing `p.gas`:
-    /// the max endpoint net, computed with exact `I256`. `>= net(p, X)` always.
-    fn upper_bound(&self, idx: usize, x: U256) -> I256 {
-        let p = self.points[idx];
-        match self.hull.len() {
-            0 => I256::MIN,
-            1 => net_entry(&self.hull[0], x),
-            _ => {
-                // First hull index with gas >= p.gas.
-                let mut low = 0usize;
-                let mut high = self.hull.len();
-                while low < high {
-                    let mid = usize::midpoint(low, high);
-                    if self.hull[mid].gas < p.gas {
-                        low = mid + 1;
-                    } else {
-                        high = mid;
-                    }
-                }
-                if low < self.hull.len() && self.hull[low].gas == p.gas {
-                    return net_entry(&self.hull[low], x);
-                }
-                let i = low - 1;
-                let n1 = net_entry(&self.hull[i], x);
-                if low < self.hull.len() {
-                    n1.max(net_entry(&self.hull[low], x))
-                } else {
-                    n1
-                }
+    /// The single gas interval whose interior is exactly the set of gas values
+    /// `g` with `upper_bound(g, X) >= kth_hull_net(X, k)` — i.e. the hot gas
+    /// range derived in the module docs. `(Unbounded, Unbounded)` = every gas
+    /// is hot (`k > hull.len()` / empty hull); an empty range for `k == 0`
+    /// (callers return early). Both bounds are `Excluded` of a COLD vertex's
+    /// gas where finite, so points at a cold vertex's own gas (whose bound is
+    /// that vertex's cold net) stay out while points just past it (bracketed
+    //  by the hot neighbor) stay in — bit-for-bit the old per-point filter.
+    fn hot_gas_bounds(&self, x: U256, k: usize) -> (Bound<U256>, Bound<U256>) {
+        if k == 0 {
+            return (
+                Bound::Excluded(U256::ZERO),
+                Bound::Excluded(U256::ZERO), // empty range marker
+            );
+        }
+        if self.hull.is_empty() || k > self.hull.len() {
+            return (Bound::Unbounded, Bound::Unbounded);
+        }
+        let t = self.kth_hull_net(x, k);
+        let mut first_hot = self.hull.len();
+        let mut last_hot = 0usize;
+        for (idx, vertex) in self.hull.iter().enumerate() {
+            if net_entry(vertex, x) >= t {
+                first_hot = first_hot.min(idx);
+                last_hot = idx.max(last_hot);
             }
         }
+        let lo = if first_hot == 0 {
+            Bound::Unbounded
+        } else {
+            Bound::Excluded(self.hull[first_hot - 1].gas)
+        };
+        let hi = if last_hot == self.hull.len() - 1 {
+            Bound::Unbounded
+        } else {
+            Bound::Excluded(self.hull[last_hot + 1].gas)
+        };
+        (lo, hi)
     }
 
     /// Splice a live point into the hull snapshot iff it pokes above the current

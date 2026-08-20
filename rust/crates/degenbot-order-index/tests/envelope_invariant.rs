@@ -229,6 +229,54 @@ proptest! {
     }
 }
 
+// A33CRA acceptance: random mutations INTERLEAVED with a sequence of X values —
+// the per-block pattern (X changes every block, mutations churn between blocks).
+// The hot-range reclassification must track both: after every op and at every
+// X, top_k / top_k_floor / best equal the brute ScanTopK reference exactly.
+proptest! {
+    #[test]
+    fn mutation_plus_x_sequence_matches_scan_topk(
+        ops in prop::collection::vec(op_strategy(), 1..80),
+        xs in prop::collection::vec(0u64..2_000_000_000_000, 1..4),
+        k in 1usize..8,
+    ) {
+        use degenbot_order_index::{EnvelopeIndex, ScanTopK};
+        let mut env = EnvelopeIndex::<u64>::new();
+        let mut scan = ScanTopK::<u64>::new();
+        for op in &ops {
+            match op {
+                Op::Insert(id, gas, gross) => {
+                    env.insert(*id, *gas, *gross);
+                    scan.insert(*id, *gas, *gross);
+                }
+                Op::Update(id, gas, gross) => {
+                    prop_assert_eq!(env.update(*id, *gas, *gross), scan.update(*id, *gas, *gross));
+                }
+                Op::Remove(id) => {
+                    prop_assert_eq!(env.remove(id), scan.remove(id));
+                }
+            }
+            for x in &xs {
+                let x = U256::from(*x);
+                prop_assert_eq!(env.top_k(x, k), scan.top_k(x, k), "top_k diverged at x={} after op {:?}", x, op);
+                prop_assert_eq!(env.best(x), scan.best(x), "best diverged at x={} after op {:?}", x, op);
+                // Floor at a fraction of the current max net exercises the
+                // floor filter across the same X sweep.
+                // The zero floor exercises the floor-filter path across the
+                // same X sweep (negative-net points must drop out).
+                let min_net = I256::ZERO;
+                prop_assert_eq!(
+                    env.top_k_floor(x, k, min_net),
+                    scan.top_k_floor(x, k, min_net),
+                    "top_k_floor diverged at x={} after op {:?}",
+                    x,
+                    op
+                );
+            }
+        }
+    }
+}
+
 /// Brute-force reference for the floored top-K.
 fn brute_top_k_floor(points: &[common::Cand], x: U256, k: usize, min_net: I256) -> Vec<u64> {
     let mut ranked: Vec<(I256, u64)> = points

@@ -47,22 +47,24 @@ fn cands(n: u64, mut seed: u64) -> Vec<(u64, U256, U256)> {
 
 fn main() {
     const N: u64 = 1_000_000;
+    const N_TEN_M: u64 = 10_000_000;
     const K: usize = 50;
-    let cands = cands(N, 0x9E37_79B9_7F4A_7C15);
+    let small_pts = cands(N, 0x9E37_79B9_7F4A_7C15);
 
     // 1. Batched/incremental build (insert loop; insert is incremental).
     let mut idx = EnvelopeIndex::<u64>::new();
     let mut small = EnvelopeIndex::<u64>::new();
     let t = Instant::now();
-    for (i, (id, gas, gross)) in cands.iter().enumerate() {
+    for (i, (id, gas, gross)) in small_pts.iter().enumerate() {
         idx.insert(*id, *gas, *gross);
         if i < 100_000 {
             small.insert(*id, *gas, *gross);
         }
     }
     let t_build = t.elapsed();
-    // 2. Per-block hot reclassify + top-K (the O(N log h) baseline).
+    // 2. Per-block hot reclassify + top-K (gas-ordered hot-range walk, A33CRA).
     let x = U256::from(80_000_000_000u64);
+    let hot = idx.hot_len(x, K);
     let t = Instant::now();
     let top = idx.top_k(x, K);
     let t_topk = t.elapsed();
@@ -119,11 +121,34 @@ fn main() {
     );
     println!("incremental build(1M)   : {t_build:?}");
     println!(
-        "per-block top_k({K})    : {t_topk:?}  ({} results)",
+        "per-block top_k({K})    : {t_topk:?}  ({} results, hot={hot} of {N})",
         top.len()
     );
     println!("hull-only best()        : {t_best:?}  (best idx {best:?})");
     println!("single interior insert  : {t_interior:?}");
     println!("single above-hull insert: {t_above:?}");
     println!("non-vertex update+remove (avg) : {t_update_remove:?}");
+
+    // 8. Multi-10M target (A33CRA engagement trigger): the per-block top_k line
+    //    at N=10M, where the former O(N log h) rescan stopped fitting budget.
+    let big_pts = cands(N_TEN_M, 0xC2B2_AE3D_27D4_EB4F);
+    let mut idx10 = EnvelopeIndex::<u64>::new();
+    let t = Instant::now();
+    for (id, gas, gross) in &big_pts {
+        idx10.insert(*id, *gas, *gross);
+    }
+    let t_build10 = t.elapsed();
+    let hot10 = idx10.hot_len(x, K);
+    let t = Instant::now();
+    let top10 = idx10.top_k(x, K);
+    let t_topk10 = t.elapsed();
+    println!(
+        "== 10M target: N={N_TEN_M}, K={K}, hull={} ==",
+        idx10.hull_len()
+    );
+    println!("incremental build(10M)  : {t_build10:?}");
+    println!(
+        "per-block top_k({K})    : {t_topk10:?}  ({} results, hot={hot10} of {N_TEN_M})",
+        top10.len()
+    );
 }

@@ -100,6 +100,29 @@ per-path gas**, plus a settled (non-concurrently-modified) bot codebase. The
 crate-level parity of the index itself is proven by the invariant suite and the
 scale demo.
 
+## Addendum — A33CRA (2026-08-20): gas-ordered hot-range reclassification
+
+The deferred gas-ordered index (canceled 4Y6763's recorded path) has landed.
+The per-block `top_k` no longer rescans all N points with a per-point hull
+search. Key lemma (documented in `envelope.rs`): because `upper_bound` depends
+on a point only through the hull edge **bracketing its gas**, the hot set is
+the single gas interval `(v_{L-1}.gas, v_{R+1}.gas)` where `v_{L..R}` are the
+hull vertices with `net(v_i, X) >= T` (hull vertex nets are unimodal at fixed
+`X`, so the block is contiguous; the min/max scan is exact even without that).
+Live points are mirrored in a `BTreeMap<U256 /*gas*/, Vec<Id>>` (O(log N) per
+mutation, one touched bucket), and per-block reclassification is one range
+walk — O(h + log N + P_hot log k + k log k) instead of O(N log h) — with the
+final k-heap rank bounded by `k`. The lossless superset invariant is
+unchanged: the range reproduces the old per-point `upper_bound >= T` filter
+bit-for-bit.
+
+Measured (`bench_strategies`, K=50): per-block `top_k` 80.2ms -> 21.9ms @1M
+(hot=51,579), 145ms @10M (hot=245,973) — cost now proportional to the hot set,
+not N. Incremental insert pays +~30-160ns for the bucket entry (169ns -> 198ns
+interior; 190ns -> 349ns above-hull). Differential coverage added:
+`mutation_plus_x_sequence_matches_scan_topk` (mutations interleaved with X
+sequences vs the brute `ScanTopK` reference).
+
 ## Consequences
 
 - Deterministic, lossless top-K selection that scales to millions of results with
