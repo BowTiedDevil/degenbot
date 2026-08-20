@@ -8,7 +8,6 @@ On-chain executor contracts for MEV arbitrage.
 contracts/
 ├── README.md                            ← you are here
 ├── cmd_executor_bytecode.txt            ← Creation bytecode (deployment + constructor args)
-├── cmd_executor_init_bytecode.txt       ← Identical to `*_bytecode.txt` (legacy name, no consumer)
 ├── cmd_executor_runtime_bytecode.txt    ← Runtime bytecode + CBOR + immutables (for code injection)
 ├── cmd_executor_abi.json                ← ABI (for web3.py contract objects)
 └── tests/                               ← Ape + Foundry test suite
@@ -19,7 +18,6 @@ contracts/
 | File | Contents | Use |
 |------|----------|-----|
 | `*_bytecode.txt` | `vyper -f bytecode` output (artifact creation hex) | Deployment (`cast send --create` + constructor args `(weth, pool_manager)`) |
-| `*_init_bytecode.txt` | Same creation hex as `*_bytecode.txt` (reference copy) | (no code consumer) |
 | `*_runtime_bytecode.txt` | Runtime bytecode + CBOR + 5 x 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
 
 ### Vyper bytecode layout

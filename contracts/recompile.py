@@ -5,11 +5,13 @@ Usage:
     uv run python contracts/recompile.py            # bake from the committed
                                                     #   tier3-oracle/artifacts/executor/
                                                     #   (toolchain-free, default)
-    uv run python contracts/recompile.py --compile  # additionally compile the
-                                                    #   in-repo executor/contracts/cmd_executor.vy
-                                                    #   (pinned vyper 0.5.0a3, executor uv
-                                                    #   project) and FAIL on any sha256
-                                                    #   mismatch vs the artifacts
+    uv run python contracts/recompile.py --compile  # additionally run the
+                                                    #   AUTHORITATIVE compile-vs-use gate
+                                                    #   (tier3-oracle/verify-tier3-executor-artifact.
+                                                    #   sh): a fresh vyper 0.5.0a3 + solc 0.7.6
+                                                    #   compile byte-compared against ALL committed
+                                                    #   executor artifacts + the V3 topology harness.
+                                                    #   Opt-in; requires the toolchain.
     uv run python contracts/recompile.py --no-patch # bake the POOL_MANAGER slot as
                                                     #   zero (testnet/dev; patch afterwards
                                                     #   with the README recipe)
@@ -18,8 +20,6 @@ Files written (existing file format: 0x-prefixed lowercase hex + trailing
 newline; the ABI is copied verbatim):
     cmd_executor_runtime_bytecode.txt  = 0x + runtime hex + 5 x 32B immutables
     cmd_executor_bytecode.txt          = 0x + creation hex (deployment)
-    cmd_executor_init_bytecode.txt     = 0x + creation hex (legacy filename,
-                                                    #   identical to the deployment file)
     cmd_executor_abi.json              = the artifact ABI
 
 Vyper bytecode layout (re-derived for the current artifact — the code section
@@ -50,6 +50,12 @@ bytes32 pair, v4-core CurrencyDelta._computeSlot).
 The old pipeline compiled from ~/code/executor/ (retired 5ddf2f05b, vendored
 in-repo); the re-sync derives from the COMMITTED tier-3 artifacts instead,
 which fixes U3WVLL + 767TN5 + 0x43 in one bake.
+
+Manifest convention (tier-3-wide, see write-harness-manifest.sh and the
+build script): each manifest `sha256` field records the sha256 of the
+artifact's git-tracked SOURCE (not the artifact file) — the pin proves the
+committed artifacts were built from the current source. Artifact-BYTE
+integrity is the job of the compile-vs-use gate above (CI job tier3-oracle).
 """
 
 from __future__ import annotations
@@ -129,33 +135,18 @@ def _check_manifest() -> None:
 
 
 def _verify_compile_matches_artifacts() -> None:
-    """Compile the in-repo source and fail-closed on any drift from the
-    committed artifacts (the toolchain path is a consistency check, not a
-    bake source)."""
-    if not VYPER_SOURCE.exists():
-        sys.exit(f"source not found: {VYPER_SOURCE} (drop --compile?)")
-    want = {
-        "bytecode": _hex_read(ARTIFACTS_DIR / "cmd_executor.creation.hex"),
-        "bytecode_runtime": _hex_read(ARTIFACTS_DIR / "cmd_executor.runtime.hex"),
-    }
-    for fmt, want_hex in want.items():
-        try:
-            out = subprocess.check_output(
-                ["uv", "run", "vyper", "-f", fmt, str(VYPER_SOURCE)],
-                cwd=EXECUTOR_DIR,
-                stderr=subprocess.PIPE,
-            ).decode().strip()
-        except subprocess.CalledProcessError as e:
-            sys.exit(f"vyper ({fmt}) failed:\n{e.stderr.decode()}")
-        got = out.removeprefix("0x").strip().lower()
-        if got != want_hex:
-            sys.exit(
-                f"source/artifact drift: vyper -f {fmt} sha256 "
-                f"{hashlib.sha256(got.encode()).hexdigest()[:16]} != artifact "
-                f"{hashlib.sha256(want_hex.encode()).hexdigest()[:16]} — "
-                "run just rebuild-tier3-artifacts (or revert the source)"
-            )
-        print(f"       vyper -f {fmt}: matches artifact")
+    """Opt-in strict path: run the AUTHORITATIVE compile-vs-use gate
+    (tier3-oracle/verify-tier3-executor-artifact.sh) — a fresh vyper 0.5.0a3 +
+    solc 0.7.6 compile byte-compared against ALL committed executor artifacts
+    (creation, runtime, abi, error_map, immutables) plus the V3 topology
+    harness. Replaces the former inline 2-format vyper check, which covered
+    creation+runtime only. Requires the toolchain (executor uv project +
+    svm-cached solc)."""
+    gate = DEGENBOT_ROOT / "tier3-oracle" / "verify-tier3-executor-artifact.sh"
+    try:
+        subprocess.run(["bash", str(gate)], check=True)
+    except subprocess.CalledProcessError:
+        sys.exit("verify-tier3-executor-artifact.sh failed — source/artifact/toolchain drift; run just rebuild-tier3-artifacts")
 
 
 def main() -> None:
@@ -184,7 +175,6 @@ def main() -> None:
     CONTRACTS_DIR.mkdir(parents=True, exist_ok=True)
     (CONTRACTS_DIR / "cmd_executor_abi.json").write_text(abi)
     (CONTRACTS_DIR / "cmd_executor_bytecode.txt").write_text("0x" + creation + "\n")
-    (CONTRACTS_DIR / "cmd_executor_init_bytecode.txt").write_text("0x" + creation + "\n")
     (CONTRACTS_DIR / "cmd_executor_runtime_bytecode.txt").write_text("0x" + runtime_baked + "\n")
 
     tail = runtime_baked[-IMMUTABLE_HEX_LEN:]
