@@ -46,7 +46,7 @@ degenbot-pools.workspace = true
 degenbot-price.workspace = true
 degenbot-rpc.workspace = true
 degenbot-simulation.workspace = true
-degenbot-arbitrage = { path = "../degenbot-arbitrage", features = ["order-index"] }
+degenbot-arbitrage = { workspace = true, features = ["order-index"] }
 degenbot-solidly-math.workspace = true
 degenbot-solvers.workspace = true
 degenbot-submission.workspace = true
