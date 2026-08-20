@@ -49,7 +49,7 @@ use crate::TickInfo;
 #[derive(Debug, Clone)]
 pub struct BootstrapTickWord {
     /// The tick-bitmap word position that was fetched
-    /// (`degenbot_concentrated_liquidity_math::get_tick_word_and_bit_position(tick, spacing).0`).
+    /// (`degenbot_math::cl::get_tick_word_and_bit_position(tick, spacing).0`).
     pub word: i32,
     /// Initialized ticks in this word. `liquidity_gross` / `liquidity_net` /
     /// `block` — the same shape `register_*_pool` accepts as `tick_data`.
@@ -165,11 +165,10 @@ mod tests {
             if self.bitmap == 0 {
                 return Ok(None);
             }
-            let (word, _) =
-                degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_and_bit_position(
-                    tick,
-                    tick_spacing,
-                );
+            let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
+                tick,
+                tick_spacing,
+            );
             let mut ticks = HashMap::new();
             for i in 0..u128::BITS {
                 if (self.bitmap & (1u128 << i)) > 0 {

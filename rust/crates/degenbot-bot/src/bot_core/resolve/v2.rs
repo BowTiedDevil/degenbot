@@ -2,8 +2,8 @@
 
 use alloy::primitives::U256;
 
+use degenbot_math::v2::IntHopState;
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
-use degenbot_v2_math::IntHopState;
 
 use super::super::BotState;
 use super::MissingHopReason;

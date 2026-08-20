@@ -70,7 +70,7 @@
 #![expect(clippy::large_enum_variant)]
 
 use alloy::primitives::{Sign as AlloySign, U256};
-use degenbot_v2_math::IntHopState;
+use degenbot_math::v2::IntHopState;
 use num_bigint::BigInt;
 
 use crate::mobius_int_exact::isqrt_u2048;

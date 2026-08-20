@@ -59,11 +59,11 @@ use proptest::prelude::*;
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 
-use degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_decoders::v3_pancakeswap_swap_decoder::{
     decode_v3_pancakeswap_swap_log, V3_PANCAKESWAP_SWAP_TOPIC,
 };
 use degenbot_decoders::v3_swap_decoder::{decode_v3_swap_log, V3_SWAP_TOPIC};
+use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::v3_pancakeswap_storage_slots::{
     encode_pancake_v3_slot0_word1, pancake_v3_tick_bitmap_word_slot, pancake_v3_tick_mapping_slot,
 };

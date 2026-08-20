@@ -27,19 +27,19 @@ use alloy::primitives::{address, aliases::U112, Address, Bytes, I256, U128, U256
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
-use degenbot::degenbot_arbitrage::{
+use degenbot::arbitrage::{
     simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
 };
-use degenbot::degenbot_balancer_math::{mul_down, ONE};
-use degenbot::degenbot_curve_math::{
+use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
+use degenbot::cmd_executor::compute_simulation_warmup_slots;
+use degenbot::db::snapshot_db::SnapshotDb;
+use degenbot::dex_identity::UNISWAP_V2;
+use degenbot::math::balancer::{mul_down, ONE};
+use degenbot::math::curve::{
     calculate_dy, stableswap_get_d, DVariant, DyCalculationInputs, YVariant,
 };
-use degenbot::degenbot_db::snapshot_db::SnapshotDb;
-use degenbot::degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
-use degenbot::degenbot_executor::compute_simulation_warmup_slots;
-use degenbot::degenbot_simulation::apply_simulation_overrides;
-use degenbot::degenbot_solidly_math::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
-use degenbot::dex_identity::UNISWAP_V2;
+use degenbot::math::solidly::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
+use degenbot::simulation::apply_simulation_overrides;
 use degenbot::{bot_core::Bot, BotState, RegisterV2PoolParams};
 use revm::bytecode::Bytecode;
 use revm::database::CacheDB;
@@ -56,8 +56,8 @@ use degenbot::bot_core::pool_builder::builder::{
     build_erc20_metadata, build_v2, build_v3, build_v4, probe_pool_type, resolve_v4_identity,
     PoolBuilderError, PoolFamily, V4PoolBuildIdentity, V4PoolBuildOverrides,
 };
-use degenbot::degenbot_rpc::provider::EthBlock;
 use degenbot::errors::ProviderError;
+use degenbot::rpc::provider::EthBlock;
 
 /// A construction RPC that always fails (no RPC wired in the standalone
 /// no-network example) — proves the trait-object seam compiles + runs
@@ -190,7 +190,7 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
 #[expect(clippy::too_many_lines)]
 fn main() {
     // 2b reaches ArbitrageEngine for the standalone lifecycle slice.
-    use degenbot::solvers::arb_engine::{ArbitrageEngine, EnginePhase};
+    use degenbot::bot::solvers::arb_engine::{ArbitrageEngine, EnginePhase};
 
     // 1. Construct the Rust-owned per-chain bot state (no Python).
     let mut bot = BotState::new();
@@ -270,7 +270,7 @@ fn main() {
     //      numerator       = amountInWithFee * reserve_out
     //      denominator     = reserve_in * 1000 + amountInWithFee
     //    — byte-identical to the core's EVM-exact integer path
-    //    (`degenbot_v2_math::IntHopState::swap`).
+    //    (`degenbot_math::v2::IntHopState::swap`).
     let amount_in_with_fee = amount_in * U256::from(997_u64);
     let numer = amount_in_with_fee * reserve1;
     let denom = reserve0 * U256::from(1000_u64) + amount_in_with_fee;
@@ -535,10 +535,9 @@ fn in_process_sim_standalone_slice() {
     let asserter = Asserter::new();
     let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
     let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
-    let provider = degenbot::degenbot_rpc::provider::AlloyProvider::from_provider(Arc::new(
-        dyn_provider,
-    )
-        as Arc<dyn Provider<Ethereum>>);
+    let provider = degenbot::rpc::provider::AlloyProvider::from_provider(
+        Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>
+    );
     let warmup = compute_simulation_warmup_slots(EXECUTOR, WETH);
     let ctx = SimulateContext {
         provider: &provider,
@@ -741,29 +740,29 @@ fn in_process_sim_standalone_slice() {
     //    actually differ from the Uniswap layout (so a pancake pool is never
     //    seeded with the wrong slot indices).
     assert_eq!(
-        degenbot::degenbot_pools::PANCAKE_V3_LIQUIDITY_SLOT,
+        degenbot::pools::PANCAKE_V3_LIQUIDITY_SLOT,
         5,
         "fork liquidity@5 (Uniswap@4)"
     );
     assert_eq!(
-        degenbot::degenbot_pools::PANCAKE_V3_TICKS_MAPPING_SLOT,
+        degenbot::pools::PANCAKE_V3_TICKS_MAPPING_SLOT,
         6,
         "fork ticks base@6 (Uniswap@5)"
     );
     assert_eq!(
-        degenbot::degenbot_pools::PANCAKE_V3_TICK_BITMAP_MAPPING_SLOT,
+        degenbot::pools::PANCAKE_V3_TICK_BITMAP_MAPPING_SLOT,
         7,
         "fork tickBitmap base@7 (Uniswap@6)"
     );
-    let fork_tick_slot = degenbot::degenbot_pools::pancake_v3_tick_mapping_slot(0);
-    let uniswap_tick_slot = degenbot::degenbot_pools::v3_tick_mapping_slot(0);
+    let fork_tick_slot = degenbot::pools::pancake_v3_tick_mapping_slot(0);
+    let uniswap_tick_slot = degenbot::pools::v3_tick_mapping_slot(0);
     assert_ne!(
         fork_tick_slot, uniswap_tick_slot,
         "fork + Uniswap tick mapping slots must differ for the same tick"
     );
     // slot0 word 1 packs feeProtocol (low 32b) | unlocked (bit 32).
     assert_eq!(
-        degenbot::degenbot_pools::encode_pancake_v3_slot0_word1(0, true),
+        degenbot::pools::encode_pancake_v3_slot0_word1(0, true),
         U256::from(1u64) << 32
     );
     println!("standalone degenbot consumer OK: PancakeSwap V3 fork slot encoders reachable");

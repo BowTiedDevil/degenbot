@@ -3,7 +3,7 @@
 //! The Rust twin of the Python companion's `_resolve_calculation_inputs_via_io`
 //! (+ the metapool resolver). Given a pool's immutable `CurvePoolIdentity`,
 //! its current balances, and the stored I/O provider, it pre-resolves a
-//! [`DyCalculationInputs`] snapshot so the pure `degenbot_curve_math::calculate_dy`
+//! [`DyCalculationInputs`] snapshot so the pure `degenbot_math::curve::calculate_dy`
 //! (which does no I/O) can run. This is what lets a swap path run with **no
 //! Python provider / cache / calculator in the graph** — the companion's
 //! orchestration is retired once the Rust entry (GW2) drives this.
@@ -15,7 +15,7 @@
 //! absent, mirroring the Python `MissingCurveData` guard.
 
 use alloy::primitives::U256;
-use degenbot_curve_math::{
+use degenbot_math::curve::{
     resolve_amp, resolve_ramping_a, ARampingParams, DVariant, DyCalculationInputs, SwapStyle,
     YVariant,
 };
@@ -39,7 +39,7 @@ pub enum CurveInputsError {
     /// A provider fetch failed (RPC / length / unsupported).
     Provider(CurveDataProviderError),
     /// A swap-math (A-ramping) error.
-    Swap(degenbot_curve_math::CurveSwapError),
+    Swap(degenbot_math::curve::CurveSwapError),
     /// A length mismatch in zipped rate/balance/coin arrays.
     LengthMismatch(&'static str),
     /// The requested pool isn't a registered Curve pool.
@@ -48,15 +48,15 @@ pub enum CurveInputsError {
     NotMetapool,
 }
 
-impl From<degenbot_curve_math::CurveSwapError> for CurveInputsError {
-    fn from(e: degenbot_curve_math::CurveSwapError) -> Self {
+impl From<degenbot_math::curve::CurveSwapError> for CurveInputsError {
+    fn from(e: degenbot_math::curve::CurveSwapError) -> Self {
         Self::Swap(e)
     }
 }
 
-impl From<degenbot_curve_math::CurveMathError> for CurveInputsError {
-    fn from(e: degenbot_curve_math::CurveMathError) -> Self {
-        Self::Swap(degenbot_curve_math::CurveSwapError::from(e))
+impl From<degenbot_math::curve::CurveMathError> for CurveInputsError {
+    fn from(e: degenbot_math::curve::CurveMathError) -> Self {
+        Self::Swap(degenbot_math::curve::CurveSwapError::from(e))
     }
 }
 

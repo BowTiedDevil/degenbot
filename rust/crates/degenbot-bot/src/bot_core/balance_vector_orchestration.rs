@@ -13,7 +13,7 @@
 
 use alloy::primitives::U256;
 
-use degenbot_curve_math::{
+use degenbot_math::curve::{
     calculate_dy, calculate_dy_underlying, resolve_ramping_a, stableswap_get_d, stableswap_get_y_d,
     ARampingParams, CurveSwapError, DVariant, YDVariant,
 };
@@ -210,7 +210,7 @@ impl BotState {
     /// `TV72EG`). The counterpart of the companion's `get_dy` — resolves the
     /// dy-calculation snapshot from the pool's identity + balances + stored
     /// provider via [`degenbot_pools::resolve_dy_inputs`], then runs the pure
-    /// [`degenbot_curve_math::calculate_dy`]. No Python provider / cache /
+    /// [`degenbot_math::curve::calculate_dy`]. No Python provider / cache /
     /// calculator is on the path.
     ///
     /// `i`/`j` are coin indices, `dx` the input amount. `override_balances`

@@ -32,7 +32,7 @@ degenbot-core.workspace = true
 degenbot-executor.workspace = true
 # `sqrt_price_math` — the engine's proven V3 amount math, so the harness
 # computes V3 hop outputs byte-consistent with the `PoolV3` stub (UQOAHA).
-degenbot-concentrated-liquidity-math.workspace = true
+degenbot-math.workspace = true
 # `AlloyProvider` — the typed RPC provider the in-process sim's cold-miss
 # fallback (`WrapDatabaseAsync<AlloyDB>`) + the access-list / feeHistory paths
 # consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.
@@ -89,7 +89,6 @@ degenbot-uniswap.workspace = true
 # `IntHopState` — the executor grammar harness computes byte-consistent V2
 # hop outputs from the seeded reserves (mirroring the tier-3 V2 oracle) so the
 # encoded path round-trips cleanly (UQOAHA).
-degenbot-v2-math.workspace = true
 # `proptest` — property-driven fixtures for the relocated Tier-3 CL parity
 # oracles (tier3_v3 / v4 / pancake_v3 swap-vs-revm, moved from degenbot-pools
 # in 5D3YVK). They live here because they drive `degenbot_simulation::oracle`;

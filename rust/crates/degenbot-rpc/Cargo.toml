@@ -15,7 +15,7 @@ workspace = true
 alloy = { version = "^2.4", features = ["full", "transport-throttle", "json-rpc"] }
 dashmap = { version = "^6.2" }
 degenbot-abi.workspace = true
-degenbot-concentrated-liquidity-math.workspace = true
+degenbot-math.workspace = true
 degenbot-core.workspace = true
 degenbot-pools.workspace = true
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }

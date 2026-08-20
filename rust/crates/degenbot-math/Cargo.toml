@@ -1,0 +1,37 @@
+[package]
+name = "degenbot-math"
+description = "Pure-Rust ports of canonical AMM invariant math — Uniswap V2 constant-product, V3/V4 concentrated liquidity, Curve StableSwap, Balancer (fixed-point/log-exp/weighted/stable), and Solidly/Aerodrome/Camelot stable pools. One crate, five family modules (v2, cl, curve, balancer, solidly); ADR-035."
+keywords = ["amm", "uniswap", "curve", "balancer", "solidly"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "^2.4" }
+thiserror = { version = "^2.0" }
+degenbot-core.workspace = true
+
+[dev-dependencies]
+proptest = "^1.11"
+serde_json = "^1.0"
+criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
+# Tier-3a byte-exact oracle (cl module): revm-transacted SwapMath harness;
+# dev-only, so the no-pyo3-in-cores check is unaffected.
+revm = { version = "^42.0", default-features = true }
+
+[[bench]]
+name = "swap"
+harness = false
+
+[[bench]]
+name = "stableswap"
+harness = false
+
+[[bench]]
+name = "leaves"
+harness = false

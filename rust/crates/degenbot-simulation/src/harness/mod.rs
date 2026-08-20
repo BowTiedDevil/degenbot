@@ -868,7 +868,7 @@ pub fn v3_amount_out(
     zero_for_one: bool,
     fee: u32,
 ) -> u128 {
-    use degenbot_concentrated_liquidity_math::sqrt_price_math::{
+    use degenbot_math::cl::sqrt_price_math::{
         get_amount0_delta, get_amount1_delta, get_next_sqrt_price_from_input,
     };
     let fee_retained = U256::from(1_000_000u64 - u64::from(fee));

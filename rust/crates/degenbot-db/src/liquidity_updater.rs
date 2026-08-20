@@ -4,7 +4,7 @@
 //! (read pool row + positions → apply CL `apply_liquidity_mapping_update` per
 //! event → upsert positions + init maps → stamp `liquidity_update_block`/
 //! `liquidity_update_log_index`) to a Rust core over [`DegenbotDb`] +
-//! [`degenbot_concentrated_liquidity_math::liquidity_mapping::apply_liquidity_mapping_update`].
+//! [`degenbot_math::cl::liquidity_mapping::apply_liquidity_mapping_update`].
 //!
 //! # What this is (and isn't)
 //!
@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use alloy::primitives::{I256, U128, U256};
-use degenbot_concentrated_liquidity_math::liquidity_mapping::{
+use degenbot_math::cl::liquidity_mapping::{
     apply_liquidity_mapping_update, BitmapAtWord, LiquidityAtTick,
 };
 

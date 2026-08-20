@@ -8,7 +8,7 @@
 //!
 //! The per-hop swap primitive — `IntHopState`, `IntHopState::swap`, and
 //! `int_simulate_path` — has been extracted into the standalone
-//! [`degenbot_v2_math`] leaf crate (a pool-specific, value-only concern, not
+//! [`degenbot_math::v2`] leaf crate (a pool-specific, value-only concern, not
 //! a solver/arbitrage concern). This module imports `IntHopState` from there
 //! and composes it into the Möbius recurrence + `IntMobiusCoefficients` that
 //! stay here.
@@ -25,7 +25,7 @@
 #![expect(non_snake_case)]
 
 use alloy::primitives::U512;
-use degenbot_v2_math::IntHopState;
+use degenbot_math::v2::IntHopState;
 
 // ---------------------------------------------------------------------------
 // Errors

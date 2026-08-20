@@ -47,7 +47,7 @@ pub(crate) fn project_balancer_weighted(
             id.scaling_factors[0],
         )
     };
-    let pow_version = degenbot_balancer_math::PowVersion::from_u8(id.pow_version)
+    let pow_version = degenbot_math::balancer::PowVersion::from_u8(id.pow_version)
         .ok_or(MissingHopReason::UnknownVariant)?; // Unknown pow_version → invalid
     Ok((
         ResolvedHop::BalancerWeighted {
@@ -73,7 +73,7 @@ mod tests {
     use super::project_balancer_weighted;
     use crate::bot_core::{BotState, RegisterBalancerWeightedPoolParams};
     use alloy::primitives::{Address, U256};
-    use degenbot_balancer_math::PowVersion;
+    use degenbot_math::balancer::PowVersion;
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
     // -----------------------------------------------------------------

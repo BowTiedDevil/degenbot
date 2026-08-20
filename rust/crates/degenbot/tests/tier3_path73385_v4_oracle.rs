@@ -20,7 +20,7 @@
 use alloy::primitives::aliases::I256;
 use alloy::primitives::U256;
 use degenbot::investigation::{build_v4_state, PathFixture};
-use degenbot_concentrated_liquidity_math::tick_math::MIN_SQRT_RATIO;
+use degenbot_math::cl::tick_math::MIN_SQRT_RATIO;
 use degenbot_pools::v4_state::v4_simulate_swap;
 
 const FIXTURE_PATH: &str = concat!(

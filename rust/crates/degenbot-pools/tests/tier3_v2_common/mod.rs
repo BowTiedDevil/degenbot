@@ -50,7 +50,7 @@ use revm::database_interface::EmptyDB;
 use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
-use degenbot_v2_math::IntHopState;
+use degenbot_math::v2::IntHopState;
 
 /// `uint112` max — the V2 pair's reserve width. The post-swap input-token
 /// balance must stay at or below this or the pair's `_update` reverts

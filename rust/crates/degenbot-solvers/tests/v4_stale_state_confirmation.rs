@@ -120,7 +120,7 @@ fn sim_out_with_protocol_fee(state: &V4PoolState, amount_in: U256) -> U256 {
         TICK_SPACING,
         false, // ofz: WETH→USDC, price goes up
         amount_specified,
-        U256::from(degenbot_concentrated_liquidity_math::tick_math::MAX_SQRT_RATIO),
+        U256::from(degenbot_math::cl::tick_math::MAX_SQRT_RATIO),
     )
     .expect("v4_simulate_swap succeeds on the on-chain state");
     outcome.amount0 // ofz exact-in: amount0 is the output (caller receives token0=USDC)

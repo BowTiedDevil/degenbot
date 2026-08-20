@@ -1,154 +1,77 @@
-//! # `degenbot` — umbrella Rust crate (ADR-005 standalone surface)
-//!
-//! Re-exports the **pyo3-free** degenbot core surface so a standalone Rust
-//! consumer can `cargo add degenbot` and reach `BotState`, the `DexIdentity`
-//! presets, the V2/V3/V4 pool-state structs, the swap calc math, and the V2
-//! swap-call encoder — **with zero Python in the build graph**.
-//!
-//! This mirrors the `polars` umbrella Rust crate, which `pub use`s
-//! `polars_core::{DataFrame, Series, ...}` with no `pyo3`; all `Py*` wrappers
-//! live exclusively in `polars-python`, which Rust consumers never touch.
-//! Here the binding layer (`degenbot_rs` cdylib, built from
-//! `crates/degenbot-python/`) is a separate workspace member that DOES pull
-//! `pyo3`; the umbrella never depends on it.
-//!
-//! # Standalone-Rust consumer
-//!
-//! See [`examples/standalone_consumer.rs`](../examples/standalone_consumer.rs):
-//! it constructs a `BotState`, registers a V2 pool via the `UNISWAP_V2`
-//! `DexIdentity` preset, and runs a swap calc — no Python interpreter, no
-//! `pyo3` feature, no maturin.
-//!
-//! # Verifying pyo3-freeness
-//!
-//! `rg 'use pyo3' rust/crates/degenbot` is empty by construction (the
-//! umbrella has no `pyo3` dependency; the gates `just check-no-pyo3-in-cores`
-//! covers the core crates — this umbrella is the same class).
-
+/// The whole `degenbot-core` crate (errors, hex, EIP-55, runtime, EIP-1559).
+pub use degenbot_core as core;
 /// Foundational utilities — errors, hex, EIP-55 addresses, shared runtime.
 pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 
-/// Path **investigation toolkit** — shared fixture load/reconstruct/per-hop
-/// oracle helpers for reproducing captured failing settlement-arbitrage paths in the
 /// `examples/path*_solver_fixture.rs` investigate-runner dialect.
 pub mod investigation;
 
-/// Per-chain Rust-owned bot state (`BotState`), reorg journal, decoders,
-/// liquidity verifier, block pump, log/solve/reorg coordinators, V2/V3/V4
 /// state, plus the Möbius solvers + the unified `ArbitrageEngine`.
-pub use degenbot_bot::{bot_core, solvers};
-
-/// Value-only pool identity/state structs + stateless swap simulation
-/// (`PoolEntry`, `*PoolIdentity`/`*PoolState`, `v3_simulate_swap`/`v4_simulate_swap`,
-/// the V2 constant-product dispatch, the spec-bound validators) + the
-/// `TickWordFetcher`/`CurveDataProvider`/`BalancerRateProvider` *interface*
+pub use degenbot_bot as bot;
+/// `degenbot::solvers` — ADR-015 relocation).
+pub use degenbot_bot::bot_core;
 /// traits (ADR-005 standalone-by-design pool value/trait layer).
-pub use degenbot_pools;
+pub use degenbot_pools as pools;
 
 /// Pathfinding graph (`PathGraph`) + edge graph.
-pub use degenbot_pathfinding;
+pub use degenbot_pathfinding as pathfinding;
 
-/// Möbius solver math (`basket` / `mixed`) relocated out of
-/// `degenbot_bot::solvers` into this standalone crate. `degenbot_bot::solvers`
 /// re-exports only `arb_engine`; the relocated solver math lives here.
-pub use degenbot_solvers;
+pub use degenbot_solvers as solvers;
 
-/// Uniswap-protocol domain — `DexIdentity` / `DexVariant` / `ReservesAbi`
+/// The whole `degenbot-uniswap` crate (dex identity + V2 encoding + registry).
+pub use degenbot_uniswap as uniswap;
 /// value objects + `pub const` per-DEX presets, and the V2 swap-call encoder.
 pub use degenbot_uniswap::{dex_identity, v2_encoding};
 
 /// Uniswap V2/V3/V4 event-log decoders (alloy-only leaf).
-pub use degenbot_decoders;
+pub use degenbot_decoders as decoders;
 
-/// Curve `StableSwap` invariant math (Vyper D/Y solvers — pure-Rust leaf).
-pub use degenbot_curve_math;
-
-/// Balancer V2 math (`FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath` — pure-Rust leaf).
-pub use degenbot_balancer_math;
-
-/// Solidly / Aerodrome / Camelot stable-pool invariant math (pure-Rust leaf).
-pub use degenbot_solidly_math;
+/// family modules, byte-verified against canonical sources by the tier-3 oracles.
+pub use degenbot_math as math;
 
 /// EIP-1559 base-fee math.
 pub use degenbot_core::eip_1559;
 
-/// On-chain price readers — Chainlink aggregator + Aave oracle over
 /// `degenbot-rpc` `eth_call` (pyo3-free leaf).
-pub use degenbot_price;
+pub use degenbot_price as price;
 
 /// cmd-executor domain — simulation warmup-slot storage math (pure-Rust leaf).
-pub use degenbot_executor;
+pub use degenbot_executor as cmd_executor;
 
-/// The `ExecutionStrategy` seam (ADR-025) — the `PayloadComposer` Encode part +
-/// the gate protocol + solve-result view value types, consumed alike by the
-/// standalone Rust path and the `PyO3` driver shell. No default strategy ships
 /// here; `degenbot-arbitrage` implements it as the default adapter.
-pub use degenbot_execution;
-/// Transaction submission pipeline — fee sizing, signer, dispatcher, and the
+pub use degenbot_execution as execution;
 /// pending-tx receipt monitor (pure-Rust leaf).
-pub use degenbot_submission;
+pub use degenbot_submission as submission;
 
-/// `eth_simulateV1` `stateOverrides` construction — code injection + ETH/WETH
-/// funding + warmup-slot integration + WETH9 `balanceOf` override
-/// (pure-Rust leaf). The in-process revm engine (the per-block shared-EVM
-/// handle, DB stack, overrides, AL collector, warm cache).
-/// The `degenbot_simulation::oracle` fixture driver (ADR-020 tier-3) is
 /// test/diagnostic Rust surface — deliberately no FFI exposure.
-pub use degenbot_simulation;
+pub use degenbot_simulation as simulation;
 
-/// The settlement-arbitrage searcher strategy — the 7-call pre/post-balance bundle,
-/// `compute_priority_fee`, `decode_balance`, `SimResult`, + the
-/// `dispatch_profitable_results` fan-out/categorization policy over the
-/// `degenbot-simulation` engine (ADR-019 D4/D7, decision R — Rust-canonical:
-/// the strategy stays in Rust; the Python driver is a thin cockpit, not a
 /// co-implementation).
-pub use degenbot_arbitrage;
+pub use degenbot_arbitrage as arbitrage;
 
-/// Net-profit order index (ADR-024) — convex-hull / upper-envelope `top_k`
-/// selection over `(gross, gas)` path results (`OrderIndex` trait,
-/// `EnvelopeIndex`, `ScanTopK` baseline). The seam `degenbot-arbitrage`
-/// consumes for deterministic pre-sim selection, shipped to the standalone
 /// consumer by this crate (B5L2XA).
-pub use degenbot_order_index;
-
-/// Concentrated-liquidity math (`tick_math`, `swap_math`, `liquidity_mapping`).
-pub use degenbot_concentrated_liquidity_math;
-/// Uniswap V2 constant-product (`x·y=k`) single-hop swap math (`IntHopState`,
-/// `int_simulate_path`) — the shared primitive for the V2 pool family + the
-/// Solidly/Camelot/Aerodrome volatile V2-equivalent hop.
-pub use degenbot_v2_math;
+pub use degenbot_order_index as order_index;
 
 /// ABI encode/decode (`decoder`, `encoder`).
-pub use degenbot_abi;
+pub use degenbot_abi as abi;
 
-/// RPC provider/contract/subscription seams (the pure core; `pyo3` is an
 /// optional feature the umbrella never enables).
-pub use degenbot_rpc;
+pub use degenbot_rpc as rpc;
 
-/// `SQLite` persistence substrate — read handle + Alembic-aware schema gate +
-/// typed rows + read fns (pyo3-free leaf; `rusqlite` with the `bundled`
 /// feature).
-pub use degenbot_db;
+pub use degenbot_db as db;
 
-/// Aave V3 domain — the updater chunk-loop + the position-analysis math
-/// (health-factor / LTV / eMode / isolation). Standalone-Rust core: a
 /// `cargo add degenbot` consumer runs `run_aave_update` with no Python.
-pub use degenbot_aave;
+pub use degenbot_aave as aave;
 
-/// Anvil fork lifecycle + dev-RPC core (`AnvilFork`, `evm_mine`,
-/// `anvil_reset`, `anvil_snapshot`, ...). Standalone-Rust core: a Rust-only
-/// consumer spins an anvil fork with no Python (the `anvil` binary must be
 /// in `$PATH` at runtime).
-pub use degenbot_fork;
+pub use degenbot_fork as fork;
 
-/// Pool-updater chunk-loop RPC + decode bridge (`run_pool_update`,
-/// `apply_chunk_writes_on_conn`, on-chain `verify_v3/v4_liquidity_map`).
 /// Standalone-Rust core mirroring the Aave updater shape.
-pub use degenbot_pool_updater;
+pub use degenbot_pool_updater as pool_updater;
 
 // ---------------------------------------------------------------------------
-// Convenience top-level re-exports of the most-used types (mirrors how the
-// `polars` umbrella re-exports `DataFrame`/`Series` at the crate root).
 // ---------------------------------------------------------------------------
 
 pub use degenbot_bot::bot_core::pool_builder::builder::{

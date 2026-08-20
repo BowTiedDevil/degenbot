@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use alloy::primitives::{aliases::U112, Address, B256, I256, U256};
 
 use crate::bot_core::BotState;
-use crate::degenbot_decoders::v4_swap_decoder::V4PoolId;
-use crate::degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
-use crate::degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
-use crate::degenbot_pools::TickInfo;
+use crate::decoders::v4_swap_decoder::V4PoolId;
+use crate::pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+use crate::pools::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
+use crate::pools::TickInfo;
 use crate::{DexVariant, RegisterV2PoolParams};
 
 use super::fixture::{PoolData, TickJson};

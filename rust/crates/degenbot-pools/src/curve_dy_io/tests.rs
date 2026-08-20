@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, U256};
-use degenbot_curve_math::calculate_dy;
+use degenbot_math::curve::calculate_dy;
 
 use super::resolve_dy_inputs;
 use crate::curve_data_provider::{CurveDataProvider, CurveDataProviderError};

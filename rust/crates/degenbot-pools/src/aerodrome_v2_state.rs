@@ -34,7 +34,7 @@ use degenbot_uniswap::dex_identity::DexVariant;
 /// `register_aerodrome_pool` and never mutated. Mirrors [`V2PoolIdentity`].
 ///
 /// The fee is the **fee fraction** (`amount_in_after_fee = amount_in - amount_in * fee_numer / fee_denom`),
-/// matching [`degenbot_solidly_math::calc_exact_in_volatile`]'s convention —
+/// matching [`degenbot_math::solidly::calc_exact_in_volatile`]'s convention —
 /// NOT the V2 retained-fraction `(gamma_numer, fee_denom)` convention.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AerodromeV2PoolIdentity {

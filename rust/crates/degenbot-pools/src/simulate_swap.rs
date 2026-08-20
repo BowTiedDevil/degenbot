@@ -20,12 +20,12 @@
 //! `&PoolEntry` then delegates here.
 
 use alloy::primitives::{I256, U256};
-use degenbot_balancer_math::fixed_point::{div_down, mul_down};
-use degenbot_balancer_math::stable_math;
-use degenbot_balancer_math::weighted_math;
-use degenbot_balancer_math::PowVersion;
-use degenbot_curve_math::stableswap::{stableswap_get_y, DVariant, YVariant};
-use degenbot_v2_math::IntHopState;
+use degenbot_math::balancer::fixed_point::{div_down, mul_down};
+use degenbot_math::balancer::stable_math;
+use degenbot_math::balancer::weighted_math;
+use degenbot_math::balancer::PowVersion;
+use degenbot_math::curve::stableswap::{stableswap_get_y, DVariant, YVariant};
+use degenbot_math::v2::IntHopState;
 
 use crate::registry::PoolEntry;
 use crate::v3_state::{v3_simulate_swap, SimulateSwapError, V3PoolState};
@@ -143,7 +143,7 @@ pub fn simulate_swap(
             if !id.stable {
                 let token_in: u8 = u8::from(!zero_for_one);
                 let (fee_numer, fee_denom) = id.fee;
-                return degenbot_solidly_math::calc_exact_in_volatile(
+                return degenbot_math::solidly::calc_exact_in_volatile(
                     amount_in,
                     token_in,
                     state.reserve0.to::<U256>(),
@@ -434,7 +434,7 @@ fn simulate_aerodrome_stable_swap(
     }
     let token_in: u8 = u8::from(!zero_for_one);
     let (fee_numer, fee_denom) = id.fee;
-    degenbot_solidly_math::calc_exact_in_stable_solidly(
+    degenbot_math::solidly::calc_exact_in_stable_solidly(
         amount_in,
         token_in,
         state.reserve0.to::<U256>(),

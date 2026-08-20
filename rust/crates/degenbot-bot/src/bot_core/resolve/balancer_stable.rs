@@ -50,9 +50,9 @@ pub(crate) fn project_balancer_stable(
     }
     let amp_u256 = U256::from(id.amp);
     let invariant = if id.invariant_version == 1 {
-        degenbot_balancer_math::stable_math::calculate_invariant(amp_u256, &upscaled_balances)
+        degenbot_math::balancer::stable_math::calculate_invariant(amp_u256, &upscaled_balances)
     } else {
-        degenbot_balancer_math::stable_math::calculate_invariant_deployed(
+        degenbot_math::balancer::stable_math::calculate_invariant_deployed(
             amp_u256,
             &upscaled_balances,
             true,

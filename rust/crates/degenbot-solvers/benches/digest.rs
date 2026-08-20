@@ -21,8 +21,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
-use degenbot_balancer_math::stable_math::calculate_invariant_deployed;
-use degenbot_curve_math::stableswap::{DVariant, YVariant};
+use degenbot_math::balancer::stable_math::calculate_invariant_deployed;
+use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_solvers::mixed::{
     solve_path, BalancerStableHopState, CurveStableswapHopState, ResolvedHop, ResolvedMixedPath,
 };

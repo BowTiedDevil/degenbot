@@ -2048,16 +2048,14 @@ dependencies = [
  "degenbot-aave",
  "degenbot-abi",
  "degenbot-arbitrage",
- "degenbot-balancer-math",
  "degenbot-bot",
- "degenbot-concentrated-liquidity-math",
  "degenbot-core",
- "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
+ "degenbot-math",
  "degenbot-order-index",
  "degenbot-pathfinding",
  "degenbot-pool-updater",
@@ -2065,11 +2063,9 @@ dependencies = [
  "degenbot-price",
  "degenbot-rpc",
  "degenbot-simulation",
- "degenbot-solidly-math",
  "degenbot-solvers",
  "degenbot-submission",
  "degenbot-uniswap",
- "degenbot-v2-math",
  "parking_lot",
  "revm",
  "serde",
@@ -2126,15 +2122,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-balancer-math"
-version = "0.6.0-alpha.5"
-dependencies = [
- "alloy",
- "criterion",
- "proptest",
-]
-
-[[package]]
 name = "degenbot-bot"
 version = "0.6.0-alpha.5"
 dependencies = [
@@ -2142,19 +2129,15 @@ dependencies = [
  "async-trait",
  "dashmap",
  "degenbot-abi",
- "degenbot-balancer-math",
- "degenbot-concentrated-liquidity-math",
  "degenbot-core",
- "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-executor",
+ "degenbot-math",
  "degenbot-pools",
  "degenbot-rpc",
- "degenbot-solidly-math",
  "degenbot-solvers",
  "degenbot-uniswap",
- "degenbot-v2-math",
  "futures-util",
  "hotpath",
  "parking_lot",
@@ -2170,18 +2153,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-concentrated-liquidity-math"
-version = "0.6.0-alpha.5"
-dependencies = [
- "alloy",
- "degenbot-core",
- "proptest",
- "revm",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "degenbot-core"
 version = "0.6.0-alpha.5"
 dependencies = [
@@ -2194,20 +2165,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-curve-math"
-version = "0.6.0-alpha.5"
-dependencies = [
- "alloy",
- "criterion",
- "proptest",
-]
-
-[[package]]
 name = "degenbot-db"
 version = "0.6.0-alpha.5"
 dependencies = [
  "alloy",
- "degenbot-concentrated-liquidity-math",
+ "degenbot-math",
  "degenbot-pathfinding",
  "parking_lot",
  "rusqlite",
@@ -2267,6 +2229,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-math"
+version = "0.6.0-alpha.5"
+dependencies = [
+ "alloy",
+ "criterion",
+ "degenbot-core",
+ "proptest",
+ "revm",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "degenbot-order-index"
 version = "0.6.0-alpha.5"
 dependencies = [
@@ -2299,13 +2274,9 @@ name = "degenbot-pools"
 version = "0.6.0-alpha.5"
 dependencies = [
  "alloy",
- "degenbot-balancer-math",
- "degenbot-concentrated-liquidity-math",
- "degenbot-curve-math",
  "degenbot-decoders",
- "degenbot-solidly-math",
+ "degenbot-math",
  "degenbot-uniswap",
- "degenbot-v2-math",
  "hex",
  "parking_lot",
  "proptest",
@@ -2334,8 +2305,8 @@ dependencies = [
  "alloy",
  "dashmap",
  "degenbot-abi",
- "degenbot-concentrated-liquidity-math",
  "degenbot-core",
+ "degenbot-math",
  "degenbot-pools",
  "futures-util",
  "parking_lot",
@@ -2355,14 +2326,13 @@ version = "0.6.0-alpha.5"
 dependencies = [
  "alloy",
  "degenbot-bot",
- "degenbot-concentrated-liquidity-math",
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-executor",
+ "degenbot-math",
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-uniswap",
- "degenbot-v2-math",
  "hex",
  "parking_lot",
  "proptest",
@@ -2376,28 +2346,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-solidly-math"
-version = "0.6.0-alpha.5"
-dependencies = [
- "alloy",
- "proptest",
- "serde_json",
-]
-
-[[package]]
 name = "degenbot-solvers"
 version = "0.6.0-alpha.5"
 dependencies = [
  "alloy",
  "criterion",
- "degenbot-balancer-math",
- "degenbot-concentrated-liquidity-math",
- "degenbot-curve-math",
+ "degenbot-math",
  "degenbot-pools",
  "degenbot-rpc",
- "degenbot-solidly-math",
  "degenbot-uniswap",
- "degenbot-v2-math",
  "num-bigint 0.5.1",
  "num-integer",
  "proptest",
@@ -2431,14 +2388,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "degenbot-v2-math"
-version = "0.6.0-alpha.5"
-dependencies = [
- "alloy",
- "criterion",
-]
-
-[[package]]
 name = "degenbot_rs"
 version = "0.6.0-alpha.5"
 dependencies = [
@@ -2449,27 +2398,23 @@ dependencies = [
  "degenbot-aave",
  "degenbot-abi",
  "degenbot-arbitrage",
- "degenbot-balancer-math",
  "degenbot-bot",
- "degenbot-concentrated-liquidity-math",
  "degenbot-core",
- "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-execution",
  "degenbot-executor",
  "degenbot-fork",
+ "degenbot-math",
  "degenbot-pathfinding",
  "degenbot-pool-updater",
  "degenbot-pools",
  "degenbot-price",
  "degenbot-rpc",
  "degenbot-simulation",
- "degenbot-solidly-math",
  "degenbot-solvers",
  "degenbot-submission",
  "degenbot-uniswap",
- "degenbot-v2-math",
  "futures-util",
  "log",
  "lru",

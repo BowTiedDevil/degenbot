@@ -53,7 +53,7 @@ use alloy::primitives::{U256, U512};
 type U2048 = alloy::primitives::Uint<2048, 32>;
 
 use crate::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients, MobiusError};
-use degenbot_v2_math::{int_simulate_path, IntHopState};
+use degenbot_math::v2::{int_simulate_path, IntHopState};
 
 /// Result of [`exact_mobius_solve`] — the discrete-EVM-sim-exact optimum of
 /// the on-chain swap chain (NOT the closed-form Möbius-model optimum).

@@ -15,10 +15,10 @@ use pyo3::{exceptions::PyValueError, types::PyAny, PyTypeInfo};
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
 use crate::conversion::alloy as alloy_py;
-use degenbot_concentrated_liquidity_math::bit_math;
-use degenbot_concentrated_liquidity_math::full_math;
-use degenbot_concentrated_liquidity_math::liquidity_mapping;
-use degenbot_concentrated_liquidity_math::swap_math;
+use degenbot_math::cl::bit_math;
+use degenbot_math::cl::full_math;
+use degenbot_math::cl::liquidity_mapping;
+use degenbot_math::cl::swap_math;
 
 /// Convert a Python int/bytes to U256.
 fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
@@ -244,7 +244,7 @@ pub fn compute_swap_step_v4(
 /// Compute the tick word and bit position for a compressed tick.
 ///
 /// Returns `(word, bit)` where `word` is the mapping key (`i32`) and `bit`
-/// is in `0..=255` (`u8`). Mirrors `degenbot_concentrated_liquidity_math::get_tick_word_and_bit_position`.
+/// is in `0..=255` (`u8`). Mirrors `degenbot_math::cl::get_tick_word_and_bit_position`.
 #[pyfunction(signature = (tick, tick_spacing))]
 #[must_use]
 pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8) {

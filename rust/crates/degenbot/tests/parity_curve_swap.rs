@@ -5,7 +5,7 @@
 //! The Curve StableSwap dy math has no simple closed form (`stableswap_get_y`
 //! is a Newton solve), so — like the V3/V4 CL tests — this asserts the direct
 //! **FFI-seam-lossless claim**: the **same** canonical fixture driven through
-//! the **Rust consumer** (`degenbot_curve_math::calculate_dy`, as a `cargo add
+//! the **Rust consumer** (`degenbot_math::curve::calculate_dy`, as a `cargo add
 //! degenbot` user) produces the **same** `dy` as the **Python consumer**
 //! (`degenbot.curve.dy.calculate_dy`, the PyO3 binding). The shared oracle is
 //! the recorded constant in the shared fixture file.
@@ -26,8 +26,8 @@
 
 use alloy::primitives::U256;
 use degenbot::{BotState, RegisterCurvePoolParams};
-use degenbot_curve_math::curve_dy_calculator::{calculate_dy, DyCalculationInputs};
-use degenbot_curve_math::{DVariant, YVariant};
+use degenbot_math::curve::curve_dy_calculator::{calculate_dy, DyCalculationInputs};
+use degenbot_math::curve::{DVariant, YVariant};
 
 /// Path to the shared Curve fixture (loaded by both this Rust test and the
 /// Python dual-driver test — HRT356, the single source of truth).

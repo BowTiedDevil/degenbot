@@ -55,7 +55,7 @@ pub use connection::DegenbotDb;
 /// against — aliased so they don't collide with the snapshot batch-read `U256`
 /// flavor above. These are the field types of `ComputedLiquidityUpdate` + the
 /// on-chain verifier's comparison inputs.
-pub use degenbot_concentrated_liquidity_math::liquidity_mapping::{
+pub use degenbot_math::cl::liquidity_mapping::{
     BitmapAtWord as ApplyBitmapAtWord, LiquidityAtTick as ApplyLiquidityAtTick,
 };
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};

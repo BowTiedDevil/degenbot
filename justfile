@@ -110,7 +110,7 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-concentrated-liquidity-math degenbot-v2-math degenbot-curve-math degenbot-balancer-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-solidly-math degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
+    for crate in degenbot-core degenbot-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot-pathfinding degenbot degenbot-price degenbot-db degenbot-pool-updater degenbot-aave degenbot-execution degenbot-executor degenbot-submission degenbot-simulation degenbot-pools degenbot-solvers degenbot-order-index degenbot-arbitrage degenbot-fork degenbot-execution-sample; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
@@ -222,7 +222,7 @@ test-tier3 family='all':
     run_family() {
         local harness pkg test
         case "$1" in
-            step)     harness=build-tier3-harnesses.sh;           pkg=degenbot-concentrated-liquidity-math; test=tier3_compute_swap_step_vs_revm ;;
+            step)     harness=build-tier3-harnesses.sh;           pkg=degenbot-math; test=tier3_compute_swap_step_vs_revm ;;
             swap)     harness=build-tier3-v3-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v3_pool_swap_vs_revm ;;  # 5D3YVK: relocated from pools
             v2)       harness=build-tier3-v2-swap-harness.sh;     pkg=degenbot-pools; test=tier3_v2_pair_swap_vs_revm ;;
             v4)       harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v4_pool_swap_vs_revm ;;  # 5D3YVK: relocated from pools

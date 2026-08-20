@@ -15,7 +15,7 @@
 #[test]
 fn order_index_reachable_from_umbrella() {
     fn reachable<T>() {}
-    reachable::<Box<dyn degenbot::degenbot_order_index::OrderIndex<u64>>>();
-    reachable::<degenbot::degenbot_order_index::ScanTopK<u64>>();
-    reachable::<degenbot::degenbot_order_index::EnvelopeIndex<u64>>();
+    reachable::<Box<dyn degenbot::order_index::OrderIndex<u64>>>();
+    reachable::<degenbot::order_index::ScanTopK<u64>>();
+    reachable::<degenbot::order_index::EnvelopeIndex<u64>>();
 }

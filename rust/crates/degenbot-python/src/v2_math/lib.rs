@@ -1,6 +1,6 @@
 //! `PyO3` wrappers for the V2 constant-product (x*y=k) swap math.
 //!
-//! Thin binding layer over `degenbot_v2_math` (`v2_swap_exact_in` /
+//! Thin binding layer over `degenbot_math::v2` (`v2_swap_exact_in` /
 //! `v2_swap_exact_out`): `extract_u256` argument extraction, an error
 //! translator, and one `#[pyfunction]` per wrapped entrypoint (RH3L24).
 
@@ -43,15 +43,15 @@ fn u256_to_py_obj(py: Python<'_>, v: U256) -> PyResult<PyObject> {
     Ok(alloy_py::u256_to_py(py, &v)?.unbind())
 }
 
-fn v2_math_err(e: degenbot_v2_math::HopSwapError) -> PyErr {
+fn v2_math_err(e: degenbot_math::v2::HopSwapError) -> PyErr {
     let msg = match e {
-        degenbot_v2_math::HopSwapError::Overflow => {
+        degenbot_math::v2::HopSwapError::Overflow => {
             "uint256 overflow in V2 swap math (on-chain would revert)"
         }
-        degenbot_v2_math::HopSwapError::InsufficientReserves => {
+        degenbot_math::v2::HopSwapError::InsufficientReserves => {
             "requested output >= pool reserves (or degenerate fee parameters)"
         }
-        degenbot_v2_math::HopSwapError::InvalidFee => "fee numerator must be < fee denominator",
+        degenbot_math::v2::HopSwapError::InvalidFee => "fee numerator must be < fee denominator",
     };
     PyValueError::new_err(msg)
 }
@@ -72,7 +72,7 @@ pub fn calc_exact_in_v2(
     fee_denom: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = reserves_in.py();
-    let result = degenbot_v2_math::v2_swap_exact_in(
+    let result = degenbot_math::v2::v2_swap_exact_in(
         extract_u256(reserves_in)?,
         extract_u256(reserves_out)?,
         extract_u256(amount_in)?,
@@ -102,7 +102,7 @@ pub fn calc_exact_out_v2(
     fee_denom: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = reserves_in.py();
-    let result = degenbot_v2_math::v2_swap_exact_out(
+    let result = degenbot_math::v2::v2_swap_exact_out(
         extract_u256(reserves_in)?,
         extract_u256(reserves_out)?,
         extract_u256(amount_out)?,

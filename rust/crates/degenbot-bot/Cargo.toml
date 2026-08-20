@@ -20,19 +20,15 @@ alloy = { version = "^2.4", features = ["full", "transport-throttle"] }
 async-trait = { version = "^0.1" }
 dashmap = { version = "^6.2" }
 degenbot-abi.workspace = true
-degenbot-concentrated-liquidity-math.workspace = true
+degenbot-math.workspace = true
 degenbot-core.workspace = true
 degenbot-db.workspace = true
 degenbot-decoders.workspace = true
 degenbot-rpc.workspace = true
-degenbot-solidly-math.workspace = true
-degenbot-balancer-math.workspace = true
-degenbot-curve-math.workspace = true
 degenbot-pools.workspace = true
 degenbot-solvers.workspace = true
 degenbot-executor.workspace = true
 degenbot-uniswap.workspace = true
-degenbot-v2-math.workspace = true
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 # hotpath: drain-path profiling tracer (ADR-005 core, pyo3-free). The crate is a
 # non-optional dependency so the `#[hotpath::measure]` attributes resolve, but

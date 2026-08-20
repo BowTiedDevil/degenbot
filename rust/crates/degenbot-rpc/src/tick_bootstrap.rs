@@ -11,7 +11,7 @@
 //!
 //! Both methods port the Python Branch 3 sparse-RPC loop verbatim:
 //! 1. Compute the tick-bitmap word via
-//!    [`degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_and_bit_position`].
+//!    [`degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position`].
 //! 2. `eth_call` the bitmap (`tickBitmap(int16)` for V3; `getTickBitmap(bytes32,int16)` for V4).
 //! 3. If the bitmap is zero → return `Ok(None)` (no initialized ticks in this
 //!    word — matches the Python "don't seed empty" rule).
@@ -91,11 +91,10 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
         let provider = Arc::clone(&self.provider);
         get_runtime().block_on(async move {
             // 1. Compute the tick-bitmap word containing `tick`.
-            let (word, _) =
-                degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_and_bit_position(
-                    tick,
-                    tick_spacing,
-                );
+            let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
+                tick,
+                tick_spacing,
+            );
             // The Solidity `tickBitmap(int16)` selector takes an int16; the
             // helper's `word: i32` is guaranteed to fit in int16 for any valid
             // V3 tick (tick range is int24, word = tick.div_euclid(spacing) >> 8).
@@ -148,11 +147,10 @@ impl TickBootstrapRpc for AlloyTickBootstrapRpc {
 
         let provider = Arc::clone(&self.provider);
         get_runtime().block_on(async move {
-            let (word, _) =
-                degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_and_bit_position(
-                    tick,
-                    tick_spacing,
-                );
+            let (word, _) = degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(
+                tick,
+                tick_spacing,
+            );
             #[expect(clippy::expect_used)] // V3 tick word always fits in int16
             let word_i16 = i16::try_from(word).expect("tick word fits in int16");
 

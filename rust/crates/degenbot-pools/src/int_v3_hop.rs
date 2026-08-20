@@ -1,5 +1,5 @@
 //! V3 tick-range hop types for intermediate-value (Int) swap simulation —
-//! the V3-family analogue of [`degenbot_v2_math::IntHopState`].
+//! the V3-family analogue of [`degenbot_math::v2::IntHopState`].
 //!
 //! **Relocated** from `degenbot-bot/src/solvers/mobius_v3_int.rs` (these are
 //! pure value types, previously mis-homed under `solvers/`); re-exported there
@@ -7,7 +7,7 @@
 //! resolve unchanged. Transient re-export — repointed natively by USPN7M/P2CKRL.
 
 use alloy::primitives::{U256, U512};
-use degenbot_v2_math::IntHopState;
+use degenbot_math::v2::IntHopState;
 
 /// Ceiling division of `U512` / `U512` → `U256` (matches on-chain
 /// `get_amount_delta(..., round_up=true)` and
@@ -512,8 +512,8 @@ impl IntV3TickRangeSequence {
 mod tests {
     use super::*;
     use alloy::primitives::I256;
-    use degenbot_concentrated_liquidity_math::swap_math::compute_swap_step_v3;
-    use degenbot_concentrated_liquidity_math::tick_math::get_sqrt_ratio_at_tick_internal;
+    use degenbot_math::cl::swap_math::compute_swap_step_v3;
+    use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
 
     /// Build a 3-range sequence crossing ticks -60, 0, +60 (tick_spacing=60)
     /// with liquidity `L` at every range + the standard net at each boundary.

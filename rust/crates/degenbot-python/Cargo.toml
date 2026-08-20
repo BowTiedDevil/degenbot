@@ -32,12 +32,8 @@ degenbot-pools = { path = "../degenbot-pools" }
 degenbot-decoders = { path = "../degenbot-decoders", optional = true }
 degenbot-uniswap = { path = "../degenbot-uniswap", optional = true }
 degenbot-abi = { path = "../degenbot-abi", optional = true }
-degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math", optional = true }
+degenbot-math = { path = "../degenbot-math", optional = true }
 degenbot-db = { path = "../degenbot-db", optional = true }
-degenbot-balancer-math = { path = "../degenbot-balancer-math", optional = true }
-degenbot-curve-math = { path = "../degenbot-curve-math", optional = true }
-degenbot-solidly-math = { path = "../degenbot-solidly-math", optional = true }
-degenbot-v2-math = { path = "../degenbot-v2-math", optional = true }
 degenbot-pathfinding = { path = "../degenbot-pathfinding", optional = true }
 degenbot-price = { path = "../degenbot-price", optional = true, features = ["pyo3"] }
 degenbot-submission = { path = "../degenbot-submission", optional = true, features = ["pyo3"] }
@@ -91,14 +87,14 @@ execution = ["dep:degenbot-execution", "executor"]
 fork = ["dep:degenbot-fork"]
 rpc = ["dep:degenbot-rpc", "abi"]
 abi = ["dep:degenbot-abi"]
-concentrated-liquidity-math = ["dep:degenbot-concentrated-liquidity-math"]
+concentrated-liquidity-math = ["dep:degenbot-math"]
 db = ["dep:degenbot-db"]
 pool = ["dep:degenbot-pool-updater", "db", "rpc"]
 aave-updater = ["dep:degenbot-aave", "db", "rpc"]
-balancer-math = ["dep:degenbot-balancer-math"]
-curve-math = ["dep:degenbot-curve-math"]
-solidly-math = ["dep:degenbot-solidly-math"]
-v2-math = ["dep:degenbot-v2-math"]
+balancer-math = ["dep:degenbot-math"]
+curve-math = ["dep:degenbot-math"]
+solidly-math = ["dep:degenbot-math"]
+v2-math = ["dep:degenbot-math"]
 uniswap = ["dep:degenbot-uniswap"]
 decoders = ["dep:degenbot-decoders"]
 pathfinding = ["dep:degenbot-pathfinding"]

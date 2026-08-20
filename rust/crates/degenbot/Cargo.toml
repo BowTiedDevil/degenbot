@@ -26,11 +26,9 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 degenbot-aave.workspace = true
 degenbot-abi.workspace = true
-degenbot-balancer-math.workspace = true
+degenbot-math.workspace = true
 degenbot-bot.workspace = true
-degenbot-concentrated-liquidity-math.workspace = true
 degenbot-core.workspace = true
-degenbot-curve-math.workspace = true
 degenbot-db.workspace = true
 degenbot-decoders.workspace = true
 degenbot-execution.workspace = true
@@ -48,11 +46,9 @@ degenbot-price.workspace = true
 degenbot-rpc.workspace = true
 degenbot-simulation.workspace = true
 degenbot-arbitrage = { workspace = true, features = ["order-index"] }
-degenbot-solidly-math.workspace = true
 degenbot-solvers.workspace = true
 degenbot-submission.workspace = true
 degenbot-uniswap.workspace = true
-degenbot-v2-math.workspace = true
 
 [dev-dependencies]
 async-trait = "0.1"

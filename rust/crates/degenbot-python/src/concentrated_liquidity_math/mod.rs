@@ -60,9 +60,7 @@ pub fn add_concentrated_liquidity_math_module(m: &Bound<'_, PyModule>) -> PyResu
 /// now-retired pure-Python `tick_math.py` constant definitions are gone
 /// (C8 task CM2YQ4).
 fn register_tick_math_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    use degenbot_concentrated_liquidity_math::tick_math::{
-        MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK,
-    };
+    use degenbot_math::cl::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
     let py = m.py();
     m.add("MIN_TICK", MIN_TICK)?;
     m.add("MAX_TICK", MAX_TICK)?;

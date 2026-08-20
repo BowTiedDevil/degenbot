@@ -1,14 +1,14 @@
 //! `PyO3` wrappers for the Solidly / Aerodrome / Camelot stable-pool math.
 //!
 //! Thin binding layer that extracts Python arguments, calls the pure Rust core
-//! (`degenbot_solidly_math`), and converts results back to Python `int`s.
+//! (`degenbot_math::solidly`), and converts results back to Python `int`s.
 //! Mirrors `balancer_math::lib` and `curve_math::lib` — `extract_u256` /
 //! `u256_to_py_obj` round-trip helpers, an `solidly_err` error translator, and
 //! one `#[pyfunction]` per wrapped entrypoint.
 
 use crate::prelude::*;
 use alloy::primitives::U256;
-use degenbot_solidly_math::SolidlyMathError;
+use degenbot_math::solidly::SolidlyMathError;
 use pyo3::{
     exceptions::{PyValueError, PyZeroDivisionError},
     types::PyModule,
@@ -99,7 +99,7 @@ fn solidly_err(e: SolidlyMathError) -> PyErr {
 #[pyfunction]
 pub fn calc_d(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x0.py();
-    let result = degenbot_solidly_math::calc_d(extract_u256(x0)?, extract_u256(y)?);
+    let result = degenbot_math::solidly::calc_d(extract_u256(x0)?, extract_u256(y)?);
     u256_to_py_obj(py, result)
 }
 
@@ -118,7 +118,7 @@ pub fn calc_k(
     decimals_1: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = balance_0.py();
-    let result = degenbot_solidly_math::calc_k(
+    let result = degenbot_math::solidly::calc_k(
         extract_u256(balance_0)?,
         extract_u256(balance_1)?,
         extract_u256(decimals_0)?,
@@ -136,7 +136,7 @@ pub fn calc_k(
 #[pyfunction]
 pub fn calc_f(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x0.py();
-    let result = degenbot_solidly_math::calc_f(extract_u256(x0)?, extract_u256(y)?);
+    let result = degenbot_math::solidly::calc_f(extract_u256(x0)?, extract_u256(y)?);
     u256_to_py_obj(py, result)
 }
 
@@ -148,7 +148,7 @@ pub fn calc_f(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject>
 #[pyfunction]
 pub fn camelot_f(x0: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x0.py();
-    let result = degenbot_solidly_math::f_camelot(extract_u256(x0)?, extract_u256(y)?);
+    let result = degenbot_math::solidly::f_camelot(extract_u256(x0)?, extract_u256(y)?);
     u256_to_py_obj(py, result)
 }
 
@@ -165,7 +165,7 @@ pub fn camelot_k(
     decimals_1: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = balance_0.py();
-    let result = degenbot_solidly_math::k_camelot(
+    let result = degenbot_math::solidly::k_camelot(
         extract_u256(balance_0)?,
         extract_u256(balance_1)?,
         extract_u256(decimals_0)?,
@@ -192,7 +192,7 @@ pub fn get_y_solidly(
     decimals_1: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = x0.py();
-    let result = degenbot_solidly_math::get_y_solidly(
+    let result = degenbot_math::solidly::get_y_solidly(
         extract_u256(x0)?,
         extract_u256(xy)?,
         extract_u256(y)?,
@@ -219,7 +219,7 @@ pub fn camelot_get_y_camelot(
     y: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = x_0.py();
-    let result = degenbot_solidly_math::get_y_camelot(
+    let result = degenbot_math::solidly::get_y_camelot(
         extract_u256(x_0)?,
         extract_u256(xy)?,
         extract_u256(y)?,
@@ -246,7 +246,7 @@ pub fn calc_exact_in_volatile(
     fee_denom: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = amount_in.py();
-    let result = degenbot_solidly_math::calc_exact_in_volatile(
+    let result = degenbot_math::solidly::calc_exact_in_volatile(
         extract_u256(amount_in)?,
         token_in,
         extract_u256(reserves_0)?,
@@ -277,7 +277,7 @@ pub fn calc_exact_in_stable_solidly(
     fee_denom: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = amount_in.py();
-    let result = degenbot_solidly_math::calc_exact_in_stable_solidly(
+    let result = degenbot_math::solidly::calc_exact_in_stable_solidly(
         extract_u256(amount_in)?,
         token_in,
         extract_u256(reserves_0)?,
@@ -311,7 +311,7 @@ pub fn calc_exact_out_stable_solidly(
     fee_denom: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = amount_out.py();
-    let result = degenbot_solidly_math::calc_exact_out_stable_solidly(
+    let result = degenbot_math::solidly::calc_exact_out_stable_solidly(
         extract_u256(amount_out)?,
         token_in,
         extract_u256(reserves_0)?,
@@ -344,7 +344,7 @@ pub fn calc_exact_in_stable_camelot(
     fee_denom: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = amount_in.py();
-    let result = degenbot_solidly_math::calc_exact_in_stable_camelot(
+    let result = degenbot_math::solidly::calc_exact_in_stable_camelot(
         extract_u256(amount_in)?,
         token_in,
         extract_u256(reserves_0)?,

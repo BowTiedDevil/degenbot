@@ -72,16 +72,15 @@ exit = "deny"
 degenbot-aave = { version = "0.6.0-alpha.5", path = "crates/degenbot-aave" }
 degenbot-abi = { version = "0.6.0-alpha.5", path = "crates/degenbot-abi" }
 degenbot-arbitrage = { version = "0.6.0-alpha.5", path = "crates/degenbot-arbitrage" }
-degenbot-balancer-math = { version = "0.6.0-alpha.5", path = "crates/degenbot-balancer-math" }
 degenbot-bot = { version = "0.6.0-alpha.5", path = "crates/degenbot-bot" }
-degenbot-concentrated-liquidity-math = { version = "0.6.0-alpha.5", path = "crates/degenbot-concentrated-liquidity-math" }
 degenbot-core = { version = "0.6.0-alpha.5", path = "crates/degenbot-core" }
-degenbot-curve-math = { version = "0.6.0-alpha.5", path = "crates/degenbot-curve-math" }
 degenbot-db = { version = "0.6.0-alpha.5", path = "crates/degenbot-db" }
 degenbot-decoders = { version = "0.6.0-alpha.5", path = "crates/degenbot-decoders" }
 degenbot-execution = { version = "0.6.0-alpha.5", path = "crates/degenbot-execution" }
 degenbot-executor = { version = "0.6.0-alpha.5", path = "crates/degenbot-executor" }
 degenbot-fork = { version = "0.6.0-alpha.5", path = "crates/degenbot-fork" }
+# degenbot-math: consolidated AMM math family (ADR-035: v2, cl, curve, balancer, solidly).
+degenbot-math = { version = "0.6.0-alpha.5", path = "crates/degenbot-math" }
 degenbot-order-index = { version = "0.6.0-alpha.5", path = "crates/degenbot-order-index" }
 degenbot-pathfinding = { version = "0.6.0-alpha.5", path = "crates/degenbot-pathfinding" }
 degenbot-pool-updater = { version = "0.6.0-alpha.5", path = "crates/degenbot-pool-updater" }
@@ -89,11 +88,9 @@ degenbot-pools = { version = "0.6.0-alpha.5", path = "crates/degenbot-pools" }
 degenbot-price = { version = "0.6.0-alpha.5", path = "crates/degenbot-price" }
 degenbot-rpc = { version = "0.6.0-alpha.5", path = "crates/degenbot-rpc" }
 degenbot-simulation = { version = "0.6.0-alpha.5", path = "crates/degenbot-simulation" }
-degenbot-solidly-math = { version = "0.6.0-alpha.5", path = "crates/degenbot-solidly-math" }
 degenbot-solvers = { version = "0.6.0-alpha.5", path = "crates/degenbot-solvers" }
 degenbot-submission = { version = "0.6.0-alpha.5", path = "crates/degenbot-submission" }
 degenbot-uniswap = { version = "0.6.0-alpha.5", path = "crates/degenbot-uniswap" }
-degenbot-v2-math = { version = "0.6.0-alpha.5", path = "crates/degenbot-v2-math" }
 
 [workspace]
 resolver = "3"
@@ -101,17 +98,15 @@ members = [
     "crates/degenbot",
     "crates/degenbot-aave",
     "crates/degenbot-abi",
-    "crates/degenbot-balancer-math",
     "crates/degenbot-bot",
-    "crates/degenbot-concentrated-liquidity-math",
     "crates/degenbot-core",
-    "crates/degenbot-curve-math",
     "crates/degenbot-db",
     "crates/degenbot-decoders",
     "crates/degenbot-execution",
     "crates/degenbot-execution-sample",
     "crates/degenbot-executor",
     "crates/degenbot-fork",
+    "crates/degenbot-math",
     "crates/degenbot-pathfinding",
     "crates/degenbot-pool-updater",
     "crates/degenbot-pools",
@@ -120,12 +115,10 @@ members = [
     "crates/degenbot-rpc",
     "crates/degenbot-simulation",
     "crates/degenbot-arbitrage",
-    "crates/degenbot-solidly-math",
     "crates/degenbot-solvers",
     "crates/degenbot-submission",
     "crates/degenbot-uniswap",
     "crates/degenbot-order-index",
-    "crates/degenbot-v2-math",
 ]
 
 # Release profile.
@@ -167,15 +160,7 @@ codegen-units = 1
 
 [profile.release.package.degenbot-core]
 codegen-units = 16
-[profile.release.package.degenbot-concentrated-liquidity-math]
-codegen-units = 16
-[profile.release.package.degenbot-v2-math]
-codegen-units = 16
-[profile.release.package.degenbot-curve-math]
-codegen-units = 16
-[profile.release.package.degenbot-balancer-math]
-codegen-units = 16
-[profile.release.package.degenbot-solidly-math]
+[profile.release.package.degenbot-math]
 codegen-units = 16
 [profile.release.package.degenbot-pools]
 codegen-units = 16
@@ -207,5 +192,4 @@ codegen-units = 16
 # rebuild quickly during the red-green loop.
 [profile.dev]
 # More codegen units for faster incremental dev builds across all crates.
-codegen-units = 16
 opt-level = 1

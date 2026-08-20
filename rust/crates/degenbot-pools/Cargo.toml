@@ -17,11 +17,7 @@ thiserror = { version = "^2.0" }
 parking_lot = { version = "^0.12" }
 degenbot-decoders.workspace = true
 degenbot-uniswap.workspace = true
-degenbot-v2-math.workspace = true
-degenbot-concentrated-liquidity-math.workspace = true
-degenbot-curve-math.workspace = true
-degenbot-balancer-math.workspace = true
-degenbot-solidly-math.workspace = true
+degenbot-math.workspace = true
 
 [dev-dependencies]
 proptest = "^1.11"

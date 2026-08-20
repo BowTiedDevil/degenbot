@@ -12,7 +12,7 @@ use crate::prelude::*;
 use alloy::primitives::aliases::U160;
 use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, types::PyAny, PyTypeInfo};
 
-use degenbot_concentrated_liquidity_math::tick_math::{
+use degenbot_math::cl::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal,
 };
 
@@ -114,8 +114,8 @@ pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, P
 /// - The input is too large (exceeds 20 bytes)
 /// - The sqrt price is outside the valid [`MIN_SQRT_RATIO`, `MAX_SQRT_RATIO`) range
 ///
-/// [`MIN_SQRT_RATIO`]: degenbot_concentrated_liquidity_math::tick_math::MIN_SQRT_RATIO
-/// [`MAX_SQRT_RATIO`]: degenbot_concentrated_liquidity_math::tick_math::MAX_SQRT_RATIO
+/// [`MIN_SQRT_RATIO`]: degenbot_math::cl::tick_math::MIN_SQRT_RATIO
+/// [`MAX_SQRT_RATIO`]: degenbot_math::cl::tick_math::MAX_SQRT_RATIO
 ///
 /// Returns `PyTypeError` if the input is not an int or bytes
 ///

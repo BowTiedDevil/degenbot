@@ -276,7 +276,7 @@ fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
         .iter()
         .map(|h| matches!(h, ResolvedHop::V2 { .. }))
         .collect();
-    let v2_hops: Vec<Option<degenbot_v2_math::IntHopState>> = resolved
+    let v2_hops: Vec<Option<degenbot_math::v2::IntHopState>> = resolved
         .hops
         .iter()
         .map(|h| h.as_v2_state().cloned())
@@ -320,7 +320,7 @@ fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
 fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     use crate::mobius_int::compute_int_mobius_coefficients;
     use crate::mobius_int_exact::compute_mobius_model_optimal_input;
-    use degenbot_v2_math::IntHopState;
+    use degenbot_math::v2::IntHopState;
 
     let hops = &resolved.hops;
     if hops.len() < 2 {
@@ -459,8 +459,8 @@ fn solidly_brute_force_best(hops: &[ResolvedHop], center: U256) -> Option<SolveP
 /// (fee fraction → retained fraction); V2 hops pass through unchanged.
 /// Returns `None` for any non-V2/non-Solidly hop or when the Solidly fee
 /// pair overflows `u64` (the path is then unsolvable here).
-fn solidly_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math::IntHopState> {
-    use degenbot_v2_math::IntHopState;
+fn solidly_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_math::v2::IntHopState> {
+    use degenbot_math::v2::IntHopState;
     match hop {
         ResolvedHop::V2 { state } => Some(state.clone()),
         ResolvedHop::SolidlyStable { state } => {
@@ -523,7 +523,7 @@ fn simulate_solidly_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
 /// overflow / invalid `token_in` (the leaf's `Err` variants), matching the
 /// Python `_simulate_mixed_path_int`'s defensive fallback.
 fn simulate_solidly_hop(amount_in: U256, hop: &SolidlyHopState) -> U256 {
-    use degenbot_solidly_math::{
+    use degenbot_math::solidly::{
         calc_exact_in_stable_camelot, calc_exact_in_stable_solidly, calc_exact_in_volatile,
     };
     use degenbot_uniswap::dex_identity::DexVariant;
@@ -579,14 +579,14 @@ fn simulate_solidly_hop(amount_in: U256, hop: &SolidlyHopState) -> U256 {
 /// input.
 ///
 /// Per-hop simulation calls
-/// `degenbot_balancer_math::weighted_math::calc_out_given_in`. The
+/// `degenbot_math::balancer::weighted_math::calc_out_given_in`. The
 /// V2-equivalent precheck treats each weighted hop as a constant-product
 /// hop — exact for 50/50 pools, approximate for other weights (good enough
 /// for bracket narrowing).
 fn solve_balancer_weighted_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     use crate::mobius_int::compute_int_mobius_coefficients;
     use crate::mobius_int_exact::compute_mobius_model_optimal_input;
-    use degenbot_v2_math::IntHopState;
+    use degenbot_math::v2::IntHopState;
 
     let hops = &resolved.hops;
     if hops.len() < 2 {
@@ -669,8 +669,8 @@ fn solve_balancer_weighted_path_int(resolved: &ResolvedMixedPath) -> Option<Solv
 /// and convert the fee (`swap_fee` as fraction of 1e18 → retained fraction
 /// `gamma_numer/fee_denom`). V2 hops pass through unchanged. Returns `None`
 /// for any non-V2/non-weighted hop.
-fn balancer_weighted_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math::IntHopState> {
-    use degenbot_v2_math::IntHopState;
+fn balancer_weighted_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_math::v2::IntHopState> {
+    use degenbot_math::v2::IntHopState;
     match hop {
         ResolvedHop::V2 { state } => Some(state.clone()),
         ResolvedHop::BalancerWeighted { state } => {
@@ -694,8 +694,8 @@ fn balancer_weighted_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math:
 /// V2-equivalent [`IntHopState`] for a Balancer stable hop. Used by the
 /// Möbius precheck to narrow the golden-section bracket. `StableSwap` ≠
 /// constant product, but at high amplification it's locally V2-like.
-fn balancer_stable_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math::IntHopState> {
-    use degenbot_v2_math::IntHopState;
+fn balancer_stable_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_math::v2::IntHopState> {
+    use degenbot_math::v2::IntHopState;
     match hop {
         ResolvedHop::V2 { state } => Some(state.clone()),
         ResolvedHop::BalancerStable { state } => {
@@ -793,15 +793,15 @@ fn simulate_balancer_weighted_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec
 }
 
 /// Evaluate a single Balancer weighted hop's output via
-/// `degenbot_balancer_math::weighted_math::calc_out_given_in`. The swap
+/// `degenbot_math::balancer::weighted_math::calc_out_given_in`. The swap
 /// fee is subtracted from the input first (Balancer convention:
 /// `amount_in_after_fee = amount_in - mul_up(amount_in, swap_fee)`),
 /// then the invariant math runs on the after-fee amount. Returns
 /// `U256::ZERO` on overflow / error (matching the defensive fallback in
 /// `simulate_solidly_hop`).
 fn simulate_balancer_weighted_hop(amount_in: U256, hop: &BalancerWeightedHopState) -> U256 {
-    use degenbot_balancer_math::fixed_point::mul_up;
-    use degenbot_balancer_math::weighted_math::calc_out_given_in;
+    use degenbot_math::balancer::fixed_point::mul_up;
+    use degenbot_math::balancer::weighted_math::calc_out_given_in;
     if amount_in.is_zero() {
         return U256::ZERO;
     }
@@ -838,7 +838,7 @@ fn simulate_balancer_weighted_hop(amount_in: U256, hop: &BalancerWeightedHopStat
 fn solve_balancer_stable_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     use crate::mobius_int::compute_int_mobius_coefficients;
     use crate::mobius_int_exact::compute_mobius_model_optimal_input;
-    use degenbot_v2_math::IntHopState;
+    use degenbot_math::v2::IntHopState;
 
     let hops = &resolved.hops;
 
@@ -980,8 +980,8 @@ fn simulate_balancer_stable_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U
 /// Simulate a single Balancer stable hop (upscaling, fee, math,
 /// downscaling).
 fn simulate_balancer_stable_hop(amount_in: U256, hop: &BalancerStableHopState) -> U256 {
-    use degenbot_balancer_math::fixed_point::mul_up;
-    use degenbot_balancer_math::stable_math::calc_out_given_in;
+    use degenbot_math::balancer::fixed_point::mul_up;
+    use degenbot_math::balancer::stable_math::calc_out_given_in;
     if amount_in.is_zero() {
         return U256::ZERO;
     }
@@ -1041,7 +1041,7 @@ fn balancer_stable_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option
 fn solve_curve_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     use crate::mobius_int::compute_int_mobius_coefficients;
     use crate::mobius_int_exact::compute_mobius_model_optimal_input;
-    use degenbot_v2_math::IntHopState;
+    use degenbot_math::v2::IntHopState;
 
     let hops = &resolved.hops;
 
@@ -1138,8 +1138,8 @@ fn curve_build_result(hops: &[ResolvedHop], best_input: U256) -> Option<SolvePat
 }
 
 /// V2-equivalent [`IntHopState`] for a Curve stableswap hop.
-fn curve_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_v2_math::IntHopState> {
-    use degenbot_v2_math::IntHopState;
+fn curve_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_math::v2::IntHopState> {
+    use degenbot_math::v2::IntHopState;
     match hop {
         ResolvedHop::V2 { state } => Some(state.clone()),
         ResolvedHop::CurveStableswap { state } => {
@@ -1187,7 +1187,7 @@ fn simulate_curve_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
 /// Simulate a single Curve stableswap hop (rate-adjusted XP, `get_y`,
 /// fee+rate conversion).
 fn simulate_curve_hop(amount_in: U256, hop: &CurveStableswapHopState) -> U256 {
-    use degenbot_curve_math::stableswap::stableswap_get_y;
+    use degenbot_math::curve::stableswap::stableswap_get_y;
     if amount_in.is_zero() {
         return U256::ZERO;
     }

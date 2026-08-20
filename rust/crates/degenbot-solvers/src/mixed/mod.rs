@@ -16,10 +16,10 @@ use alloy::primitives::{Address, U256};
 use std::collections::HashMap;
 
 use crate::mobius_v3_int::IntV3TickRangeSequence;
-use degenbot_balancer_math::PowVersion;
-use degenbot_curve_math::stableswap::{DVariant, YVariant};
+use degenbot_math::balancer::PowVersion;
+use degenbot_math::curve::stableswap::{DVariant, YVariant};
+use degenbot_math::v2::IntHopState;
 use degenbot_uniswap::dex_identity::DexVariant;
-use degenbot_v2_math::IntHopState;
 
 // ---------------------------------------------------------------------------
 // Snapshot data (V3/V4 registration intake)
@@ -127,7 +127,7 @@ pub struct MixedPath {
 /// Solidly solve branch. Carries everything the `degenbot-solidly-math`
 /// leaf needs in the leaf's own contract shape: **un-oriented**
 /// `reserves_0`/`reserves_1` + a `token_in` direction flag (matching
-/// [`degenbot_solidly_math::calc_exact_in_stable_solidly`] etc. 1:1).
+/// [`degenbot_math::solidly::calc_exact_in_stable_solidly`] etc. 1:1).
 ///
 /// `variant` + `stable` together dispatch the math:
 /// - `(AerodromeV2Stable, true)` → `calc_exact_in_stable_solidly`
@@ -152,7 +152,7 @@ pub struct SolidlyHopState {
     /// Decimals scale of token1 (`10^decimals`, e.g. `1_000_000`).
     pub decimals_1: U256,
     /// Direction flag: `0` swaps token0→token1, `1` swaps token1→token0.
-    /// Mirrors `token_in` in [`degenbot_solidly_math::calc_exact_in_stable_solidly`].
+    /// Mirrors `token_in` in [`degenbot_math::solidly::calc_exact_in_stable_solidly`].
     pub token_in: u8,
     /// Fee numerator — the fee fraction is `fee_numer / fee_denom`.
     pub fee_numer: U256,

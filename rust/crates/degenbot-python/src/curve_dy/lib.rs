@@ -9,7 +9,7 @@
 
 use crate::prelude::*;
 use alloy::primitives::{Address, U256};
-use degenbot_curve_math::curve_dy_calculator::{
+use degenbot_math::curve::curve_dy_calculator::{
     calculate_dy as core_calculate_dy, calculate_dy_underlying as core_calculate_dy_underlying,
     CurveBasePoolPort as CoreBasePort, CurveSwapError, DyCalculationInputs as CoreInputs,
 };
@@ -96,8 +96,8 @@ fn empty_inputs() -> CoreInputs {
         block_number: 0,
         block_timestamp: 0,
         amp: U256::ZERO,
-        d_variant: degenbot_curve_math::DVariant::Standard,
-        y_variant: degenbot_curve_math::YVariant::Standard,
+        d_variant: degenbot_math::curve::DVariant::Standard,
+        y_variant: degenbot_math::curve::YVariant::Standard,
         a_precision: U256::ZERO,
         swap_style: 1,
         metapool: false,
@@ -220,13 +220,13 @@ impl DyCalculationInputs {
     }
     #[setter]
     fn set_d_variant(&mut self, v: u8) -> PyResult<()> {
-        self.inner.d_variant = degenbot_curve_math::DVariant::try_from_u8(v)
+        self.inner.d_variant = degenbot_math::curve::DVariant::try_from_u8(v)
             .ok_or_else(|| PyValueError::new_err(format!("Unknown d_variant: {v}")))?;
         Ok(())
     }
     #[setter]
     fn set_y_variant(&mut self, v: u8) -> PyResult<()> {
-        self.inner.y_variant = degenbot_curve_math::YVariant::try_from_u8(v)
+        self.inner.y_variant = degenbot_math::curve::YVariant::try_from_u8(v)
             .ok_or_else(|| PyValueError::new_err(format!("Unknown y_variant: {v}")))?;
         Ok(())
     }

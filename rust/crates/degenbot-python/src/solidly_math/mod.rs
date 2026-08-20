@@ -2,7 +2,7 @@
 //! core.
 //!
 //! Thin binding layer that extracts Python arguments, calls the pure-Rust math
-//! leaf (`degenbot_solidly_math`), and converts results back to Python `int`s.
+//! leaf (`degenbot_math::solidly`), and converts results back to Python `int`s.
 //! Mirrors the `balancer_math` / `curve_math` binding shape (top-level
 //! functions added to the umbrella module via `add_solidly_math_module`). The
 //! GIL is held during computation — the Solidly math operations are cheap and

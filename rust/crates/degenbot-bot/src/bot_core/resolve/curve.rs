@@ -2,7 +2,7 @@
 
 use alloy::primitives::U256;
 
-use degenbot_curve_math::{FEE_DENOMINATOR, X_PRECISION};
+use degenbot_math::curve::{FEE_DENOMINATOR, X_PRECISION};
 use degenbot_solvers::mixed::{CurveStableswapHopState, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
@@ -28,7 +28,7 @@ pub(crate) fn project_curve(
     } else {
         (1, 0)
     };
-    // Curve constants (degenbot_curve_math owns the convention).
+    // Curve constants (degenbot_math::curve owns the convention).
     let precision = U256::from(X_PRECISION);
     let fee_denom = U256::from(FEE_DENOMINATOR);
     let a_precision = U256::from(id.a_precision);
@@ -44,9 +44,9 @@ pub(crate) fn project_curve(
     if raw_idx_in >= xp.len() || raw_idx_out >= xp.len() {
         return Err(MissingHopReason::OutOfRange);
     }
-    let y_variant = degenbot_curve_math::stableswap::YVariant::try_from_u8(id.y_variant)
+    let y_variant = degenbot_math::curve::stableswap::YVariant::try_from_u8(id.y_variant)
         .ok_or(MissingHopReason::UnknownVariant)?;
-    let d_variant = degenbot_curve_math::stableswap::DVariant::try_from_u8(id.d_variant)
+    let d_variant = degenbot_math::curve::stableswap::DVariant::try_from_u8(id.d_variant)
         .ok_or(MissingHopReason::UnknownVariant)?;
     Ok((
         ResolvedHop::CurveStableswap {

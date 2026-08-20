@@ -814,10 +814,7 @@ async fn bootstrap_v3_tick_map(
     block: u64,
 ) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), ProviderError> {
     let (word, _) =
-        degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_and_bit_position(
-            tick,
-            tick_spacing,
-        );
+        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V3 tick word fits in int16");
     // Best-effort single-word probe for a Sparse pool: an unreadable word
@@ -1104,10 +1101,7 @@ async fn bootstrap_v4_tick_map(
     block: u64,
 ) -> Result<(HashMap<i32, TickInfo>, PoolTickCoverage), ProviderError> {
     let (word, _) =
-        degenbot_concentrated_liquidity_math::liquidity_mapping::get_tick_word_and_bit_position(
-            tick,
-            tick_spacing,
-        );
+        degenbot_math::cl::liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing);
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V4 tick word fits in int16");
     // Same best-effort single-word probe + graceful decode-error degradation as

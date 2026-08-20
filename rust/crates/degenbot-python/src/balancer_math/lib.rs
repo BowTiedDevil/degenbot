@@ -1,7 +1,7 @@
 //! `PyO3` wrappers for the Balancer V2 math library.
 //!
 //! Thin binding layer that extracts Python arguments, calls the pure Rust
-//! core (`degenbot_balancer_math`), and converts results back to Python
+//! core (`degenbot_math::balancer`), and converts results back to Python
 //! `int`s. Only the swap-path math surfaces the Balancer companions invoke
 //! (`weighted_math`/`stable_math` `calc_out_given_in`/`calc_in_given_out`/
 //! `calculate_invariant` + the fee helpers) are wrapped here; the BPT /
@@ -15,7 +15,7 @@
 
 use crate::prelude::*;
 use alloy::primitives::U256;
-use degenbot_balancer_math::{BalancerMathError, PowVersion};
+use degenbot_math::balancer::{BalancerMathError, PowVersion};
 use pyo3::{
     exceptions::{PyOverflowError, PyValueError},
     types::{PyList, PyModule},
@@ -128,7 +128,7 @@ pub fn weighted_calculate_invariant(
     let py = normalized_weights.py();
     let weights = extract_u256_vec(normalized_weights)?;
     let balances = extract_u256_vec(balances)?;
-    let result = degenbot_balancer_math::weighted_calculate_invariant(
+    let result = degenbot_math::balancer::weighted_calculate_invariant(
         &weights,
         &balances,
         pow_version(version)?,
@@ -152,7 +152,7 @@ pub fn weighted_calc_out_given_in(
     version: u8,
 ) -> PyResult<PyObject> {
     let py = balance_in.py();
-    let result = degenbot_balancer_math::weighted_calc_out_given_in(
+    let result = degenbot_math::balancer::weighted_calc_out_given_in(
         extract_u256(balance_in)?,
         extract_u256(weight_in)?,
         extract_u256(balance_out)?,
@@ -179,7 +179,7 @@ pub fn weighted_calc_in_given_out(
     version: u8,
 ) -> PyResult<PyObject> {
     let py = balance_in.py();
-    let result = degenbot_balancer_math::weighted_calc_in_given_out(
+    let result = degenbot_math::balancer::weighted_calc_in_given_out(
         extract_u256(balance_in)?,
         extract_u256(weight_in)?,
         extract_u256(balance_out)?,
@@ -202,7 +202,7 @@ pub fn weighted_subtract_swap_fee_amount(
     fee_percentage: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = amount.py();
-    let result = degenbot_balancer_math::subtract_swap_fee_amount(
+    let result = degenbot_math::balancer::subtract_swap_fee_amount(
         extract_u256(amount)?,
         extract_u256(fee_percentage)?,
     )
@@ -221,7 +221,7 @@ pub fn weighted_add_swap_fee_amount(
     fee_percentage: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = amount.py();
-    let result = degenbot_balancer_math::add_swap_fee_amount(
+    let result = degenbot_math::balancer::add_swap_fee_amount(
         extract_u256(amount)?,
         extract_u256(fee_percentage)?,
     )
@@ -246,7 +246,7 @@ pub fn weighted_add_swap_fee_amount(
 #[pyfunction(signature = (a, b))]
 pub fn fixed_point_mul_down(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
-    let result = degenbot_balancer_math::fixed_point::mul_down(extract_u256(a)?, extract_u256(b)?)
+    let result = degenbot_math::balancer::fixed_point::mul_down(extract_u256(a)?, extract_u256(b)?)
         .map_err(bal_err)?;
     u256_to_py_obj(py, result)
 }
@@ -260,7 +260,7 @@ pub fn fixed_point_mul_down(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyRes
 #[pyfunction(signature = (a, b))]
 pub fn fixed_point_div_down(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
-    let result = degenbot_balancer_math::fixed_point::div_down(extract_u256(a)?, extract_u256(b)?)
+    let result = degenbot_math::balancer::fixed_point::div_down(extract_u256(a)?, extract_u256(b)?)
         .map_err(bal_err)?;
     u256_to_py_obj(py, result)
 }
@@ -274,7 +274,7 @@ pub fn fixed_point_div_down(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyRes
 #[pyfunction(signature = (a, b))]
 pub fn fixed_point_div_up(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
-    let result = degenbot_balancer_math::fixed_point::div_up(extract_u256(a)?, extract_u256(b)?)
+    let result = degenbot_math::balancer::fixed_point::div_up(extract_u256(a)?, extract_u256(b)?)
         .map_err(bal_err)?;
     u256_to_py_obj(py, result)
 }
@@ -293,7 +293,7 @@ pub fn stable_calculate_invariant(
 ) -> PyResult<PyObject> {
     let py = amp.py();
     let balances = extract_u256_vec(balances)?;
-    let result = degenbot_balancer_math::stable_calculate_invariant(extract_u256(amp)?, &balances)
+    let result = degenbot_math::balancer::stable_calculate_invariant(extract_u256(amp)?, &balances)
         .map_err(bal_err)?;
     u256_to_py_obj(py, result)
 }
@@ -311,7 +311,7 @@ pub fn stable_calculate_invariant_deployed(
 ) -> PyResult<PyObject> {
     let py = amp.py();
     let balances = extract_u256_vec(balances)?;
-    let result = degenbot_balancer_math::stable_calculate_invariant_deployed(
+    let result = degenbot_math::balancer::stable_calculate_invariant_deployed(
         extract_u256(amp)?,
         &balances,
         round_up,
@@ -336,7 +336,7 @@ pub fn stable_calc_out_given_in(
 ) -> PyResult<PyObject> {
     let py = amp.py();
     let balances = extract_u256_vec(balances)?;
-    let result = degenbot_balancer_math::stable_calc_out_given_in(
+    let result = degenbot_math::balancer::stable_calc_out_given_in(
         extract_u256(amp)?,
         &balances,
         token_index_in,
@@ -364,7 +364,7 @@ pub fn stable_calc_in_given_out(
 ) -> PyResult<PyObject> {
     let py = amp.py();
     let balances = extract_u256_vec(balances)?;
-    let result = degenbot_balancer_math::stable_calc_in_given_out(
+    let result = degenbot_math::balancer::stable_calc_in_given_out(
         extract_u256(amp)?,
         &balances,
         token_index_in,

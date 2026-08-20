@@ -1,7 +1,7 @@
 //! `PyO3` wrappers for the Curve `StableSwap` math library.
 //!
 //! Thin binding layer that extracts Python arguments, calls the pure Rust core
-//! (`degenbot_curve_math`), and converts results back to Python `int`s. Wraps
+//! (`degenbot_math::curve`), and converts results back to Python `int`s. Wraps
 //! the five iterative solvers the `DyCalculator` strategy seam invokes; the
 //! step functions (`calc_d`/`calc_dp*`) are internal to the solvers and not
 //! re-exported. The variant enums (`DVariant`/`YVariant`/`YDVariant`) cross
@@ -10,7 +10,7 @@
 
 use crate::prelude::*;
 use alloy::primitives::U256;
-use degenbot_curve_math::{CurveMathError, CurveMathError as CErr, DVariant, YDVariant, YVariant};
+use degenbot_math::curve::{CurveMathError, CurveMathError as CErr, DVariant, YDVariant, YVariant};
 use pyo3::{
     exceptions::PyValueError,
     types::{PyList, PyModule},
@@ -117,7 +117,7 @@ pub fn stableswap_get_d(
     d_variant: u8,
 ) -> PyResult<PyObject> {
     let py = xp.py();
-    let result = degenbot_curve_math::stableswap_get_d(
+    let result = degenbot_math::curve::stableswap_get_d(
         &extract_u256_vec(xp)?,
         extract_u256(amp)?,
         extract_u256(n_coins)?,
@@ -147,7 +147,7 @@ pub fn stableswap_get_y(
     d_variant: u8,
 ) -> PyResult<PyObject> {
     let py = x.py();
-    let result = degenbot_curve_math::stableswap_get_y(
+    let result = degenbot_math::curve::stableswap_get_y(
         i,
         j,
         extract_u256(x)?,
@@ -178,7 +178,7 @@ pub fn stableswap_get_y_d(
     yd_variant: u8,
 ) -> PyResult<PyObject> {
     let py = amp.py();
-    let result = degenbot_curve_math::stableswap_get_y_d(
+    let result = degenbot_math::curve::stableswap_get_y_d(
         extract_u256(amp)?,
         i,
         &extract_u256_vec(xp)?,
@@ -207,7 +207,7 @@ pub fn stableswap_newton_y(
     a_multiplier: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = ann.py();
-    let result = degenbot_curve_math::stableswap_newton_y(
+    let result = degenbot_math::curve::stableswap_newton_y(
         extract_u256(ann)?,
         extract_u256(gamma)?,
         &extract_u256_vec(xp)?,
@@ -232,7 +232,7 @@ pub fn stableswap_reduction_coefficient(
     n_coins: &Bound<'_, PyAny>,
 ) -> PyResult<PyObject> {
     let py = x.py();
-    let result = degenbot_curve_math::stableswap_reduction_coefficient(
+    let result = degenbot_math::curve::stableswap_reduction_coefficient(
         &extract_u256_vec(x)?,
         extract_u256(fee_gamma)?,
         extract_u256(n_coins)?,
