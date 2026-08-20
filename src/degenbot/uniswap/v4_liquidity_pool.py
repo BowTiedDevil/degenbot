@@ -20,10 +20,11 @@ amount-modifying hooks + dynamic fees) lives in Rust
 (`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool` (ADR-005
 slice 9a) so the companion never holds a hooked pool.
 
-`_bitmap_override` mirrors V3: the verbatim tick_bitmap words the
-builder/snapshot/fetcher passed via `update_tick_data`, overlaid on the
-Rust-derived bitmap so a snapshot's on-chain bitmap is preserved verbatim AND
-a fetcher-checked empty word is seen as present-but-zero.
+Checked words (a tick-data fetcher probed `tickBitmap(word)` and the on-chain
+bitmap was zero) are tracked in Rust `known_bitmap_words` (Sparse only — see
+the V3 companion's sparse-map note); `tick_bitmap_snapshot()` surfaces a
+checked-but-empty word as `(0, block)` so the fetch loop breaks with no
+client-side shadow (T1 3WTDFK retired the companion's `_bitmap_override`).
 """
 
 from __future__ import annotations
@@ -182,7 +183,6 @@ class UniswapV4Pool(
     lp_fee: int
     _initial_state_block: int
     _sparse_liquidity_map: bool
-    _bitmap_override: dict[int, Any]
     _tick_data_fetcher: Any
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
@@ -305,7 +305,6 @@ class UniswapV4Pool(
 
         self._sparse_liquidity_map = len(self._py_pool.tick_data_snapshot()) == 0
 
-        self._bitmap_override = {}
         self._tick_data_fetcher = None
         return self
 
@@ -669,13 +668,16 @@ class UniswapV4Pool(
     def tick_bitmap(self) -> InitializedTickMap:
         """Tick bitmap.
 
-        Returns a deep-copy snapshot of the Rust-side tick bitmap (built from
-        ``tick_data`` keys — Rust derives the bitmap, no separate store) MERGED
-        with the companion's verbatim ``_bitmap_override``. Mirrors the V3
+        A deep-copy snapshot of the Rust-side tick bitmap: derived from
+        ``tick_data`` keys, + for Sparse pools the checked-but-empty words
+        from Rust ``known_bitmap_words`` as ``(0, block)`` entries (a word
+        checked via ``update_tick_data``/fetch-merge survives as
+        present-but-zero — the fetch loop breaks). Tracked pools return the
+        pure derivation (absent word = known-empty). Mirrors the V3
         companion.
         """
         raw = self._py_pool.tick_bitmap_snapshot()
-        result: dict[int, BitmapAtWord] = {
+        return {
             int(word): (
                 BitmapAtWord(bitmap=int(row[0]), block=int(row[1]))
                 if not isinstance(row, BitmapAtWord)
@@ -683,9 +685,6 @@ class UniswapV4Pool(
             )
             for word, row in raw.items()
         }
-        for word, bitmap_at_word in self._bitmap_override.items():
-            result[word] = bitmap_at_word  # ruff:ignore[manual-dict-comprehension]
-        return result
 
     @property
     def tick_data(self) -> LiquidityMap:
@@ -771,9 +770,12 @@ class UniswapV4Pool(
         """Apply updated tick bitmap and data from the tick data fetcher.
 
         Delegates to ``LiquidityPool.update_tick_data`` (replaces the
-        Rust-side ``tick_data`` HashMap; scalars unchanged; ``update_block``
-        advances when newer). Records every word in ``tick_bitmap`` into
-        ``_bitmap_override``. Mirrors the V3 companion.
+        Rust-side ``tick_data`` HashMap; scalars unchanged). The
+        ``tick_bitmap`` KEYS are the checked words: for Sparse pools the FFI
+        records them in Rust ``known_bitmap_words`` (a checked word is never
+        re-fetched); the VALUES are NOT stored (the bitmap derives from the
+        tick rows). Tracked pools record nothing (their bitmap is complete).
+        Mirrors the V3 companion.
         """
         normalized: dict[int, tuple[int, int, int]] = {}
         for tick, info in tick_data.items():
@@ -796,13 +798,6 @@ class UniswapV4Pool(
                     int(info[2]) if len(info) > 2 else block,  # ruff:ignore[magic-value-comparison]
                 )
         self._py_pool.update_tick_data(tick_bitmap, normalized, block)
-        for word, bitmap_at_word in tick_bitmap.items():
-            if isinstance(bitmap_at_word, BitmapAtWord):
-                self._bitmap_override[int(word)] = bitmap_at_word
-            elif isinstance(bitmap_at_word, dict):
-                self._bitmap_override[int(word)] = BitmapAtWord(**bitmap_at_word)
-            else:
-                self._bitmap_override[int(word)] = bitmap_at_word
         # NOTE: ``_sparse_liquidity_map`` NOT flipped — fetcher's incremental
         # backfill must keep the pool sparse. See V3 companion for rationale.
 

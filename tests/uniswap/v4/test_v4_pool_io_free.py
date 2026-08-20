@@ -164,8 +164,12 @@ class TestV4PoolIOFreeConstructor:
         native_eth = _make_native_eth()
         usdc = _make_usdc()
 
-        tick_bitmap = {0: BitmapAtWord(bitmap=1, block=18_000_000)}
+        # The bitmap is DERIVED from the tick rows (T1 3WTDFK — verbatim
+        # bitmap values are not stored; checked words are tracked in Rust
+        # known_bitmap_words instead). tick -10 / spacing 10 -> compressed
+        # -1 -> word -1 bit 255; tick 120 -> compressed 12 -> word 0 bit 12.
         tick_data = {
+            120: LiquidityAtTick(liquidity_net=100, liquidity_gross=200, block=18_000_000),
             -10: LiquidityAtTick(liquidity_net=100, liquidity_gross=200, block=18_000_000),
         }
 
@@ -184,12 +188,13 @@ class TestV4PoolIOFreeConstructor:
             protocol_fee_one_for_zero=0,
             lp_fee=500000,
             state_block=18_000_000,
-            tick_bitmap=tick_bitmap,
             tick_data=tick_data,
         )
 
         assert pool.sparse_liquidity_map is False
-        assert pool.tick_bitmap[0].bitmap == 1
+        assert pool.tick_bitmap[0].bitmap == (1 << 12)
+        assert pool.tick_bitmap[-1].bitmap == (1 << 255)
+        assert pool.tick_data[120].liquidity_net == 100
         assert pool.tick_data[-10].liquidity_net == 100
 
     def test_io_free_external_update(self) -> None:

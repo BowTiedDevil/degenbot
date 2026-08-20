@@ -88,6 +88,25 @@ per-pool `Quarantined → drain+verify → Live` sequence owned by the Rust core
 - **Sparse** (`PoolTickCoverage`) — no complete tick data exists; solver
   results may be inaccurate. Registers `Live` immediately, is never
   quarantined, and is **never verified** (no RPC) — DFQYM5.
+- **Known bitmap word** (`known_bitmap_words`, V3/V4 CL state) — a tick-bitmap
+  word the caller has CHECKED: its whole tick set is established (fetched via
+  the sparse fetcher, a full-sync replace, the initial snapshot's tick keys,
+  or the `tick_bitmap` keys passed at the `update_tick_data` FFI seam).
+  **Sparse-only state**: seeded at Sparse registration, grown only by those
+  checked-word sources — an apply event NEVER marks its touched word
+  (partial information never makes a word known). Never written for Tracked
+  pools (their bitmap is complete). The Rust bitmap itself is DERIVED from
+  the `tick_data` rows (bit set ⟺ tick row holds);
+  `tick_bitmap_snapshot()` (the FFI read seam) surfaces a known-but-empty
+  word as a `(0, tick_data_block)` entry.
+- **Checked-empty word** — a checked bitmap word with no initialized ticks
+  (the fetcher probed `tickBitmap(word)` and the on-chain bitmap was zero).
+  It must survive as *present-but-zero*, never re-fetched — hence the absence
+  contract: a word ABSENT from the bitmap snapshot is *indeterminate* on a
+  Sparse pool (fetch before use) and *known-empty* on a Tracked pool (the map
+  is complete). The companion's Python `_bitmap_override` shadow is retired
+  (T1, epic `OU4SYZ`): the invariant lives in the Rust core, so a standalone
+  Rust consumer gets the same contract.
 - **Snapshot seed** — the registration-time (pinned) `tick_data` for a Tracked
   pool; verified exactly once against on-chain@snapshot-block (step-1), then
   consumed so memory is bounded. Comparing engine-current instead of the seed

@@ -388,6 +388,38 @@ impl BotState {
         }
     }
 
+    /// Record `words` as known on the CL pool behind `pool_id` — the
+    /// write-path twin of [`Self::sync_tick_data_by_pool_id`] (arch-review
+    /// cand 4, T1). Sparse pools only: the trait writer no-ops for Tracked
+    /// (their bitmap is complete). The FFI `update_tick_data` seam calls
+    /// both under one write guard: tick rows replaced first, then the
+    /// caller's checked words recorded (the contract that retires the
+    /// companion's `_bitmap_override` shadow).
+    ///
+    /// Returns `false` for V2 / non-CL / unregistered (the family-dispatch
+    /// silent no-op contract).
+    #[must_use]
+    pub fn mark_bitmap_words_known_by_pool_id(&mut self, pool_id: u64, words: &[i32]) -> bool {
+        let Some(entry) = self.pools.get_mut(&pool_id) else {
+            return false;
+        };
+        match entry {
+            PoolEntry::V3(_, state) => {
+                state.mark_bitmap_words_known(words);
+                true
+            }
+            PoolEntry::V4(_, state) => {
+                state.mark_bitmap_words_known(words);
+                true
+            }
+            PoolEntry::V2(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => false,
+        }
+    }
+
     /// Buffer a V3 liquidity update from the backfill phase. During backfill no
     /// pools are registered yet, so this always buffers (routes to the
     /// never-expired backfill buffer). If the pool happens to be registered
@@ -1792,5 +1824,90 @@ impl BotState {
         state.update_block = update.update_block;
         state.tick_data_block = update.update_block;
         state.invalidate_tick_range_cache();
+    }
+}
+
+#[cfg(test)]
+mod known_word_dispatcher_tests {
+    use std::collections::HashMap;
+
+    use alloy::primitives::{Address, U256};
+
+    use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState};
+
+    use super::{BotState, RegisterV3PoolParams};
+
+    fn register_v3(coverage: PoolTickCoverage) -> (BotState, u64) {
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+        (core, pool_id)
+    }
+
+    #[test]
+    fn mark_bitmap_words_known_by_pool_id_sparse_marks() {
+        let (mut core, pool_id) = register_v3(PoolTickCoverage::Sparse);
+        assert!(
+            core.mark_bitmap_words_known_by_pool_id(pool_id, &[7]),
+            "dispatcher must report a CL apply"
+        );
+        let state = core.get_v3_pool(pool_id).expect("registered");
+        assert!(state.known_bitmap_words.contains(&7));
+    }
+
+    #[test]
+    fn mark_bitmap_words_known_by_pool_id_tracked_noop() {
+        let (mut core, pool_id) = register_v3(PoolTickCoverage::Tracked);
+        let _ = core.mark_bitmap_words_known_by_pool_id(pool_id, &[7]);
+        let state = core.get_v3_pool(pool_id).expect("registered");
+        assert!(
+            !state.known_bitmap_words.contains(&7),
+            "Tracked pools never record checked words"
+        );
+    }
+
+    #[test]
+    fn mark_bitmap_words_known_by_pool_id_unregistered_noop() {
+        let (mut core, _pool_id) = register_v3(PoolTickCoverage::Sparse);
+        assert!(!core.mark_bitmap_words_known_by_pool_id(99, &[7]));
+    }
+
+    #[test]
+    fn apply_liquidity_update_does_not_mark_words_known() {
+        // Discipline (grilling decision): a word becomes known only when its
+        // WHOLE tick set is established (fetch-merge / full sync / passed
+        // checked words) — an apply event must never mark the touched word.
+        let (mut core, pool_id) = register_v3(PoolTickCoverage::Sparse);
+        // A Mint initializing a tick in word 1 (compressed 256 -> tick 15360).
+        assert!(core
+            .apply_liquidity_update_by_pool_id(pool_id, 15360, 15420, 1, 5)
+            .is_some());
+        let state = core.get_v3_pool(pool_id).expect("registered");
+        assert!(
+            state.tick_data.contains_key(&15360),
+            "the Mint must initialize the boundary tick row"
+        );
+        let word = V3PoolState::word_of(15360, 60);
+        assert!(
+            !state.known_bitmap_words.contains(&word),
+            "an apply event must not mark the touched word known"
+        );
     }
 }

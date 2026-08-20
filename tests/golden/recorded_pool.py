@@ -211,10 +211,12 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
             state_block=block,
             tick_data=state.get("tick_data"),
         )
-        # ``make_v3_pool`` seeds tick_data but not the Rust bitmap, so swap
-        # simulation can't tell where liquidity ends (swap-for-all /
-        # IncompleteSwap). ``update_tick_data`` seeds the Rust bitmap AND the
-        # companion override from the recorded words, restoring fork parity.
+        # ``make_v3_pool`` seeds tick_data but not the checked words, so
+        # swap simulation can't tell where liquidity ends (swap-for-all /
+        # IncompleteSwap). ``update_tick_data`` replays the recorded words
+        # (Sparse pools record them as checked words in Rust — the bitmap
+        # itself derives from the tick rows), restoring fork parity (T1
+        # 3WTDFK: the companion override is retired).
         tick_data = state.get("tick_data")
         tick_bitmap = state.get("tick_bitmap")
         if tick_bitmap or tick_data:

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 
 if TYPE_CHECKING:
@@ -128,14 +128,9 @@ def make_v4_pool(
         one_for_zero=protocol_fee_one_for_zero,
     )
     pool.lp_fee = lp_fee
-    if tick_bitmap is not None:
-        for word, bitmap_at_word in tick_bitmap.items():
-            if isinstance(bitmap_at_word, BitmapAtWord):
-                pool._bitmap_override[int(word)] = bitmap_at_word
-            elif isinstance(bitmap_at_word, dict):
-                pool._bitmap_override[int(word)] = BitmapAtWord(**bitmap_at_word)
-            else:
-                pool._bitmap_override[int(word)] = bitmap_at_word
+    # ``tick_bitmap`` keys are recorded Rust-side as checked words at the
+    # construction seed (T1 3WTDFK — the companion override is retired);
+    # nothing to overlay here.
     pool._sparse_liquidity_map = sparse
     return pool
 

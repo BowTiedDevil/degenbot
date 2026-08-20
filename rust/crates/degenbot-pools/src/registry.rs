@@ -10,11 +10,11 @@ use crate::state_history::{
     BalanceVectorPoolState, ReservePairPoolState, ScalarPriors, TickBefore, V3BlockDelta,
 };
 use crate::v2_state::{V2PoolIdentity, V2PoolState};
-use crate::v3_state::{V3PoolIdentity, V3PoolState};
+use crate::v3_state::{PoolTickCoverage, V3PoolIdentity, V3PoolState};
 use crate::v4_state::{V4PoolIdentity, V4PoolState};
 use crate::TickInfo;
 use alloy::primitives::{Address, I256, U256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A single pool's state. Pool-type-specific fields are in the enum variants.
 #[derive(Clone, Debug)]
@@ -380,6 +380,15 @@ pub trait ConcentratedLiquidityPool {
     /// OB7UNY). A pool can have a fresh price but a liquidity map that lags.
     fn tick_data_block(&self) -> u64;
     fn tick_data(&self) -> &HashMap<i32, TickInfo>;
+    /// Registration coverage (Sparse/Tracked). Sparse pools consult
+    /// `known_bitmap_words` for miss-detection; a Tracked pool's bitmap is
+    /// derived from its complete tick rows (word absent = known-empty).
+    fn coverage(&self) -> PoolTickCoverage;
+    /// The checked tick-bitmap words (the sparse miss-detection set).
+    /// Sparse-only state: seeded at registration from the initial tick
+    /// keys, grown by fetch-merge + full-sync + the FFI checked-word seam;
+    /// never written for Tracked pools.
+    fn known_bitmap_words(&self) -> &HashSet<i32>;
 }
 
 impl ConcentratedLiquidityPool for V3PoolState {
@@ -401,6 +410,12 @@ impl ConcentratedLiquidityPool for V3PoolState {
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
         &self.tick_data
     }
+    fn coverage(&self) -> PoolTickCoverage {
+        self.coverage
+    }
+    fn known_bitmap_words(&self) -> &HashSet<i32> {
+        &self.known_bitmap_words
+    }
 }
 
 impl ConcentratedLiquidityPool for V4PoolState {
@@ -421,6 +436,12 @@ impl ConcentratedLiquidityPool for V4PoolState {
     }
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
         &self.tick_data
+    }
+    fn coverage(&self) -> PoolTickCoverage {
+        self.coverage
+    }
+    fn known_bitmap_words(&self) -> &HashSet<i32> {
+        &self.known_bitmap_words
     }
 }
 
@@ -470,6 +491,19 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// `false` return is reserved for non-CL / unregistered pools — same
     /// convention as [`Self::replace_tick_data`]).
     fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool;
+
+    /// Record `words` as known in `known_bitmap_words` (arch-review cand 4,
+    /// T1) — **Sparse pools only**: a Tracked pool's bitmap is complete, so
+    /// the known set is never written (writing it would be dead state). The
+    /// word discipline: a word is known only when its WHOLE tick set is
+    /// established (a fetched word, a full-sync replace, or checked words
+    /// passed at the FFI `update_tick_data` boundary) — an apply event NEVER
+    /// marks its touched word.
+    ///
+    /// No journal delta (the known set is a miss-detection fact, not a
+    /// tick-map mutation); no cache invalidation (the known set does not
+    /// feed the cached tick ranges).
+    fn mark_bitmap_words_known(&mut self, words: &[i32]);
 
     /// Apply a Swap event to this pool's mutable `slot0` scalars + `tick_data`,
     /// capturing reverse-apply priors into the reorg journal (ADR-014 D1,
@@ -583,6 +617,12 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         self.known_bitmap_words.insert(fetched.word);
         self.invalidate_tick_range_cache();
         true
+    }
+
+    fn mark_bitmap_words_known(&mut self, words: &[i32]) {
+        if self.coverage == PoolTickCoverage::Sparse {
+            self.known_bitmap_words.extend(words.iter().copied());
+        }
     }
 
     fn apply_swap(
@@ -767,6 +807,12 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
         true
+    }
+
+    fn mark_bitmap_words_known(&mut self, words: &[i32]) {
+        if self.coverage == PoolTickCoverage::Sparse {
+            self.known_bitmap_words.extend(words.iter().copied());
+        }
     }
 
     fn apply_swap(
@@ -960,5 +1006,137 @@ mod projection_tests {
             state.update_block = 7;
         }
         assert_eq!(entry.v3().unwrap().1.update_block, 7);
+    }
+}
+
+// --- arch-review cand 4 (T1 3WTDFK): the known-word writer + coverage reader
+// (the FFI checked-word invariant contract, tested at the trait seam).
+
+#[cfg(test)]
+mod known_word_tests {
+    use std::collections::HashMap;
+
+    use alloy::primitives::{Address, U256};
+
+    use super::ConcentratedLiquidityPool;
+    use crate::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+    use crate::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
+
+    fn v3_state(coverage: PoolTickCoverage) -> V3PoolState {
+        let (_, state) = V3PoolState::from_params(
+            RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage,
+                fetcher: None,
+                ..Default::default()
+            },
+            8,
+        );
+        state
+    }
+
+    fn v4_state(coverage: PoolTickCoverage) -> V4PoolState {
+        let pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId = [0x99u8; 32];
+        let (_, state) = V4PoolState::from_params(
+            RegisterV4PoolParams {
+                pool_manager: Address::from([0x88u8; 20]),
+                pool_id,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage,
+                fetcher: None,
+            },
+            8,
+        );
+        state
+    }
+
+    #[test]
+    fn mark_bitmap_words_known_extends_sparse_known_set() {
+        // A checked word passed at the FFI boundary must land in
+        // known_bitmap_words for a Sparse pool (the fetch contract breaks
+        // otherwise — the companion's `_bitmap_override` existed for this).
+        let mut state = v3_state(PoolTickCoverage::Sparse);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[5, 9]);
+        assert!(
+            state.known_bitmap_words.contains(&5),
+            "sparse word 5 must be marked"
+        );
+        assert!(
+            state.known_bitmap_words.contains(&9),
+            "sparse word 9 must be marked"
+        );
+    }
+
+    #[test]
+    fn mark_bitmap_words_known_is_noop_for_tracked() {
+        // A Tracked pool's bitmap is COMPLETE — absent means known-empty — so
+        // the known set is never written (writing it would be dead state).
+        let mut state = v3_state(PoolTickCoverage::Tracked);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[5]);
+        assert!(
+            state.known_bitmap_words.is_empty(),
+            "Tracked pools must not write known_bitmap_words"
+        );
+    }
+
+    #[test]
+    fn coverage_reader_reports_registration_coverage() {
+        let sparse = v3_state(PoolTickCoverage::Sparse);
+        let tracked = v3_state(PoolTickCoverage::Tracked);
+        assert_eq!(sparse.coverage(), PoolTickCoverage::Sparse);
+        assert_eq!(tracked.coverage(), PoolTickCoverage::Tracked);
+    }
+
+    #[test]
+    fn v4_mark_bitmap_words_known_extends_sparse_known_set() {
+        let mut state = v4_state(PoolTickCoverage::Sparse);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[2]);
+        assert!(
+            state.known_bitmap_words.contains(&2),
+            "V4 sparse word must be marked"
+        );
+    }
+
+    #[test]
+    fn v4_mark_bitmap_words_known_is_noop_for_tracked() {
+        let mut state = v4_state(PoolTickCoverage::Tracked);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[2]);
+        assert!(
+            state.known_bitmap_words.is_empty(),
+            "V4 Tracked pools must not write known_bitmap_words"
+        );
+    }
+
+    #[test]
+    fn v4_coverage_reader_reports_registration_coverage() {
+        let sparse = v4_state(PoolTickCoverage::Sparse);
+        let tracked = v4_state(PoolTickCoverage::Tracked);
+        assert_eq!(sparse.coverage(), PoolTickCoverage::Sparse);
+        assert_eq!(tracked.coverage(), PoolTickCoverage::Tracked);
     }
 }
