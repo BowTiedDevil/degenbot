@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-abi"
 description = "Pure-Rust ABI type/decode/encode and function-signature parsing."
+keywords = ["mev", "solidity", "abi", "evm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-execution"
 description = "The ExecutionStrategy seam (ADR-025) — a pyo3-free crate owning the user-owned execution layer: the ExecutionStrategy trait + its value types (solve-result view, gate protocol, ExecutionResult, ComposerInputs) and the PayloadComposer Encode part. No default strategy ships here."
+keywords = ["mev", "execution", "evm", "transactions"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

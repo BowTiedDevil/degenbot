@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-pathfinding"
 description = "Pure-Rust arbitrage pathfinding graph + DFS (zero-dependency leaf; no pyo3/tokio/alloy)."
+keywords = ["arbitrage", "pathfinding", "graph", "mev"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

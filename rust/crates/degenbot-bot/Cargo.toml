@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-bot"
 description = "Rust-owned bot state (BotState) + Möbius solvers + unified Uniswap V2/V3/V4 engine."
+keywords = ["mev", "arbitrage", "bot", "evm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

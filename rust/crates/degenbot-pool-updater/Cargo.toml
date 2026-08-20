@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-pool-updater"
 description = "Pure-Rust pool-updater chunk-loop core: typed RPC event fetching + decode-to-row-input mapping (epic 2SFL6I)."
+keywords = ["mev", "pools", "events", "evm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

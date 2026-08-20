@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-executor"
 description = "Pure-Rust cmd-executor domain — simulation warmup-slot storage math (Solidity mapping-slot keccak layout)."
+keywords = ["mev", "evm", "execution", "encoding"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

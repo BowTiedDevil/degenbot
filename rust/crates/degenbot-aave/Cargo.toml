@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-aave"
 description = "Pure-Rust Aave V3 domain crate: the updater chunk-loop (transactional apply of decoded Aave events under one rusqlite Transaction) + the position-analysis math (health-factor / LTV / eMode / isolation) + the Aave V3 fixed-point math libraries (WadRayMath / PercentageMath). Epic AZGJUN."
+keywords = ["mev", "aave", "lending", "evm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

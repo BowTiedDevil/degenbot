@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-db"
 description = "SQLite persistence substrate for the degenbot Rust core — pyo3-free read handle with an Alembic-aware schema gate."
+keywords = ["sqlite", "database", "persistence", "mev"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

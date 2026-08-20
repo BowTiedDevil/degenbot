@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-fork"
 description = "Pure-Rust Anvil fork lifecycle + dev-RPC core (alloy node-bindings)."
+keywords = ["anvil", "fork", "rpc", "evm"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

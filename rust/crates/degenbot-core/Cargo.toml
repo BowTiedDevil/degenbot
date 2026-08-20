@@ -1,6 +1,7 @@
 [package]
 name = "degenbot-core"
 description = "Foundational utilities (errors, hex, addresses, runtime) for the degenbot Rust crates."
+keywords = ["mev", "evm", "primitives", "utilities"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
