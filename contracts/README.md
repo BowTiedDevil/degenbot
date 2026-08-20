@@ -18,8 +18,9 @@ contracts/
 
 | File | Contents | Use |
 |------|----------|-----|
-| `*_bytecode.txt` | `vyper -f bytecode` output | Deployment (`cast send --create`) |
-| `*_runtime_bytecode.txt` | Runtime bytecode + CBOR + 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
+| `*_bytecode.txt` | `vyper -f bytecode` output (artifact creation hex) | Deployment (`cast send --create`) |
+| `*_init_bytecode.txt` | Same creation hex as `*_bytecode.txt` (reference copy) | (no code consumer) |
+| `*_runtime_bytecode.txt` | Runtime bytecode + CBOR + 5 x 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
 
 ### Vyper bytecode layout
 
@@ -35,10 +36,12 @@ The deployed bytecode appends immutable data **after** the CBOR:
 [code_section][CBOR_metadata][immutable_data]
 ```
 
-The CODECOPY offset `0x405c` (= code_section + CBOR size) reads the first
-immutable; subsequent offsets read later slots. **The CBOR metadata must NOT
-be stripped** --- removing it breaks the jump table, JUMPDEST targets, and
-CODECOPY offsets.
+The CODECOPY offsets are compiler-generated against the end of the runtime
+section (with the current 16,097-byte artifact the first slot sits at
+0x3EE1) --- the one invariant the bake must hold is that the 160-byte
+immutables tail is appended AFTER the runtime (i.e. after the CBOR).
+**The CBOR metadata must NOT be stripped** --- removing it breaks the jump
+table, JUMPDEST targets, and CODECOPY offsets.
 
 The `*_runtime_bytecode.txt` files have immutables pre-appended (after the
 CBOR) so no storage overrides are needed.
@@ -90,30 +93,33 @@ with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
     f.write("0x" + code[:-320] + new_tail + "\n")
 ```
 
-### Recompiling
+### Rebaking the injected bytecode (X6OKMV re-sync)
 
-Source lives in `~/code/executor/` (separate project). The `recompile.py` script
-handles the full pipeline: compile, append immutables after CBOR metadata, patch
-PM address, and copy:
+`contracts/recompile.py` bakes the `contracts/cmd_executor_*` files from the
+COMMITTED tier-3 artifacts (toolchain-free): the runtime file is `0x` +
+`tier3-oracle/artifacts/executor/cmd_executor.runtime.hex` + the 5 x 32-byte
+immutable slots (mainnet values, delta slots precomputed for
+`INJECTED_EXECUTOR_ADDRESS`); the two init/bytecode files are the artifact
+creation hex; the ABI is copied verbatim. Before writing, it pins the
+artifacts to the current in-repo source via the manifest source-sha
+(fail-closed on drift -> run `just rebuild-tier3-artifacts`).
 
 ```bash
-python3 contracts/recompile.py          # compile + patch mainnet PM
-python3 contracts/recompile.py --no-patch  # compile without PM patch (testnet)
+uv run python contracts/recompile.py            # default: mainnet PM baked
+uv run python contracts/recompile.py --no-patch # POOL_MANAGER slot baked as zero (testnet/dev; patch later with the recipe above)
+uv run python contracts/recompile.py --compile  # additionally compile the in-repo source (vyper 0.5.0a3 via the executor uv project) and fail on any sha256 drift vs the artifacts
 ```
 
-The script reads `cmd_executor.vy` from `~/code/executor/`, compiles with Vyper,
-appends the 5 × 32-byte immutable slots after the CBOR metadata, patches
-`POOL_MANAGER_ADDR` to the mainnet address, and writes all 3 output files into
-`contracts/`. The CBOR metadata is preserved in the compiled output --- it must
-NOT be stripped (see "Vyper bytecode layout" above).
+The previous pipeline compiled from the retired `~/code/executor/` path
+(pre-vendoring); derivation from the committed artifacts replaces it outright.
 
 ---
 
 ## cmd_executor — Command-Stream Executor
 
-**Vyper**: 0.5.0a3 | **EVM**: Cancun | **Runtime**: 15,605 bytes (code + CBOR + immutables)
-**Source**: `~/code/executor/contracts/cmd_executor.vy`
-**Tests**: `~/code/executor/tests/` (224 passing, Ape + Foundry)
+**Vyper**: 0.5.0a3 | **EVM**: Cancun | **Runtime**: 16,257 bytes (16,097 B code + CBOR + 160 B immutables)
+**Source**: in-repo `executor/contracts/cmd_executor.vy` (vendored); committed artifacts in `tier3-oracle/artifacts/executor/` (vyper 0.5.0a3, compile-vs-use gate: `just verify-tier3-executor-artifact`)
+**Tests**: in-repo `executor/tests/` (Ape + Foundry)
 
 Compact command-stream executor. All execution decisions are made off-chain and encoded as a byte stream; the contract is a pure command interpreter. Two modes are freely mixed:
 
@@ -172,6 +178,7 @@ SKIP_PROFIT_CHECK / BRIBE behavior they used to encode moved into `config`.
 | `0x40` | V4_SWAP_COMPACT | `[0x40][c0:1][c1:1][fee:2][ts:2][hooks:1][zfo:1][amt:12]` | V4 swap, explicit amount (uint96) |
 | `0x41` | V4_SWAP_DYNAMIC | `[0x41][c0:1][c1:1][fee:2][ts:2][hooks:1][zfo:1]` | V4 swap from PM exttload |
 | `0x42` | V4_BATCH | `[0x42][n:1][entry:20]...` | Multi-swap + auto-settle (max 8) |
+| `0x43` | V4_BATCH_OPEN_WETH | `[0x43][n:1][entry:20]...` | As `0x42` but skips the WETH tail-settle (leaves the positive WETH delta open for a follow-up `V4_MINT_COMPACT` — ERC6909 capture; TGUZCT) |
 | **V4 Settlement / ERC6909** |||| |
 | `0x50` | V4_UNLOCK | `[0x50][len:1][data:N]` | Enter PM unlock context |
 | `0x51` | V4_TAKE | `[0x51][currency:1][rcpt:1][amount:32]` | Take from PM |

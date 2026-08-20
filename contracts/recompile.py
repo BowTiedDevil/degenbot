@@ -1,226 +1,203 @@
 #!/usr/bin/env python3
-"""Recompile cmd_executor.vy and inject mainnet immutables into the runtime bytecode.
+"""Bake the cmd_executor bytecode files into contracts/ (X6OKMV / TGUZCT re-sync).
 
 Usage:
-    python3 contracts/recompile.py [--no-patch]
+    uv run python contracts/recompile.py            # bake from the committed
+                                                    #   tier3-oracle/artifacts/executor/
+                                                    #   (toolchain-free, default)
+    uv run python contracts/recompile.py --compile  # additionally compile the
+                                                    #   in-repo executor/contracts/cmd_executor.vy
+                                                    #   (pinned vyper 0.5.0a3, executor uv
+                                                    #   project) and FAIL on any sha256
+                                                    #   mismatch vs the artifacts
+    uv run python contracts/recompile.py --no-patch # bake the POOL_MANAGER slot as
+                                                    #   zero (testnet/dev; patch afterwards
+                                                    #   with the README recipe)
 
-Steps:
-    1. Compile cmd_executor.vy from ~/code/executor/ using Vyper
-    2. Append 5 × 32-byte immutable slots after the CBOR metadata
-    3. Patch POOL_MANAGER_ADDR to the Ethereum mainnet PoolManager
-    4. Copy ABI, bytecode, and runtime bytecode into contracts/
+Files written (existing file format: 0x-prefixed lowercase hex + trailing
+newline; the ABI is copied verbatim):
+    cmd_executor_runtime_bytecode.txt  = 0x + runtime hex + 5 x 32B immutables
+    cmd_executor_bytecode.txt          = 0x + creation hex (deployment)
+    cmd_executor_init_bytecode.txt     = 0x + creation hex (pre-constructor-args)
+    cmd_executor_abi.json              = the artifact ABI
 
-Vyper bytecode layout
---------------------
-The Vyper compiler outputs runtime bytecode as:
-    [code_section][CBOR_metadata]
+Vyper bytecode layout (re-derived for the current artifact — the code section
+moved with U3WVLL / 767TN5 / TGUZCT; do NOT hand-bake offsets, they are
+compiler-generated):
+    runtime  = [code_section][CBOR_metadata]            (16,097 B @ this commit)
+    deployed = runtime + [5 x 32-byte immutable slots]  (16,257 B)
 
-The CBOR metadata occupies the last N bytes (variable length;
-the last 2 bytes encode the CBOR data length). The code section
-contains CODECOPY instructions with hardcoded offsets that assume
-the CBOR metadata is present in the deployed bytecode.
+The runtime code's CODECOPY instructions read the immutable slots from
+offsets at/after the end of the runtime section, so the 160-byte tail
+appended to `cmd_executor_runtime_bytecode.txt` lands exactly where the
+compiler expects it. The CBOR metadata MUST NOT be stripped (it doubles
+as the dispatch jump table + JUMPDEST targets), and the tail must come
+AFTER the CBOR — never replace it.
 
-In a normal deployment, the initcode appends immutable values
-AFTER the CBOR metadata:
-    [code_section][CBOR_metadata][immutable_data]
+Immutable layout (5 slots, 160 bytes, appended after the CBOR):
+    [0] OWNER_ADDR          0x9C56a29c7231974c269E24F9FB3c29203039089E
+    [1] WETH_ADDR           0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2
+    [2] POOL_MANAGER_ADDR   0x000000000004444c5dc75cB358380D2e3De08A90 (mainnet;
+                            zero with --no-patch)
+    [3] WETH_DELTA_SLOT     keccak256(padded20(self), padded20(WETH))
+    [4] NATIVE_DELTA_SLOT   keccak256(padded20(self), padded20(0x0))
+`self` = INJECTED_EXECUTOR_ADDRESS, the code-injection address — must match
+degenbot.runner._driver_constants.INJECTED_EXECUTOR_ADDRESS. Delta slots are
+precomputed exactly as __init__ computes them (keccak256 of the packed
+bytes32 pair, v4-core CurrencyDelta._computeSlot).
 
-The CODECOPY offset 0x405c (= 16476 = code_section + CBOR)
-reads the first immutable slot; subsequent CODECOPY offsets read
-later slots. The CBOR bytes also serve as the function dispatch
-jump table (e.g., 0x404a) and a JUMPDEST target (0x4046).
-
-IMPORTANT: The CBOR metadata MUST NOT be stripped. Removing it
-breaks the jump table, the JUMPDEST at 0x4046, and the CODECOPY
-offsets for immutables.
-
-Immutable layout (5 slots, 160 bytes, placed after CBOR):
-    [0]  OWNER_ADDR          — msg.sender at deploy time
-    [1]  WETH_ADDR           — constructor param
-    [2]  POOL_MANAGER_ADDR   — constructor param
-    [3]  WETH_DELTA_SLOT     — precomputed keccak256(self, WETH)
-    [4]  NATIVE_DELTA_SLOT   — precomputed keccak256(self, NATIVE)
-
-The constructor is __init__(weth, pool_manager) — no per-path token
-immutables. Only the two hot protocol currencies (WETH, NATIVE) get
-precomputed delta slots; all other currencies compute the slot on-chain
-via keccak256. The delta slots are precomputed in __init__ as
-keccak256(abi.encodePacked(self, currency)), matching v4-core
-CurrencyDelta._computeSlot. With code injection, self = the injected
-executor address.
-
-With --no-patch, skip the PM immutable patch (e.g. for testnets).
+The old pipeline compiled from ~/code/executor/ (retired 5ddf2f05b, vendored
+in-repo); the re-sync derives from the COMMITTED tier-3 artifacts instead,
+which fixes U3WVLL + 767TN5 + 0x43 in one bake.
 """
 
+from __future__ import annotations
+
+import hashlib
+import json
 import pathlib
-import shutil
 import subprocess
 import sys
 
 from degenbot.crypto import keccak256
 
 # ── Paths ──────────────────────────────────────────────────────────
-EXECUTOR_SRC = pathlib.Path.home() / "code" / "executor"
-VYPER_SOURCE = EXECUTOR_SRC / "contracts" / "cmd_executor.vy"
 DEGENBOT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONTRACTS_DIR = DEGENBOT_ROOT / "contracts"
+ARTIFACTS_DIR = DEGENBOT_ROOT / "tier3-oracle" / "artifacts" / "executor"
+EXECUTOR_DIR = DEGENBOT_ROOT / "executor"
+VYPER_SOURCE = EXECUTOR_DIR / "contracts" / "cmd_executor.vy"
 
-# ── Mainnet immutable values ──────────────────────────────────────
+# ── Mainnet immutable values ───────────────────────────────────────
 OWNER_ADDR = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 WETH_ADDR = "0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2"
 POOL_MANAGER_ADDR = "0x000000000004444c5dc75cB358380D2e3De08A90"
 NATIVE_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 # The injected executor address — used as `self` for delta slot precomputation.
-# Must match INJECTED_EXECUTOR_ADDRESS in the settlement-arbitrage bot.
+# Must match INJECTED_EXECUTOR_ADDRESS in degenbot.runner._driver_constants.
 INJECTED_EXECUTOR_ADDRESS = "0x0D6d4C3CF3bD3b769De1821F2Be0D7d99913e4F1"
 
+NUM_IMMUTABLE_SLOTS = 5
+IMMUTABLE_HEX_LEN = NUM_IMMUTABLE_SLOTS * 64  # 320 hex chars = 160 bytes
 
-def _left_pad_address(addr: str) -> str:
-    """Left-pad a 20-byte address to 32 bytes (64 hex chars)."""
+
+def _hex_read(path: pathlib.Path) -> str:
+    """Read a hex file, normalize to bare lowercase hex (no 0x / whitespace)."""
+    data = path.read_text().strip()
+    if data.startswith("0x") or data.startswith("0X"):
+        data = data[2:]
+    data = "".join(data.split()).lower()
+    if len(data) % 2 or any(c not in "0123456789abcdef" for c in data):
+        sys.exit(f"{path}: not even-length hex")
+    return data
+
+
+def _padded20(addr: str) -> str:
     return "0" * 24 + addr[2:].lower()
 
 
-def _left_pad_bytes32(value: bytes) -> str:
-    """Encode a 32-byte value as 64 hex chars (no 0x prefix)."""
-    return value.hex()
+def _compute_delta_slot(target: str, currency: str) -> str:
+    """V4 CurrencyDelta slot: keccak256(padded20(target) || padded20(currency))."""
+    packed = bytes.fromhex(_padded20(target) + _padded20(currency))
+    return keccak256(packed).hex()
 
 
-def _compute_delta_slot(target: str, currency: str) -> bytes:
-    """Compute a V4 CurrencyDelta slot.
-
-    Matches v4-core CurrencyDelta._computeSlot:
-        keccak256(abi.encodePacked(target, currency))
-    where target and currency are left-padded to bytes32.
-
-    In Vyper: keccak256(concat(convert(self, bytes32),
-        convert(convert(currency, uint160), bytes32)))
+def _check_manifest() -> None:
+    """Toolchain-free source pin: the manifest's sha256 column records the
+    SOURCE sha (cmd_executor.vy) that the committed cmd_executor artifacts
+    were built from. Verifying it here (without a toolchain) pins the
+    artifacts to the current in-repo source; the authoritative
+    compile-vs-use gate is just verify-tier3-executor-artifact.sh (CI).
     """
-    target_bytes = bytes.fromhex(target[2:].lower().zfill(64))
-    currency_bytes = bytes.fromhex(currency[2:].lower().zfill(64))
-    return keccak256(target_bytes + currency_bytes)
+    manifest = json.loads((ARTIFACTS_DIR / "manifest.json").read_text())
+    pin = None
+    for entry, meta in manifest.get("artifacts", {}).items():
+        if entry.startswith("executor/cmd_executor."):
+            pin = meta["sha256"]
+            break
+    if pin is None:
+        sys.exit("manifest.json: no executor/cmd_executor.* pin found")
+    actual = hashlib.sha256((DEGENBOT_ROOT / "executor" / "contracts" / "cmd_executor.vy").read_bytes()).hexdigest()
+    if actual != pin:
+        sys.exit(
+            f"source/artifact drift: cmd_executor.vy sha256 {actual[:16]} != manifest pin "
+            f"{pin[:16]} — rebuild via just rebuild-tier3-artifacts first"
+        )
+    print("       manifest source pin: OK (artifacts match committed source)")
+
+
+def _verify_compile_matches_artifacts() -> None:
+    """Compile the in-repo source and fail-closed on any drift from the
+    committed artifacts (the toolchain path is a consistency check, not a
+    bake source)."""
+    if not VYPER_SOURCE.exists():
+        sys.exit(f"source not found: {VYPER_SOURCE} (drop --compile?)")
+    want = {
+        "bytecode": _hex_read(ARTIFACTS_DIR / "cmd_executor.creation.hex"),
+        "bytecode_runtime": _hex_read(ARTIFACTS_DIR / "cmd_executor.runtime.hex"),
+    }
+    for fmt, want_hex in want.items():
+        try:
+            out = subprocess.check_output(
+                ["uv", "run", "vyper", "-f", fmt, str(VYPER_SOURCE)],
+                cwd=EXECUTOR_DIR,
+                stderr=subprocess.PIPE,
+            ).decode().strip()
+        except subprocess.CalledProcessError as e:
+            sys.exit(f"vyper ({fmt}) failed:\n{e.stderr.decode()}")
+        got = out.removeprefix("0x").strip().lower()
+        if got != want_hex:
+            sys.exit(
+                f"source/artifact drift: vyper -f {fmt} sha256 "
+                f"{hashlib.sha256(got.encode()).hexdigest()[:16]} != artifact "
+                f"{hashlib.sha256(want_hex.encode()).hexdigest()[:16]} — "
+                "run just rebuild-tier3-artifacts (or revert the source)"
+            )
+        print(f"       vyper -f {fmt}: matches artifact")
 
 
 def main() -> None:
     patch_pm = "--no-patch" not in sys.argv[1:]
+    if "--compile" in sys.argv[1:]:
+        _verify_compile_matches_artifacts()
 
-    if not VYPER_SOURCE.exists():
-        sys.exit(f"Source not found: {VYPER_SOURCE}")
+    if not (ARTIFACTS_DIR / "cmd_executor.runtime.hex").exists():
+        sys.exit(f"artifacts not found under {ARTIFACTS_DIR}")
+    _check_manifest()
 
-    # ── Step 1: Compile ────────────────────────────────────────────
-    print("[1/4] Compiling cmd_executor.vy ...")
-    try:
-        abi = subprocess.check_output(
-            ["uv", "run", "vyper", "-f", "abi", str(VYPER_SOURCE)],
-            cwd=EXECUTOR_SRC,
-            stderr=subprocess.PIPE,
-        ).decode()
-    except subprocess.CalledProcessError as e:
-        sys.exit(f"Vyper ABI compilation failed:\n{e.stderr.decode()}")
+    runtime = _hex_read(ARTIFACTS_DIR / "cmd_executor.runtime.hex")
+    creation = _hex_read(ARTIFACTS_DIR / "cmd_executor.creation.hex")
+    abi = (ARTIFACTS_DIR / "cmd_executor.abi.json").read_text()
 
-    try:
-        bytecode = subprocess.check_output(
-            ["uv", "run", "vyper", "-f", "bytecode", str(VYPER_SOURCE)],
-            cwd=EXECUTOR_SRC,
-            stderr=subprocess.PIPE,
-        ).decode().strip()
-    except subprocess.CalledProcessError as e:
-        sys.exit(f"Vyper bytecode compilation failed:\n{e.stderr.decode()}")
-
-    try:
-        runtime_raw = subprocess.check_output(
-            ["uv", "run", "vyper", "-f", "bytecode_runtime", str(VYPER_SOURCE)],
-            cwd=EXECUTOR_SRC,
-            stderr=subprocess.PIPE,
-        ).decode().strip()
-    except subprocess.CalledProcessError as e:
-        sys.exit(f"Vyper runtime bytecode compilation failed:\n{e.stderr.decode()}")
-
-    runtime_code = runtime_raw.removeprefix("0x")
-    print(f"       Runtime bytecode: {len(runtime_code) // 2} bytes (code + CBOR)")
-
-    # ── Step 2: Append immutables AFTER the CBOR metadata ──────────
-    # The CBOR metadata MUST stay in place. Vyper's CODECOPY offsets
-    # are computed assuming the deployed bytecode layout is:
-    #   [code_section][CBOR_metadata][immutable_data]
-    # The CBOR bytes also serve as the function dispatch jump table
-    # and JUMPDEST targets used by the code section.
-    print("[2/4] Appending immutables after CBOR metadata ...")
-
-    # Precompute delta slots using the injected executor address as `self`
-    weth_delta_slot = _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, WETH_ADDR)
-    native_delta_slot = _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, NATIVE_ADDRESS)
-
+    pm = POOL_MANAGER_ADDR if patch_pm else NATIVE_ADDRESS
     immutables = (
-        _left_pad_address(OWNER_ADDR)          # [0] OWNER_ADDR
-        + _left_pad_address(WETH_ADDR)         # [1] WETH_ADDR
-        + _left_pad_address(POOL_MANAGER_ADDR) # [2] POOL_MANAGER_ADDR
-        + _left_pad_bytes32(weth_delta_slot)    # [3] WETH_DELTA_SLOT
-        + _left_pad_bytes32(native_delta_slot)  # [4] NATIVE_DELTA_SLOT
+        _padded20(OWNER_ADDR)                      # [0] OWNER_ADDR
+        + _padded20(WETH_ADDR)                     # [1] WETH_ADDR
+        + _padded20(pm)                            # [2] POOL_MANAGER_ADDR
+        + _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, WETH_ADDR)              # [3]
+        + _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, NATIVE_ADDRESS)         # [4]
     )
-    runtime_with_immutables = f"0x{runtime_code}{immutables}"
-    print(f"       OWNER        ={OWNER_ADDR}")
-    print(f"       WETH         ={WETH_ADDR}")
-    print(f"       PM           ={POOL_MANAGER_ADDR}")
-    print(f"       WETH_DELTA   =0x{weth_delta_slot.hex()}")
-    print(f"       NATIVE_DELTA =0x{native_delta_slot.hex()}")
+    runtime_baked = runtime + immutables
 
-    # ── Step 3: Patch PM immutable in runtime bytecode ─────────────
-    # The compiler may use a different PM than mainnet. We always
-    # overwrite it to ensure the runtime bytecode targets mainnet PM.
-    NUM_IMMUTABLE_SLOTS = 5
-    IMMUTABLE_HEX_LEN = NUM_IMMUTABLE_SLOTS * 64  # 320 hex chars = 160 bytes
-    PM_SLOT_INDEX = 2  # POOL_MANAGER_ADDR is the 3rd immutable (index 2)
-
-    if patch_pm:
-        print("[3/4] Patching POOL_MANAGER_ADDR immutable to mainnet ...")
-        code = runtime_with_immutables.removeprefix("0x")
-        pm_padded = _left_pad_address(POOL_MANAGER_ADDR)
-        # The immutable tail is the last IMMUTABLE_HEX_LEN hex chars
-        tail = code[-IMMUTABLE_HEX_LEN:]
-        # PM is at slot index 2: offset 2*64, replace 64 hex chars
-        pm_offset = PM_SLOT_INDEX * 64
-        patched_tail = tail[:pm_offset] + pm_padded + tail[pm_offset + 64:]
-        runtime_with_immutables = f"0x{code[:-IMMUTABLE_HEX_LEN]}{patched_tail}"
-    else:
-        print("[3/4] Skipping PM patch (--no-patch)")
-
-    # ── Step 4: Write output files ─────────────────────────────────
-    print("[4/4] Writing output files ...")
     CONTRACTS_DIR.mkdir(parents=True, exist_ok=True)
-
     (CONTRACTS_DIR / "cmd_executor_abi.json").write_text(abi)
-    (CONTRACTS_DIR / "cmd_executor_bytecode.txt").write_text(bytecode + "\n")
-    (CONTRACTS_DIR / "cmd_executor_runtime_bytecode.txt").write_text(runtime_with_immutables + "\n")
+    (CONTRACTS_DIR / "cmd_executor_bytecode.txt").write_text("0x" + creation + "\n")
+    (CONTRACTS_DIR / "cmd_executor_init_bytecode.txt").write_text("0x" + creation + "\n")
+    (CONTRACTS_DIR / "cmd_executor_runtime_bytecode.txt").write_text("0x" + runtime_baked + "\n")
 
-    init_bytecode_src = EXECUTOR_SRC / "contracts" / "cmd_executor_init_bytecode.txt"
-    if init_bytecode_src.exists():
-        shutil.copy2(init_bytecode_src, CONTRACTS_DIR / "cmd_executor_init_bytecode.txt")
-
-    print(f"       → {CONTRACTS_DIR / 'cmd_executor_abi.json'}")
-    print(f"       → {CONTRACTS_DIR / 'cmd_executor_bytecode.txt'}")
-    print(f"       → {CONTRACTS_DIR / 'cmd_executor_runtime_bytecode.txt'}")
-
-    # ── Verify ─────────────────────────────────────────────────────
-    code = runtime_with_immutables.removeprefix("0x")
-    tail = code[-IMMUTABLE_HEX_LEN:]
+    tail = runtime_baked[-IMMUTABLE_HEX_LEN:]
     print()
-    print("Verification:")
-    print(f"  Code + CBOR:   {len(runtime_code) // 2} bytes")
-    print(f"  Immutables:    {NUM_IMMUTABLE_SLOTS * 32} bytes")
-    print(f"  Total:         {len(code) // 2} bytes")
-    print(f"  OWNER slot:        0x{tail[0:64][-40:]}")
-    print(f"  WETH slot:         0x{tail[64:128][-40:]}")
-    print(f"  PM slot:           0x{tail[128:192][-40:]}")
-    print(f"  WETH_DELTA slot:   0x{tail[192:256]}")
-    print(f"  NATIVE_DELTA slot: 0x{tail[256:320]}")
-    # Validate total bytecode length
-    expected_len = len(runtime_code) // 2 + NUM_IMMUTABLE_SLOTS * 32
-    actual_len = len(code) // 2
-    if actual_len != expected_len:
-        print(f"  WARNING: bytecode length {actual_len} != expected {expected_len}")
-    else:
-        print(f"  Bytecode length: {actual_len} bytes ✓")
-    print()
+    print("Baked into contracts/ (from tier3-oracle/artifacts/executor/):")
+    print(f"  runtime (code+CBOR): {len(runtime) // 2} B")
+    print(f"  immutables:          {IMMUTABLE_HEX_LEN // 2} B (first CODECOPY tail offset {hex(len(runtime) // 2)})")
+    print(f"  runtime + immutables: {len(runtime_baked) // 2} B")
+    print(f"  OWNER         = {tail[0:64][-40:]}")
+    print(f"  WETH          = {tail[64:128][-40:]}")
+    print(f"  PM            = {tail[128:192][-40:]}")
+    print(f"  WETH_DELTA    = 0x{tail[192:256]}")
+    print(f"  NATIVE_DELTA  = 0x{tail[256:320]}")
+    print("  creation:          " + hashlib.sha256(creation.encode()).hexdigest()[:16])
     print("Done ✓")
 
 
