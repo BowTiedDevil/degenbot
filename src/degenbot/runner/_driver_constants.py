@@ -10,7 +10,7 @@ Note: the *canonical defaults* for the same tunables live in
 ``main()`` builds). These module-level values are the driver's live operating
 values — several are read directly by the hot-path modules (e.g.
 ``FEE_PERCENTILES`` by :mod:`~degenbot.runner.consume`, ``MIN_PROFIT_NET`` by
-:mod:`~degenbot.runner.dispatch`) and are settable via env vars / CLI.
+:mod:`~degenbot.runner._dispatch`) and are settable via env vars / CLI.
 """
 
 from __future__ import annotations
@@ -65,9 +65,6 @@ ERC6909_PROFIT = os.environ.get("DEGENBOT_ERC6909_PROFIT", "0") == "1"
 # Build/registration tunables.
 REG_QUEUE_BOUND = int(os.environ.get("DEGENBOT_REG_QUEUE_BOUND", "64"))
 REG_WORKERS = int(os.environ.get("DEGENBOT_REG_WORKERS", "4"))
-
-# Path permutation filter (set by main() from the --permutation CLI flag).
-PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
 
 # V3 factories (Ethereum mainnet).
 UNISWAP_V3_MAINNET_FACTORY = "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"

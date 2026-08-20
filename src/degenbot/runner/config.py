@@ -1,4 +1,4 @@
-"""Driver configuration + display-only helpers for the settlement-arbitrage ``BotRunner``.
+"""Driver configuration for the settlement-arbitrage ``BotRunner``.
 
 Extracted from ``examples/eth_backrun_helpers.py`` (epic 5TSYKN, task RVSYWB).
 This module owns the Python-companion, ``stays-python`` surface that the
@@ -6,19 +6,19 @@ runtime driver (``BotRunner``) and its tests consume:
 
 - :class:`ArbitrageConfig` — the unified frozen config value object (built from a
   dotenv mapping + CLI flags via :meth:`ArbitrageConfig.from_env`).
-- :func:`classify_revert` + :func:`format_failure_breakdown` — simulation
-  revert taxonomy / tallies (display-only).
-- :func:`filter_thin_margin_results` — display-only thinning of solver results.
-- :func:`format_sim_diag_line` — one always-on ``[sim-diag]`` JSON line.
+- :func:`classify_revert` — the canonical simulation-revert labeler
+  (public leaf; the dual-driver parity test imports it directly).
 
-None of these are engine logic; they are orchestration/config/display, so the
-three-layer rubric keeps them in the Python companion (``stays-python``).
+The display renderers (sim-diag / sim-fail / failure-breakdown) moved to
+:mod:`degenbot.runner._render`, and the helpers that served only the deleted
+legacy ``main()`` (``filter_thin_margin_results`` with its ``BPS_DENOM`` /
+``EngineResult`` pair) were deleted (epic Y7PA5A, task 34XJ6C).
 """
 
 import dataclasses
-import json
 import warnings
 from collections.abc import Mapping
+from pathlib import Path
 
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
@@ -206,6 +206,10 @@ class ArbitrageConfig:
     verification_retry_policy: VerificationRetryPolicy
     # Run mode
     dry_run: bool
+    # Explicit executor-runtime bytecode path (file containing 0x-prefixed hex).
+    # None -> DEGENBOT_CONTRACTS_DIR -> one computed source-layout candidate
+    # (NO filesystem walk). Wheel installs: pass this explicitly.
+    executor_runtime: str | Path | None = None
 
     @classmethod
     def from_env(
@@ -323,6 +327,7 @@ class ArbitrageConfig:
             executor_address = injected_address
 
         verification_retry_policy = _verification_retry_policy_from_env(env)
+        executor_runtime = env.get("EXECUTOR_RUNTIME") or None
 
         return cls(
             operator_address=operator_address,
@@ -348,6 +353,7 @@ class ArbitrageConfig:
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
             verification_retry_policy=verification_retry_policy,
+            executor_runtime=executor_runtime,
         )
 
 
@@ -449,117 +455,6 @@ def classify_revert(revert_data: bytes) -> str:
     return f"unknown:0x{selector}"
 
 
-def format_failure_breakdown(buckets: dict[str, int]) -> str:
-    """Render a ``name=count`` breakdown, highest count first (name breaks ties).
-
-    Returns ``""`` for an empty tally so the caller can skip the suffix when no
-    failures were classified.
-
-    Returns:
-        ``"name=count name=count…"`` ordered by descending count, or ``""``.
-
-    """
-    if not buckets:
-        return ""
-    ordered = sorted(buckets.items(), key=lambda kv: (-kv[1], kv[0]))
-    return " ".join(f"{name}={count}" for name, count in ordered)
-
-
-# Basis points denominator (10_000 = 100%).
 BPS_DENOM = 10_000
 
-# A result row from the Rust engine: (path_id, opt_input, profit, hop_outputs,
-# consumed_inputs, solve_block). The filter inspects opt_input + profit only.
 EngineResult = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]
-
-
-def filter_thin_margin_results(
-    results: list[EngineResult],
-    min_profit_margin_bps: int,
-) -> tuple[list[EngineResult], int]:
-    """Drop solver results whose gross-profit margin is too low.
-
-    S1 found that the dominant IIA reverts in V3/V4-heavy perms are razor-thin
-    arb (gross profit ≈ $0.001 on ≈ $0.06-$1.30 input = sub-0.2 bps margin)
-    that cannot survive 1-block drift. The chain has already arbitraged these
-    away by the time the sim runs. Filtering them pre-sim saves an RPC + a
-    revert per attempt and keeps them out of the TSV ``Reverts`` column.
-
-    ``min_profit_margin_bps`` is in basis points of ``optimal_input``
-    (e.g. ``50`` = 0.5% — a result with profit < 0.5% of its input is dropped).
-    ``0`` disables the filter (keeps all — backwards-compatible default).
-
-    Returns ``(kept, dropped_count)``. A dropped result is a genuine
-    above-zero-profit path the solver found; dropping it trades a missed
-    edge case for a cleaner revert signal + saved sim budget.
-
-    Returns:
-        A ``(kept_results, dropped_count)`` tuple; ``kept`` is a new list.
-
-    """
-    if min_profit_margin_bps <= 0 or not results:
-        return list(results), 0
-    threshold_num = min_profit_margin_bps
-    kept: list[EngineResult] = []
-    dropped = 0
-    for row in results:
-        _path_id, opt_input, profit, _ho, _ci, _sb = row
-        # profit ≥ opt_input * bps / BPS_DENOM  ⟺  profit * BPS_DENOM ≥ opt_input * bps
-        # (integer math — no float rounding.)
-        if opt_input > 0 and profit * BPS_DENOM >= opt_input * threshold_num:
-            kept.append(row)
-        elif opt_input == 0:
-            # No input basis to ratio against — keep (the solver's profit is
-            # absolute; a filter can't ratio it). Rare for arb paths.
-            kept.append(row)
-        else:
-            dropped += 1
-    return kept, dropped
-
-
-def format_sim_diag_line(
-    failure: dict[str, object],
-    *,
-    path_id: int,
-    path_type: str,
-    solve_block: int,
-    block: int,
-    age: int,
-) -> str:
-    """Render one always-on ``[sim-diag]`` JSON line per reverted candidate.
-
-    Ergo epic 63I7WJ (task AM5AJW): re-pointed at the inspector's captured
-    swap amounts (the ACTUAL amounts the in-process EVM emitted) vs the
-    solver's reported ``hop_outputs`` (the EXPECTED amounts). No
-    ``fetch_onchain``, no ``recompute`` — the captured swaps ARE the ground
-    truth (proven byte-exact against mainnet receipts by the
-    ``swap_capture_correctness`` probe).
-
-    The line is one compact, machine-parseable JSON object (``json.loads`` on
-    the text after the ``[sim-diag] `` prefix) carrying: ``path_id``,
-    ``path_type``, ``solve_block``, ``block``, ``age``, ``revert_info``
-    (the reverting-frame label — the ``failure["bucket"]``), ``optimal_input``
-    (the solver's expected input), ``hop_outputs`` (the solver's expected
-    per-hop outputs), and ``captured_swaps`` (the inspector-captured actual
-    per-swap amounts). ``logs/permutation_analyzer.py::classify_candidate``
-    compares ``hop_outputs[i]`` vs the i-th captured swap's output amount to
-    classify SolverCalc / Encoding / Unknown. Never raises — a malformed
-    failure emits a best-effort line with the fields it has, so emission never
-    blocks the revert path.
-
-    Returns:
-        The full ``[sim-diag] ``-prefixed JSON line string.
-
-    """
-    payload = {
-        "path_id": path_id,
-        "path_type": path_type,
-        "solve_block": solve_block,
-        "block": block,
-        "age": age,
-        "revert_info": failure.get("bucket", "") or "",
-        "optimal_input": failure.get("optimal_input"),
-        "hop_outputs": failure.get("hop_outputs", []),
-        "captured_swaps": failure.get("captured_swaps", []),
-    }
-    return "[sim-diag] " + json.dumps(payload, default=str, separators=(",", ":"))

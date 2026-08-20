@@ -29,6 +29,8 @@ import contextlib
 import gc
 import signal
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -41,11 +43,9 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.dispatch import Dispatcher, SimulateContext
 from degenbot.logging import logger as bot_logger
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot.runner.build_paths import ConstructionContext, PathRegistrationPipeline, build_paths
-from degenbot.runner.config import ArbitrageConfig
-from degenbot.runner.consume import consume_result_batches
-from degenbot.runner.dispatch import _load_executor_runtime_bytecode
-from degenbot.runner.driver_constants import (
+from degenbot.runner._consume import consume_result_batches
+from degenbot.runner._dispatch import _load_executor_runtime_bytecode
+from degenbot.runner._driver_constants import (
     ETH_MAINNET_ALLOWED_TOKENS,
     INJECT_EXECUTOR_CODE,
     INJECTED_EXECUTOR_ADDRESS,
@@ -53,6 +53,8 @@ from degenbot.runner.driver_constants import (
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
+from degenbot.runner.build_paths import ConstructionContext, PathRegistrationPipeline, build_paths
+from degenbot.runner.config import ArbitrageConfig
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -102,6 +104,44 @@ def _make_arbitrage_config(node_http: str) -> DegenbotConfig:
 
 
 # ============ class BotRunner ============
+
+
+class PhaseError(RuntimeError):
+    """Cockpit phase violation: a lifecycle method ran in the wrong phase.
+
+    The session phase machine is ``New -> Started -> Running -> Closed``:
+    ``start()`` is an idempotent no-op until the session is ``Running``;
+    ``run()`` requires ``Started``; ``enqueue_path`` / ``trigger_discovery``
+    require ``Running``; ``shutdown()`` stays deliberately any-phase and
+    idempotent (the SIGINT teardown ordering depends on it).
+    """
+
+
+class _Phase(Enum):
+    """Cockpit session phase (private; the public signal is :class:`PhaseError`)."""
+
+    NEW = "new"
+    STARTED = "started"
+    RUNNING = "running"
+    CLOSED = "closed"
+
+
+@dataclass
+class _SessionState:
+    """Cockpit session state (CONTEXT.md term: *session state*).
+
+    The single owner of one pump session's coordination state: the block
+    loop (``consume``) and the dispatch leaf (``dispatch``) both read the
+    same owner instead of the session travelling as a parameter bag.
+    Mutable pieces (``current_block``) advance on the owner.
+    """
+
+    engine_registry: EngineRegistry
+    async_w3: AsyncAlloyProvider
+    sim_ctx: SimulateContext | None
+    dispatcher: Dispatcher
+    cfg: ArbitrageConfig
+    current_block: int
 
 
 class BotRunner:
@@ -193,6 +233,8 @@ class BotRunner:
         self.v3_snapshot: Any = None
         self.v4_snapshot: Any = None
         self.current_block: int = 0
+        self._phase: _Phase = _Phase.NEW
+        self._session: _SessionState | None = None
         self._started = False
         # Created in run():
         self._result_consumer_task: asyncio.Task | None = None
@@ -219,6 +261,9 @@ class BotRunner:
         """
         if self._started:
             return self
+        if self._phase is _Phase.RUNNING or self._phase is _Phase.CLOSED:
+            msg = f"start() in phase {self._phase.value!r} - session can only start from New"
+            raise PhaseError(msg)
         self._started = True
 
         cfg = self.cfg
@@ -259,7 +304,7 @@ class BotRunner:
             # dispatch raises a clear error if reached without one.
             self._sim_ctx = None
         else:
-            runtime_code = _load_executor_runtime_bytecode()
+            runtime_code = _load_executor_runtime_bytecode(cfg)
             self._sim_ctx = SimulateContext(
                 provider=async_alloy,
                 executor_owner=cfg.executor_owner,
@@ -315,7 +360,19 @@ class BotRunner:
             self.current_block = backfill_target
             self.dispatcher.advance_block(backfill_target)
 
+        assert self.engine_registry is not None
+        assert self.async_w3 is not None
+        assert self.dispatcher is not None
+        self._session = _SessionState(
+            engine_registry=self.engine_registry,
+            async_w3=self.async_w3,
+            sim_ctx=self._sim_ctx,
+            dispatcher=self.dispatcher,
+            cfg=cfg,
+            current_block=self.current_block,
+        )
         self._install_sigint_handler()
+        self._phase = _Phase.STARTED
         return self
 
     # ── Phase B: the rolling-start main loop ──────────────────────────
@@ -329,7 +386,10 @@ class BotRunner:
         4. ``bot.release_python_state()`` + drop the bot (hot loop keeps only engine + async_w3)
         5. ``await result_consumer_task`` (the main loop, indefinite)
         """
-        assert self._started, "BotRunner.start() must be awaited before run()"
+        if self._phase is not _Phase.STARTED:
+            msg = f"run() requires phase 'started' (session phase is {self._phase.value!r})"
+            raise PhaseError(msg)
+        self._phase = _Phase.RUNNING
         assert self.engine_registry is not None
         assert self.async_w3 is not None
         assert self.bot is not None
@@ -347,18 +407,9 @@ class BotRunner:
         block_stream = self.engine_registry.engine.block_stream()
 
         # Attach the consumer BEFORE resume (consumer-safety invariant).
+        assert self._session is not None
         self._result_consumer_task = asyncio.create_task(
-            consumer(
-                engine_registry=self.engine_registry,
-                async_w3=self.async_w3,
-                sim_ctx=self._sim_ctx,
-                executor_address=cfg.executor_address,
-                operator_address=cfg.operator_address,
-                operator_private_key=cfg.operator_private_key,
-                dispatcher=self.dispatcher,
-                dry_run=cfg.dry_run,
-                block_stream=block_stream,
-            ),
+            consumer(session=self._session, block_stream=block_stream),
             name="result-consumer",
         )
 
@@ -422,6 +473,7 @@ class BotRunner:
                 retry_policy=cfg.verification_retry_policy,
                 context=registration_context,
                 pipeline=pipeline,
+                permutation_filter=cfg.permutation_filter,
             )
             self._trim_python_state()
 
@@ -484,6 +536,9 @@ class BotRunner:
             RuntimeError: if no live pipeline exists (injected fake builders
                 have no construction surface, or ``run()`` has not run).
         """
+        if self._phase is not _Phase.RUNNING:
+            msg = f"enqueue_path() needs 'running' (phase is {self._phase.value!r})"
+            raise PhaseError(msg)
         if self._pipeline is None:
             msg = "no live registration pipeline; add-path unavailable (injected/fake run)"
             raise RuntimeError(msg)
@@ -498,6 +553,9 @@ class BotRunner:
             RuntimeError: if no live pipeline exists (injected fake builders,
                 or ``run()`` has not run).
         """
+        if self._phase is not _Phase.RUNNING:
+            msg = f"trigger_discovery() needs 'running' (phase is {self._phase.value!r})"
+            raise PhaseError(msg)
         if self._pipeline is None:
             msg = "no live registration pipeline; on-demand discovery unavailable"
             raise RuntimeError(msg)
@@ -538,6 +596,7 @@ class BotRunner:
                 retry_policy=retry_policy,
                 context=registration_context,
                 pipeline=pipeline,
+                permutation_filter=self.cfg.permutation_filter,
             )
             self._trim_python_state()
         except asyncio.CancelledError:
@@ -791,6 +850,9 @@ class BotRunner:
         silent WS subscription, which ``asyncio.run``'s teardown did not reach
         until the OS closed the socket.
         """
+        # Closed from ANY phase: teardown (SIGINT, partial startup, post-run)
+        # may reach here at any point; idempotent by design.
+        self._phase = _Phase.CLOSED
         registry = getattr(self, "engine_registry", None)
         engine = getattr(registry, "engine", None) if registry is not None else None
         if engine is None:

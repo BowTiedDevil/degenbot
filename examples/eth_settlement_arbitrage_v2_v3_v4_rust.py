@@ -20,7 +20,6 @@ The old driver code that lived here (``BackrunSession``→``BotRunner``,
 the shared constants) has moved to ``degenbot.runner`` (epic 5TSYKN).
 """
 
-import argparse
 import asyncio
 import contextlib
 import time
@@ -30,7 +29,6 @@ import dotenv
 from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.logging import logger as bot_logger
 from degenbot.runner import BotRunner
-from degenbot.runner import driver_constants as _driver_constants
 from degenbot.runner.cli import build_arbitrage_arg_parser
 from degenbot.runner.config import ArbitrageConfig
 
@@ -47,9 +45,7 @@ async def main() -> None:
     start_gil_probe(interval_ms=50, threshold_ms=100, stuck_ms=30_000)
     mark_progress()
 
-    # Override the driver's PATH_PERMUTATION_FILTER from --permutation.
     if args.permutation is not None:
-        _driver_constants.PATH_PERMUTATION_FILTER = {args.permutation}
         bot_logger.info(f"[startup] Permutation filter from CLI: {args.permutation}")
     if not dry_run:
         bot_logger.info("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS! ***\n")
@@ -94,12 +90,8 @@ async def main() -> None:
                         return {"detail": f"discovery processed {n} paths"}
                     return {"error": f"unknown op {op!r}"}
 
-                operator = OperatorServer(
-                    operator_handler, socket_path=args.operator_socket
-                )
-                operator_task = asyncio.create_task(
-                    operator.serve(), name="operator-server"
-                )
+                operator = OperatorServer(operator_handler, socket_path=args.operator_socket)
+                operator_task = asyncio.create_task(operator.serve(), name="operator-server")
                 bot_logger.info(f"[operator] listening on {args.operator_socket}")
             try:
                 await session.run()

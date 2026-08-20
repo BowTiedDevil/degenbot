@@ -13,11 +13,11 @@ the verbose per-fail diagnostic string (that stays in ``[sim-fail]`` lines).
 from __future__ import annotations
 
 from degenbot.abi import encode as abi_encode
+from degenbot.runner._render import format_failure_breakdown
 from degenbot.runner.config import (
     _EXECUTOR_REVERT_SELECTORS,
     _V4_REVERT_SELECTORS,
     classify_revert,
-    format_failure_breakdown,
 )
 
 # ── Fixtures ─────────────────────────────────────────────────────────────

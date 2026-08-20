@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.runner import dispatch as d
-from degenbot.runner.dispatch import ERC6909_PROFIT
+from degenbot.dispatch import Dispatcher
+from degenbot.runner import _dispatch as d
+from degenbot.runner._driver_constants import ERC6909_PROFIT
+from degenbot.runner.bot_runner import _SessionState
+from degenbot.runner.config import ArbitrageConfig
 
 
 class _RecordingCandidate:
@@ -48,19 +51,33 @@ async def test_dispatch_profitable_projects_erc6909_toggle(monkeypatch) -> None:
     # One solved result; ``sim_ctx=None`` raises AFTER candidate construction
     # (the RuntimeError is the tripwire that the constructor really ran).
     results = [(1, 100, 5, (105,), (100,), 10, (0,))]
+    owner = _SessionState(
+        engine_registry=_EngineRegistry(),  # type: ignore[arg-type]
+        async_w3=None,  # type: ignore[arg-type] — never read before the sim gate
+        sim_ctx=None,
+        dispatcher=Dispatcher.for_block(0),
+        cfg=ArbitrageConfig.from_env(
+            {
+                "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+                "OPERATOR_PRIVATE_KEY": "0x"
+                + "11" * 32,  # valid secp256k1 scalar, cosmetic (sim gate first)
+                "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+                "INJECT_EXECUTOR_CODE": "0",
+            },
+            live=False,
+            permutation=None,
+            cli_http="http://localhost:8545",
+            cli_ws="ws://localhost:8546",
+        ),
+        current_block=10,
+    )
     with pytest.raises(RuntimeError, match="SimulateContext is required"):
         await d._dispatch_profitable(
-            results=results,  # type: ignore[arg-type]
-            engine_registry=_EngineRegistry(),  # type: ignore[arg-type]
-            async_w3=None,  # type: ignore[arg-type]
-            sim_ctx=None,
-            operator_private_key="0x" + "0" * 32,
-            operator_nonce=0,
-            dispatcher=d.Dispatcher.for_block(0),
-            current_block=10,
+            owner,
+            results,
             block_timestamp=1_700_000_000,
             base_fee_next=1_000_000_000,
-            dry_run=True,
+            operator_nonce=0,
         )
 
     assert len(recorded) == 1, "one candidate must be constructed"

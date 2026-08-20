@@ -146,7 +146,7 @@ Full table of files reaching into the examples (all in `tests/`):
 | `arbitrage/test_backrun_session.py` | `BackrunSession`, `BackrunConfig`, `ConstructionContext`, `PathRegistrationPipeline`, `run_registration_pipeline`, `REG_QUEUE_BOUND`, `REG_WORKERS`, factory/WETH constants | `degenbot.runner` (BotRunner, config) + `runner.build_paths` |
 | `arbitrage/test_consumer_block_stream.py` | `Dispatcher`, `consume_result_batches`, `_dispatch_profitable`, `_tee_block_stream` | `degenbot.runner.*` |
 | `arbitrage/test_registration_pipeline.py` | `run_registration_pipeline`, `PathRegistrationPipeline` | `degenbot.runner.build_paths` |
-| `arbitrage/test_render_sim_failures.py` | `_render_sim_failures` | `degenbot.runner.dispatch` |
+| `arbitrage/test_render_sim_failures.py` | `_render_sim_failures` | `degenbot.runner._render` |
 | `arbitrage/test_synthetic_v2_round_trip.py` | `resolve_directions`, `EngineRegistry` | `degenbot.arbitrage` (resolve_directions) + existing `EngineRegistry` |
 | `arbitrage/test_eth_backrun_main_args.py` | `_build_arg_parser` | thin example entrypoint (re-export) |
 | `arbitrage/test_eth_backrun_helpers.py`, `test_backrun_config.py`, `test_verification_retry_config.py`, `test_revert_taxonomy.py` | `BackrunConfig` + helpers | `degenbot.runner.config` |

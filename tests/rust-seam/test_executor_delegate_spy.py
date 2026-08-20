@@ -130,7 +130,7 @@ class TestExampleRoutesThroughRust:
         ``degenbot._ffi`` (the PyO3 wrapper is an implementation detail of the
         companion, not a driver surface).
         """
-        src = (REPO / "src" / "degenbot" / "runner" / "dispatch.py").read_text()
+        src = (REPO / "src" / "degenbot" / "runner" / "_dispatch.py").read_text()
         tree = ast.parse(src)
         imports_ffi = False
         imports_companion_dispatch = False
@@ -213,13 +213,13 @@ class TestExampleRoutesThroughRust:
         the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
         internally by ``dispatch_profitable`` + ``SimulateContext``
         construction. The dispatch path (moved from the example into
-        ``degenbot.runner.dispatch`` by epic 5TSYKN) is
+        ``degenbot.runner._dispatch`` by epic 5TSYKN) is
         ``dispatch_profitable`` (simulate) → ``dispatch_and_submit``
         (submit), both Rust-bound pyfunctions imported via the companion
         package ``degenbot.dispatch`` (stable re-exports of the FFI symbols —
         the driver does not import ``degenbot_rs`` directly).
         """
-        src = (REPO / "src" / "degenbot" / "runner" / "dispatch.py").read_text()
+        src = (REPO / "src" / "degenbot" / "runner" / "_dispatch.py").read_text()
         assert "dispatch_profitable(" in src, (
             "driver must route simulation through dispatch_profitable (A5)"
         )

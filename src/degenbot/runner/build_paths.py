@@ -43,10 +43,9 @@ from degenbot.exceptions import (
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
-from degenbot.runner.driver_constants import (
+from degenbot.runner._driver_constants import (
     ALLOWED_INTERMEDIATE_TOKENS,
     PANCAKESWAP_V3_MAINNET_FACTORY,
-    PATH_PERMUTATION_FILTER,
     REG_QUEUE_BOUND,
     REG_WORKERS,
     SUSHISWAP_V3_MAINNET_FACTORY,
@@ -698,6 +697,7 @@ async def build_paths(
     retry_policy: VerificationRetryPolicy | None = None,
     context: ConstructionContext | None = None,
     pipeline: PathRegistrationPipeline | None = None,
+    permutation_filter: frozenset[str] | None = None,
 ) -> None:
     """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
@@ -720,12 +720,13 @@ async def build_paths(
         engine_registry=engine_registry,
         retry_policy=retry_policy,
     )
-    pipeline.pool_type_per_depth = _parse_permutation_filter(PATH_PERMUTATION_FILTER)
-    pipeline.pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
+    perms = set(permutation_filter) if permutation_filter else None
+    pipeline.pool_type_per_depth = _parse_permutation_filter(perms)
+    pipeline.pool_types = _pool_types_from_filter(perms)
     if pipeline.pool_type_per_depth is not None:
         bot_logger.info(
             "[build_paths] Permutation filter active: "
-            f"{PATH_PERMUTATION_FILTER} → depths={pipeline.pool_type_per_depth}",
+            f"{perms} → depths={pipeline.pool_type_per_depth}",
         )
     bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pipeline.pool_types]}")
 

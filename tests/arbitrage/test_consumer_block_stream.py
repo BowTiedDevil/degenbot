@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from degenbot.dispatch import Dispatcher
-from degenbot.runner import consume_result_batches
+from degenbot.runner._consume import consume_result_batches
 
 
 class _Eth:
@@ -158,33 +158,43 @@ async def _run(
     # proving it keys off the block stream (not solve_block).
     dispatched: list[int] = []
 
-    async def _fake_dispatch(**kwargs):
-        dispatched.append(kwargs["current_block"])
-        return
+    def _fake_dispatch(session: Any, results: Any, **kwargs: Any):
+        dispatched.append(session.dispatcher.current_block)
 
-    from degenbot.runner import consume as _runner_consume
+        async def _n() -> None:
+            pass
+
+        return _n()
+
+    from degenbot.runner import _consume as _runner_consume
+    from degenbot.runner.bot_runner import _SessionState
+    from degenbot.runner.config import ArbitrageConfig
 
     orig = _runner_consume._dispatch_profitable
     _runner_consume._dispatch_profitable = _fake_dispatch  # type: ignore[assignment]
+    owner = _SessionState(
+        engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
+        async_w3=w3,  # type: ignore[arg-type]
+        sim_ctx=None,
+        dispatcher=dispatcher,
+        cfg=ArbitrageConfig.from_env(
+            {
+                "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+                "OPERATOR_PRIVATE_KEY": "0x"
+                + "11" * 32,  # valid secp256k1 scalar, cosmetic (leaf stubbed)
+                "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+                "INJECT_EXECUTOR_CODE": "0",
+            },
+            live=False,
+            permutation=None,
+            cli_http="http://localhost:8545",
+            cli_ws="ws://localhost:8546",
+        ),
+        current_block=dispatcher.current_block,
+    )
     try:
         await consume_result_batches(
-            engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
-            async_w3=w3,  # type: ignore[arg-type]
-            # sim_ctx is typed `SimulateContext | None` since the A5 cutover; a
-            # test fake deliberately passes None (see comment above) — the real
-            # ``_dispatch_profitable`` never runs.
-            sim_ctx=None,
-            executor_address="0x" + "0" * 40,
-            operator_address="0x" + "0" * 40,
-            # dry-run placeholder must be a valid secp256k1 scalar (the real
-            # `dispatch_profitable_results` would construct a `TxSigner` from
-            # it; all-zero is rejected by the curve). Here `dispatch_*` is
-            # stubbed so the value is cosmetic, but it mirrors the real config.
-            operator_private_key="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            dispatcher=dispatcher,
-            dry_run=True,
-            block_stream=_Blocks(blocks),
-            result_iter=_Results(batches),
+            owner, block_stream=_Blocks(blocks), result_iter=_Results(batches)
         )
     finally:
         _runner_consume._dispatch_profitable = orig  # type: ignore[assignment]

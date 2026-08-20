@@ -49,6 +49,25 @@ adapter (`degenbot-arbitrage`) — never to describe the mechanism.
 - **PyO3 wrapper** — `rust/crates/degenbot-python/src/<domain>/**`. `#[pyclass]`/`#[pyfunction]` only — arg extract → GIL release → core call → result wrap. No business logic.
 - **Python companion** — `src/degenbot/**`. User-facing API, docstrings, I/O orchestration, immutable config dual-tracking, `Fraction`-based display.
 
+### Driver cockpit (`degenbot.runner`)
+
+**Driver cockpit** — the Python-companion module (the `degenbot.runner`
+package) that owns one settlement-arbitrage pump session behind one small
+interface: the `BotRunner` lifecycle (`start` → `run` → `close`,
+`enqueue_path`, `trigger_discovery`), `ArbitrageConfig`, and the
+`build_paths` registration sibling. The block loop, the dispatch/submit
+leaf, the renderers, and the session's coordination state are private
+internals of the cockpit — not a strategy co-implementation (ADR-019 R),
+and not the PyO3 wrapper (ADR-005).
+_Avoid_: "driver shell" (that is the whole Python-companion layer), "backrun
+session" (legacy name, ADR-026).
+
+**Session state** — the cockpit's one owner of a pump session's
+coordination state (dispatcher, sim context, current block, provider,
+operator credentials); the block loop and the dispatch leaf read the same
+owner instead of it travelling as a parameter bag.
+_Avoid_: "session dict", "cockpit config".
+
 ### Pool registration lifecycle (D4 / IKGQ6F)
 
 Canonical terms for the CL (V3/V4) pool registration verify-lifecycle — the

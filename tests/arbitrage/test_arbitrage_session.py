@@ -767,13 +767,13 @@ class TestConstructionContext:
     task owns them out of run()'s main-loop trim."""
 
     def test_for_bot_builds_trackers_weth_db_once(self) -> None:
-        from degenbot.runner.build_paths import ConstructionContext
-        from degenbot.runner.driver_constants import (
+        from degenbot.runner._driver_constants import (
             PANCAKESWAP_V3_MAINNET_FACTORY,
             SUSHISWAP_V3_MAINNET_FACTORY,
             UNISWAP_V3_MAINNET_FACTORY,
             WETH_ADDRESS,
         )
+        from degenbot.runner.build_paths import ConstructionContext
 
         class _BuildBot:
             def __init__(self) -> None:
@@ -1418,8 +1418,8 @@ class TestPathRegistrationPipeline:
         WITHOUT aborting the pipeline (a raw ``object()`` would make `_consume`
         do `list(object())` → TypeError, masking the real composition).
         """
+        from degenbot.runner._driver_constants import REG_QUEUE_BOUND, REG_WORKERS
         from degenbot.runner.build_paths import run_registration_pipeline
-        from degenbot.runner.driver_constants import REG_QUEUE_BOUND, REG_WORKERS
 
         pipeline, reg, t_base = self._make_pipeline()
         prior_skips = pipeline.skip_count

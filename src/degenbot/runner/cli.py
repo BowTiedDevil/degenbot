@@ -34,7 +34,7 @@ def build_arbitrage_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Pool version permutation filter (e.g. V2-V3-V4). "
             "Only paths matching this 3-hop ordering will be built and simulated. "
-            "Overrides PATH_PERMUTATION_FILTER in the driver."
+            "Sets the path permutation filter on the config."
         ),
     )
     parser.add_argument(

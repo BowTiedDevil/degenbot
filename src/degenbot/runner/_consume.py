@@ -17,27 +17,21 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.calculations import next_base_fee
 from degenbot.diagnostics import mark_progress
-from degenbot.dispatch import Dispatcher, SimulateContext, fetch_fee_history
+from degenbot.dispatch import fetch_fee_history
 from degenbot.logging import logger as bot_logger
-from degenbot.provider import AsyncAlloyProvider
-from degenbot.runner.dispatch import _dispatch_profitable
-from degenbot.runner.driver_constants import FEE_PERCENTILES
+from degenbot.runner._dispatch import _dispatch_profitable
+from degenbot.runner._driver_constants import FEE_PERCENTILES
+
+if TYPE_CHECKING:
+    from degenbot.runner.bot_runner import _SessionState
 
 
 async def consume_result_batches(
-    engine_registry: EngineRegistry,
-    async_w3: AsyncAlloyProvider,
-    sim_ctx: SimulateContext | None,
-    executor_address: str,
-    operator_address: str,
-    operator_private_key: str,
-    dispatcher: Dispatcher,
-    dry_run: bool,
+    session: _SessionState,
     *,
     block_stream: AsyncIterator[dict[str, int]] | None = None,
     result_iter: AsyncIterator[dict[str, object]] | None = None,
@@ -57,9 +51,9 @@ async def consume_result_batches(
     bot_logger.info("[consumer] Starting — block stream + result batches from Rust pump")
 
     if block_stream is None:
-        block_stream = engine_registry.engine.block_stream()
+        block_stream = session.engine_registry.engine.block_stream()
     if result_iter is None:
-        result_iter = aiter(engine_registry.engine)
+        result_iter = aiter(session.engine_registry.engine)
 
     block_fut = cast(
         "asyncio.Task[dict[str, int]] | None", asyncio.ensure_future(anext(block_stream))
@@ -78,23 +72,13 @@ async def consume_result_batches(
                     "asyncio.Task[dict[str, int]] | None",
                     _reprime(block_stream, fut, "block stream"),
                 )
-                await _apply_block_if_ready(fut, dispatcher, async_w3)
+                await _apply_block_if_ready(fut, session)
             elif fut is result_fut:
                 result_fut = cast(
                     "asyncio.Task[dict[str, object]] | None",
                     _reprime(result_iter, fut, "result stream"),
                 )
-                await _apply_result_if_ready(
-                    fut,
-                    dispatcher,
-                    engine_registry,
-                    async_w3,
-                    sim_ctx,
-                    executor_address,
-                    operator_address,
-                    operator_private_key,
-                    dry_run,
-                )
+                await _apply_result_if_ready(fut, session)
         # ergo 66H3KJ: mark main-loop forward progress for the Rust stuck-
         # watchdog (start_gil_probe). A stale timestamp here means the loop
         # is parked mid-`_apply_result_if_ready` (the dispatch deadlock site).
@@ -117,14 +101,12 @@ def _reprime(
     return asyncio.ensure_future(anext(stream))
 
 
-async def _apply_block_if_ready(
-    fut: asyncio.Task[dict[str, int]],
-    dispatcher: Dispatcher,
-    async_w3: AsyncAlloyProvider,
-) -> None:
+async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _SessionState) -> None:
     """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved."""
     if fut.cancelled() or fut.exception() is not None:
         return
+    dispatcher = session.dispatcher
+    async_w3 = session.async_w3
     try:
         block = fut.result()
     except StopAsyncIteration:
@@ -166,18 +148,11 @@ async def _apply_block_if_ready(
             )
 
     dispatcher.advance_block(block_number)
+    session.current_block = block_number
 
 
 async def _apply_result_if_ready(
-    fut: asyncio.Task[dict[str, object]],
-    dispatcher: Dispatcher,
-    engine_registry: EngineRegistry,
-    async_w3: AsyncAlloyProvider,
-    sim_ctx: SimulateContext | None,
-    executor_address: str,
-    operator_address: str,
-    operator_private_key: str,
-    dry_run: bool,
+    fut: asyncio.Task[dict[str, object]], session: _SessionState
 ) -> None:
     """Dispatch profitable results from a solver result batch if fut resolved."""
     if fut.cancelled() or fut.exception() is not None:
@@ -187,8 +162,8 @@ async def _apply_result_if_ready(
     except StopAsyncIteration:
         return
 
-    current_block = dispatcher.current_block
-    operator_nonce = await async_w3.get_transaction_count(operator_address)
+    current_block = session.dispatcher.current_block
+    operator_nonce = await session.async_w3.get_transaction_count(session.cfg.operator_address)
     solve_block = int(cast("Any", batch["solve_block"]))
 
     results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int, tuple[int, ...]]] = []
@@ -216,23 +191,17 @@ async def _apply_result_if_ready(
         ))
 
     for path_id in cast("Any", batch["removed"]):
-        dispatcher.discard_path(int(path_id))
+        session.dispatcher.discard_path(int(path_id))
 
     if results:
         await _dispatch_profitable(
-            results=results,
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            sim_ctx=sim_ctx,
-            operator_private_key=operator_private_key,
-            operator_nonce=operator_nonce,
-            dispatcher=dispatcher,
-            current_block=current_block,
-            block_timestamp=dispatcher.block_timestamp_for(current_block) or 0,
+            session,
+            results,
+            block_timestamp=session.dispatcher.block_timestamp_for(current_block) or 0,
             base_fee_next=next_base_fee(
                 parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
                 parent_gas_used=int(cast("Any", batch["gas_used"])),
                 parent_gas_limit=int(cast("Any", batch["gas_limit"])),
             ),
-            dry_run=dry_run,
+            operator_nonce=operator_nonce,
         )
