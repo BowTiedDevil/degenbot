@@ -15,13 +15,13 @@ alloy = { version = "^2.4" }
 thiserror = { version = "^2.0" }
 num-bigint = { version = "^0.5" }
 num-integer = { version = "^0.1" }
-degenbot-v2-math = { path = "../degenbot-v2-math" }
-degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math" }
-degenbot-pools = { path = "../degenbot-pools" }
-degenbot-balancer-math = { path = "../degenbot-balancer-math" }
-degenbot-curve-math = { path = "../degenbot-curve-math" }
-degenbot-solidly-math = { path = "../degenbot-solidly-math" }
-degenbot-uniswap = { path = "../degenbot-uniswap" }
+degenbot-v2-math.workspace = true
+degenbot-concentrated-liquidity-math.workspace = true
+degenbot-pools.workspace = true
+degenbot-balancer-math.workspace = true
+degenbot-curve-math.workspace = true
+degenbot-solidly-math.workspace = true
+degenbot-uniswap.workspace = true
 
 [dev-dependencies]
 proptest = "^1.11"
@@ -31,7 +31,7 @@ criterion = { version = "^0.8", default-features = false, features = ["cargo_ben
 # pointing at a topology-specific `compute_crossing` divergence the synthetic
 # parity sweep (regular, symmetric ticks) cannot construct. These deps fetch
 # the real pool state on demand; the test is env-gated so CI never hits the net.
-degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-rpc.workspace = true
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 
 

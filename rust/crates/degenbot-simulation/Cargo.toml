@@ -24,27 +24,27 @@ revm = { version = "^42.0", default-features = true, features = ["alloydb", "asy
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
 alloy = { version = "^2.4", features = ["full"] }
-degenbot-core = { path = "../degenbot-core" }
+degenbot-core.workspace = true
 # `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
 # `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim
 # orchestration consumes — crossed from the executor leaf.
-degenbot-executor = { path = "../degenbot-executor" }
+degenbot-executor.workspace = true
 # `sqrt_price_math` — the engine's proven V3 amount math, so the harness
 # computes V3 hop outputs byte-consistent with the `PoolV3` stub (UQOAHA).
-degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math" }
+degenbot-concentrated-liquidity-math.workspace = true
 # `AlloyProvider` — the typed RPC provider the in-process sim's cold-miss
 # fallback (`WrapDatabaseAsync<AlloyDB>`) + the access-list / feeHistory paths
 # consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.
-degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-rpc.workspace = true
 # `BotState` (ADR-003 state owner; ADR-005 standalone-core) — the snapshot
 # surface (`v3_pools_snapshot` / `v4_pools_snapshot`) + the typed pool-state
 # structs BotStateDb reads. Depends on `degenbot-pools` (state structs) +
 # `degenbot-uniswap` (DexIdentity). Added in EGMSNS (option B).
-degenbot-bot = { path = "../degenbot-bot" }
-degenbot-pools = { path = "../degenbot-pools" }
+degenbot-bot.workspace = true
+degenbot-pools.workspace = true
 # `V4PoolId` — the V4 pool identifier type (crossed from the decoders leaf for
 # the V4 swap-event decoder + the swap-capture inspector).
-degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-decoders.workspace = true
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 # `Serialize` derive for the inspector captured structs (`CallTrace`,
@@ -78,14 +78,14 @@ tokio = { version = "^1.53", features = ["macros", "rt-multi-thread"] }
 # constructor) so the §4.2 wire-shape tests + the parity fixture can drive the
 # typed dispatch without a live RPC. Production builds (the umbrella, the
 # cdylib) never enable this feature.
-degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # `compute_simulation_warmup_slots` + the `PathInfo`/`HopInfo`/`V2HopInfo`/
 # `EncodeOptions` types the smoke test's `SimulatePath` fixture constructs.
-degenbot-executor = { path = "../degenbot-executor" }
+degenbot-executor.workspace = true
 # `DexVariant` for the `BotStateDb` tripwire tests (register a tracked V2 pool
 # so `pool_id_by_address` resolves) — dev-only, no production linkage.
-degenbot-uniswap = { path = "../degenbot-uniswap" }
+degenbot-uniswap.workspace = true
 # `IntHopState` — the executor grammar harness computes byte-consistent V2
 # hop outputs from the seeded reserves (mirroring the tier-3 V2 oracle) so the
 # encoded path round-trips cleanly (UQOAHA).
-degenbot-v2-math = { path = "../degenbot-v2-math" }
+degenbot-v2-math.workspace = true

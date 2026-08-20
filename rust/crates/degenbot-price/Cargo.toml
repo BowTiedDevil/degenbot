@@ -12,9 +12,9 @@ workspace = true
 
 [dependencies]
 alloy = { version = "^2.4" }
-degenbot-core = { path = "../degenbot-core" }
-degenbot-abi = { path = "../degenbot-abi" }
-degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-core.workspace = true
+degenbot-abi.workspace = true
+degenbot-rpc.workspace = true
 tracing = { version = "^0.1" }
 thiserror = { version = "^2.0" }
 

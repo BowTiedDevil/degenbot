@@ -14,13 +14,13 @@ workspace = true
 alloy = { version = "^2.4" }
 thiserror = { version = "^2.0" }
 parking_lot = { version = "^0.12" }
-degenbot-decoders = { path = "../degenbot-decoders" }
-degenbot-uniswap = { path = "../degenbot-uniswap" }
-degenbot-v2-math = { path = "../degenbot-v2-math" }
-degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math" }
-degenbot-curve-math = { path = "../degenbot-curve-math" }
-degenbot-balancer-math = { path = "../degenbot-balancer-math" }
-degenbot-solidly-math = { path = "../degenbot-solidly-math" }
+degenbot-decoders.workspace = true
+degenbot-uniswap.workspace = true
+degenbot-v2-math.workspace = true
+degenbot-concentrated-liquidity-math.workspace = true
+degenbot-curve-math.workspace = true
+degenbot-balancer-math.workspace = true
+degenbot-solidly-math.workspace = true
 
 [dev-dependencies]
 proptest = "^1.11"
@@ -37,4 +37,4 @@ revm = { version = "^42.0", default-features = true }
 # The tier-3 on-chain oracle driver (deploy -> seed -> call -> classify) now
 # lives in `degenbot-simulation::oracle` (ADR-020 landing zone), and the
 # tier-3 CL oracles drive the real pool bytecode through it. A dev-dep only.
-degenbot-simulation = { path = "../degenbot-simulation" }
+degenbot-simulation.workspace = true

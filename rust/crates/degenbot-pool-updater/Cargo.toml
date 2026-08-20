@@ -12,10 +12,10 @@ workspace = true
 
 [dependencies]
 alloy = { version = "^2.4" }
-degenbot-db = { path = "../degenbot-db" }
-degenbot-decoders = { path = "../degenbot-decoders" }
-degenbot-core = { path = "../degenbot-core" }
-degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-db.workspace = true
+degenbot-decoders.workspace = true
+degenbot-core.workspace = true
+degenbot-rpc.workspace = true
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros", "sync"] }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
@@ -28,5 +28,5 @@ default = []
 
 [dev-dependencies]
 alloy = { version = "^2.4" }
-degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-rpc.workspace = true
 tempfile = { version = "^3.27" }

@@ -13,10 +13,10 @@ workspace = true
 [dependencies]
 alloy = { version = "^2.4", features = ["full", "transport-throttle", "json-rpc"] }
 dashmap = { version = "^6.2" }
-degenbot-abi = { path = "../degenbot-abi" }
-degenbot-concentrated-liquidity-math = { path = "../degenbot-concentrated-liquidity-math" }
-degenbot-core = { path = "../degenbot-core" }
-degenbot-pools = { path = "../degenbot-pools" }
+degenbot-abi.workspace = true
+degenbot-concentrated-liquidity-math.workspace = true
+degenbot-core.workspace = true
+degenbot-pools.workspace = true
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 parking_lot = { version = "^0.12" }
 rand = { version = "^0.10" }

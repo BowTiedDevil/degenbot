@@ -18,6 +18,6 @@ thiserror = { version = "^2.0" }
 # execution layer; this crate only borrows its `PathInfo`/`HopInfo` descriptor
 # types so the seam's Encode input (`path: &PathInfo`) matches what a Rust
 # consumer already reaches.
-degenbot-executor = { path = "../degenbot-executor" }
+degenbot-executor.workspace = true
 # `SolvePathResult` (amounts) — the solve-result view's amount side (ADR-025 D4).
-degenbot-solvers = { path = "../degenbot-solvers" }
+degenbot-solvers.workspace = true

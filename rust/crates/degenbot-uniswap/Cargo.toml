@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 alloy = { version = "^2.4" }
-degenbot-abi = { path = "../degenbot-abi" }
-degenbot-core = { path = "../degenbot-core" }
+degenbot-abi.workspace = true
+degenbot-core.workspace = true
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
