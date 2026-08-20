@@ -36,6 +36,7 @@ pub mod reorg_coordinator;
 pub mod reserve_pair_orchestration;
 pub(crate) mod resolve;
 pub mod snapshot_verify;
+pub(crate) mod solve_anchor;
 pub mod solve_coordinator;
 pub mod solver_state_verifier;
 pub mod tick_assembly;

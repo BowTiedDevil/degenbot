@@ -868,19 +868,6 @@ fn is_cl_pool_stale(update_block: u64, block: u64) -> bool {
     update_block > 0 && block.saturating_sub(update_block) > cl_staleness_threshold_blocks()
 }
 
-/// Whether a CL hop's stored price-clock `update_block` is AHEAD of the solve
-/// `block` — the two-stamp PRICE clock running past the block being solved (the
-/// backfill/dispatch race, live path 10956: solved 25677777 with a 25677789
-/// price). The `>=` in `skip_in_progress_hop` groups this with the legitimate
-/// mid-block `update_block == block` case and silently SKIPS it, so the
-/// verification never sees a future-priced pool. Ahead is NEVER legitimate and
-/// must be rejected loudly. Mirror of `is_cl_pool_stale` (which only handles
-/// the behind case).
-#[must_use]
-fn is_future_price(update_block: u64, block: u64) -> bool {
-    update_block > block
-}
-
 /// Whether a hop at `update_block` must be SKIPPED when verifying at solve
 /// `block`: skip hops touched IN the in-progress block (`update_block >= block`)
 /// — their scalar reflects a mid-block capture (an early swap of the block,
@@ -898,9 +885,10 @@ fn skip_in_progress_hop(update_block: u64, block: u64) -> bool {
 /// block its stored state claims to reflect. A pool 1-2 blocks behind the solve
 /// block is normal latency; matching the chain at `update_block` proves the state
 /// is accurate where it says it is, and only a divergence even AT the anchor is a
-/// true desync (missed log / reorg / storage mutation). `block` (the solve block)
-/// is retained for staleness reporting only. Fails fast on the FIRST mismatch or
-/// any read error.
+/// true desync (missed log / reorg / storage mutation). The pump-resolved solve
+/// ANCHOR (`solve_anchor` — `crate::bot_core::solve_anchor`) is retained for
+/// staleness reporting + the future-hop guard. Fails fast on the FIRST mismatch
+/// or any read error.
 ///
 /// Each mismatch message carries the hop's solver-stored `update_block` and the
 /// staleness `block - update_block`, so a panic both proves the divergence and
@@ -915,13 +903,16 @@ fn skip_in_progress_hop(update_block: u64, block: u64) -> bool {
 /// # Errors
 ///
 /// Returns [`SolverStateMismatch`] on any hop whose stored state diverges
-/// from the chain at `block`, or on an `eth_call` transport/decode failure.
+/// from the chain at its anchor, or on an `eth_call` transport/decode failure.
 #[expect(clippy::too_many_lines)]
 pub async fn verify_solver_hop_states(
     provider: &AlloyProvider,
     hops: &[SolverHopScalarState],
-    block: u64,
+    solve_anchor: crate::bot_core::solve_anchor::SolveAnchor,
 ) -> Result<(), SolverStateMismatch> {
+    // The pump resolved the anchor at publish (see `crate::bot_core::solve_anchor`);
+    // the body reads the plain block for staleness math + messages.
+    let block = solve_anchor.block();
     for (i, hop) in hops.iter().enumerate() {
         // Compare against the chain at the SOLVER'S OWN anchor block
         // (`update_block`) — the block its stored scalar state claims to
@@ -932,26 +923,25 @@ pub async fn verify_solver_hop_states(
         // desync (a missed log / reorg / storage mutation). `block` (the
         // solve block) remains for message context / staleness reporting.
         let anchor = solver_anchor_block(hop.update_block, block);
-        // FUTURE-PRICE guard (belts + suspenders): `block` is the PUMP-promoted
-        // solve block (`active_block = max(current_block, pool_state_head)`),
-        // so no hop's `update_block` can exceed it (head is the max). This
-        // fires only in a genuinely impossible case now — NOT the
-        // backfill/dispatch race. Promoted at the pump (BO5FBS) instead of the
-        // verifier re-anchoring at head, but the guard stays to catch a
-        // mid-solve state advance or a bypassing caller.
-        // Originally the solve block was the lagging drain clock and a hop at
-        // head (path 10956: solved 25677777 with a 25677789 price) was LIVE
-        // state, not a future price; aborting on it killed a capturable
-        // opportunity (B2 — the block_pump promotes at head first).
-        if is_future_price(hop.update_block, block) {
+        // FUTURE-PRICE guard (belts + suspenders): `solve_anchor` is the
+        // PUMP-resolved anchor (BO5FBS / B2 re-anchor history in
+        // `crate::bot_core::solve_anchor`), so no hop's `update_block` can
+        // exceed it (head is the max). This fires only in a genuinely impossible
+        // case — NOT the backfill/dispatch race (a hop at the head is LIVE
+        // state, and the anchor already floored at it). The guard stays to
+        // catch a mid-solve state advance or a bypassing caller; the verifier's
+        // reaction is the terminal `MismatchError` (ADR-021), unlike the
+        // solve-stage deferral.
+        if solve_anchor.is_future(hop.update_block) {
             return Err(mismatch(
                 i,
                 &format!(
-                    "CL hop FUTURE at solve block {block} (solver update_block={}, ahead by {} blocks): \
+                    "CL hop FUTURE at solve anchor {} (solver update_block={}, ahead by {} blocks): \
                      the price clock runs past the block being solved — solving with a future price is \
                      never legitimate",
+                    solve_anchor.block(),
                     hop.update_block,
-                    hop.update_block.saturating_sub(block),
+                    hop.update_block.saturating_sub(solve_anchor.block()),
                 ),
             ));
         }
@@ -1306,19 +1296,6 @@ mod tests {
         assert!(is_cl_pool_stale(25_664_550, 25_664_704));
     }
 
-    #[test]
-    fn future_price_is_detected() {
-        // The observed failure: solved 25677777 with a 25677789 price clock.
-        assert!(is_future_price(25_677_789, 25_677_777));
-        // Strictly ahead (even +1) is never legitimate.
-        assert!(is_future_price(101, 100));
-        // Equal to the solve block is a mid-block capture, NOT future.
-        assert!(!is_future_price(100, 100));
-        // Behind (normal latency) is NOT future.
-        assert!(!is_future_price(99, 100));
-        assert!(!is_future_price(0, 100));
-    }
-
     // ---------------------------------------------------------------
     // Solve-anchor FSM seed (`solve_anchor_advancement`)
     //
@@ -1653,9 +1630,13 @@ mod tests {
         // Scalar reads match on-chain (sqrt/γ/tick all equal at anchor 100),
         // so a scalar-only gate returns Ok; the tick-map probe must be what
         // turns this into an Err (the RED assertion).
-        let err = verify_solver_hop_states(&provider, &[hop], 102)
-            .await
-            .expect_err("gate must trip: on-chain tick 60 is missing from the solver's map");
+        let err = verify_solver_hop_states(
+            &provider,
+            &[hop],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(102, 0),
+        )
+        .await
+        .expect_err("gate must trip: on-chain tick 60 is missing from the solver's map");
         assert!(
             err.message.contains("tick-map fidelity probe")
                 && err.message.contains("NOT in engine"),
@@ -1726,9 +1707,13 @@ mod tests {
             }),
         };
 
-        let err = verify_solver_hop_states(&provider, &[hop], 102)
-            .await
-            .expect_err("gate must trip: V4 on-chain tick 60 missing from the solver's map");
+        let err = verify_solver_hop_states(
+            &provider,
+            &[hop],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(102, 0),
+        )
+        .await
+        .expect_err("gate must trip: V4 on-chain tick 60 missing from the solver's map");
         assert!(
             err.message.contains("tick-map fidelity probe")
                 && err.message.contains("NOT in engine"),

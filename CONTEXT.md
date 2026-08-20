@@ -295,6 +295,18 @@ dispatcher**. Same family as ADR-008 (BlockClock) and ADR-027 (dispatch seam):
 - **tick/clock input** — the driver reads the wall clock (a monotonic `now_ms`)
   and feeds it as data, so the FSM's watchdog rules (`on_tick`,
   `record_header`/`record_log`) are deterministic and horology-free.
+- **Solve anchor** — the block solve / verify / sim run against: the
+  request block at or above the **pool-state head**. A hop whose
+  price clock *runs ahead of* the anchor is **future** and never
+  legitimate; a hop *at* the anchor is a mid-block capture and is
+  fine. The pump's `drain_decision` emits it (ADR-008 D2), the engine
+  re-anchors its solve to it, and the ADR-021 verifier tests future
+  prices against it — never against the raw lagging block (the B2
+  re-anchor). One pure rule, shared by all three.
+- **Pool-state head** — the state clock: the max `update_block`
+  across all registered pools (`BotState::pool_state_head`). During a
+  backfill/drain desync it can run *ahead of* the pump's header clock;
+  the solve anchor takes the maximum of the two.
 
 The FSM owns the rules: quiesce-before-publish + solver-release gate
 (`on_settle`), recovery anchor + single-writer discard (`record_backfill` /

@@ -645,23 +645,21 @@ impl BlockPump {
         }
         // Extract per-path scalar states under a short read guard, then drop
         // the guard BEFORE awaiting the RPC reads.
-        // Re-anchor the solve block at the pool-state head (B2): during a
-        // backfill/drain desync the pools sit AHEAD of the lagging `block`, and
-        // a hop at head (`update_block > block`) is LIVE state, not a future
-        // price — aborting on it kills a capturable opportunity. `is_future_price`
-        // must therefore be tested against max(block, pool_state_head), never the
-        // raw lagging clock.
+        // Resolve the solve anchor at the pool-state head (B2 — rule owner and
+        // full re-anchor history in `crate::bot_core::solve_anchor`): during a
+        // backfill/drain desync the pools sit AHEAD of the lagging `block`,
+        // and a hop at head is LIVE state, not a future price.
         let mut path_hop_states = Vec::with_capacity(path_refs.len());
-        let anchor;
+        let anchor: crate::bot_core::solve_anchor::SolveAnchor;
         {
             let state_arc = bot.state_arc();
             let core = state_arc.read();
             for pools in path_refs {
                 path_hop_states.push(extract_solver_hop_states(&core, pools));
             }
-            anchor = block.max(core.pool_state_head());
+            anchor = crate::bot_core::solve_anchor::SolveAnchor::resolve(block, &core);
         }
-        let block = anchor;
+        let block = anchor.block();
         if divergence_scan_enabled() {
             // **Dev-only** non-aborting divergence scanner (dry-run low-MTBF failure
             // hunting). When `DEGENBOT_SOLVER_DIVERGENCE_SCAN=1` we log every lagging
@@ -842,7 +840,7 @@ impl BlockPump {
         }
 
         for (path_idx, hop_states) in path_hop_states.iter().enumerate() {
-            if let Err(mismatch) = verify_solver_hop_states(provider, hop_states, block).await {
+            if let Err(mismatch) = verify_solver_hop_states(provider, hop_states, anchor).await {
                 // Diagnose the cause class before panicking: log every hop's
                 // solver-stored update_block and its staleness vs. the solve
                 // block. `stale == 0` on the failing hop is the sub-tick
@@ -2074,18 +2072,12 @@ impl BlockPump {
     }
 }
 
-/// Compute the single pump-owned SOLVE anchor that `on_drain`/solve/verify/sim all
-/// derive from (BO5FBS + ADR-008 D2 solver-release gate).
-///
-/// `anchor = max(open, pool_state_head)`, where:
-/// - `open` is the LOG-DRIVEN settled block (`BlockClock::latest_observed`),
-///   falling back to the header `current_block` only when no block's logs are
-///   currently open (`open.is_none()`). A header that races a head ahead of the
-///   applied state must NOT pull the solve anchor up to it — otherwise a quiet
-///   path pool's pre-in-block-swap state is consumed while the block is still
-///   settling (the 0x99ac8c false-abort).
-/// - `pool_state_head` (the state clock, `max update_block`) still dominates so a
-///   backfill-ahead state is never solved below (MQIZ5M +1-wei / IIA class).
+/// The pump's solve anchor (`anchor = max(open, pool_state_head)`, BO5FBS +
+/// ADR-008 D2) is owned by `crate::bot_core::solve_anchor`: the LOG-DRIVEN
+/// settled block (`BlockClock::latest_observed`, falling back to the header
+/// `current_block`) floored by the pool-state head, with the future-hop rule.
+/// Its failure history (0x99ac8c false-abort, MQIZ5M +1-wei / IIA class) lives
+/// in that module's docs.
 ///
 /// Build an Alloy `Filter` for backfill via `eth_getLogs`.
 ///

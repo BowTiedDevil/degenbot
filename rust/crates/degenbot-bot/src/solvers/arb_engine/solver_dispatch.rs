@@ -25,15 +25,6 @@ use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 // genuine stale/desync pool it fails HARD and LOUDLY, which is the preferred
 // behavior (develop on loud failures).
 
-/// Whether a hop's price clock runs AHEAD of the solve block (U6RNHH T1).
-/// Mirror of the verifier's `is_future_price`; after the B2 re-anchor
-/// (`solve_block = max(block_number, pool_state_head)`) this is impossible for
-/// any pool (head is the max across all pools), so this is a belt-and-suspenders
-/// invariant assertion, not a normal-path rejection.
-#[must_use]
-fn hop_is_future(update_block: u64, solve_block: u64) -> bool {
-    update_block > solve_block
-}
 use crate::bot_core::resolve::resolve_hops;
 use ::degenbot_solvers::mixed::{HopType, ResolvedMixedPath, SolvePathResult};
 
@@ -322,16 +313,17 @@ impl ArbitrageEngine {
         // covered rather than only its final solve.
         self.last_solved_path_ids.extend(&affected_path_ids);
 
-        // Solve-block anchor: the batch's `solve_block` (= `results_block`)
-        // is the block the pool state actually reflects — the pool-state
-        // head, NOT the (possibly-lagging) drain `block_number`. Since
-        // BO5FBS the pump pre-promotes `active_block = max(current_block,
-        // pool_state_head())` before calling `on_drain`, so `block_number`
-        // here is already >= `pool_state_head` and this `max` is a defensive
-        // no-op that preserves the pre-promotion invariant if any caller
-        // bypasses the pump (e.g. tests driving `solve_dirty` directly). Keep
-        // it — it is now the guard, not the re-anchor.
-        let solve_block = block_number.max(self.core.read().pool_state_head());
+        // Solve-block anchor (rule owner + history: `crate::bot_core::solve_anchor`):
+        // the batch's `solve_block` (= `results_block`) is the block the pool
+        // state actually reflects — the pool-state head, NOT the
+        // (possibly-lagging) drain `block_number`. Since BO5FBS the pump
+        // pre-promotes `active_block` before calling `on_drain`, so
+        // `block_number` here is already >= the head and the re-anchor is a
+        // defensive no-op on the pump path — it stays the guard for callers
+        // that bypass the pump (e.g. tests driving `solve_dirty` directly).
+        let anchor =
+            crate::bot_core::solve_anchor::SolveAnchor::resolve(block_number, &self.core.read());
+        let solve_block = anchor.block();
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
             self.results_block = solve_block;
@@ -370,21 +362,17 @@ impl ArbitrageEngine {
                 let Some(path) = self.path_pools.get(&path_id) else {
                     continue;
                 };
-                // U6RNHH T1 solve-stage future-price tripwire (belt + suspenders):
-                // a hop whose PRICE clock runs AHEAD of the solve block is never
-                // legitimate and must be rejected loudly, not solved (a future-price
-                // solve reports a misleading downstream IIA). Note the B2 re-anchor
-                // above sets `solve_block = max(block_number, pool_state_head)`,
-                // so the only way a hop beats it is `update_block > pool_state_head`
-                // — impossible by definition (head is the max across all pools).
-                // This guard therefore normally never fires: it is an explicit
-                // invariant assertion for the truly-future case, and it does NOT
-                // regress B2 (which concerns `update_block > block_number` — a
-                // legitimate live-head path that the re-anchor folds into
-                // `solve_block`).
-                let future = path.pools.iter().any(|pool_ref| {
-                    hop_is_future(core.pool_update_block(pool_ref.pool_key), solve_block)
-                });
+                // U6RNHH T1 solve-stage future-price tripwire: a hop whose PRICE
+                // clock runs ahead of the solve anchor is never legitimate and is
+                // rejected loudly (deferred + logged), not solved — a future-price
+                // solve reports a misleading downstream IIA. Rule owner:
+                // `crate::bot_core::solve_anchor`; after the head floor a hop can
+                // beat the anchor only on a mid-solve state advance (belt +
+                // suspenders, normally unreachable).
+                let future = path
+                    .pools
+                    .iter()
+                    .any(|pool_ref| anchor.is_future(core.pool_update_block(pool_ref.pool_key)));
                 if future {
                     deferred_paths.insert(path_id);
                     tracing::error!(
@@ -547,23 +535,6 @@ impl ArbitrageEngine {
 impl Default for ArbitrageEngine {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod staleness_gate_tests {
-    use super::hop_is_future;
-
-    #[test]
-    fn ahead_is_future_never_legitimate() {
-        // Any magnitude ahead is future (U6RNHH T1 / TVJF6K T2).
-        assert!(hop_is_future(101, 100));
-        assert!(hop_is_future(25_677_789, 25_677_777));
-        // Equal to the solve block is a mid-block capture, NOT future.
-        assert!(!hop_is_future(100, 100));
-        // Behind (normal latency) is NOT future.
-        assert!(!hop_is_future(99, 100));
-        assert!(!hop_is_future(0, 100));
     }
 }
 

@@ -167,13 +167,15 @@ impl PumpFSM {
 
     /// The solver-release solve anchor (ADR-008 D2): the LOG-DRIVEN settled
     /// block (`clock.latest_observed()`), falling back to `current_block` when
-    /// no block logs are open, maximised against the pool-state head so a
-    /// backfill-ahead stall never solves below the state it solves against.
+    /// no block logs are open, resolved through the shared solve-anchor rule
+    /// (`super::solve_anchor` — the head floor + future-hop rule; the rule's
+    /// failure history lives in that module).
     fn solve_anchor(&self, state_head: u64) -> u64 {
-        self.clock
-            .latest_observed()
-            .unwrap_or(self.current_block)
-            .max(state_head)
+        super::solve_anchor::SolveAnchor::for_head(
+            self.clock.latest_observed().unwrap_or(self.current_block),
+            state_head,
+        )
+        .block()
     }
 
     /// BQ7ZBC — record that an authoritative catch-up (a header-gap backfill
