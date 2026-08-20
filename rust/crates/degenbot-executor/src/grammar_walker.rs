@@ -499,12 +499,15 @@ mod mechanics {
         at: &mut AddressTable,
         facts: &HopFacts,
         entries: Vec<V4BatchSwap>,
+        open_weth: bool,
     ) -> PlanStep {
         // `currency`/`fee`/`tick_spacing` ride on the entries; the pool-manager
         // index is implicit. Kept as a thin wrapper so the mechanics surface is
         // homogeneous (T7 wires the `v4_v4`/`v4_v4_v4` batch paths through it).
+        // `open_weth`: 0x43 variant — the WETH tail-settle is skipped, so a
+        // trailing mint (erc6909 capture) finds the live delta (TGUZCT/SW42JA).
         let _ = (at, facts);
-        PlanStep::V4Batch { entries }
+        PlanStep::V4Batch { entries, open_weth }
     }
 }
 

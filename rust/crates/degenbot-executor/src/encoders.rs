@@ -110,6 +110,7 @@ pub const CMD_V4_SWAP_COMPACT: u8 = 0x40;
 pub const CMD_V4_SWAP_DYNAMIC: u8 = 0x41;
 /// `V4_BATCH` — multi-swap + auto-settle (max 8).
 pub const CMD_V4_BATCH: u8 = 0x42;
+pub const CMD_V4_BATCH_OPEN_WETH: u8 = 0x43;
 
 /// `V4_UNLOCK` — enter PM unlock context.
 pub const CMD_V4_UNLOCK: u8 = 0x50;
@@ -637,11 +638,36 @@ pub struct V4BatchEntry {
 /// Returns [`EncoderError::TooManyV4BatchSwaps`] if `swaps.len() > 8`, or
 /// [`EncoderError::Uint96Overflow`] if any entry's `amount_u96 ≥ 2^96`.
 pub fn enc_v4_batch(swaps: &[V4BatchEntry]) -> Result<Vec<u8>, EncoderError> {
+    v4_batch_stream(CMD_V4_BATCH, swaps)
+}
+
+/// `V4_BATCH_OPEN_WETH`: `[0x43][num_swaps:1][entry_1:20]...[entry_N:20]`.
+///
+/// Byte-identical layout to `V4_BATCH` (0x42) except the command byte: the
+/// PoolManager SKIPS the WETH tail-settle, leaving the positive WETH delta
+/// OPEN for a trailing `V4_MINT_COMPACT` (ERC6909 capture — TGUZCT/SW42JA);
+/// the native-ETH tail-settle still applies.
+///
+/// # Errors
+///
+/// Returns [`EncoderError::TooManyV4BatchSwaps`] if `swaps.len() > 8`, or
+/// [`EncoderError::Uint96Overflow`] if any entry's `amount_u96 ≥ 2^96`.
+pub fn enc_v4_batch_open_weth(swaps: &[V4BatchEntry]) -> Result<Vec<u8>, EncoderError> {
+    v4_batch_stream(CMD_V4_BATCH_OPEN_WETH, swaps)
+}
+
+/// Shared stream layout for `V4_BATCH` (0x42) / `V4_BATCH_OPEN_WETH` (0x43).
+///
+/// # Errors
+///
+/// Returns [`EncoderError::TooManyV4BatchSwaps`] if `swaps.len() > 8`, or
+/// [`EncoderError::Uint96Overflow`] if any entry's `amount_u96 ≥ 2^96`.
+fn v4_batch_stream(cmd: u8, swaps: &[V4BatchEntry]) -> Result<Vec<u8>, EncoderError> {
     if swaps.len() > 8 {
         return Err(EncoderError::TooManyV4BatchSwaps(swaps.len()));
     }
     let mut out = Vec::with_capacity(2 + swaps.len() * 20);
-    out.push(CMD_V4_BATCH);
+    out.push(cmd);
     // `swaps.len() ≤ 8` here, so the narrowing cannot fail; `unwrap_or` is
     // panic-free and the fallback is unreachable.
     push_u8(&mut out, u8::try_from(swaps.len()).unwrap_or(u8::MAX));

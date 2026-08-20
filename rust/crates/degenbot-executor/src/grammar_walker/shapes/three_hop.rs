@@ -6,8 +6,8 @@ use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WET
 use crate::grammar_ledger::Prot;
 use crate::grammar_plan::{Plan, PlanStep, V4BatchSwap};
 use crate::grammar_shape::{
-    erc6909_batch_capture_declines, native_capture_declines, v4_bridge_steps, v4_scaffold_table,
-    v4_terminal_capture_steps,
+    native_capture_declines, v4_bridge_steps, v4_scaffold_table, v4_terminal_capture_steps,
+    ProfitCapture,
 };
 
 #[expect(clippy::too_many_lines, clippy::needless_return)]
@@ -686,6 +686,10 @@ fn rule_walk_v4_led(
             };
 
             let mut inner: Plan = if inputs.opts.use_v4_batch && !any_gap {
+                // TGUZCT/SW42JA: on a WETH terminal with erc6909 capture, open
+                // the WETH tail-settle (0x43, not 0x42) so the trailing mint
+                // finds the live delta.
+                let open_weth = capture == ProfitCapture::Erc6909 && output_c == weth;
                 let mut steps = vec![PlanStep::V4Batch {
                     entries: vec![
                         V4BatchSwap {
@@ -728,6 +732,7 @@ fn rule_walk_v4_led(
                             out_amount: out_c,
                         },
                     ],
+                    open_weth,
                 }];
                 if output_c != NATIVE_CURRENCY_ADDRESS && output_c != weth {
                     steps.push(PlanStep::V4TakeDelta {
@@ -766,14 +771,6 @@ fn rule_walk_v4_led(
                 }
                 steps
             };
-            if !any_gap
-                && erc6909_batch_capture_declines(capture, inputs.opts.use_v4_batch, output_c, weth)
-            {
-                // SMOZG3: batch tail-settle + V4_MINT on the WETH terminal is
-                // unexecutable on the current executor artifact (D0) — decline
-                // until TGUZCT ships the composable artifact.
-                return None;
-            }
             inner.append(&mut v4_terminal_capture_steps(
                 output_c,
                 terminal_idx,

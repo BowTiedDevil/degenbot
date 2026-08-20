@@ -347,10 +347,11 @@ pub enum PlanStep {
         weth_addr: Address,
         amount: u128,
     },
-    /// `V4_BATCH` — a bundled PM extcall of up to 8 swaps
-    /// (`encoders::enc_v4_batch`). Ledger-equivalent to the constituent
+    /// `V4_BATCH` (0x42) / `V4_BATCH_OPEN_WETH` (0x43) — a bundled PM extcall
+    /// of up to 8 swaps (`encoders::enc_v4_batch` /
+    /// `encoders::enc_v4_batch_open_weth`). Ledger-equivalent to the constituent
     /// `V4Swap`s: each entry applies the same `PM[in]` debt / `PM[out]`
-    /// credit. **Asymmetry vs a plain `V4Swap` sequence:** the contract
+    /// credit. **Asymmetry vs a plain `V4Swap` sequence:** the 0x42 contract
     /// auto-settles any positive native ETH and WETH delta at the batch's end
     /// (an implicit `V4_TAKE_DELTA(→SELF)` for those two currencies). For the
     /// WETH-only slice (the executor's proven path) the derive therefore omits
@@ -359,7 +360,16 @@ pub enum PlanStep {
     /// deltas leave a positive `PM[weth]` that the trailing `V4SettleAll`
     /// zeroes (the gate's master invariant fires at `V4UnlockEnd` — the profit
     /// capture is modelled by the contract, not by a `Take` op here).
-    V4Batch { entries: Vec<V4BatchSwap> },
+    ///
+    /// `open_weth`: `false` = 0x42 (full tail-settle); `true` = 0x43 — the
+    /// WETH tail-settle is SKIPPED, so the positive `PM[weth]` delta is left
+    /// OPEN for a trailing `V4Mint` (ERC6909 capture, TGUZCT/SW42JA). The 0x43
+    /// projection additionally emits the `LedgerOp::OpenWethPairing` gate op,
+    /// which requires a WETH `Mint` before `V4UnlockEnd`.
+    V4Batch {
+        entries: Vec<V4BatchSwap>,
+        open_weth: bool,
+    },
     /// `V4_MINT_COMPACT(cur→rcp, amount)` — convert a positive `PM[cur]`
     /// delta into an ERC6909 claim for `rcp` (BP7KIR `erc6909_profit` opt).
     /// Ledger-equivalent to [`PlanStep::V4TakeDelta`]: debits `PM[cur]` by
@@ -673,7 +683,7 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                         amount: *amount,
                     });
                 }
-                PlanStep::V4Batch { entries } => {
+                PlanStep::V4Batch { entries, open_weth } => {
                     // Each batch entry applies the same `PM[in]` debt / `PM[out]`
                     // credit as a standalone `V4Swap`. The batch's on-chain
                     // auto-settle of native+WETH positive deltas is modelled
@@ -687,6 +697,13 @@ pub fn plan_to_ledger_ops(plan: &Plan) -> Vec<LedgerOp> {
                             out_currency: e.out_currency,
                             out_amount: e.out_amount,
                         });
+                    }
+                    if *open_weth {
+                        // TGUZCT/SW42JA: the 0x43 variant leaves the terminal
+                        // (WETH) delta open — arm the pairing gate for the
+                        // trailing `V4_MINT_COMPACT`.
+                        let weth = entries.last().map(|e| e.out_currency).unwrap_or_default();
+                        ops.push(LedgerOp::OpenWethPairing { weth });
                     }
                 }
                 PlanStep::V4Mint {
@@ -855,7 +872,7 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                 PlanStep::WethDeposit { amount, .. } => {
                     out.extend_from_slice(&encoders::enc_weth_deposit(U256::from(*amount)));
                 }
-                PlanStep::V4Batch { entries } => {
+                PlanStep::V4Batch { entries, open_weth } => {
                     let batch: Vec<encoders::V4BatchEntry> = entries
                         .iter()
                         .map(|e| encoders::V4BatchEntry {
@@ -868,10 +885,13 @@ pub fn plan_to_bytes(plan: &Plan, at: &AddressTable) -> Vec<u8> {
                             amount_u96: e.amount,
                         })
                         .collect();
-                    out.extend_from_slice(
-                        &encoders::enc_v4_batch(&batch)
-                            .expect("V4 batch <= 8 entries + uint96 amounts"),
-                    );
+                    let encoded = if *open_weth {
+                        encoders::enc_v4_batch_open_weth(&batch)
+                    } else {
+                        encoders::enc_v4_batch(&batch)
+                    }
+                    .expect("V4 batch <= 8 entries + uint96 amounts");
+                    out.extend_from_slice(&encoded);
                 }
                 PlanStep::V4Mint {
                     currency_idx,

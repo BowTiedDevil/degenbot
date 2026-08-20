@@ -93,14 +93,13 @@ fn encode_cmd_stream_routes_two_hop_v2_v3_via_the_intake_pair() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SMOZG3 — the `use_v4_batch` × `erc6909_profit` interplay (open question 3).
-// The current executor artifact (pre-deployment, operated via code
-// injection) cannot execute the combined WETH-terminal stream:
-// `_cmd_v4_batch`'s tail settle TAKES the positive WETH delta into custody
-// (`_v4_settle_currency`, positive branch), so the follow-up
-// `V4_MINT_COMPACT` reverts with the PoolManager's D0 credit-before-debit
-// (probed at runtime in the harness). The funnel must DECLINE the
-// combination (ADR-030) instead of emitting un-executable bytes.
+// TGUZCT — the `use_v4_batch` × `erc6909_profit` interplay (was SMOZG3 open
+// question 3). On the deployed artifact the combination COMPOSES via the
+// `V4_BATCH_OPEN_WETH` (0x43) command: the batch skips its WETH tail-settle,
+// so the follow-up `V4_MINT_COMPACT` finds the live delta. (The
+// pre-deployment artifact's 0x42 tail-settle starved the mint — D0; the
+// intake declined the combination until this flip.) The pairing gate in the
+// validator keeps the composed stream checkable.
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn v4_hop(c0: Address, c1: Address, zfo: bool) -> HopInfo {
@@ -122,7 +121,10 @@ fn v4v4_weth_terminal() -> PathInfo {
 }
 
 #[test]
-fn batch_and_erc6909_capture_weth_terminal_declines() {
+fn batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
+    // TGUZCT/SW42JA: the deployed artifact's 0x43 open-weth batch leaves the
+    // WETH delta open for the trailing mint — the intake encodes the open
+    // batch (not the legacy 0x42).
     let ctx = EncodeContext::new(EXECUTOR, PM, WETH);
     let req = EncodeRequest::new(
         v4v4_weth_terminal(),
@@ -135,9 +137,11 @@ fn batch_and_erc6909_capture_weth_terminal_declines() {
             ..Default::default()
         },
     );
+    let bytes =
+        encode_cmd_stream(&ctx, &req).expect("batch + erc6909 capture must compose (TGUZCT)");
     assert!(
-        encode_cmd_stream(&ctx, &req).is_none(),
-        "batch + erc6909 capture must decline (unexecutable on the current artifact; TGUZCT)"
+        bytes.windows(2).any(|w| w[0] == 0x43 && w[1] == 2),
+        "stream must carry the open-weth batch command (0x43, 2 entries)"
     );
 }
 
@@ -160,9 +164,9 @@ fn erc6909_capture_without_batch_still_encodes() {
 }
 
 #[test]
-fn v4v4v4_batch_and_erc6909_capture_weth_terminal_declines() {
-    // The 3-hop pure-V4 family has the same batch-tail starvation. Three
-    // tokens so the path is WETH-terminal: WETH -> TOK2 -> USDC -> WETH.
+fn v4v4v4_batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
+    // TGUZCT/SW42JA: the 3-hop pure-V4 family composes too (0x43 open batch).
+    // Three tokens so the path is WETH-terminal: WETH -> TOK2 -> USDC -> WETH.
     let path = PathInfo::new(vec![
         v4_hop(WETH, TOK2, true),
         v4_hop(TOK2, USDC, true),
@@ -184,9 +188,11 @@ fn v4v4v4_batch_and_erc6909_capture_weth_terminal_declines() {
             ..Default::default()
         },
     );
+    let bytes =
+        encode_cmd_stream(&ctx, &req).expect("3-hop batch + erc6909 capture must compose (TGUZCT)");
     assert!(
-        encode_cmd_stream(&ctx, &req).is_none(),
-        "3-hop batch + erc6909 capture must decline"
+        bytes.windows(2).any(|w| w[0] == 0x43 && w[1] == 3),
+        "stream must carry the open-weth batch command (0x43, 3 entries)"
     );
 }
 

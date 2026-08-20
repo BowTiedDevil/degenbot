@@ -260,6 +260,13 @@ pub enum LedgerOp {
     V4SettleDelta { currency: Address },
     /// `V4_SETTLE_ALL` — auto-settle every touched PM currency to 0.
     V4SettleAll,
+    /// `V4_BATCH_OPEN_WETH` (0x43) pairing arm — no PM effect (the per-entry
+    /// `V4Swap` ops already model the batch). The batch left the positive
+    /// WETH delta OPEN (no tail take), so the stream must convert it with a
+    /// `Mint { currency: weth }` before `V4UnlockEnd` — otherwise the PM's
+    /// `delta()` settles the leftover delta to the caller at callback end
+    /// (TGUZCT/SW42JA). Disarmed by a mint of the same currency.
+    OpenWethPairing { weth: Address },
     /// `V4_TAKE_DELTA(cur→rcp)` — take the ENTIRE positive `PM[cur]` delta to
     /// `rcp` (the profit capture). Debits whatever credit `PM[cur]` holds
     /// (amount is runtime state — the current balance). Requires `PM[cur] > 0`
@@ -470,7 +477,8 @@ impl LedgerOp {
             | LedgerOp::WethWithdraw { .. }
             | LedgerOp::WethDeposit { .. }
             | LedgerOp::ExternalFlash { .. }
-            | LedgerOp::ExternalRepay { .. } => None,
+            | LedgerOp::ExternalRepay { .. }
+            | LedgerOp::OpenWethPairing { .. } => None,
         }
     }
 }
@@ -512,6 +520,10 @@ pub struct LedgerValidator {
     /// Outstanding flash debt per currency (owed by the executor, awaiting
     /// repayment within a callback). Checked zero at `finish()`.
     flash_debt: HashMap<Address, u128>,
+    /// Armed open-weth (0x43) batch pairing (TGUZCT/SW42JA): `Some(weth)`
+    /// after an `OpenWethPairing` op until a `Mint { currency: weth }`
+    /// disarms it; `V4UnlockEnd` rejects while set.
+    open_weth_pairing: Option<Address>,
 }
 
 /// Why a stream was rejected — the invariant that fired and the offending op.
@@ -553,6 +565,12 @@ pub enum ValidationError {
     /// constructed with `with_external_ledgers` covering the index the stream
     /// uses.
     UnknownExternalLedger { ledger: u8 },
+    /// A `V4_BATCH_OPEN_WETH` (0x43) left the WETH delta OPEN and the unlock
+    /// closed before a WETH `V4_MINT_COMPACT` consumed it — the PM's
+    /// `delta()` would settle the leftover delta to the caller at callback
+    /// end (TGUZCT: with the open-weth batch, a batch without its mint is
+    /// unrepresentable).
+    OpenWethBatchNotFollowedByMint { weth: Address },
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -833,11 +851,21 @@ impl LedgerValidator {
                 }
                 Ok(())
             }
+            // TGUZCT/SW42JA: the 0x43 open-weth batch arms the pairing — a
+            // WETH `Mint` before `V4UnlockEnd` must consume the open delta.
+            // Re-arming overwrites (the encoder emits at most one per unlock).
+            LedgerOp::OpenWethPairing { weth } => {
+                self.open_weth_pairing = Some(weth);
+                Ok(())
+            }
             // V4_UNLOCK callback end: the master invariant — every touched
             // PM currency must net to zero by callback end. (A prior
             // `V4SettleAll` would have zeroed them; this catches any stream
             // that forgot to settle.)
             LedgerOp::V4UnlockEnd => {
+                if let Some(weth) = self.open_weth_pairing {
+                    return Err(ValidationError::OpenWethBatchNotFollowedByMint { weth });
+                }
                 // The unlock-close auto-settles POSITIVE PM deltas to the
                 // executor (the master-rule "net zero" credits the bot — a
                 // stream may validly leave surplus profit). A NEGATIVE delta is
@@ -873,8 +901,16 @@ impl LedgerValidator {
             }
             LedgerOp::Take {
                 currency, amount, ..
+            } => self.pm.debit(currency, amount),
+            LedgerOp::Mint { currency, amount } => {
+                self.pm.debit(currency, amount)?;
+                // TGUZCT/SW42JA: a mint of the paired currency consumes the
+                // open batch's WETH delta — disarms the pairing gate.
+                if Some(currency) == self.open_weth_pairing {
+                    self.open_weth_pairing = None;
+                }
+                Ok(())
             }
-            | LedgerOp::Mint { currency, amount } => self.pm.debit(currency, amount),
             LedgerOp::SwapCalc {
                 pool,
                 out_currency,
@@ -1154,6 +1190,93 @@ mod tests {
             pm.debit(usdc(), 1),
             Err(ValidationError::TakeBeforeCredit { currency, wanted: 1, have: -500 }) if currency == usdc()
         ));
+    }
+
+    // ── TGUZCT/SW42JA: the open-weth batch pairing gate ──
+    // The 0x43 `V4_BATCH_OPEN_WETH` leaves the positive WETH delta OPEN at
+    // the batch's end (no tail take). The stream can end the callback only if
+    // a WETH `V4_MINT_COMPACT` consumes that delta before unlock — otherwise
+    // the PM's `delta()` settles it to the caller and the stream is wrong
+    // (the 0x57 settle-all path the flip removes). `OpenWethPairing` arms
+    // the gate; a mint of the SAME currency before `V4UnlockEnd` disarms it.
+
+    fn open_batch_swaps() -> Vec<LedgerOp> {
+        vec![
+            LedgerOp::V4Swap {
+                in_currency: weth(),
+                in_amount: 100,
+                out_currency: usdc(),
+                out_amount: 500,
+            },
+            LedgerOp::V4Swap {
+                in_currency: usdc(),
+                in_amount: 200,
+                out_currency: weth(),
+                out_amount: 300,
+            },
+        ]
+    }
+
+    #[test]
+    fn open_weth_batch_pairs_with_weth_mint_before_unlock_end() {
+        let mut v = LedgerValidator::default();
+        for op in open_batch_swaps() {
+            v.push(op).unwrap();
+        }
+        // Post-batch: PM[weth] = +200, PM[usdc] = +300 (open, not tail-taken).
+        v.push(LedgerOp::OpenWethPairing { weth: weth() }).unwrap();
+        v.push(LedgerOp::Mint {
+            currency: weth(),
+            amount: 200,
+        })
+        .unwrap();
+        v.push(LedgerOp::V4SettleAll).unwrap();
+        v.push(LedgerOp::V4UnlockEnd).unwrap();
+    }
+
+    #[test]
+    fn open_weth_batch_without_mint_rejected_at_unlock_end() {
+        let mut v = LedgerValidator::default();
+        for op in open_batch_swaps() {
+            v.push(op).unwrap();
+        }
+        v.push(LedgerOp::OpenWethPairing { weth: weth() }).unwrap();
+        // settle-all hides the delta from the master invariant …
+        v.push(LedgerOp::V4SettleAll).unwrap();
+        // … but the pairing gate still fires at unlock end.
+        let err = v.push(LedgerOp::V4UnlockEnd).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::OpenWethBatchNotFollowedByMint { weth: c } if c == weth()
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn open_weth_batch_not_disarmed_by_foreign_mint() {
+        let mut v = LedgerValidator::default();
+        for op in open_batch_swaps() {
+            v.push(op).unwrap();
+        }
+        v.push(LedgerOp::OpenWethPairing { weth: weth() }).unwrap();
+        // A usdc mint is D0-legal (PM[usdc] = +300) but does NOT satisfy the
+        // WETH pairing — the WETH delta is still live at unlock end.
+        v.push(LedgerOp::Mint {
+            currency: usdc(),
+            amount: 300,
+        })
+        .unwrap();
+        v.push(LedgerOp::V4SettleAll).unwrap();
+        let err = v.push(LedgerOp::V4UnlockEnd).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::OpenWethBatchNotFollowedByMint { weth: c } if c == weth()
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]

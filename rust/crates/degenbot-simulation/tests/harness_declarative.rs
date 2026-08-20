@@ -614,15 +614,14 @@ fn erc6909_capture_v4v4v4_lands_in_vault() {
     assert_erc6909_capture(&result, 3, "v4_v4_v4 erc6909 capture");
 }
 
-/// SMOZG3 (open question 3, RESOLVED): `use_v4_batch` and `erc6909_profit`
-/// do NOT compose on a WETH-terminal pure-V4 path. Probed at runtime pre-fix:
-/// the combined stream executes the batch and then reverts with the
-/// PoolManager's D0 (credit-before-debit) — `_cmd_v4_batch`'s tail settle
-/// takes the WETH delta into custody before `V4_MINT_COMPACT` runs, leaving
-/// nothing for the mint to convert. The fix makes the funnel decline the
-/// combination; the declarative entry surfaces that as an encode error.
+/// TGUZCT/SW42JA (supersedes the SMOZG3 decline): `use_v4_batch` and
+/// `erc6909_profit` now DO compose on a WETH-terminal pure-V4 path. The
+/// encoder emits the `V4_BATCH_OPEN_WETH` (0x43) variant — the batch leaves
+/// the positive WETH delta open, and the trailing `V4_MINT_COMPACT` converts
+/// it into the ERC6909 vault. The prior decline (SMOZG3, pre-deployment
+/// artifact whose 0x42 tail-settle starved the mint) is lifted.
 #[test]
-fn erc6909_capture_with_batch_declines_unexecutable_combo() {
+fn erc6909_capture_with_batch_composes_via_open_weth_batch() {
     let mut h = Harness::new().unwrap();
     let t = h.add_token().unwrap();
     let hops = vec![
@@ -666,8 +665,8 @@ fn erc6909_capture_with_batch_declines_unexecutable_combo() {
         use_v4_batch: true,
         ..Default::default()
     };
-    assert!(
-        h.run_chain_with_opts(&hops, 100_000, 8_000_000, opts).is_err(),
-        "batch + erc6909 capture must decline at encode (unexecutable on the current artifact; TGUZCT)"
-    );
+    let result = h
+        .run_chain_with_opts(&hops, 100_000, 8_000_000, opts)
+        .unwrap_or_else(|e| panic!("batch + erc6909 must execute via 0x43 (TGUZCT): {e}"));
+    assert_erc6909_capture(&result, 2, "v4_v4 batch erc6909 capture (0x43)");
 }

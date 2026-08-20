@@ -19,9 +19,7 @@ use crate::composers::{resolve_axes, ComposerInputs, CurrencyBridge, NATIVE_CURR
 use crate::encoders::{AddressTable, SENTINEL_NATIVE, SENTINEL_SELF, SENTINEL_WETH};
 use crate::grammar_ledger::{ProfitCapture, Prot};
 use crate::grammar_plan::Plan;
-use crate::grammar_shape::{
-    erc6909_batch_capture_declines, v4_bridge_steps, v4_scaffold_table, v4_terminal_capture_steps,
-};
+use crate::grammar_shape::{v4_bridge_steps, v4_scaffold_table, v4_terminal_capture_steps};
 
 pub(crate) fn derive(
     facts: &[HopFacts],
@@ -90,13 +88,13 @@ fn v4v4_arm(
         ));
         inner.push(mechanics::v4_settle_all());
         inner
-    } else if erc6909_batch_capture_declines(capture, inputs.opts.use_v4_batch, out_b, weth) {
-        // SMOZG3: batch tail-settle + V4_MINT on the WETH terminal is
-        // unexecutable on the current executor artifact (D0) — decline
-        // until TGUZCT ships the composable artifact.
-        return None;
     } else {
+        // TGUZCT/SW42JA: the deployed artifact composes batch × erc6909 on a
+        // WETH terminal — the open-weth batch variant (0x43) skips the WETH
+        // tail-settle, so the trailing `v4_terminal_capture_steps` mint finds
+        // the live delta. (The SMOZG3 pre-deployment decline is lifted.)
         let batch = inputs.opts.use_v4_batch;
+        let open_weth = batch && capture == ProfitCapture::Erc6909 && out_b == weth;
         let explicit_take = out_b != NATIVE_CURRENCY_ADDRESS && out_b != weth;
         let steps: Plan = if batch {
             vec![mechanics::v4_batch(
@@ -106,6 +104,7 @@ fn v4v4_arm(
                     mechanics::v4_batch_entry(fa, c0_a, c1_a, optimal, fwd, fa.in_currency),
                     mechanics::v4_batch_entry(fb, c0_b, c1_b, b_swap_in, b_out, out_a),
                 ],
+                open_weth,
             )]
         } else {
             vec![
@@ -373,9 +372,9 @@ mod walk_probe {
     }
 
     /// Per-file byte-identity pin: the exact current streams for every
-    /// v4v2/v4v3/v4v4 family × amount-set × `EncodeOptions` combo, including
-    /// the decline partition (the SMOZG3 erc6909×batch WETH-terminal declines
-    /// stay declined — TGUZCT is still open).
+    /// v4v2/v4v3/v4v4 family × amount-set × `EncodeOptions` combo. The
+    /// SMOZG3 erc6909×batch WETH-terminal decline is lifted (TGUZCT/SW42JA);
+    /// the flipped cell is pinned by the shape/matrix tests, not this table.
     const FAMILIES: &[(&str, &[&str])] = &[
         ("V4_V2", &["V4", "V2"]),
         ("V4_V3", &["V4", "V3"]),

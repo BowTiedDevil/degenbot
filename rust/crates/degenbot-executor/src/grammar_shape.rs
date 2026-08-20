@@ -103,23 +103,6 @@ pub(crate) fn native_capture_declines(
     capture == ProfitCapture::Native && terminal != weth && terminal != NATIVE_CURRENCY_ADDRESS
 }
 
-/// The SMOZG3 capture×batch guard: `ProfitCapture::Erc6909` under
-/// `use_v4_batch` on a WETH terminal is **unexecutable on the current
-/// executor artifact (pre-deployment, operated via code injection)** —
-/// `_cmd_v4_batch`'s tail settle takes the positive WETH delta into custody
-/// (`_v4_settle_currency`, positive branch → `PM.take`), so the follow-up
-/// `V4_MINT_COMPACT` finds no delta left to convert and reverts with the
-/// PoolManager's D0 (credit-before-debit). Decline at encode (ADR-030) until
-/// TGUZCT makes the combination composable at the executor source.
-pub(crate) fn erc6909_batch_capture_declines(
-    capture: ProfitCapture,
-    use_v4_batch: bool,
-    terminal: Address,
-    weth: Address,
-) -> bool {
-    capture == ProfitCapture::Erc6909 && use_v4_batch && terminal == weth
-}
-
 /// Build the terminal-capture `PlanStep`s for a V4-crossing family (mirrors the
 /// emitters' terminal-capture block): `erc6909_profit` (WETH terminal) → an
 /// ERC6909 mint; otherwise a physical `V4TakeDelta` unless `use_v4_batch`
@@ -1308,22 +1291,47 @@ mod tests {
     }
 
     #[test]
-    fn v4_v4_batch_and_erc6909_capture_weth_terminal_declines() {
-        // SMOZG3: the former `[V4Batch, V4Mint, V4SettleAll]` shape was
-        // unexecutable on the current executor artifact (pre-deployment) —
-        // `_cmd_v4_batch`'s tail settle TAKES the positive WETH delta into
-        // custody inside the batch command, so the follow-up `V4_MINT_COMPACT`
-        // found no delta and reverted with the PoolManager's D0
-        // (credit-before-debit). The Plan builder now declines the combination
-        // instead of emitting it.
+    fn v4_v4_batch_and_erc6909_capture_weth_terminal_composes() {
+        // TGUZCT/SW42JA: on the deployed artifact the `V4_BATCH_OPEN_WETH`
+        // (0x43) variant leaves the positive WETH delta OPEN at the batch's
+        // end, so the follow-up `V4_MINT_COMPACT` converts it into the
+        // ERC6909 vault. The former decline (SMOZG3, pre-deployment artifact)
+        // is lifted: the stream composes as [V4Batch(open_weth), V4Mint,
+        // V4SettleAll] and the pairing gate accepts it.
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
             erc6909_profit: true,
             use_v4_batch: true,
             ..Default::default()
         });
+        let (_preamble, plan, _at) = build_v4v4_plan(&path, &inputs)
+            .expect("batch + erc6909 WETH-terminal must build (TGUZCT)");
+        let PlanStep::V4Unlock { inner, .. } = &plan[0] else {
+            panic!("expected outer V4Unlock");
+        };
+        assert_eq!(
+            inner.len(),
+            3,
+            "erc6909+batch inner = [V4Batch(open_weth), V4Mint, V4SettleAll]"
+        );
         assert!(
-            build_v4v4_plan(&path, &inputs).is_none(),
-            "batch + erc6909 WETH-terminal must decline (unexecutable on the current artifact; TGUZCT)"
+            matches!(
+                &inner[0],
+                PlanStep::V4Batch {
+                    open_weth: true,
+                    ..
+                }
+            ),
+            "the batch must be the open-weth (0x43) variant"
+        );
+        assert!(matches!(&inner[1], PlanStep::V4Mint { .. }));
+        assert!(matches!(&inner[2], PlanStep::V4SettleAll));
+        // The pairing gate accepts the composed stream.
+        let ops = plan_to_ledger_ops(&plan);
+        assert!(
+            crate::grammar_ledger::LedgerValidator::default()
+                .validate_full(&ops)
+                .is_ok(),
+            "open batch -> WETH mint -> settle-all must validate"
         );
     }
 
@@ -1402,16 +1410,9 @@ mod tests {
             for (m_name, opts) in modes {
                 let label = format!("v4_v4 {t_name}+{m_name}");
                 let (path, inputs) = v4_v4_inputs(terminal, opts);
-                if matches!(terminal, Terminal::Weth) && opts.erc6909_profit && opts.use_v4_batch {
-                    // SMOZG3: batch tail-settle starves the mint (D0 on the
-                    // current artifact) — declines; TGUZCT composes it.
-                    assert!(
-                        build_v4v4_plan(&path, &inputs).is_none(),
-                        "[{label}] must decline"
-                    );
-                } else {
-                    plan_builds_and_validates(build_v4v4_plan, &path, &inputs, &label);
-                }
+                // TGUZCT/SW42JA: the WETH-terminal batch+erc6909 cell composes
+                // (0x43 open-weth batch feeds the mint) — no decline special case.
+                plan_builds_and_validates(build_v4v4_plan, &path, &inputs, &label);
             }
         }
         let _ = U256::ZERO;

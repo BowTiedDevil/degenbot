@@ -213,9 +213,10 @@ mod walk_probe {
     }
 
     /// Per-file byte-identity pin (T4 gate target): the exact current streams
-    /// for every v2v4/v3v4 family × amount-set × `EncodeOptions` combo,
-    /// including the decline partition (the SMOZG3 erc6909×batch WETH-terminal
-    /// declines stay declined — TGUZCT is still open).
+    /// for every v2v4/v3v4 family × amount-set × `EncodeOptions` combo. (The
+    /// SMOZG3 erc6909×batch WETH-terminal decline is lifted — TGUZCT/SW42JA —
+    /// and the flipped cell is pinned by the shape/matrix tests, not this
+    /// table.)
     const FAMILIES: &[(&str, &[&str])] = &[("V2_V4", &["V2", "V4"]), ("V3_V4", &["V3", "V4"])];
 
     const GOLDEN: &[&str] = &[
