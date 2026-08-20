@@ -3,7 +3,6 @@ name = "degenbot-bot"
 description = "Rust-owned bot state (BotState) + Möbius solvers + unified Uniswap V2/V3/V4 engine."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

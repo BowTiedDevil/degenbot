@@ -21,7 +21,7 @@
 version = "0.6.0-alpha.5"
 edition = "2021"
 license = "MIT"
-publish = false
+rust-version = "1.97"
 repository = "https://github.com/BowTiedDevil/degenbot"
 authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 

@@ -3,7 +3,6 @@ name = "degenbot-core"
 description = "Foundational utilities (errors, hex, addresses, runtime) for the degenbot Rust crates."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

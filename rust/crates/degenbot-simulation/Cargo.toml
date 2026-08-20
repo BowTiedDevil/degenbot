@@ -3,7 +3,6 @@ name = "degenbot-simulation"
 description = "In-process revm simulation executor + dispatch fan-out (pyo3-free core; ADR-019 D4 fold)."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

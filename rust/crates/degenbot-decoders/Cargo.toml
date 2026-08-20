@@ -3,7 +3,6 @@ name = "degenbot-decoders"
 description = "Pure-Rust Uniswap V2/V3/V4 event-log decoders (alloy-only leaf; no pyo3/tokio/degenbot-core)."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

@@ -3,7 +3,6 @@ name = "degenbot-db"
 description = "SQLite persistence substrate for the degenbot Rust core — pyo3-free read handle with an Alembic-aware schema gate."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

@@ -3,7 +3,6 @@ name = "degenbot-executor"
 description = "Pure-Rust cmd-executor domain — simulation warmup-slot storage math (Solidity mapping-slot keccak layout)."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

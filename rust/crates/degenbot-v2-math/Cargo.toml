@@ -3,7 +3,6 @@ name = "degenbot-v2-math"
 description = "Pure-Rust ports of Uniswap V2-style constant-product (x·y=k) swap math."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

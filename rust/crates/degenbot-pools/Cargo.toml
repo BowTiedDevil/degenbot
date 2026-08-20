@@ -3,7 +3,6 @@ name = "degenbot-pools"
 description = "Value-only pool identity/state structs + stateless swap simulation for the degenbot pool families."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

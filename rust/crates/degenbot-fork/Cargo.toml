@@ -3,7 +3,6 @@ name = "degenbot-fork"
 description = "Pure-Rust Anvil fork lifecycle + dev-RPC core (alloy node-bindings)."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

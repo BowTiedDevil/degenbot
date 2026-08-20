@@ -3,7 +3,6 @@ name = "degenbot-price"
 description = "Pure-Rust on-chain price readers — Chainlink aggregator + Aave oracle over degenbot-rpc eth_call."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

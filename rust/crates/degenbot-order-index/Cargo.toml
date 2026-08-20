@@ -3,7 +3,6 @@ name = "degenbot-order-index"
 description = "Convex-hull / upper-envelope order index for ranking path results by net profit under a variable gas price."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

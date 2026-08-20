@@ -3,7 +3,6 @@ name = "degenbot-arbitrage"
 description = "The settlement-arbitrage searcher strategy — the 7-call pre/post-balance bundle, gross/net + priority-fee sizing, dispatch fan-out + categorization policy. One example strategy over the degenbot-simulation engine (ADR-019 D4/D7; pyo3-free Rust core)."
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
