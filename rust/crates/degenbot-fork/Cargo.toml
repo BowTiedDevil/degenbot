@@ -25,3 +25,16 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "s
 default = []
 # Test-only constructors visible to downstream crates' tests.
 test-utils = []
+
+[dev-dependencies]
+# Teardown tests observe the alloy pubsub service's own events
+# (reconnect attempts / clean "request channel closed" shutdown).
+# default-features = false on every tracing crate: with default features,
+# `tracing-subscriber/tracing-log` + the `tracing` log bridge would unify
+# into the `degenbot_rs` build in `cargo test --workspace` (feature
+# unification across primary packages), which double-installs the global
+# `log` logger inside `python_log_layer::init_logging_subscriber` and
+# panics `logging_parity` with `SetLoggerError`.
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-core = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry"] }

@@ -2227,6 +2227,9 @@ dependencies = [
  "degenbot-core",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
+ "tracing-core",
+ "tracing-subscriber",
 ]
 
 [[package]]

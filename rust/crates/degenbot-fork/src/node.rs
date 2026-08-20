@@ -254,6 +254,12 @@ impl AnvilForkBuilder {
     /// - [`ForkError::Spawn`] if the `anvil` binary is missing or fails to start.
     /// - [`ForkError::Connect`] if the IPC connection fails.
     /// - [`ForkError::Rpc`] if a queued state-override call fails.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic: the IPC connect failure (including the dedicated
+    /// runtime's connect task aborting without delivering a result) maps to
+    /// [`ForkError::Connect`].
     pub async fn try_spawn(self) -> Result<AnvilFork, ForkError> {
         // Use a process-unique IPC path by default (avoids anvil's default
         // socket collisions when multiple anvil forks spawn concurrently — e.g.
@@ -272,18 +278,55 @@ impl AnvilForkBuilder {
         // Use the instance's resolved ipc_path (may differ from the requested
         // default if anvil picked its own).
         let resolved_ipc = instance.ipc_path().to_string();
-        let provider: DynProvider = ProviderBuilder::default()
-            .connect_ipc(IpcConnect::new(resolved_ipc.clone()))
-            .await
-            .map_err(|source| ForkError::Connect {
-                path: resolved_ipc,
-                source,
-            })?
-            .erased();
+        let resolved_ipc_display = resolved_ipc.clone();
+        // The IPC provider's pubsub service + backend tasks live on a
+        // DEDICATED single-worker runtime, not the ambient one: teardown
+        // must be able to drive that service deterministically (see
+        // `Drop`), and only the fork knows which runtime the service is
+        // on.
+        let pubsub_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .map_err(|e| ForkError::Spawn(e.to_string()))?;
+        // Connect INSIDE the dedicated runtime via spawn + oneshot: a
+        // nested `block_on` here would panic (tokio forbids blocking from
+        // within any async execution environment, `try_spawn` being one).
+        let (connect_tx, connect_rx) = tokio::sync::oneshot::channel::<
+            Result<DynProvider, alloy::transports::TransportError>,
+        >();
+        pubsub_runtime.spawn(async move {
+            let provider = match ProviderBuilder::default()
+                .connect_ipc(IpcConnect::new(resolved_ipc))
+                .await
+            {
+                Ok(p) => Ok(p.erased()),
+                Err(source) => Err(source),
+            };
+            let _ = connect_tx.send(provider);
+        });
+        let provider = match connect_rx.await {
+            Ok(Ok(provider)) => provider,
+            Ok(Err(source)) => {
+                return Err(ForkError::Connect {
+                    path: resolved_ipc_display,
+                    source,
+                })
+            }
+            Err(_) => {
+                return Err(ForkError::Connect {
+                    path: resolved_ipc_display,
+                    source: alloy::transports::TransportErrorKind::custom_str(
+                        "IPC connect task aborted",
+                    ),
+                })
+            }
+        };
 
         let fork = AnvilFork {
             instance,
             provider: Some(provider),
+            pubsub_runtime: Some(pubsub_runtime),
         };
 
         // Apply queued state overrides post-spawn.
@@ -351,44 +394,105 @@ impl AnvilForkBuilder {
 /// A Rust-owned Anvil fork handle.
 ///
 /// Owns the spawned `anvil` subprocess (via the embedded `AnvilInstance`) +
-/// a connected alloy [`Provider`] (over IPC). Dropping the handle kills the
-/// subprocess + closes the transport, and removes the Unix-domain IPC socket
-/// file so `/tmp` doesn't accumulate leftover `.ipc` files.
+/// a connected alloy [`Provider`] (over IPC) + the dedicated runtime that
+/// runs the provider's pubsub service/backend tasks. Dropping the handle
+/// shuts the pubsub service down deterministically (see [`Drop`]), kills the
+/// subprocess, and removes the Unix-domain IPC socket file so `/tmp` doesn't
+/// accumulate leftover `.ipc` files.
 ///
 /// Call [`AnvilForkBuilder::try_spawn`] to construct.
 pub struct AnvilFork {
     /// The alloy Provider wired to the anvil node over IPC.
     ///
-    /// Stored as an `Option` so `Drop` can cleanly shut it down BEFORE the
-    /// `instance` kills the spawn anvil subprocess. The IPC provider's
-    /// pubsub backend takes the clean alloy "pubsub service request channel
-    /// closed" shutdown path only while the socket is still alive; dropping
-    /// it *after* the subprocess is killed leaves the backend to enter the
-    /// reconnect loop (``WARN alloy_pubsub::service: Reconnection attempt …``)
-    /// against the dead socket. See [`Drop`] for the ordering.
+    /// Stored as an `Option` so [`Drop`] can cleanly shut it down while the
+    /// anvil subprocess is still alive: dropping the provider drops the
+    /// alloy pubsub frontend, which closes the pubsub service's request
+    /// channel. The graced teardown (below) then lets the service observe
+    /// that closure and exit BEFORE the socket file is unlinked / anvil is
+    /// killed — dropping it *after* the subprocess dies leaves the service
+    /// to enter the reconnect loop (``WARN alloy_pubsub::service:
+    /// Reconnection attempt …``) against the dead socket. Callers must also
+    /// not hold `DynProvider` clones (`provider().clone()`) past drop: a
+    /// leaked frontend keeps the request channel open and will reconnect
+    /// into the dead socket regardless of teardown order.
     provider: Option<DynProvider>,
+    /// Dedicated single-worker runtime that owns the IPC provider's alloy
+    /// pubsub service + backend tasks (spawned ambient-at-connect, i.e. the
+    /// connect inside [`AnvilForkBuilder::try_spawn`] runs on THIS runtime).
+    /// Steady state: one parked OS thread (~0 CPU); RPC round-trips and
+    /// teardown wake it on demand. [`Drop`] drives it across
+    /// `PUBSUB_SHUTDOWN_GRACE` so the pubsub service exits via the clean
+    /// "request channel closed" path before the anvil child can die —
+    /// deterministically, without depending on which shared-runtime worker
+    /// gets to poll a woken task first. Dropping this runtime is
+    /// non-blocking, so even a leaked `DynProvider` clone (caller contract
+    /// violation) can only keep one parked worker alive until the fork
+    /// itself is dropped, at which point any residual reconnect task is
+    /// discarded with the runtime.
+    ///
+    /// Field drop order is load-bearing for teardown: `provider` is
+    /// already `None` (taken in the explicit `Drop` body), then
+    /// `pubsub_runtime` is torn down BEFORE `instance` kills the anvil
+    /// child, so a residual (leaked or starving) pubsub service is
+    /// cancelled while the backend is still alive — the backend-death
+    /// path (and its reconnect storm) is never observed at all.
+    ///
+    /// `Option` so [`Drop`] can pull it out and control WHERE it is
+    /// dropped: tokio forbids both driving (`block_on`) and dropping a
+    /// multi-thread runtime from within an async execution environment,
+    /// and a pure-Rust consumer can legitimately drop the fork from a task.
+    pubsub_runtime: Option<tokio::runtime::Runtime>,
     /// Owns the anvil subprocess lifecycle (drop = kill).
     instance: alloy::node_bindings::AnvilInstance,
 }
+
+/// Short grace the `Drop` impl drives the fork's dedicated transport
+/// runtime for, after dropping the IPC provider (see below).
+const PUBSUB_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_millis(2);
 
 impl Drop for AnvilFork {
     fn drop(&mut self) {
         // Teardown ORDER matters and is intentional:
         //
         // 1. Take (drop) the IPC provider FIRST, while the anvil subprocess
-        //    is still alive and the socket fd is still open. Dropping the
-        //    pubsub frontend closes the service's request channel, so alloy
-        //    exits via the clean "pubsub service request channel closed"
-        //    path. (A blocked select! is biased to the `reqs.recv()` branch,
-        //    which resolves the instant the frontend is dropped, beating the
-        //    socket-close branch because the peer is still up.) This avoids
-        //    the reconnect loop that would otherwise log repeated
-        //    ``alloy_pubsub::service`` reconnection warnings when the socket
-        //    is torn down beneath the open provider.
+        //    is still alive and the socket is still connected. That drops
+        //    the pubsub frontend, closes the service's request channel, and
+        //    synchronously wakes the pubsub service task on
+        //    `pubsub_runtime`.
         self.provider.take();
-        // 2. Unlink the IPC socket file (safe while the fd is open), then
-        //    drop `instance`, which kills the anvil child process and closes
-        //    the transport.
+        // 2. Bounded grace for the service to take the clean exit path.
+        //    Step 1 synchronously WOKEN the pubsub service task, parked in
+        //    the local queue of the `pubsub_runtime`'s DEDICATED worker —
+        //    an OS thread that has nothing else to do. Driving it matters
+        //    because the alternative (the old design, service on the SHARED
+        //    runtime) made clean shutdown depend on some contended shared
+        //    worker getting a CPU slice before anvil could die — a race the
+        //    CI flake lost: `WARN alloy_pubsub::service: Reconnection
+        //    attempt N/10 failed: No such file or directory …`.
+        //
+        //    Off an async context (the Python path: CPython refcounting
+        //    drops this handle on the main thread), `block_on` the
+        //    dedicated runtime across the grace: that single worker polls
+        //    the already-READY service task first, then the pending sleep
+        //    future. Inside an async execution environment a nested
+        //    `block_on` would PANIC — and so would dropping the runtime —
+        //    so there we sleep the same bound on this thread (the
+        //    dedicated worker is an independent OS thread woken by its
+        //    waker) and drop the runtime detached, where blocking (the
+        //    worker join) is allowed.
+        if let Some(rt) = self.pubsub_runtime.take() {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                std::thread::sleep(PUBSUB_SHUTDOWN_GRACE);
+                std::thread::spawn(move || drop(rt));
+            } else {
+                rt.block_on(async { tokio::time::sleep(PUBSUB_SHUTDOWN_GRACE).await });
+            }
+        }
+        // 3. Unlink the IPC socket file (safe while the fd is open), then
+        //    the field drops kill the anvil child (`instance`) and tear
+        //    down the transport runtime (`pubsub_runtime` — a non-blocking
+        //    drop that discards any residual reconnect task, bounding the
+        //    damage of a leaked provider clone).
         let _ = std::fs::remove_file(self.instance.ipc_path());
     }
 }
@@ -756,6 +860,216 @@ mod tests {
         assert!(
             std::fs::metadata(&ipc).is_err(),
             "IPC socket should be removed after AnvilFork is dropped"
+        );
+    }
+
+    // -- Teardown: pubsub service shutdown observation ---------------------
+
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    /// Events (level + formatted message) captured from the alloy pubsub
+    /// service, so teardown tests can observe its backend/reconnect decisions.
+    static CAPTURED: std::sync::OnceLock<Arc<Mutex<Vec<String>>>> = std::sync::OnceLock::new();
+
+    struct CaptureLayer {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    /// Extracts the (unrendered) `message` field from an event.
+    ///
+    /// Tracing stores the format TEMPLATE plus separate field values, so the
+    /// message field is e.g. `Reconnection attempt {retry_count}...` — the
+    /// literal prefix is what the assertions key on.
+    #[derive(Default)]
+    struct MsgVisitor(Option<String>);
+
+    impl tracing::field::Visit for MsgVisitor {
+        fn record_str(&mut self, field: &tracing_core::field::Field, value: &str) {
+            if field.name() == "message" {
+                self.0 = Some(value.to_string());
+            }
+        }
+
+        fn record_debug(
+            &mut self,
+            field: &tracing_core::field::Field,
+            value: &dyn std::fmt::Debug,
+        ) {
+            if field.name() == "message" {
+                self.0 = Some(format!("{value:?}"));
+            }
+        }
+    }
+
+    impl<S> tracing_subscriber::Layer<S> for CaptureLayer
+    where
+        S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let meta = event.metadata();
+            if meta.target() != "alloy_pubsub::service" {
+                return;
+            }
+            let mut visitor = MsgVisitor::default();
+            event.record(&mut visitor);
+            let msg = format!(
+                "[{}] {}",
+                meta.level(),
+                visitor.0.unwrap_or_else(|| "<no message>".into())
+            );
+            self.events
+                .lock()
+                .expect("capture mutex poisoned")
+                .push(msg);
+        }
+    }
+
+    fn install_capture_subscriber() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            CAPTURED
+                .set(events.clone())
+                .expect("capture state set twice");
+            let _ = tracing_subscriber::registry()
+                .with(CaptureLayer { events })
+                .try_init();
+        });
+    }
+
+    fn captured_events() -> Vec<String> {
+        CAPTURED
+            .get()
+            .map(|c| c.lock().expect("capture mutex poisoned").clone())
+            .unwrap_or_default()
+    }
+
+    fn clear_captured_events() {
+        if let Some(c) = CAPTURED.get() {
+            c.lock().expect("capture mutex poisoned").clear();
+        }
+    }
+
+    /// The teardown tests share one process-wide tracing subscriber + capture
+    /// vec (global `try_init` wins once), and the test harness runs tests on
+    /// parallel threads — their clear/observe windows would erase each
+    /// other's events (seen as `captured: []` flakes). Serialize the whole
+    /// capture window per test. A `tokio` mutex (not `std`) because the
+    /// guard is held across `await`s.
+    static TEARDOWN_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn teardown_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        TEARDOWN_TEST_LOCK.lock().await
+    }
+
+    /// A caller contract violation — holding an `Arc` clone of the IPC
+    /// provider across fork teardown — must NOT produce a reconnection
+    /// storm either: the pubsub service lives on the fork's dedicated
+    /// transport runtime, so it is discarded with the fork (a short
+    /// backend-death window can at most log a single event pair before the
+    /// runtime drop). RPCs issued on the leaked clone thereafter simply
+    /// hang (bounded by the caller's own call timeout).
+    ///
+    /// Pre-fix, both a lost teardown race AND a leaked clone left a 10x
+    /// 3s/6s/12s/30s... `Reconnection attempt N/10 failed: No such file or
+    /// directory ...` storm on the SHARED runtime for ~2 minutes — the
+    /// warning observed at the tail of CI `just test-python` runs.
+    #[tokio::test]
+    async fn leaked_provider_clone_emits_no_reconnect_storm() {
+        ensure_anvil_available();
+        let _guard = teardown_lock().await;
+        install_capture_subscriber();
+        let ipc = test_ipc_path();
+        let _ = std::fs::remove_file(&ipc);
+
+        let fork = AnvilForkBuilder::new()
+            .ipc_path(&ipc)
+            .try_spawn()
+            .await
+            .expect("spawn");
+        let leaked = fork.provider().clone();
+        clear_captured_events();
+        drop(fork); // kills anvil + unlinks the socket + drops the runtime
+
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        drop(leaked);
+
+        let events = captured_events();
+        let bad: Vec<String> = events
+            .iter()
+            .filter(|e| {
+                e.contains("Reconnection attempt") || e.contains("Pubsub service backend error")
+            })
+            .cloned()
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "leaked provider clone left a pubsub reconnect storm: {bad:?}"
+        );
+    }
+
+    /// Normal teardown (no external provider clones) must NOT enter the
+    /// reconnect path: dropping the fork closes the pubsub service's
+    /// request channel while anvil is still up, and `Drop` drives the
+    /// fork's dedicated transport runtime so the service exits via the
+    /// clean "request channel closed" path before the anvil child can die.
+    ///
+    /// A lost teardown race (the pre-fix CI flake) would log
+    /// `Reconnection attempt 1/10 failed: No such file or directory ...`
+    /// almost immediately — the first attempt precedes any backoff — so a
+    /// short observation window suffices. The positive assertion (clean
+    /// shutdown event observed) additionally proves the service actually
+    /// ran its exit path rather than merely being unscheduled.
+    ///
+    /// The drop happens on a bare std thread, mirroring the Python process
+    /// (`CPython` reference counting drops the `PyAnvilFork` handle on the
+    /// main thread, never on a runtime worker).
+    #[tokio::test]
+    async fn drop_shuts_down_pubsub_cleanly() {
+        ensure_anvil_available();
+        let _guard = teardown_lock().await;
+        install_capture_subscriber();
+        let ipc = test_ipc_path();
+        let _ = std::fs::remove_file(&ipc);
+
+        let fork = AnvilForkBuilder::new()
+            .ipc_path(&ipc)
+            .try_spawn()
+            .await
+            .expect("spawn");
+        clear_captured_events();
+        // Drop on a bare thread, mirroring the Python main-thread drop.
+        std::thread::spawn(move || drop(fork))
+            .join()
+            .expect("drop thread");
+
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        let events = captured_events();
+        let bad: Vec<String> = events
+            .iter()
+            .filter(|e| {
+                e.contains("Reconnection attempt") || e.contains("Pubsub service backend error")
+            })
+            .cloned()
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "fork drop triggered a pubsub reconnect/backend error: {bad:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("Pubsub service request channel closed")),
+            "expected the clean 'request channel closed' shutdown event; captured: {events:?}"
         );
     }
 }
