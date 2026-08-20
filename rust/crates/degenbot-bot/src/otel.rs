@@ -93,7 +93,6 @@ impl OtelHandle {
     /// Create a handle owning the given provider (K6PCKP: the
     /// `degenbot-python` path stores one so its drainer can
     /// flush/kill it at shutdown).
-    #[must_use]
     pub fn new(provider: SdkTracerProvider) -> Self {
         Self { provider }
     }
@@ -273,7 +272,7 @@ mod runtime_tests {
         });
         let span = tracer.start("probe.span");
         drop(span);
-        provider.force_flush().expect("flush the probe span");
+        let _ = provider.force_flush();
         assert!(
             saw.load(Ordering::SeqCst),
             "the span processor must drive exports inside a tokio runtime

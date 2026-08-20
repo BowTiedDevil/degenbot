@@ -254,7 +254,7 @@ fn fetch_v4_tick_map_from_db(
 pub(crate) fn liquidity_map_to_tick_info(
     map: LiquidityMap,
     tick_spacing: i32,
-) -> Result<Option<(HashMap<i32, TickInfo>, PoolTickCoverage)>, TickMapAssemblyError> {
+) -> TickMapAssemblyResult {
     if map.tick_bitmap.is_empty() || map.tick_data.is_empty() {
         return Ok(None);
     }
@@ -274,6 +274,7 @@ pub(crate) fn liquidity_map_to_tick_info(
 /// did NOT supply are skipped (an incremental snapshot may carry a word
 /// subset). A fully-zero word is legal (a checked-empty word — T1) so long
 /// as no gross>0 row sits in it.
+#[expect(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 pub(crate) fn verify_tracked_tick_map(
     tick_bitmap: &HashMap<i64, BitmapAtWord>,
     tick_data: &HashMap<i32, LiquidityAtTick>,
@@ -308,7 +309,7 @@ pub(crate) fn verify_tracked_tick_map(
             if !entry.bitmap.bit(bit) {
                 continue;
             }
-            let compressed = word * 256 + i64::try_from(bit).unwrap(); // bit < 256
+            let compressed = word * 256 + bit as i64; // bit < 256 (covered by fn-level expect)
             let Some(tick) = (compressed * i64::from(spacing)).try_into().ok() else {
                 return Err(TickMapAssemblyError::InconsistentTickMap {
                     word,

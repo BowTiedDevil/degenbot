@@ -1823,6 +1823,7 @@ impl PyLiquidityPool {
     /// Python companion's sparse-word gate reads this — Rust's coverage is
     /// the fact (the companion's double-tracked sparseness flag is retired).
     #[getter]
+    #[expect(clippy::unnecessary_wraps)]
     fn coverage(&self) -> PyResult<Option<String>> {
         let core = self.core.read();
         let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {

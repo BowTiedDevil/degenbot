@@ -17,9 +17,8 @@ fn first_init_ok_second_init_is_already_set_up() {
 
     let first = degenbot_bot::otel::init_otel_tracing();
     assert!(first.is_ok(), "first init should succeed: {first:?}");
-    let handle = match &first {
-        Ok(handle) => handle,
-        Err(_) => return, // unreachable: asserted ok above
+    let Ok(handle) = &first else {
+        return; // unreachable: asserted ok above
     };
     let flushed = handle.flush();
     // Connection refused is an export error, not a flush-contract failure of

@@ -427,12 +427,11 @@ type MiddleRegistry = Layered<
 
 type BaseRegistry<P> = Layered<P, MiddleRegistry>;
 
-/// Assembles the base logging registry: `EnvFilter` + stderr `fmt`
-/// + a final Python-forwarding slot `P` (K6PCKP extraction). Byte-
-/// equivalent to the pre-K6PCKP inline assembly in
-/// `init_logging_subscriber`; extracted so the `OTel` layer can layer
-/// on top and the stack is testable without a `Python::attach`-
-/// capable drainer (seam C).
+/// Assembles the base logging registry: `EnvFilter` + stderr `fmt` and a
+/// final Python-forwarding slot `P` (K6PCKP extraction). Byte-equivalent
+/// to the pre-K6PCKP inline assembly in `init_logging_subscriber`;
+/// extracted so the `OTel` layer can layer on top and the stack is testable
+/// without a `Python::attach`-capable drainer (seam C).
 #[must_use]
 pub(crate) fn build_base_registry<P>(env_filter: EnvFilter, python_layer: P) -> BaseRegistry<P>
 where
@@ -552,7 +551,7 @@ pub fn init_logging_subscriber() {
     });
 }
 
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

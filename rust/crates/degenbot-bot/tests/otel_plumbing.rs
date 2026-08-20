@@ -43,9 +43,8 @@ fn probe_span_is_exported_with_name_field_event_and_resource() {
         spans_res.is_ok(),
         "get_finished_spans failed: {spans_res:?}"
     );
-    let spans = match spans_res {
-        Ok(spans) => spans,
-        Err(_) => return, // unreachable: asserted ok above
+    let Ok(spans) = spans_res else {
+        return; // unreachable: asserted ok above
     };
 
     let probe_count = spans

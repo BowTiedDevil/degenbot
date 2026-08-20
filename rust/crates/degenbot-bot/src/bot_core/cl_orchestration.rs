@@ -936,10 +936,10 @@ impl BotState {
         let Some(fetcher) = fetcher else {
             return false;
         };
-        let Ok(fetched) = fetcher.fetch_missing_tick_word(pool_id, word, block) else {
+        let Ok(fetched_word) = fetcher.fetch_missing_tick_word(pool_id, word, block) else {
             return false;
         };
-        self.merge_tick_word(pool_id, &fetched)
+        self.merge_tick_word(pool_id, &fetched_word)
     }
 
     /// Merge a fetched tick-bitmap word into a V3/V4 pool's state.
@@ -1868,6 +1868,7 @@ mod known_word_dispatcher_tests {
 
     use super::{BotState, RegisterV3PoolParams};
 
+    #[expect(clippy::expect_used)]
     fn register_v3(coverage: PoolTickCoverage) -> (BotState, u64) {
         let mut core = BotState::new();
         let pool_id = core
@@ -1893,6 +1894,7 @@ mod known_word_dispatcher_tests {
     }
 
     #[test]
+    #[expect(clippy::expect_used)]
     fn mark_bitmap_words_known_by_pool_id_sparse_marks() {
         let (mut core, pool_id) = register_v3(PoolTickCoverage::Sparse);
         assert!(
@@ -1904,6 +1906,7 @@ mod known_word_dispatcher_tests {
     }
 
     #[test]
+    #[expect(clippy::expect_used)]
     fn mark_bitmap_words_known_by_pool_id_tracked_noop() {
         let (mut core, pool_id) = register_v3(PoolTickCoverage::Tracked);
         let _ = core.mark_bitmap_words_known_by_pool_id(pool_id, &[7]);
@@ -1921,6 +1924,7 @@ mod known_word_dispatcher_tests {
     }
 
     #[test]
+    #[expect(clippy::expect_used)]
     fn apply_liquidity_update_does_not_mark_words_known() {
         // Discipline (grilling decision): a word becomes known only when its
         // WHOLE tick set is established (fetch-merge / full sync / passed
