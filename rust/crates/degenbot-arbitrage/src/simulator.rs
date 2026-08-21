@@ -943,6 +943,27 @@ where
     simulate_path_on_evm(&mut evm, ctx, path, fail_buckets)
 }
 
+/// G6HSIS (epic 2LXPPV): records the `simulate.*` span fields when the
+/// per-candidate sim span closes. Default verdict is `not_profitable`
+/// (every `Ok(None)` branch falls through to it); the success + error sites
+/// override before returning. `span.record` ignores undeclared field names
+/// (as_field), so the fields are declared as `tracing::field::Empty`
+/// placeholders at span creation.
+struct SimSpanVerdict {
+    span: tracing::Span,
+    verdict: &'static str,
+    profit: Option<i64>,
+}
+
+impl Drop for SimSpanVerdict {
+    fn drop(&mut self) {
+        self.span.record("simulate.verdict", self.verdict);
+        if let Some(profit) = self.profit {
+            self.span.record("simulate.expected_profit", profit);
+        }
+    }
+}
+
 /// Run one path's 7-call vector on a PRE-BUILT `&mut EVM` (block env already
 /// set by the caller; `CacheDB` + overrides applied upstream). The journaled
 /// state accumulates across the 7 `transact_one` calls (pre reads → execute →
@@ -978,6 +999,18 @@ where
         > + InspectEvm<Inspector = SimInspector>,
     <E as ExecuteEvm>::Error: std::fmt::Display,
 {
+    let span = tracing::info_span!(
+        "degenbot.bundle.simulate",
+        path_id = path.path_id,
+        simulate.verdict = tracing::field::Empty,
+        simulate.expected_profit = tracing::field::Empty,
+    );
+    let _enter = span.enter();
+    let mut guard = SimSpanVerdict {
+        span: span.clone(),
+        verdict: "not_profitable",
+        profit: None,
+    };
     // C3 — int128 check (mirrors the oracle's guard). The amount fed into each
     // V4 hop is `consumed_inputs[i]` (the CL-hop clamp's executable forward),
     // so the guard checks the clamped input, not hop_outputs[i-1].
@@ -1048,15 +1081,20 @@ where
     // active; Erc6909 → check_mode=2; SweepToAddress → check_mode=3). Replaces
     // the hardcoded `EXECUTE_CONFIG = ZERO` (check_mode=0 fast path, no
     // assert) — a money-losing production path now reverts on-chain.
-    let execute_config =
-        config_for_options(path.opts, U256::ZERO).map_err(|e| ProviderError::RpcError {
+    let execute_config = config_for_options(path.opts, U256::ZERO).map_err(|e| {
+        guard.verdict = "error";
+        ProviderError::RpcError {
             code: -32603,
             message: format!("config_for_options failed: {e}"),
-        })?;
+        }
+    })?;
     let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config)
-        .map_err(|e| ProviderError::RpcError {
-            code: -32603,
-            message: format!("execute() ABI encode failed: {e}"),
+        .map_err(|e| {
+            guard.verdict = "error";
+            ProviderError::RpcError {
+                code: -32603,
+                message: format!("execute() ABI encode failed: {e}"),
+            }
         })?;
 
     // Build the 7 calldata blobs (the balance reads + the execute call).
@@ -1415,6 +1453,9 @@ where
     // The call trace + captured swaps were drained right after `finalize`
     // (before the revert branch) so both branches have them.
 
+    guard.verdict = "profitable";
+    let profit_i128 = i128::try_from(net_profit).unwrap_or(i128::from(i64::MAX));
+    guard.profit = Some(i64::try_from(profit_i128).unwrap_or(i64::MAX));
     Ok(Some(SimResult {
         path_id: path.path_id,
         gross_profit,
@@ -1776,6 +1817,105 @@ fn log_reverted_swaps_vs_hop_outputs(
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+
+    // G6HSIS (epic 2LXPPV): test-only span capture (same process-global seam
+    // as the degenbot-submission span tests - one global per test binary;
+    // the crate has no other global subscriber installs).
+    mod span_capture {
+        use std::collections::{BTreeMap, HashMap};
+        use std::sync::{Arc, Mutex, OnceLock};
+        use tracing::field::Visit;
+        use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+        type SpanEntry = (String, BTreeMap<String, String>);
+        #[derive(Default)]
+
+        pub struct SpanCapture {
+            spans: Mutex<HashMap<tracing::span::Id, SpanEntry>>,
+        }
+
+        impl SpanCapture {
+            /// All captured spans as (name, recorded fields).
+            pub fn snapshot(&self) -> Vec<(String, BTreeMap<String, String>)> {
+                let Ok(g) = self.spans.lock() else {
+                    return Vec::new();
+                };
+                g.values()
+                    .map(|entry| (entry.0.clone(), entry.1.clone()))
+                    .collect()
+            }
+        }
+
+        pub struct CaptureLayer(pub Arc<SpanCapture>);
+
+        struct FieldPusher<'a>(&'a mut BTreeMap<String, String>);
+
+        impl Visit for FieldPusher<'_> {
+            fn record_debug(&mut self, key: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0.insert(key.name().to_string(), format!("{value:?}"));
+            }
+            fn record_str(&mut self, key: &tracing::field::Field, value: &str) {
+                self.0.insert(key.name().to_string(), value.to_string());
+            }
+            fn record_i64(&mut self, key: &tracing::field::Field, value: i64) {
+                self.0.insert(key.name().to_string(), value.to_string());
+            }
+            fn record_u64(&mut self, key: &tracing::field::Field, value: u64) {
+                self.0.insert(key.name().to_string(), value.to_string());
+            }
+            fn record_bool(&mut self, key: &tracing::field::Field, value: bool) {
+                self.0.insert(key.name().to_string(), value.to_string());
+            }
+        }
+
+        impl<S> Layer<S> for CaptureLayer
+        where
+            S: tracing::Subscriber,
+        {
+            fn on_new_span(
+                &self,
+                attrs: &tracing::span::Attributes<'_>,
+                id: &tracing::span::Id,
+                _ctx: Context<'_, S>,
+            ) {
+                let name = attrs.metadata().name().to_string();
+                let Ok(mut g) = self.0.spans.lock() else {
+                    return;
+                };
+                let entry = g
+                    .entry(id.clone())
+                    .or_insert_with(|| (name, BTreeMap::new()));
+                attrs.values().record(&mut FieldPusher(&mut entry.1));
+            }
+
+            fn on_record(
+                &self,
+                id: &tracing::span::Id,
+                values: &tracing::span::Record<'_>,
+                _ctx: Context<'_, S>,
+            ) {
+                let Ok(mut g) = self.0.spans.lock() else {
+                    return;
+                };
+                if let Some(entry) = g.get_mut(id) {
+                    values.record(&mut FieldPusher(&mut entry.1));
+                }
+            }
+        }
+
+        /// The shared capture, installed as the process-global subscriber on
+        /// first use (once per test binary; a second install is a no-op and
+        /// the shared `Arc` keeps capturing regardless).
+        #[must_use]
+        pub fn global() -> Arc<SpanCapture> {
+            static CAP: OnceLock<Arc<SpanCapture>> = OnceLock::new();
+            let cap = CAP.get_or_init(|| Arc::new(SpanCapture::default())).clone();
+            let _ = tracing::subscriber::set_global_default(
+                tracing_subscriber::registry().with(CaptureLayer(cap.clone())),
+            );
+            cap
+        }
+    }
     use super::*;
     use alloy::primitives::U256;
     use degenbot_executor::composers::V3HopInfo;
@@ -2691,6 +2831,49 @@ mod tests {
         assert!(
             !cmd.windows(forward.len()).any(|w| w == forward),
             "V4 swap-in must NOT embed the un-clamped hop_outputs[0]=2_000_000_000"
+        );
+    }
+
+    /// G6HSIS (epic 2LXPPV): the `degenbot.bundle.simulate` span is recorded
+    /// per candidate at the shared sim seam, with the terminal verdict.
+    /// Reuses the reverting-path smoke fixture (exec() call [3] reverts ->
+    /// `Ok(None)` -> `not_profitable`).
+    #[test]
+    fn simulate_span_records_verdict_for_reverting_path() {
+        const UNIQUE_PATH_ID: u64 = 991_234;
+        let cap = span_capture::global();
+        let asserter = Asserter::new();
+        let provider = smoke_provider(&asserter);
+        let ctx = smoke_ctx(&provider);
+        let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
+        degenbot_simulation::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
+            .expect("overrides apply over EmptyDB");
+        let mut buckets = FailBuckets::new();
+
+        let path = smoke_v2_path(UNIQUE_PATH_ID);
+        let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).unwrap();
+        assert!(result.is_none(), "reverting execute returns None");
+
+        let mine: Vec<_> = cap
+            .snapshot()
+            .into_iter()
+            .filter(|(name, fields)| {
+                name == "degenbot.bundle.simulate"
+                    && fields.get("path_id").map(String::as_str)
+                        == Some(UNIQUE_PATH_ID.to_string().as_str())
+            })
+            .collect();
+        assert_eq!(
+            mine.len(),
+            1,
+            "one simulate span for the candidate; all: {:?}",
+            cap.snapshot()
+        );
+        assert_eq!(
+            mine[0].1.get("simulate.verdict").map(String::as_str),
+            Some("not_profitable"),
+            "reverted path is not_profitable; fields: {:?}",
+            mine[0].1
         );
     }
 }
