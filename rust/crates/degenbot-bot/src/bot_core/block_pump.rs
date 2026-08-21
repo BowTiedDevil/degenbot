@@ -737,12 +737,14 @@ impl BlockPump {
     /// `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes). Also shuts
     /// down on a
     /// late-forward log on a tombstoned block (unreliable WS, ADR-008 D3).
-    #[expect(
-        clippy::too_many_lines,
-        clippy::cast_possible_truncation,
-        clippy::used_underscore_binding
-    )]
-    #[tracing::instrument(skip(self, combined), fields(first_observed_block))]
+    // MQUKB6-T0: `clippy::used_underscore_binding` expectation retired — it
+    // was only fired by the removed `#[tracing::instrument]` expansion.
+    #[expect(clippy::too_many_lines, clippy::cast_possible_truncation)]
+    // MQUKB6-T0: the former `#[tracing::instrument]` here was a root span that
+    // stayed open for the whole bot run. OTel only exports CLOSED spans, so the
+    // root never reached Jaeger while every pump-task span referenced it as a
+    // missing parent — one giant orphaned trace. Per-block `degenbot.pump.block`
+    // spans (below) are the trace roots now.
     pub async fn run_with_stream(
         &mut self,
         mut combined: stream::BoxStream<'static, WsEvent>,
@@ -981,7 +983,17 @@ impl BlockPump {
         // 30s `DRAINER_STALL_SECS` poll watchdog and the pump-side
         // `drainer_check` timer are retired — no time-based knob remains.
 
+        // MQUKB6-T0: the current block's span, replaced by each accepted header.
+        let mut block_span: Option<tracing::Span> = None;
         loop {
+            // The per-block span stays current across the whole iteration — the
+            // loop-head drain dispatch and the log/settle arms nest under the
+            // block whose event burst they belong to.
+            // Own the clone so the header arm can replace `block_span` while
+            // this guard is alive (the guard borrows `iteration_span`, a local,
+            // not the mutable cursor).
+            let iteration_span: Option<tracing::Span> = block_span.clone();
+            let _iteration_guard = iteration_span.as_ref().map(tracing::Span::enter);
             // Solve any dirty paths accumulated from the previous iteration's
             // log(s). This naturally coalesces multiple logs that arrive
             // between await points — only one solve per batch of WS events.
@@ -1150,9 +1162,13 @@ impl BlockPump {
                     // MQUKB6 (epic KDUED5): the per-block beat — one entered
                     // span per observed header. Future solver/submission spans
                     // fired within this arm inherit it as parent for free.
-                    let _block_span =
+                    let new_block_span =
                         tracing::info_span!("degenbot.pump.block", block.number = number);
-                    let _entered = _block_span.enter();
+                    // MQUKB6-T0: this span becomes the loop's per-block context —
+                    // subsequent iterations (logs, settle decisions) nest under it
+                    // until the next header replaces it.
+                    block_span = Some(new_block_span.clone());
+                    let _entered = new_block_span.enter();
                     // [DIAG] newHeads-liveness: HEADER count, gap, and 20s stall
                     // warning → one call on the telemetry seam.
                     telemetry.on_header(number);
@@ -5151,15 +5167,16 @@ mod tests {
         );
         let block_span = &my_spans[0];
 
-        // Parented under the run_with_stream span (the loop's own frame).
-        let parent_found = spans.iter().any(|sp| {
-            sp.name.as_ref() == "run_with_stream"
-                && sp.span_context.span_id() == block_span.parent_span_id
-        });
-        assert!(
-            parent_found,
-            "per-block span for block {} not parented under run_with_stream; parent_span_id: {:?}",
-            MY_BLOCK, block_span.parent_span_id
+        // MQUKB6-T0: the per-block span is now a trace ROOT — the former
+        // `run_with_stream` instrument span was a never-closing root that OTel
+        // never exported (orphaning every pump-task span under a missing
+        // parent). Roots export cleanly; parent_span_id is the zero sentinel.
+        assert_eq!(
+            block_span.parent_span_id,
+            opentelemetry::trace::SpanId::INVALID,
+            "per-block span for block {} must be a trace root; parent_span_id: {:?}",
+            MY_BLOCK,
+            block_span.parent_span_id
         );
     }
 }

@@ -116,6 +116,16 @@ impl Engine for EngineHandle {
         // monitor spans fired inside inherit it, and it parents under
         // `degenbot.pump.block` when pump-driven (MQUKB6). Inert without
         // a subscriber; lock-hold invariant untouched.
+        //
+        // T0 no-op gating: most per-block solves find nothing dirty (a ~2µs
+        // lock-and-return) and their spans flooded Jaeger's recent-traces list,
+        // drowning the real solves. Emit the span only when there is dirty
+        // work. Behavior is unchanged — solve_dirty re-derives the dirty set
+        // under its own lock; this gate only decides whether the span exists.
+        if !self.engine.lock().has_dirty_paths() {
+            self.engine.lock().solve_dirty(block, metadata);
+            return;
+        }
         let span = tracing::info_span!("degenbot.arb.solve", block.number = block);
         let _guard = span.enter();
         self.engine.lock().solve_dirty(block, metadata);

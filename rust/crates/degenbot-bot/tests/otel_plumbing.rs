@@ -117,3 +117,91 @@ fn bot_resource_carries_service_identity() {
         "bot resource missing service identity"
     );
 }
+
+/// MQUKB6-T0: work handed across the drain pipe must not orphan into root
+/// traces. The drainer task enters the span that was current at
+/// `dispatch()` time, so spans emitted while processing a `DrainWork` item
+/// (today: `degenbot.arb.solve` via the sink) parent under the pump's
+/// per-block span instead of becoming disconnected Jaeger roots.
+#[tokio::test]
+async fn drain_work_parents_under_the_dispatching_span() {
+    use degenbot_bot::bot_core::drain_sink::DrainSink;
+    use degenbot_bot::bot_core::event_dispatch::{DispatchOwner, DrainWork};
+    use degenbot_bot::bot_core::BlockMetadata;
+    use std::sync::Arc;
+
+    /// A sink whose `on_drain` emits a probe span — the stand-in for the
+    /// solve-path spans the real sink fires under the drainer.
+    struct SpanEmittingSink;
+    impl DrainSink for SpanEmittingSink {
+        fn has_dirty_paths(&self) -> bool {
+            false
+        }
+        fn on_drain(&self, _block: u64, _metadata: &BlockMetadata) {
+            let probe = tracing::info_span!("drain.work");
+            let _probe = probe.enter();
+        }
+        fn on_send(&self, _metadata: &BlockMetadata) {}
+        fn finalize_block(&self, _block: u64, _metadata: &BlockMetadata) {}
+        fn set_last_solved_block(&self, _block: u64) {}
+        fn set_solve_anchor(&self, _block: u64) {}
+        fn record_logs_this_block(&self) {}
+        fn last_processed_block(&self) -> Option<u64> {
+            None
+        }
+        fn notify_block(&self, _block: u64, _metadata: &BlockMetadata) {}
+    }
+
+    let exporter = InMemorySpanExporter::default();
+    let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+    let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+    // Thread-local default + current-thread tokio runtime (the #[tokio::test]
+    // default): the spawned drainer task is polled on THIS thread, so it sees
+    // the same subscriber and the exported parent linkage is observable.
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let sink: Arc<dyn DrainSink> = Arc::new(SpanEmittingSink);
+    let owner = DispatchOwner::new(sink, &None);
+
+    {
+        let outer = tracing::info_span!("test.dispatch.outer");
+        let _entered = outer.enter();
+        owner.dispatch(DrainWork::Drain {
+            block: 1,
+            metadata: BlockMetadata::default(),
+        });
+    }
+
+    // Settle the drainer (current-thread runtime: yield until it makes progress).
+    for _ in 0..10_000 {
+        if owner.health().processed() > 0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        owner.health().processed() > 0,
+        "drainer never processed the dispatched work"
+    );
+
+    provider.force_flush().expect("force_flush failed");
+    let spans = exporter
+        .get_finished_spans()
+        .expect("get_finished_spans failed");
+
+    let outer_id = spans
+        .iter()
+        .find(|s| s.name.as_ref() == "test.dispatch.outer")
+        .map(|s| s.span_context.span_id())
+        .expect("outer dispatch span not exported");
+
+    let work = spans
+        .iter()
+        .find(|s| s.name.as_ref() == "drain.work")
+        .expect("drain.work span not exported");
+
+    assert_eq!(
+        work.parent_span_id, outer_id,
+        "drain.work must parent under the span current at dispatch() time"
+    );
+}

@@ -326,6 +326,11 @@ impl ArbitrageEngine {
             v3_affected.len(),
             v4_affected.len()
         );
+        // MQUKB6-T0: rayon worker threads have no ambient tracing context — any
+        // span emitted inside a par_iter closure would orphan into a root trace.
+        // Capture the caller's span (the drainer's `degenbot.arb.solve`) once
+        // and re-enter it per work item below.
+        let solve_span = tracing::Span::current();
         // Collect affected path IDs from the reverse index
         let mut affected_path_ids: HashSet<u64> = HashSet::new();
 
@@ -497,6 +502,7 @@ impl ArbitrageEngine {
         let solved: Vec<(u64, SolvePathResult)> = to_solve
             .par_iter()
             .filter_map(|(pid, resolved)| {
+                let _solve_ctx = solve_span.enter();
                 ::degenbot_solvers::mixed::solve_path(resolved).map(|r| (*pid, r))
             })
             // Log solver pool state for every solved path (including
@@ -550,9 +556,12 @@ impl ArbitrageEngine {
             "[solver-dbg] solve_all called, resolved_paths={}",
             self.path_resolved.len()
         );
+        // MQUKB6-T0: same rayon context re-entry as rebuild_and_solve_affected.
+        let solve_span = tracing::Span::current();
         self.path_resolved
             .par_iter()
             .filter_map(|(&path_id, resolved)| {
+                let _solve_ctx = solve_span.enter();
                 if !resolved.valid {
                     return None;
                 }

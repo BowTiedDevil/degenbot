@@ -158,7 +158,11 @@ fn now_millis() -> u64 {
 /// drainer that progresses but falls behind only WARNs (lag metric, never abort).
 pub struct DispatchOwner {
     sink: Arc<dyn DrainSink>,
-    drain_send: tokio::sync::mpsc::UnboundedSender<DrainWork>,
+    // MQUKB6-T0: each item rides with the span current at `dispatch()` time so
+    // the drainer task can enter it — solve/finalize/publish spans fired under
+    // the drainer parent under the pump's per-block span instead of orphaning
+    // into disconnected Jaeger root traces.
+    drain_send: tokio::sync::mpsc::UnboundedSender<(DrainWork, tracing::Span)>,
     drainer_health: Arc<DrainerHealth>,
     /// B3 stall backstop state (single-writer: `dispatch` is called from the
     /// pump task only). `last_processed` = the drainer completion count at the
@@ -182,15 +186,20 @@ impl DispatchOwner {
         sink: Arc<dyn DrainSink>,
         verify_tx: &Option<tokio::sync::watch::Sender<Option<SolverVerifyRequest>>>,
     ) -> Self {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DrainWork>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(DrainWork, tracing::Span)>();
         let health = Arc::new(DrainerHealth::new());
         let sink_clone = Arc::clone(&sink);
         let vt = verify_tx.clone();
         let health_clone = Arc::clone(&health);
         let _drainer = tokio::spawn(async move {
-            while let Some(work) = rx.recv().await {
+            while let Some((work, parent)) = rx.recv().await {
                 // Picked up: this item left the FIFO (the B3 depth signal).
                 health_clone.picked_up.fetch_add(1, Ordering::Relaxed);
+                // MQUKB6-T0: enter the dispatch-time span so sink spans
+                // (`degenbot.arb.solve` & co) inherit the pump block context
+                // across the task boundary. Inert when no subscriber is
+                // installed (`Span::current()` is then the disabled root).
+                let _parent_guard = parent.enter();
                 match work {
                     DrainWork::Drain { block, metadata } => {
                         sink_clone.on_drain(block, &metadata);
@@ -292,7 +301,8 @@ impl DispatchOwner {
             }
             std::process::abort();
         }
-        if tx.send(work).is_ok() {
+        let parent = tracing::Span::current();
+        if tx.send((work, parent)).is_ok() {
             self.drainer_health.enqueued.fetch_add(1, Ordering::Relaxed);
         } else {
             tracing::error!(

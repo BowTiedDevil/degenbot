@@ -4937,7 +4937,11 @@ mod tests {
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
 
-        let handle = EngineHandle::new(Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())));
+        // T0 no-op gating: the span fires only when the engine holds dirty
+        // paths — mark one so this test still exercises the emitted-span path.
+        let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
+        engine.lock().dirty_v2.insert(0x0BAD_F00D);
+        let handle = EngineHandle::new(engine);
         tracing::subscriber::with_default(subscriber, || {
             handle.solve_dirty(MY_SOLVE_BLOCK, &BlockMetadata::default());
         });
@@ -4966,6 +4970,40 @@ mod tests {
             1,
             "expected exactly one degenbot.arb.solve span for block {MY_SOLVE_BLOCK}; got names: {:?}",
             spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    /// T0 no-op gating: a clean engine (no dirty paths) must NOT emit an
+    /// `degenbot.arb.solve` span — the 2µs no-op solves were flooding Jaeger's
+    /// recent-traces list and drowning the real solves.
+    #[cfg(feature = "otel")]
+    #[test]
+    fn solve_dirty_skips_span_when_nothing_dirty() {
+        use crate::bot_core::engine::Engine;
+        use crate::otel;
+        use crate::solvers::arb_engine::engine_handle::EngineHandle;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use std::sync::Arc;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        let handle = EngineHandle::new(Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())));
+        tracing::subscriber::with_default(subscriber, || {
+            handle.solve_dirty(1, &BlockMetadata::default());
+        });
+
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+        let solve_spans = spans
+            .iter()
+            .filter(|sp| sp.name.as_ref() == "degenbot.arb.solve")
+            .count();
+        assert_eq!(
+            solve_spans, 0,
+            "no-op solve must not emit a degenbot.arb.solve span"
         );
     }
 }
