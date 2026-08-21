@@ -41,6 +41,14 @@ pub trait DrainSink: Send + Sync {
     /// Solve every dirty path at `block` (the eager drain tick).
     fn on_drain(&self, block: u64, metadata: &BlockMetadata);
 
+    /// The pump's WS subscription stream ended (or the pump task exited):
+    /// the bot will no longer process blocks. Implementors must make the
+    /// death observable to the consumer (incident 2026-08-20: the pump
+    /// died on a WS drop and the Python main loop idled forever - no log,
+    /// no error, no recovery). Default no-op for sinks without delivery
+    /// channels.
+    fn on_pump_ended(&self) {}
+
     /// Flush a debounced result batch to Python (the `DEBOUNCE_MS` send-debounce).
     fn on_send(&self, metadata: &BlockMetadata);
 

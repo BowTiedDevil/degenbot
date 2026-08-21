@@ -3658,6 +3658,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn drop_delivery_channels_closes_block_and_result_streams() {
+        // Incident 2026-08-20 (WS-silent class): pump death routes
+        // on_pump_ended -> drop_delivery_channels; the Python-facing streams
+        // must report Disconnected so the consumer ends and the bot fails
+        // loudly (the engine outlives the pump, so without the drop the
+        // senders stay alive and the Python side awaits forever).
+        use tokio::sync::mpsc::error::TryRecvError;
+        let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = ArbitrageEngine::new();
+        engine.set_block_channel(block_tx);
+        engine.set_result_channel(result_tx);
+        let metadata = BlockMetadata {
+            timestamp: 1_700_000_000,
+            base_fee_per_gas: Some(7_000_000_000),
+            gas_used: 15_000_000,
+            gas_limit: 30_000_000,
+        };
+        engine.notify_block(42, &metadata);
+        assert_eq!(
+            block_rx
+                .try_recv()
+                .expect("one notification in flight")
+                .number,
+            42
+        );
+        engine.drop_delivery_channels();
+        match block_rx.try_recv() {
+            Err(TryRecvError::Disconnected) => {}
+            other => panic!("block stream must be Disconnected after drop, got {other:?}"),
+        }
+        match result_rx.try_recv() {
+            Err(TryRecvError::Disconnected) => {}
+            other => panic!("result stream must be Disconnected after drop, got {other:?}"),
+        }
+    }
+
     // -----------------------------------------------------------------
     // HopType::SolidlyStable + ResolvedHop::SolidlyStable variant (Plan: Port
     // Solidly solve into the Rust engine — task BFIWUG).

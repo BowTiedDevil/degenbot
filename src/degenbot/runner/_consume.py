@@ -35,6 +35,7 @@ async def consume_result_batches(
     *,
     block_stream: AsyncIterator[dict[str, int]] | None = None,
     result_iter: AsyncIterator[dict[str, object]] | None = None,
+    allow_quiet_end: bool = False,
 ) -> None:
     """Consume the block stream (clock) + result batches (dispatch) in parallel.
 
@@ -61,6 +62,8 @@ async def consume_result_batches(
     result_fut = cast(
         "asyncio.Task[dict[str, object]] | None", asyncio.ensure_future(anext(result_iter))
     )
+    block_ended = False
+    result_ended = False
 
     while block_fut is not None or result_fut is not None:
         pending = {f for f in (block_fut, result_fut) if f is not None}
@@ -68,37 +71,52 @@ async def consume_result_batches(
 
         for fut in done:
             if fut is block_fut:
-                block_fut = cast(
-                    "asyncio.Task[dict[str, int]] | None",
-                    _reprime(block_stream, fut, "block stream"),
-                )
+                block_fut, block_ended = _reprime(block_stream, fut, "block stream")
                 await _apply_block_if_ready(fut, session)
             elif fut is result_fut:
-                result_fut = cast(
-                    "asyncio.Task[dict[str, object]] | None",
-                    _reprime(result_iter, fut, "result stream"),
-                )
+                result_fut, result_ended = _reprime(result_iter, fut, "result stream")
                 await _apply_result_if_ready(fut, session)
         # ergo 66H3KJ: mark main-loop forward progress for the Rust stuck-
         # watchdog (start_gil_probe). A stale timestamp here means the loop
         # is parked mid-`_apply_result_if_ready` (the dispatch deadlock site).
         mark_progress()
 
+    # Incident 2026-08-20 (silent pump death): the Rust pump's delivery
+    # channels (block clock + result batches) are owned by the engine, which
+    # OUTLIVES the pump task. When the pump's WS subscription dies the Rust
+    # side drops them (pump is STOPPED - ERROR log), which ends BOTH of these
+    # streams. A settlement bot whose block clock is dead must abort loudly -
+    # a quiet return here let the process sit as if the run were normal:
+    # operators read it as a "GIL deadlock". Cancellation (explicit stop)
+    # raises CancelledError inside asyncio.wait above and never reaches this
+    # point, so this only fires on a natural stream end.
+    if (block_ended or result_ended) and not allow_quiet_end:
+        bot_logger.error(
+            "[consumer] block/result stream ended - the Rust pump stopped "
+            "(WS subscription dead or pump task exited); aborting"
+        )
+        raise RuntimeError(
+            "block/result stream ended: the Rust pump stopped (WS subscription "
+            "dropped or pump task exited - see the Rust 'pump is STOPPED' "
+            "ERROR log). The settlement bot cannot keep trading from a dead "
+            "block clock; aborting loudly."
+        )
+
 
 def _reprime(
     stream: AsyncIterator[Any],
     fut: asyncio.Task[Any],
     label: str,
-) -> asyncio.Task[Any] | None:
-    """If `fut`'s stream ended, return None; else schedule the next pull."""
+) -> tuple[asyncio.Task[Any] | None, bool]:
+    """Schedule the next pull; return (task_or_None, stream_ended)."""
     try:
         fut.result()
     except StopAsyncIteration:
         bot_logger.info("[consumer] %s ended", label)
-        return None
+        return None, True
     except BaseException:
-        return None
-    return asyncio.ensure_future(anext(stream))
+        return None, False
+    return asyncio.ensure_future(anext(stream)), False
 
 
 async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _SessionState) -> None:

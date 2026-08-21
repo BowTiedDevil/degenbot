@@ -227,6 +227,7 @@ class TestSessionOwner:
             owner,
             block_stream=AsyncOnce(_block_tick(12_347)),
             result_iter=AsyncOnce(_batch()),
+            allow_quiet_end=True,  # injected one-shot streams end by design
         )
         assert owner.current_block == 12_347
         leaf_args = list(captured.get("positional", []))
@@ -260,5 +261,6 @@ class TestSessionOwner:
             owner,
             block_stream=AsyncOnce(_block_tick(12_347)),
             result_iter=AsyncOnce(_batch()),
+            allow_quiet_end=True,  # injected one-shot streams end by design
         )
         assert owner.current_block == 12_347

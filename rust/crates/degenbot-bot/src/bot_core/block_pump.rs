@@ -1479,7 +1479,16 @@ impl BlockPump {
                             }
                         }
                     }
-                    tracing::warn!("BlockPump: both subscription streams ended");
+                    // Incident 2026-08-20 (WS-silent class): the pump is DEAD -
+                    // the WS subscription dropped and no reconnect exists.
+                    // Loud error + sink notification (drops the engine delivery
+                    // channels) so the Python consumer's block stream ENDS and
+                    // the settlement bot aborts loudly instead of idling
+                    // forever (the "deadlock" operators observed).
+                    tracing::error!(
+                        "BlockPump: WS subscription streams ended - pump is STOPPED. The bot will no longer process blocks (no reconnect). Check the WS endpoint / restart."
+                    );
+                    self.sink.on_pump_ended();
                     return;
                 }
             }
@@ -2018,6 +2027,8 @@ mod tests {
         /// O3HW7E): the LEZJAS bookkeeping write must fire exactly when the
         /// FSM's `on_log_applied` ran for an applied forward log.
         logs_recorded: std::sync::atomic::AtomicUsize,
+        /// pump_ended recorded (incident 2026-08-20 stream-death test).
+        pump_ended: std::sync::atomic::AtomicBool,
     }
 
     impl FakeDrainSink {
@@ -2032,6 +2043,7 @@ mod tests {
                 path_refs: Mutex::new(Vec::new()),
                 dirty: AtomicBool::new(false),
                 logs_recorded: std::sync::atomic::AtomicUsize::new(0),
+                pump_ended: std::sync::atomic::AtomicBool::new(false),
             }
         }
 
@@ -2042,6 +2054,11 @@ mod tests {
 
         /// Number of `record_logs_this_block` calls the pump routed here
         /// (T4 pairing pin).
+        /// True once the pump notified stream death (incident 2026-08-20).
+        fn pump_ended(&self) -> bool {
+            self.pump_ended.load(std::sync::atomic::Ordering::Relaxed)
+        }
+
         fn logs_recorded(&self) -> usize {
             self.logs_recorded
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -2095,6 +2112,10 @@ mod tests {
         fn record_logs_this_block(&self) {
             self.logs_recorded
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        fn on_pump_ended(&self) {
+            self.pump_ended
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         fn last_processed_block(&self) -> Option<u64> {
             let v = self.last_processed.load(Ordering::Relaxed);
@@ -3574,6 +3595,27 @@ mod tests {
     /// restore+notify (covered in `reorg_coordinator.rs`) is the downstream
     /// observable; what is asserted here is that the *pump* routes a
     /// `removed: true` log there, and that an in-depth reorg is non-fatal.
+    /// Incident 2026-08-20 (WS-silent class): a WS subscription stream that
+    /// ENDS mid-run must notify the sink (on_pump_ended - the production
+    /// SolveCoordinator impl drops the engine delivery channels there), so
+    /// the Python block/result streams END and the settlement bot fails
+    /// loudly instead of idling forever (the silent stall operators saw).
+    #[tokio::test]
+    async fn stream_end_notifies_sink_on_pump_ended() {
+        let pool_addr = Address::from([0x22u8; 20]);
+        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        assert!(!sink.pump_ended(), "no premature pump-ended signal");
+        let forward = make_v2_sync_log(pool_addr, U256::from(1_000), U256::from(2_000), 7, false);
+        // Stream ends immediately after the log -> Ok(None) arm.
+        let combined = stream::iter(vec![WsEvent::Log(forward)]).boxed();
+        pump.run_test_loop(combined, 5).await;
+        assert!(
+            sink.pump_ended(),
+            "stream end must route to sink.on_pump_ended (closes the Python-facing channels)"
+        );
+    }
+
     #[tokio::test]
     async fn reorg_log_restores_pool_via_coordinator_and_pump_continues() {
         let pool_addr = Address::from([0x11u8; 20]);

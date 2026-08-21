@@ -139,6 +139,15 @@ impl DrainSink for SolveCoordinator {
         state.last_drained_block = Some(block);
     }
 
+    fn on_pump_ended(&self) {
+        tracing::error!(
+            "SolveCoordinator: pump ended - dropping engine delivery channels; the Python block/result streams now end so the bot fails loudly"
+        );
+        for engine in &self.engines {
+            engine.drop_delivery_channels();
+        }
+    }
+
     #[hotpath::measure(label = "SolveCoordinator::on_send")]
     fn on_send(&self, metadata: &BlockMetadata) {
         #[expect(clippy::expect_used)] // invariant-guarded (documented)

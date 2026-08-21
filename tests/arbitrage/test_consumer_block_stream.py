@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from degenbot.dispatch import Dispatcher
 from degenbot.runner._consume import consume_result_batches
 
@@ -150,6 +152,7 @@ async def _run(
     batches: list[dict[str, Any]],
     *,
     dispatcher: Dispatcher | None = None,
+    allow_quiet_end: bool = True,
 ) -> tuple[Dispatcher, _FakeW3, list[int]]:
     dispatcher = dispatcher or Dispatcher.for_block(0)
     w3 = _FakeW3()
@@ -194,7 +197,10 @@ async def _run(
     )
     try:
         await consume_result_batches(
-            owner, block_stream=_Blocks(blocks), result_iter=_Results(batches)
+            owner,
+            block_stream=_Blocks(blocks),
+            result_iter=_Results(batches),
+            allow_quiet_end=allow_quiet_end,
         )
     finally:
         _runner_consume._dispatch_profitable = orig  # type: ignore[assignment]
@@ -255,3 +261,30 @@ class TestBlockClockFromStream:
         assert dispatched[0] != 999, (
             "dispatch must key off the block-stream clock, never the batch's stale solve_block"
         )
+
+
+class TestPumpDeathVisible:
+    """Incident 2026-08-20: a dead pump's ended delivery channels must abort
+    the consumer loudly, not return quietly (the quiet end looked like a
+    GIL deadlock to operators - the process sat with a live-but-dead
+    settlement bot)."""
+
+    async def test_block_stream_end_aborts_loudly(self) -> None:
+        # Both streams end naturally (the Rust side drops both delivery
+        # channels together when the pump's WS subscription dies).
+        with pytest.raises(RuntimeError, match="stream ended"):
+            await _run(
+                blocks=[_block(101)],
+                batches=[_empty_batch(101)],
+                allow_quiet_end=False,
+            )
+
+    async def test_quiet_end_suppressed_for_injected_streams(self) -> None:
+        # The harness flag keeps finite injected streams quiet (existing
+        # dual-clock tests are not about stream death).
+        dispatcher, _w3, _dispatched = await _run(
+            blocks=[_block(101)],
+            batches=[],
+            allow_quiet_end=True,
+        )
+        assert dispatcher.current_block == 101

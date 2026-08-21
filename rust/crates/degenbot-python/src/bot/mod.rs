@@ -490,6 +490,7 @@ impl PyBot {
     #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory, update_block=0, variant="uniswap-v2", stable_swap=false, fee_denominator=None))]
     fn register_v2_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         token0: &str,
         token1: &str,
@@ -535,25 +536,29 @@ impl PyBot {
         let deployer = degenbot_uniswap::deployments::resolve_deployer(chain_id, fac);
         let init_hash_b256 = degenbot_uniswap::deployments::resolve_v2_init_hash(chain_id, fac);
 
-        self.bot
-            .state_arc()
-            .write()
-            .register_v2_pool(&RegisterV2PoolParams {
-                address: addr,
-                token0: t0,
-                token1: t1,
-                reserve0: r0,
-                reserve1: r1,
-                fee_token0: (gamma_numer0, fee_denom0),
-                fee_token1: (gamma_numer1, fee_denom1),
-                factory: fac,
-                deployer,
-                init_hash: init_hash_b256,
-                update_block,
-                variant: variant_enum,
-                stable_swap,
-                fee_denominator,
-            })
+        let p = RegisterV2PoolParams {
+            address: addr,
+            token0: t0,
+            token1: t1,
+            reserve0: r0,
+            reserve1: r1,
+            fee_token0: (gamma_numer0, fee_denom0),
+            fee_token1: (gamma_numer1, fee_denom1),
+            factory: fac,
+            deployer,
+            init_hash: init_hash_b256,
+            update_block,
+            variant: variant_enum,
+            stable_swap,
+            fee_denominator,
+        };
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        py.detach(move || state.write().register_v2_pool(&p))
             .map_err(map_register_v2_err)
     }
 
@@ -602,11 +607,14 @@ impl PyBot {
             params.address.to_checksum(None),
             params.variant.as_str().to_string(),
         );
-        let pool_id = self
-            .bot
-            .state_arc()
-            .write()
-            .register_v2_pool(&params)
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        let pool_id = py
+            .detach(move || state.write().register_v2_pool(&params))
             .map_err(map_register_v2_err)?;
         Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
@@ -637,11 +645,13 @@ impl PyBot {
                 get_runtime().block_on(builder::build_aerodrome_v2(chain_id, addr, &io, block))
             })
             .map_err(map_builder_err)?;
-        Ok(self
-            .bot
-            .state_arc()
-            .write()
-            .register_aerodrome_pool(&params))
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        Ok(py.detach(move || state.write().register_aerodrome_pool(&params)))
     }
 
     /// Build + register a Balancer V2 **weighted** pool through the Rust
@@ -674,11 +684,13 @@ impl PyBot {
                 ))
             })
             .map_err(map_builder_err)?;
-        Ok(self
-            .bot
-            .state_arc()
-            .write()
-            .register_balancer_weighted_pool(&params))
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        Ok(py.detach(move || state.write().register_balancer_weighted_pool(&params)))
     }
 
     /// Build + register a Balancer V2 **stable** pool through the Rust
@@ -719,11 +731,13 @@ impl PyBot {
                 ))
             })
             .map_err(map_builder_err)?;
-        Ok(self
-            .bot
-            .state_arc()
-            .write()
-            .register_balancer_stable_pool(&params))
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        Ok(py.detach(move || state.write().register_balancer_stable_pool(&params)))
     }
 
     /// Build + register a V3 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
@@ -785,11 +799,14 @@ impl PyBot {
             params.address.to_checksum(None),
             family,
         );
-        let pool_id = self
-            .bot
-            .state_arc()
-            .write()
-            .register_v3_pool(&params)
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        let pool_id = py
+            .detach(move || state.write().register_v3_pool(&params))
             .map_err(map_register_v3_err)?;
         Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
@@ -985,11 +1002,14 @@ impl PyBot {
             degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
             degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
         };
-        let pool_id = self
-            .bot
-            .state_arc()
-            .write()
-            .register_v4_pool(&params)
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        let pool_id = py
+            .detach(move || state.write().register_v4_pool(&params))
             .map_err(map_register_v4_err)?;
         // Return `(pool_id, coverage, identity..., protocol_fee, lp_fee)` so the
         // Python driver can set the companion's `_sparse_liquidity_map` (from
@@ -1046,6 +1066,7 @@ impl PyBot {
         let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
         })?;
+        // T1-scan-exempt: test-only seam (pure-Rust test callers, no GIL held).
         self.bot
             .state_arc()
             .write()
@@ -1072,6 +1093,7 @@ impl PyBot {
     #[pyo3(signature = (address, reserve0, reserve1, block_number))]
     fn update_v2_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         reserve0: &Bound<'_, PyAny>,
         reserve1: &Bound<'_, PyAny>,
@@ -1087,10 +1109,8 @@ impl PyBot {
             "reserve1",
         )?;
 
-        self.bot
-            .state_arc()
-            .write()
-            .update_v2_pool(addr, r0, r1, block_number);
+        let state = self.bot.state_arc();
+        py.detach(move || state.write().update_v2_pool(addr, r0, r1, block_number));
         Ok(())
     }
 
@@ -1838,6 +1858,7 @@ impl PyBot {
     ))]
     fn register_curve_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         tokens: &Bound<'_, PyList>,
         a_coefficient: u128,
@@ -1895,45 +1916,48 @@ impl PyBot {
             Some(l) => Some(parse_address_list(l)?),
             None => None,
         };
-        Ok(self
-            .bot
-            .state_arc()
-            .write()
-            .register_curve_pool(&RegisterCurvePoolParams {
-                address: addr,
-                tokens: token_addrs,
-                a_coefficient,
-                a_precision,
-                fee,
-                admin_fee,
-                rate_multipliers: rate_mults,
-                balances: bal_vals,
-                update_block,
-                swap_style,
-                lending_rate_style,
-                d_variant,
-                y_variant,
-                yd_variant,
-                base_pool: base,
-                initial_a_coefficient,
-                future_a_coefficient,
-                initial_a_coefficient_time,
-                future_a_coefficient_time,
-                create_timestamp,
-                fee_gamma,
-                mid_fee,
-                offpeg_fee_multiplier,
-                out_fee,
-                gamma,
-                lp_token: lp,
-                use_lending: use_lend,
-                precision_multipliers: prec_mults,
-                tokens_underlying: tokens_under,
-                metapool_rate_style,
-                metapool_underlying_style,
-                data_provider: data_provider
-                    .map(|b| crate::bot::pool::make_curve_data_provider(b.unbind())),
-            }))
+        let p = RegisterCurvePoolParams {
+            address: addr,
+            tokens: token_addrs,
+            a_coefficient,
+            a_precision,
+            fee,
+            admin_fee,
+            rate_multipliers: rate_mults,
+            balances: bal_vals,
+            update_block,
+            swap_style,
+            lending_rate_style,
+            d_variant,
+            y_variant,
+            yd_variant,
+            base_pool: base,
+            initial_a_coefficient,
+            future_a_coefficient,
+            initial_a_coefficient_time,
+            future_a_coefficient_time,
+            create_timestamp,
+            fee_gamma,
+            mid_fee,
+            offpeg_fee_multiplier,
+            out_fee,
+            gamma,
+            lp_token: lp,
+            use_lending: use_lend,
+            precision_multipliers: prec_mults,
+            tokens_underlying: tokens_under,
+            metapool_rate_style,
+            metapool_underlying_style,
+            data_provider: data_provider
+                .map(|b| crate::bot::pool::make_curve_data_provider(b.unbind())),
+        };
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        Ok(py.detach(move || state.write().register_curve_pool(&p)))
     }
 
     /// Build + register a Curve `StableSwap` pool through the Rust `PoolBuilder`
@@ -2011,6 +2035,7 @@ impl PyBot {
     ))]
     fn register_balancer_weighted_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         vault: &str,
         pool_id_hex: &str,
@@ -2029,22 +2054,25 @@ impl PyBot {
         let weight_vals = extract_u256_list(weights)?;
         let scaling_vals = extract_u256_list(scaling_factors)?;
         let bal_vals = extract_u256_list(balances)?;
-        Ok(self
-            .bot
-            .state_arc()
-            .write()
-            .register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
-                address: addr,
-                vault: vault_addr,
-                pool_id: pool_id_bytes,
-                tokens: token_addrs,
-                weights: weight_vals,
-                scaling_factors: scaling_vals,
-                swap_fee,
-                pow_version,
-                balances: bal_vals,
-                update_block,
-            }))
+        let p = RegisterBalancerWeightedPoolParams {
+            address: addr,
+            vault: vault_addr,
+            pool_id: pool_id_bytes,
+            tokens: token_addrs,
+            weights: weight_vals,
+            scaling_factors: scaling_vals,
+            swap_fee,
+            pow_version,
+            balances: bal_vals,
+            update_block,
+        };
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        Ok(py.detach(move || state.write().register_balancer_weighted_pool(&p)))
     }
 
     /// Register a Balancer V2 stable pool (ADR-005 slice 12c state port).
@@ -2138,6 +2166,7 @@ impl PyBot {
     #[pyo3(signature = (address, token0, token1, factory, variant, stable, fee_numer, fee_denom, token0_decimals, token1_decimals, reserve0, reserve1, update_block=0))]
     fn register_aerodrome_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         token0: &str,
         token1: &str,
@@ -2182,24 +2211,27 @@ impl PyBot {
             stable,
         )?;
 
-        Ok(self
-            .bot
-            .state_arc()
-            .write()
-            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-                address: addr,
-                token0: t0,
-                token1: t1,
-                factory: fac,
-                variant: variant_enum,
-                stable,
-                fee: (fee_numer, fee_denom),
-                token0_decimals,
-                token1_decimals,
-                reserve0: r0,
-                reserve1: r1,
-                update_block,
-            }))
+        let p = RegisterAerodromeV2PoolParams {
+            address: addr,
+            token0: t0,
+            token1: t1,
+            factory: fac,
+            variant: variant_enum,
+            stable,
+            fee: (fee_numer, fee_denom),
+            token0_decimals,
+            token1_decimals,
+            reserve0: r0,
+            reserve1: r1,
+            update_block,
+        };
+        // Incident 2026-08-20 #2: never hold the GIL while parked on the
+        // BotState write - the dispatch fan-out's per-candidate tasks hold
+        // the read end across provider fetches, and a parked GIL-writer
+        // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
+        // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
+        let state = self.bot.state_arc();
+        Ok(py.detach(move || state.write().register_aerodrome_pool(&p)))
     }
 
     /// Update a V3 pool's state from a Swap event.
@@ -2208,6 +2240,7 @@ impl PyBot {
     #[pyo3(signature = (address, sqrt_price_x96, liquidity, tick, block_number))]
     fn update_v3_pool(
         &self,
+        py: Python<'_>,
         address: &str,
         sqrt_price_x96: &Bound<'_, PyAny>,
         liquidity: &Bound<'_, PyAny>,
@@ -2218,10 +2251,12 @@ impl PyBot {
         let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
 
-        self.bot
-            .state_arc()
-            .write()
-            .update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
+        let state = self.bot.state_arc();
+        py.detach(move || {
+            state
+                .write()
+                .update_v3_pool(addr, spx, liq, tick, block_number, vec![])
+        });
         Ok(())
     }
 
