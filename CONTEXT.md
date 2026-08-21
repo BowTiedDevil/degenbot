@@ -332,6 +332,9 @@ clock are owned by ONE module — one **dispatch owner** — but delivered over 
   sink's `notify_block` no longer takes the `drain_lock` (the `engines` vec is
   frozen after start), so the clock does not contend with the drain fan-out.
   Callers hold no ordering guarantee on solver results.
+  *(2026-08-20 review update: the pipe relocates to the `SolveCoordinator` —
+  see "Delivery lifecycle + block-clock relocation" below; engines exit the
+  block path entirely.)*
 - **Stall backstop** — the drain-pipe liveness check (B3), soak-hardened: the
   pump aborts when the queue holds a backlog (`depth >= BACKLOG_FLOOR=2`) AND
   the drainer has completed no work for `STALL_WINDOW` (~30s). The wall-clock
@@ -341,6 +344,64 @@ clock are owned by ONE module — one **dispatch owner** — but delivered over 
   false-positives under heavy multi-path solve load. A drainer that progresses
   but falls behind is observed via `pending()` (a lag metric), never aborted;
   a dead (closed-channel) drainer still aborts immediately.
+
+## GIL-state discipline module (2026-08-20 architecture review)
+
+- **GIL-state discipline** — the invariant "never hold the GIL while parked
+  on the `BotState` lock" (incidents 2026-08-20 #1 / 2026-08-21 run-9) as
+  ONE home: the sanctioned accessors **`PyBot::with_state` /
+  `PyBot::with_state_mut`** (`degenbot-python/src/bot/mod.rs`) acquire the
+  guard INSIDE `py.detach`; pyo3's `Ungil` bound keeps GIL-bound values out
+  of the closure and the `!Send` guard can never escape it. Direct
+  `state_arc().read()/.write()` in pymethod bodies is forbidden. Covers
+  reads AND writes — a GIL-held reader parked behind a long write is the
+  frozen-victim side of the same inversion. (Shipped: ergo epic `UX66EM`
+  — accessors `3MXFTV`, pool.rs migration `J2HPO4`, gap closures
+  `UTFQ4Q`.)
+- **Lock-intent registration** — always-on per-thread record
+  (wants/holds/released, with the access mode) kept beside the thread
+  registry, so a GIL-deadlock dump states holder + wanters outright
+  instead of requiring manual futex correlation; join with the thread's
+  `last_span` (the pymethod name) for the full picture. These are cold
+  paths (the pump's hot dispatch never holds the GIL), so the map-op cost
+  is invisible.
+- **Enforcement** — the source scan
+  `no_gil_held_botstate_locks_in_bot_sources`
+  (`tests/gil_state_write_concurrency.rs`): every `.read()`/`.write()`
+  line under `src/bot/` must have `py.detach` within the 8 preceding lines
+  or carry a `T1-scan-exempt` marker (sanctioned accessors + pure-Rust
+  test seams). Unenforced locality decays. (Shipped: UX66EM `ZFZSEQ`.)
+
+## Delivery lifecycle + block-clock relocation (2026-08-20 architecture review)
+
+- **Delivery lifecycle** (`DeliveryLifecycle`, `arb_engine`) — the channels'
+  open/deliver/close plus the end-of-stream contract ("receivers observe a
+  natural stream end exactly once, on pump death or engine drop" — incident
+  2026-08-20 #2) as one module. Concrete, not generic (sample-of-one
+  discipline; generalize to `DeliveryLifecycle<T>` only when a second
+  payload type actually exists). Its test suite is the incident's
+  red/green tests, moved to where the invariant lives.
+- **Delivery policy vs lifecycle** — the split is per-engine-vs-invariant:
+  thresholds / diff bookkeeping / filter (`DeliveryPolicy`) are
+  engine-specific and stay per engine; the lifecycle is invariant across
+  engines and is shared. N engines hand-rolling close semantics = N copies
+  of the incident class.
+- **`Engine::on_pump_ended`** — the renamed `drop_delivery_channels`
+  (matching `DrainSink::on_pump_ended`); the default no-op is removed so
+  every engine answers the liveness question explicitly.
+- **Block-clock pipe ownership** — the pipe relocates from the engine
+  (`DeliveryPolicy.block_tx`) to the `SolveCoordinator`, completing
+  ADR-027's one-dispatch-owner design (supersedes the engine-notification-
+  channel wording in the dispatch-seam section above). `BlockNotification`
+  moves to `bot_core` (a chain fact, not solver vocabulary);
+  `Engine::notify_block` and the `EngineHandle` per-header engine-mutex
+  relay retire; Python `block_stream()` moves off `PyArbitrageEngine` onto
+  the coordinator-side handle.
+- **Deferred to the ADR-018 trigger** — whether a second engine family's
+  Python stream is separate or merged into one, and whether delivery
+  leaves the engine entirely (coordinator-owned); the lifecycle module is
+  designed not to care.
+
 
 ## Block-pump PumpDecision seam (A — pure producer/FSM, 2026-08)
 

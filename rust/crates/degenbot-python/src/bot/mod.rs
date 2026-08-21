@@ -45,6 +45,9 @@ fn narrow_reserve(
 }
 use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
+use crate::diagnostics::thread_registry::{
+    note_state_intent, StateIntentGuard, StateLockMode, StateLockPhase,
+};
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
     Bot, BotState, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
@@ -174,8 +177,13 @@ impl PyBot {
     {
         py.detach(|| {
             let core = self.bot.state_arc();
+            // Lock-intent registration (incident 2026-08-20 #1 follow-up): a
+            // GIL-deadlock dump states wants/holds outright — join with the
+            // thread's last_span for the pymethod name.
+            note_state_intent("with_state", StateLockMode::Read, StateLockPhase::Wants);
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
             let guard = core.read();
+            let _intent = StateIntentGuard::held("with_state", StateLockMode::Read);
             f(&guard)
         })
     }
@@ -191,8 +199,15 @@ impl PyBot {
     {
         py.detach(move || {
             let core = self.bot.state_arc();
+            // Lock-intent registration — see `with_state`.
+            note_state_intent(
+                "with_state_mut",
+                StateLockMode::Write,
+                StateLockPhase::Wants,
+            );
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
             let mut guard = core.write();
+            let _intent = StateIntentGuard::held("with_state_mut", StateLockMode::Write);
             f(&mut guard)
         })
     }

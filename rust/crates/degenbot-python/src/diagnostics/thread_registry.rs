@@ -20,6 +20,105 @@ struct ThreadInfo {
     last_span: Option<String>,
     last_span_loc: Option<String>,
     last_span_ns: u128,
+    /// Live `BotState` lock intent, if any — `"wants write(op)"` /
+    /// `"holds read(op)"`. See [`note_state_intent`].
+    state_lock: Option<String>,
+}
+
+impl ThreadInfo {
+    fn new() -> Self {
+        Self {
+            os_tid: read_os_tid(),
+            name: std::thread::current()
+                .name()
+                .unwrap_or("<unnamed>")
+                .to_string(),
+            last_span: None,
+            last_span_loc: None,
+            last_span_ns: 0,
+            state_lock: None,
+        }
+    }
+}
+
+/// Which `BotState` guard mode a thread is parked on / holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StateLockMode {
+    Read,
+    Write,
+}
+
+impl StateLockMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+        }
+    }
+}
+
+/// Where a thread is relative to the `BotState` lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StateLockPhase {
+    /// About to acquire (parked or about to park).
+    Wants,
+    /// Holds the guard.
+    Holds,
+}
+
+impl StateLockPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Wants => "wants",
+            Self::Holds => "holds",
+        }
+    }
+}
+
+/// Record the calling thread's `BotState` lock intent (always-on; CONTEXT.md
+/// §"GIL-state discipline module"). A GIL-deadlock dump then states holder +
+/// wanter outright — no manual futex correlation. Join with the thread's
+/// `last_span` (the pymethod name) for the full picture.
+///
+/// Cost: one mutex-guarded map upsert. Only the sanctioned
+/// `PyBot::with_state{,_mut}` accessors call this — cold, network/DB-
+/// dominated paths (the pump's hot dispatch never holds the GIL).
+pub(crate) fn note_state_intent(op: &str, mode: StateLockMode, phase: StateLockPhase) {
+    let tid = std::thread::current().id();
+    let mut map = match registry().lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let entry = map.entry(tid).or_insert_with(ThreadInfo::new);
+    entry.state_lock = Some(format!("{} {}({op})", phase.as_str(), mode.as_str()));
+}
+
+/// RAII half of [`note_state_intent`]: flips the intent to `holds` on
+/// construction and clears it on drop — including panic unwinding — so a
+/// dump never shows a stale holder.
+pub(crate) struct StateIntentGuard;
+
+impl StateIntentGuard {
+    /// Note `holds <mode>(<op>)` for the calling thread until dropped.
+    /// The guard clears the CALLING thread's intent on drop (the accessor
+    /// closure never changes threads), so no fields are retained.
+    pub(crate) fn held(op: &'static str, mode: StateLockMode) -> Self {
+        note_state_intent(op, mode, StateLockPhase::Holds);
+        Self
+    }
+}
+
+impl Drop for StateIntentGuard {
+    fn drop(&mut self) {
+        let tid = std::thread::current().id();
+        let mut map = match registry().lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(entry) = map.get_mut(&tid) {
+            entry.state_lock = None;
+        }
+    }
 }
 
 fn registry() -> &'static Mutex<HashMap<std::thread::ThreadId, ThreadInfo>> {
@@ -57,16 +156,7 @@ pub(crate) fn note_current_thread(span_name: &str, span_loc: Option<&str>) {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let entry = map.entry(tid).or_insert_with(|| ThreadInfo {
-        os_tid: read_os_tid(),
-        name: std::thread::current()
-            .name()
-            .unwrap_or("<unnamed>")
-            .to_string(),
-        last_span: None,
-        last_span_loc: None,
-        last_span_ns: 0,
-    });
+    let entry = map.entry(tid).or_insert_with(ThreadInfo::new);
     entry.last_span = Some(span_name.to_string());
     if let Some(l) = span_loc {
         entry.last_span_loc = Some(l.to_string());
@@ -136,6 +226,7 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
                         "last_span": info.last_span,
                         "last_span_loc": info.last_span_loc,
                         "idle_ns": mono_ns().saturating_sub(info.last_span_ns),
+                        "state_lock": info.state_lock,
                     })
                 })
                 .collect()
@@ -184,5 +275,52 @@ mod tests {
         if std::env::consts::OS == "linux" {
             assert!(entry.os_tid > 0, "os_tid must be non-zero on Linux");
         }
+    }
+
+    /// Lock-intent registration (incident 2026-08-20 #1 follow-up): the
+    /// deadlock dump must state holder/wanter outright — no futex
+    /// correlation required. Wants → Holds (via the RAII guard) → cleared.
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn state_intent_flows_through_wants_holds_and_clears_on_drop() {
+        let dump_json = || {
+            let path = dump_to_file().expect("dump writes");
+            std::fs::read_to_string(&path).expect("dump readable")
+        };
+
+        // Wants: parked on (or about to park on) the lock.
+        note_state_intent(
+            "with_state_mut",
+            StateLockMode::Write,
+            StateLockPhase::Wants,
+        );
+        let doc = dump_json();
+        assert!(
+            doc.contains("wants write(with_state_mut)"),
+            "dump must carry the wants intent; got: {doc}"
+        );
+
+        // Holds: the RAII guard flips the phase; Drop clears it.
+        {
+            let _guard = StateIntentGuard::held("with_state_mut", StateLockMode::Write);
+            let doc = dump_json();
+            assert!(
+                doc.contains("holds write(with_state_mut)"),
+                "guard must flip the intent to holds; got: {doc}"
+            );
+        }
+        let doc = dump_json();
+        assert!(
+            !doc.contains("holds write(with_state_mut)"),
+            "dropping the guard must clear the intent; got: {doc}"
+        );
+
+        // Read mode renders distinctly.
+        note_state_intent("with_state", StateLockMode::Read, StateLockPhase::Wants);
+        let doc = dump_json();
+        assert!(
+            doc.contains("wants read(with_state)"),
+            "read-mode intent must render; got: {doc}"
+        );
     }
 }
