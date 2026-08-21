@@ -63,6 +63,7 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
+toml = "1.1.4"
 
 [features]
 # Per-domain binding-layer features (ergo UG6FKN task UKDOUR). Each gates its optional

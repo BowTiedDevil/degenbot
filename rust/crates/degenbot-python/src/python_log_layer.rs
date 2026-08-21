@@ -16,6 +16,7 @@
 //! remaining records. The Python driver should call this before interpreter
 //! finalization (e.g. in `__aexit__` or via Python `atexit`).
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -178,6 +179,61 @@ where
 /// has `target = "log"` and the original log target is stored in the
 /// `log.target` field. This function visits the event fields and returns
 /// the original target if found.
+/// T5/RMH23E dev-default: is `OTel` telemetry requested for this session?
+///
+/// The `otel` Cargo feature only exists in dev builds (release wheels compile
+/// zero `OTel` code), so defaulting to ON here cannot leak into production.
+/// Opt out with `DEGENBOT_OTEL=0`.
+#[cfg(feature = "otel")]
+#[must_use]
+pub(crate) fn otel_requested(raw: Option<&str>) -> bool {
+    !matches!(raw, Some("0"))
+}
+
+/// The user config file (`~/.config/degenbot/config.toml`). Separate helper
+/// so tests can point it at a fixture.
+#[cfg(feature = "otel")]
+fn user_config_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| Path::new(&home).join(".config/degenbot/config.toml"))
+}
+
+/// Resolve the OTLP endpoint for span export. Precedence (first wins):
+///
+/// 1. `OTEL_EXPORTER_OTLP_ENDPOINT` env var (standard `OTel` signal env —
+///    explicit, always wins),
+/// 2. `otel.endpoint` in the user config file
+///    (`~/.config/degenbot/config.toml`),
+/// 3. `None` — the exporter falls back to its built-in default
+///    (`http://localhost:4318`).
+///
+/// A malformed config file is treated as absent (warn + fall through) rather
+/// than disabling telemetry — a typo in one key must not silence tracing.
+#[cfg(feature = "otel")]
+#[must_use]
+pub(crate) fn resolve_otlp_endpoint(
+    env_raw: Option<&str>,
+    config_file: Option<&Path>,
+) -> Option<String> {
+    if let Some(url) = env_raw.filter(|s| !s.is_empty()) {
+        return Some(url.to_owned());
+    }
+    let path = config_file?;
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    match text.parse::<toml::Table>() {
+        Ok(table) => table
+            .get("otel")
+            .and_then(|otel| otel.get("endpoint"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        Err(e) => {
+            tracing::warn!(%e, path = %path.display(), "user config.toml failed to parse - otel.endpoint ignored");
+            None
+        }
+    }
+}
+
 fn extract_log_target(event: &tracing::Event) -> Option<String> {
     struct LogTargetExtractor(Option<String>);
 
@@ -536,18 +592,37 @@ pub fn init_logging_subscriber() {
             // justified implicit call site. Layered third on the base
             // registry; the provider lives in OTEL_PROVIDER for
             // `shutdown_log_drainer` flush/kill.
-            let otel_layer = if let Ok("1") = std::env::var("DEGENBOT_OTEL").as_deref() { match degenbot_bot::otel::provider_from_env_endpoint() {
-                Ok((provider, tracer)) => {
-                    let _ = OTEL_PROVIDER.set(degenbot_bot::otel::OtelHandle::new(provider));
-                    tracing::info!("OTel OTLP span layer active (endpoint from OTEL_EXPORTER_OTLP_* or http://localhost:4318)");
-                    Some(degenbot_bot::otel::layer(tracer))
+            //
+            // T5/RMH23E dev default: ON whenever the `otel` feature is
+            // compiled (dev builds only — release wheels carry zero OTel
+            // code). Opt out with DEGENBOT_OTEL=0. Endpoint precedence:
+            // OTEL_EXPORTER_OTLP_ENDPOINT env > otel.endpoint in
+            // ~/.config/degenbot/config.toml > exporter default.
+            let endpoint = resolve_otlp_endpoint(
+                std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok().as_deref(),
+                user_config_path().as_deref(),
+            );
+            let build_provider = || match &endpoint {
+                Some(url) => degenbot_bot::otel::provider_from_endpoint(url),
+                None => degenbot_bot::otel::provider_from_env_endpoint(),
+            };
+            let otel_layer = if otel_requested(std::env::var("DEGENBOT_OTEL").ok().as_deref()) {
+                match build_provider() {
+                    Ok((provider, tracer)) => {
+                        let _ = OTEL_PROVIDER.set(degenbot_bot::otel::OtelHandle::new(provider));
+                        tracing::info!(
+                            endpoint = endpoint.as_deref().unwrap_or("http://localhost:4318 (exporter default)"),
+                            "OTel OTLP span layer active"
+                        );
+                        Some(degenbot_bot::otel::layer(tracer))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "OTel layer disabled: OTLP exporter build failed");
+                        None
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "OTel layer disabled: OTLP exporter build failed");
-                    None
-                }
-            } } else {
-                tracing::debug!("OTel span layer inactive (set DEGENBOT_OTEL=1 to enable)");
+            } else {
+                tracing::debug!("OTel span layer inactive (set DEGENBOT_OTEL=0 to opt out)");
                 None
             };
             // T1: metrics ride the same DEGENBOT_OTEL gate — the Prometheus
@@ -741,5 +816,62 @@ mod tests {
                 .any(|(target, level)| target.starts_with("degenbot") && *level == Level::INFO),
             "degenbot's own INFO records must not be throttled"
         );
+    }
+
+    // T5/RMH23E: the otel runtime gate defaults ON in dev builds (the otel
+    // feature only exists there); DEGENBOT_OTEL=0 is the explicit opt-out.
+    #[test]
+    fn otel_requested_defaults_on_and_honors_opt_out() {
+        assert!(otel_requested(None), "unset must default to enabled");
+        assert!(otel_requested(Some("1")), "explicit 1 enables");
+        assert!(otel_requested(Some("")), "empty is treated as unset");
+        assert!(!otel_requested(Some("0")), "DEGENBOT_OTEL=0 opts out");
+    }
+
+    // T5/RMH23E: OTLP endpoint precedence - env var beats config file;
+    // config file beats None; missing/malformed config falls through to None
+    // (exporter default) without disabling telemetry.
+    #[cfg(feature = "otel")]
+    #[test]
+    fn resolve_otlp_endpoint_precedence() {
+        use std::io::Write as _;
+
+        let dir = std::env::temp_dir().join(format!("degenbot-otel-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("config.toml");
+
+        // 1. env wins over an existing config file
+        let contents = concat!("[otel]\n", "endpoint = \"http://from-config:4318\"\n");
+        std::fs::write(&cfg, contents).unwrap();
+        assert_eq!(
+            resolve_otlp_endpoint(Some("http://from-env:4318"), Some(&cfg)).as_deref(),
+            Some("http://from-env:4318"),
+            "env var must win over the config file"
+        );
+
+        // 2. config endpoint used when env is unset or empty
+        assert_eq!(
+            resolve_otlp_endpoint(None, Some(&cfg)).as_deref(),
+            Some("http://from-config:4318")
+        );
+        assert_eq!(
+            resolve_otlp_endpoint(Some(""), Some(&cfg)).as_deref(),
+            Some("http://from-config:4318")
+        );
+
+        // 3. malformed config treated as absent (warn + fall through)
+        let mut bad = std::fs::File::create(&cfg).unwrap();
+        writeln!(bad, "not [valid toml ====").unwrap();
+        drop(bad);
+        assert_eq!(resolve_otlp_endpoint(None, Some(&cfg)), None);
+
+        // 4. missing file -> None (exporter default)
+        assert_eq!(
+            resolve_otlp_endpoint(None, Some(&dir.join("nope.toml"))),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

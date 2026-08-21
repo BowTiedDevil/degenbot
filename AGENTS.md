@@ -64,8 +64,6 @@ forwards records to Python `logging`, so one registry carries logs +
 trace context.
 
 ```bash
-DEGENBOT_OTEL=1 \
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 ```
 
@@ -74,10 +72,17 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
   PyPI `maturin-action` passes its own `--features pyo3/extension-module`
   list, which overrides it, so release wheels ship without the OTLP
   client footprint.
-- **Import-time gate.** `DEGENBOT_OTEL=1` is read in pymodule init (the
-  one justified implicit call site). The endpoint comes from the
-  standard `OTEL_EXPORTER_OTLP_*` env vars, defaulting to
-  `http://localhost:4318`.
+- **Default-on in dev; opt out with `DEGENBOT_OTEL=0`.** Because the
+  code only exists under the dev-only feature, the runtime gate defaults
+  to enabled — no env var needed for local runs. `DEGENBOT_OTEL=0`
+  disables it explicitly.
+- **Import-time gate.** Read in pymodule init (the one justified
+  implicit call site). Endpoint precedence:
+  `OTEL_EXPORTER_OTLP_ENDPOINT` env var > `otel.endpoint` in
+  `~/.config/degenbot/config.toml` > exporter default
+  (`http://localhost:4318`). A Prometheus scrape endpoint also starts
+  on `DEGENBOT_METRICS_ADDR` (default loopback 9464) whenever the layer
+  is active.
 - **Fail-open.** If the OTLP exporter build fails, the layer logs a
   warning and the bot continues on the no-otel assembly (byte-
   equivalent to the historical subscriber).
