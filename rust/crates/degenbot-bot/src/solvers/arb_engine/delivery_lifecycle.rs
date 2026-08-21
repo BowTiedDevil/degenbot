@@ -9,7 +9,7 @@
 
 use tokio::sync::mpsc;
 
-use super::{BlockMetadata, BlockNotification, ResultBatch};
+use super::ResultBatch;
 
 /// The engine-side delivery channels' open/send/close — ONE home for the
 /// end-of-stream contract (architecture review 2026-08-20; incident
@@ -35,10 +35,12 @@ pub(crate) struct DeliveryLifecycle {
     /// Sender for the result-batch channel. `None` = standalone/no-pyo3
     /// consumer (sends are quiet no-ops).
     result_tx: Option<mpsc::UnboundedSender<ResultBatch>>,
-    /// Sender for the block-notification channel (epic 6W35AI). Independent
-    /// of `result_tx`.
-    block_tx: Option<mpsc::UnboundedSender<BlockNotification>>,
 }
+
+// The block-notification channel is NOT engine-side any more (ADR-027
+// completion, 2026-08-20 review): the block-clock pipe is coordinator-owned
+// (bot_core::block_clock_pipe::BlockClockPipe) — a header tick is a chain
+// fact, not engine business.
 
 impl DeliveryLifecycle {
     /// Attach the result-batch channel sender (engine construction/wiring).
@@ -46,18 +48,11 @@ impl DeliveryLifecycle {
         self.result_tx = Some(tx);
     }
 
-    /// Attach the block-notification channel sender. Independent of
-    /// `result_tx`.
-    pub(crate) fn set_block_channel(&mut self, tx: mpsc::UnboundedSender<BlockNotification>) {
-        self.block_tx = Some(tx);
-    }
-
     /// Close both channels — THE end-of-stream contract (see the type doc).
     /// Called on pump death (`Engine::on_pump_ended`) and engine drop.
     /// Idempotent; a no-op when no channel was attached (standalone
     /// consumers have nothing to end).
     pub(crate) fn close(&mut self) {
-        self.block_tx = None;
         self.result_tx = None;
     }
 
@@ -70,15 +65,6 @@ impl DeliveryLifecycle {
             None => false,
         }
     }
-
-    /// Forward a `newHeads` block tick onto the block-notification channel
-    /// (epic 6W35AI). A quiet no-op when no block channel is attached or
-    /// after [`Self::close`].
-    pub(crate) fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-        if let Some(ref tx) = self.block_tx {
-            let _ = tx.send(BlockNotification::from_metadata(block, metadata));
-        }
-    }
 }
 
 #[cfg(test)]
@@ -87,21 +73,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn close_ends_both_streams_exactly_once() {
+    fn close_ends_the_result_stream_exactly_once() {
         let (rtx, mut rrx) = mpsc::unbounded_channel::<ResultBatch>();
-        let (btx, mut brx) = mpsc::unbounded_channel::<BlockNotification>();
         let mut lc = DeliveryLifecycle::default();
         lc.set_result_channel(rtx);
-        lc.set_block_channel(btx);
 
         lc.close();
         assert!(
             rrx.try_recv().is_err(),
             "result receiver must observe end-of-stream"
-        );
-        assert!(
-            brx.try_recv().is_err(),
-            "block receiver must observe end-of-stream"
         );
     }
 
@@ -133,20 +113,6 @@ mod tests {
             !lc.send_batch(batch),
             "send after close must report not-sent"
         );
-    }
-
-    #[test]
-    fn notify_block_without_channel_or_after_close_is_a_no_op() {
-        let mut lc = DeliveryLifecycle::default();
-        let metadata = BlockMetadata::default();
-        lc.notify_block(1, &metadata); // no channel attached
-        let (tx, mut rx) = mpsc::unbounded_channel::<BlockNotification>();
-        lc.set_block_channel(tx);
-        lc.notify_block(2, &metadata);
-        assert!(rx.try_recv().is_ok(), "open channel delivers the tick");
-        lc.close();
-        lc.notify_block(3, &metadata); // closed — quiet no-op
-        assert!(rx.try_recv().is_err(), "closed channel delivers nothing");
     }
 
     #[test]

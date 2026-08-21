@@ -40,7 +40,6 @@ impl PyArbitrageEngine {
         let mut engine = engine;
         engine.set_result_channel(result_tx);
         let (block_tx, block_rx) = mpsc::unbounded_channel();
-        engine.set_block_channel(block_tx);
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         // ADR-006 slice 6: wrap the shared engine in `EngineHandle` (an
         // `Arc<dyn Engine>` view) and build the coordinator. The coordinator
@@ -60,6 +59,10 @@ impl PyArbitrageEngine {
         let coordinator = Arc::new(SolveCoordinator::new(vec![
             Arc::clone(&engine_handle) as Arc<dyn degenbot_bot::bot_core::engine::Engine>
         ]));
+        // ADR-027 completion: the block-clock pipe is coordinator-owned —
+        // header ticks never touch the engine (a chain fact, not engine
+        // business); the receiver stays on `Self` for `block_stream()`.
+        coordinator.set_block_channel(block_tx);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         let pump = Arc::new(crate::bot::pump::PumpState::new(
             Arc::clone(&engine),

@@ -245,44 +245,10 @@ pub use crate::bot_core::PoolTickCoverage;
 // engine code + external references (`crate::solvers::arb_engine::BlockMetadata`)
 // keep working (ADR-006 D4).
 pub use crate::bot_core::BlockMetadata;
-
-/// Forwarded newHeads tick — the authoritative block clock for Python.
-///
-/// Distinct from [`ResultBatch`] (which carries solve results + the solve
-/// block as metadata): the consumer derives its block clock from
-/// `BlockNotification`s pushed by the pump on every `WsEvent::BlockHeader`,
-/// NOT from `ResultBatch::solve_block`. `solve_block` lags by the send
-/// debounce + only advances when a batch is actually sent, so using it as the
-/// clock makes the bot's `[block: N]` freeze behind the pump's `current_block`
-/// (epic 6W35AI; `docs/architecture/rust-owned-bot.md` §6.1 specifies this
-/// `block_tx.send(BlockNotification)` channel).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BlockNotification {
-    /// The block number (the clock field).
-    pub number: u64,
-    /// Block timestamp.
-    pub timestamp: u64,
-    /// Base fee per gas (None for pre-EIP-1559 blocks).
-    pub base_fee_per_gas: Option<u64>,
-    /// Gas used in this block.
-    pub gas_used: u64,
-    /// Gas limit of this block.
-    pub gas_limit: u64,
-}
-
-impl BlockNotification {
-    /// Build a notification from a block number + its `BlockMetadata`.
-    #[must_use]
-    pub fn from_metadata(number: u64, metadata: &BlockMetadata) -> Self {
-        Self {
-            number,
-            timestamp: metadata.timestamp,
-            base_fee_per_gas: metadata.base_fee_per_gas,
-            gas_used: metadata.gas_used,
-            gas_limit: metadata.gas_limit,
-        }
-    }
-}
+// ADR-027 completion (2026-08-20 review): the block-clock pipe is
+// coordinator-owned; the type moved to bot_core. Re-exported so external
+// references keep working (same pattern as BlockMetadata above).
+pub use crate::bot_core::block_clock_pipe::BlockNotification;
 
 /// Incremental result batch pushed to Python via the result channel.
 ///

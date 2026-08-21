@@ -16,6 +16,7 @@ pub mod balance_vector_orchestration;
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_clock;
+pub mod block_clock_pipe;
 pub mod block_pump;
 pub mod bot;
 pub mod cl_orchestration;
@@ -60,6 +61,7 @@ pub use balancer_stable_state::{
 pub use balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
+pub use block_clock_pipe::BlockNotification;
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
 use degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};

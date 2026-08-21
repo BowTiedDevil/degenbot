@@ -571,13 +571,13 @@ mod tests {
         let bot = std::sync::Arc::new(Bot::with_core(std::sync::Arc::clone(&core)));
         let mut engine = ArbitrageEngine::with_core(core);
         let (result_tx, _result_rx) = mpsc::unbounded_channel();
-        let (block_tx, _block_rx) = mpsc::unbounded_channel();
         engine.set_result_channel(result_tx);
-        engine.set_block_channel(block_tx);
         let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
         let coordinator = std::sync::Arc::new(SolveCoordinator::new(vec![EngineHandle::arc_dyn(
             std::sync::Arc::clone(&engine),
         )]));
+        let (block_tx, _block_rx) = mpsc::unbounded_channel();
+        coordinator.set_block_channel(block_tx);
         let reorg_coordinator =
             std::sync::Arc::new(ReorgCoordinator::new(std::sync::Arc::clone(&bot)));
         std::sync::Arc::new(PumpState::new(engine, coordinator, reorg_coordinator, bot))

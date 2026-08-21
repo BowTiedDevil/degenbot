@@ -157,11 +157,6 @@ impl Engine for EngineHandle {
         self.engine.lock().last_processed_block()
     }
 
-    #[hotpath::measure(label = "EngineHandle::notify_block")]
-    fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-        self.engine.lock().notify_block(block, metadata);
-    }
-
     fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
         self.engine.lock().solver_path_pool_refs()
     }

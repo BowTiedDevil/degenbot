@@ -3580,116 +3580,26 @@ mod tests {
         assert_eq!(notif.gas_limit, metadata.gas_limit);
     }
 
-    #[test]
-    fn set_block_channel_plumbs_a_sender_separate_from_result_channel() {
-        // Contract: the engine accepts a dedicated `block_tx` independent of
-        // `result_tx`. Solving / sending result batches must NOT touch the block
-        // channel; only an explicit `notify_block` (task AROB7V) does. This test
-        // pins the plumbing + the separation: after `set_block_channel`, a
-        // result-batch `compute_diff_and_send` produces a `ResultBatch` but
-        // leaves the block channel empty.
-        let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (result_tx, _result_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = ArbitrageEngine::new();
-        engine.set_block_channel(block_tx);
-        engine.set_result_channel(result_tx);
-
-        // Two mispriced V2 pools so a send has something to report.
-        let v2_addr_a = Address::from([0x31u8; 20]);
-        let _ = engine.register_v2_pool(
-            v2_addr_a,
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
-        let v2_addr_b = Address::from([0x32u8; 20]);
-        let _ = engine.register_v2_pool(
-            v2_addr_b,
-            weth(800),
-            usdc(1_600_000),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
-
-        let metadata = BlockMetadata {
-            timestamp: 1,
-            base_fee_per_gas: Some(0),
-            gas_used: 0,
-            gas_limit: 0,
-        };
-        // A send enqueues a result batch but must NOT notify the block stream.
-        engine.send_result_batch(&metadata);
-        assert!(
-            block_rx.try_recv().is_err(),
-            "result-batch send must not touch the block channel"
-        );
-    }
+    // The block-channel engine tests (set_block_channel plumbing, notify_block
+    // push) relocated with the pipe itself: the block clock is coordinator-owned
+    // now (ADR-027 completion) — see bot_core/block_clock_pipe.rs + the
+    // SolveCoordinator tests.
 
     #[test]
-    fn notify_block_pushes_a_block_notification_on_the_block_channel() {
-        // Contract (AROB7V): `notify_block` forwards exactly one
-        // `BlockNotification` per call, carrying the block number + the
-        // metadata, onto `block_tx`. It must NOT also enqueue a result batch
-        // (the block channel is the block clock, independent of solve state).
-        let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = ArbitrageEngine::new();
-        engine.set_block_channel(block_tx);
-
-        let metadata = BlockMetadata {
-            timestamp: 1_700_000_000,
-            base_fee_per_gas: Some(7_000_000_000),
-            gas_used: 15_000_000,
-            gas_limit: 30_000_000,
-        };
-        engine.notify_block(25_390_117, &metadata);
-
-        let notif = block_rx
-            .try_recv()
-            .expect("notify_block sent a notification");
-        assert_eq!(notif.number, 25_390_117);
-        assert_eq!(notif.timestamp, metadata.timestamp);
-        assert_eq!(notif.base_fee_per_gas, metadata.base_fee_per_gas);
-        assert_eq!(notif.gas_used, metadata.gas_used);
-        assert_eq!(notif.gas_limit, metadata.gas_limit);
-        assert!(
-            block_rx.try_recv().is_err(),
-            "exactly one notification per call"
-        );
-    }
-
-    #[test]
-    fn on_pump_ended_closes_block_and_result_streams() {
+    fn on_pump_ended_closes_the_result_stream() {
         // Incident 2026-08-20 (WS-silent class): pump death routes
-        // DrainSink::on_pump_ended -> Engine::on_pump_ended; the Python-facing streams
-        // must report Disconnected so the consumer ends and the bot fails
-        // loudly (the engine outlives the pump, so without the drop the
-        // senders stay alive and the Python side awaits forever).
+        // DrainSink::on_pump_ended -> Engine::on_pump_ended; the engine-side
+        // result stream must report Disconnected so the consumer ends and the
+        // bot fails loudly (the engine outlives the pump, so without the
+        // close the sender stays alive and the Python side awaits forever).
+        // The BLOCK stream close is coordinator-owned now (ADR-027 completion)
+        // — covered by
+        // solve_coordinator::notify_block_delivers_to_the_coordinator_block_clock_pipe.
         use tokio::sync::mpsc::error::TryRecvError;
-        let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut engine = ArbitrageEngine::new();
-        engine.set_block_channel(block_tx);
         engine.set_result_channel(result_tx);
-        let metadata = BlockMetadata {
-            timestamp: 1_700_000_000,
-            base_fee_per_gas: Some(7_000_000_000),
-            gas_used: 15_000_000,
-            gas_limit: 30_000_000,
-        };
-        engine.notify_block(42, &metadata);
-        assert_eq!(
-            block_rx
-                .try_recv()
-                .expect("one notification in flight")
-                .number,
-            42
-        );
         engine.on_pump_ended();
-        match block_rx.try_recv() {
-            Err(TryRecvError::Disconnected) => {}
-            other => panic!("block stream must be Disconnected after drop, got {other:?}"),
-        }
         match result_rx.try_recv() {
             Err(TryRecvError::Disconnected) => {}
             other => panic!("result stream must be Disconnected after drop, got {other:?}"),

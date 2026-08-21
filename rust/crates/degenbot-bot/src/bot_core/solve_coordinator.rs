@@ -42,6 +42,7 @@ use crate::bot_core::drain_sink::DrainSink;
 use crate::bot_core::BlockMetadata;
 use degenbot_solvers::mixed::MixedPoolRef;
 
+use super::block_clock_pipe::BlockClockPipe;
 use super::engine::Engine;
 
 /// The coordinator state guarded by `drain_lock`.
@@ -66,6 +67,12 @@ struct CoordinatorState {
 pub struct SolveCoordinator {
     engines: Vec<Arc<dyn Engine>>,
     drain_lock: Mutex<CoordinatorState>,
+    /// The block-clock pipe (ADR-027 completion): the coordinator is the ONE
+    /// dispatch owner, so the newHeads pipe lives here — not on the engines,
+    /// who only ever relayed ticks. Guarded by its own mutex: `notify_block`
+    /// must never take `drain_lock` (B2 — the clock never queues behind
+    /// solver work), and a channel send is nanoseconds.
+    block_clock: Mutex<BlockClockPipe>,
 }
 
 impl SolveCoordinator {
@@ -79,7 +86,27 @@ impl SolveCoordinator {
                 started: false,
                 last_drained_block: None,
             }),
+            block_clock: Mutex::new(BlockClockPipe::default()),
         }
+    }
+
+    /// Attach the block-clock channel sender (the wiring layer creates the
+    /// channel pair; the Python-facing receiver lives elsewhere). ADR-027
+    /// completion: the pipe is coordinator-owned, engines are never in the
+    /// block path.
+    ///
+    /// # Panics
+    /// If the `block_clock` mutex is poisoned (a prior holder panicked
+    /// mid-send — not a recoverable state for liveness bookkeeping).
+    #[expect(clippy::expect_used)] // invariant-guarded (documented)
+    pub fn set_block_channel(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::bot_core::BlockNotification>,
+    ) {
+        self.block_clock
+            .lock()
+            .expect("block_clock poisoned")
+            .set_channel(tx);
     }
 
     /// Mark the pump as started. After this, `register_before_start` panics.
@@ -141,8 +168,13 @@ impl DrainSink for SolveCoordinator {
 
     fn on_pump_ended(&self) {
         tracing::error!(
-            "SolveCoordinator: pump ended - dropping engine delivery channels; the Python block/result streams now end so the bot fails loudly"
+            "SolveCoordinator: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
+        #[expect(clippy::expect_used)] // invariant-guarded (see set_block_channel)
+        self.block_clock
+            .lock()
+            .expect("block_clock poisoned")
+            .close();
         for engine in &self.engines {
             engine.on_pump_ended();
         }
@@ -210,20 +242,18 @@ impl DrainSink for SolveCoordinator {
 
     #[hotpath::measure(label = "SolveCoordinator::notify_block")]
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-        // Fan out to every engine DIRECTLY — no `drain_lock` (B2). The
-        // `engines` vec is frozen after construction (ADR-006: engines are
-        // registered before `start`, late registration panics), so iterating it
-        // needs no lock. Each `engine.notify_block` is a non-blocking `mpsc`
-        // send into the engine's block channel, and Python's block-clock
-        // consumer never acquires the engine lock (it awaits `block_rx.recv()`).
-        // NOT taking `drain_lock` is what keeps the block clock from contending
-        // with an in-flight solve fan-out (B2: the clock is never queued / gated
-        // behind solver work). `notify_block` must NOT advance
-        // `last_drained_block` (that clock is solve-driven; the *block* clock
-        // lives on the block channel).
-        for engine in &self.engines {
-            engine.notify_block(block, metadata);
-        }
+        // Deliver straight into the coordinator-owned block-clock pipe — no
+        // `drain_lock` (B2), no engine involvement (ADR-027 completion: one
+        // dispatch owner owns all three pipes; a header tick is a chain fact,
+        // not engine business). NOT taking `drain_lock` is what keeps the
+        // block clock from contending with an in-flight solve fan-out.
+        // `notify_block` must NOT advance `last_drained_block` (that clock
+        // is solve-driven; the *block* clock lives on this pipe).
+        #[expect(clippy::expect_used)] // invariant-guarded (see set_block_channel)
+        self.block_clock
+            .lock()
+            .expect("block_clock poisoned")
+            .notify(block, metadata);
     }
 
     fn solver_path_pool_refs(&self) -> Vec<Vec<MixedPoolRef>> {
@@ -260,9 +290,7 @@ mod tests {
         send_result_batch_calls: StdMutex<u32>,
         finalize_block_calls: StdMutex<u32>,
         has_dirty_paths_calls: StdMutex<u32>,
-        notify_block_calls: StdMutex<u32>,
         on_pump_ended_calls: StdMutex<u32>,
-        last_notified: StdMutex<Option<u64>>,
         dirty: StdMutex<bool>,
         cursor: StdMutex<Option<u64>>,
     }
@@ -274,9 +302,7 @@ mod tests {
                 send_result_batch_calls: StdMutex::new(0),
                 finalize_block_calls: StdMutex::new(0),
                 has_dirty_paths_calls: StdMutex::new(0),
-                notify_block_calls: StdMutex::new(0),
                 on_pump_ended_calls: StdMutex::new(0),
-                last_notified: StdMutex::new(None),
                 dirty: StdMutex::new(false),
                 cursor: StdMutex::new(None),
             }
@@ -290,14 +316,8 @@ mod tests {
         fn solve_dirty_count(&self) -> u32 {
             *self.solve_dirty_calls.lock().unwrap()
         }
-        fn notify_block_count(&self) -> u32 {
-            *self.notify_block_calls.lock().unwrap()
-        }
         fn on_pump_ended_count(&self) -> u32 {
             *self.on_pump_ended_calls.lock().unwrap()
-        }
-        fn last_notified_block(&self) -> Option<u64> {
-            *self.last_notified.lock().unwrap()
         }
     }
 
@@ -321,13 +341,35 @@ mod tests {
         }
         fn set_solve_anchor(&self, _block: u64) {}
         fn record_logs_this_block(&self) {}
-        fn notify_block(&self, block: u64, _metadata: &BlockMetadata) {
-            *self.notify_block_calls.lock().unwrap() += 1;
-            *self.last_notified.lock().unwrap() = Some(block);
-        }
         fn last_processed_block(&self) -> Option<u64> {
             *self.cursor.lock().unwrap()
         }
+    }
+
+    /// ADR-027 completion (architecture review 2026-08-20): the block-clock
+    /// pipe is COORDINATOR-owned — `notify_block` delivers straight into it,
+    /// engines are never in the block path, and pump death closes it.
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn notify_block_delivers_to_the_coordinator_block_clock_pipe() {
+        let coordinator = SolveCoordinator::new(Vec::new());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        coordinator.set_block_channel(tx);
+
+        let metadata = BlockMetadata {
+            timestamp: 1_700_000_000,
+            base_fee_per_gas: Some(7_000_000_000),
+            gas_used: 15_000_000,
+            gas_limit: 30_000_000,
+        };
+        coordinator.notify_block(25_390_117, &metadata);
+        let notif = rx.blocking_recv().expect("tick delivered to the pipe");
+        assert_eq!(notif.number, 25_390_117);
+        assert_eq!(notif.timestamp, metadata.timestamp);
+
+        // Pump death closes the pipe: the receiver observes end-of-stream.
+        coordinator.on_pump_ended();
+        assert!(rx.try_recv().is_err(), "pump death ends the block stream");
     }
 
     /// Incident 2026-08-20 #2: pump death fans out `on_pump_ended` to EVERY
@@ -464,24 +506,5 @@ mod tests {
 
         // `last_drained_block` seeded from the agreed cursor.
         assert_eq!(coordinator.last_processed_block(), Some(100));
-    }
-
-    /// RED→GREEN tracer (epic 6W35AI): `notify_block` fans out to every
-    /// attached engine under the drain lock, mirroring `on_drain`/`on_send`.
-    /// The pump calls this on every `WsEvent::BlockHeader` so the block
-    /// channel ticks in lockstep with newHeads — independent of solve state.
-    #[test]
-    fn notify_block_fans_out_to_all_engines_with_the_block() {
-        let a = Arc::new(FakeEngine::new());
-        let b = Arc::new(FakeEngine::new());
-        let coordinator = SolveCoordinator::new(vec![a.clone(), b.clone()]);
-
-        let metadata = BlockMetadata::default();
-        coordinator.notify_block(25_390_117, &metadata);
-
-        assert_eq!(a.notify_block_count(), 1);
-        assert_eq!(b.notify_block_count(), 1);
-        assert_eq!(a.last_notified_block(), Some(25_390_117));
-        assert_eq!(b.last_notified_block(), Some(25_390_117));
     }
 }

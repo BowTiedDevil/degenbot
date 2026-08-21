@@ -25,7 +25,7 @@ use alloy::primitives::U256;
 use tokio::sync::mpsc;
 
 use super::delivery_lifecycle::DeliveryLifecycle;
-use super::{ArbitrageEngine, BlockMetadata, BlockNotification, ResultBatch};
+use super::{ArbitrageEngine, BlockMetadata, ResultBatch};
 use ::degenbot_solvers::mixed::SolvePathResult;
 
 /// The delivery policy: filters the engine's solve output by the profit
@@ -91,20 +91,9 @@ impl DeliveryPolicy {
         self.lifecycle.set_result_channel(tx);
     }
 
-    /// Set the sender for the block-notification channel (epic 6W35AI).
-    /// Independent of `result_tx`. Delegates to the embedded
-    /// [`DeliveryLifecycle`].
-    pub fn set_block_channel(&mut self, tx: mpsc::UnboundedSender<BlockNotification>) {
-        self.lifecycle.set_block_channel(tx);
-    }
-
     /// Forward a `newHeads` block tick onto the block-notification channel
     /// (epic 6W35AI). A no-op when no block channel is attached (no-pyo3
     /// tests / standalone).
-    pub fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-        self.lifecycle.notify_block(block, metadata);
-    }
-
     /// Set the profit thresholds for the result batch channel.
     ///
     /// Only paths with `profit > min_profit` and `profit <= max_profit`
@@ -254,19 +243,6 @@ impl ArbitrageEngine {
     /// attaches the optional delivery sink.
     pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
         self.delivery.set_result_channel(tx);
-    }
-
-    /// Set the sender for the block-notification channel (epic 6W35AI).
-    /// Delegates to the [`DeliveryPolicy`]; independent of `result_tx`.
-    pub fn set_block_channel(&mut self, tx: mpsc::UnboundedSender<BlockNotification>) {
-        self.delivery.set_block_channel(tx);
-    }
-
-    /// Forward a `newHeads` block tick onto the block-notification channel
-    /// (epic 6W35AI). Delegates to the [`DeliveryPolicy`]; a no-op when no
-    /// block channel is attached.
-    pub fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-        self.delivery.notify_block(block, metadata);
     }
 
     /// Set the profit thresholds for the result batch channel. Delegates to
