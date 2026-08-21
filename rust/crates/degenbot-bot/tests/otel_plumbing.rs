@@ -280,3 +280,45 @@ fn metrics_http_server_serves_registry_text() {
     let _ = std::net::TcpStream::connect(addr);
     handle.join().expect("server thread");
 }
+
+/// T2 seam: the named drain-path instruments render the expected Prometheus
+/// families with recorded values.
+#[test]
+fn pipeline_instruments_render_expected_families() {
+    use degenbot_bot::instruments::PipelineInstruments;
+    use degenbot_bot::metrics;
+    use opentelemetry::metrics::MeterProvider;
+
+    let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
+    let meter = provider.meter("degenbot.test");
+    let p = PipelineInstruments::new(&meter);
+
+    p.observe_header_to_solved(0.25);
+    p.count_block();
+    p.count_log_received();
+    p.count_log_applied();
+    p.count_backfill();
+    p.set_drain_queue_depth(3);
+    p.set_state_head_lag(-2);
+
+    let text = metrics::render(&registry);
+    for family in [
+        "degenbot_block_header_to_solved",
+        "degenbot_blocks_observed_total",
+        "degenbot_logs_received_total",
+        "degenbot_logs_applied_total",
+        "degenbot_backfills_executed_total",
+        "degenbot_drain_queue_depth",
+        "degenbot_state_head_lag_blocks",
+    ] {
+        assert!(
+            text.contains(family),
+            "expected family {family} in prometheus text, got:\n{text}"
+        );
+    }
+    let lag = text
+        .lines()
+        .find(|l| l.starts_with("degenbot_state_head_lag_blocks"))
+        .expect("lag gauge missing");
+    assert!(lag.ends_with("-2"), "expected -2 lag, got: {lag}");
+}

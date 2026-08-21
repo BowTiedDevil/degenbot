@@ -130,6 +130,15 @@ const STALL_WINDOW_MS: u64 = 30_000;
 /// of 1 is a single item in flight — not a backlog). A small constant floor.
 const BACKLOG_FLOOR: u64 = 2;
 
+/// Milliseconds → seconds for the latency histograms. Clamped at ~49 days:
+/// a larger gap means the clock jumped, and the histogram bucket is garbage
+/// either way — the clamp keeps the precision lint honest without pretending
+/// the number is meaningful.
+#[must_use]
+pub fn ms_to_secs(ms: u64) -> f64 {
+    f64::from(u32::try_from(ms).unwrap_or(u32::MAX)) / 1_000.0
+}
+
 /// Pure predicate for the B3 stall backstop (unit-testable): the drainer is
 /// stalled if the queue holds a backlog (`depth >= floor`) AND the last healthy
 /// moment was at least `window_ms` ago.
@@ -162,7 +171,7 @@ pub struct DispatchOwner {
     // the drainer task can enter it — solve/finalize/publish spans fired under
     // the drainer parent under the pump's per-block span instead of orphaning
     // into disconnected Jaeger root traces.
-    drain_send: tokio::sync::mpsc::UnboundedSender<(DrainWork, tracing::Span)>,
+    drain_send: tokio::sync::mpsc::UnboundedSender<(DrainWork, tracing::Span, u64)>,
     drainer_health: Arc<DrainerHealth>,
     /// B3 stall backstop state (single-writer: `dispatch` is called from the
     /// pump task only). `last_processed` = the drainer completion count at the
@@ -171,6 +180,10 @@ pub struct DispatchOwner {
     /// persists with no completion for the stall window.
     last_processed: AtomicU64,
     last_healthy_ms: AtomicU64,
+    /// Wall-clock ms of the last accepted header (T2): the anchor for the
+    /// `header_to_solved` latency histogram — the drainer stamps elapsed time
+    /// when a Drain/Finalize item completes.
+    header_ms: Arc<AtomicU64>,
     /// How long a backlogged drainer may go without completing work before the
     /// pump aborts (production = [`STALL_WINDOW_MS`]; tests shrink it).
     stall_window_ms: u64,
@@ -186,20 +199,33 @@ impl DispatchOwner {
         sink: Arc<dyn DrainSink>,
         verify_tx: &Option<tokio::sync::watch::Sender<Option<SolverVerifyRequest>>>,
     ) -> Self {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(DrainWork, tracing::Span)>();
+        let (tx, mut rx) =
+            tokio::sync::mpsc::unbounded_channel::<(DrainWork, tracing::Span, u64)>();
         let health = Arc::new(DrainerHealth::new());
+        let header_ms = Arc::new(AtomicU64::new(0));
         let sink_clone = Arc::clone(&sink);
         let vt = verify_tx.clone();
         let health_clone = Arc::clone(&health);
+        let header_ms_clone = Arc::clone(&header_ms);
         let _drainer = tokio::spawn(async move {
-            while let Some((work, parent)) = rx.recv().await {
+            while let Some((work, parent, enqueued_ms)) = rx.recv().await {
                 // Picked up: this item left the FIFO (the B3 depth signal).
                 health_clone.picked_up.fetch_add(1, Ordering::Relaxed);
+                // T2: queue time for this item (histogram; no-op when the
+                // metrics gate is off).
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.observe_drain_queue_wait(ms_to_secs(
+                        now_millis().saturating_sub(enqueued_ms),
+                    ));
+                }
                 // MQUKB6-T0: enter the dispatch-time span so sink spans
                 // (`degenbot.arb.solve` & co) inherit the pump block context
                 // across the task boundary. Inert when no subscriber is
                 // installed (`Span::current()` is then the disabled root).
                 let _parent_guard = parent.enter();
+                // Solve-carrying items anchor the header→solved measurement;
+                // computed before the match (Publish partially moves `work`).
+                let carries_solve = !matches!(work, DrainWork::Publish { .. });
                 match work {
                     DrainWork::Drain { block, metadata } => {
                         sink_clone.on_drain(block, &metadata);
@@ -219,6 +245,17 @@ impl DispatchOwner {
                         }
                     }
                 }
+                // T2: header→solved latency for solve-carrying work items.
+                if carries_solve {
+                    if let Some(p) = crate::instruments::pipeline() {
+                        let header_ms = header_ms_clone.load(Ordering::Relaxed);
+                        if header_ms != 0 {
+                            p.observe_header_to_solved(ms_to_secs(
+                                now_millis().saturating_sub(header_ms),
+                            ));
+                        }
+                    }
+                }
                 health_clone.processed.fetch_add(1, Ordering::Relaxed);
             }
         });
@@ -229,6 +266,7 @@ impl DispatchOwner {
             drainer_health: health,
             last_processed: AtomicU64::new(0),
             last_healthy_ms: AtomicU64::new(now_millis()),
+            header_ms,
             stall_window_ms: STALL_WINDOW_MS,
         }
     }
@@ -302,7 +340,11 @@ impl DispatchOwner {
             std::process::abort();
         }
         let parent = tracing::Span::current();
-        if tx.send((work, parent)).is_ok() {
+        // T2: stamp enqueue time (queue-wait histogram) + sample depth gauge.
+        if let Some(p) = crate::instruments::pipeline() {
+            p.set_drain_queue_depth(depth_before);
+        }
+        if tx.send((work, parent, now)).is_ok() {
             self.drainer_health.enqueued.fetch_add(1, Ordering::Relaxed);
         } else {
             tracing::error!(
@@ -318,6 +360,13 @@ impl DispatchOwner {
             }
             std::process::abort();
         }
+    }
+
+    /// T2: record that a block header was just accepted — the anchor the
+    /// drainer measures `header_to_solved` latency against. Called from the
+    /// pump's header arm; single-writer (pump task only).
+    pub fn note_header_accepted(&self) {
+        self.header_ms.store(now_millis(), Ordering::Relaxed);
     }
 
     /// The **block-clock pipe** (B2): forward a `newHeads` tick to the sink's

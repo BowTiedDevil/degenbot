@@ -108,6 +108,13 @@ impl PumpTelemetry {
             return;
         }
         self.stat_emissions += 1;
+        // T2: the freeze-signature divergence as a scrapeable gauge (the
+        // [DIAG] log below stays for the investigation trail).
+        if let Some(p) = crate::instruments::pipeline() {
+            let head = i64::from(u32::try_from(pool_state_head).unwrap_or(i32::MAX as u32));
+            let clock = i64::from(u32::try_from(current_block).unwrap_or(i32::MAX as u32));
+            p.set_state_head_lag(head - clock);
+        }
         let last_header_secs = self.last_header_at.elapsed().as_secs();
         tracing::info!(
             diag_header_count = self.header_count,

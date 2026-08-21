@@ -37,6 +37,48 @@
 //! - [`solvers`] — Möbius solvers + the unified `ArbitrageEngine`.
 
 pub mod bot_core;
+
+/// Default-build stub for the instruments module: same call surface, always
+/// `None`. Observation sites stay ungated (`if let Some(p) = pipeline()`) so
+/// the hot path reads identically in both builds — the compiler drops the
+/// branch, and default builds compile zero metrics code.
+#[cfg(not(feature = "otel"))]
+pub mod instruments {
+    /// Inert twin of the real instrument set; never constructed.
+    #[derive(Debug)]
+    pub struct PipelineInstruments;
+
+    impl PipelineInstruments {
+        /// no-op
+        pub fn observe_header_to_solved(&self, _secs: f64) {}
+        /// no-op
+        pub fn observe_drain_queue_wait(&self, _secs: f64) {}
+        /// no-op
+        pub fn observe_log_decode(&self, _secs: f64) {}
+        /// no-op
+        pub fn observe_state_apply(&self, _secs: f64) {}
+        /// no-op
+        pub fn count_block(&self) {}
+        /// no-op
+        pub fn count_log_received(&self) {}
+        /// no-op
+        pub fn count_log_applied(&self) {}
+        /// no-op
+        pub fn count_backfill(&self) {}
+        /// no-op
+        pub fn set_drain_queue_depth(&self, _depth: u64) {}
+        /// no-op
+        pub fn set_state_head_lag(&self, _head_minus_clock: i64) {}
+    }
+
+    /// Always `None` — metrics are compiled out of this build.
+    #[must_use]
+    pub fn pipeline() -> Option<&'static PipelineInstruments> {
+        None
+    }
+}
+#[cfg(feature = "otel")]
+pub mod instruments;
 #[cfg(feature = "otel")]
 pub mod metrics;
 #[cfg(feature = "otel")]

@@ -407,9 +407,17 @@ impl LogDispatcher {
         // Each appears as its own row in the hotpath functions-timing table
         // with a per-phase call count — zero-cost no-ops when the `hotpath`
         // feature is off. See `src/profiling.rs`.
+        // T2: relevant-topic log entering the dispatcher.
+        if let Some(p) = crate::instruments::pipeline() {
+            p.count_log_received();
+        }
+        let decode_start = std::time::Instant::now();
         let decoded = hotpath::measure_block!("dispatch.decode", {
             self.decoders.iter().find_map(|d| d.try_decode(log))
         });
+        if let Some(p) = crate::instruments::pipeline() {
+            p.observe_log_decode(decode_start.elapsed().as_secs_f64());
+        }
         let Some(decoded) = decoded else {
             // [trace-dispatch] (DEGENBOT_TRACE_DISPATCH): a relevant-topic log that
             // NO decoder recognized. Distinct from "apply miss". Zero-cost unless
@@ -452,7 +460,11 @@ impl LogDispatcher {
             return;
         };
         // Apply under the write guard, then RELEASE before notifying.
+        let apply_start = std::time::Instant::now();
         let pool_id = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
+        if let Some(p) = crate::instruments::pipeline() {
+            p.observe_state_apply(apply_start.elapsed().as_secs_f64());
+        }
         // [trace-dispatch] report the apply outcome (applied pool vs "not
         // registered / dropped by apply") for the 0x99ac8c / PancakeSwap desync
         // investigation. Zero-cost unless the env is set.
@@ -479,6 +491,10 @@ impl LogDispatcher {
         let Some(pool_id) = pool_id else {
             return;
         };
+        // T2: successful apply to a registered pool.
+        if let Some(p) = crate::instruments::pipeline() {
+            p.count_log_applied();
+        }
         hotpath::measure_block!("dispatch.notify", {
             self.notify(pool_id);
         });

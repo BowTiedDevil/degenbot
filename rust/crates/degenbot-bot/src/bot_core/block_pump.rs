@@ -1172,6 +1172,11 @@ impl BlockPump {
                     // [DIAG] newHeads-liveness: HEADER count, gap, and 20s stall
                     // warning → one call on the telemetry seam.
                     telemetry.on_header(number);
+                    // T2: blocks-observed counter + the header→solved anchor.
+                    if let Some(p) = crate::instruments::pipeline() {
+                        p.count_block();
+                    }
+                    dispatch.note_header_accepted();
                     // ADR-028: THE header decision lives in the FSM. Feeding
                     // the header (metadata + a wall-clock `now_ms` for the
                     // watchdog anchors) emits, in order, the effects the driver
@@ -1569,6 +1574,10 @@ impl BlockPump {
         }
 
         tracing::info!(from_block, to_block, "BlockPump: backfilling blocks");
+        // T2: one counter per executed backfill range.
+        if let Some(p) = crate::instruments::pipeline() {
+            p.count_backfill();
+        }
 
         let filter = build_backfill_filter(from_block, to_block);
         let logs = match self.provider.provider_arc().get_logs(&filter).await {
