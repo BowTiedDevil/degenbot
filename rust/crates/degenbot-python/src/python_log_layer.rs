@@ -592,8 +592,10 @@ where
     }
 }
 
-// clippy --all-targets gate (UX66EM): this test module uses unwrap but no
-// expect, so expecting expect_used here is an unfulfilled-lint-expectation.
+// clippy --all-targets gate (UX66EM): this test module uses unwrap; the
+// feature-gated otel test's expect calls carry their own targeted
+// #[expect(clippy::expect_used)] so the module attribute stays fulfilled
+// in default (no-otel) builds too.
 #[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
@@ -639,6 +641,10 @@ mod tests {
     /// interpreter); this also proves both layers live in one registry.
     /// The global slot is per-process and no other lib test sets one,
     /// so this test owns it deterministically (repo convention).
+    // Targeted expect (fulfilled when the otel feature is on): the global
+    /// subscriber slot and the exporter/provider plumbing only fail on
+    /// programmer error, so the test asserts loudly rather than propagating.
+    #[expect(clippy::expect_used)]
     #[cfg(feature = "otel")]
     #[test]
     fn otel_layer_composes_into_the_base_registry() {
