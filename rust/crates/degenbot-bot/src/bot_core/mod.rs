@@ -41,7 +41,6 @@ pub(crate) mod solve_anchor;
 pub mod solve_coordinator;
 pub mod solver_state_tripwire;
 pub mod tick_assembly;
-pub mod v3_state;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
@@ -55,6 +54,11 @@ pub use ::degenbot_pools::rate_provider::{
 };
 pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
 pub use ::degenbot_pools::state_history::BalancesBlockDelta;
+pub use ::degenbot_pools::v3_state::{
+    v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
+    PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegistrationLifecycle,
+    SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome, V3SwapUpdate,
+};
 pub use balancer_stable_state::{
     BalancerStablePoolIdentity, BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
@@ -68,11 +72,6 @@ pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
     run_v4_registration_lifecycle, RegistrationLifecycleError,
-};
-pub use v3_state::{
-    v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
-    PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegistrationLifecycle,
-    SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome, V3SwapUpdate,
 };
 
 pub use ::degenbot_pools::v4_state::{
