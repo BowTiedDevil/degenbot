@@ -953,6 +953,8 @@ struct SimSpanVerdict {
     span: tracing::Span,
     verdict: &'static str,
     profit: Option<i64>,
+    /// T3: wall-clock anchor for the per-path simulate duration histogram.
+    started: std::time::Instant,
 }
 
 impl Drop for SimSpanVerdict {
@@ -960,6 +962,11 @@ impl Drop for SimSpanVerdict {
         self.span.record("simulate.verdict", self.verdict);
         if let Some(profit) = self.profit {
             self.span.record("simulate.expected_profit", profit);
+        }
+        // T3: verdict counter (labeled, small closed set) + duration histogram.
+        if let Some(p) = degenbot_bot::instruments::pipeline() {
+            p.count_simulate_verdict(self.verdict);
+            p.observe_simulate_duration(self.started.elapsed().as_secs_f64());
         }
     }
 }
@@ -1009,6 +1016,7 @@ where
     let mut guard = SimSpanVerdict {
         span: span.clone(),
         verdict: "not_profitable",
+        started: std::time::Instant::now(),
         profit: None,
     };
     // C3 — int128 check (mirrors the oracle's guard). The amount fed into each

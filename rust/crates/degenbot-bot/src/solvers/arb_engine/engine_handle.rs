@@ -128,7 +128,20 @@ impl Engine for EngineHandle {
         }
         let span = tracing::info_span!("degenbot.arb.solve", block.number = block);
         let _guard = span.enter();
-        self.engine.lock().solve_dirty(block, metadata);
+        // T3: solve duration + registered-path gauge (dirty solves only; the
+        // no-op path above returns before this).
+        let solve_start = std::time::Instant::now();
+        {
+            let mut engine = self.engine.lock();
+            if let Some(p) = crate::instruments::pipeline() {
+                p.set_registered_paths(u64::try_from(engine.path_count()).unwrap_or(u64::MAX));
+            }
+            engine.solve_dirty(block, metadata);
+        }
+        if let Some(p) = crate::instruments::pipeline() {
+            p.observe_solve_duration(solve_start.elapsed().as_secs_f64());
+            p.count_solves_executed();
+        }
     }
 
     #[hotpath::measure(label = "EngineHandle::on_pump_ended")]

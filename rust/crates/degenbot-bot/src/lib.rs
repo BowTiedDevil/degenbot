@@ -69,6 +69,18 @@ pub mod instruments {
         pub fn set_drain_queue_depth(&self, _depth: u64) {}
         /// no-op
         pub fn set_state_head_lag(&self, _head_minus_clock: i64) {}
+        /// no-op
+        pub fn observe_solve_duration(&self, _secs: f64) {}
+        /// no-op
+        pub fn count_solves_executed(&self) {}
+        /// no-op
+        pub fn set_registered_paths(&self, _count: u64) {}
+        /// no-op
+        pub fn count_candidates_found(&self, _n: u64) {}
+        /// no-op
+        pub fn observe_simulate_duration(&self, _secs: f64) {}
+        /// no-op
+        pub fn count_simulate_verdict(&self, _verdict: &str) {}
     }
 
     /// Always `None` — metrics are compiled out of this build.

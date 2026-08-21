@@ -322,3 +322,48 @@ fn pipeline_instruments_render_expected_families() {
         .expect("lag gauge missing");
     assert!(lag.ends_with("-2"), "expected -2 lag, got: {lag}");
 }
+
+/// T3 seam: solver/simulate instruments render, including the labeled verdict
+/// counter.
+#[test]
+fn solver_instruments_render_with_verdict_labels() {
+    use degenbot_bot::instruments::PipelineInstruments;
+    use degenbot_bot::metrics;
+    use opentelemetry::metrics::MeterProvider;
+
+    let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
+    let meter = provider.meter("degenbot.test");
+    let p = PipelineInstruments::new(&meter);
+
+    p.observe_solve_duration(0.012);
+    p.count_solves_executed();
+    p.set_registered_paths(42);
+    p.count_candidates_found(7);
+    p.observe_simulate_duration(0.003);
+    p.count_simulate_verdict("profitable");
+    p.count_simulate_verdict("profitable");
+    p.count_simulate_verdict("not_profitable");
+
+    let text = metrics::render(&registry);
+    for family in [
+        "degenbot_solve_duration",
+        "degenbot_solves_executed_total",
+        "degenbot_engine_registered_paths",
+        "degenbot_candidates_found_total",
+        "degenbot_simulate_duration",
+        "degenbot_simulate_verdicts_total",
+    ] {
+        assert!(
+            text.contains(family),
+            "expected family {family} in prometheus text, got:\n{text}"
+        );
+    }
+    let profitable = text
+        .lines()
+        .find(|l| l.starts_with("degenbot_simulate_verdicts_total") && l.contains("\"profitable\""))
+        .expect("profitable verdict series missing");
+    assert!(
+        profitable.ends_with("2"),
+        "expected 2 profitable, got: {profitable}"
+    );
+}

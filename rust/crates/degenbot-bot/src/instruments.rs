@@ -41,6 +41,19 @@ pub struct PipelineInstruments {
     drain_queue_depth: Gauge<f64>,
     /// `pool_state_head - engine clock` divergence (the freeze signature).
     state_head_lag_blocks: Gauge<f64>,
+    /// Solve lock-hold duration (dirty solves only — no-op solves are gated
+    /// out of the span path and the histogram alike).
+    solve_duration: Histogram<f64>,
+    /// Solve cycles that carried dirty work.
+    solves_executed: Counter<u64>,
+    /// Registered solver paths (engine gauge).
+    registered_paths: Gauge<f64>,
+    /// Candidates entering the simulate fan-out (per-batch sizes summed).
+    candidates_found: Counter<u64>,
+    /// Per-path EVM simulation duration.
+    simulate_duration: Histogram<f64>,
+    /// Simulation outcomes, labeled by verdict string.
+    simulate_verdicts: Counter<u64>,
 }
 
 impl PipelineInstruments {
@@ -92,6 +105,32 @@ impl PipelineInstruments {
             state_head_lag_blocks: meter
                 .f64_gauge("degenbot.state.head_lag_blocks")
                 .with_description("pool_state_head minus engine clock (freeze signature)")
+                .build(),
+            solve_duration: meter
+                .f64_histogram("degenbot.solve.duration")
+                .with_unit("s")
+                .with_description("Dirty-carrying solve cycle duration")
+                .build(),
+            solves_executed: meter
+                .u64_counter("degenbot.solves.executed")
+                .with_description("Solve cycles that carried dirty work")
+                .build(),
+            registered_paths: meter
+                .f64_gauge("degenbot.engine.registered_paths")
+                .with_description("Registered solver paths")
+                .build(),
+            candidates_found: meter
+                .u64_counter("degenbot.candidates.found")
+                .with_description("Candidates entering the simulate fan-out")
+                .build(),
+            simulate_duration: meter
+                .f64_histogram("degenbot.simulate.duration")
+                .with_unit("s")
+                .with_description("Per-path EVM simulation duration")
+                .build(),
+            simulate_verdicts: meter
+                .u64_counter("degenbot.simulate.verdicts")
+                .with_description("Simulation outcomes by verdict")
                 .build(),
         }
     }
@@ -149,6 +188,39 @@ impl PipelineInstruments {
         let clamped = head_minus_clock.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
         self.state_head_lag_blocks
             .record(f64::from(i32::try_from(clamped).unwrap_or_default()), &[]);
+    }
+
+    /// One dirty-carrying solve cycle's duration.
+    pub fn observe_solve_duration(&self, secs: f64) {
+        self.solve_duration.record(secs, &[]);
+    }
+
+    /// One solve cycle that carried dirty work.
+    pub fn count_solves_executed(&self) {
+        self.solves_executed.add(1, &[]);
+    }
+
+    /// Current registered-path count (engine gauge).
+    pub fn set_registered_paths(&self, count: u64) {
+        self.registered_paths
+            .record(f64::from(u32::try_from(count).unwrap_or(u32::MAX)), &[]);
+    }
+
+    /// A batch of `n` candidates entered the simulate fan-out.
+    pub fn count_candidates_found(&self, n: u64) {
+        self.candidates_found.add(n, &[]);
+    }
+
+    /// One per-path simulation completed.
+    pub fn observe_simulate_duration(&self, secs: f64) {
+        self.simulate_duration.record(secs, &[]);
+    }
+
+    /// One simulation outcome; `verdict` is a small closed set
+    /// (`profitable`, `not_profitable`, `error`, ...).
+    pub fn count_simulate_verdict(&self, verdict: &str) {
+        self.simulate_verdicts
+            .add(1, &[KeyValue::new("outcome", verdict.to_owned())]);
     }
 }
 
