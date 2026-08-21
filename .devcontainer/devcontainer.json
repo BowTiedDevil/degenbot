@@ -143,7 +143,13 @@
     "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
     "source=${localEnv:HOME}/.config/degenbot,target=/home/dev/.config/degenbot,type=bind",
     "source=${localEnv:HOME}/.foundry,target=/home/dev/.foundry,type=bind",
-    "source=${localEnv:HOME}/.pi,target=/home/dev/.pi,type=bind"
+    "source=${localEnv:HOME}/.pi,target=/home/dev/.pi,type=bind",
+    // Persist the VS Code server + extensions across rebuilds via the
+    // existing 'vscode' named podman volume (created 2026-07-24; orphaned
+    // until this entry was added — see git history). Without it,
+    // .vscode-server lives in the container's writable layer and every
+    // recreate re-downloads the server and all extensions.
+    "source=vscode,target=/home/dev/.vscode-server,type=volume",
   ],
   // PATH additions for the npm-global pi binary (~/.local/bin; npm prefix
   // in the Dockerfile makes `npm i -g` land there) and foundry
