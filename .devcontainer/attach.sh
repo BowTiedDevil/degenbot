@@ -44,6 +44,18 @@ if [ "$state" != "running" ]; then
   podman start "$name"
 fi
 
+# Resource-cap invariant check (post-incident 2026-08-21): runArgs caps
+# (--cpus/--memory/--pids-limit) apply only at container CREATION. A container
+# created before the caps landed — or recreated without them — runs unbounded,
+# and attach.sh is the last line of defense that can say so. Warn (don't block)
+# when the running container lacks the CPU cap; NanoCpus is 0 when unset.
+nano_cpus="$(podman inspect -f '{{.HostConfig.NanoCpus}}' "$name" 2>/dev/null || echo 0)"
+if [ "$nano_cpus" = "0" ]; then
+  echo "⚠️  container has NO CPU/memory cap (NanoCpus=0). Runaway builds/tests can" >&2
+  echo "    starve the host. Fix by recreating: .devcontainer/rebuild.sh (runArgs in" >&2
+  echo "    devcontainer.json apply at creation only, never on 'podman start')." >&2
+fi
+
 # Guard against the plain-attach path landing in a container that was created
 # but never had postCreateCommand run. The attach path does podman start + exec
 # — it has no knowledge of devcontainer.json, so postCreateCommand (which runs

@@ -90,9 +90,23 @@
     "dockerfile": "Dockerfile"
   },
   "runArgs": [
-    // Removing the default cgroup PID cap so heavy test spawning 
-    // (cargo, pytest, forge) never hits the limit.
-    "--pids-limit=-1",
+    // Resource backstop (post-incident 2026-08-21): a runaway build or a
+    // wedged test subprocess (e.g. a B3 freeze test whose child never
+    // aborts) previously pegged all cores + memory and forced a container
+    // kill. Caps throttle instead: builds get slower, the host stays alive.
+    // Applied ONLY at container creation (devcontainer up / rebuild.sh /
+    // VSCode reopen) — attach.sh's `podman start` cannot change them.
+    "--cpus=8",
+    "--memory=16g",
+    // Swap == memory: no extra swap headroom, so OOM-kill happens on real
+    // pressure instead of thrashing the host into unresponsiveness.
+    "--memory-swap=16g",
+    // Finite PID ceiling (replaces the removed --pids-limit=-1): far above
+    // anything cargo/pytest/forge legitimately spawn, but a runaway fork
+    // loop fails loudly with EAGAIN instead of starving everything. The
+    // original -1 removal was for heavy-but-sane test suites; 4096 keeps
+    // that headroom while restoring the runaway guard.
+    "--pids-limit=4096",
     // T5 (RMH23E): publish the bot's Prometheus scrape endpoint so the
     // ethereum-pod containers (Prometheus) can reach it via
     // host.containers.internal:9464 — same mechanism as reth's published
@@ -105,7 +119,9 @@
   // T5 (RMH23E): mirror the published scrape port into VS Code's forwarding
   // panel so a host-side Prometheus can also use localhost:9464 while a
   // window is attached.
-  "forwardPorts": [9464],
+  "forwardPorts": [
+    9464
+  ],
   "remoteUser": "dev",
   "workspaceFolder": "/workspaces/degenbot",
   "shutdownAction": "none", // keep the container running if VSCode disconnects
