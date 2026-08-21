@@ -61,7 +61,8 @@ impl PyArbitrageEngine {
         ]));
         // ADR-027 completion: the block-clock pipe is coordinator-owned —
         // header ticks never touch the engine (a chain fact, not engine
-        // business); the receiver stays on `Self` for `block_stream()`.
+        // business). The receiver lives on the shared `PumpState` beside the
+        // pipe's owner; `PyBot::block_stream` hands it to Python once.
         coordinator.set_block_channel(block_tx);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         let pump = Arc::new(crate::bot::pump::PumpState::new(
@@ -69,6 +70,7 @@ impl PyArbitrageEngine {
             Arc::clone(&coordinator),
             Arc::clone(&reorg_coordinator),
             Arc::clone(&bot),
+            parking_lot::Mutex::new(Some(block_rx)),
         ));
         if let Some(parent) = py_bot_ref {
             parent.borrow(py).attach_pump_state(Arc::clone(&pump));
@@ -83,7 +85,6 @@ impl PyArbitrageEngine {
             engine_handle,
             pump,
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
-            block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
             warm_code_cache,
         }
     }

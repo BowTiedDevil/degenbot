@@ -265,6 +265,45 @@ impl PyBot {
         }
     }
 
+    /// Return a fresh async iterator over `newHeads` block notifications —
+    /// the settlement bot's authoritative block clock (epic 6W35AI).
+    ///
+    /// ADR-027 completion (ergo 6VGMLY): the block-clock pipe is
+    /// coordinator-owned, so this method lives on `PyBot` (the pump-lifecycle
+    /// handle) — NOT on `ArbitrageEngine`, which is out of the block path
+    /// entirely. The receiver is born on the shared `PumpState` beside the
+    /// pipe's sender and is handed out exactly once.
+    ///
+    /// Each yielded item is a dict: `number`, `timestamp`,
+    /// `base_fee_per_gas` (int | None), `gas_used`, `gas_limit`.
+    ///
+    /// Can be called at most once (the receiver is moved into the iterator).
+    /// Subsequent calls raise `RuntimeError`. Raises `RuntimeError` too if
+    /// no engine was constructed against this bot (no pump state).
+    ///
+    /// # Errors
+    /// `RuntimeError` if no pump state is attached (no engine constructed
+    /// against this bot) or the receiver was already handed out.
+    pub fn block_stream(&self) -> PyResult<crate::bot::engine::BlockStream> {
+        // parking_lot::lock() is infallible (no poisoning) — the guard derefs
+        // straight to Option<Arc<PumpState>>.
+        let pump = {
+            let guard = self.pump.lock();
+            match guard.as_ref() {
+                Some(p) => p.clone(),
+                None => {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "no pump state: construct an ArbitrageEngine against this Bot first",
+                    ))
+                }
+            }
+        };
+        let block_rx = pump.take_block_receiver().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("block_stream() can only be called once")
+        })?;
+        Ok(crate::bot::engine::BlockStream::new(block_rx))
+    }
+
     /// Load the V3 + V4 DB snapshot into the core `BotState` (B3OROH, JUCFCB).
     ///
     /// Called at Python `Bot.__init__` time when a DB path is configured

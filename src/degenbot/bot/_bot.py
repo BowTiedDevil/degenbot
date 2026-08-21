@@ -419,6 +419,21 @@ class Bot:
         self._trackers[key] = manager
         return manager
 
+    def block_stream(self) -> Any:
+        """Fresh async iterator over ``newHeads`` block notifications.
+
+        The settlement bot's authoritative block clock (epic 6W35AI): ticked
+        once per accepted header by the pump — NOT derived from
+        ``ResultBatch.solve_block``, which lags by the send debounce.
+
+        ADR-027 completion (ergo 6VGMLY): the block-clock pipe is
+        coordinator-owned, so this surfaces on the ``Bot`` (the
+        pump-lifecycle handle) rather than on the arbitrage engine, which is
+        out of the block path entirely. Once-only: a second call raises
+        ``RuntimeError``.
+        """
+        return self._py_bot.block_stream()
+
     def release_python_state(self) -> None:
         """Drop Python-side pool/token/tracker caches once Rust owns canonical state.
 

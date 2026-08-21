@@ -291,28 +291,9 @@ impl PyArbitrageEngine {
         slf
     }
 
-    /// Return a fresh async iterator over `newHeads` block notifications
-    /// (epic 6W35AI).
-    ///
-    /// The settlement-arbitrage bot must derive its block clock from this stream, NOT
-    /// from the result batch's `solve_block` field — `solve_block` lags by
-    /// the send debounce and only advances when a batch is actually sent,
-    /// so using it as the clock freezes `[block: N]` behind the pump's
-    /// `current_block`. The pump forwards exactly one `BlockNotification`
-    /// per accepted `WsEvent::BlockHeader` (in lockstep with the block the
-    /// solver just solved against), so this stream is the authoritative clock.
-    ///
-    /// Each yielded item is a dict: `number`, `timestamp`,
-    /// `base_fee_per_gas` (int | None), `gas_used`, `gas_limit`.
-    ///
-    /// Can be called at most once (the receiver is moved into the iterator).
-    /// Subsequent calls raise `RuntimeError`.
-    fn block_stream(&self) -> PyResult<BlockStream> {
-        let block_rx = self.block_rx.lock().take().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("block_stream() can only be called once")
-        })?;
-        Ok(BlockStream::new(block_rx))
-    }
+    // block_stream() lived here while the block-clock pipe was engine-side; it
+    // moved to PyBot with the pipe itself (ADR-027 completion, ergo 6VGMLY) —
+    // a header tick is coordinator business, not engine business.
 
     /// Await the next result batch from the engine.
     ///

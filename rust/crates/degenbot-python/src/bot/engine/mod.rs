@@ -83,11 +83,10 @@ pub struct PyArbitrageEngine {
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.
     result_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<ResultBatch>>>>,
-    /// Receiver for the block-notification channel (epic 6W35AI). The pump
-    /// forwards `newHeads` ticks here via `DrainSink::notify_block`;
-    /// Python consumes this as its block clock (not `ResultBatch::solve_block`).
-    /// Consumed by `BlockStream::__anext__`; wrapped in Arc for the coroutine.
-    block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
+    // The block-notification receiver is NOT here any more (ADR-027
+    // completion): the block-clock pipe is coordinator-owned, and its
+    // receiver lives on the shared PumpState — `PyBot::block_stream`
+    // hands it to Python.
     /// The cross-block persistent bytecode + account-existence cache
     /// (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Held for the
     /// engine's life; cloned into each per-block `BlockSimHandle::build` so

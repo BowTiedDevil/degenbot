@@ -401,10 +401,11 @@ class BotRunner:
         # 1. Acquire the once-only block_stream and feed it DIRECTLY to the result
         # consumer (no tee, no recurring-verify branch — the redundant Python
         # whole-batch re-verify was removed; the Rust two-step gate + solve-time
-        # solver-state verifier own verification). The pump's
-        # `engine.block_stream()` moves the mpsc receiver out of a Mutex on each
-        # call — a second call raises RuntimeError("block_stream() can only be called once").
-        block_stream = self.engine_registry.engine.block_stream()
+        # solver-state verifier own verification). The block-clock pipe is
+        # coordinator-owned (ADR-027 completion): `bot.block_stream()` moves
+        # the mpsc receiver out of the PumpState on each call — a second call
+        # raises RuntimeError("block_stream() can only be called once").
+        block_stream = self.bot.block_stream()
 
         # Attach the consumer BEFORE resume (consumer-safety invariant).
         assert self._session is not None

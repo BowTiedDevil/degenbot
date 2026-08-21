@@ -134,15 +134,31 @@ class _FakeEngineRegistry:
 
 
 class _FakeBot:
-    def __init__(self, events: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[str] | None = None,
+        blocks: list[dict[str, int]] | None = None,
+    ) -> None:
         self.chain_id = 1
         self.released = False
         self._events = events
+        self._blocks = blocks or []
+        # Mimics the real Bot.block_stream() once-only receiver semantics
+        # (the block-clock pipe is coordinator-owned; the receiver is handed
+        # out exactly once).
+        self.block_stream_calls = 0
 
     def release_python_state(self) -> None:
         self.released = True
         if self._events is not None:
             self._events.append("release")
+
+    def block_stream(self):
+        self.block_stream_calls += 1
+        if self.block_stream_calls > 1:
+            msg = "block_stream() can only be called once"
+            raise RuntimeError(msg)
+        return _BlocksStream(list(self._blocks))
 
 
 class _RecordingPyBot:
@@ -423,11 +439,11 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
     exactly ONCE and feed it DIRECTLY to the single result consumer (the tee and
     the redundant Python recurring-verify branch were removed).
 
-    The real `PyArbitrageEngine.block_stream()` is once-only — a second call
-    raises `RuntimeError("block_stream() can only be called once")`. This test
-    uses an engine whose `block_stream()` raises on the second call (mimicking
-    the real once-only seam) and asserts the single consumer receives every
-    block.
+    The real `Bot.block_stream()` is once-only — a second call raises
+    `RuntimeError("block_stream() can only be called once")`. This test uses
+    a bot whose `block_stream()` raises on the second call (mimicking the
+    real once-only seam — the block-clock pipe is coordinator-owned, ergo
+    6VGMLY) and asserts the single consumer receives every block.
     """
 
     async def test_run_acquires_block_stream_once_for_single_consumer(
@@ -436,10 +452,7 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
         seen_by_consumer: list[int] = []
 
         class _OnceOnlyEngine:
-            """Mimics the real `block_stream()` once-only receiver semantics."""
-
             def __init__(self) -> None:
-                self.block_stream_calls = 0
                 self.resumed = False
 
             def resume(self) -> None:
@@ -460,17 +473,6 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
             def path_count(self) -> int:
                 return 0
 
-            def block_stream(self):
-                self.block_stream_calls += 1
-                if self.block_stream_calls > 1:
-                    msg = "block_stream() can only be called once"
-                    raise RuntimeError(msg)
-                # Blocks divisible by RECURRING_VERIFY_INTERVAL (50) so the
-                # recurring-verify ticker actually fires at each.
-                return _BlocksStream(
-                    [_block_dict(500), _block_dict(550), _block_dict(600)],
-                )
-
         class _Registry:
             def __init__(self) -> None:
                 self.engine = _OnceOnlyEngine()
@@ -487,9 +489,14 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
             async for b in block_stream:
                 seen_by_consumer.append(b["number"])  # ruff: ignore[manual-list-comprehension]  (async iter)
 
+        # Blocks divisible by RECURRING_VERIFY_INTERVAL (50) so the
+        # recurring-verify ticker actually fires at each.
+        bot = _FakeBot(
+            blocks=[_block_dict(500), _block_dict(550), _block_dict(600)],
+        )
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
+            bot=bot,
             engine_registry=registry,  # type: ignore[arg-type]
             async_w3=_FakeAsyncW3(),
             snapshots=(None, None, None, None),
@@ -500,8 +507,8 @@ class TestBotRunnerRunBlockStreamAcquiredOnce:
         await session.run()
 
         # The load-bearing contract: exactly ONE acquisition.
-        assert registry.engine.block_stream_calls == 1, (
-            "run() must acquire engine.block_stream() exactly once (was 2 → crash)"
+        assert bot.block_stream_calls == 1, (
+            "run() must acquire bot.block_stream() exactly once (was 2 → crash)"
         )
         assert registry.engine.resumed is True
         # The single consumer received every block.
@@ -1202,9 +1209,12 @@ class TestSubCBgRegistrationConcurrency:
                 await asyncio.sleep(0)
 
         registry = _Registry()
+        # The main loop ends on the finite block stream — carried by the bot
+        # now (the block-clock pipe is coordinator-owned, ergo 6VGMLY).
+        bot = _FakeBot(blocks=[_block_dict(500)])
         session = BotRunner(
             _cfg(),
-            bot=_FakeBot(),
+            bot=bot,
             engine_registry=registry,  # type: ignore[arg-type]
             async_w3=_FakeAsyncW3(),
             snapshots=(None, None, None, None),
@@ -1215,7 +1225,7 @@ class TestSubCBgRegistrationConcurrency:
         await session.start()
         await session.run()
 
-        assert registry.engine.block_stream_calls == 1
+        assert bot.block_stream_calls == 1
         assert registry.engine.resumed is True
         assert climbed > 0, "registration must have climbed concurrently with the main loop"
         # Main loop ended on the finite block stream; finally cancelled the

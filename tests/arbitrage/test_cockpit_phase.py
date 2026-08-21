@@ -88,6 +88,15 @@ class _FakeBot:
     def release_python_state(self) -> None:
         pass
 
+    def block_stream(self):  # pragma: no cover - consumer is a no-op here
+        # The injected consumer never iterates it; an immediately-empty
+        # stream is enough for run() to acquire + pass through.
+        async def _empty():
+            return
+            yield {}  # pragma: no cover
+
+        return _empty()
+
 
 class _FakeAsyncW3:
     async def get_block(self, block_identifier: str):

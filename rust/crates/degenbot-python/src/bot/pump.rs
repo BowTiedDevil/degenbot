@@ -26,6 +26,7 @@ use parking_lot::Mutex;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::Bound;
+use tokio::sync::mpsc;
 
 /// Python-facing subscribe state, held between `subscribe()` and `resume()`.
 pub(crate) struct PySubscribeState {
@@ -75,6 +76,13 @@ pub(crate) struct PumpState {
     pub(crate) verify_provider: Mutex<Option<degenbot_rpc::provider::AlloyProvider>>,
     /// Optional `StateView` contract address for V4 verification.
     pub(crate) verify_state_view: Mutex<Option<alloy::primitives::Address>>,
+    /// Receiver for the coordinator-owned block-clock pipe (ADR-027
+    /// completion). Lives HERE — beside the coordinator that owns the pipe's
+    /// sender — not on the engine; `PyBot::block_stream` hands it to Python
+    /// once. Wrapped in Arc so the async coroutine can share it.
+    pub(crate) block_rx: parking_lot::Mutex<
+        Option<mpsc::UnboundedReceiver<degenbot_bot::bot_core::BlockNotification>>,
+    >,
 }
 
 impl PumpState {
@@ -84,6 +92,9 @@ impl PumpState {
         coordinator: Arc<SolveCoordinator>,
         reorg_coordinator: Arc<ReorgCoordinator>,
         bot: Arc<Bot>,
+        block_rx: parking_lot::Mutex<
+            Option<mpsc::UnboundedReceiver<degenbot_bot::bot_core::BlockNotification>>,
+        >,
     ) -> Self {
         Self {
             engine,
@@ -96,7 +107,16 @@ impl PumpState {
             verify_rpc_url: Mutex::new(None),
             verify_provider: Mutex::new(None),
             verify_state_view: Mutex::new(None),
+            block_rx,
         }
+    }
+
+    /// Hand the block-clock receiver to Python (`PyBot::block_stream`) —
+    /// once-only take; a second call finds `None`.
+    pub(crate) fn take_block_receiver(
+        &self,
+    ) -> Option<mpsc::UnboundedReceiver<degenbot_bot::bot_core::BlockNotification>> {
+        self.block_rx.lock().take()
     }
 
     /// Read the current engine lifecycle phase (delegates to the core
@@ -580,7 +600,13 @@ mod tests {
         coordinator.set_block_channel(block_tx);
         let reorg_coordinator =
             std::sync::Arc::new(ReorgCoordinator::new(std::sync::Arc::clone(&bot)));
-        std::sync::Arc::new(PumpState::new(engine, coordinator, reorg_coordinator, bot))
+        std::sync::Arc::new(PumpState::new(
+            engine,
+            coordinator,
+            reorg_coordinator,
+            bot,
+            parking_lot::Mutex::new(None),
+        ))
     }
 
     #[test]

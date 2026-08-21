@@ -2,7 +2,7 @@
 
 Extracted from ``examples/eth_backrun_v2_v3_v4_rust.py`` (epic 5TSYKN, task
 CXWQDI). Owns the permanent main loop: :func:`consume_result_batches` awaits
-the block clock (``engine.block_stream()``) and the result batches
+the block clock (``bot.block_stream()``) and the result batches
 (``engine``) concurrently, driving the dispatcher's block clock and dispatching
 profitable results through the Rust seam.
 
@@ -40,7 +40,7 @@ async def consume_result_batches(
     """Consume the block stream (clock) + result batches (dispatch) in parallel.
 
     Epic 6W35AI: the block clock comes from the forwarded ``newHeads`` stream
-    (``engine.block_stream()``), NOT from ``ResultBatch.solve_block``. The
+    (``bot.block_stream()``), NOT from ``ResultBatch.solve_block``. The
     result batch's ``solve_block`` lagged by the send debounce + only advanced
     when a batch was actually sent, so the bot's ``[block: N]`` froze behind
     the pump's ``current_block``. The block stream ticks once per accepted
@@ -52,7 +52,7 @@ async def consume_result_batches(
     bot_logger.info("[consumer] Starting — block stream + result batches from Rust pump")
 
     if block_stream is None:
-        block_stream = session.engine_registry.engine.block_stream()
+        block_stream = session.bot.block_stream()
     if result_iter is None:
         result_iter = aiter(session.engine_registry.engine)
 

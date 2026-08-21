@@ -661,6 +661,13 @@ class Bot:
         The default ``chain_id = 0`` keeps the bare ``Bot()`` test fixtures
         (which only exercise the Rust core) working without a chain invariant.
         """
+    def block_stream(self) -> BlockStream:
+        """Fresh async iterator over newHeads block notifications.
+
+        ADR-027 completion (ergo 6VGMLY): the block-clock pipe is
+        coordinator-owned, so this lives on Bot (the pump-lifecycle handle),
+        not on ArbitrageEngine. Once-only; a second call raises RuntimeError.
+        """
     def load_snapshot_from_db(self, db_path: str, chain_id: int) -> None:
         """Load `S` from the DB into the core `BotState` at construction time.
 
@@ -1152,7 +1159,6 @@ class ArbitrageEngine:
         path_id: int,
         rpc_url: str | None = None,
     ) -> dict[str, Any]: ...
-    def block_stream(self) -> BlockStream: ...
     def __aiter__(self) -> ArbitrageEngine: ...
     def __anext__(self) -> Coroutine[Any, Any, dict[str, Any]]: ...
 
