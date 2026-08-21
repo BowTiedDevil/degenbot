@@ -92,12 +92,19 @@
   "runArgs": [
     // Removing the default cgroup PID cap so heavy test spawning 
     // (cargo, pytest, forge) never hits the limit.
-    "--pids-limit=-1"
+    "--pids-limit=-1",
+    // T5 (RMH23E): publish the bot's Prometheus scrape endpoint so the
+    // ethereum-pod containers (Prometheus) can reach it via
+    // host.containers.internal:9464 — same mechanism as reth's published
+    // 8545. Requires DEGENBOT_METRICS_ADDR=0.0.0.0:9464 (see containerEnv
+    // below); the default bind is loopback-only, unreachable via pasta
+    // inbound.
+    "-p",
+    "9464:9464"
   ],
-  // T5 (RMH23E): the bot's Prometheus scrape endpoint
-  // (DEGENBOT_METRICS_ADDR, default 127.0.0.1:9464 — set 0.0.0.0:9464 to
-  // scrape from a host-side Prometheus). Forwarded so Grafana/Prometheus on
-  // the host can reach it at localhost:9464.
+  // T5 (RMH23E): mirror the published scrape port into VS Code's forwarding
+  // panel so a host-side Prometheus can also use localhost:9464 while a
+  // window is attached.
   "forwardPorts": [9464],
   "remoteUser": "dev",
   "workspaceFolder": "/workspaces/degenbot",
@@ -198,7 +205,13 @@
     // ...` CLI run resolves to host.containers.internal instead of the
     // container's own loopback (`rpc[1]=http://localhost:8545` in config.toml).
     "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
-    "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546"
+    "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546",
+    // T5 (RMH23E): bind the Prometheus scrape endpoint on all interfaces so
+    // the -p 9464:9464 publish (runArgs above) can forward host traffic into
+    // it. The code default is loopback-only, which pasta cannot reach
+    // inbound — this override is what makes host.containers.internal:9464
+    // work for the ethereum-pod Prometheus.
+    "DEGENBOT_METRICS_ADDR": "0.0.0.0:9464"
   },
   // Extensions auto-installed into the container on first launch. The interpreter
   // is pinned to the container-local venv (UV_PROJECT_ENVIRONMENT above), NOT the
