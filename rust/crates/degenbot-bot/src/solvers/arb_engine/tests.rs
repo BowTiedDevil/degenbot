@@ -3275,8 +3275,9 @@ mod tests {
     fn with_core_shares_the_same_core_arc_as_a_peer_bot() {
         use std::sync::Arc;
 
-
-        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
+            crate::bot_core::BotState::new(),
+        ));
         let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         // `Arc::ptr_eq` proves the engine + the peer hold the SAME allocation
         // — not a copy, not a fresh `BotState`. Writes through either side
@@ -3304,10 +3305,11 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-
         use crate::bot_core::BlockMetadata;
 
-        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
+            crate::bot_core::BotState::new(),
+        ));
         let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let pool_id = engine.register_v2_pool(
             Address::repeat_byte(0x11),
@@ -3462,10 +3464,11 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-
         use crate::bot_core::BlockMetadata;
 
-        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
+            crate::bot_core::BotState::new(),
+        ));
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
 
         // Register N paths so `solve_dirty` exercises a real par_iter batch.

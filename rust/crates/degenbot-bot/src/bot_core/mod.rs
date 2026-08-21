@@ -38,10 +38,10 @@ pub mod reserve_pair_orchestration;
 pub(crate) mod resolve;
 pub mod sim_anchor;
 pub mod snapshot_verify;
-pub mod state_lock;
 pub(crate) mod solve_anchor;
 pub mod solve_coordinator;
 pub mod solver_state_tripwire;
+pub mod state_lock;
 pub mod tick_assembly;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns

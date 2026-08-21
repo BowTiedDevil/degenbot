@@ -254,7 +254,9 @@ impl<T> StateLock<T> {
     /// Create a tracked lock.
     #[must_use]
     pub fn new(value: T) -> Self {
-        Self { inner: RwLock::new(value) }
+        Self {
+            inner: RwLock::new(value),
+        }
     }
 
     /// Acquire a read guard, registering the hold.
@@ -283,7 +285,11 @@ impl<T> StateLock<T> {
             .unwrap_or_default();
         drop(map);
         log_slow_holds(key, &aged);
-        StateReadGuard { inner: guard, key, seq }
+        StateReadGuard {
+            inner: guard,
+            key,
+            seq,
+        }
     }
 
     /// Acquire a write guard. Long blocks WARN with the reader snapshot taken
@@ -309,7 +315,9 @@ impl<T> StateLock<T> {
     /// Mirrors `parking_lot::RwLock::try_write` for callers that only probe.
     #[track_caller]
     pub fn try_write(&self) -> Option<StateWriteGuard<'_, T>> {
-        self.inner.try_write().map(|guard| StateWriteGuard { inner: guard })
+        self.inner
+            .try_write()
+            .map(|guard| StateWriteGuard { inner: guard })
     }
 }
 
