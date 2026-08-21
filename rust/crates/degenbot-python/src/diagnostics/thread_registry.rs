@@ -6,10 +6,10 @@
 //! The registry fills passively: `PythonLogLayer::on_new_span` (present in
 //! every registry stack) calls [`note_current_thread`] on the span-CREATING
 //! thread. The watchdog (never GIL) calls [`dump_to_file`] on a confirmed
-//! GIL-deadlock alarm, writing {std-thread-id -> os_tid + last span} joined
+//! GIL-deadlock alarm, writing a `std-thread-id -> os_tid + last span` map joined
 //! with every thread's /proc state + waited futex to a JSON file. Std
-//! thread-ids are the same ids that appear as the `thread.id` tag on the
-//! OTel spans (scrape from Jaeger to join a span to an OS TID).
+//! Standard thread-ids are the same ids that appear as the `thread.id` span tag
+//! on `OTel` spans (scrape from Jaeger to join a span to an OS TID).
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;

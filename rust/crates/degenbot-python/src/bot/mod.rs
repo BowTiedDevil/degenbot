@@ -199,6 +199,7 @@ impl PyBot {
 impl PyBot {
     #[new]
     #[pyo3(signature = (chain_id = 0))]
+    #[must_use]
     pub fn new(chain_id: u64) -> Self {
         // ADR-006 slice 8b: the Python ``Bot`` facade is now single-chain,
         // so it passes its ``config.default_chain_id`` here. The ``chain_id = 0``
@@ -2255,7 +2256,7 @@ impl PyBot {
         py.detach(move || {
             state
                 .write()
-                .update_v3_pool(addr, spx, liq, tick, block_number, vec![])
+                .update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
         });
         Ok(())
     }

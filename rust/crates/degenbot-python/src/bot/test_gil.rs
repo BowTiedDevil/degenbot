@@ -1,5 +1,5 @@
 //! Test-only helper for the GIL/BotState concurrency contract (incident
-//! 2026-08-20: a sync FFI pymethod took the BotState WRITE while holding the
+//! 2026-08-20: a sync FFI pymethod took the `BotState` WRITE while holding the
 //! GIL and parked behind the dispatch fan-out's long-held READ guard; the
 //! reader then wanted the GIL -> permanent inversion; every other thread
 //! froze on the GIL futex = the observed 'GIL deadlock').
@@ -15,7 +15,7 @@ use std::time::Duration;
 /// call it from a GIL-held thread.
 ///
 /// Ordering (matches the incident): the READER (fan-out shape) holds the
-/// BotState read end FIRST; the writer (the pymethod, GIL-held by the
+/// `BotState` read end FIRST; the writer (the pymethod, GIL-held by the
 /// caller) then parks behind it. While parked, the reader wants the GIL
 /// (`Python::attach`).
 ///
@@ -28,6 +28,11 @@ use std::time::Duration;
 ///
 /// Returns the holder's `JoinHandle` - join it OUTSIDE any GIL scope (the
 /// holder's final `Python::attach` needs the GIL the caller still holds).
+///
+/// # Errors
+///
+/// Returns `Err` if the cycle's Python-side bookkeeping setup fails; the
+/// concurrency behavior itself is asserted by the caller.
 pub fn state_write_park_cycle(
     py: Python<'_>,
     bot: &PyBot,
@@ -53,9 +58,14 @@ pub fn state_write_park_cycle(
 /// Incident 2026-08-20 #2: the same cycle around `update_v3_pool` (the T2
 /// re-audit found the build_/register_/update_ pymethods carried the same
 /// GIL-held `state_arc().write()` shape; the frozen V3 cold-build was
-/// parked in build_v3_pool's registration write).
+/// parked in `build_v3_pool`'s registration write).
 /// Pre-fix: the write parks behind the reader while holding the GIL (RED);
 /// fixed (write inside `py.detach`): parks GIL-released (GREEN).
+///
+/// # Errors
+///
+/// Returns `Err` if the cycle's Python-side bookkeeping setup fails; the
+/// concurrency behavior itself is asserted by the caller.
 pub fn update_v3_park_cycle(
     py: Python<'_>,
     bot: &PyBot,
@@ -74,6 +84,6 @@ pub fn update_v3_park_cycle(
     let int = builtins.getattr("int")?;
     let spx: Bound<'_, PyAny> = int.call1((1u64,))?;
     let liq: Bound<'_, PyAny> = int.call1((0u64,))?;
-    let _ = bot.update_v3_pool(py, address, &spx, &liq, 0, 0)?;
+    bot.update_v3_pool(py, address, &spx, &liq, 0, 0)?;
     Ok(holder)
 }

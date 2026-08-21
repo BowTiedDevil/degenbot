@@ -205,7 +205,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                         // during a hard GIL deadlock; /proc reads + a file
                         // write are non-blocking.
                         alarm_count += 1;
-                        if alarm_count == 1 || alarm_count % 10 == 0 {
+                        if alarm_count == 1 || alarm_count.is_multiple_of(10) {
                             if let Some(p) = crate::diagnostics::thread_registry::dump_to_file() {
                                 tracing::error!(
                                     path = %p.display(),
@@ -218,7 +218,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                             since_sample,
                             stuck = ?stuck,
                             "[gil-probe] GIL DEADLOCK confirmed"
-                        )
+                        );
                     }
                 }
             }

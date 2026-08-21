@@ -398,7 +398,7 @@ pub struct ArbitrageEngine {
 
 impl ArbitrageEngine {
     /// Drop both delivery channels (forward to the embedded policy).
-    /// Incident 2026-08-20: SolveCoordinator::on_pump_ended routes pump
+    /// Incident 2026-08-20: `SolveCoordinator::on_pump_ended` routes pump
     /// death here so Python's block/result streams end.
     pub fn drop_delivery_channels(&mut self) {
         self.delivery.drop_delivery_channels();

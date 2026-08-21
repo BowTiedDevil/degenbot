@@ -842,7 +842,7 @@ impl Clone for AlloyProvider {
 }
 
 /// Per-call timeout for the in-process SIMULATION path (incident 2026-08-20):
-/// the dispatch fan-out holds a BotState READ guard across `BlockSimHandle`
+/// the dispatch fan-out holds a `BotState` READ guard across `BlockSimHandle`
 /// build + sim-loop fetches on the fan-out worker; GIL-held FFI writers park
 /// behind that reader and keep the GIL while parked. With the default 30s
 /// call timeout x 3-5 attempts + backoff, one stalled RPC stalled the guard
@@ -850,7 +850,7 @@ impl Clone for AlloyProvider {
 /// path uses a fail-fast budget instead: a slow cold miss tallies
 /// `rpc-failed` quickly rather than stalling graph state for the retry
 /// budget's duration.
-pub const SIM_CALL_TIMEOUT: Duration = Duration::from_millis(2000);
+pub const SIM_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 pub const SIM_MAX_ATTEMPTS: u32 = 2;
 
 impl AlloyProvider {
