@@ -509,8 +509,6 @@ where
 }
 
 pub fn init_logging_subscriber() {
-    use tracing_subscriber::util::SubscriberInitExt;
-
     let () = INIT_DONE.get_or_init(|| {
 
         // Build the Python-forwarding layer.
@@ -553,17 +551,45 @@ pub fn init_logging_subscriber() {
                 None
             };
             match otel_layer {
-                Some(ol) =>
-                    build_base_registry_with_otel(env_filter, ol, python_layer).init(),
-                None => build_base_registry(env_filter, python_layer).init(),
+                Some(ol) => set_global_subscriber(build_base_registry_with_otel(
+                    env_filter,
+                    ol,
+                    python_layer,
+                )),
+                None => set_global_subscriber(build_base_registry(env_filter, python_layer)),
             }
         }
 
         #[cfg(not(feature = "otel"))]
         {
-            build_base_registry(env_filter, python_layer).init();
+            set_global_subscriber(build_base_registry(env_filter, python_layer));
         }
     });
+}
+
+/// Install the registry as the global default subscriber without touching
+/// the `log` global logger.
+///
+/// `SubscriberInitExt::init()` ALSO initializes a `log` compat layer when
+/// tracing-subscriber's `tracing-log` feature is compiled in — and Cargo
+/// feature unification can flip that default feature on for any workspace-
+/// wide build even though this crate resolves without it. That second
+/// install then fails against the explicit `LogTracer::init()` bridge above,
+/// panicking with "failed to set global default subscriber:
+/// `SetLoggerError(())`" (TU252C: deterministic `cargo test --workspace`
+/// failure of `degenbot_rs --test logging_parity`). The free function sets
+/// only the subscriber; the explicit bridge remains the single owner of the
+/// `log` slot under every feature resolution.
+fn set_global_subscriber<S>(subscriber: S)
+where
+    S: tracing::Subscriber + Send + Sync + 'static,
+{
+    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+        // Fail-open: a pre-existing subscriber keeps serving. Route through
+        // `log` rather than our own (not-installed) layer — if some other
+        // bridge owns the slot, this still surfaces; otherwise it drops.
+        log::warn!("degenbot: global tracing subscriber not installed: {e}");
+    }
 }
 
 // clippy --all-targets gate (UX66EM): this test module uses unwrap but no
