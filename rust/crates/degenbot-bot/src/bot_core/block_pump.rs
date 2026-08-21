@@ -1164,6 +1164,23 @@ impl BlockPump {
                     // fired within this arm inherit it as parent for free.
                     let new_block_span =
                         tracing::info_span!("degenbot.pump.block", block.number = number);
+                    // JYCTXI: detach from the ambient context so each header
+                    // span is its own trace ROOT. Without this, the new span
+                    // is created while the PREVIOUS block span is still entered
+                    // (the loop-context guard below), chaining every block of a
+                    // session into one ever-growing mega-trace. Children (logs,
+                    // solves, dispatch) still nest under it via the loop-context
+                    // guard — only the parent linkage at creation changes.
+                    #[cfg(feature = "otel")]
+                    {
+                        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+                        // Detaching cannot fail; the Result is informational.
+                        drop(new_block_span.set_parent(opentelemetry::context::Context::new()));
+                    }
+                    #[cfg(not(feature = "otel"))]
+                    {
+                        let _ = &new_block_span; // no OTel layer: nothing to detach
+                    }
                     // MQUKB6-T0: this span becomes the loop's per-block context —
                     // subsequent iterations (logs, settle decisions) nest under it
                     // until the next header replaces it.
@@ -5140,13 +5157,26 @@ mod tests {
         tracing::subscriber::set_global_default(subscriber)
             .expect("global default already set by another test");
 
-        let events: Vec<WsEvent> = vec![WsEvent::BlockHeader {
-            number: MY_BLOCK,
-            timestamp: 1,
-            base_fee_per_gas: Some(1),
-            gas_used: 1,
-            gas_limit: 1,
-        }];
+        // JYCTXI: a second header exercises the consecutive-header case —
+        // the new span must detach from the still-entered previous block
+        // span (loop-context guard) instead of chaining into one mega-trace.
+        const NEXT_BLOCK: u64 = MY_BLOCK + 1;
+        let events: Vec<WsEvent> = vec![
+            WsEvent::BlockHeader {
+                number: MY_BLOCK,
+                timestamp: 1,
+                base_fee_per_gas: Some(1),
+                gas_used: 1,
+                gas_limit: 1,
+            },
+            WsEvent::BlockHeader {
+                number: NEXT_BLOCK,
+                timestamp: 2,
+                base_fee_per_gas: Some(2),
+                gas_used: 2,
+                gas_limit: 2,
+            },
+        ];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, MY_BLOCK - 1).await;
 
@@ -5186,6 +5216,34 @@ mod tests {
             "per-block span for block {} must be a trace root; parent_span_id: {:?}",
             MY_BLOCK,
             block_span.parent_span_id
+        );
+
+        // JYCTXI: the NEXT header's span must ALSO be a trace root in its own
+        // trace — created while block {}'s span was still entered (the loop
+        // context guard), it must detach rather than chain into a mega-trace.
+        let next_spans: Vec<_> = spans
+            .iter()
+            .filter(|sp| {
+                sp.name.as_ref() == "degenbot.pump.block"
+                    && sp.attributes.iter().any(|kv| {
+                        kv.key == opentelemetry::Key::from_static_str("block.number")
+                            && (matches!(kv.value, opentelemetry::Value::I64(v) if v == NEXT_BLOCK as i64)
+                                || matches!(kv.value, opentelemetry::Value::String(ref v) if v.as_str() == NEXT_BLOCK.to_string().as_str()))
+                    })
+            })
+            .collect();
+        assert_eq!(next_spans.len(), 1, "expected one span for the next header");
+        let next_span = &next_spans[0];
+        assert_eq!(
+            next_span.parent_span_id,
+            opentelemetry::trace::SpanId::INVALID,
+            "consecutive-header span must also be a trace root; parent_span_id: {:?}",
+            next_span.parent_span_id
+        );
+        assert_ne!(
+            next_span.span_context.trace_id(),
+            block_span.span_context.trace_id(),
+            "consecutive headers must be separate traces (mega-trace regression)"
         );
     }
 }
