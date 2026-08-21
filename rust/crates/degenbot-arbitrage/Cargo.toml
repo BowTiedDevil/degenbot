@@ -72,6 +72,10 @@ order-index = ["dep:degenbot-order-index"]
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.23", features = ["registry", "ansi"] }
-tokio = { version = "^1.53", features = ["macros", "rt"] }
+# multi-thread flavor for the WrapDatabaseAsync ambient-runtime requirement
+tokio = { version = "^1.53", features = ["macros", "rt", "rt-multi-thread", "time"] }
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 serde_json = { version = "^1.0" }
+# the delaying transport's Service impl (ULUWNI red test)
+tower = { version = "0.5", default-features = false }
+alloy-json-rpc = "2.4.1"

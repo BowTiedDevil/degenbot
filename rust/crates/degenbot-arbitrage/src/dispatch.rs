@@ -620,7 +620,18 @@ pub fn dispatch_profitable_results(
         // committed to the shared `CacheDB`). `parking_lot`'s read guard is
         // held for the serial loop's duration.
         Some(arc) => {
-            let guard = arc.read();
+            // ULUWNI (incident 2026-08-20 #1 root fix): snapshot the sim
+            // anchor under a SHORT read and drop the guard BEFORE any
+            // provider I/O. Pre-fix this read guard was held across
+            // `BlockSimHandle::build` + the whole serial sim loop — every
+            // cold-miss fetch parked a `BotState` writer behind it for the
+            // transport delay (minutes on a stalled RPC pre-F2). The
+            // snapshot is O(pools) scalar words; see
+            // `bot_core::SimAnchorState` for the audited surface.
+            let anchor = {
+                let guard = arc.read();
+                degenbot_bot::bot_core::SimAnchorState::snapshot(&guard)
+            };
             // The warm-code cache arc; degrade to a fresh per-call cache if
             // the caller wired `bot_state` without one (safe — no
             // cross-block persistence, no panic).
@@ -651,7 +662,7 @@ pub fn dispatch_profitable_results(
                 sim_block,
                 ctx.block_timestamp,
                 &ctx.override_params(),
-                &guard,
+                &anchor,
                 &warm_cache,
             ) {
                 Some(mut handle) => candidates
@@ -1166,6 +1177,129 @@ mod tests {
     }
 
     // ── Tier 1 (V5HCR5): in-process serial branch ─────────────────────
+
+    // ── ULUWNI: no BotState guard across provider I/O ──────────────────
+
+    /// A transport wrapper that delays every request before delegating —
+    /// makes the fan-out's provider I/O observably slow so a guard held
+    /// across it is measurable. The wrapped queue can be empty: the delay
+    /// happens BEFORE the (then-failing) delegation, which is all the
+    /// timing assertion needs.
+    #[derive(Debug, Clone)]
+    struct DelayedTransport {
+        inner: alloy::transports::BoxTransport,
+        delay: std::time::Duration,
+    }
+
+    impl tower::Service<alloy_json_rpc::RequestPacket> for DelayedTransport {
+        type Response = alloy_json_rpc::ResponsePacket;
+        type Error = alloy::transports::TransportError;
+        type Future = alloy::transports::TransportFut<'static>;
+
+        fn poll_ready(
+            &mut self,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            tower::Service::<alloy_json_rpc::RequestPacket>::poll_ready(&mut self.inner, cx)
+        }
+
+        fn call(&mut self, req: alloy_json_rpc::RequestPacket) -> Self::Future {
+            let mut inner = self.inner.clone();
+            let delay = self.delay;
+            Box::pin(async move {
+                tokio::time::sleep(delay).await;
+                inner.call(req).await
+            })
+        }
+    }
+
+    /// ULUWNI (incident 2026-08-20 #1 root fix): the fan-out must NOT hold
+    /// the `BotState` read guard across provider I/O. Pre-fix,
+    /// `BlockSimHandle::build` + the serial sim loop borrowed the guard
+    /// while every cold-miss fetch went over RPC — a writer parked for the
+    /// full transport delay (minutes on a stalled RPC pre-F2). Post-fix the
+    /// anchor is snapshotted under a SHORT read and the writer proceeds
+    /// while the sim is mid-RPC.
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn fanout_does_not_hold_the_botstate_guard_across_provider_io() {
+        use alloy::transports::Transport;
+        // WrapDatabaseAsync needs an ambient multi-threaded runtime; the
+        // delaying transport needs its reactor for the sleep.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime");
+
+        // Empty Asserter queue: every RPC errors — AFTER the delay. The
+        // timing assertion only needs the delay, not successful sims.
+        let asserter = Asserter::new();
+        let client = alloy::rpc::client::ClientBuilder::default().transport(
+            DelayedTransport {
+                inner: MockTransport::new(asserter).boxed(),
+                delay: std::time::Duration::from_millis(1_500),
+            },
+            true,
+        );
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        let provider =
+            AlloyProvider::from_provider(Arc::new(dyn_provider)
+                as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>);
+
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
+        let warm = degenbot_simulation::WarmCodeCacheInner::shared_default();
+        let bot_state = Arc::new(RwLock::new(BotState::new()));
+        let writer_state = Arc::clone(&bot_state);
+
+        // The fan-out runs on its own thread inside the runtime.
+        let sim_thread = std::thread::spawn(move || {
+            let cands = vec![
+                candidate(40, 1_000_000_000_000_000_000u128, 1_000),
+                candidate(41, 1_000_000_000_000_000_000u128, 1_000),
+            ];
+            rt.block_on(async {
+                dispatch_profitable_results(
+                    cands,
+                    &ctx(&provider),
+                    &suppression,
+                    100,
+                    MIN_PROFIT_NET,
+                    0,
+                    &pool_divergence,
+                    &fot_registry,
+                    Some(bot_state),
+                    Some(warm),
+                )
+            })
+        });
+
+        // Once the fan-out is mid-build (guard held, first delayed RPC in
+        // flight), queue a BotState writer and measure how long it parks.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let (tx, rx) = std::sync::mpsc::channel::<std::time::Duration>();
+        let writer = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let _guard = writer_state.write(); // parks behind the fan-out's read (pre-fix)
+            tx.send(start.elapsed()).expect("report wait");
+        });
+
+        let waited = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("writer completes");
+        assert!(
+            waited < std::time::Duration::from_millis(700),
+            "BotState writer waited {waited:?} — the fan-out holds the read \
+             guard across provider I/O (ULUWNI)"
+        );
+
+        let outcome = sim_thread.join().expect("fan-out thread");
+        // The sim itself still fails cleanly (delayed-erroring transport):
+        // every candidate tallies rpc-failed, no exceptions.
+        assert_eq!(outcome.exception_count, 0);
+        writer.join().expect("writer thread");
+    }
 
     /// Tier 1 (`V5HCR5`) parity: the in-process serial branch
     /// (`Some(bot_state)`) tallies `rpc-failed` for every candidate when the

@@ -2110,6 +2110,7 @@ name = "degenbot-arbitrage"
 version = "0.6.0-alpha.5"
 dependencies = [
  "alloy",
+ "alloy-json-rpc",
  "degenbot-abi",
  "degenbot-bot",
  "degenbot-core",
@@ -2125,6 +2126,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

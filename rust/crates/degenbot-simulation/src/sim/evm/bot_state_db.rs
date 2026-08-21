@@ -52,7 +52,7 @@
 //! ```
 
 use alloy::primitives::Address;
-use degenbot_bot::bot_core::BotState;
+use degenbot_bot::bot_core::SimAnchorState;
 use revm::database_interface::DatabaseRef;
 use revm::primitives::{StorageKey, StorageValue, B256, KECCAK_EMPTY};
 use revm::state::AccountInfo;
@@ -68,9 +68,11 @@ pub struct BotStateDb<'bot, ExtDb>
 where
     ExtDb: DatabaseRef,
 {
-    /// The `Bot` typed-state read view backing the serving seam + divergence
-    /// probe (both env-gated, default off).
-    pub bot_state: &'bot BotState,
+    /// The build-time anchor snapshot backing the serving seam + divergence
+    /// probe (both env-gated, default off). ULUWNI: an OWNED snapshot taken
+    /// under a short read — no `BotState` guard is held across the RPC
+    /// fetches this wrapper performs.
+    pub anchor: &'bot SimAnchorState,
     /// The RPC cold-miss fallback (`WrapDatabaseAsync<AlloyDB>` in production).
     pub fallback: ExtDb,
     /// False-empty provenance probe (DEGENBOT false-empty capture): an
@@ -94,9 +96,9 @@ where
     /// Wrap the cold-miss fallback `DatabaseRef`. The `bot_state` borrow backs
     /// the env-gated serving seam + divergence probe.
     #[must_use]
-    pub fn new(bot_state: &'bot BotState, fallback: ExtDb) -> Self {
+    pub fn new(anchor: &'bot SimAnchorState, fallback: ExtDb) -> Self {
         Self {
-            bot_state,
+            anchor,
             fallback,
             code_probe_rpc: None,
             code_probe_block: None,
@@ -111,13 +113,13 @@ where
     /// false-empty reads.
     #[must_use]
     pub fn new_with_code_probe(
-        bot_state: &'bot BotState,
+        anchor: &'bot SimAnchorState,
         fallback: ExtDb,
         rpc_url: &str,
         sim_block: u64,
     ) -> Self {
         Self {
-            bot_state,
+            anchor,
             fallback,
             code_probe_rpc: Some(rpc_url.to_string()),
             code_probe_block: Some(sim_block),
@@ -197,7 +199,7 @@ where
         // this is the value-origin point (the warm cache only caches what this
         // returns), the poisoned `None`/empty can never reach the warm cache
         // to be served on a later block's hit.
-        if self.bot_state.pool_id_by_address(&address).is_some() {
+        if self.anchor.pool_id_by_address(&address).is_some() {
             let invalid = match &info {
                 None => true,
                 Some(acc) => acc.code_hash == KECCAK_EMPTY,
@@ -255,7 +257,7 @@ where
         // Observation first (env-gated, pure — compares engine vs RPC, logs
         // divergence, never changes what the sim reads). Independent of the
         // serving gate below.
-        super::divergence_probe::observe_storage_read(self.bot_state, address, index, rpc_value);
+        super::divergence_probe::observe_storage_read(self.anchor, address, index, rpc_value);
         // Serving seam (env-gated, DEFAULT OFF): if `(address, index)` maps
         // to a tracked pool slot the engine carries authoritatively, return
         // the engine's packed word instead of the RPC value (the sim's swap
@@ -265,7 +267,7 @@ where
         // The seam stays gated off in production; a partial serve (slot0/
         // liquidity WITHOUT feeGrowth/bitmap) reintroduces the documented
         // K-invariant / LOK reverts.
-        let served = super::serving::serve_tracked_slot(self.bot_state, address, index, rpc_value);
+        let served = super::serving::serve_tracked_slot(self.anchor, address, index, rpc_value);
         Ok(served.unwrap_or(rpc_value))
     }
 
@@ -403,7 +405,8 @@ mod tests {
             result: None,
             calls: Cell::new(0),
         };
-        let bsd = BotStateDb::new(&core, db);
+        let anchor = SimAnchorState::snapshot(&core);
+        let bsd = BotStateDb::new(&anchor, db);
         let _ = bsd.basic_ref(POOL).unwrap();
     }
 
@@ -417,7 +420,8 @@ mod tests {
             result: Some(codeless_info()),
             calls: Cell::new(0),
         };
-        let bsd = BotStateDb::new(&core, db);
+        let anchor = SimAnchorState::snapshot(&core);
+        let bsd = BotStateDb::new(&anchor, db);
         let _ = bsd.basic_ref(POOL).unwrap();
     }
 
@@ -430,7 +434,8 @@ mod tests {
             result: Some(code_info()),
             calls: Cell::new(0),
         };
-        let bsd = BotStateDb::new(&core, db);
+        let anchor = SimAnchorState::snapshot(&core);
+        let bsd = BotStateDb::new(&anchor, db);
         let got = bsd.basic_ref(POOL).unwrap();
         assert!(got.is_some(), "tracked pool with code is forwarded");
         assert_ne!(got.unwrap().code_hash, KECCAK_EMPTY);
@@ -445,7 +450,8 @@ mod tests {
             result: None,
             calls: Cell::new(0),
         };
-        let bsd = BotStateDb::new(&core, db);
+        let anchor = SimAnchorState::snapshot(&core);
+        let bsd = BotStateDb::new(&anchor, db);
         // EOA is not a pool: `None` is a legitimate EOA read, forwarded no-panic.
         assert!(bsd.basic_ref(EOA).unwrap().is_none());
     }
@@ -525,12 +531,13 @@ mod tests {
         });
 
         let core = bot_state_with_pool();
+        let anchor = SimAnchorState::snapshot(&core);
         let db = ScriptedDb {
             result: Some(codeless_info()),
             calls: Cell::new(0),
         };
         let bsd = BotStateDb::new_with_code_probe(
-            &core,
+            &anchor,
             db,
             &format!("http://127.0.0.1:{port}"),
             1_234_567u64,

@@ -342,7 +342,9 @@ const fn be_uint160_mask() -> U256 {
 /// already-computed `keccak256(PoolKey)` bytes (the engine stores it as
 /// `V4PoolIdentity.pool_id`). `abi.encode(bytes32,uint256)` = 32 + 32 bytes
 /// (the uint256 6 big-endian-padded).
-fn derive_v4_pool_state_base(pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId) -> U256 {
+pub(crate) fn derive_v4_pool_state_base(
+    pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+) -> U256 {
     let mut input = [0u8; 64];
     input[..32].copy_from_slice(pool_id);
     // uint256(6) big-endian: 31 zero bytes + 0x06.

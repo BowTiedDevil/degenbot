@@ -50,7 +50,7 @@ use std::sync::{Mutex, OnceLock};
 
 use alloy::primitives::{Address, B256, U256};
 
-use degenbot_bot::bot_core::{divergence_probe::TrackedSlotProbe, BotState};
+use degenbot_bot::bot_core::{divergence_probe::TrackedSlotProbe, SimAnchorState};
 
 /// The env-var name gating the divergence probe (set at launch). Off by
 /// default — the sim's behavior is identical whether on or off (observation
@@ -178,11 +178,19 @@ fn tracked_fields_match(probe: &TrackedSlotProbe, rpc_word: U256) -> bool {
 ///
 /// `index` + `rpc_value` are `revm` `StorageKey`/`StorageValue` (both `U256`
 /// type-aliases) — taken as `U256` to bridge the `alloy` umbrella cleanly.
-pub fn observe_storage_read(bot_state: &BotState, address: Address, index: U256, rpc_value: U256) {
+pub fn observe_storage_read(
+    anchor: &SimAnchorState,
+    address: Address,
+    index: U256,
+    rpc_value: U256,
+) {
     if !probe_enabled() {
         return;
     }
-    let Some(probe) = bot_state.probe_tracked_storage_slot(address, index) else {
+    // ULUWNI: the anchor is the build-time SNAPSHOT — scalar slots compare
+    // against the engine-at-build words; tick slots are not snapshotted and
+    // fall through (see `SimAnchorState` module docs).
+    let Some(probe) = anchor.probe_tracked_storage_slot(address, index) else {
         // Not a tracked-pool scalar slot (non-pool contract, a V3/V4
         // fee-growth / tick-bitmap slot the engine doesn't carry, etc.) —
         // no comparison, no tally increment.
@@ -381,6 +389,7 @@ mod tests {
     #[test]
     fn storage_ref_returns_rpc_value_unchanged_when_probe_on_or_off() {
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, -5010, 18_000_000);
+        let anchor = SimAnchorState::snapshot(&core);
         // rpc serves slot0 = a DIFFERENT tick → would diverge IF the probe
         // compared; but the probe must NOT change the returned value either way
         // (regardless of the gate state — observation only).
@@ -388,7 +397,7 @@ mod tests {
         let mut db = FixedStorageDb::default();
         db.slots.insert((V3_ADDR, U256::ZERO), rpc_word);
 
-        let bot_db = BotStateDb::new(&core, db);
+        let bot_db = BotStateDb::new(&anchor, db);
         let got = bot_db
             .storage_ref(V3_ADDR, U256::ZERO)
             .expect("storage_ref ok");
@@ -416,12 +425,13 @@ mod tests {
         // itself the "silent when off" contract recorded in the next test).
         reset_divergence_tally();
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, -5010, 18_000_000);
+        let anchor = SimAnchorState::snapshot(&core);
         let rpc_word = rpc_slot0_with_tick(U256::from(1u128) << 96, 5010);
 
         // Force the probe ON for THIS test (deterministic — no env-gate race).
         force_probe_enabled_for_tests(Some(true));
 
-        observe_storage_read(&core, V3_ADDR, U256::ZERO, rpc_word);
+        observe_storage_read(&anchor, V3_ADDR, U256::ZERO, rpc_word);
 
         let tally = divergence_tally_snapshot();
         assert_eq!(tally.slots_compared, 1, "one tracked slot compared");
@@ -436,11 +446,12 @@ mod tests {
         reset_divergence_tally();
         let sqrt = U256::from(1u128) << 96;
         let core = v3_pool(sqrt, 1_000_000, -5010, 18_000_000);
+        let anchor = SimAnchorState::snapshot(&core);
         // rpc slot0 with the SAME tick as the engine → no divergence.
         let rpc_word = rpc_slot0_with_tick(sqrt, -5010);
         force_probe_enabled_for_tests(Some(true));
 
-        observe_storage_read(&core, V3_ADDR, U256::ZERO, rpc_word);
+        observe_storage_read(&anchor, V3_ADDR, U256::ZERO, rpc_word);
         let tally = divergence_tally_snapshot();
         assert_eq!(tally.slots_compared, 1, "compared once");
         assert_eq!(tally.divergent_slots, 0, "matched → not flagged");
@@ -453,8 +464,14 @@ mod tests {
         // feeGrowthGlobal0X128 (slot 1) is NOT tracked → observe does nothing.
         reset_divergence_tally();
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, 0, 18_000_000);
+        let anchor = SimAnchorState::snapshot(&core);
         force_probe_enabled_for_tests(Some(true));
-        observe_storage_read(&core, V3_ADDR, U256::from(1u64), U256::from(0xdeadbeefu64));
+        observe_storage_read(
+            &anchor,
+            V3_ADDR,
+            U256::from(1u64),
+            U256::from(0xdeadbeefu64),
+        );
         let tally = divergence_tally_snapshot();
         assert_eq!(tally.slots_compared, 0, "untracked slot never compared");
         force_probe_enabled_for_tests(None);

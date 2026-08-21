@@ -36,6 +36,7 @@ pub mod registration_lifecycle;
 pub mod reorg_coordinator;
 pub mod reserve_pair_orchestration;
 pub(crate) mod resolve;
+pub mod sim_anchor;
 pub mod snapshot_verify;
 pub(crate) mod solve_anchor;
 pub mod solve_coordinator;
@@ -73,6 +74,7 @@ pub use registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
     run_v4_registration_lifecycle, RegistrationLifecycleError,
 };
+pub use sim_anchor::SimAnchorState;
 
 pub use ::degenbot_pools::v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent,

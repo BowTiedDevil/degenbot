@@ -49,7 +49,7 @@ use alloy::eips::BlockId;
 use alloy::network::Ethereum;
 use alloy::primitives::U256;
 use alloy::providers::{Provider, RootProvider};
-use degenbot_bot::bot_core::BotState;
+use degenbot_bot::bot_core::SimAnchorState;
 use parking_lot::RwLock;
 use revm::database::CacheDB;
 use revm::database_interface::WrapDatabaseAsync;
@@ -179,7 +179,7 @@ impl<'a> BlockSimHandle<'a> {
         current_block: u64,
         block_timestamp: u64,
         override_params: &SimulationOverrideParams,
-        bot_state: &'a BotState,
+        anchor: &'a SimAnchorState,
         warm_cache: &Arc<RwLock<super::WarmCodeCacheInner>>,
     ) -> Option<Self> {
         // `AlloyDB::new` requires `P: Provider<Ethereum>` by value; the
@@ -198,7 +198,7 @@ impl<'a> BlockSimHandle<'a> {
             return None;
         };
         let bot_state_db = super::BotStateDb::new_with_code_probe(
-            bot_state,
+            anchor,
             wrap_db,
             provider.rpc_url(),
             current_block,

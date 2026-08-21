@@ -50,7 +50,7 @@ use std::sync::OnceLock;
 
 use alloy::primitives::{Address, U256};
 
-use degenbot_bot::bot_core::BotState;
+use degenbot_bot::bot_core::SimAnchorState;
 
 /// The env-var name gating the serving seam (set at launch). DEFAULT OFF —
 /// the sim forwards every read to the RPC (the safe status quo; the reverted
@@ -109,7 +109,7 @@ pub fn force_serve_enabled_for_tests(on: Option<bool>) {
 /// `swap()` callback reads the served word as the storage slot value.
 #[must_use]
 pub fn serve_tracked_slot(
-    bot_state: &BotState,
+    anchor: &SimAnchorState,
     address: Address,
     index: U256,
     rpc_value: U256,
@@ -117,7 +117,9 @@ pub fn serve_tracked_slot(
     if !serve_enabled() {
         return None;
     }
-    let probe = bot_state.probe_tracked_storage_slot(address, index)?;
+    // ULUWNI: served from the build-time snapshot (scalar slots only; tick
+    // slots fall through — see `SimAnchorState` module docs).
+    let probe = anchor.probe_tracked_storage_slot(address, index)?;
     let served = U256::from_be_bytes(probe.engine_word.0);
     let delta_xor = served ^ rpc_value;
     tracing::info!(
@@ -231,6 +233,7 @@ mod tests {
     fn serve_returns_engine_v2_reserves_when_gate_on() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
+        let anchor = SimAnchorState::snapshot(&core);
         // The fallback returns a DIFFERENT reserves value — simulating a
         // stale/divergent RPC read. Serving must return the engine value,
         // NOT the fallback's.
@@ -240,7 +243,7 @@ mod tests {
             .insert((V2_ADDR, U256::from(V2_RESERVES_SLOT)), rpc_word);
 
         force_serve_enabled_for_tests(Some(true));
-        let bot_db = BotStateDb::new(&core, db);
+        let bot_db = BotStateDb::new(&anchor, db);
         let got = bot_db
             .storage_ref(V2_ADDR, U256::from(V2_RESERVES_SLOT))
             .expect("storage_ref ok");
@@ -261,6 +264,7 @@ mod tests {
     fn serve_falls_through_to_rpc_when_gate_off() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
+        let anchor = SimAnchorState::snapshot(&core);
         // The fallback returns a DIFFERENT value; with serving OFF the sim
         // reads the RPC value (the safe status quo — serving is not enabled).
         let rpc_word = pack_v2_reserves(999_999, 1_999_999);
@@ -269,7 +273,7 @@ mod tests {
             .insert((V2_ADDR, U256::from(V2_RESERVES_SLOT)), rpc_word);
 
         force_serve_enabled_for_tests(Some(false));
-        let bot_db = BotStateDb::new(&core, db);
+        let bot_db = BotStateDb::new(&anchor, db);
         let got = bot_db
             .storage_ref(V2_ADDR, U256::from(V2_RESERVES_SLOT))
             .expect("storage_ref ok");
@@ -281,6 +285,7 @@ mod tests {
     fn serve_falls_through_for_untracked_slot() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
+        let anchor = SimAnchorState::snapshot(&core);
         // Slot 6 (price0CumulativeLast) is NOT tracked by the engine → even
         // with serving on, the RPC value is returned (the sim reads RPC for
         // every slot the engine doesn't carry).
@@ -289,7 +294,7 @@ mod tests {
         db.slots.insert((V2_ADDR, U256::from(6u64)), rpc_word);
 
         force_serve_enabled_for_tests(Some(true));
-        let bot_db = BotStateDb::new(&core, db);
+        let bot_db = BotStateDb::new(&anchor, db);
         let got = bot_db
             .storage_ref(V2_ADDR, U256::from(6u64))
             .expect("storage_ref ok");
@@ -304,13 +309,14 @@ mod tests {
     fn serve_falls_through_for_unregistered_address() {
         let _g = SERVE_TEST_GUARD.lock().unwrap();
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
+        let anchor = SimAnchorState::snapshot(&core);
         let unknown = address!("1111111111111111111111111111111111111111");
         let rpc_word = U256::from(0xcafeu64);
         let mut db = FixedStorageDb::default();
         db.slots.insert((unknown, U256::ZERO), rpc_word);
 
         force_serve_enabled_for_tests(Some(true));
-        let bot_db = BotStateDb::new(&core, db);
+        let bot_db = BotStateDb::new(&anchor, db);
         let got = bot_db
             .storage_ref(unknown, U256::ZERO)
             .expect("storage_ref ok");
@@ -330,6 +336,7 @@ mod tests {
         // would be noise). Verifies the probe's zeroing + the mask the find
         // doc relies on.
         let core = v2_bot_state(1_000_000, 2_000_000, 18_012_345);
+        let anchor = SimAnchorState::snapshot(&core);
         // The RPC reserves word carries a NONZERO timestamp in the high 32.
         let rpc_with_ts =
             pack_v2_reserves(999_999, 1_999_999) | (U256::from(0x6543_2101u32) << 224u32);
@@ -338,7 +345,7 @@ mod tests {
             .insert((V2_ADDR, U256::from(V2_RESERVES_SLOT)), rpc_with_ts);
 
         force_serve_enabled_for_tests(Some(true));
-        let bot_db = BotStateDb::new(&core, db);
+        let bot_db = BotStateDb::new(&anchor, db);
         let got = bot_db
             .storage_ref(V2_ADDR, U256::from(V2_RESERVES_SLOT))
             .expect("storage_ref ok");
