@@ -2027,7 +2027,7 @@ mod tests {
         /// O3HW7E): the LEZJAS bookkeeping write must fire exactly when the
         /// FSM's `on_log_applied` ran for an applied forward log.
         logs_recorded: std::sync::atomic::AtomicUsize,
-        /// pump_ended recorded (incident 2026-08-20 stream-death test).
+        /// `pump_ended` recorded (incident 2026-08-20 stream-death test).
         pump_ended: std::sync::atomic::AtomicBool,
     }
 
@@ -3596,8 +3596,8 @@ mod tests {
     /// observable; what is asserted here is that the *pump* routes a
     /// `removed: true` log there, and that an in-depth reorg is non-fatal.
     /// Incident 2026-08-20 (WS-silent class): a WS subscription stream that
-    /// ENDS mid-run must notify the sink (on_pump_ended - the production
-    /// SolveCoordinator impl drops the engine delivery channels there), so
+    /// ENDS mid-run must notify the sink (`on_pump_ended` - the production
+    /// `SolveCoordinator` impl drops the engine delivery channels there), so
     /// the Python block/result streams END and the settlement bot fails
     /// loudly instead of idling forever (the silent stall operators saw).
     #[tokio::test]

@@ -170,6 +170,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(clippy::unwrap_used, clippy::expect_used)]
     fn note_then_dump_captures_the_calling_thread() {
         note_current_thread("test.span", Some("tests.rs:42"));
         let map = registry().lock().unwrap();

@@ -111,6 +111,13 @@ impl Engine for EngineHandle {
     /// `async for batch in engine_registry.engine:`.
     #[hotpath::measure(label = "EngineHandle::solve_dirty")]
     fn solve_dirty(&self, block: u64, metadata: &BlockMetadata) {
+        // P5FEOI (epic 2LXPPV): the drain-path solve is one Jaeger node
+        // (OTel tier-1). Entered for the whole lock-hold so sim/dispatch/
+        // monitor spans fired inside inherit it, and it parents under
+        // `degenbot.pump.block` when pump-driven (MQUKB6). Inert without
+        // a subscriber; lock-hold invariant untouched.
+        let span = tracing::info_span!("degenbot.arb.solve", block.number = block);
+        let _guard = span.enter();
         self.engine.lock().solve_dirty(block, metadata);
     }
 

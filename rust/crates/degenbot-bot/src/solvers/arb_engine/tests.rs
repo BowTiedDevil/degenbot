@@ -5004,4 +5004,58 @@ mod tests {
             "Curve + CL must not solve"
         );
     }
+    /// P5FEOI (epic 2LXPPV): `solve_dirty` emits an entered `degenbot.arb.solve`
+    /// span carrying `block.number`, captured through the `OTel` layer over the
+    /// `InMemorySpanExporter`. Scoped LOCAL subscriber (sync closure, one thread): it does not consume the
+    /// once-per-process global subscriber slot (the MQUKB6 pump test owns that - see
+    /// `header_arms_per_block_span_with_number_and_parent`) and cannot let other
+    /// tests' spans leak into this exporter.
+    #[cfg(feature = "otel")]
+    #[test]
+    fn solve_dirty_emits_arb_solve_span_with_block_number() {
+        use crate::bot_core::engine::Engine;
+        use crate::otel;
+        use crate::solvers::arb_engine::engine_handle::EngineHandle;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use std::sync::Arc;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        const MY_SOLVE_BLOCK: u64 = 0x0BAD_F00D;
+        const MY_SOLVE_BLOCK_I64: i64 = 0x0BAD_F00D;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        let handle = EngineHandle::new(Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())));
+        tracing::subscriber::with_default(subscriber, || {
+            handle.solve_dirty(MY_SOLVE_BLOCK, &BlockMetadata::default());
+        });
+
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+
+        // Same dual-representation attribute check as the MQUKB6 pump test (tracing-
+        // opentelemetry 0.33 maps u64 fields to strings; an OTel bump may switch to
+        // I64 - accept both).
+        let my_spans: Vec<_> = spans
+            .iter()
+            .filter(|sp| {
+                sp.name.as_ref() == "degenbot.arb.solve"
+            })
+            .filter(|sp| {
+                sp.attributes.iter().any(|kv| {
+                    kv.key == opentelemetry::Key::from_static_str("block.number")
+                        && (matches!(kv.value, opentelemetry::Value::I64(v) if v == MY_SOLVE_BLOCK_I64)
+                            || matches!(kv.value, opentelemetry::Value::String(ref v) if v.as_str() == MY_SOLVE_BLOCK.to_string().as_str()))
+                })
+            })
+            .collect();
+        assert_eq!(
+            my_spans.len(),
+            1,
+            "expected exactly one degenbot.arb.solve span for block {MY_SOLVE_BLOCK}; got names: {:?}",
+            spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
+        );
+    }
 }

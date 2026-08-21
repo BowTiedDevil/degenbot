@@ -16,10 +16,10 @@
 
 #![cfg(feature = "auto-initialize")]
 #![expect(
-    clippy::unwrap_used,
+    clippy::panic,
     clippy::expect_used,
     clippy::doc_markdown,
-    clippy::unused_self
+    clippy::print_stderr
 )]
 
 use std::sync::mpsc;
@@ -102,7 +102,7 @@ fn no_gil_held_botstate_writes_in_bot_mod_rs() {
     let mut violations = Vec::<String>::new();
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
-        let is_comment = trimmed.starts_with("//") || trimmed.starts_with("#");
+        let is_comment = trimmed.starts_with("//") || trimmed.starts_with('#');
         if !line.contains(".write()") || is_comment {
             continue;
         }
@@ -123,9 +123,7 @@ fn no_gil_held_botstate_writes_in_bot_mod_rs() {
         checked >= 15,
         "scan found only {checked} .write() sites - the pattern moved; update this guard"
     );
-    if !violations.is_empty() {
-        panic!("GIL-held BotState writes outside py.detach scopes in bot/mod.rs (inversion class, incidents 2026-08-20 #1/#2). Wrap each in py.detach(...) or mark pure-Rust test seams T1-scan-exempt: {}", violations.join(" | "));
-    }
+    assert!(violations.is_empty(), "GIL-held BotState writes outside py.detach scopes in bot/mod.rs (inversion class, incidents 2026-08-20 #1/#2). Wrap each in py.detach(...) or mark pure-Rust test seams T1-scan-exempt: {}", violations.join(" | "));
 }
 
 /// Source guard for the 2026-08-21 run-9 cycle (KTXKUF/OB7UNY regression):
@@ -148,7 +146,7 @@ fn no_gil_held_botstate_locks_in_pool_rs() {
     let mut violations = Vec::<String>::new();
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
-        let is_comment = trimmed.starts_with("//") || trimmed.starts_with("#");
+        let is_comment = trimmed.starts_with("//") || trimmed.starts_with('#');
         if is_comment {
             continue;
         }
@@ -172,18 +170,16 @@ fn no_gil_held_botstate_locks_in_pool_rs() {
         checked >= 100,
         "scan found only {checked} BotState lock sites in pool.rs - the pattern moved; update this guard"
     );
-    if !violations.is_empty() {
-        let shown: String = violations
-            .iter()
-            .cloned()
-            .take(25)
-            .collect::<Vec<_>>()
-            .join(" | ");
-        panic!(
+    let shown: String = violations
+        .iter()
+        .take(25)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(violations.is_empty(),
             "GIL-held BotState locks outside py.detach scopes in pool.rs (inversion class, incident 2026-08-21 run-9: seed_genesis GIL-held write behind live readers). Wrap each acquisition in py.detach(...) or mark pure-Rust test seams T1-scan-exempt. {} of {} violating: {}",
             violations.len(),
             checked,
             shown
-        );
-    }
+    );
 }
