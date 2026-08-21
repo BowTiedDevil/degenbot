@@ -14,6 +14,10 @@ workspace = true
 [dependencies]
 alloy = { version = "^2.4", features = ["full", "signer-local", "network"] }
 degenbot-core.workspace = true
+# T4 economics metrics record through the bot crate's instruments module —
+# one-way (bot never depends on submission); default builds get the inert
+# stub twin so this adds no metrics code without the `otel` feature.
+degenbot-bot.workspace = true
 # `AlloyProvider` (the typed `eth_sendRawTransaction`/`eth_feeHistory`/
 # `eth_createAccessList` surfaces the N6 submit orchestration consumes —
 # ZUZANP typed, no `make_request` escape hatch).

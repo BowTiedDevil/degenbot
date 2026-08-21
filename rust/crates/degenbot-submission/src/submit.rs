@@ -169,6 +169,13 @@ impl SubmitOutcome {
 /// `gasUsed` when building the `TxParams`.
 const GAS_SAFETY_MARGIN: f64 = 1.5;
 
+/// T4: a candidate's net profit as `f64` wei (saturating at `u128::MAX`;
+/// dashboards chart magnitudes, not exact wei).
+#[expect(clippy::cast_precision_loss)]
+fn candidate_net_wei(candidate: &SubmitCandidate) -> f64 {
+    u128::try_from(candidate.net_profit).unwrap_or(u128::MAX) as f64
+}
+
 /// Sort + submit the gas-profitable candidates with mutual exclusivity.
 ///
 /// Pipeline (ports L2608–L2672):
@@ -274,7 +281,19 @@ pub async fn dispatch_and_submit(
     // claimed by submitted + dry-run/inject-skipped candidates this batch).
     let mut committed_pools: HashSet<PoolKey> = HashSet::new();
 
+    // T4: per-batch latency anchor — candidate loop start → each broadcast.
+    let batch_start = std::time::Instant::now();
     for candidate in candidates {
+        // T4: per-candidate economics (histograms; f64 wei for dashboards —
+        // they chart magnitudes, not exact wei; clamped at u128::MAX).
+        if let Some(p) = degenbot_bot::instruments::pipeline() {
+            #[expect(clippy::cast_precision_loss)]
+            let gross = u128::try_from(candidate.gross_profit).unwrap_or(u128::MAX) as f64;
+            #[expect(clippy::cast_precision_loss)]
+            let net = u128::try_from(candidate.net_profit).unwrap_or(u128::MAX) as f64;
+            p.observe_dispatch_profits(gross, net);
+            p.observe_dispatch_gas(candidate.gas_used);
+        }
         let path_pools = candidate.path_pools.clone();
 
         // 2a. Mutual-exclusivity guard (L2626). Lock briefly — no .await.
@@ -284,6 +303,10 @@ pub async fn dispatch_and_submit(
             d.is_path_blocked(&path_pools, &committed_pools)
         };
         if blocked {
+            if let Some(p) = degenbot_bot::instruments::pipeline() {
+                p.count_submit_outcome("skipped_pools_claimed");
+                p.add_profit_missed(candidate_net_wei(&candidate));
+            }
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
                 reason: SkipReason::PoolsClaimed,
@@ -294,6 +317,10 @@ pub async fn dispatch_and_submit(
         // 2b. dry_run guard (L2608). Commit pools (dry-run respects mutual
         //     exclusivity) + skip.
         if dry_run {
+            // Dry-run is a MODE, not missed money — counted, not profit-summed.
+            if let Some(p) = degenbot_bot::instruments::pipeline() {
+                p.count_submit_outcome("skipped_dry_run");
+            }
             committed_pools.extend(path_pools.clone());
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
@@ -305,6 +332,10 @@ pub async fn dispatch_and_submit(
         // 2c. inject_code guard (L2666). The injected contract doesn't exist
         //     on-chain, so live submission is unsafe. Commit pools + skip.
         if inject_code {
+            if let Some(p) = degenbot_bot::instruments::pipeline() {
+                p.count_submit_outcome("skipped_inject_code");
+                p.add_profit_missed(candidate_net_wei(&candidate));
+            }
             committed_pools.extend(path_pools.clone());
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
@@ -377,6 +408,10 @@ pub async fn dispatch_and_submit(
                 // `continue` on Web3Exception — the nonce is leaked until a
                 // manual cleanup or the dispatcher's reap). The monitor is
                 // NOT spawned (no tx to track).
+                if let Some(p) = degenbot_bot::instruments::pipeline() {
+                    p.count_submit_outcome("skipped_broadcast_failed");
+                    p.add_profit_missed(candidate_net_wei(&candidate));
+                }
                 outcome.records.push(SubmitRecord::Skipped {
                     path_id: candidate.path_id,
                     reason: SkipReason::BroadcastFailed(format!("{e}")),
@@ -393,6 +428,10 @@ pub async fn dispatch_and_submit(
         }
         committed_pools.extend(path_pools.clone());
 
+        if let Some(p) = degenbot_bot::instruments::pipeline() {
+            p.count_submit_outcome("submitted");
+            p.observe_submit_latency(batch_start.elapsed().as_secs_f64());
+        }
         outcome.records.push(SubmitRecord::Submitted {
             path_id: candidate.path_id,
             tx_hash,
@@ -406,18 +445,32 @@ pub async fn dispatch_and_submit(
         let dispatcher_clone = Arc::clone(dispatcher);
         let probe_clone = Arc::clone(&probe);
         let submitted_tx = SubmittedTx::new(tx_hash, nonce, path_pools, current_block);
+        // T4: realized profit — this candidate's net profit lands on the
+        // realized counter iff its tx confirms. Cloned into the task (the
+        // loop moves `candidate` on).
+        let candidate_net = candidate_net_wei(&candidate);
         #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
         {
             dispatcher
                 .lock()
                 .expect("dispatcher mutex poisoned")
                 .track_task(async move {
-                    let _ = monitor_pending_transaction_default(
+                    let outcome = monitor_pending_transaction_default(
                         submitted_tx,
                         &*probe_clone,
                         &dispatcher_clone,
                     )
                     .await;
+                    if let Some(p) = degenbot_bot::instruments::pipeline() {
+                        match &outcome {
+                            Ok(o) if o.is_confirmed() => {
+                                p.count_monitor_outcome("confirmed");
+                                p.add_profit_realized(candidate_net);
+                            }
+                            Ok(_) => p.count_monitor_outcome("expired"),
+                            Err(_) => p.count_monitor_outcome("error"),
+                        }
+                    }
                 });
         }
     }

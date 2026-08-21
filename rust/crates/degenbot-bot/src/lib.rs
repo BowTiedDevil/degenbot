@@ -81,6 +81,20 @@ pub mod instruments {
         pub fn observe_simulate_duration(&self, _secs: f64) {}
         /// no-op
         pub fn count_simulate_verdict(&self, _verdict: &str) {}
+        /// no-op
+        pub fn observe_dispatch_profits(&self, _gross_wei: f64, _net_wei: f64) {}
+        /// no-op
+        pub fn observe_dispatch_gas(&self, _gas: u64) {}
+        /// no-op
+        pub fn count_submit_outcome(&self, _outcome: &str) {}
+        /// no-op
+        pub fn observe_submit_latency(&self, _secs: f64) {}
+        /// no-op
+        pub fn add_profit_realized(&self, _wei: f64) {}
+        /// no-op
+        pub fn add_profit_missed(&self, _wei: f64) {}
+        /// no-op
+        pub fn count_monitor_outcome(&self, _outcome: &str) {}
     }
 
     /// Always `None` — metrics are compiled out of this build.

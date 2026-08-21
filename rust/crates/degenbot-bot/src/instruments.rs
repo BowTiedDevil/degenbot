@@ -54,12 +54,29 @@ pub struct PipelineInstruments {
     simulate_duration: Histogram<f64>,
     /// Simulation outcomes, labeled by verdict string.
     simulate_verdicts: Counter<u64>,
+    /// Per-candidate gross profit (wei) at submit entry.
+    dispatch_gross_profit: Histogram<f64>,
+    /// Per-candidate net profit (wei) at submit entry.
+    dispatch_net_profit: Histogram<f64>,
+    /// Per-candidate simulated gas.
+    dispatch_gas_used: Histogram<f64>,
+    /// Submit outcomes, labeled (`submitted`, `skipped_dry_run`, ...).
+    submit_outcomes: Counter<u64>,
+    /// Candidate loop start → broadcast latency.
+    submit_latency: Histogram<f64>,
+    /// Cumulative confirmed net profit (wei).
+    profit_realized: Counter<f64>,
+    /// Cumulative un-submitted profitable-candidate net profit (wei).
+    profit_missed: Counter<f64>,
+    /// Monitor outcomes, labeled (`confirmed`, `expired`).
+    monitor_outcomes: Counter<u64>,
 }
 
 impl PipelineInstruments {
     /// Build all instruments from a meter. Visible for tests — production
     /// callers go through [`pipeline`].
     #[must_use]
+    #[expect(clippy::too_many_lines)] // one instrument per block; splitting hides the inventory
     pub fn new(meter: &Meter) -> Self {
         Self {
             header_to_solved: meter
@@ -131,6 +148,43 @@ impl PipelineInstruments {
             simulate_verdicts: meter
                 .u64_counter("degenbot.simulate.verdicts")
                 .with_description("Simulation outcomes by verdict")
+                .build(),
+            dispatch_gross_profit: meter
+                .f64_histogram("degenbot.dispatch.gross_profit")
+                .with_unit("wei")
+                .with_description("Per-candidate gross profit at submit entry")
+                .build(),
+            dispatch_net_profit: meter
+                .f64_histogram("degenbot.dispatch.net_profit")
+                .with_unit("wei")
+                .with_description("Per-candidate net profit at submit entry")
+                .build(),
+            dispatch_gas_used: meter
+                .f64_histogram("degenbot.dispatch.gas_used")
+                .with_description("Per-candidate simulated gas")
+                .build(),
+            submit_outcomes: meter
+                .u64_counter("degenbot.submit.outcomes")
+                .with_description("Submit outcomes by reason")
+                .build(),
+            submit_latency: meter
+                .f64_histogram("degenbot.submit.latency")
+                .with_unit("s")
+                .with_description("Candidate loop start to broadcast")
+                .build(),
+            profit_realized: meter
+                .f64_counter("degenbot.profit.realized")
+                .with_unit("wei")
+                .with_description("Cumulative confirmed net profit")
+                .build(),
+            profit_missed: meter
+                .f64_counter("degenbot.profit.missed")
+                .with_unit("wei")
+                .with_description("Cumulative net profit of un-submitted candidates")
+                .build(),
+            monitor_outcomes: meter
+                .u64_counter("degenbot.monitor.outcomes")
+                .with_description("Monitor outcomes (confirmed/expired)")
                 .build(),
         }
     }
@@ -221,6 +275,48 @@ impl PipelineInstruments {
     pub fn count_simulate_verdict(&self, verdict: &str) {
         self.simulate_verdicts
             .add(1, &[KeyValue::new("outcome", verdict.to_owned())]);
+    }
+
+    /// One candidate's economics at submit entry (wei as f64 — dashboards
+    /// chart magnitudes, not exact wei).
+    pub fn observe_dispatch_profits(&self, gross_wei: f64, net_wei: f64) {
+        self.dispatch_gross_profit.record(gross_wei, &[]);
+        self.dispatch_net_profit.record(net_wei, &[]);
+    }
+
+    /// One candidate's simulated gas.
+    #[expect(clippy::cast_precision_loss)]
+    pub fn observe_dispatch_gas(&self, gas: u64) {
+        self.dispatch_gas_used
+            .record(gas.min(u64::from(u32::MAX)) as f64, &[]);
+    }
+
+    /// One submit outcome; `outcome` is a small closed set
+    /// (`submitted`, `skipped_pools_claimed`, `skipped_dry_run`, ...).
+    pub fn count_submit_outcome(&self, outcome: &str) {
+        self.submit_outcomes
+            .add(1, &[KeyValue::new("outcome", outcome.to_owned())]);
+    }
+
+    /// Candidate loop start → broadcast latency.
+    pub fn observe_submit_latency(&self, secs: f64) {
+        self.submit_latency.record(secs, &[]);
+    }
+
+    /// Add confirmed net profit (wei).
+    pub fn add_profit_realized(&self, wei: f64) {
+        self.profit_realized.add(wei, &[]);
+    }
+
+    /// Add un-submitted candidate net profit (wei).
+    pub fn add_profit_missed(&self, wei: f64) {
+        self.profit_missed.add(wei, &[]);
+    }
+
+    /// One monitor outcome (`confirmed`, `expired`).
+    pub fn count_monitor_outcome(&self, outcome: &str) {
+        self.monitor_outcomes
+            .add(1, &[KeyValue::new("outcome", outcome.to_owned())]);
     }
 }
 

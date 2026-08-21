@@ -367,3 +367,48 @@ fn solver_instruments_render_with_verdict_labels() {
         "expected 2 profitable, got: {profitable}"
     );
 }
+
+/// T4 seam: dispatch economics instruments render, including labeled
+/// submit/monitor outcomes and cumulative P&L counters.
+#[test]
+fn dispatch_economics_instruments_render() {
+    use degenbot_bot::instruments::PipelineInstruments;
+    use degenbot_bot::metrics;
+    use opentelemetry::metrics::MeterProvider;
+
+    let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
+    let meter = provider.meter("degenbot.test");
+    let p = PipelineInstruments::new(&meter);
+
+    p.observe_dispatch_profits(1.0e18, 3.0e17);
+    p.observe_dispatch_gas(250_000);
+    p.count_submit_outcome("submitted");
+    p.count_submit_outcome("skipped_dry_run");
+    p.observe_submit_latency(0.042);
+    p.add_profit_realized(2.5e17);
+    p.add_profit_missed(1.0e17);
+    p.count_monitor_outcome("confirmed");
+
+    let text = metrics::render(&registry);
+    for family in [
+        "degenbot_dispatch_gross_profit",
+        "degenbot_dispatch_net_profit",
+        "degenbot_dispatch_gas_used",
+        "degenbot_submit_outcomes_total",
+        "degenbot_submit_latency",
+        "degenbot_profit_realized",
+        "degenbot_profit_missed",
+        "degenbot_monitor_outcomes_total",
+    ] {
+        assert!(
+            text.contains(family),
+            "expected family {family} in prometheus text, got:\n{text}"
+        );
+    }
+    let realized = text
+        .lines()
+        .find(|l| l.starts_with("degenbot_profit_realized"))
+        .expect("realized profit series missing");
+    // Prometheus renders the f64 sum as a plain integer at this magnitude.
+    assert!(realized.ends_with("250000000000000000"), "got: {realized}");
+}
