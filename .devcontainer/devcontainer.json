@@ -94,6 +94,11 @@
     // (cargo, pytest, forge) never hits the limit.
     "--pids-limit=-1"
   ],
+  // T5 (RMH23E): the bot's Prometheus scrape endpoint
+  // (DEGENBOT_METRICS_ADDR, default 127.0.0.1:9464 — set 0.0.0.0:9464 to
+  // scrape from a host-side Prometheus). Forwarded so Grafana/Prometheus on
+  // the host can reach it at localhost:9464.
+  "forwardPorts": [9464],
   "remoteUser": "dev",
   "workspaceFolder": "/workspaces/degenbot",
   "shutdownAction": "none", // keep the container running if VSCode disconnects
