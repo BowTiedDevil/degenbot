@@ -92,3 +92,105 @@ pub use submit::{
     dispatch_and_submit, fetch_fee_history, SkipReason, SubmitCandidate, SubmitOutcome,
     SubmitRecord,
 };
+
+// Test-only span capture for the OTel tier-1 span tests (RMHQAR, epic
+// 2LXPPV). One global subscriber per test process: async tests cross
+// tasks, where scoped `with_default` guards would be unsafe (MQUKB6
+// finding), so every test module in this crate shares the same capture
+// via `span_capture::global()`.
+#[cfg(test)]
+pub(crate) mod span_capture {
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use tracing::field::Visit;
+    use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+    type SpanEntry = (String, BTreeMap<String, String>);
+
+    #[derive(Default)]
+    pub struct SpanCapture {
+        spans: Mutex<HashMap<tracing::span::Id, SpanEntry>>,
+    }
+
+    impl SpanCapture {
+        /// All captured spans as (name, recorded fields).
+        pub fn snapshot(&self) -> Vec<(String, BTreeMap<String, String>)> {
+            let Ok(g) = self.spans.lock() else {
+                return Vec::new();
+            };
+            g.values()
+                .map(|entry| (entry.0.clone(), entry.1.clone()))
+                .collect()
+        }
+    }
+
+    pub struct CaptureLayer(pub Arc<SpanCapture>);
+
+    struct FieldPusher<'a>(&'a mut BTreeMap<String, String>);
+
+    impl Visit for FieldPusher<'_> {
+        fn record_debug(&mut self, key: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            self.0.insert(key.name().to_string(), format!("{value:?}"));
+        }
+        fn record_str(&mut self, key: &tracing::field::Field, value: &str) {
+            self.0.insert(key.name().to_string(), value.to_string());
+        }
+        fn record_i64(&mut self, key: &tracing::field::Field, value: i64) {
+            self.0.insert(key.name().to_string(), value.to_string());
+        }
+        fn record_u64(&mut self, key: &tracing::field::Field, value: u64) {
+            self.0.insert(key.name().to_string(), value.to_string());
+        }
+        fn record_bool(&mut self, key: &tracing::field::Field, value: bool) {
+            self.0.insert(key.name().to_string(), value.to_string());
+        }
+    }
+
+    impl<S> Layer<S> for CaptureLayer
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            id: &tracing::span::Id,
+            _ctx: Context<'_, S>,
+        ) {
+            let name = attrs.metadata().name().to_string();
+            let Ok(mut g) = self.0.spans.lock() else {
+                return;
+            };
+            let entry = g
+                .entry(id.clone())
+                .or_insert_with(|| (name, BTreeMap::new()));
+            attrs.values().record(&mut FieldPusher(&mut entry.1));
+        }
+
+        fn on_record(
+            &self,
+            id: &tracing::span::Id,
+            values: &tracing::span::Record<'_>,
+            _ctx: Context<'_, S>,
+        ) {
+            let Ok(mut g) = self.0.spans.lock() else {
+                return;
+            };
+            if let Some(entry) = g.get_mut(id) {
+                values.record(&mut FieldPusher(&mut entry.1));
+            }
+        }
+    }
+
+    /// The shared capture, installed as the process-global subscriber on
+    /// first use (once per test binary; a second install is a no-op and the
+    /// shared `Arc` keeps capturing regardless).
+    #[must_use]
+    pub fn global() -> Arc<SpanCapture> {
+        static CAP: OnceLock<Arc<SpanCapture>> = OnceLock::new();
+        let cap = CAP.get_or_init(|| Arc::new(SpanCapture::default())).clone();
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(CaptureLayer(cap.clone())),
+        );
+        cap
+    }
+}

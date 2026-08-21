@@ -223,6 +223,18 @@ pub async fn monitor_pending_transaction(
     // Extract the by-reference block clock handle ONCE (before the loop) so
     // the per-poll `current_block` read avoids acquiring the outer dispatcher
     // mutex (the handle is the inner `Arc<Mutex<u64>>`, M756BN).
+    // RMHQAR (epic 2LXPPV): OTel tier-1 - one Jaeger node per awaited receipt
+    // (degenbot.bundle.monitor); parents under the block/solve spans when
+    // pump-driven. Inert without a subscriber.
+    let span = tracing::info_span!(
+        "degenbot.bundle.monitor",
+        nonce = tx.nonce,
+        submission_block = tx.submission_block,
+        monitor.result = tracing::field::Empty,
+        monitor.confirmed_at_block = tracing::field::Empty,
+        monitor.blocks_waited = tracing::field::Empty,
+    );
+    let _guard = span.enter();
     #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
     let block_ref = dispatcher
         .lock()
@@ -233,7 +245,14 @@ pub async fn monitor_pending_transaction(
     loop {
         tokio::time::sleep(MONITOR_POLL_INTERVAL).await;
 
-        if probe.receipt_found(tx.tx_hash).await? {
+        let found = match probe.receipt_found(tx.tx_hash).await {
+            Ok(found) => found,
+            Err(e) => {
+                span.record("monitor.result", "error");
+                return Err(e);
+            }
+        };
+        if found {
             // receipt found → confirmed: release nonce + pools, return.
             #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
             let confirmed_at = *block_ref.lock().expect("current_block mutex poisoned");
@@ -244,6 +263,8 @@ pub async fn monitor_pending_transaction(
                     .expect("dispatcher mutex poisoned")
                     .release_tx(&committed);
             }
+            span.record("monitor.result", "confirmed");
+            span.record("monitor.confirmed_at_block", confirmed_at);
             return Ok(MonitorOutcome::Confirmed {
                 confirmed_at_block: confirmed_at,
             });
@@ -253,6 +274,8 @@ pub async fn monitor_pending_transaction(
         let current_block = *block_ref.lock().expect("current_block mutex poisoned");
         let blocks_waited = current_block.saturating_sub(tx.submission_block);
         if blocks_waited > blocks_before_nonce_expires {
+            span.record("monitor.result", "expired");
+            span.record("monitor.blocks_waited", blocks_waited);
             #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
             {
                 dispatcher
@@ -702,5 +725,73 @@ mod tests {
                 }
             }
         })
+    }
+    /// RMHQAR (epic 2LXPPV): the monitor span records "monitor.result" on every
+    /// terminal path. Unique nonces filter this test's spans from the shared global
+    /// capture (MQUKB6 unique-identifier rule).
+    #[tokio::test]
+    async fn monitor_span_records_terminal_outcomes() {
+        const CONFIRM_NONCE: u64 = 0xC0FF_EE01;
+        const EXPIRE_NONCE: u64 = 0xC0FF_EE02;
+        let cap = crate::span_capture::global();
+
+        // Confirmed path: MockProbe confirms on poll #1 (production poll
+        // interval is 1s - one production poll for a single-second test).
+        let mut dispatcher = Dispatcher::for_block(100);
+        let tx = sample_tx_variant(CONFIRM_NONCE, "capPoolA", 100);
+        reserve_tx_state(&mut dispatcher, &tx);
+        let dispatcher = Arc::new(Mutex::new(dispatcher));
+        let probe = MockProbe::new(1);
+        let outcome =
+            monitor_pending_transaction(tx, &probe, &dispatcher, BLOCKS_BEFORE_NONCE_EXPIRES)
+                .await
+                .unwrap();
+        assert!(outcome.is_confirmed());
+
+        // Expired path: NeverConfirmProbe advances the clock past threshold
+        // 1 (two production polls, ~2s).
+        let mut dispatcher = Dispatcher::for_block(100);
+        let tx = sample_tx_variant(EXPIRE_NONCE, "capPoolB", 100);
+        reserve_tx_state(&mut dispatcher, &tx);
+        let handle = dispatcher.current_block_handle();
+        let dispatcher = Arc::new(Mutex::new(dispatcher));
+        let probe = NeverConfirmProbe::new(handle, 100);
+        let outcome = monitor_pending_transaction(tx, &probe, &dispatcher, 1)
+            .await
+            .unwrap();
+        assert!(!outcome.is_confirmed());
+
+        let mut confirmed = 0;
+        let mut expired = 0;
+        for (name, fields) in cap.snapshot() {
+            if name != "degenbot.bundle.monitor" {
+                continue;
+            }
+            match fields.get("nonce").map(String::as_str) {
+                Some(v) if v == CONFIRM_NONCE.to_string().as_str() => {
+                    assert_eq!(
+                        fields.get("monitor.result").map(String::as_str),
+                        Some("confirmed")
+                    );
+                    confirmed += 1;
+                }
+                Some(v) if v == EXPIRE_NONCE.to_string().as_str() => {
+                    assert_eq!(
+                        fields.get("monitor.result").map(String::as_str),
+                        Some("expired")
+                    );
+                    expired += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            confirmed, 1,
+            "exactly one confirmed monitor span for {CONFIRM_NONCE}"
+        );
+        assert_eq!(
+            expired, 1,
+            "exactly one expired monitor span for {EXPIRE_NONCE}"
+        );
     }
 }

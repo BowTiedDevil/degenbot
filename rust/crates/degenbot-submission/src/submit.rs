@@ -252,6 +252,18 @@ pub async fn dispatch_and_submit(
     dry_run: bool,
     inject_code: bool,
 ) -> Result<SubmitOutcome, crate::SubmissionError> {
+    // RMHQAR (epic 2LXPPV): OTel tier-1 - one Jaeger node per dispatch
+    // batch (degenbot.bundle.dispatch); parents under the block/solve
+    // spans when pump-driven. Inert without a subscriber.
+    let span = tracing::info_span!(
+        "degenbot.bundle.dispatch",
+        candidates = candidates.len(),
+        dry_run,
+        current_block,
+        dispatch.submitted = tracing::field::Empty,
+        dispatch.skipped = tracing::field::Empty,
+    );
+    let _guard = span.enter();
     // 1. Sort by net profit descending (the dispatch fan-out's output ordering
     //    — re-asserted so a caller handing un-sorted candidates submits
     //    best-first). Ports L2561's `gas_profitable.sort(key=net, reverse=...)`.
@@ -410,6 +422,8 @@ pub async fn dispatch_and_submit(
         }
     }
 
+    span.record("dispatch.submitted", outcome.submitted_count());
+    span.record("dispatch.skipped", outcome.skipped_count());
     Ok(outcome)
 }
 
@@ -1031,5 +1045,64 @@ mod tests {
         > {
             Box::pin(async { Ok(false) })
         }
+    }
+    /// RMHQAR (epic 2LXPPV): the `dispatch_and_submit` span records the
+    /// candidate count and outcome counts (`dry_run` marker path: 1 candidate
+    /// -> 0 submitted, 1 skipped).
+    /// The unique `current_block` creation field filters this test's span from the
+    /// shared global capture.
+    #[tokio::test]
+    async fn dispatch_span_records_candidate_and_outcome_counts() {
+        const MY_BLOCK: u64 = 999_999_999;
+        let cap = crate::span_capture::global();
+        let asserter = Asserter::new();
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+
+        let outcome = dispatch_and_submit(
+            vec![candidate(7, 1_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            0,
+            MY_BLOCK,
+            true, // dry_run
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.submitted_count(), 0);
+        assert_eq!(outcome.skipped_count(), 1);
+
+        let mut mine = 0;
+        for (name, fields) in cap.snapshot() {
+            if name != "degenbot.bundle.dispatch" {
+                continue;
+            }
+            if fields.get("current_block").map(String::as_str)
+                != Some(MY_BLOCK.to_string().as_str())
+            {
+                continue;
+            }
+            mine += 1;
+            assert_eq!(fields.get("dry_run").map(String::as_str), Some("true"));
+            assert_eq!(fields.get("candidates").map(String::as_str), Some("1"));
+            assert_eq!(
+                fields.get("dispatch.submitted").map(String::as_str),
+                Some("0")
+            );
+            assert_eq!(
+                fields.get("dispatch.skipped").map(String::as_str),
+                Some("1"),
+                "all fields: {fields:?}"
+            );
+        }
+        assert_eq!(
+            mine, 1,
+            "one dry-run dispatch span for block 999_999_999 captured"
+        );
     }
 }
