@@ -24,17 +24,22 @@ use std::collections::HashMap;
 use alloy::primitives::U256;
 use tokio::sync::mpsc;
 
+use super::delivery_lifecycle::DeliveryLifecycle;
 use super::{ArbitrageEngine, BlockMetadata, BlockNotification, ResultBatch};
 use ::degenbot_solvers::mixed::SolvePathResult;
 
 /// The delivery policy: filters the engine's solve output by the profit
 /// window, tracks what Python has already received, and pushes an incremental
-/// diff over the result and block channels.
+/// diff over the result channel.
 ///
 /// It is the **only** owner of the diff bookkeeping (`delivered`/`deregistered`)
 /// and the profit thresholds. It does not solve anything — it consumes the
 /// engine's [`ArbitrageEngine::latest_results`] output via
 /// [`DeliveryPolicy::diff_and_send`].
+///
+/// The *transport* half — channel open/send/close and the end-of-stream
+/// contract — lives on the embedded [`DeliveryLifecycle`]; this struct owns
+/// the *policy* half (per-engine: thresholds + diff bookkeeping).
 ///
 /// The fields are `pub(crate)` so the in-crate unit tests (`arb_engine/tests.rs`)
 /// can assert on `delivered` directly; no external crate can reach them, and the
@@ -62,14 +67,9 @@ pub(crate) struct DeliveryPolicy {
     /// Maximum profit (in wei) for a result to appear in the batch channel.
     /// Paths above this are likely solver defects or scam tokens.
     pub(crate) max_profit: U256,
-    /// Sender for the result batch channel. Created in `PyArbitrageEngine::new()`.
-    pub(crate) result_tx: Option<mpsc::UnboundedSender<ResultBatch>>,
-    /// Sender for the block-notification channel (epic 6W35AI). The pump
-    /// forwards every accepted `WsEvent::BlockHeader` here via
-    /// `DrainSink::notify_block`, so Python can drive its block clock from
-    /// `newHeads` (not from `ResultBatch::solve_block`). Plumbed parallel to
-    /// `result_tx`; `diff_and_send` never touches it.
-    pub(crate) block_tx: Option<mpsc::UnboundedSender<BlockNotification>>,
+    /// The transport half: channel open/send/close + the end-of-stream
+    /// contract (see the type's docs).
+    pub(crate) lifecycle: DeliveryLifecycle,
 }
 
 impl Default for DeliveryPolicy {
@@ -79,22 +79,23 @@ impl Default for DeliveryPolicy {
             deregistered: Vec::new(),
             min_profit: U256::ZERO,
             max_profit: U256::MAX,
-            result_tx: None,
-            block_tx: None,
+            lifecycle: DeliveryLifecycle::default(),
         }
     }
 }
 
 impl DeliveryPolicy {
-    /// Set the sender for the result batch channel.
+    /// Set the sender for the result batch channel. Delegates to the
+    /// embedded [`DeliveryLifecycle`].
     pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
-        self.result_tx = Some(tx);
+        self.lifecycle.set_result_channel(tx);
     }
 
     /// Set the sender for the block-notification channel (epic 6W35AI).
-    /// Independent of `result_tx`.
+    /// Independent of `result_tx`. Delegates to the embedded
+    /// [`DeliveryLifecycle`].
     pub fn set_block_channel(&mut self, tx: mpsc::UnboundedSender<BlockNotification>) {
-        self.block_tx = Some(tx);
+        self.lifecycle.set_block_channel(tx);
     }
 
     /// Drop both delivery senders (incident 2026-08-20, WS-silent class):
@@ -104,17 +105,14 @@ impl DeliveryPolicy {
     /// (the engine outlives the pump; without this drop the senders stay
     /// alive and the Python consumer awaits a stream that never ends).
     pub fn drop_delivery_channels(&mut self) {
-        self.block_tx = None;
-        self.result_tx = None;
+        self.lifecycle.close();
     }
 
     /// Forward a `newHeads` block tick onto the block-notification channel
     /// (epic 6W35AI). A no-op when no block channel is attached (no-pyo3
     /// tests / standalone).
     pub fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-        if let Some(ref tx) = self.block_tx {
-            let _ = tx.send(BlockNotification::from_metadata(block, metadata));
-        }
+        self.lifecycle.notify_block(block, metadata);
     }
 
     /// Set the profit thresholds for the result batch channel.
@@ -242,23 +240,21 @@ impl DeliveryPolicy {
             }
         }
 
-        // Send if channel is available and there's anything to report
-        if let Some(ref tx) = self.result_tx {
-            // Always send a batch even if empty — Python needs the block
-            // metadata and solve_block to drive its main loop.
-            let batch = ResultBatch {
-                solve_block: results_block,
-                timestamp: metadata.timestamp,
-                base_fee_per_gas: metadata.base_fee_per_gas,
-                gas_used: metadata.gas_used,
-                gas_limit: metadata.gas_limit,
-                fresh,
-                updated,
-                expired,
-                removed,
-            };
-            let _ = tx.send(batch);
-        }
+        // Always send a batch even if empty — Python needs the block
+        // metadata and solve_block to drive its main loop. Quiet no-op when
+        // no channel is open (standalone consumer) or after close.
+        let batch = ResultBatch {
+            solve_block: results_block,
+            timestamp: metadata.timestamp,
+            base_fee_per_gas: metadata.base_fee_per_gas,
+            gas_used: metadata.gas_used,
+            gas_limit: metadata.gas_limit,
+            fresh,
+            updated,
+            expired,
+            removed,
+        };
+        self.lifecycle.send_batch(batch);
     }
 }
 

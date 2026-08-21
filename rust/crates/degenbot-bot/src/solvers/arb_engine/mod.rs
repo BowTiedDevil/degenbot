@@ -33,7 +33,8 @@
 //! |--------|---------|
 //! | [`event_routing`] | Log event routing, block processing, backfill |
 //! | [`solver_dispatch`] | Path resolution, solver dispatch, rebuild logic |
-//! | [`delivery_policy`] | Delivery policy: diff computation, result/block channels (BI7UZV) |
+//! | [`delivery_lifecycle`] | Delivery lifecycle: channel open/send/close + the end-of-stream contract (incident 2026-08-20 #2) |
+//! | [`delivery_policy`] | Delivery policy: diff computation, thresholds, delivered-bookkeeping (BI7UZV) |
 //! | [`lifecycle`] | Path registration, buffer management, engine accessors |
 //! | [`py_binding`] | PyO3 wrapper (`PyArbitrageEngine`) |
 //! | [`tests`] | Unit tests |
@@ -50,6 +51,7 @@ use self::delivery_policy::DeliveryPolicy;
 use crate::bot_core::BotState;
 
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
+mod delivery_lifecycle;
 mod delivery_policy;
 mod diagnostic;
 pub mod engine_handle;
