@@ -121,9 +121,9 @@ impl Engine for EngineHandle {
         self.engine.lock().solve_dirty(block, metadata);
     }
 
-    #[hotpath::measure(label = "EngineHandle::drop_delivery_channels")]
-    fn drop_delivery_channels(&self) {
-        self.engine.lock().drop_delivery_channels();
+    #[hotpath::measure(label = "EngineHandle::on_pump_ended")]
+    fn on_pump_ended(&self) {
+        self.engine.lock().on_pump_ended();
     }
 
     #[hotpath::measure(label = "EngineHandle::send_result_batch")]

@@ -54,13 +54,14 @@ pub trait Engine: Send + Sync {
     /// LEZJAS). See `DrainSink::set_last_solved_block`.
     fn set_last_solved_block(&self, block: u64);
 
-    /// Drop this engine's Python-facing delivery channels (block clock +
-    /// result batches). Incident 2026-08-20: the pump's WS subscription
-    /// can die mid-run; without the drop the senders outlive the pump and
-    /// the Python block/result iterators await forever (the silent
-    /// deadlock stall). Default no-op: engines without channels have
-    /// nothing to drop.
-    fn drop_delivery_channels(&self) {}
+    /// The pump ended (WS stream dead or pump task exited): make this
+    /// engine's Python-facing streams END so the bot fails loudly instead of
+    /// idling on a channel whose pump is gone (incident 2026-08-20 #2: the
+    /// senders outlive the pump; without the close the Python block/result
+    /// iterators await forever — the silent deadlock stall). Named for the
+    /// `DrainSink::on_pump_ended` event it answers. No default: every engine
+    /// answers the liveness question explicitly.
+    fn on_pump_ended(&self);
 
     /// Seed the cold-start `results_block` anchor to a settled block (the pump
     /// passes its resume/backfill boundary at resume so registration eager-solve

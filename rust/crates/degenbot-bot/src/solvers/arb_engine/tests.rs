@@ -3659,9 +3659,9 @@ mod tests {
     }
 
     #[test]
-    fn drop_delivery_channels_closes_block_and_result_streams() {
+    fn on_pump_ended_closes_block_and_result_streams() {
         // Incident 2026-08-20 (WS-silent class): pump death routes
-        // on_pump_ended -> drop_delivery_channels; the Python-facing streams
+        // DrainSink::on_pump_ended -> Engine::on_pump_ended; the Python-facing streams
         // must report Disconnected so the consumer ends and the bot fails
         // loudly (the engine outlives the pump, so without the drop the
         // senders stay alive and the Python side awaits forever).
@@ -3685,7 +3685,7 @@ mod tests {
                 .number,
             42
         );
-        engine.drop_delivery_channels();
+        engine.on_pump_ended();
         match block_rx.try_recv() {
             Err(TryRecvError::Disconnected) => {}
             other => panic!("block stream must be Disconnected after drop, got {other:?}"),

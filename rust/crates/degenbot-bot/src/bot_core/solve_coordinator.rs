@@ -144,7 +144,7 @@ impl DrainSink for SolveCoordinator {
             "SolveCoordinator: pump ended - dropping engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
         for engine in &self.engines {
-            engine.drop_delivery_channels();
+            engine.on_pump_ended();
         }
     }
 
@@ -261,6 +261,7 @@ mod tests {
         finalize_block_calls: StdMutex<u32>,
         has_dirty_paths_calls: StdMutex<u32>,
         notify_block_calls: StdMutex<u32>,
+        on_pump_ended_calls: StdMutex<u32>,
         last_notified: StdMutex<Option<u64>>,
         dirty: StdMutex<bool>,
         cursor: StdMutex<Option<u64>>,
@@ -274,6 +275,7 @@ mod tests {
                 finalize_block_calls: StdMutex::new(0),
                 has_dirty_paths_calls: StdMutex::new(0),
                 notify_block_calls: StdMutex::new(0),
+                on_pump_ended_calls: StdMutex::new(0),
                 last_notified: StdMutex::new(None),
                 dirty: StdMutex::new(false),
                 cursor: StdMutex::new(None),
@@ -290,6 +292,9 @@ mod tests {
         }
         fn notify_block_count(&self) -> u32 {
             *self.notify_block_calls.lock().unwrap()
+        }
+        fn on_pump_ended_count(&self) -> u32 {
+            *self.on_pump_ended_calls.lock().unwrap()
         }
         fn last_notified_block(&self) -> Option<u64> {
             *self.last_notified.lock().unwrap()
@@ -311,6 +316,9 @@ mod tests {
             *self.finalize_block_calls.lock().unwrap() += 1;
         }
         fn set_last_solved_block(&self, _block: u64) {}
+        fn on_pump_ended(&self) {
+            *self.on_pump_ended_calls.lock().unwrap() += 1;
+        }
         fn set_solve_anchor(&self, _block: u64) {}
         fn record_logs_this_block(&self) {}
         fn notify_block(&self, block: u64, _metadata: &BlockMetadata) {
@@ -320,6 +328,22 @@ mod tests {
         fn last_processed_block(&self) -> Option<u64> {
             *self.cursor.lock().unwrap()
         }
+    }
+
+    /// Incident 2026-08-20 #2: pump death fans out `on_pump_ended` to EVERY
+    /// engine — each engine answers the liveness question explicitly (no
+    /// default no-op on the trait), so a silent link in the relay cannot
+    /// exist.
+    #[test]
+    fn on_pump_ended_fans_out_to_every_engine() {
+        let a = Arc::new(FakeEngine::new());
+        let b = Arc::new(FakeEngine::new());
+        let coordinator = SolveCoordinator::new(vec![a.clone(), b.clone()]);
+
+        coordinator.on_pump_ended();
+
+        assert_eq!(a.on_pump_ended_count(), 1, "engine A must be notified");
+        assert_eq!(b.on_pump_ended_count(), 1, "engine B must be notified");
     }
 
     /// RED→GREEN tracer (ADR-006 slice 6): the coordinator coalesces. Dirty

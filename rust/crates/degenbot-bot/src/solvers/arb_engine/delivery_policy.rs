@@ -98,16 +98,6 @@ impl DeliveryPolicy {
         self.lifecycle.set_block_channel(tx);
     }
 
-    /// Drop both delivery senders (incident 2026-08-20, WS-silent class):
-    /// called when the pump's WS subscription dies so the Python-facing
-    /// block clock / result streams END - the settlement bot then fails
-    /// loudly instead of idling forever on a channel whose pump is gone
-    /// (the engine outlives the pump; without this drop the senders stay
-    /// alive and the Python consumer awaits a stream that never ends).
-    pub fn drop_delivery_channels(&mut self) {
-        self.lifecycle.close();
-    }
-
     /// Forward a `newHeads` block tick onto the block-notification channel
     /// (epic 6W35AI). A no-op when no block channel is attached (no-pyo3
     /// tests / standalone).

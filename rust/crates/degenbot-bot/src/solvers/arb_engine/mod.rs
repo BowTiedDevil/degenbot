@@ -399,11 +399,12 @@ pub struct ArbitrageEngine {
 }
 
 impl ArbitrageEngine {
-    /// Drop both delivery channels (forward to the embedded policy).
-    /// Incident 2026-08-20: `SolveCoordinator::on_pump_ended` routes pump
-    /// death here so Python's block/result streams end.
-    pub fn drop_delivery_channels(&mut self) {
-        self.delivery.drop_delivery_channels();
+    /// The pump ended: close the delivery channels so Python's block/result
+    /// streams end loudly (incident 2026-08-20 #2). The `Engine` trait's
+    /// `on_pump_ended` answer — see [`DeliveryLifecycle::close`] for the
+    /// end-of-stream contract.
+    pub fn on_pump_ended(&mut self) {
+        self.delivery.lifecycle.close();
     }
     /// Create a new engine with its **own** standalone `BotState` (standard
     /// allocation). ADR-006 D1: prefer [`ArbitrageEngine::with_core`] on the live
