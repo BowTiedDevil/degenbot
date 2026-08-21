@@ -47,7 +47,7 @@ use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
-    Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
+    Bot, BotState, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
     RegisterV3PoolParams, RegisterV4PoolParams, SimulateSwapError, V4PoolKey,
 };
@@ -160,6 +160,43 @@ impl PyBot {
         Arc::clone(&self.bot)
     }
 
+    /// Sanctioned `BotState` read access for pymethod code (GIL/`BotState`
+    /// inversion class, incidents 2026-08-20/21). The guard is acquired
+    /// INSIDE `py.detach`, so the GIL is never held while parked on the lock;
+    /// pyo3's `Ungil` bound (= `Send` on stable) keeps GIL-bound values out
+    /// of the closure, and the `!Send` guard can never escape it. Direct
+    /// `state_arc().read()/.write()` in pymethod bodies is forbidden — the
+    /// source scan (`tests/gil_state_write_concurrency.rs`) permits it only
+    /// inside these accessors and the marked pure-Rust test seams.
+    pub(crate) fn with_state<T>(&self, py: Python<'_>, f: impl FnOnce(&BotState) -> T + Send) -> T
+    where
+        T: Send,
+    {
+        py.detach(|| {
+            let core = self.bot.state_arc();
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let guard = core.read();
+            f(&guard)
+        })
+    }
+
+    /// Sanctioned `BotState` write access — see [`Self::with_state`].
+    pub(crate) fn with_state_mut<T>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&mut BotState) -> T + Send,
+    ) -> T
+    where
+        T: Send,
+    {
+        py.detach(move || {
+            let core = self.bot.state_arc();
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let mut guard = core.write();
+            f(&mut guard)
+        })
+    }
+
     /// The cached read-only `SnapshotDb` handle armed by
     /// `load_snapshot_from_db` (Decision 5 (B) / task A6J5HG + epic `XEANMB`),
     /// or `None` on the cold-start path (no DB configured, or the snapshot
@@ -270,14 +307,15 @@ impl PyBot {
     ///
     /// # Errors
     /// `PyRuntimeError` if the `COMMIT` fails.
-    fn close_snapshot_tx(&self) -> PyResult<()> {
+    fn close_snapshot_tx(&self, py: Python<'_>) -> PyResult<()> {
         // Canary (epic XEANMB task 5.7): capture S_snapshot (read inside the
         // held tx) before committing, then re-read S_live after COMMIT on the
         // same connection (now seeing the live DB). If S_live > S_snapshot the
         // pool_updater committed concurrently with startup — a discipline
         // violation. Correctness was already preserved by the held tx; the
         // canary only surfaces it.
-        let s_snapshot = self.bot.state_arc().read().snapshot_seed_block();
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        let s_snapshot = self.with_state(py, degenbot_bot::bot_core::BotState::snapshot_seed_block);
         let chain_id = self.bot.chain_id();
         let snap = self.db.lock().take();
         if let Some(snap) = snap {
@@ -390,8 +428,9 @@ impl PyBot {
     /// the cold-start path). Python reads this in `engine_registry.start()`
     /// to stash `_verify_snapshot_block` for the per-pool two-step verify.
     #[getter]
-    fn snapshot_seed_block(&self) -> Option<u64> {
-        self.bot.state_arc().read().snapshot_seed_block()
+    fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        self.with_state(py, degenbot_bot::bot_core::BotState::snapshot_seed_block)
     }
 
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
@@ -558,8 +597,7 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        py.detach(move || state.write().register_v2_pool(&p))
+        self.with_state_mut(py, |s| s.register_v2_pool(&p))
             .map_err(map_register_v2_err)
     }
 
@@ -613,9 +651,8 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        let pool_id = py
-            .detach(move || state.write().register_v2_pool(&params))
+        let pool_id = self
+            .with_state_mut(py, |s| s.register_v2_pool(&params))
             .map_err(map_register_v2_err)?;
         Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
@@ -651,8 +688,7 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        Ok(py.detach(move || state.write().register_aerodrome_pool(&params)))
+        Ok(self.with_state_mut(py, |s| s.register_aerodrome_pool(&params)))
     }
 
     /// Build + register a Balancer V2 **weighted** pool through the Rust
@@ -690,8 +726,7 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        Ok(py.detach(move || state.write().register_balancer_weighted_pool(&params)))
+        Ok(self.with_state_mut(py, |s| s.register_balancer_weighted_pool(&params)))
     }
 
     /// Build + register a Balancer V2 **stable** pool through the Rust
@@ -737,8 +772,7 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        Ok(py.detach(move || state.write().register_balancer_stable_pool(&params)))
+        Ok(self.with_state_mut(py, |s| s.register_balancer_stable_pool(&params)))
     }
 
     /// Build + register a V3 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
@@ -805,9 +839,8 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        let pool_id = py
-            .detach(move || state.write().register_v3_pool(&params))
+        let pool_id = self
+            .with_state_mut(py, |s| s.register_v3_pool(&params))
             .map_err(map_register_v3_err)?;
         Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
@@ -944,8 +977,7 @@ impl PyBot {
         // Register the Rust-owned V4 StateView registry first (ADR-005 /
         // Option 2) — the solver-state gate reads it to verify V4 hops.
         {
-            let state = self.bot.state_arc();
-            py.detach(move || state.write().register_v4_state_view(pm, state_view));
+            self.with_state_mut(py, |s| s.register_v4_state_view(pm, state_view));
         }
         let io = self.bot.construction_io_arc().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
@@ -1008,9 +1040,8 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        let pool_id = py
-            .detach(move || state.write().register_v4_pool(&params))
+        let pool_id = self
+            .with_state_mut(py, |s| s.register_v4_pool(&params))
             .map_err(map_register_v4_err)?;
         // Return `(pool_id, coverage, identity..., protocol_fee, lp_fee)` so the
         // Python driver can set the companion's `_sparse_liquidity_map` (from
@@ -1110,8 +1141,7 @@ impl PyBot {
             "reserve1",
         )?;
 
-        let state = self.bot.state_arc();
-        py.detach(move || state.write().update_v2_pool(addr, r0, r1, block_number));
+        self.with_state_mut(py, |s| s.update_v2_pool(addr, r0, r1, block_number));
         Ok(())
     }
 
@@ -1130,11 +1160,10 @@ impl PyBot {
         amount_in: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let result = {
-            let state = self.bot.state_arc();
-            let core = state.read();
-            core.calculate_tokens_out_miss_aware(pool_id, zero_for_one, amount)
-        };
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        let result = self.with_state(py, |s| {
+            s.calculate_tokens_out_miss_aware(pool_id, zero_for_one, amount)
+        });
         // cdbc03bb: surface `NotComputable` (uint256 overflow = on-chain revert)
         // as a Python `ValueError` so the companion can translate it to a
         // domain `LiquidityPoolError`; keep `MissingTickWord` mapped to 0 so
@@ -1189,11 +1218,10 @@ impl PyBot {
             }
             None => None,
         };
-        let result = {
-            let state = self.bot.state_arc();
-            let core = state.read();
-            core.curve_get_dy(pool_id, i, j, amount, block_number, overrides.as_deref())
-        };
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        let result = self.with_state(py, |s| {
+            s.curve_get_dy(pool_id, i, j, amount, block_number, overrides.as_deref())
+        });
         let out = match result {
             Ok(v) => v,
             Err(e) => {
@@ -1222,18 +1250,16 @@ impl PyBot {
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        let result = {
-            let state = self.bot.state_arc();
-            let core = state.read();
-            core.calculate_tokens_in(pool_id, zero_for_one, amount)
-        };
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        let result = self.with_state(py, |s| s.calculate_tokens_in(pool_id, zero_for_one, amount));
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
 
     /// Number of registered pools.
-    fn pool_count(&self) -> usize {
-        self.bot.state_arc().read().pool_count()
+    fn pool_count(&self, py: Python<'_>) -> usize {
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        self.with_state(py, degenbot_bot::bot_core::BotState::pool_count)
     }
 
     /// The chain this `PyBot` orchestrates (ADR-006 D4). Wired from the
@@ -1283,8 +1309,9 @@ impl PyBot {
     ///
     /// Returns:
     ///     A `PyLiquidityPool` handle, or `None` if the pool ID is not registered.
-    fn get_pool(&self, pool_id: u64) -> Option<PyLiquidityPool> {
-        if self.bot.state_arc().read().has_pool(pool_id) {
+    fn get_pool(&self, py: Python<'_>, pool_id: u64) -> Option<PyLiquidityPool> {
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        if self.with_state(py, |s| s.has_pool(pool_id)) {
             Some(PyLiquidityPool::new(self.bot.state_arc(), pool_id))
         } else {
             None
@@ -1292,8 +1319,9 @@ impl PyBot {
     }
 
     /// Prototype structural pool handle (V2 slice).
-    fn py_pool(&self, pool_id: u64) -> Option<crate::bot::pool::PyPool> {
-        if self.bot.state_arc().read().has_pool(pool_id) {
+    fn py_pool(&self, py: Python<'_>, pool_id: u64) -> Option<crate::bot::pool::PyPool> {
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        if self.with_state(py, |s| s.has_pool(pool_id)) {
             Some(crate::bot::pool::PyPool::new(
                 self.bot.state_arc(),
                 pool_id,
@@ -1348,13 +1376,12 @@ impl PyBot {
                  V4 unregister is engine-side — use the engine’s unregister path.",
             ));
         }
-        let state = self.bot.state_arc();
         // Incident 2026-08-20 (GIL/BotState inversion): never hold the GIL
         // while parked on the BotState write - the dispatch fan-out reader
         // can hold the read end across provider RPCs for seconds, and a
         // parked GIL-writer freezes the main asyncio loop (the observed
         // 'GIL deadlock').
-        Ok(py.detach(move || state.write().unregister_pool(addr, None)))
+        Ok(self.with_state_mut(py, |s| s.unregister_pool(addr, None)))
     }
 
     /// Assemble a V3 pool's tick map from the stored DB snapshot (`Store → Db`
@@ -1637,16 +1664,15 @@ impl PyBot {
                 .filter(|f| !f.is_none())
                 .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
         };
-        let state = self.bot.state_arc();
-        // YLYJM2: release the GIL across the BotState write-lock acquisition +
-        // `register_v3_pool` so the live pump + asyncio loop keep making GIL
+        // YLYJM2: the write-lock acquisition + `register_v3_pool` run inside
+        // the accessor's py.detach so the live pump + asyncio loop keep making GIL
         // progress while the main thread awaits `core.write()` (the startup-
         // stall enabler — see `register_token`). `RegisterV3PoolParams` is
         // `Send` (all-`Send` fields; `fetcher` is `Option<Arc<dyn
         // TickWordFetcher>>`, `TickWordFetcher: Send + Sync`); the error is
         // mapped to a `PyErr` OUTSIDE the closure (GIL-held) since `PyErr`
         // construction needs the interpreter.
-        let result = py.detach(move || state.write().register_v3_pool(&params));
+        let result = self.with_state_mut(py, |s| s.register_v3_pool(&params));
         result.map_err(map_register_v3_err)
     }
 
@@ -1771,11 +1797,10 @@ impl PyBot {
                 .filter(|f| !f.is_none())
                 .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
         };
-        let state = self.bot.state_arc();
-        // YLYJM2: release the GIL across the BotState write-lock acquisition +
-        // `register_v4_pool` (see `register_token`). `RegisterV4PoolParams` is
+        // YLYJM2: the write-lock acquisition + `register_v4_pool` (see
+        // `register_token`) run inside the accessor's py.detach. `RegisterV4PoolParams` is
         // `Send`; the error is mapped to a `PyErr` OUTSIDE the closure.
-        let result = py.detach(move || state.write().register_v4_pool(&params));
+        let result = self.with_state_mut(py, |s| s.register_v4_pool(&params));
         result.map_err(map_register_v4_err)
     }
 
@@ -1804,8 +1829,7 @@ impl PyBot {
                 "register_v4_state_view: malformed state_view {state_view:?}: {e}"
             ))
         })?;
-        let state = self.bot.state_arc();
-        py.detach(move || state.write().register_v4_state_view(pm, sv));
+        self.with_state_mut(py, |s| s.register_v4_state_view(pm, sv));
         Ok(())
     }
 
@@ -1957,8 +1981,7 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        Ok(py.detach(move || state.write().register_curve_pool(&p)))
+        Ok(self.with_state_mut(py, |s| s.register_curve_pool(&p)))
     }
 
     /// Build + register a Curve `StableSwap` pool through the Rust `PoolBuilder`
@@ -2000,10 +2023,9 @@ impl PyBot {
                 get_runtime().block_on(builder::build_curve_pool(addr, &registry, &io, block))
             })
             .map_err(map_builder_err)?;
-        let state = self.bot.state_arc();
         // Incident 2026-08-20: see unregister_pool (no GIL while parked on
         // the BotState write).
-        Ok(py.detach(move || state.write().register_curve_pool(&params)))
+        Ok(self.with_state_mut(py, |s| s.register_curve_pool(&params)))
     }
 
     /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
@@ -2072,8 +2094,7 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        Ok(py.detach(move || state.write().register_balancer_weighted_pool(&p)))
+        Ok(self.with_state_mut(py, |s| s.register_balancer_weighted_pool(&p)))
     }
 
     /// Register a Balancer V2 stable pool (ADR-005 slice 12c state port).
@@ -2145,10 +2166,9 @@ impl PyBot {
             update_block,
             rate_provider: provider,
         };
-        let state = self.bot.state_arc();
         // Incident 2026-08-20: see unregister_pool (no GIL while parked on
         // the BotState write).
-        Ok(py.detach(move || state.write().register_balancer_stable_pool(&params)))
+        Ok(self.with_state_mut(py, |s| s.register_balancer_stable_pool(&params)))
     }
 
     /// Register an Aerodrome V2 pool by contract address (ADR-005 Aerodrome
@@ -2231,8 +2251,7 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        let state = self.bot.state_arc();
-        Ok(py.detach(move || state.write().register_aerodrome_pool(&p)))
+        Ok(self.with_state_mut(py, |s| s.register_aerodrome_pool(&p)))
     }
 
     /// Update a V3 pool's state from a Swap event.
@@ -2252,11 +2271,8 @@ impl PyBot {
         let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
 
-        let state = self.bot.state_arc();
-        py.detach(move || {
-            state
-                .write()
-                .update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
+        self.with_state_mut(py, |s| {
+            s.update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
         });
         Ok(())
     }
@@ -2264,15 +2280,16 @@ impl PyBot {
     /// Get the number of deltas in the reorg journal for a V3 pool.
     ///
     /// Returns 0 if the pool ID is not registered or is not a V3 pool.
-    fn v3_journal_len(&self, pool_id: u64) -> usize {
-        let state = self.bot.state_arc();
-        let core = state.read();
-        // Family guard: 0 for non-V3/V4 (preserves the per-family contract).
-        if core.get_v3_or_v4_pool(pool_id).is_none() {
-            0
-        } else {
-            core.pool_journal_len(pool_id).unwrap_or(0)
-        }
+    fn v3_journal_len(&self, py: Python<'_>, pool_id: u64) -> usize {
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        self.with_state(py, |s| {
+            // Family guard: 0 for non-V3/V4 (preserves the per-family contract).
+            if s.get_v3_or_v4_pool(pool_id).is_none() {
+                0
+            } else {
+                s.pool_journal_len(pool_id).unwrap_or(0)
+            }
+        })
     }
 
     /// Discard V3 reorg journal deltas earlier than the given block.
@@ -2282,11 +2299,10 @@ impl PyBot {
     /// is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
     #[pyo3(signature = (pool_id, block))]
     fn v3_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
-        let state = self.bot.state_arc();
         // Incident 2026-08-20: the whole write scope runs detached - the GIL
         // is released while parked behind a live reader.
-        py.detach(move || {
-            let mut core = state.write();
+        // GIL hygiene: the write guard is acquired inside the accessor's py.detach.
+        self.with_state_mut(py, |core| {
             // Family guard: no-op for non-V3/V4 (V3's contract).
             if core.get_v3_or_v4_pool(pool_id).is_none() {
                 return Ok(());
@@ -2312,12 +2328,10 @@ impl PyBot {
         // returns `()`; the post-restore scalar fields ARE the before-values
         // the `V3RestoreResult.scalar_priors` previously carried. Copy out
         // under the write guard, then marshal after release.
-        let state = self.bot.state_arc();
-        // Incident 2026-08-20: the whole write scope runs detached - the GIL
-        // is released while parked behind a live reader. Owned scalars come
-        // out (the parking_lot write guard is !Send and never leaves).
-        let restored = py.detach(move || {
-            let mut core = state.write();
+        // Incident 2026-08-20: the whole write scope runs inside the
+        // accessor's py.detach - the GIL is released while parked behind a
+        // live reader. Owned scalars come out (the !Send guard never leaves).
+        let restored = self.with_state_mut(py, |core| {
             if core.get_v3_or_v4_pool(pool_id).is_none() {
                 return Ok(None);
             }
@@ -2374,7 +2388,6 @@ impl PyBot {
         let addr = parse_address(address)?;
         let name = name.to_string();
         let symbol = symbol.to_string();
-        let state = self.bot.state_arc();
         // YLYJM2: release the GIL across the BotState write-lock acquisition +
         // insert so the live pump (tokio) + the asyncio loop keep making GIL
         // progress while the main thread awaits `core.write()`. Pre-fix no
@@ -2385,10 +2398,8 @@ impl PyBot {
         // objects: `BotState::register_token` is pure Rust insertion; the
         // `PyErc20Token` handle is built afterward from the returned `addr`.
         // Behavior-preserving (lock + insert unchanged).
-        py.detach(move || {
-            state
-                .write()
-                .register_token(addr, name, symbol, decimals, chain_id);
+        self.with_state_mut(py, |s| {
+            s.register_token(addr, name, symbol, decimals, chain_id);
         });
         Ok(PyErc20Token::new(self.bot.state_arc(), addr))
     }
@@ -2400,9 +2411,10 @@ impl PyBot {
     ///
     /// Returns:
     ///     A `PyErc20Token` handle, or `None` if the address is not registered.
-    fn get_token(&self, address: &str) -> PyResult<Option<PyErc20Token>> {
+    fn get_token(&self, py: Python<'_>, address: &str) -> PyResult<Option<PyErc20Token>> {
         let addr = parse_address(address)?;
-        if self.bot.state_arc().read().has_token(&addr) {
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        if self.with_state(py, |s| s.has_token(&addr)) {
             Ok(Some(PyErc20Token::new(self.bot.state_arc(), addr)))
         } else {
             Ok(None)
@@ -2449,11 +2461,8 @@ impl PyBot {
                 ))
             })
             .map_err(map_builder_err)?;
-        let state = self.bot.state_arc();
-        py.detach(move || {
-            state
-                .write()
-                .register_token(addr, name, symbol, decimals, chain_id);
+        self.with_state_mut(py, |s| {
+            s.register_token(addr, name, symbol, decimals, chain_id);
         });
         Ok(PyErc20Token::new(self.bot.state_arc(), addr))
     }
@@ -2471,6 +2480,7 @@ impl PyBot {
     #[pyo3(signature = (pool_id, zero_for_one, amount_out, recipient))]
     fn encode_swap(
         &self,
+        py: Python<'_>,
         pool_id: u64,
         zero_for_one: bool,
         amount_out: &Bound<'_, PyAny>,
@@ -2479,11 +2489,8 @@ impl PyBot {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let recip = parse_address(recipient)?;
 
-        let result = {
-            let state = self.bot.state_arc();
-            let core = state.read();
-            core.encode_swap(pool_id, zero_for_one, amount, recip)
-        };
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        let result = self.with_state(py, |s| s.encode_swap(pool_id, zero_for_one, amount, recip));
 
         Ok(result.map(|call| {
             let to_hex = format!("{:#x}", call.to);
@@ -2495,15 +2502,16 @@ impl PyBot {
     /// Get the number of deltas in the reorg journal for a V2 pool.
     ///
     /// Returns 0 if the pool ID is not registered.
-    fn v2_journal_len(&self, pool_id: u64) -> usize {
-        let state = self.bot.state_arc();
-        let core = state.read();
-        // Family guard: 0 for non-V2 (preserves the per-family contract).
-        if core.get_v2_pool_state(pool_id).is_none() {
-            0
-        } else {
-            core.pool_journal_len(pool_id).unwrap_or(0)
-        }
+    fn v2_journal_len(&self, py: Python<'_>, pool_id: u64) -> usize {
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        self.with_state(py, |s| {
+            // Family guard: 0 for non-V2 (preserves the per-family contract).
+            if s.get_v2_pool_state(pool_id).is_none() {
+                0
+            } else {
+                s.pool_journal_len(pool_id).unwrap_or(0)
+            }
+        })
     }
 
     /// Discard V2 reorg journal deltas earlier than the given block.
@@ -2515,11 +2523,10 @@ impl PyBot {
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (pool_id, block))]
     fn v2_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
-        let state = self.bot.state_arc();
         // Incident 2026-08-20: the whole write scope runs detached - the GIL
         // is released while parked behind a live reader.
-        py.detach(move || {
-            let mut core = state.write();
+        // GIL hygiene: the write guard is acquired inside the accessor's py.detach.
+        self.with_state_mut(py, |core| {
             // Family guard: no-op for non-V2 (V2's contract).
             if core.get_v2_pool_state(pool_id).is_none() {
                 return Ok(());
@@ -2552,12 +2559,10 @@ impl PyBot {
         // Read-after-restore (ADR-016): the trait returns `()`; the
         // post-restore reserves ARE the before-values the per-family tuple
         // previously carried. Copy out under the guard, marshal after release.
-        let state = self.bot.state_arc();
-        // Incident 2026-08-20: the whole write scope runs detached - the GIL
-        // is released while parked behind a live reader. Owned scalars come
-        // out (the parking_lot write guard is !Send and never leaves).
-        let restored = py.detach(move || {
-            let mut core = state.write();
+        // Incident 2026-08-20: the whole write scope runs inside the
+        // accessor's py.detach - the GIL is released while parked behind a
+        // live reader. Owned scalars come out (the !Send guard never leaves).
+        let restored = self.with_state_mut(py, |core| {
             if core.get_v2_pool_state(pool_id).is_none() {
                 return Ok(None);
             }
@@ -3119,7 +3124,7 @@ mod tests {
             eprintln!("skipping: parity fixture not reachable");
             return;
         };
-        pyo3::Python::attach(|_| {
+        pyo3::Python::attach(|py| {
             let py_bot = PyBot::new(8453);
             let path_str = fixture.to_string_lossy().to_string();
             py_bot
@@ -3132,7 +3137,7 @@ mod tests {
             // seed block computed at load time is readable via the cached
             // connection (proving the `Mutex<Connection>` isn't dropped).
             assert!(
-                py_bot.snapshot_seed_block().is_some(),
+                py_bot.snapshot_seed_block(py).is_some(),
                 "parity fixture must record a non-cold-start snapshot seed block"
             );
             // Two clones don't interfere — PyBot retains its own Arc.

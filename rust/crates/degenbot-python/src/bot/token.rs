@@ -25,6 +25,26 @@ impl PyErc20Token {
     pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, address: Address) -> Self {
         Self { core, address }
     }
+
+    /// Sanctioned `BotState` read access for pymethod code (GIL/`BotState`
+    /// inversion class): the guard is acquired INSIDE `py.detach`. Same
+    /// invariant contract as `PyBot::with_state` — see the doc comment there.
+    pub(crate) fn with_state<T>(&self, py: Python<'_>, f: impl FnOnce(&BotState) -> T + Send) -> T
+    where
+        T: Send,
+    {
+        py.detach(|| {
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let guard = self.core.read();
+            f(&guard)
+        })
+    }
+}
+
+/// Build the `token not registered` error. Must run under the GIL (`PyErr`
+/// construction touches Python); call it AFTER the detached scope returns.
+fn token_not_registered(addr: &Address) -> pyo3::PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(format!("token not registered: {addr}"))
 }
 
 #[pymethods]
@@ -37,54 +57,43 @@ impl PyErc20Token {
     }
 
     /// Token decimals (e.g. 6 for USDC, 18 for WETH).
+    ///
+    /// GIL hygiene (GIL/`BotState` inversion class): the `BotState` read guard is
+    /// acquired inside `py.detach`; owned data comes out and any `PyErr` is
+    /// built after the GIL is re-acquired.
     #[getter]
-    fn decimals(&self) -> PyResult<u8> {
-        let core = self.core.read();
-        let Some(entry) = core.token_entry(&self.address) else {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "token not registered: {}",
-                self.address
-            )));
-        };
-        Ok(entry.decimals)
+    fn decimals(&self, py: Python<'_>) -> PyResult<u8> {
+        self.with_state(py, |s| {
+            s.token_entry(&self.address).map(|entry| entry.decimals)
+        })
+        .ok_or_else(|| token_not_registered(&self.address))
     }
 
     /// Chain ID where this token is registered.
     #[getter]
-    fn chain_id(&self) -> PyResult<u64> {
-        let core = self.core.read();
-        let Some(entry) = core.token_entry(&self.address) else {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "token not registered: {}",
-                self.address
-            )));
-        };
-        Ok(entry.chain_id)
+    fn chain_id(&self, py: Python<'_>) -> PyResult<u64> {
+        self.with_state(py, |s| {
+            s.token_entry(&self.address).map(|entry| entry.chain_id)
+        })
+        .ok_or_else(|| token_not_registered(&self.address))
     }
 
-    /// Token symbol (e.g. "WETH", "USDC").
+    /// Token symbol (e.g. "USDC", "WETH").
     #[getter]
-    fn symbol(&self) -> PyResult<String> {
-        let core = self.core.read();
-        let Some(entry) = core.token_entry(&self.address) else {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "token not registered: {}",
-                self.address
-            )));
-        };
-        Ok(entry.symbol.clone())
+    fn symbol(&self, py: Python<'_>) -> PyResult<String> {
+        self.with_state(py, |s| {
+            s.token_entry(&self.address)
+                .map(|entry| entry.symbol.clone())
+        })
+        .ok_or_else(|| token_not_registered(&self.address))
     }
 
     /// Token name (e.g. "Wrapped Ether").
     #[getter]
-    fn name(&self) -> PyResult<String> {
-        let core = self.core.read();
-        let Some(entry) = core.token_entry(&self.address) else {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "token not registered: {}",
-                self.address
-            )));
-        };
-        Ok(entry.name.clone())
+    fn name(&self, py: Python<'_>) -> PyResult<String> {
+        self.with_state(py, |s| {
+            s.token_entry(&self.address).map(|entry| entry.name.clone())
+        })
+        .ok_or_else(|| token_not_registered(&self.address))
     }
 }

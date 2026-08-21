@@ -50,7 +50,7 @@ pub(crate) use degenbot_bot::solvers::arb_engine::engine_handle::EngineHandle;
 pub(crate) use degenbot_bot::solvers::arb_engine::{
     ArbitrageEngine, BlockNotification, ResultBatch,
 };
-pub(crate) use degenbot_solvers::mixed::{HopType, MixedPoolRef, PoolHop, SolvePathResult};
+pub(crate) use degenbot_solvers::mixed::{HopType, PoolHop, SolvePathResult};
 
 /// Python-facing mixed V2/V3 arbitrage engine.
 ///
@@ -100,6 +100,78 @@ pub struct PyArbitrageEngine {
 }
 
 impl PyArbitrageEngine {
+    /// Sanctioned engine access for pymethod code (GIL/`BotState` inversion
+    /// class, incidents 2026-08-20/21): the engine `Mutex` is acquired INSIDE
+    /// `py.detach`. Same invariant contract as `PyBot::with_state` — see the
+    /// doc comment there.
+    pub(crate) fn with_engine<T>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&ArbitrageEngine) -> T + Send,
+    ) -> T
+    where
+        T: Send,
+    {
+        py.detach(|| {
+            let engine = self.engine.lock();
+            // T1-scan-exempt: sanctioned accessor — lock inside py.detach by definition.
+            f(&engine)
+        })
+    }
+
+    /// Sanctioned engine-core read access: engine `Mutex` + `BotState` read
+    /// guard, both acquired INSIDE `py.detach` (engine-then-core ordering per
+    /// ADR-003). See [`Self::with_engine`].
+    pub(crate) fn with_engine_core<T>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&BotState) -> T + Send,
+    ) -> T
+    where
+        T: Send,
+    {
+        py.detach(|| {
+            let engine = self.engine.lock();
+            let core = engine.core();
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let guard = core.read();
+            f(&guard)
+        })
+    }
+
+    /// Sanctioned engine-core write access — see [`Self::with_engine_core`].
+    pub(crate) fn with_engine_core_mut<T>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&mut BotState) -> T + Send,
+    ) -> T
+    where
+        T: Send,
+    {
+        py.detach(move || {
+            let engine = self.engine.lock();
+            let core = engine.core();
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let mut guard = core.write();
+            f(&mut guard)
+        })
+    }
+
+    /// Sanctioned engine MUTATING access — see [`Self::with_engine`].
+    pub(crate) fn with_engine_mut<T>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&mut ArbitrageEngine) -> T + Send,
+    ) -> T
+    where
+        T: Send,
+    {
+        py.detach(move || {
+            let mut engine = self.engine.lock();
+            // T1-scan-exempt: sanctioned accessor — lock inside py.detach by definition.
+            f(&mut engine)
+        })
+    }
     /// The shared `BotState` arc (ADR-003) — the engine's `core`
     /// `Arc<RwLock<BotState>>`, cloned out for callers that need to read the
     /// pool-state registry (e.g. the in-process `BlockSimHandle` path
@@ -170,8 +242,9 @@ impl PyArbitrageEngine {
     /// reads `S` from the shared `BotState`). `None` = cold-start (no snapshot
     /// loaded).
     #[getter]
-    fn snapshot_seed_block(&self) -> Option<u64> {
-        self.engine.lock().core().read().snapshot_seed_block()
+    fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
+        // GIL hygiene: guards acquired inside the accessor's py.detach.
+        self.with_engine_core(py, degenbot_bot::bot_core::BotState::snapshot_seed_block)
     }
 
     /// Set the snapshot seed block `S` on the shared `BotState` for the
@@ -188,11 +261,8 @@ impl PyArbitrageEngine {
     /// already-set seed takes precedence on the production path because the
     /// non-DB path does not call this setter).
     #[setter]
-    fn set_snapshot_seed_block(&self, block: Option<u64>) {
-        self.engine
-            .lock()
-            .core()
-            .write()
-            .set_snapshot_seed_block(block);
+    fn set_snapshot_seed_block(&self, py: Python<'_>, block: Option<u64>) {
+        // GIL hygiene: write guard acquired inside the accessor's py.detach.
+        self.with_engine_core_mut(py, |s| s.set_snapshot_seed_block(block));
     }
 }

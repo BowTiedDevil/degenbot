@@ -566,7 +566,9 @@ pub fn init_logging_subscriber() {
     });
 }
 
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+// clippy --all-targets gate (UX66EM): this test module uses unwrap but no
+// expect, so expecting expect_used here is an unfulfilled-lint-expectation.
+#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

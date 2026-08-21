@@ -101,12 +101,19 @@ impl PumpState {
 
     /// Read the current engine lifecycle phase (delegates to the core
     /// `ArbitrageEngine` source of truth — ZU7RAF).
+    ///
+    /// GIL-hygiene note: `PumpState` is shared between GIL-holding pymethod
+    /// threads and the pure-Rust pump task, so the `PyArbitrageEngine`
+    /// accessors are not reachable here. These two are sanctioned direct
+    /// locks: non-blocking phase flips, never extended across provider I/O
+    /// (the YLYJM2 rule). Anything heavier must go through a detached scope.
     pub(crate) fn current_phase(&self) -> EnginePhase {
         self.engine.lock().current_phase()
     }
 
     /// Advance to `phase` (no ordering check — the caller validates).
-    /// Delegates to the core `ArbitrageEngine` (ZU7RAF).
+    /// Delegates to the core `ArbitrageEngine` (ZU7RAF). Same sanctioned
+    /// direct-lock note as [`Self::current_phase`].
     pub(crate) fn set_phase(&self, phase: EnginePhase) {
         self.engine.lock().set_phase(phase);
     }
@@ -181,7 +188,11 @@ impl PumpState {
         // `after_subscribe` lands at `SnapshotLoaded` when the core has a
         // snapshot (so `resume()` is reachable) and `Subscribed` otherwise
         // (the legacy path that loads the snapshot after subscribe).
-        let core_has_snapshot = self.bot.state_arc().read().snapshot_seed_block().is_some();
+        // GIL hygiene: read guard acquired inside py.detach (inversion class).
+        // (PumpState holds the pyo3-free `Arc<Bot>`, so there is no PyBot
+        // accessor here — detach directly.)
+        let core_has_snapshot =
+            py.detach(|| self.bot.state_arc().read().snapshot_seed_block().is_some());
         self.set_phase(EnginePhase::after_subscribe(phase, core_has_snapshot));
         Ok(state.first_block)
     }

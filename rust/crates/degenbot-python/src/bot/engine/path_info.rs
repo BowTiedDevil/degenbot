@@ -14,6 +14,7 @@
 //! the `PathInfo` in a pyclass first.
 
 use degenbot_executor::composers::PathInfo;
+use pyo3::Python;
 
 use degenbot_bot::solvers::arb_engine::path_info::PathInfoBuildError;
 
@@ -30,8 +31,10 @@ impl PyArbitrageEngine {
     #[must_use]
     pub(crate) fn path_info_for_core(
         &self,
+        py: Python<'_>,
         path_id: u64,
     ) -> Option<Result<PathInfo, PathInfoBuildError>> {
-        self.engine.lock().path_info_for(path_id)
+        // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
+        self.with_engine(py, |e| e.path_info_for(path_id))
     }
 }

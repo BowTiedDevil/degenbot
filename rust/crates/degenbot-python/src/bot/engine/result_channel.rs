@@ -6,8 +6,8 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Address, Arc, BlockNotification, HopType, MixedPoolRef, PyArbitrageEngine, PyDict,
-    PyList, PyStopAsyncIteration, ResultBatch, SolvePathResult, U256,
+    mpsc, Address, Arc, BlockNotification, HopType, PyArbitrageEngine, PyDict, PyList,
+    PyStopAsyncIteration, ResultBatch, SolvePathResult, U256,
 };
 use crate::prelude::*;
 
@@ -30,135 +30,136 @@ impl PyArbitrageEngine {
     #[pyo3(signature = (path_id))]
     #[expect(clippy::too_many_lines)]
     fn inspect_path(&self, path_id: u64, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
-        // Phase 1: Collect pool refs from the path
-        let pool_refs: Vec<MixedPoolRef> = {
-            let engine = self.engine.lock();
-            let Some(path) = engine.path_pools().get(&path_id) else {
-                return Ok(None);
-            };
-            path.pools.clone()
+        // Phase 1: Collect pool refs from the path. GIL hygiene: the engine
+        // Mutex is acquired inside the accessor's py.detach.
+        let Some(pool_refs) = self.with_engine(py, |e| {
+            e.path_pools().get(&path_id).map(|p| p.pools.clone())
+        }) else {
+            return Ok(None);
         };
 
-        // Phase 2: Query sub-engines for pool details
-        let mut hops: Vec<HopInfo> = Vec::new();
-        let engine = self.engine.lock();
+        // Phase 2: Query sub-engines for pool details. GIL hygiene: the
+        // engine Mutex + core read guard are acquired inside the accessor's
+        // py.detach; the loop is pure Rust (owned HopInfo data out, no Python
+        // API under the locks) and the dict is built under the GIL below.
         // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
         // reads the per-family engines, which are disjoint fields).
-        let core = engine.core().read();
+        let hops: Vec<HopInfo> = self.with_engine_core(py, |core| {
+            let mut hops = Vec::new();
 
-        for pool_ref in &pool_refs {
-            match pool_ref.hop_type {
-                HopType::V2 => {
-                    let identity = core.get_v2_identity(pool_ref.pool_key);
-                    let addr = identity.map(|i| format!("{}", i.address));
-                    // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
-                    let gamma_numer = identity.map(|i| {
-                        if pool_ref.zero_for_one {
-                            i.fee_token0.0
-                        } else {
-                            i.fee_token1.0
-                        }
-                    });
-                    hops.push(HopInfo {
-                        hop_type: "V2".to_string(),
-                        address: addr,
-                        pool_id: None,
-                        zero_for_one: pool_ref.zero_for_one,
-                        fee: gamma_numer,
-                        tick_spacing: None,
-                    });
-                }
-                HopType::V3 => {
-                    let pool_id = pool_ref.pool_key;
-                    let identity = core.get_v3_identity(pool_id);
-                    let (addr, fee, ts) = identity.map_or((None, None, None), |i| {
-                        (
-                            Some(format!("{}", i.address)),
-                            Some(u64::from(i.fee)),
-                            Some(i.tick_spacing),
-                        )
-                    });
-                    hops.push(HopInfo {
-                        hop_type: "V3".to_string(),
-                        address: addr,
-                        pool_id: None,
-                        zero_for_one: pool_ref.zero_for_one,
-                        fee,
-                        tick_spacing: ts,
-                    });
-                }
-                HopType::V4 => {
-                    let identity = core.get_v4_identity(pool_ref.pool_key);
-                    let (pm, pid, fee, ts) = identity.map_or((None, None, None, None), |i| {
-                        (
-                            Some(format!("{}", i.pool_manager)),
-                            Some(format!("0x{}", alloy::hex::encode(i.pool_id))),
-                            Some(u64::from(i.pool_key.fee)),
-                            Some(i.pool_key.tick_spacing),
-                        )
-                    });
-                    hops.push(HopInfo {
-                        hop_type: "V4".to_string(),
-                        address: pm,
-                        pool_id: pid,
-                        zero_for_one: pool_ref.zero_for_one,
-                        fee,
-                        tick_spacing: ts,
-                    });
-                }
-                // Solidly hop-info lands with the build/register plumbing
-                // (task WCT5KR). Until then, a Solidly hop emits a minimal
-                // HopInfo so the result-channel match is exhaustive; the
-                // resolve short-circuit means no Solidly hop reaches a solve.
-                HopType::SolidlyStable => {
-                    hops.push(HopInfo {
-                        hop_type: "Solidly".to_string(),
-                        address: None,
-                        pool_id: None,
-                        zero_for_one: pool_ref.zero_for_one,
-                        fee: None,
-                        tick_spacing: None,
-                    });
-                }
-                HopType::BalancerWeighted => {
-                    let id = core.get_balancer_weighted_identity(pool_ref.pool_key);
-                    hops.push(HopInfo {
-                        hop_type: "BalW".to_string(),
-                        address: id.map(|i| format!("{}", i.address)),
-                        pool_id: None,
-                        zero_for_one: pool_ref.zero_for_one,
-                        fee: None,
-                        tick_spacing: None,
-                    });
-                }
-                HopType::BalancerStable => {
-                    let id = core.get_balancer_stable_identity(pool_ref.pool_key);
-                    hops.push(HopInfo {
-                        hop_type: "BalS".to_string(),
-                        address: id.map(|i| format!("{}", i.address)),
-                        pool_id: None,
-                        zero_for_one: pool_ref.zero_for_one,
-                        fee: None,
-                        tick_spacing: None,
-                    });
-                }
-                HopType::CurveStableswap => {
-                    let id = core.get_curve_identity(pool_ref.pool_key);
-                    hops.push(HopInfo {
-                        hop_type: "Crv".to_string(),
-                        address: id.map(|i| format!("{}", i.address)),
-                        pool_id: None,
-                        zero_for_one: pool_ref.zero_for_one,
-                        fee: None,
-                        tick_spacing: None,
-                    });
+            for pool_ref in &pool_refs {
+                match pool_ref.hop_type {
+                    HopType::V2 => {
+                        let identity = core.get_v2_identity(pool_ref.pool_key);
+                        let addr = identity.map(|i| format!("{}", i.address));
+                        // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
+                        let gamma_numer = identity.map(|i| {
+                            if pool_ref.zero_for_one {
+                                i.fee_token0.0
+                            } else {
+                                i.fee_token1.0
+                            }
+                        });
+                        hops.push(HopInfo {
+                            hop_type: "V2".to_string(),
+                            address: addr,
+                            pool_id: None,
+                            zero_for_one: pool_ref.zero_for_one,
+                            fee: gamma_numer,
+                            tick_spacing: None,
+                        });
+                    }
+                    HopType::V3 => {
+                        let pool_id = pool_ref.pool_key;
+                        let identity = core.get_v3_identity(pool_id);
+                        let (addr, fee, ts) = identity.map_or((None, None, None), |i| {
+                            (
+                                Some(format!("{}", i.address)),
+                                Some(u64::from(i.fee)),
+                                Some(i.tick_spacing),
+                            )
+                        });
+                        hops.push(HopInfo {
+                            hop_type: "V3".to_string(),
+                            address: addr,
+                            pool_id: None,
+                            zero_for_one: pool_ref.zero_for_one,
+                            fee,
+                            tick_spacing: ts,
+                        });
+                    }
+                    HopType::V4 => {
+                        let identity = core.get_v4_identity(pool_ref.pool_key);
+                        let (pm, pid, fee, ts) = identity.map_or((None, None, None, None), |i| {
+                            (
+                                Some(format!("{}", i.pool_manager)),
+                                Some(format!("0x{}", alloy::hex::encode(i.pool_id))),
+                                Some(u64::from(i.pool_key.fee)),
+                                Some(i.pool_key.tick_spacing),
+                            )
+                        });
+                        hops.push(HopInfo {
+                            hop_type: "V4".to_string(),
+                            address: pm,
+                            pool_id: pid,
+                            zero_for_one: pool_ref.zero_for_one,
+                            fee,
+                            tick_spacing: ts,
+                        });
+                    }
+                    // Solidly hop-info lands with the build/register plumbing
+                    // (task WCT5KR). Until then, a Solidly hop emits a minimal
+                    // HopInfo so the result-channel match is exhaustive; the
+                    // resolve short-circuit means no Solidly hop reaches a solve.
+                    HopType::SolidlyStable => {
+                        hops.push(HopInfo {
+                            hop_type: "Solidly".to_string(),
+                            address: None,
+                            pool_id: None,
+                            zero_for_one: pool_ref.zero_for_one,
+                            fee: None,
+                            tick_spacing: None,
+                        });
+                    }
+                    HopType::BalancerWeighted => {
+                        let id = core.get_balancer_weighted_identity(pool_ref.pool_key);
+                        hops.push(HopInfo {
+                            hop_type: "BalW".to_string(),
+                            address: id.map(|i| format!("{}", i.address)),
+                            pool_id: None,
+                            zero_for_one: pool_ref.zero_for_one,
+                            fee: None,
+                            tick_spacing: None,
+                        });
+                    }
+                    HopType::BalancerStable => {
+                        let id = core.get_balancer_stable_identity(pool_ref.pool_key);
+                        hops.push(HopInfo {
+                            hop_type: "BalS".to_string(),
+                            address: id.map(|i| format!("{}", i.address)),
+                            pool_id: None,
+                            zero_for_one: pool_ref.zero_for_one,
+                            fee: None,
+                            tick_spacing: None,
+                        });
+                    }
+                    HopType::CurveStableswap => {
+                        let id = core.get_curve_identity(pool_ref.pool_key);
+                        hops.push(HopInfo {
+                            hop_type: "Crv".to_string(),
+                            address: id.map(|i| format!("{}", i.address)),
+                            pool_id: None,
+                            zero_for_one: pool_ref.zero_for_one,
+                            fee: None,
+                            tick_spacing: None,
+                        });
+                    }
                 }
             }
-        }
 
-        drop(core);
-        drop(engine);
+            hops
+        });
 
         // Phase 3: Build the Python dict
         let dict = PyDict::new(py);
@@ -175,13 +176,12 @@ impl PyArbitrageEngine {
 
     /// Returns (`results`, `block_number`) where results is a flat list:
     /// [`path_id_0`, `optimal_input_0`, `profit_0`, `path_id_1`, ...]
-    #[expect(clippy::significant_drop_tightening)]
     fn latest_results(&self, py: Python<'_>) -> PyResult<(Py<PyList>, u64)> {
-        let (results, block_num) = {
-            let engine = self.engine.lock();
-            let (r, b) = engine.latest_results();
-            (r.clone(), b)
-        };
+        // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
+        let (results, block_num) = self.with_engine(py, |e| {
+            let (results, block) = e.latest_results();
+            (results.clone(), block)
+        });
 
         let py_list = PyList::empty(py);
         for (path_id, solve_result) in results {
@@ -222,8 +222,8 @@ impl PyArbitrageEngine {
     ///
     /// Returns `true` if the path existed and was removed.
     #[pyo3(signature = (path_id))]
-    fn deregister_path(&self, path_id: u64) -> bool {
-        self.engine.lock().deregister_path(path_id)
+    fn deregister_path(&self, py: Python<'_>, path_id: u64) -> bool {
+        self.with_engine_mut(py, |e| e.deregister_path(path_id))
     }
 
     /// Set the profit thresholds for the result batch channel.
@@ -244,6 +244,7 @@ impl PyArbitrageEngine {
     #[pyo3(signature = (min_profit, max_profit=None))]
     fn set_profit_thresholds(
         &self,
+        py: Python<'_>,
         min_profit: &Bound<'_, pyo3::PyAny>,
         max_profit: Option<&Bound<'_, pyo3::PyAny>>,
     ) -> PyResult<()> {
@@ -252,7 +253,7 @@ impl PyArbitrageEngine {
             Some(obj) => crate::conversion::alloy::extract_python_u256(obj)?,
             None => U256::MAX,
         };
-        self.engine.lock().set_profit_thresholds(min, max);
+        self.with_engine_mut(py, |e| e.set_profit_thresholds(min, max));
         Ok(())
     }
 
@@ -263,23 +264,25 @@ impl PyArbitrageEngine {
     /// (orientation is selected at solve time via `zero_for_one`, not by a
     /// separate reverse key). The former forward/reverse dual keys are gone.
     #[pyo3(signature = (address_hex))]
-    fn diag_v2_pool(&self, address_hex: &str) -> PyResult<Option<(u64, String, String)>> {
+    fn diag_v2_pool(
+        &self,
+        py: Python<'_>,
+        address_hex: &str,
+    ) -> PyResult<Option<(u64, String, String)>> {
         let addr: Address = address_hex.parse().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
         })?;
-        let engine = self.engine.lock();
-        let core = engine.core().read();
-        let Some(pool_id) = core.pool_id_by_address(&addr) else {
-            return Ok(None);
-        };
-        let Some(state) = core.get_v2_pool_state(pool_id) else {
-            return Ok(None);
-        };
-        Ok(Some((
-            pool_id,
-            state.reserve0.to_string(),
-            state.reserve1.to_string(),
-        )))
+        // GIL hygiene: guards acquired inside the accessor's py.detach;
+        // owned data comes out, the PyResult is assembled under the GIL.
+        Ok(self.with_engine_core(py, |core| {
+            let pool_id = core.pool_id_by_address(&addr)?;
+            let state = core.get_v2_pool_state(pool_id)?;
+            Some((
+                pool_id,
+                state.reserve0.to_string(),
+                state.reserve1.to_string(),
+            ))
+        }))
     }
 
     /// Return self as an async iterator over result batches.

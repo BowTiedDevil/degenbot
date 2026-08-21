@@ -96,7 +96,7 @@ impl PyDispatchCandidate {
     ) -> PyResult<Self> {
         let rust_path: PathInfo = engine
             .borrow(py)
-            .path_info_for_core(path_id)
+            .path_info_for_core(py, path_id)
             .ok_or_else(|| {
                 PyValueError::new_err(format!(
                     "path_id {path_id} is not registered in this engine"

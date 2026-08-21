@@ -68,20 +68,21 @@ impl PyArbitrageEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
         })?;
 
-        let v3_pools = {
-            let engine = self.engine.lock();
-            let core = engine.core().read();
-            let Some(key) = core.pool_id_by_address(&pool_addr) else {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "V3 pool {address} not registered in engine"
-                )));
-            };
+        // GIL hygiene: engine Mutex + read guard acquired inside py.detach;
+        // owned pool data comes out, the PyErr (if any) is built under the GIL.
+        let v3_pools = self.with_engine_core(py, |core| {
+            let key = core.pool_id_by_address(&pool_addr)?;
             let mut map = std::collections::HashMap::new();
             if let (Some(identity), Some(pool)) = (core.get_v3_identity(key), core.get_v3_pool(key))
             {
                 map.insert(key, (*identity, pool.clone()));
             }
-            map
+            Some(map)
+        });
+        let Some(v3_pools) = v3_pools else {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "V3 pool {address} not registered in engine"
+            )));
         };
 
         let tick_lens = Address::ZERO;
@@ -135,38 +136,36 @@ impl PyArbitrageEngine {
 
         let pool_id = hex_string_to_pool_id(&pool_id_hex)?;
 
-        let engine = self.engine.lock();
-        let core = engine.core().read();
+        // GIL hygiene: engine Mutex + read guard acquired inside py.detach;
+        // owned pool data comes out, the PyErr (if any) is built under the GIL.
         // ADR-003: single V4 entry per `(pool_manager, pool_id)` — no dual
         // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
-        let v4_key = core.v4_pool_id_by_key(Address::ZERO, &pool_id).or_else(|| {
-            // V4 pools are registered with the actual pool_manager address,
-            // not ZERO. Fallback: scan all V4 pools for matching pool_id.
-            for (key, pool) in core.v4_pools_snapshot() {
-                if pool.0.pool_id == pool_id {
-                    return Some(key);
+        let v4_pools = self.with_engine_core(py, |core| {
+            let v4_key = core.v4_pool_id_by_key(Address::ZERO, &pool_id).or_else(|| {
+                // V4 pools are registered with the actual pool_manager address,
+                // not ZERO. Fallback: scan all V4 pools for matching pool_id.
+                for (key, pool) in core.v4_pools_snapshot() {
+                    if pool.0.pool_id == pool_id {
+                        return Some(key);
+                    }
                 }
-            }
-            None
-        });
+                None
+            });
 
-        let v4_pools = if let Some(fwd_key) = v4_key {
+            let fwd_key = v4_key?;
             let mut map = std::collections::HashMap::new();
             if let (Some(identity), Some(pool)) =
                 (core.get_v4_identity(fwd_key), core.get_v4_pool(fwd_key))
             {
                 map.insert(fwd_key, (identity.clone(), pool.clone()));
             }
-            map
-        } else {
-            drop(core);
-            drop(engine);
+            Some(map)
+        });
+        let Some(v4_pools) = v4_pools else {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "V4 pool {pool_id_hex} not registered in engine"
             )));
         };
-        drop(core);
-        drop(engine);
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)

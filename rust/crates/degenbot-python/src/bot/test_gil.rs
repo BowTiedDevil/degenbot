@@ -41,6 +41,8 @@ pub fn state_write_park_cycle(
 ) -> PyResult<std::thread::JoinHandle<()>> {
     let arc = bot.bot.state_arc();
     let holder = thread::spawn(move || {
+        // T1-scan-exempt: pure-Rust test seam — this thread holds no GIL by
+        // design; the cycle repro constructs the inversion deliberately.
         let guard = arc.read();
         thread::sleep(Duration::from_millis(read_hold_ms));
         // The reader's next GIL touch (a Python-backed data source). Under
@@ -74,6 +76,8 @@ pub fn update_v3_park_cycle(
 ) -> PyResult<std::thread::JoinHandle<()>> {
     let arc = bot.bot.state_arc();
     let holder = thread::spawn(move || {
+        // T1-scan-exempt: pure-Rust test seam — this thread holds no GIL by
+        // design; the cycle repro constructs the inversion deliberately.
         let guard = arc.read();
         thread::sleep(Duration::from_millis(read_hold_ms));
         Python::attach(|_p| ());

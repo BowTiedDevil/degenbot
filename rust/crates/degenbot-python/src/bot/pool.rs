@@ -447,6 +447,33 @@ impl PyLiquidityPool {
         Self { core, pool_id }
     }
 
+    /// Sanctioned `BotState` read access for pymethod code (GIL/`BotState`
+    /// inversion class, incidents 2026-08-20/21): the guard is acquired
+    /// INSIDE `py.detach`. Same invariant contract as `PyBot::with_state` —
+    /// see the doc comment there.
+    fn with_state<T>(&self, py: Python<'_>, f: impl FnOnce(&BotState) -> T + Send) -> T
+    where
+        T: Send,
+    {
+        py.detach(|| {
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let guard = self.core.read();
+            f(&guard)
+        })
+    }
+
+    /// Sanctioned `BotState` write access — see [`Self::with_state`].
+    fn with_state_mut<T>(&self, py: Python<'_>, f: impl FnOnce(&mut BotState) -> T + Send) -> T
+    where
+        T: Send,
+    {
+        py.detach(move || {
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let mut guard = self.core.write();
+            f(&mut guard)
+        })
+    }
+
     /// Clone-out the stored `CurveDataProvider` (if any) for this handle's
     /// Curve state, releasing the read guard before a (potentially
     /// re-entrant) provider call.
@@ -454,10 +481,12 @@ impl PyLiquidityPool {
         &self,
         py: Python<'_>,
     ) -> Option<std::sync::Arc<dyn degenbot_pools::curve_data_provider::CurveDataProvider>> {
-        py.detach(|| -> Option<std::sync::Arc<dyn degenbot_pools::curve_data_provider::CurveDataProvider>> {
-            let core = self.core.read();
-            core.get_curve_pool(self.pool_id)?.data_provider.clone()
-        })
+        self.with_state(
+            py,
+            |core| -> Option<
+                std::sync::Arc<dyn degenbot_pools::curve_data_provider::CurveDataProvider>,
+            > { core.get_curve_pool(self.pool_id)?.data_provider.clone() },
+        )
     }
 
     /// Read a `Vec<U256>` from the stored Curve data provider via `f`,
@@ -539,8 +568,7 @@ impl PyLiquidityPool {
             Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
             _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
         };
-        let outcome = py.detach(|| {
-            let core = self.core.read();
+        let outcome = self.with_state(py, |core| {
             core.simulate_swap_with_override(
                 self.pool_id,
                 zero_for_one,
@@ -592,8 +620,7 @@ impl PyLiquidityPool {
         amount_in: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let result = py.detach(|| {
-            let core = self.core.read();
+        let result = self.with_state(py, |core| {
             core.calculate_tokens_out_miss_aware(self.pool_id, zero_for_one, amount)
         });
         // cdbc03bb: V2/V3/V4 swap math reverts on `uint256` overflow (mirrors
@@ -627,8 +654,7 @@ impl PyLiquidityPool {
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        let result = py.detach(|| {
-            let core = self.core.read();
+        let result = self.with_state(py, |core| {
             core.calculate_tokens_in(self.pool_id, zero_for_one, amount)
         });
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
@@ -662,8 +688,7 @@ impl PyLiquidityPool {
         block: u64,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let result = py.detach(|| {
-            let mut core = self.core.write();
+        let result = self.with_state_mut(py, |core| {
             core.calculate_tokens_out_with_fetch(self.pool_id, zero_for_one, amount, block)
         });
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
@@ -691,8 +716,7 @@ impl PyLiquidityPool {
             Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
             _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
         };
-        let outcome = py.detach(|| {
-            let mut core = self.core.write();
+        let outcome = self.with_state_mut(py, |core| {
             core.simulate_exact_input_swap_with_fetch(
                 self.pool_id,
                 zero_for_one,
@@ -737,8 +761,7 @@ impl PyLiquidityPool {
             Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
             _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
         };
-        let outcome = py.detach(|| {
-            let mut core = self.core.write();
+        let outcome = self.with_state_mut(py, |core| {
             core.simulate_exact_output_swap_with_fetch(
                 self.pool_id,
                 zero_for_one,
@@ -857,8 +880,7 @@ impl PyLiquidityPool {
             }
         };
 
-        let result = py.detach(|| {
-            let core = self.core.read();
+        let result = self.with_state(py, |core| {
             core.encode_swap(self.pool_id, zero_for_one, amount, recip)
         });
 
@@ -877,8 +899,7 @@ impl PyLiquidityPool {
     /// Current reserve of token0.
     #[getter]
     fn reserve0(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let r = py.detach(|| {
-            let core = self.core.read();
+        let r = self.with_state(py, |core| {
             core.get_v2_pool_state(self.pool_id)
                 .map(|s| s.reserve0.to::<U256>())
                 .unwrap_or_default()
@@ -889,8 +910,7 @@ impl PyLiquidityPool {
     /// Current reserve of token1.
     #[getter]
     fn reserve1(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let r = py.detach(|| {
-            let core = self.core.read();
+        let r = self.with_state(py, |core| {
             core.get_v2_pool_state(self.pool_id)
                 .map(|s| s.reserve1.to::<U256>())
                 .unwrap_or_default()
@@ -902,8 +922,7 @@ impl PyLiquidityPool {
     /// so the same Python companion property works for all families.
     #[getter]
     fn update_block(&self, py: Python<'_>) -> u64 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             if let Some(s) = core.get_v2_pool_state(self.pool_id) {
                 return s.update_block;
             }
@@ -941,8 +960,7 @@ impl PyLiquidityPool {
     /// them apart.
     #[getter]
     fn tick_data_block(&self, py: Python<'_>) -> u64 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             if let Some(s) = core.get_v3_or_v4_pool(self.pool_id) {
                 return s.tick_data_block();
             }
@@ -960,7 +978,7 @@ impl PyLiquidityPool {
     /// V2 pool.
     #[pyo3(signature = ())]
     fn snapshot(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        let snap = py.detach(|| self.core.read().v2_snapshot(self.pool_id));
+        let snap = self.with_state(py, |s| s.v2_snapshot(self.pool_id));
         match snap {
             None => Ok(None),
             Some((r0, r1, blk)) => {
@@ -988,8 +1006,7 @@ impl PyLiquidityPool {
     /// V2/V3 pool.
     #[getter]
     fn address(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let addr = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.address),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.address),
@@ -1006,8 +1023,7 @@ impl PyLiquidityPool {
     /// a V2/V3/V4 pool.
     #[getter]
     fn token0_address(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let addr = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
@@ -1026,8 +1042,7 @@ impl PyLiquidityPool {
     /// a V2/V3/V4 pool.
     #[getter]
     fn token1_address(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let addr = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
@@ -1046,8 +1061,7 @@ impl PyLiquidityPool {
     /// V2/V3 pool.
     #[getter]
     fn factory(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let addr = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.factory),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.factory),
@@ -1065,8 +1079,7 @@ impl PyLiquidityPool {
     /// empty string.
     #[getter]
     fn deployer(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let addr = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.deployer),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.deployer),
@@ -1083,8 +1096,7 @@ impl PyLiquidityPool {
     /// pool families return an empty string.
     #[getter]
     fn init_hash(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let h = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.init_hash),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.init_hash),
@@ -1099,8 +1111,7 @@ impl PyLiquidityPool {
     /// not a V2 pool.
     #[getter]
     fn fee_token0(&self, py: Python<'_>) -> (u64, u64) {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v2_identity(self.pool_id)
                 .map(|s| s.fee_token0)
                 .unwrap_or_default()
@@ -1111,8 +1122,7 @@ impl PyLiquidityPool {
     /// not a V2 pool.
     #[getter]
     fn fee_token1(&self, py: Python<'_>) -> (u64, u64) {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v2_identity(self.pool_id)
                 .map(|s| s.fee_token1)
                 .unwrap_or_default()
@@ -1123,19 +1133,16 @@ impl PyLiquidityPool {
     /// `"uniswap-v2"`, `"camelot-v2-stable"`). Empty string if not a V2 pool.
     #[getter]
     fn variant(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
-            match core.pool_family(self.pool_id) {
-                "v2" => core
-                    .get_v2_identity(self.pool_id)
-                    .map(|d| d.variant.as_str().to_string())
-                    .unwrap_or_default(),
-                "aerodrome-v2" => core
-                    .get_aerodrome_identity(self.pool_id)
-                    .map(|d| d.variant.as_str().to_string())
-                    .unwrap_or_default(),
-                _ => String::new(),
-            }
+        self.with_state(py, |core| match core.pool_family(self.pool_id) {
+            "v2" => core
+                .get_v2_identity(self.pool_id)
+                .map(|d| d.variant.as_str().to_string())
+                .unwrap_or_default(),
+            "aerodrome-v2" => core
+                .get_aerodrome_identity(self.pool_id)
+                .map(|d| d.variant.as_str().to_string())
+                .unwrap_or_default(),
+            _ => String::new(),
         })
     }
 
@@ -1143,8 +1150,7 @@ impl PyLiquidityPool {
     /// and for non-V2 `pool_ids`.
     #[getter]
     fn stable_swap(&self, py: Python<'_>) -> bool {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v2_identity(self.pool_id)
                 .is_some_and(|d| d.stable_swap)
         })
@@ -1160,17 +1166,13 @@ impl PyLiquidityPool {
     /// `variant`, which is V2-only and returns `""` for non-V2).
     #[getter]
     fn pool_family(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
-            core.pool_family(self.pool_id).to_string()
-        })
+        self.with_state(py, |core| core.pool_family(self.pool_id).to_string())
     }
 
     /// Camelot integer fee scaling. `None` for non-Camelot V2 / non-V2.
     #[getter]
     fn fee_denominator(&self, py: Python<'_>) -> Option<u64> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v2_identity(self.pool_id)
                 .and_then(|d| d.fee_denominator)
         })
@@ -1185,8 +1187,7 @@ impl PyLiquidityPool {
     /// registration).
     #[getter]
     fn dex(&self, py: Python<'_>) -> Option<crate::bot::dex_identity::PyDexIdentity> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let id = core.get_v2_identity(self.pool_id)?;
             let mut ident = degenbot_uniswap::dex_identity::preset_for_variant(id.variant);
             ident.factory = id.factory;
@@ -1210,8 +1211,7 @@ impl PyLiquidityPool {
     /// `PyErc20Token` handle for token0, or `None` if not registered in the
     /// shared `BotState`.
     fn get_token0(&self, py: Python<'_>) -> Option<PyErc20Token> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let token_addr = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
@@ -1232,8 +1232,7 @@ impl PyLiquidityPool {
     /// `PyErc20Token` handle for token1, or `None` if not registered in the
     /// shared `BotState`.
     fn get_token1(&self, py: Python<'_>) -> Option<PyErc20Token> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let token_addr = match core.pool_family(self.pool_id) {
                 "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
                 "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
@@ -1252,8 +1251,7 @@ impl PyLiquidityPool {
     }
 
     fn get_balancer_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let identity = core.get_balancer_weighted_identity(self.pool_id)?;
             let mut out = Vec::with_capacity(identity.tokens.len());
             for token_addr in &identity.tokens {
@@ -1274,8 +1272,7 @@ impl PyLiquidityPool {
     /// Current `sqrt_price_x96` (Q64.96) for a V3/V4 pool. 0 if not V3/V4.
     #[getter]
     fn sqrt_price_x96(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let spx = py.detach(|| {
-            let core = self.core.read();
+        let spx = self.with_state(py, |core| {
             core.get_v3_or_v4_pool(self.pool_id)
                 .map(degenbot_bot::bot_core::ConcentratedLiquidityPool::sqrt_price_x96)
                 .unwrap_or_default()
@@ -1286,10 +1283,8 @@ impl PyLiquidityPool {
     /// Current active liquidity for a V3/V4 pool. 0 if not V3/V4.
     #[getter]
     fn liquidity(&self, py: Python<'_>) -> u128 {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_v3_or_v4_pool(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_v3_or_v4_pool(self.pool_id)
                 .map(degenbot_bot::bot_core::ConcentratedLiquidityPool::liquidity)
                 .unwrap_or_default()
         })
@@ -1298,10 +1293,8 @@ impl PyLiquidityPool {
     /// Current tick for a V3/V4 pool. 0 if not V3/V4.
     #[getter]
     fn tick(&self, py: Python<'_>) -> i32 {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_v3_or_v4_pool(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_v3_or_v4_pool(self.pool_id)
                 .map(degenbot_bot::bot_core::ConcentratedLiquidityPool::tick)
                 .unwrap_or_default()
         })
@@ -1310,8 +1303,7 @@ impl PyLiquidityPool {
     /// Pool fee (immutable) for a V3/V4 pool. 0 if not V3/V4.
     #[getter]
     fn fee(&self, py: Python<'_>) -> u32 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v3_identity(self.pool_id)
                 .map(|i| i.fee)
                 .or_else(|| core.get_v4_identity(self.pool_id).map(|i| i.pool_key.fee))
@@ -1322,8 +1314,7 @@ impl PyLiquidityPool {
     /// Tick spacing (immutable) for a V3/V4 pool. 0 if not V3/V4.
     #[getter]
     fn tick_spacing(&self, py: Python<'_>) -> i32 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v3_identity(self.pool_id)
                 .map(|i| i.tick_spacing)
                 .or_else(|| {
@@ -1341,8 +1332,7 @@ impl PyLiquidityPool {
     /// not a V4 pool.
     #[getter]
     fn pool_manager_address(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v4_identity(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.pool_manager))
                 .unwrap_or_default()
@@ -1353,12 +1343,9 @@ impl PyLiquidityPool {
     /// a V4 pool.
     #[getter]
     fn pool_id_hex(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
-            match core.get_v4_identity(self.pool_id) {
-                Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
-                None => String::new(),
-            }
+        self.with_state(py, |core| match core.get_v4_identity(self.pool_id) {
+            Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
+            None => String::new(),
         })
     }
 
@@ -1366,8 +1353,7 @@ impl PyLiquidityPool {
     /// V4 pool.
     #[getter]
     fn hook_address(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_v4_identity(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.pool_key.hooks))
                 .unwrap_or_default()
@@ -1380,8 +1366,7 @@ impl PyLiquidityPool {
     /// or non-Aerodrome pools.
     #[getter]
     fn aerodrome_stable(&self, py: Python<'_>) -> bool {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_aerodrome_identity(self.pool_id)
                 .is_some_and(|d| d.stable)
         })
@@ -1391,8 +1376,7 @@ impl PyLiquidityPool {
     /// not an Aerodrome pool.
     #[getter]
     fn aerodrome_fee(&self, py: Python<'_>) -> (u64, u64) {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_aerodrome_identity(self.pool_id)
                 .map(|d| d.fee)
                 .unwrap_or_default()
@@ -1402,8 +1386,7 @@ impl PyLiquidityPool {
     /// Aerodrome V2 token0 ERC-20 decimal count. `0` for non-Aerodrome pools.
     #[getter]
     fn aerodrome_token0_decimals(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_aerodrome_identity(self.pool_id)
                 .map(|d| d.token0_decimals)
                 .unwrap_or_default()
@@ -1413,8 +1396,7 @@ impl PyLiquidityPool {
     /// Aerodrome V2 token1 ERC-20 decimal count. `0` for non-Aerodrome pools.
     #[getter]
     fn aerodrome_token1_decimals(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_aerodrome_identity(self.pool_id)
                 .map(|d| d.token1_decimals)
                 .unwrap_or_default()
@@ -1426,8 +1408,7 @@ impl PyLiquidityPool {
     /// pool.
     #[getter]
     fn aerodrome_reserve0(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let v = py.detach(|| {
-            let core = self.core.read();
+        let v = self.with_state(py, |core| {
             core.get_aerodrome_pool(self.pool_id)
                 .map(|s| s.reserve0.to::<U256>())
                 .unwrap_or_default()
@@ -1438,8 +1419,7 @@ impl PyLiquidityPool {
     /// Aerodrome V2 reserve of token1. 0 if not an Aerodrome pool.
     #[getter]
     fn aerodrome_reserve1(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let v = py.detach(|| {
-            let core = self.core.read();
+        let v = self.with_state(py, |core| {
             core.get_aerodrome_pool(self.pool_id)
                 .map(|s| s.reserve1.to::<U256>())
                 .unwrap_or_default()
@@ -1454,8 +1434,8 @@ impl PyLiquidityPool {
     /// WETH = 5e21), so the prior `to::<u64>()` conversion panicked on
     /// overflow.
     fn snapshot_aerodrome(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        let snap = py.detach(|| {
-            self.core.read().get_aerodrome_pool(self.pool_id).map(|s| {
+        let snap = self.with_state(py, |s| {
+            s.get_aerodrome_pool(self.pool_id).map(|s| {
                 (
                     s.reserve0.to::<U256>(),
                     s.reserve1.to::<U256>(),
@@ -1500,10 +1480,8 @@ impl PyLiquidityPool {
             "reserve1",
         )
         .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
-        let _ = py.detach(|| {
-            self.core
-                .write()
-                .apply_sync_by_pool_id(self.pool_id, r0, r1, block_number)
+        let _ = self.with_state_mut(py, |s| {
+            s.apply_sync_by_pool_id(self.pool_id, r0, r1, block_number)
         });
         Ok(())
     }
@@ -1514,8 +1492,7 @@ impl PyLiquidityPool {
     /// Empty string if not a Balancer weighted pool.
     #[getter]
     fn balancer_address(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_balancer_weighted_identity(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.address))
                 .unwrap_or_default()
@@ -1526,8 +1503,7 @@ impl PyLiquidityPool {
     /// Empty string if not a Balancer weighted pool.
     #[getter]
     fn balancer_vault(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_balancer_weighted_identity(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.vault))
                 .unwrap_or_default()
@@ -1538,8 +1514,7 @@ impl PyLiquidityPool {
     /// not a Balancer weighted pool.
     #[getter]
     fn balancer_pool_id_hex(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             match core.get_balancer_weighted_identity(self.pool_id) {
                 Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
                 None => String::new(),
@@ -1551,8 +1526,7 @@ impl PyLiquidityPool {
     /// if not a Balancer weighted pool.
     #[getter]
     fn balancer_token_addresses(&self, py: Python<'_>) -> Vec<String> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             match core.get_balancer_weighted_identity(self.pool_id) {
                 Some(i) => i
                     .tokens
@@ -1568,10 +1542,8 @@ impl PyLiquidityPool {
     /// Empty list if not a Balancer weighted pool.
     #[getter]
     fn balancer_weights(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let weights: Vec<alloy::primitives::U256> = py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_weighted_identity(self.pool_id)
+        let weights: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
+            s.get_balancer_weighted_identity(self.pool_id)
                 .map(|i| i.weights.clone())
                 .unwrap_or_default()
         });
@@ -1586,10 +1558,8 @@ impl PyLiquidityPool {
     /// if not a Balancer weighted pool.
     #[getter]
     fn balancer_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let sf: Vec<alloy::primitives::U256> = py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_weighted_identity(self.pool_id)
+        let sf: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
+            s.get_balancer_weighted_identity(self.pool_id)
                 .map(|i| i.scaling_factors.clone())
                 .unwrap_or_default()
         });
@@ -1604,10 +1574,8 @@ impl PyLiquidityPool {
     /// Balancer weighted pool.
     #[getter]
     fn balancer_swap_fee(&self, py: Python<'_>) -> u128 {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_weighted_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_balancer_weighted_identity(self.pool_id)
                 .map(|i| i.swap_fee)
                 .unwrap_or_default()
         })
@@ -1617,10 +1585,8 @@ impl PyLiquidityPool {
     /// a Balancer weighted pool.
     #[getter]
     fn balancer_pow_version(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_weighted_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_balancer_weighted_identity(self.pool_id)
                 .map(|i| i.pow_version)
                 .unwrap_or_default()
         })
@@ -1649,18 +1615,15 @@ impl PyLiquidityPool {
             "reserve1",
         )
         .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
-        let _ = py.detach(|| {
-            self.core
-                .write()
-                .apply_sync_by_pool_id(self.pool_id, r0, r1, block_number)
+        let _ = self.with_state_mut(py, |s| {
+            s.apply_sync_by_pool_id(self.pool_id, r0, r1, block_number)
         });
         Ok(())
     }
 
     /// Number of deltas in the V2 reorg journal (genesis + transitions).
     fn journal_len(&self, py: Python<'_>) -> usize {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             if core.get_v2_pool_state(self.pool_id).is_none() {
                 0
             } else {
@@ -1676,8 +1639,7 @@ impl PyLiquidityPool {
     ///         every known state).
     #[pyo3(signature = (block))]
     fn discard_before_block(&self, py: Python<'_>, block: u64) -> PyResult<()> {
-        py.detach(|| {
-            let mut core = self.core.write();
+        self.with_state_mut(py, |core| {
             if core.get_v2_pool_state(self.pool_id).is_none() {
                 return Ok(());
             }
@@ -1702,9 +1664,10 @@ impl PyLiquidityPool {
         // acquired inside py.detach so the GIL is released while parked on
         // the BotState lock (a GIL-held write behind live readers is the
         // incident cycle).
-        let vals: Option<(alloy::primitives::U256, alloy::primitives::U256, u64)> = py.detach(
-            || -> PyResult<Option<(alloy::primitives::U256, alloy::primitives::U256, u64)>> {
-                let mut core = self.core.write();
+        let vals: Option<(alloy::primitives::U256, alloy::primitives::U256, u64)> = self
+            .with_state_mut(
+            py,
+            |core| -> PyResult<Option<(alloy::primitives::U256, alloy::primitives::U256, u64)>> {
                 if core.get_v2_pool_state(self.pool_id).is_none() {
                     return Ok(None);
                 }
@@ -1747,8 +1710,7 @@ impl PyLiquidityPool {
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (block))]
     fn discard_aerodrome_before_block(&self, py: Python<'_>, block: u64) -> PyResult<()> {
-        py.detach(|| {
-            let mut core = self.core.write();
+        self.with_state_mut(py, |core| {
             if core.get_aerodrome_pool(self.pool_id).is_none() {
                 return Ok(());
             }
@@ -1773,9 +1735,10 @@ impl PyLiquidityPool {
     ) -> PyResult<Option<Py<PyAny>>> {
         // Read-after-restore (ADR-016). Write guard inside py.detach
         // (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let vals: Option<(alloy::primitives::U256, alloy::primitives::U256, u64)> = py.detach(
-            || -> PyResult<Option<(alloy::primitives::U256, alloy::primitives::U256, u64)>> {
-                let mut core = self.core.write();
+        let vals: Option<(alloy::primitives::U256, alloy::primitives::U256, u64)> = self
+            .with_state_mut(
+            py,
+            |core| -> PyResult<Option<(alloy::primitives::U256, alloy::primitives::U256, u64)>> {
                 if core.get_aerodrome_pool(self.pool_id).is_none() {
                     return Ok(None);
                 }
@@ -1841,10 +1804,8 @@ impl PyLiquidityPool {
         // dropped every Python-side V4 update). The dispatcher is one write
         // guard + two O(1) lookups; the single Python `apply_swap` API is
         // preserved.
-        let _ = py.detach(|| {
-            self.core
-                .write()
-                .apply_swap_by_pool_id(self.pool_id, spx, liq, tick, block_number, &[])
+        let _ = self.with_state_mut(py, |s| {
+            s.apply_swap_by_pool_id(self.pool_id, spx, liq, tick, block_number, &[])
         });
         Ok(())
     }
@@ -1856,10 +1817,8 @@ impl PyLiquidityPool {
     /// Returns `True` on a registered V3/V4 pool, `False` otherwise.
     #[pyo3(signature = (block_number))]
     fn seed_genesis(&self, py: Python<'_>, block_number: u64) -> bool {
-        py.detach(|| {
-            self.core
-                .write()
-                .seed_genesis_by_pool_id(self.pool_id, block_number)
+        self.with_state_mut(py, |s| {
+            s.seed_genesis_by_pool_id(self.pool_id, block_number)
                 .is_some()
         })
     }
@@ -1895,8 +1854,8 @@ impl PyLiquidityPool {
                 "liquidity_delta must fit in i128 (V3 contract int128 range)",
             )
         })?;
-        let applied = py.detach(|| {
-            self.core.write().apply_liquidity_update_by_pool_id(
+        let applied = self.with_state_mut(py, |s| {
+            s.apply_liquidity_update_by_pool_id(
                 self.pool_id,
                 tick_lower,
                 tick_upper,
@@ -1920,10 +1879,8 @@ impl PyLiquidityPool {
     fn ensure_word_known(&self, py: Python<'_>, word: i64, block: u64) -> PyResult<bool> {
         let word_i32 = i32::try_from(word)
             .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("word must fit in i32"))?;
-        let ok = py.detach(|| {
-            self.core
-                .write()
-                .ensure_word_known_by_pool_id(self.pool_id, word_i32, block)
+        let ok = self.with_state_mut(py, |s| {
+            s.ensure_word_known_by_pool_id(self.pool_id, word_i32, block)
         });
         Ok(ok)
     }
@@ -1934,8 +1891,7 @@ impl PyLiquidityPool {
     /// the fact (the companion's double-tracked sparseness flag is retired).
     #[getter]
     fn coverage(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Ok(None);
             };
@@ -2032,8 +1988,7 @@ impl PyLiquidityPool {
         }
         // The write guard lives inside py.detach (GIL/BotState inversion fix,
         // 2026-08-21 run-9): GIL released while parked on the BotState lock.
-        let applied = py.detach(|| {
-            let mut core = self.core.write();
+        let applied = self.with_state_mut(py, |core| {
             let applied = core.sync_tick_data_by_pool_id(self.pool_id, map, block);
             if applied {
                 let _ = core.mark_bitmap_words_known_by_pool_id(self.pool_id, &words);
@@ -2053,8 +2008,7 @@ impl PyLiquidityPool {
     #[pyo3(signature = ())]
     fn snapshot_v3(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         // Read guard inside py.detach (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let snap = py.detach(|| {
-            let core = self.core.read();
+        let snap = self.with_state(py, |core| {
             let s = core.get_v3_or_v4_pool(self.pool_id)?;
             Some((
                 s.sqrt_price_x96(),
@@ -2089,8 +2043,7 @@ impl PyLiquidityPool {
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (block))]
     fn discard_v3_before_block(&self, py: Python<'_>, block: u64) -> PyResult<()> {
-        py.detach(|| {
-            let mut core = self.core.write();
+        self.with_state_mut(py, |core| {
             // J63J3N: only apply when this handle points at a V3/V4 pool —
             // otherwise silently no-op. Unified dispatcher (ADR-016).
             if core.get_v3_or_v4_pool(self.pool_id).is_none() {
@@ -2116,9 +2069,9 @@ impl PyLiquidityPool {
         // `V3RestoreResult.scalar_priors` previously carried.
         // Write guard inside py.detach (GIL/BotState inversion fix,
         // 2026-08-21 run-9).
-        let vals: Option<(alloy::primitives::U256, u128, i32, u64)> = py.detach(
-            || -> PyResult<Option<(alloy::primitives::U256, u128, i32, u64)>> {
-                let mut core = self.core.write();
+        let vals: Option<(alloy::primitives::U256, u128, i32, u64)> = self.with_state_mut(
+            py,
+            |core| -> PyResult<Option<(alloy::primitives::U256, u128, i32, u64)>> {
                 if core.get_v3_or_v4_pool(self.pool_id).is_none() {
                     return Ok(None);
                 }
@@ -2170,8 +2123,7 @@ impl PyLiquidityPool {
     fn tick_data_snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // Rows pulled inside py.detach; empty-dict fallback under the GIL
         // (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let rows: Vec<(i32, (u128, i128, u64))> = match py.detach(|| {
-            let core = self.core.read();
+        let rows: Vec<(i32, (u128, i128, u64))> = match self.with_state(py, |core| {
             let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Err(());
             };
@@ -2228,8 +2180,7 @@ impl PyLiquidityPool {
             Vec<i32>,
             u64,
             u64,
-        ) = match py.detach(|| {
-            let core = self.core.read();
+        ) = match self.with_state(py, |core| {
             let spacing = core
                 .get_v3_identity(self.pool_id)
                 .map(|i| i.tick_spacing)
@@ -2306,10 +2257,8 @@ impl PyLiquidityPool {
     /// Returns 0 if this `pool_id` is not registered as a Curve pool.
     #[getter]
     fn n_coins(&self, py: Python<'_>) -> usize {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_curve_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_curve_identity(self.pool_id)
                 .map_or(0, CurvePoolIdentity::n_coins)
         })
     }
@@ -2322,8 +2271,7 @@ impl PyLiquidityPool {
     fn balances(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // Data pulled inside py.detach; the empty-list fallback is built under
         // the GIL afterwards (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let bal: Vec<alloy::primitives::U256> = match py.detach(|| {
-            let core = self.core.read();
+        let bal: Vec<alloy::primitives::U256> = match self.with_state(py, |core| {
             let Some(s) = core.get_curve_pool(self.pool_id) else {
                 return Err(());
             };
@@ -2346,8 +2294,7 @@ impl PyLiquidityPool {
     #[pyo3(signature = ())]
     fn snapshot_curve(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         // Read guard inside py.detach (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = py.detach(|| {
-            let core = self.core.read();
+        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = self.with_state(py, |core| {
             let s = core.get_curve_pool(self.pool_id)?;
             Some((s.balances.clone(), s.update_block))
         });
@@ -2390,8 +2337,7 @@ impl PyLiquidityPool {
         Option<u64>,
         Option<u64>,
     )> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let id = core.get_curve_identity(self.pool_id)?;
             Some((
                 id.initial_a_coefficient,
@@ -2418,8 +2364,7 @@ impl PyLiquidityPool {
         Option<u64>,
         Option<u64>,
     )> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let id = core.get_curve_identity(self.pool_id)?;
             Some((
                 id.fee_gamma,
@@ -2436,8 +2381,7 @@ impl PyLiquidityPool {
     // `Option<Option<_>>` distinguishes no-pool / pool-no-lp-token / has-token.
     #[expect(clippy::option_option)]
     fn curve_lp_token(&self, py: Python<'_>) -> Option<Option<String>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let id = core.get_curve_identity(self.pool_id)?;
             Some(
                 id.lp_token
@@ -2450,12 +2394,9 @@ impl PyLiquidityPool {
     /// or when none were registered.
     #[getter]
     fn curve_use_lending(&self, py: Python<'_>) -> Vec<bool> {
-        py.detach(|| {
-            let core = self.core.read();
-            match core.get_curve_identity(self.pool_id) {
-                Some(i) => i.use_lending.clone(),
-                None => Vec::new(),
-            }
+        self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
+            Some(i) => i.use_lending.clone(),
+            None => Vec::new(),
         })
     }
 
@@ -2463,13 +2404,11 @@ impl PyLiquidityPool {
     /// list for a non-Curve pool.
     #[getter]
     fn curve_precision_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let pms: Vec<alloy::primitives::U256> = py.detach(|| {
-            let core = self.core.read();
-            match core.get_curve_identity(self.pool_id) {
+        let pms: Vec<alloy::primitives::U256> =
+            self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
                 Some(i) => i.precision_multipliers.clone(),
                 None => Vec::new(),
-            }
-        });
+            });
         let py_pms: Vec<Py<PyAny>> = pms
             .iter()
             .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
@@ -2482,12 +2421,9 @@ impl PyLiquidityPool {
     /// pools registered without a provider (the no-I/O fixture case).
     #[getter]
     fn curve_has_data_provider(&self, py: Python<'_>) -> bool {
-        py.detach(|| {
-            let core = self.core.read();
-            match core.get_curve_pool(self.pool_id) {
-                Some(s) => s.data_provider.is_some(),
-                None => false,
-            }
+        self.with_state(py, |core| match core.get_curve_pool(self.pool_id) {
+            Some(s) => s.data_provider.is_some(),
+            None => false,
         })
     }
 
@@ -2496,8 +2432,7 @@ impl PyLiquidityPool {
     /// Curve amplification coefficient `A` (raw). 0 for a non-Curve handle.
     #[getter]
     fn curve_a_coefficient(&self, py: Python<'_>) -> u128 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.a_coefficient)
         })
@@ -2506,8 +2441,7 @@ impl PyLiquidityPool {
     /// Curve swap fee (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
     #[getter]
     fn curve_fee(&self, py: Python<'_>) -> u64 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id).map_or(0, |i| i.fee)
         })
     }
@@ -2515,8 +2449,7 @@ impl PyLiquidityPool {
     /// Curve admin-fee share (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
     #[getter]
     fn curve_admin_fee(&self, py: Python<'_>) -> u64 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.admin_fee)
         })
@@ -2525,13 +2458,11 @@ impl PyLiquidityPool {
     /// Curve rate multipliers (one `U256` per token). Empty for a non-Curve pool.
     #[getter]
     fn curve_rate_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let rms: Vec<alloy::primitives::U256> = py.detach(|| {
-            let core = self.core.read();
-            match core.get_curve_identity(self.pool_id) {
+        let rms: Vec<alloy::primitives::U256> =
+            self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
                 Some(i) => i.rate_multipliers.clone(),
                 None => Vec::new(),
-            }
-        });
+            });
         let py_rms: Vec<Py<PyAny>> = rms
             .iter()
             .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
@@ -2543,8 +2474,7 @@ impl PyLiquidityPool {
     /// 0 for a non-Curve handle.
     #[getter]
     fn curve_swap_style(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.swap_style)
         })
@@ -2553,8 +2483,7 @@ impl PyLiquidityPool {
     /// Curve `lending_rate_style` discriminant. 0 for a non-Curve handle.
     #[getter]
     fn curve_lending_rate_style(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.lending_rate_style)
         })
@@ -2563,8 +2492,7 @@ impl PyLiquidityPool {
     /// Curve `d_variant` discriminant. 0 for a non-Curve handle.
     #[getter]
     fn curve_d_variant(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.d_variant)
         })
@@ -2573,8 +2501,7 @@ impl PyLiquidityPool {
     /// Curve `y_variant` discriminant. 0 for a non-Curve handle.
     #[getter]
     fn curve_y_variant(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.y_variant)
         })
@@ -2583,8 +2510,7 @@ impl PyLiquidityPool {
     /// Curve `yd_variant` discriminant. 0 for a non-Curve handle.
     #[getter]
     fn curve_yd_variant(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.yd_variant)
         })
@@ -2593,8 +2519,7 @@ impl PyLiquidityPool {
     /// Curve `metapool_rate_style` discriminant. 0 for a non-Curve handle.
     #[getter]
     fn curve_metapool_rate_style(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.metapool_rate_style)
         })
@@ -2603,8 +2528,7 @@ impl PyLiquidityPool {
     /// Curve `metapool_underlying_style` discriminant. 0 for a non-Curve handle.
     #[getter]
     fn curve_metapool_underlying_style(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_curve_identity(self.pool_id)
                 .map_or(0, |i| i.metapool_underlying_style)
         })
@@ -2615,8 +2539,7 @@ impl PyLiquidityPool {
     // `Option<Option<_>>` distinguishes no-pool / pool-no-base / has-base.
     #[expect(clippy::option_option)]
     fn curve_base_pool_address(&self, py: Python<'_>) -> Option<Option<String>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let id = core.get_curve_identity(self.pool_id)?;
             Some(
                 id.base_pool
@@ -2630,8 +2553,7 @@ impl PyLiquidityPool {
     /// token isn't registered (mirror of `get_balancer_tokens`). The companion
     /// wraps each via `Erc20Token._from_py_token`.
     fn get_curve_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let identity = core.get_curve_identity(self.pool_id)?;
             let mut out = Vec::with_capacity(identity.tokens.len());
             for token_addr in &identity.tokens {
@@ -2648,8 +2570,7 @@ impl PyLiquidityPool {
     /// beneath the base-pool intermediaries). `None` for plain pools, or if
     /// this isn't a Curve pool, or any underlying token isn't registered.
     fn get_curve_tokens_underlying(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let identity = core.get_curve_identity(self.pool_id)?;
             let underlying = identity.tokens_underlying.clone()?;
             let mut out = Vec::with_capacity(underlying.len());
@@ -2668,8 +2589,7 @@ impl PyLiquidityPool {
     /// falls back to `tokens[0]`). Returns `None` (outer) for a non-Curve pool
     /// or if the LP token isn't registered.
     fn get_curve_lp_token(&self, py: Python<'_>) -> Option<PyErc20Token> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let identity = core.get_curve_identity(self.pool_id)?;
             let lp = identity.lp_token?;
             if !core.has_token(&lp) {
@@ -2685,8 +2605,7 @@ impl PyLiquidityPool {
     /// caller construct ERC20 companions *before* `_from_py_pool`. `None` for
     /// a non-Curve pool.
     fn curve_token_addresses(&self, py: Python<'_>) -> Option<Vec<String>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let identity = core.get_curve_identity(self.pool_id)?;
             let mut out = Vec::with_capacity(identity.tokens.len());
             for address in &identity.tokens {
@@ -2700,8 +2619,7 @@ impl PyLiquidityPool {
     /// the base-pool intermediaries). `None` for a plain pool or a non-Curve
     /// handle. Not registration-gated (twin of `curve_token_addresses`).
     fn curve_token_addresses_underlying(&self, py: Python<'_>) -> Option<Vec<String>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let identity = core.get_curve_identity(self.pool_id)?;
             let underlying = identity.tokens_underlying.as_ref()?;
             let mut out = Vec::with_capacity(underlying.len());
@@ -2716,8 +2634,7 @@ impl PyLiquidityPool {
     /// token is itself the LP (or the handle is not a Curve pool). Not
     /// registration-gated (twin of `curve_token_addresses`).
     fn curve_lp_token_address(&self, py: Python<'_>) -> Option<String> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let identity = core.get_curve_identity(self.pool_id)?;
             identity
                 .lp_token
@@ -2732,13 +2649,13 @@ impl PyLiquidityPool {
     /// handles, or when the base pool isn't registered. The companion recurses:
     /// `CurveStableswapPool._from_py_pool(handle.curve_base_pool())`.
     fn curve_base_pool(&self, py: Python<'_>) -> Option<PyLiquidityPool> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let id = core.get_curve_identity(self.pool_id)?;
             let base_addr = id.base_pool?;
             let base_id = core.pool_id_by_address(&base_addr)?;
             // Construct a handle over the base pool's id, sharing this core.
-            drop(core);
+            // (The read guard releases when the accessor returns; `new` takes
+            // no lock.)
             Some(PyLiquidityPool::new(Arc::clone(&self.core), base_id))
         })
     }
@@ -2768,8 +2685,7 @@ impl PyLiquidityPool {
             }
             None => None,
         };
-        let result = py.detach(|| {
-            let core = self.core.read();
+        let result = self.with_state(py, |core| {
             core.curve_get_dy(
                 self.pool_id,
                 i,
@@ -2817,8 +2733,7 @@ impl PyLiquidityPool {
             }
             None => None,
         };
-        let result = py.detach(|| {
-            let core = self.core.read();
+        let result = self.with_state(py, |core| {
             core.curve_get_dy_underlying(
                 self.pool_id,
                 i,
@@ -2855,8 +2770,7 @@ impl PyLiquidityPool {
             .cast::<pyo3::types::PyList>()
             .map_err(|_| pyo3::exceptions::PyTypeError::new_err("amounts must be a list[int]"))?;
         let amounts = crate::bot::extract_u256_list(cast)?;
-        let result = py.detach(|| {
-            let core = self.core.read();
+        let result = self.with_state(py, |core| {
             core.curve_calc_token_amount(self.pool_id, &amounts, deposit, block_number)
         });
         let out = match result {
@@ -2884,8 +2798,7 @@ impl PyLiquidityPool {
         block_number: u64,
     ) -> PyResult<Py<PyAny>> {
         let token_amount = crate::conversion::alloy::extract_python_u256(token_amount)?;
-        let result = py.detach(|| {
-            let core = self.core.read();
+        let result = self.with_state(py, |core| {
             core.curve_calc_withdraw_one_coin(self.pool_id, token_amount, i, block_number)
         });
         let out = match result {
@@ -2910,8 +2823,7 @@ impl PyLiquidityPool {
     fn fetch_curve_block_number(&self, py: Python<'_>) -> Option<u64> {
         // Provider clone inside py.detach (GIL/BotState inversion fix,
         // 2026-08-21 run-9); the re-entrant provider call stays under the GIL.
-        let provider = py.detach(|| {
-            let core = self.core.read();
+        let provider = self.with_state(py, |core| {
             core.get_curve_pool(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
@@ -2920,8 +2832,7 @@ impl PyLiquidityPool {
     }
 
     fn fetch_curve_block_timestamp(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
-        let provider = py.detach(|| {
-            let core = self.core.read();
+        let provider = self.with_state(py, |core| {
             core.get_curve_pool(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
@@ -2936,8 +2847,7 @@ impl PyLiquidityPool {
         holder_address: &str,
         block_number: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let provider = py.detach(|| {
-            let core = self.core.read();
+        let provider = self.with_state(py, |core| {
             core.get_curve_pool(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
@@ -2962,8 +2872,7 @@ impl PyLiquidityPool {
         token_address: &str,
         block_number: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let provider = py.detach(|| {
-            let core = self.core.read();
+        let provider = self.with_state(py, |core| {
             core.get_curve_pool(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
@@ -3009,8 +2918,7 @@ impl PyLiquidityPool {
     }
 
     fn fetch_curve_base_cache_updated(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
-        let provider = py.detach(|| {
-            let core = self.core.read();
+        let provider = self.with_state(py, |core| {
             core.get_curve_pool(self.pool_id)
                 .and_then(|st| st.data_provider.clone())
         });
@@ -3050,12 +2958,11 @@ impl PyLiquidityPool {
             .iter()
             .map(|item| crate::conversion::alloy::extract_python_u256(&item))
             .collect::<PyResult<_>>()?;
-        py.detach(|| {
-            Ok(self
-                .core
-                .write()
-                .apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
-                .is_some())
+        self.with_state_mut(py, |s| {
+            Ok(
+                s.apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
+                    .is_some(),
+            )
         })
     }
 
@@ -3067,10 +2974,8 @@ impl PyLiquidityPool {
     /// Returns 0 if this `pool_id` is not registered as a Balancer weighted pool.
     #[getter]
     fn n_balancer_tokens(&self, py: Python<'_>) -> usize {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_weighted_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_balancer_weighted_identity(self.pool_id)
                 .map_or(0, BalancerWeightedPoolIdentity::n_tokens)
         })
     }
@@ -3084,8 +2989,7 @@ impl PyLiquidityPool {
     fn balancer_balances(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // Data pulled inside py.detach; the empty-list fallback is built under
         // the GIL afterwards (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let bal: Vec<alloy::primitives::U256> = match py.detach(|| {
-            let core = self.core.read();
+        let bal: Vec<alloy::primitives::U256> = match self.with_state(py, |core| {
             let Some(s) = core.get_balancer_weighted_pool(self.pool_id) else {
                 return Err(());
             };
@@ -3109,8 +3013,7 @@ impl PyLiquidityPool {
     #[pyo3(signature = ())]
     fn snapshot_balancer_weighted(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         // Read guard inside py.detach (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = py.detach(|| {
-            let core = self.core.read();
+        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = self.with_state(py, |core| {
             let s = core.get_balancer_weighted_pool(self.pool_id)?;
             Some((s.balances.clone(), s.update_block))
         });
@@ -3151,12 +3054,11 @@ impl PyLiquidityPool {
             .iter()
             .map(|item| crate::conversion::alloy::extract_python_u256(&item))
             .collect::<PyResult<_>>()?;
-        py.detach(|| {
-            Ok(self
-                .core
-                .write()
-                .apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
-                .is_some())
+        self.with_state_mut(py, |s| {
+            Ok(
+                s.apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
+                    .is_some(),
+            )
         })
     }
 
@@ -3169,10 +3071,8 @@ impl PyLiquidityPool {
     /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
     #[getter]
     fn n_balancer_stable_tokens(&self, py: Python<'_>) -> usize {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_stable_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_balancer_stable_identity(self.pool_id)
                 .map_or(0, BalancerStablePoolIdentity::n_tokens)
         })
     }
@@ -3186,8 +3086,7 @@ impl PyLiquidityPool {
     fn balancer_stable_balances(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // Data pulled inside py.detach; the empty-list fallback is built under
         // the GIL afterwards (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let bal: Vec<alloy::primitives::U256> = match py.detach(|| {
-            let core = self.core.read();
+        let bal: Vec<alloy::primitives::U256> = match self.with_state(py, |core| {
             let Some(s) = core.get_balancer_stable_pool(self.pool_id) else {
                 return Err(());
             };
@@ -3211,10 +3110,8 @@ impl PyLiquidityPool {
     /// `invariant_version` getter to distinguish).
     #[getter]
     fn balancer_bpt_index(&self, py: Python<'_>) -> Option<usize> {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_stable_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_balancer_stable_identity(self.pool_id)
                 .and_then(|i| i.bpt_idx)
         })
     }
@@ -3226,10 +3123,8 @@ impl PyLiquidityPool {
     /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
     #[getter]
     fn balancer_amp(&self, py: Python<'_>) -> u128 {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_stable_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_balancer_stable_identity(self.pool_id)
                 .map_or(0, |i| i.amp)
         })
     }
@@ -3241,10 +3136,8 @@ impl PyLiquidityPool {
     /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
     #[getter]
     fn balancer_invariant_version(&self, py: Python<'_>) -> u8 {
-        py.detach(|| {
-            self.core
-                .read()
-                .get_balancer_stable_identity(self.pool_id)
+        self.with_state(py, |s| {
+            s.get_balancer_stable_identity(self.pool_id)
                 .map_or(0, |i| i.invariant_version)
         })
     }
@@ -3257,8 +3150,7 @@ impl PyLiquidityPool {
     #[pyo3(signature = ())]
     fn snapshot_balancer_stable(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         // Read guard inside py.detach (GIL/BotState inversion fix, 2026-08-21 run-9).
-        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = py.detach(|| {
-            let core = self.core.read();
+        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = self.with_state(py, |core| {
             let s = core.get_balancer_stable_pool(self.pool_id)?;
             Some((s.balances.clone(), s.update_block))
         });
@@ -3287,8 +3179,7 @@ impl PyLiquidityPool {
     /// string if not a Balancer stable pool.
     #[getter]
     fn balancer_stable_vault(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_balancer_stable_identity(self.pool_id)
                 .map(|i| address_utils::address_to_checksum_string(&i.vault))
                 .unwrap_or_default()
@@ -3299,8 +3190,7 @@ impl PyLiquidityPool {
     /// if not a Balancer stable pool.
     #[getter]
     fn balancer_stable_pool_id_hex(&self, py: Python<'_>) -> String {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             match core.get_balancer_stable_identity(self.pool_id) {
                 Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
                 None => String::new(),
@@ -3312,8 +3202,7 @@ impl PyLiquidityPool {
     /// if not a Balancer stable pool.
     #[getter]
     fn balancer_stable_token_addresses(&self, py: Python<'_>) -> Vec<String> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             match core.get_balancer_stable_identity(self.pool_id) {
                 Some(i) => i
                     .tokens
@@ -3330,8 +3219,7 @@ impl PyLiquidityPool {
     /// Bot; unregistered tokens are skipped (the caller pre-registers them
     /// via ``Bot.register_token``). ``None`` if not a Balancer stable pool.
     fn get_balancer_stable_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             let id = core.get_balancer_stable_identity(self.pool_id)?;
             let mut out = Vec::with_capacity(id.tokens.len());
             for token_addr in &id.tokens {
@@ -3348,8 +3236,7 @@ impl PyLiquidityPool {
     /// rate-multiplied). Empty list if not a Balancer stable pool.
     #[getter]
     fn balancer_stable_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let sfs: Vec<alloy::primitives::U256> = py.detach(|| {
-            let core = self.core.read();
+        let sfs: Vec<alloy::primitives::U256> = self.with_state(py, |core| {
             match core.get_balancer_stable_identity(self.pool_id) {
                 Some(i) => i.scaling_factors.clone(),
                 None => Vec::new(),
@@ -3366,8 +3253,7 @@ impl PyLiquidityPool {
     /// not a Balancer stable pool.
     #[getter]
     fn balancer_stable_swap_fee(&self, py: Python<'_>) -> u128 {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             core.get_balancer_stable_identity(self.pool_id)
                 .map_or(0, |i| i.swap_fee)
         })
@@ -3381,8 +3267,7 @@ impl PyLiquidityPool {
     /// is the more conservative default.
     #[getter]
     fn balancer_stable_rate_provider_is_static(&self, py: Python<'_>) -> bool {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             match core.get_balancer_stable_pool(self.pool_id) {
                 Some(s) => s.rate_provider.as_ref().is_none_or(|p| p.is_static()),
                 None => false,
@@ -3402,8 +3287,7 @@ impl PyLiquidityPool {
         py: Python<'_>,
         block_identifier: Option<u64>,
     ) -> PyResult<Option<Vec<u128>>> {
-        let provider = py.detach(|| {
-            let core = self.core.read();
+        let provider = self.with_state(py, |core| {
             let s = core.get_balancer_stable_pool(self.pool_id)?;
             s.rate_provider.clone()
         });
@@ -3437,12 +3321,11 @@ impl PyLiquidityPool {
             .iter()
             .map(|item| crate::conversion::alloy::extract_python_u256(&item))
             .collect::<PyResult<_>>()?;
-        py.detach(|| {
-            Ok(self
-                .core
-                .write()
-                .apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
-                .is_some())
+        self.with_state_mut(py, |s| {
+            Ok(
+                s.apply_balance_update_by_pool_id(self.pool_id, bal, block_number)
+                    .is_some(),
+            )
         })
     }
 }
@@ -3520,13 +3403,26 @@ impl PyPool {
         }
     }
 
+    /// Sanctioned `BotState` read access for pymethod code (GIL/`BotState`
+    /// inversion class, incidents 2026-08-20/21): the guard is acquired
+    /// INSIDE `py.detach`. Same invariant contract as `PyBot::with_state` —
+    /// see the doc comment there.
+    fn with_state<T>(&self, py: Python<'_>, f: impl FnOnce(&BotState) -> T + Send) -> T
+    where
+        T: Send,
+    {
+        py.detach(|| {
+            // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
+            let guard = self.core.read();
+            f(&guard)
+        })
+    }
     fn with_pool<T: Send>(
         &self,
         py: Python<'_>,
         f: impl FnOnce(degenbot_pools::Pool<'_>) -> T + Send,
     ) -> T {
-        py.detach(|| {
-            let core = self.core.read();
+        self.with_state(py, |core| {
             #[expect(clippy::expect_used)] // invariant-guarded (documented)
             let entry = core
                 .pool_entry(self.pool_id)

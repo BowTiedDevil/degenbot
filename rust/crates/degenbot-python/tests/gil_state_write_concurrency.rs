@@ -87,88 +87,86 @@ fn update_v3_pool_write_does_not_invert_with_reader_gil() {
     });
 }
 
-/// Source guard: no BotState WRITE in `bot/mod.rs` may live outside a
-/// `py.detach` scope - GIL-held writers parked behind the fan-out's reader
-/// are the incident class (2026-08-20 #1: one write-futex waiter held the
-/// GIL; #2: 26 readers + the V3 cold-build's GIL-held registration write).
-/// Each `.write()` line must have `py.detach` within the 8 preceding lines
-/// (the detach closures in this file are short).
+/// (The former mod.rs-only write scan is folded into the directory-walking
+/// scan below: it covers writes as well as reads, in every file under src/bot/.)
+/// Source guard for the 2026-08-21 run-9 cycle (KTXKUF/OB7UNY regression),
+/// generalized from the pool.rs-only scan (ergo UX66EM/UTFQ4Q): NO file under
+/// `src/bot/` may acquire a BotState/engine lock outside a `py.detach` scope —
+/// new modules are covered automatically. The captured run-9 cycle: the
+/// seed_genesis pymethod held the GIL while parked in core().write() ->
+/// RawRwLock::wait_for_readers behind three live readers; every GIL waiter
+/// (main loop, log drainer, probe) froze permanently. READS are the same
+/// hazard class: a GIL-held read blocks the pump's per-log write
+/// (log_dispatcher state.write()), and a reader that then wants the GIL
+/// (result-channel anext, Python log forwarding) closes the cycle.
+///
+/// Each `.read()`/`.write()` line must have `py.detach` within the 8 preceding
+/// lines, or carry a `T1-scan-exempt` marker (pure-Rust test seams only).
 #[test]
-fn no_gil_held_botstate_writes_in_bot_mod_rs() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/bot/mod.rs");
-    let src = std::fs::read_to_string(path).expect("read bot/mod.rs");
-    let lines: Vec<&str> = src.lines().collect();
-    let mut checked = 0;
-    let mut violations = Vec::<String>::new();
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let is_comment = trimmed.starts_with("//") || trimmed.starts_with('#');
-        if !line.contains(".write()") || is_comment {
-            continue;
-        }
-        checked += 1;
-        let lo = i.saturating_sub(8);
-        let window: String = lines[lo..=i].join(
-            "
-",
-        );
-        if !window.contains("py.detach")
-            && !window.contains(".detach(")
-            && !window.contains("T1-scan-exempt")
-        {
-            violations.push(format!("L{}: {}", i + 1, line.trim()));
-        }
-    }
+fn no_gil_held_botstate_locks_in_bot_sources() {
+    let src_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/bot");
+    let mut files = Vec::<std::path::PathBuf>::new();
+    collect_rs_files(std::path::Path::new(src_dir), &mut files);
+    files.sort();
     assert!(
-        checked >= 15,
-        "scan found only {checked} .write() sites - the pattern moved; update this guard"
+        files.len() >= 15,
+        "scan found only {} files under src/bot - the layout moved; update this guard",
+        files.len()
     );
-    assert!(violations.is_empty(), "GIL-held BotState writes outside py.detach scopes in bot/mod.rs (inversion class, incidents 2026-08-20 #1/#2). Wrap each in py.detach(...) or mark pure-Rust test seams T1-scan-exempt: {}", violations.join(" | "));
-}
 
-/// Source guard for the 2026-08-21 run-9 cycle (KTXKUF/OB7UNY regression):
-/// the PyLiquidityPool and PyPool handle families take the BotState lock
-/// across the GIL. The captured cycle: the seed_genesis pymethod held the
-/// GIL while parked in core().write() -> RawRwLock::wait_for_readers behind
-/// three live readers; every GIL waiter (main loop, log drainer, probe)
-/// froze permanently. READS are the same hazard class: a GIL-held read
-/// blocks the pump's per-log write (log_dispatcher state.write()), and a
-/// reader that then wants the GIL (result-channel anext, Python log
-/// forwarding) closes the cycle. Every BotState lock acquisition in
-/// pool.rs must therefore live inside a py.detach scope (GIL released while
-/// parked on the lock).
-#[test]
-fn no_gil_held_botstate_locks_in_pool_rs() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/bot/pool.rs");
-    let src = std::fs::read_to_string(path).expect("read bot/pool.rs");
-    let lines: Vec<&str> = src.lines().collect();
-    let mut checked = 0;
+    let mut checked_total = 0usize;
     let mut violations = Vec::<String>::new();
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let is_comment = trimmed.starts_with("//") || trimmed.starts_with('#');
-        if is_comment {
-            continue;
+    for path in &files {
+        let rel = path
+            .strip_prefix(src_dir)
+            .expect("path under src/bot")
+            .to_string_lossy()
+            .into_owned();
+        let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {rel}: {e}"));
+        let lines: Vec<&str> = src.lines().collect();
+        let mut checked_in_file = 0usize;
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with('#') {
+                continue;
+            }
+            if !line.contains(".read()") && !line.contains(".write()") {
+                continue;
+            }
+            checked_in_file += 1;
+            let lo = i.saturating_sub(8);
+            let window: String = lines[lo..=i].join("\n");
+            if !window.contains("py.detach")
+                && !window.contains(".detach(")
+                && !window.contains("T1-scan-exempt")
+            {
+                violations.push(format!("{rel}:{}: {}", i + 1, line.trim()));
+            }
         }
-        if !line.contains(".read()") && !line.contains(".write()") {
-            continue;
+        // Pattern-drift floors for the heaviest files: if these drop, the
+        // invariant being scanned for has moved and this guard needs updating.
+        match rel.as_str() {
+            // pool.rs is near-zero by design since the accessor migration
+            // (UX66EM/J2HPO4): only the sanctioned accessor bodies still name
+            // `.read()`/`.write()` directly.
+            "pool.rs" => assert!(
+                (2..=10).contains(&checked_in_file),
+                "pool.rs lock-site count {checked_in_file} outside the accessor-migration band - the pattern moved"
+            ),
+            // mod.rs is near-zero by design since the accessor migration
+            // (UX66EM/3MXFTV): only the sanctioned accessor bodies + test
+            // seams still name `.read()`/`.write()` directly.
+            "mod.rs" => assert!(
+                (2..=10).contains(&checked_in_file),
+                "mod.rs lock-site count {checked_in_file} outside the accessor-migration band - the pattern moved"
+            ),
+            _ => {}
         }
-        checked += 1;
-        let lo = i.saturating_sub(8);
-        let window: String = lines[lo..=i].join(
-            "
-",
-        );
-        if !window.contains("py.detach")
-            && !window.contains(".detach(")
-            && !window.contains("T1-scan-exempt")
-        {
-            violations.push(format!("L{}: {}", i + 1, line.trim()));
-        }
+        checked_total += checked_in_file;
     }
     assert!(
-        checked >= 100,
-        "scan found only {checked} BotState lock sites in pool.rs - the pattern moved; update this guard"
+        checked_total >= 10,
+        "scan found only {checked_total} BotState lock sites across src/bot - the pattern moved; update this guard"
     );
     let shown: String = violations
         .iter()
@@ -177,9 +175,23 @@ fn no_gil_held_botstate_locks_in_pool_rs() {
         .collect::<Vec<_>>()
         .join(" | ");
     assert!(violations.is_empty(),
-            "GIL-held BotState locks outside py.detach scopes in pool.rs (inversion class, incident 2026-08-21 run-9: seed_genesis GIL-held write behind live readers). Wrap each acquisition in py.detach(...) or mark pure-Rust test seams T1-scan-exempt. {} of {} violating: {}",
+            "GIL-held BotState/engine locks outside py.detach scopes in src/bot (inversion class, incidents 2026-08-20 #1/#2 and 2026-08-21 run-9). Wrap each acquisition in py.detach(...) or mark pure-Rust test seams T1-scan-exempt. {} of {} violating: {}",
             violations.len(),
-            checked,
+            checked_total,
             shown
     );
+}
+
+/// Recursively collect `.rs` files under `dir`.
+fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let entries =
+        std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_rs_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            out.push(p);
+        }
+    }
 }
