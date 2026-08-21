@@ -34,7 +34,7 @@
 //! and the verifier anchor is carried in the message.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::bot_core::drain_sink::DrainSink;
 use crate::bot_core::BlockMetadata;
@@ -116,6 +116,10 @@ impl DrainerHealth {
     }
 }
 
+/// Watchdog tick for the drainer-liveness backstop (U4UOIS): short enough to
+/// bound abort latency to ~one window + one tick, rare enough to be free.
+const STALL_WATCHDOG_TICK_MS: u64 = 5_000;
+
 /// How many **consecutive** no-progress pushes (the drainer picks nothing up)
 /// How long a backlogged drainer may go without completing any work before the
 /// pump aborts. The soak proved that pure event-counting (depth- or
@@ -147,6 +151,81 @@ fn stalled(depth: u64, ms_since_healthy: u64, floor: u64, window_ms: u64) -> boo
     depth >= floor && ms_since_healthy >= window_ms
 }
 
+/// Pure decision (U4UOIS, unit-testable without clocks or globals): should a
+/// sample refresh the healthy baseline? Refresh when the drainer completed
+/// something since the last sample OR the queue went idle. Splitting the
+/// decision from the mutation is what lets the verdict be tested
+/// deterministically — the old inline version mixed clock reads into the
+/// branch and could only be tested end-to-end via process-spawning freeze
+/// tests.
+#[must_use]
+fn stall_refresh(depth: u64, processed: u64, last_processed: u64) -> bool {
+    processed != last_processed || depth == 0
+}
+
+/// Shared stall state sampled BOTH by the pump at dispatch time and by the
+/// always-on watchdog task. Single writer per field: the pump writes the two
+/// baselines; the watchdog only reads them plus the completion counter.
+struct StallWatch {
+    /// Drainer completion count when the pump last saw progress-or-idle.
+    last_processed: AtomicU64,
+    /// Wall-clock (ms) of the last progress-or-idle observation.
+    last_healthy_ms: AtomicU64,
+    /// Production window; swapped to a small value in freeze tests.
+    stall_window_ms: AtomicU64,
+}
+
+impl StallWatch {
+    fn new() -> Self {
+        Self {
+            last_processed: AtomicU64::new(0),
+            last_healthy_ms: AtomicU64::new(now_millis()),
+            stall_window_ms: AtomicU64::new(STALL_WINDOW_MS),
+        }
+    }
+
+    /// Sample-and-abort, shared by the pump's dispatch-time check and the
+    /// watchdog task (identical verdict either way — first sampler wins).
+    fn check_and_abort(&self) {
+        // Uninitialized gauges (no owner built yet) read as "idle" — the
+        // watchdog only fires once a pump is actually dispatching.
+        let depth = DEPTH.get().map_or(0, |d| d.load(Ordering::Relaxed));
+        let processed = PROCESSED.get().map_or(0, |p| p.load(Ordering::Relaxed));
+        let last_processed = self.last_processed.load(Ordering::Relaxed);
+        if stall_refresh(depth, processed, last_processed) {
+            self.last_processed.store(processed, Ordering::Relaxed);
+            self.last_healthy_ms.store(now_millis(), Ordering::Relaxed);
+            return;
+        }
+        let since_healthy =
+            now_millis().saturating_sub(self.last_healthy_ms.load(Ordering::Relaxed));
+        let window = self.stall_window_ms.load(Ordering::Relaxed);
+        if !stalled(depth, since_healthy, BACKLOG_FLOOR, window) {
+            return;
+        }
+        tracing::error!(
+            since_healthy_ms = since_healthy,
+            depth,
+            "[B3] drainer stalled: backlog with no completion for {window} ms — ABORT"
+        );
+        #[expect(clippy::print_stderr)] // fatal diagnostic before abort
+        {
+            eprintln!(
+                "[B3] ABORT: background drainer made no progress for {window} ms \
+                 with {depth} queued — solve/dispatch/publish is not advancing. \
+                 Fail loud, never half-alive."
+            );
+        }
+        std::process::abort();
+    }
+}
+
+/// Global depth gauge (drain-pipe backlog), written by `dispatch` and read by
+/// the watchdog task. `OnceLock` of one cell: the owner is unique per process.
+static DEPTH: OnceLock<AtomicU64> = OnceLock::new();
+/// Global drainer completion counter mirror for the watchdog.
+static PROCESSED: OnceLock<AtomicU64> = OnceLock::new();
+
 /// Current wall-clock time in milliseconds (the B3 stall backstop clock).
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
@@ -173,20 +252,16 @@ pub struct DispatchOwner {
     // into disconnected Jaeger root traces.
     drain_send: tokio::sync::mpsc::UnboundedSender<(DrainWork, tracing::Span, u64)>,
     drainer_health: Arc<DrainerHealth>,
-    /// B3 stall backstop state (single-writer: `dispatch` is called from the
-    /// pump task only). `last_processed` = the drainer completion count at the
-    /// last dispatch; `last_healthy_ms` = the wall-clock (ms) of the last moment
-    /// the drainer was making progress or idle. The pump aborts when a backlog
-    /// persists with no completion for the stall window.
-    last_processed: AtomicU64,
-    last_healthy_ms: AtomicU64,
+    /// B3 stall backstop state, shared with the always-on watchdog task
+    /// (U4UOIS): the watchdog samples the baselines here AND the pump
+    /// refreshes them at every dispatch, so a wedge that stops the pump from
+    /// dispatching (the incident-2026-08-21 `BotState` lock deadlock) can no
+    /// longer blind the detector.
+    stall_watch: Arc<StallWatch>,
     /// Wall-clock ms of the last accepted header (T2): the anchor for the
     /// `header_to_solved` latency histogram — the drainer stamps elapsed time
     /// when a Drain/Finalize item completes.
     header_ms: Arc<AtomicU64>,
-    /// How long a backlogged drainer may go without completing work before the
-    /// pump aborts (production = [`STALL_WINDOW_MS`]; tests shrink it).
-    stall_window_ms: u64,
 }
 
 impl DispatchOwner {
@@ -257,25 +332,50 @@ impl DispatchOwner {
                     }
                 }
                 health_clone.processed.fetch_add(1, Ordering::Relaxed);
+                if let Some(p) = PROCESSED.get() {
+                    p.store(
+                        health_clone.processed.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                }
             }
         });
 
+        // U4UOIS: the stall check previously ran ONLY inside `dispatch` — i.e.
+        // on the pump task. When the pump itself wedged (`BotState` lock held
+        // across an await, incident 2026-08-21) it stopped dispatching and the
+        // B3 abort never fired despite 15+ min of zero drain progress. This
+        // watchdog task samples the same shared state independently of pump
+        // liveness; verdict logic is identical (`StallWatch::check_and_abort`),
+        // first sampler wins.
+        let stall_watch = Arc::new(StallWatch::new());
+        let watch_clone = Arc::clone(&stall_watch);
+        let _watchdog = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(STALL_WATCHDOG_TICK_MS)).await;
+                watch_clone.check_and_abort();
+            }
+        });
+
+        DEPTH.get_or_init(|| AtomicU64::new(0));
         Self {
             sink,
             drain_send: tx,
             drainer_health: health,
-            last_processed: AtomicU64::new(0),
-            last_healthy_ms: AtomicU64::new(now_millis()),
+            stall_watch,
             header_ms,
-            stall_window_ms: STALL_WINDOW_MS,
         }
     }
 
     /// Shrink the stall window for a subprocess freeze test (test-only).
     #[cfg(test)]
     fn set_stall_window_for_test(&mut self, window_ms: u64) {
-        self.stall_window_ms = window_ms;
-        self.last_healthy_ms.store(now_millis(), Ordering::Relaxed);
+        self.stall_watch
+            .stall_window_ms
+            .store(window_ms, Ordering::Relaxed);
+        self.stall_watch
+            .last_healthy_ms
+            .store(now_millis(), Ordering::Relaxed);
     }
 
     /// The drain-pipe lag metric (B3): the number of work items currently queued
@@ -306,45 +406,23 @@ impl DispatchOwner {
     pub fn dispatch(&self, work: DrainWork) {
         let tx = &self.drain_send;
         let depth_before = self.drainer_health.depth();
-        let processed = self.drainer_health.processed();
-        let now = now_millis();
 
-        // Refresh the healthy baseline when the drainer is making progress or
-        // the queue is idle; otherwise measure time since it was last healthy.
-        if processed != self.last_processed.load(Ordering::Relaxed) || depth_before == 0 {
-            self.last_processed.store(processed, Ordering::Relaxed);
-            self.last_healthy_ms.store(now, Ordering::Relaxed);
+        // Publish the depth gauge for the always-on watchdog (U4UOIS), then
+        // run the same sample-and-abort verdict the watchdog runs — identical
+        // logic (`StallWatch::check_and_abort`), so dispatch-time checks stay
+        // latency-free and the watchdog covers the case where the pump itself
+        // stops dispatching (the incident-2026-08-21 wedge).
+        if let Some(d) = DEPTH.get() {
+            d.store(depth_before, Ordering::Relaxed);
         }
-        let since_healthy = now.saturating_sub(self.last_healthy_ms.load(Ordering::Relaxed));
-        if stalled(
-            depth_before,
-            since_healthy,
-            BACKLOG_FLOOR,
-            self.stall_window_ms,
-        ) {
-            tracing::error!(
-                since_healthy_ms = since_healthy,
-                depth = depth_before,
-                "[B3] drainer stalled: backlog with no completion for {} ms — ABORT",
-                self.stall_window_ms,
-            );
-            #[expect(clippy::print_stderr)] // fatal diagnostic before abort
-            {
-                eprintln!(
-                    "[B3] ABORT: background drainer made no progress for {} ms \
-                     with {depth_before} queued — solve/dispatch/publish is not advancing. \
-                     Fail loud, never half-alive.",
-                    self.stall_window_ms,
-                );
-            }
-            std::process::abort();
-        }
+        self.stall_watch.check_and_abort();
+
         let parent = tracing::Span::current();
         // T2: stamp enqueue time (queue-wait histogram) + sample depth gauge.
         if let Some(p) = crate::instruments::pipeline() {
             p.set_drain_queue_depth(depth_before);
         }
-        if tx.send((work, parent, now)).is_ok() {
+        if tx.send((work, parent, now_millis())).is_ok() {
             self.drainer_health.enqueued.fetch_add(1, Ordering::Relaxed);
         } else {
             tracing::error!(
@@ -549,21 +627,35 @@ mod tests {
     /// A sink whose every operation blocks forever. Used to simulate a frozen
     /// drainer: the drainer picks up one item and never returns, so the queue
     /// grows without pickup and the B3 no-progress detector aborts.
+    /// Block the calling thread indefinitely WITHOUT the kernel-edge cases of
+    /// `thread::sleep(Duration::MAX)` (huge timespec; on some kernels
+    /// `clock_nanosleep` rejects it and std retries — a spin). A parked thread
+    /// is a clean, zero-CPU indefinite block; the process aborts anyway, so
+    /// the poisoned-result branch is unreachable in practice.
+    fn park_forever() -> ! {
+        use std::sync::Mutex;
+        static PARK: Mutex<()> = Mutex::new(());
+        let _deadlock = PARK.lock(); // held forever; nothing else locks PARK
+        loop {
+            std::thread::park();
+        }
+    }
+
     struct BlockingSink;
 
     impl DrainSink for BlockingSink {
         fn has_dirty_paths(&self) -> bool {
-            std::thread::sleep(std::time::Duration::MAX);
-            unreachable!()
+            // `-> !` coerces to bool for the sink trait's signature.
+            park_forever()
         }
         fn on_drain(&self, _block: u64, _metadata: &BlockMetadata) {
-            std::thread::sleep(std::time::Duration::MAX);
+            park_forever();
         }
         fn on_send(&self, _metadata: &BlockMetadata) {
-            std::thread::sleep(std::time::Duration::MAX);
+            park_forever();
         }
         fn finalize_block(&self, _block: u64, _metadata: &BlockMetadata) {
-            std::thread::sleep(std::time::Duration::MAX);
+            park_forever();
         }
         fn set_last_solved_block(&self, _block: u64) {}
         fn set_solve_anchor(&self, _block: u64) {}
@@ -572,7 +664,7 @@ mod tests {
             None
         }
         fn notify_block(&self, _block: u64, _metadata: &BlockMetadata) {
-            std::thread::sleep(std::time::Duration::MAX);
+            park_forever();
         }
     }
 
@@ -606,6 +698,109 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
         unreachable!("B3 stall abort should have killed this process");
+    }
+
+    /// U4UOIS regression: the incident-2026-08-21 shape — the PUMP wedges
+    /// (`BotState` lock held across an await) so `dispatch` is never called
+    /// again after the drainer freezes mid-item. The dispatch-time B3 check
+    /// therefore never re-runs; only the always-on watchdog can abort.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn watchdog_aborts_when_pump_stops_dispatching() {
+        if std::env::var("DEGENBOT_NO_PROGRESS_ABORT_TEST").as_deref() != Ok("1") {
+            return;
+        }
+        let sink = Arc::new(BlockingSink);
+        let mut owner = DispatchOwner::new(sink as Arc<dyn DrainSink>, &None);
+        owner.set_stall_window_for_test(50);
+        let meta = BlockMetadata::default();
+        // The drainer picks up item 0 and freezes mid-on_drain; items 1..
+        // stay queued. THREE dispatches so the frozen-state backlog
+        // (depth = 2) clears BACKLOG_FLOOR — two dispatches leave depth 1,
+        // under the floor, and the (correctly!) never-firing check made this
+        // child hang until its sleep elapsed instead of aborting. After the
+        // third dispatch the pump wedges: no further dispatch calls, so only
+        // the always-on watchdog tick can observe depth>=floor with a stale
+        // healthy baseline and abort.
+        owner.dispatch(DrainWork::Drain {
+            block: 0,
+            metadata: meta,
+        });
+        owner.dispatch(DrainWork::Drain {
+            block: 1,
+            metadata: meta,
+        });
+        owner.dispatch(DrainWork::Drain {
+            block: 2,
+            metadata: meta,
+        });
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        unreachable!("watchdog abort should have killed this process before 30s");
+    }
+
+    /// The parent: spawn the pump-wedge child and assert it was killed
+    /// (SIGABRT) with the loud `[B3] ABORT` marker on stderr — a wedged pump
+    /// must not blind the drainer-liveness detector (U4UOIS).
+    #[test]
+    fn watchdog_aborts_when_pump_stops_dispatching_proc() {
+        let exe = std::env::current_exe().expect("current test exe");
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("ulimit -c 0; exec \"$@\"")
+            .arg("sh")
+            .arg(&exe)
+            .arg("watchdog_aborts_when_pump_stops_dispatching")
+            .arg("--nocapture")
+            .env("DEGENBOT_NO_PROGRESS_ABORT_TEST", "1")
+            .output()
+            .expect("spawn pump-wedge abort subprocess");
+        let status = out.status;
+        assert!(
+            !status.success(),
+            "the watchdog must kill a process whose pump wedged, got {status:?}"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("[B3] ABORT"),
+            "watchdog must print the loud grep-able marker; got: {stderr}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(
+                status.signal(),
+                Some(6), // SIGABRT
+                "expected the child killed by SIGABRT, got {status:?}"
+            );
+        }
+    }
+
+    /// U4UOIS pure-verdict tests: pin the refresh decision and the wedge-test
+    /// dispatch count WITHOUT clocks, globals, or subprocesses — these must
+    /// pass before any process-spawning freeze test runs.
+    #[test]
+    fn stall_refresh_verdicts() {
+        // Drainer completed something since the last sample -> refresh.
+        assert!(stall_refresh(3, 5, 4));
+        // Queue went idle -> refresh (an idle pipe must never accumulate
+        // staleness toward the abort threshold).
+        assert!(stall_refresh(0, 5, 5));
+        // Backlog unchanged, no completions -> do NOT refresh (the
+        // frozen-drainer case where staleness must accrue).
+        assert!(!stall_refresh(3, 5, 5));
+    }
+
+    /// The wedge-test child must dispatch enough items to exceed
+    /// `BACKLOG_FLOOR`: the first version dispatched 2, leaving depth 1 (the
+    /// drainer froze mid-item), under the floor — so no verdict could ever
+    /// fire and the child hung until its sleep elapsed. Three dispatches
+    /// leave depth 2 -> fires.
+    #[test]
+    fn wedge_child_dispatch_count_exceeds_floor() {
+        let picked_up = 1u64; // the drainer froze mid-item
+                              // Old (buggy) child: 2 dispatches -> depth 1 -> never stalls.
+        assert!(!stalled(2 - picked_up, u64::MAX, BACKLOG_FLOOR, 50));
+        // Fixed child: 3 dispatches -> depth 2 -> stalls at any window.
+        assert!(stalled(3 - picked_up, u64::MAX, BACKLOG_FLOOR, 50));
     }
 
     /// The parent: spawn the child and assert it was killed (SIGABRT) with the

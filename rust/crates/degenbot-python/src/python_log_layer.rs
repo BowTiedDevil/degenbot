@@ -16,6 +16,7 @@
 //! remaining records. The Python driver should call this before interpreter
 //! finalization (e.g. in `__aexit__` or via Python `atexit`).
 
+#[cfg(feature = "otel")]
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -820,6 +821,7 @@ mod tests {
 
     // T5/RMH23E: the otel runtime gate defaults ON in dev builds (the otel
     // feature only exists there); DEGENBOT_OTEL=0 is the explicit opt-out.
+    #[cfg(feature = "otel")]
     #[test]
     fn otel_requested_defaults_on_and_honors_opt_out() {
         assert!(otel_requested(None), "unset must default to enabled");

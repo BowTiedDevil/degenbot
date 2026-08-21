@@ -98,6 +98,7 @@ fn mark_progress() {
 /// Returns `PyErr` only if thread spawning fails (extremely rare).
 #[pyfunction]
 #[pyo3(signature = (interval_ms=50, threshold_ms=100, stuck_ms=30_000))]
+#[expect(clippy::too_many_lines)] // thread bodies are linear by design
 fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResult<()> {
     if PROBE_RUNNING.swap(true, Ordering::SeqCst) {
         tracing::warn!("[gil-probe] already running — start_gil_probe() call ignored (idempotent)");
@@ -180,21 +181,41 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
             );
             let stuck_ms = u64::try_from(stuck.as_millis()).unwrap_or(u64::MAX);
             let mut alarm_count: u32 = 0;
+            let mut busy_dumped = false;
             loop {
                 thread::sleep(Duration::from_secs(5));
                 let progress = LAST_PROGRESS_MS.load(Ordering::Relaxed);
                 let sample = LAST_PROBE_SAMPLE_MS.load(Ordering::Relaxed);
                 let now = now_ms();
                 match watchdog_verdict(progress, sample, now, stuck_ms) {
-                    WatchdogVerdict::NotArmed | WatchdogVerdict::Healthy => {}
+                    WatchdogVerdict::NotArmed => {}
+                    WatchdogVerdict::Healthy => {
+                        busy_dumped = false;
+                    }
                     WatchdogVerdict::Busy {
                         since_progress,
                         since_sample,
-                    } => tracing::info!(
-                        since_progress,
-                        since_sample,
-                        "[gil-probe] main loop idle: no progress — busy, not a GIL deadlock"
-                    ),
+                    } => {
+                        tracing::info!(
+                            since_progress,
+                            since_sample,
+                            "[gil-probe] main loop idle: no progress — busy, not a GIL deadlock \\
+                             (if this persists for minutes while sampling stays fresh, suspect a \
+                             non-GIL wedge: a Rust lock held across an await)"
+                        );
+                        if !busy_dumped && should_dump_busy(since_progress, BUSY_DUMP_AFTER_MS) {
+                            busy_dumped = true;
+                            if let Some(p) =
+                                crate::diagnostics::thread_registry::dump_to_file()
+                            {
+                                tracing::error!(
+                                    path = %p.display(),
+                                    since_progress,
+                                    "[gil-probe] long-Busy episode: thread-registry + futex table dumped (non-GIL wedge suspect)"
+                                );
+                            }
+                        }
+                    },
                     WatchdogVerdict::Deadlocked {
                         since_progress,
                         since_sample,
@@ -271,6 +292,20 @@ fn watchdog_verdict(
     } else {
         WatchdogVerdict::Healthy
     }
+}
+
+/// Dump threshold for a long-Busy episode (MHE62T): after this much
+/// heartbeat staleness with the probe still sampling, dump the registry once.
+/// A LONG Busy episode is the signature of a NON-GIL wedge — a Rust lock held
+/// across an await (incident 2026-08-21: the bot sat "busy" for 11 minutes
+/// before a secondary GIL grab made the verdict flip to Deadlocked).
+const BUSY_DUMP_AFTER_MS: u64 = 300_000;
+
+/// Pure decision: has a Busy episode aged past the dump threshold?
+/// Factored out of the watchdog thread for unit testing.
+#[must_use]
+fn should_dump_busy(since_progress_ms: u64, busy_dump_after_ms: u64) -> bool {
+    since_progress_ms >= busy_dump_after_ms
 }
 
 /// The watchdog's verdict on a single tick. See [`watchdog_verdict`].
@@ -374,6 +409,15 @@ mod tests {
             watchdog_verdict(0, 0, now, stuck),
             WatchdogVerdict::NotArmed
         ));
+    }
+
+    /// MHE62T: a long-Busy episode crosses the dump threshold exactly once
+    /// the age passes it (caller owns the once-per-episode flag).
+    #[test]
+    fn busy_dump_triggers_only_past_threshold() {
+        assert!(!should_dump_busy(299_999, 300_000));
+        assert!(should_dump_busy(300_000, 300_000));
+        assert!(should_dump_busy(600_000, 300_000));
     }
 
     /// Both signals fresh — Healthy (no alarm at all).

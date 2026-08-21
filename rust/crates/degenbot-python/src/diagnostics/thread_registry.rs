@@ -233,13 +233,32 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
         })
         .unwrap_or_default();
 
-    let doc = serde_json::json!({
+    // MHE62T: the futex the gil-probe thread itself is blocked on. During a
+    // confirmed GIL deadlock every GIL waiter shares that address, and the
+    // HOLDER is a thread NOT present in this table's futex waiters — naming
+    // the address makes the waiter set (and the holder's absence) explicit.
+    let likely_gil_futex = os_threads
+        .iter()
+        .find(|t| t["comm"] == "gil-probe")
+        .and_then(|t| t["futex_addr"].as_str().map(str::to_owned));
+
+    let mut doc = serde_json::json!({
         "pid": pid,
         "captured_at_ns": mono_ns(),
-        "note": "std_thread_id matches the OTel span 'thread.id' tag; join os_threads (what each thread waits on) with span_threads (what each thread last did).",
+        "note": "std_thread_id matches the OTel span 'thread.id' tag; join os_threads (what each thread waits on) with span_threads (what each thread last did). likely_gil_futex = the futex the gil-probe thread waits on (GIL waiters share it; the GIL holder is NOT among the waiters).",
+        "likely_gil_futex": likely_gil_futex,
         "os_threads": os_threads,
         "span_threads": span_threads,
     });
+
+    // Phantom-reader forensics (incident 2026-08-21): embed the StateLock
+    // tracker's active holds (thread + #[track_caller] acquire site) so a
+    // dump names a stuck read-guard holder outright.
+    #[cfg(feature = "bot")]
+    {
+        doc["state_lock_holds"] =
+            serde_json::Value::String(degenbot_bot::bot_core::state_lock::dump_active_holds());
+    }
 
     match serde_json::to_string(&doc) {
         Ok(s) => match std::fs::write(&path, s) {
@@ -260,9 +279,14 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
 mod tests {
     use super::*;
 
+    /// All dump-writing tests share one output path (pid-keyed) — serialize
+    /// them so a concurrent dump/read never sees a truncated file.
+    static DUMP_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     #[expect(clippy::unwrap_used, clippy::expect_used)]
     fn note_then_dump_captures_the_calling_thread() {
+        let _serial = DUMP_LOCK.lock().unwrap();
         note_current_thread("test.span", Some("tests.rs:42"));
         let map = registry().lock().unwrap();
         let entry = map
@@ -281,8 +305,9 @@ mod tests {
     /// deadlock dump must state holder/wanter outright — no futex
     /// correlation required. Wants → Holds (via the RAII guard) → cleared.
     #[test]
-    #[expect(clippy::expect_used)]
+    #[expect(clippy::expect_used, clippy::unwrap_used)]
     fn state_intent_flows_through_wants_holds_and_clears_on_drop() {
+        let _serial = DUMP_LOCK.lock().unwrap();
         let dump_json = || {
             let path = dump_to_file().expect("dump writes");
             std::fs::read_to_string(&path).expect("dump readable")
@@ -321,6 +346,30 @@ mod tests {
         assert!(
             doc.contains("wants read(with_state)"),
             "read-mode intent must render; got: {doc}"
+        );
+    }
+
+    /// MHE62T: the dump carries the likely-GIL futex (the probe's own wait
+    /// address) and, under the `bot` feature, the `StateLock` tracker's active
+    /// holds — phantom-reader forensics without gdb.
+    #[test]
+    #[expect(clippy::expect_used, clippy::unwrap_used)]
+    fn dump_names_gil_futex_and_state_lock_holds() {
+        let _serial = DUMP_LOCK.lock().unwrap();
+        let dump_json = || {
+            let path = dump_to_file().expect("dump writes");
+            std::fs::read_to_string(&path).expect("dump readable")
+        };
+        note_current_thread("test.span", Some("tests.rs:7"));
+        let doc = dump_json();
+        assert!(
+            doc.contains("likely_gil_futex"),
+            "dump must name the likely GIL futex; got: {doc}"
+        );
+        #[cfg(feature = "bot")]
+        assert!(
+            doc.contains("state-lock active read holds"),
+            "dump must embed the StateLock hold table; got: {doc}"
         );
     }
 }
