@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 async def consume_result_batches(
     session: _SessionState,
     *,
-    block_stream: AsyncIterator[dict[str, int]] | None = None,
+    block_stream: AsyncIterator[dict[str, int]],
     result_iter: AsyncIterator[dict[str, object]] | None = None,
     allow_quiet_end: bool = False,
 ) -> None:
@@ -46,13 +46,12 @@ async def consume_result_batches(
     the pump's ``current_block``. The block stream ticks once per accepted
     ``WsEvent::BlockHeader`` — the authoritative clock.
 
-    Both streams are injectable for testing; production pulls them from the
-    engine.
+    The block stream is always injected — the coordinator owns the once-only
+    ``Bot.block_stream()`` handle (ADR-027) and passes it in. The result
+    iterator is injectable for testing; production pulls it from the engine.
     """
     bot_logger.info("[consumer] Starting — block stream + result batches from Rust pump")
 
-    if block_stream is None:
-        block_stream = session.bot.block_stream()
     if result_iter is None:
         result_iter = aiter(session.engine_registry.engine)
 
@@ -95,12 +94,13 @@ async def consume_result_batches(
             "[consumer] block/result stream ended - the Rust pump stopped "
             "(WS subscription dead or pump task exited); aborting"
         )
-        raise RuntimeError(
+        message = (
             "block/result stream ended: the Rust pump stopped (WS subscription "
             "dropped or pump task exited - see the Rust 'pump is STOPPED' "
             "ERROR log). The settlement bot cannot keep trading from a dead "
             "block clock; aborting loudly."
         )
+        raise RuntimeError(message)
 
 
 def _reprime(

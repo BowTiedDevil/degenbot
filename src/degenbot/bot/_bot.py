@@ -61,6 +61,7 @@ from degenbot.version import __version__
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from degenbot._ffi import BlockStream
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
@@ -419,7 +420,7 @@ class Bot:
         self._trackers[key] = manager
         return manager
 
-    def block_stream(self) -> Any:
+    def block_stream(self) -> BlockStream:
         """Fresh async iterator over ``newHeads`` block notifications.
 
         The settlement bot's authoritative block clock (epic 6W35AI): ticked
@@ -431,6 +432,12 @@ class Bot:
         pump-lifecycle handle) rather than on the arbitrage engine, which is
         out of the block path entirely. Once-only: a second call raises
         ``RuntimeError``.
+
+        Returns:
+            BlockStream: Async iterator yielding one dict per accepted block
+            header (``number``, ``timestamp``, ``base_fee_per_gas``,
+            ``gas_used``, ``gas_limit``); ends when the pump stops.
+
         """
         return self._py_bot.block_stream()
 
