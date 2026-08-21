@@ -38,6 +38,7 @@ pub mod reserve_pair_orchestration;
 pub(crate) mod resolve;
 pub mod sim_anchor;
 pub mod snapshot_verify;
+pub mod state_lock;
 pub(crate) mod solve_anchor;
 pub mod solve_coordinator;
 pub mod solver_state_tripwire;

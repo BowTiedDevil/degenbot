@@ -50,6 +50,20 @@ class DatabaseSettings(BaseModel):
         return path.expanduser()
 
 
+class OtelSettings(BaseModel):
+    """OpenTelemetry telemetry settings (epic RMH23E T5).
+
+    Read by the Rust pymodule init when the dev-only ``otel`` feature is
+    compiled (spans + Prometheus scrape endpoint default to enabled in dev;
+    opt out with ``DEGENBOT_OTEL=0``). Only ``endpoint`` is defined today.
+    """
+
+    # OTLP span export endpoint. Precedence: OTEL_EXPORTER_OTLP_ENDPOINT env
+    # var wins over this key; when both are unset the exporter defaults to
+    # http://localhost:4318.
+    endpoint: HttpUrl | None = None
+
+
 class DegenbotConfig(BaseSettings):
     """DegenbotConfig class."""
 
@@ -69,6 +83,9 @@ class DegenbotConfig(BaseSettings):
     # `Bot` refuses to construct without it + enforces the connected RPC's
     # `eth_chainId` matches it (fail-fast on a misconfigured endpoint).
     default_chain_id: ChainId | None = None
+    # OpenTelemetry settings (epic RMH23E T5). Optional so existing config
+    # files without an [otel] section keep loading unchanged.
+    otel: OtelSettings = OtelSettings()
 
     @field_validator("rpc", mode="after")
     def validate_paths(

@@ -1,6 +1,6 @@
 //! `PyLiquidityPool` — thin Python handle over a `pool_id` key into `BotState`.
 //!
-//! Shares the same `Arc<parking_lot::RwLock<BotState>>` as the owning `PyBot` (one
+//! Shares the same `Arc<StateLock<BotState>>` as the owning `PyBot` (one
 //! Rust-owned `BotState`, many thin Python handles). Part of the Polars-inspired
 //! three-layer topology — see `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`.
 //!
@@ -16,6 +16,7 @@ use std::sync::Arc;
 use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
+use degenbot_bot::bot_core::state_lock::StateLock;
 use degenbot_bot::bot_core::{
     BalancerStablePoolIdentity, BalancerWeightedPoolIdentity, BotState, CurvePoolIdentity,
     PoolTickCoverage, SimulateSwapError, TickInfo,
@@ -437,13 +438,13 @@ impl PyCurveDataProvider {
 /// Does not own any state — all data lives in Rust inside `BotState`.
 #[pyclass(name = "LiquidityPool", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyLiquidityPool {
-    core: Arc<parking_lot::RwLock<BotState>>,
+    core: Arc<StateLock<BotState>>,
     pool_id: u64,
 }
 
 impl PyLiquidityPool {
     /// Create a new thin pool handle.
-    pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, pool_id: u64) -> Self {
+    pub(crate) const fn new(core: Arc<StateLock<BotState>>, pool_id: u64) -> Self {
         Self { core, pool_id }
     }
 
@@ -3385,17 +3386,13 @@ fn extract_tick_data(
 /// interface that mirrors the Rust [`degenbot_pools::Pool`] handle.
 #[pyclass(name = "Pool", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyPool {
-    core: Arc<parking_lot::RwLock<BotState>>,
+    core: Arc<StateLock<BotState>>,
     pool_id: u64,
     chain_id: u64,
 }
 
 impl PyPool {
-    pub(crate) const fn new(
-        core: Arc<parking_lot::RwLock<BotState>>,
-        pool_id: u64,
-        chain_id: u64,
-    ) -> Self {
+    pub(crate) const fn new(core: Arc<StateLock<BotState>>, pool_id: u64, chain_id: u64) -> Self {
         Self {
             core,
             pool_id,

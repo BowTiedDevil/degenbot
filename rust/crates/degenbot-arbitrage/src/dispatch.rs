@@ -39,6 +39,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
+use degenbot_bot::bot_core::state_lock::StateLock;
 use degenbot_bot::bot_core::BotState;
 use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo};
 use degenbot_simulation::BlockSimHandle;
@@ -464,7 +465,7 @@ pub fn dispatch_profitable_results(
     // (step 4's `is_empty()` short-circuit above) — need not wire an engine;
     // the `None` arm below is the unreachable guard for non-empty input
     // without a `BotState`.
-    bot_state: Option<Arc<RwLock<BotState>>>,
+    bot_state: Option<Arc<StateLock<BotState>>>,
     // The cross-block persistent bytecode + account-existence cache
     // (`WarmCodeCacheInner`, the `HDEG7H` Option-A layer). Required by the
     // `BlockSimHandle` build (the `None` arm is unreachable — see `bot_state`).
@@ -1255,7 +1256,7 @@ mod tests {
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
         let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
         let warm = degenbot_simulation::WarmCodeCacheInner::shared_default();
-        let bot_state = Arc::new(RwLock::new(BotState::new()));
+        let bot_state = Arc::new(StateLock::new(BotState::new()));
         let writer_state = Arc::clone(&bot_state);
 
         // The fan-out runs on its own thread inside the runtime.
@@ -1327,7 +1328,7 @@ mod tests {
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
         let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
-        let bot_state = Arc::new(RwLock::new(BotState::new()));
+        let bot_state = Arc::new(StateLock::new(BotState::new()));
 
         let cands = vec![
             candidate(40, 1_000_000_000_000_000_000u128, 1_000),
@@ -1390,7 +1391,7 @@ mod tests {
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
         let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
-        let bot_state = Arc::new(RwLock::new(BotState::new()));
+        let bot_state = Arc::new(StateLock::new(BotState::new()));
 
         pool_divergence
             .lock()
@@ -1450,7 +1451,7 @@ mod tests {
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
         let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
-        let bot_state = Arc::new(RwLock::new(BotState::new()));
+        let bot_state = Arc::new(StateLock::new(BotState::new()));
 
         let cands = vec![candidate_through_pool(
             60,

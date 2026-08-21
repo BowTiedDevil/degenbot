@@ -111,19 +111,9 @@ RUN go install github.com/sandover/ergo/cmd/ergo@latest
 # from pinning a throwaway .venv path; they fall back to `prek` on PATH.
 RUN uv tool install prek
 
-# cargo-nextest (Rust test runner). Baked into the image — `cargo nextest`
-# gives ~20% faster build+run than `cargo test` via execution parallelism
-# (see rust/PERF_RESULTS.md lever #3). CI does NOT install nextest, so the
-# CI-facing `just test-rust` recipe still uses `cargo test`; the dev-only
-# `just test-rust-nextest` recipe (see justfile) uses this binary. Installed
-# under the dev user's cargo home (~/.cargo/bin, already on PATH via the
-# ENV PATH above). `--locked` pins to the Cargo.lock in nextest's own
-# published crate for reproducibility.
-RUN cargo install --locked cargo-nextest
 # `cargo-edit` provides `cargo upgrade` (rewrites Cargo.toml version requirements
 # to latest published, across semver majors — `cargo update` alone can't cross
-# a major boundary), used by `just update-deps`. Same cargo-home + --locked
-# convention as cargo-nextest.
+# a major boundary), used by `just update-deps`.
 RUN cargo install --locked cargo-edit
 
 # User-level cargo config: use `mold` as the linker for all cargo builds

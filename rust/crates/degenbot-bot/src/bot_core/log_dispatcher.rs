@@ -22,6 +22,7 @@ use std::sync::{Arc, Weak};
 
 use alloy::rpc::types::Log;
 
+use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
 use degenbot_decoders::v2_sync_decoder::decode_sync_log;
 use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
@@ -399,7 +400,7 @@ impl LogDispatcher {
     /// any subscriber notify — subscribers take only their own lock (D2's
     /// engine-then-core order preserved by not nesting).
     #[tracing::instrument(skip(self, log, state), fields(block = %log.block_number.unwrap_or_default()))]
-    pub fn dispatch(&self, log: &Log, state: &Arc<parking_lot::RwLock<BotState>>) {
+    pub fn dispatch(&self, log: &Log, state: &Arc<StateLock<BotState>>) {
         // Phase-labeled `measure_block!` for the rolling-start dirty-path
         // diagnostic: distinguishes "decode miss" (no decoder recognized the
         // log) from "apply miss" (pool not registered in BotState → no-op)
@@ -569,7 +570,7 @@ mod tests {
     struct RecordingSubscriber {
         calls: Arc<Mutex<Vec<SubObservation>>>,
         /// Probes the state lock at notify time to assert it's free.
-        state: Arc<parking_lot::RwLock<BotState>>,
+        state: Arc<StateLock<BotState>>,
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -618,7 +619,7 @@ mod tests {
     #[test]
     fn dispatch_decodes_applies_then_notifies_after_write_release() {
         let pool_address = alloy::primitives::Address::from([0x11u8; 20]);
-        let state = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let state = Arc::new(StateLock::new(BotState::new()));
         // Register the pool so apply produces a pool_id (apply_v2_sync returns
         // None for unregistered addresses).
         state
@@ -668,7 +669,7 @@ mod tests {
     #[test]
     fn dispatch_skips_dropped_subscribers() {
         let pool_address = alloy::primitives::Address::from([0x22u8; 20]);
-        let state = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let state = Arc::new(StateLock::new(BotState::new()));
         state
             .write()
             .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
@@ -760,7 +761,7 @@ mod tests {
             },
         );
 
-        let state = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let state = Arc::new(StateLock::new(BotState::new()));
         let pool_id = state
             .write()
             .register_v3_pool(&RegisterV3PoolParams {

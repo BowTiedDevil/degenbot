@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
+use degenbot_bot::bot_core::state_lock::StateLock;
 use degenbot_bot::bot_core::BotState;
 
 /// A thin Python handle to a token registered in `BotState`.
@@ -16,13 +17,13 @@ use degenbot_bot::bot_core::BotState;
 /// Does not own any state — all data lives in Rust inside `BotState`.
 #[pyclass(name = "Erc20Token", skip_from_py_object, module = "degenbot._ffi")]
 pub struct PyErc20Token {
-    core: Arc<parking_lot::RwLock<BotState>>,
+    core: Arc<StateLock<BotState>>,
     address: Address,
 }
 
 impl PyErc20Token {
     /// Create a new thin token handle.
-    pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, address: Address) -> Self {
+    pub(crate) const fn new(core: Arc<StateLock<BotState>>, address: Address) -> Self {
         Self { core, address }
     }
 

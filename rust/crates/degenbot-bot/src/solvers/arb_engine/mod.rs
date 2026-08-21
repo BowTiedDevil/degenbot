@@ -48,6 +48,7 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
 
 use self::delivery_policy::DeliveryPolicy;
+use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
 
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
@@ -290,7 +291,7 @@ pub struct ArbitrageEngine {
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
     /// mutations a write guard. Lock ordering when nested is
     /// engine-then-core; no code path ever nests in the opposite direction.
-    pub(crate) core: Arc<parking_lot::RwLock<BotState>>,
+    pub(crate) core: Arc<StateLock<BotState>>,
     /// Registered path pool refs (immutable after registration).
     ///
     /// `pub(crate)`: the field is an invariant (it must stay consistent with
@@ -378,7 +379,7 @@ impl ArbitrageEngine {
     /// this no-arg ctor is the standalone-Rust / no-`pyo3`-test convenience.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_core(Arc::new(parking_lot::RwLock::new(BotState::new())))
+        Self::with_core(Arc::new(StateLock::new(BotState::new())))
     }
 
     /// Adopt an existing shared `Arc<RwLock<BotState>>` (ADR-006 D1+D2). The
@@ -389,7 +390,7 @@ impl ArbitrageEngine {
     /// state is still engine-local (ADR-006 D2 — engine keeps its own lock
     /// for path/solver state; only the core lock type/flavor changes).
     #[must_use]
-    pub fn with_core(core: Arc<parking_lot::RwLock<BotState>>) -> Self {
+    pub fn with_core(core: Arc<StateLock<BotState>>) -> Self {
         Self {
             core,
             path_pools: HashMap::new(),
@@ -422,7 +423,7 @@ impl ArbitrageEngine {
     /// reference (an invariant no downstream crate can break by swapping the
     /// field).
     #[must_use]
-    pub fn core(&self) -> &Arc<parking_lot::RwLock<BotState>> {
+    pub fn core(&self) -> &Arc<StateLock<BotState>> {
         &self.core
     }
 

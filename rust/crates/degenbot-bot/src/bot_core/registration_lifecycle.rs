@@ -30,7 +30,8 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use alloy::primitives::Address;
-use parking_lot::RwLock;
+
+use crate::bot_core::state_lock::StateLock;
 
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_rpc::provider::AlloyProvider;
@@ -110,7 +111,7 @@ impl std::error::Error for RegistrationLifecycleError {}
 /// `Quarantined` (the tripwire; never auto-repair). No error on the Sparse /
 /// no-op paths.
 pub async fn run_cl_v3_lifecycle<F1, Fut1, F2, Fut2, E>(
-    core: &RwLock<BotState>,
+    core: &StateLock<BotState>,
     address: Address,
     snapshot_block: Option<u64>,
     verify_seed: F1,
@@ -209,7 +210,7 @@ where
 /// — a verification failure aborts before `set_live`, leaving the tracked pool
 /// `Quarantined`.
 pub async fn run_cl_v4_lifecycle<F1, Fut1, F2, Fut2, E>(
-    core: &RwLock<BotState>,
+    core: &StateLock<BotState>,
     pool_manager: Address,
     pool_id: V4PoolId,
     snapshot_block: Option<u64>,
@@ -294,7 +295,7 @@ where
 /// error (mismatch = fatal tripwire), `MissingProvider` when a tracked pool
 /// needs to verify with no provider configured.
 pub async fn run_v3_registration_lifecycle(
-    core: &RwLock<BotState>,
+    core: &StateLock<BotState>,
     provider: Option<&AlloyProvider>,
     address: Address,
     snapshot_block: Option<u64>,
@@ -339,7 +340,7 @@ pub async fn run_v3_registration_lifecycle(
 /// error (mismatch = fatal tripwire), `MissingStateView` when a tracked V4
 /// pool is verified with no `state_view` supplied.
 pub async fn run_v4_registration_lifecycle(
-    core: &RwLock<BotState>,
+    core: &StateLock<BotState>,
     provider: Option<&AlloyProvider>,
     pool_manager: Address,
     pool_id: V4PoolId,
@@ -383,7 +384,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy::primitives::{Address, I256, U128, U256};
-    use parking_lot::RwLock;
+    use crate::bot_core::state_lock::StateLock;
 
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::v4_state::V4PoolKey;
@@ -394,8 +395,8 @@ mod tests {
         RegistrationLifecycle, TickInfo,
     };
 
-    fn new_core() -> Arc<RwLock<BotState>> {
-        Arc::new(RwLock::new(BotState::new()))
+    fn new_core() -> Arc<StateLock<BotState>> {
+        Arc::new(StateLock::new(BotState::new()))
     }
 
     fn reg_v3(core: &mut BotState, address: Address, coverage: PoolTickCoverage) -> u64 {

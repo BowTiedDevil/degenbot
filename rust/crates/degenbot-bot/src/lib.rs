@@ -111,3 +111,28 @@ pub mod metrics;
 pub mod otel;
 pub mod profiling;
 pub mod solvers;
+
+/// Configure the process-global rayon pool used by the engine's
+/// `par_iter` solve fan-out ([`crate::solvers`]).
+///
+/// GOQWCL (incident 2026-08-21): the pool was previously implicit — rayon
+/// spawns its global pool lazily on first `par_iter` with **unnamed**
+/// threads, which masquerade as unrelated workers in thread dumps (during
+/// the incident forensics they showed up as anonymous futex waiters and
+/// were nearly misattributed to tokio). Naming them makes any future
+/// dump immediately attributable.
+///
+/// Idempotent-ish: if a global pool already exists (another component or
+/// test built it first), the request is ignored with a debug log — rayon's
+/// global pool can only be configured once per process.
+pub fn configure_rayon_solver_pool() {
+    let result = rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("degenbot-solve-{i}"))
+        .build_global();
+    if let Err(err) = result {
+        tracing::debug!(
+            %err,
+            "[rayon] global pool already configured - keeping existing pool"
+        );
+    }
+}

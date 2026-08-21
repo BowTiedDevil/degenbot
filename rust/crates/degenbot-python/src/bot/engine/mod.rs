@@ -31,6 +31,7 @@ pub use errors::*;
 pub use result_channel::BlockStream;
 
 use crate::prelude::*;
+use degenbot_bot::bot_core::state_lock::StateLock;
 use degenbot_bot::bot_core::BotState;
 pub(crate) use std::collections::HashMap;
 pub(crate) use std::sync::Arc;
@@ -177,7 +178,7 @@ impl PyArbitrageEngine {
     /// borrows `&BotState` for `BotStateDb`). Acquires the engine lock
     /// (engine-then-core ordering per ADR-003) + clones the `core` arc —
     /// one Arc clone, no state copy.
-    pub(crate) fn bot_state_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
+    pub(crate) fn bot_state_arc(&self) -> Arc<StateLock<BotState>> {
         self.engine.lock().core().clone()
     }
 

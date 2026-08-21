@@ -3018,7 +3018,7 @@ mod tests {
         use std::sync::Arc;
 
         // Build a shared core with one V2 pool registered directly into `BotState`.
-        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         let params = RegisterV2PoolParams {
             address: Address::from([0x11u8; 20]),
             token0: Address::from([0x01u8; 20]),
@@ -3060,7 +3060,7 @@ mod tests {
         use crate::bot_core::{BotState, RegisterV2PoolParams};
         use std::sync::Arc;
 
-        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         // Register one real V2 pool so the engine has *some* valid id.
         let real_pool_id = core
             .write()
@@ -3275,9 +3275,8 @@ mod tests {
     fn with_core_shares_the_same_core_arc_as_a_peer_bot() {
         use std::sync::Arc;
 
-        use parking_lot::RwLock;
 
-        let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(crate::bot_core::BotState::new()));
         let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         // `Arc::ptr_eq` proves the engine + the peer hold the SAME allocation
         // — not a copy, not a fresh `BotState`. Writes through either side
@@ -3305,11 +3304,10 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        use parking_lot::RwLock;
 
         use crate::bot_core::BlockMetadata;
 
-        let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(crate::bot_core::BotState::new()));
         let engine = ArbitrageEngine::with_core(Arc::clone(&core));
         let pool_id = engine.register_v2_pool(
             Address::repeat_byte(0x11),
@@ -3464,11 +3462,10 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        use parking_lot::RwLock;
 
         use crate::bot_core::BlockMetadata;
 
-        let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(crate::bot_core::BotState::new()));
         let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
 
         // Register N paths so `solve_dirty` exercises a real par_iter batch.
@@ -3677,7 +3674,7 @@ mod tests {
             (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
         }
 
-        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         core.write().register_token(
             Address::from([0x01u8; 20]),
             "Token0".into(),
@@ -3800,7 +3797,7 @@ mod tests {
             (U256::from(n) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>()
         }
 
-        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         core.write().register_token(
             Address::from([0x01u8; 20]),
             "Token0".into(),
@@ -3922,7 +3919,7 @@ mod tests {
         use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV3PoolParams};
         use std::sync::Arc;
 
-        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         core.write().register_token(
             Address::from([0x01u8; 20]),
             "Token0".into(),
@@ -4313,7 +4310,9 @@ mod tests {
     #[test]
     fn balancer_weighted_rejects_mixed_with_cl() {
         use std::sync::Arc;
-        let core = Arc::new(parking_lot::RwLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
+            crate::bot_core::BotState::new(),
+        ));
 
         // Register a Balancer weighted pool
         let bw = core
@@ -4641,7 +4640,9 @@ mod tests {
     #[test]
     fn balancer_stable_rejects_mixed_with_cl() {
         use std::sync::Arc;
-        let core = Arc::new(parking_lot::RwLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
+            crate::bot_core::BotState::new(),
+        ));
 
         let bs = core
             .write()
@@ -4870,7 +4871,9 @@ mod tests {
     #[test]
     fn curve_stable_rejects_mixed_with_cl() {
         use std::sync::Arc;
-        let core = Arc::new(parking_lot::RwLock::new(crate::bot_core::BotState::new()));
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
+            crate::bot_core::BotState::new(),
+        ));
 
         let cs = core.write().register_curve_pool(&curve_stable_params(
             Address::from([0xb4u8; 20]),

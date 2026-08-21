@@ -580,14 +580,14 @@ mod tests {
     use super::PumpState;
     use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
     use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;
+    use degenbot_bot::bot_core::state_lock::StateLock;
     use degenbot_bot::bot_core::{Bot, BotState};
     use degenbot_bot::solvers::arb_engine::engine_handle::EngineHandle;
     use degenbot_bot::solvers::arb_engine::ArbitrageEngine;
-    use parking_lot::RwLock;
     use tokio::sync::mpsc;
 
     fn pump_state_for_test() -> std::sync::Arc<PumpState> {
-        let core = std::sync::Arc::new(RwLock::new(BotState::new()));
+        let core = std::sync::Arc::new(StateLock::new(BotState::new()));
         let bot = std::sync::Arc::new(Bot::with_core(std::sync::Arc::clone(&core)));
         let mut engine = ArbitrageEngine::with_core(core);
         let (result_tx, _result_rx) = mpsc::unbounded_channel();

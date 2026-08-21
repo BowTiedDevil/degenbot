@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use crate::bot_core::snapshot_verify::SnapshotLoadError;
+use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::{log_dispatcher, BotState};
 
 /// The per-chain orchestrator: a thin facade over a shared
@@ -39,7 +40,7 @@ pub struct Bot {
     /// `docs/adr/ADR-006-bot-as-per-chain-orchestrator.md` §D4).
     chain_id: u64,
     /// The shared pure-data state. Handles clone this `Arc`.
-    state: Arc<parking_lot::RwLock<BotState>>,
+    state: Arc<StateLock<BotState>>,
     /// The per-`Bot` event bus (ADR-006 D4). The pump (slice 5) drives
     /// [`dispatch_log`](Self::dispatch_log) per WS log; engine subscriber
     /// adapters attach via [`attach_engine`](Self::attach_engine).
@@ -71,7 +72,7 @@ impl Bot {
     pub fn new(chain_id: u64) -> Self {
         Self {
             chain_id,
-            state: Arc::new(parking_lot::RwLock::new(BotState::new())),
+            state: Arc::new(StateLock::new(BotState::new())),
             dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
             construction_io: parking_lot::RwLock::new(None),
         }
@@ -89,7 +90,7 @@ impl Bot {
     /// one if needed; adopters that need I/O re-attach via
     /// [`Bot::with_construction_io`]).
     #[must_use]
-    pub fn with_core(core: Arc<parking_lot::RwLock<BotState>>) -> Self {
+    pub fn with_core(core: Arc<StateLock<BotState>>) -> Self {
         Self {
             chain_id: 0,
             state: core,
@@ -133,7 +134,7 @@ impl Bot {
     /// the SAME state this orchestrator owns. This is the Polars three-layer
     /// sharing seam (ADR-005, revised by ADR-006 D4).
     #[must_use]
-    pub fn state_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
+    pub fn state_arc(&self) -> Arc<StateLock<BotState>> {
         Arc::clone(&self.state)
     }
 

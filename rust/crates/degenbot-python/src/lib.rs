@@ -185,6 +185,21 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // is module-lifecycle setup, not symbol registration.
     python_log_layer::init_logging_subscriber();
 
+    // GOQWCL (incident 2026-08-21): bind pyo3-async-runtimes to the shared
+    // bot runtime instead of letting the first `future_into_py` call lazily
+    // spawn a SECOND nproc-worker multi-thread runtime mid-run (observed as
+    // 24 surprise worker threads appearing at the wedge timestamp). The
+    // singleton is created on first use either way — this just makes it the
+    // ONE runtime, created deterministically at import.
+    if pyo3_async_runtimes::tokio::init_with_runtime(degenbot_core::runtime::get_runtime()).is_err()
+    {
+        tracing::debug!("[init] pyo3_async_runtimes already bound to a runtime");
+    }
+
+    // Name the rayon solve pool so thread dumps attribute solver workers
+    // correctly (see degenbot_bot::configure_rayon_solver_pool).
+    degenbot_bot::configure_rayon_solver_pool();
+
     // Register the shutdown pyfunction on the module.
     python_log_layer::PythonLogLayer::register_pyfunction(m)?;
 

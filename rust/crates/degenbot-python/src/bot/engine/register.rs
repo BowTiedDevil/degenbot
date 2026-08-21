@@ -12,6 +12,8 @@ use super::{
 };
 use crate::prelude::*;
 
+use degenbot_bot::bot_core::state_lock::StateLock;
+
 #[pymethods]
 impl PyArbitrageEngine {
     #[new]
@@ -31,9 +33,7 @@ impl PyArbitrageEngine {
             let bot = bot.borrow(py).bot_arc();
             (ArbitrageEngine::with_core(bot.state_arc()), bot)
         } else {
-            let core = Arc::new(parking_lot::RwLock::new(
-                degenbot_bot::bot_core::BotState::new(),
-            ));
+            let core = Arc::new(StateLock::new(degenbot_bot::bot_core::BotState::new()));
             let bot = Arc::new(Bot::with_core(Arc::clone(&core)));
             (ArbitrageEngine::with_core(core), bot)
         };
