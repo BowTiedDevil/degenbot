@@ -523,23 +523,11 @@ impl BlockPump {
     /// was not called first).
     pub async fn resume_from_subscribe(&mut self, subscribe_state: SubscribeState) {
         #[expect(clippy::expect_used)] // invariant-guarded (documented)
-        let mut combined = subscribe_state
+        let combined = subscribe_state
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
         let first_block = subscribe_state.first_block;
-        // Drain the WS stream DURING the blocking backfill (DFQYM5 root cause).
-        // The alloy `logs` subscription buffers into a small broadcast channel
-        // (default capacity 16) that DROPS the OLDEST messages for a lagging
-        // receiver. If the backfill awaits without draining `combined`, the
-        // freshly-mined live blocks' logs (oldest in the channel) overflow and
-        // are lost permanently — the first live block then shows most of its
-        // logs missing, immediately tripping the WS-completeness abort even
-        // though no message was ever dropped by the node. Poll `combined`
-        // concurrently here and collect its events so the buffer never
-        // overflows; the drained events are re-injected ahead of the live loop.
-        let (backfill_res, drained) = self
-            .drain_stream_during_backfill(first_block, &mut combined)
-            .await;
+        let (backfill_res, combined) = self.backfill_with_drain(first_block, combined).await;
         if let Err(e) = backfill_res {
             tracing::error!(
                 first_block,
@@ -547,11 +535,42 @@ impl BlockPump {
                 "BlockPump: auto-backfill failed — starting live loop from gap (not closed)"
             );
         }
-        // Re-inject any WS events drained during the backfill ahead of the
-        // still-owned stream tail, preserving arrival order (single-stream
-        // invariant MJXP5Z).
-        let combined = stream::iter(drained).chain(combined).boxed();
         self.run_with_stream(combined, first_block).await;
+    }
+
+    /// DFQYM5/WS-DROP: run the snapshot→WS gap backfill while concurrently
+    /// draining `combined`, returning `(backfill_result, combined')` where
+    /// `combined'` re-injects every event drained during the backfill ahead
+    /// of the still-owned live tail, preserving arrival order (MJXP5Z).
+    ///
+    /// Why the drain is not optional: the alloy `logs` subscription buffers
+    /// into a small broadcast channel (default capacity 16) that DROPS the
+    /// OLDEST messages for a lagging receiver. A backfill that awaits without
+    /// polling `combined` therefore loses the freshly-mined live blocks' logs
+    /// permanently — the first live block then shows most of its logs missing
+    /// and immediately trips the WS-completeness abort (observed live:
+    /// `eth_getLogs=44 logs, WS delivered=0` at block 25800995). Both
+    /// consumers of the synchronous backfill — the core
+    /// [`resume_from_subscribe`](Self::resume_from_subscribe) AND the pyo3
+    /// `PumpState::resume` (which must `block_on` the backfill before
+    /// returning so Python's `build_paths` cannot race the per-pool buffer,
+    /// J3FMDO) — MUST go through this helper so the drain discipline has a
+    /// single owner.
+    pub async fn backfill_with_drain(
+        &self,
+        first_block: u64,
+        combined: stream::BoxStream<'static, WsEvent>,
+    ) -> (Result<u64, String>, stream::BoxStream<'static, WsEvent>) {
+        let mut combined = combined;
+        let (backfill_res, drained) = self
+            .drain_stream_during_backfill(first_block, &mut combined)
+            .await;
+        let combined = if drained.is_empty() {
+            combined
+        } else {
+            stream::iter(drained).chain(combined).boxed()
+        };
+        (backfill_res, combined)
     }
 
     /// Concurrently drain the live WS stream while the blocking snapshot→WS
@@ -4757,6 +4776,87 @@ mod tests {
             1,
             "backfill_to_ws_block must buffer the V3 burn before returning (race regression)"
         );
+    }
+
+    /// DFQYM5/WS-DROP regression: the resume-path backfill helper must drain
+    /// the WS stream WHILE the snapshot backfill runs and re-inject the
+    /// drained events ahead of the live tail. Pre-fix the pyo3
+    /// `PumpState::resume` ran `backfill_to_ws_block` with the stream
+    /// untouched, so alloy's capacity-16 subscription broadcast ring
+    /// overflowed (unfiltered log sub → hundreds of messages per mainnet
+    /// block) and silently dropped the OLDEST messages — the first live
+    /// block's logs — tripping the WS-completeness abort (observed live:
+    /// `eth_getLogs=44 logs, WS delivered=0` at block 25800995). The helper
+    /// returns the stream to hand to `run_with_stream`: drained events
+    /// first (arrival order, MJXP5Z), live tail after — and the J3FMDO
+    /// synchronous-backfill contract still holds (buffer populated on
+    /// return).
+    #[tokio::test]
+    async fn backfill_with_drain_reinjects_events_present_during_backfill() {
+        let pool_addr = alloy::primitives::Address::from([0xc3u8; 20]);
+        let bot = Arc::new(Bot::new(1));
+        bot.state_arc().write().set_snapshot_seed_block(Some(85));
+        let (pump, _sink, _shutdown, asserter) =
+            pump_for_test_with_asserter(Arc::clone(&bot), None);
+
+        // The snapshot→WS gap backfill (86..100): one V3 Burn log at block 90.
+        asserter.push_success(&vec![make_v3_burn_log_with_block(
+            pool_addr, -100, 100, 500, 90,
+        )]);
+
+        // Live events present on the combined stream while the backfill is in
+        // flight — in production these are the freshly-mined first live
+        // block's logs that the undrained alloy ring used to evict. The tail
+        // pends forever to model a LIVE websocket (the drain must keep
+        // running until the backfill completes, not bail on a closed stream).
+        let live = vec![
+            WsEvent::Log(make_v2_sync_log(
+                alloy::primitives::Address::from([0xd1u8; 20]),
+                U256::ZERO,
+                U256::ZERO,
+                101,
+                false,
+            )),
+            WsEvent::BlockHeader {
+                number: 101,
+                timestamp: 1_000_101,
+                base_fee_per_gas: None,
+                gas_used: 0,
+                gas_limit: 0,
+            },
+        ];
+        let combined = stream::iter(live)
+            .chain(stream::pending::<WsEvent>())
+            .boxed();
+
+        let (backfill_res, mut combined) = pump.backfill_with_drain(100, combined).await;
+        backfill_res.expect("backfill completes against the mock");
+
+        // J3FMDO invariant preserved: the backfill buffer is populated on
+        // return (the synchronous contract `PumpState::resume` relies on).
+        assert_eq!(
+            bot.state_arc().read().buffered_v3_event_count(&pool_addr),
+            1,
+            "backfill_with_drain must buffer the V3 burn before returning (J3FMDO)"
+        );
+
+        // The drained events were captured during the backfill and are
+        // re-injected ahead of the live tail, arrival order preserved.
+        let expected: [(&str, u64); 2] = [("log", 101), ("header", 101)];
+        for (kind, number) in expected {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(5), combined.next())
+                .await
+                .expect("re-injected event must arrive")
+                .expect("stream yields the drained event");
+            match ev {
+                WsEvent::Log(l) => {
+                    assert_eq!((kind, l.block_number.unwrap()), ("log", number));
+                }
+                WsEvent::BlockHeader { number: n, .. } => {
+                    assert_eq!((kind, n), ("header", number));
+                }
+            }
+        }
     }
 
     /// J3FMDO: `resume_from_subscribe` skips the auto-backfill entirely when no

@@ -221,7 +221,7 @@ impl PumpState {
         // bot (`VerificationMismatchError`, 2026-07-12). `block_on` on the
         // shared runtime mirrors `subscribe`'s sync discipline.
         //
-        // GIL-release across the backfill `block_on`: `backfill_to_ws_block`
+        // GIL-release across the backfill `block_on`: `backfill_with_drain`
         // -> `backfill_from_snapshot` -> `process_backfill_logs` is pure Rust
         // async (eth_getLogs RPC + BotState mutation — no `Python::attach`,
         // no `sink.notify_block` which fires only in `run_with_stream`). It
@@ -233,17 +233,28 @@ impl PumpState {
         // the GIL is released during the wait. PyO3 0.29 renamed `allow_threads`
         // to `detach`.
         let pump_ref = &pump;
-        py.detach(|| {
+        // DFQYM5/WS-DROP: drain the WS stream DURING the synchronous backfill
+        // (alloy's capacity-16 subscription broadcast ring drops the OLDEST
+        // messages for a lagging receiver — an undrained backfill loses the
+        // first live block's logs permanently and trips the WS-completeness
+        // abort). The core helper returns the stream re-injected with the
+        // drained events ahead of the live tail (arrival order, MJXP5Z); the
+        // J3FMDO contract is unchanged — `block_on` still awaits the
+        // backfill synchronously before `resume` returns.
+        let (backfill_res, combined_stream) = py.detach(|| {
             degenbot_core::runtime::get_runtime().block_on(async {
-                if let Err(e) = pump_ref.backfill_to_ws_block(first_block).await {
-                    tracing::error!(
-                        first_block,
-                        %e,
-                        "BlockPump: auto-backfill failed — starting live loop with gap"
-                    );
-                }
-            });
+                pump_ref
+                    .backfill_with_drain(first_block, combined_stream)
+                    .await
+            })
         });
+        if let Err(e) = backfill_res {
+            tracing::error!(
+                first_block,
+                %e,
+                "BlockPump: auto-backfill failed — starting live loop with gap"
+            );
+        }
         let handle = degenbot_core::runtime::get_runtime().spawn(async move {
             pump.run_with_stream(combined_stream, first_block).await;
         });
