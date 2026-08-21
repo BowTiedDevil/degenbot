@@ -53,6 +53,26 @@
 /// is the real guard whose drop writes the report.
 pub type Guard = hotpath::HotpathGuard;
 
+/// The `HOTPATH_SHUTDOWN_MS` window as a `Duration`, for callers orchestrating
+/// a cooperative timed exit (S53STH): raise the pump shutdown flag at this
+/// deadline, unwind, flush telemetry, then drop the guard.
+/// `None` when unset or unparseable (warn on unparseable — a typo would
+/// otherwise silently disable the timed exit).
+#[cfg(feature = "hotpath")]
+#[must_use]
+pub fn timed_exit_window() -> Option<std::time::Duration> {
+    match std::env::var("HOTPATH_SHUTDOWN_MS") {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(ms) => Some(std::time::Duration::from_millis(ms)),
+            Err(e) => {
+                tracing::warn!(%raw, %e, "HOTPATH_SHUTDOWN_MS not a millisecond count — timed exit disabled");
+                None
+            }
+        },
+        Err(_) => None,
+    }
+}
+
 /// Build a hotpath guard for the pump run, iff the operator opted in.
 ///
 /// Returns `None` (no guard) unless `DEGENBOT_HOTPATH=1` is set, so the
@@ -71,26 +91,27 @@ pub fn hotpath_guard(caller_name: &'static str) -> Option<Guard> {
     #[cfg(feature = "hotpath")]
     {
         let builder = hotpath::HotpathGuardBuilder::new(caller_name);
-        // If a timed shutdown is requested (HOTPATH_SHUTDOWN_MS), hand the
-        // guard to hotpath's own background thread — it sleeps for the
-        // duration, drops the guard (→ writes the report), then exits the
-        // process. This is the clean way to capture a fixed window from a
-        // long-running bot (the pump loop never returns on its own). Without
-        // it, build() returns a guard the caller holds so the report lands on
-        // normal pump exit.
-        if std::env::var("HOTPATH_SHUTDOWN_MS").is_ok() {
-            builder.build_with_shutdown(std::time::Duration::from_secs(0));
+        let guard = builder.build();
+        // S53STH: HOTPATH_SHUTDOWN_MS no longer arms hotpath's own
+        // build_with_shutdown thread (which dropped the guard then called
+        // process::exit() while tokio workers were still live - the TLS
+        // teardown abort of incident 2026-08-21). The caller
+        // (`BlockPump::run_with_stream`) reads timed_exit_window(), starts its
+        // own cooperative timer that raises the pump's shutdown flag at the
+        // window, lets the loop unwind through all span guards, flushes OTel,
+        // and only then drops this guard (report) at scope end.
+        if let Ok(raw) = std::env::var("HOTPATH_SHUTDOWN_MS") {
             tracing::info!(
                 caller_name,
-                "hotpath: profiling active — timed exit via HOTPATH_SHUTDOWN_MS"
+                window_ms = %raw,
+                "hotpath: profiling active — cooperative timed exit via HOTPATH_SHUTDOWN_MS"
             );
-            return None;
+        } else {
+            tracing::info!(
+                caller_name,
+                "hotpath: profiling guard active (report on pump exit)"
+            );
         }
-        let guard = builder.build();
-        tracing::info!(
-            caller_name,
-            "hotpath: profiling guard active (report on pump exit)"
-        );
         Some(guard)
     }
     #[cfg(not(feature = "hotpath"))]

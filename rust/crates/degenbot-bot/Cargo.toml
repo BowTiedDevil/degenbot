@@ -60,6 +60,7 @@ thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
 opentelemetry-prometheus = { version = "0.32.0", optional = true }
 prometheus = { version = "0.14.0", default-features = false, optional = true }
+tokio-util = { version = "0.7.19", optional = true }
 
 [features]
 # OpenTelemetry tracer bullet (see src/otel.rs). Enable with --features otel.
@@ -72,7 +73,7 @@ prometheus = { version = "0.14.0", default-features = false, optional = true }
 # T1 metrics pipeline rides the same feature gate: opentelemetry-prometheus
 # (Prometheus text-format reader for Grafana scrapes) + the prometheus crate
 # (registry + TextEncoder). Same zero-footprint rule as the trace deps.
-otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:opentelemetry-prometheus", "dep:prometheus"]
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:opentelemetry-prometheus", "dep:prometheus", "dep:tokio-util"]
 # Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
@@ -82,6 +83,7 @@ hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 opentelemetry-prometheus = ["dep:opentelemetry-prometheus"]
 prometheus = ["dep:prometheus"]
+tokio-util = ["dep:tokio-util"]
 
 [dev-dependencies]
 proptest = "^1.11"

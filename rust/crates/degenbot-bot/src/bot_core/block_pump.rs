@@ -761,8 +761,35 @@ impl BlockPump {
         // profiling guard for the whole pump loop iff `DEGENBOT_HOTPATH=1`.
         // No-op (not even constructed) otherwise, and a no-op stub when the
         // `hotpath` Cargo feature is off. Dropping at loop exit writes the
-        // report; for a long-running bot use `HOTPATH_SHUTDOWN_MS`.
+        // report. With HOTPATH_SHUTDOWN_MS set, the cooperative timer below
+        // raises the shutdown flag at the window; the guard drops HERE — after
+        // the post-loop OTel flush — so the report captures the final state
+        // without racing live workers (S53STH: replaces hotpath's own
+        // build_with_shutdown thread, whose process::exit aborted tokio
+        // workers mid-TLS-teardown).
         let _hotpath_guard = crate::profiling::hotpath_guard("block_pump");
+        // S53STH cooperative timed exit: a 500ms tick that polls the shutdown
+        // flag inside the parked select, so the loop unwinds through its span
+        // guards promptly when the hotpath timer raises the flag. The flag is
+        // the single source of truth (also checked at the loop head).
+        let mut timed_exit_tick = tokio::time::interval(Duration::from_millis(500));
+        timed_exit_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        timed_exit_tick.tick().await; // discard the immediate first tick
+        #[cfg(feature = "hotpath")]
+        if let Some(window) = crate::profiling::timed_exit_window() {
+            let flag = Arc::clone(&self.shutdown);
+            tracing::info!(
+                window_ms = window.as_millis() as u64,
+                "timed exit: cooperative pump shutdown armed"
+            );
+            tokio::spawn(async move {
+                tokio::time::sleep(window).await;
+                tracing::info!(
+                    "timed exit: HOTPATH_SHUTDOWN_MS window elapsed — raising pump shutdown"
+                );
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+        }
 
         let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
 
@@ -948,6 +975,15 @@ impl BlockPump {
         // replaced; the verifier anchor + change-set ride the `Publish` message
         // (single-writer). A dead or stalled drainer never silently loses work.
         let dispatch = DispatchOwner::new(Arc::clone(&self.sink), &verify_tx);
+        // S53STH cooperative timed exit: arm the StallWatch cancel token when
+        // a hotpath timed window is configured so no watchdog sample lands
+        // between the post-loop OTel flush and teardown.
+        #[cfg(all(feature = "hotpath", feature = "otel"))]
+        let dispatch = if crate::profiling::timed_exit_window().is_some() {
+            dispatch.with_shutdown_token(tokio_util::sync::CancellationToken::new())
+        } else {
+            dispatch
+        };
 
         // JIABO3 Option A — header-staleness watchdog. A `tokio::time::interval`
         // selected against `combined.next()` (below) whose internal `Sleep`
@@ -1065,6 +1101,22 @@ impl BlockPump {
             };
             let event = tokio::select! {
                 biased;
+                // S53STH cooperative timed exit: the hotpath timer raises the
+                // shutdown flag; this arm polls it every 500ms so the parked
+                // select wakes promptly (worst case otherwise: one full
+                // BACKFILL_TIMEOUT_SECS park). The loop-head shutdown check
+                // then exits and unwinds all span guards on this task. A tick
+                // is free relative to the window (minutes) it serves.
+                _ = timed_exit_tick.tick() => {
+                    if self.shutdown.load(Ordering::Relaxed) {
+                        tracing::info!("timed exit: shutdown signaled — unwinding pump loop");
+                        break;
+                    }
+                    // Flag not yet raised: re-park. `continue` keeps both arm
+                    // paths diverging so the arm types coerce to the event
+                    // arm's `Option<WsEvent>`.
+                    continue;
+                }
                 // JIABO3 header-staleness watchdog — see the interval setup
                 // above. Firing here does NOT consume the stream event; it runs
                 // `handle_timeout_eager` then re-loops (the top-of-loop drain
@@ -1549,6 +1601,20 @@ impl BlockPump {
                     return;
                 }
             }
+        }
+        // S53STH: the loop has unwound — every span guard (pump iteration,
+        // drainer parent, solve) has popped through its scope on THIS task
+        // before this point. Flush + shut down telemetry BEFORE the hotpath
+        // guard drops at scope end (its Drop writes the report), so the report
+        // and the exporter see the complete, final state. This is the exit
+        // ordering that replaces hotpath's old process::exit() race.
+        #[cfg(feature = "otel")]
+        {
+            if let Some(handle) = crate::otel::global_handle() {
+                let _ = handle.flush();
+                let _ = handle.shutdown();
+            }
+            crate::metrics::shutdown_global_metrics();
         }
     }
 
@@ -5136,6 +5202,7 @@ mod tests {
     #[cfg(feature = "otel")]
     #[tokio::test]
     async fn header_arms_per_block_span_with_number_and_parent() {
+        const NEXT_BLOCK: u64 = MY_BLOCK + 1;
         use crate::otel;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use tracing_subscriber::layer::SubscriberExt;
@@ -5160,7 +5227,6 @@ mod tests {
         // JYCTXI: a second header exercises the consecutive-header case —
         // the new span must detach from the still-entered previous block
         // span (loop-context guard) instead of chaining into one mega-trace.
-        const NEXT_BLOCK: u64 = MY_BLOCK + 1;
         let events: Vec<WsEvent> = vec![
             WsEvent::BlockHeader {
                 number: MY_BLOCK,
@@ -5227,7 +5293,7 @@ mod tests {
                 sp.name.as_ref() == "degenbot.pump.block"
                     && sp.attributes.iter().any(|kv| {
                         kv.key == opentelemetry::Key::from_static_str("block.number")
-                            && (matches!(kv.value, opentelemetry::Value::I64(v) if v == NEXT_BLOCK as i64)
+                            && (matches!(kv.value, opentelemetry::Value::I64(v) if v == i64::try_from(NEXT_BLOCK).unwrap_or(i64::MAX))
                                 || matches!(kv.value, opentelemetry::Value::String(ref v) if v.as_str() == NEXT_BLOCK.to_string().as_str()))
                     })
             })
@@ -5244,6 +5310,62 @@ mod tests {
             next_span.span_context.trace_id(),
             block_span.span_context.trace_id(),
             "consecutive headers must be separate traces (mega-trace regression)"
+        );
+    }
+
+    /// S53STH: the cooperative timed-exit path must make a PARKED select wake
+    /// and return promptly (unwinding all span guards on this task) when the
+    /// hotpath timer raises the flag mid-park — not sit out the full settle
+    /// window, and never `process::exit`.
+    #[cfg(feature = "hotpath")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn timed_exit_flag_exits_parked_select_promptly() {
+        let (mut pump, _sink) = pump_for_test(None);
+        // Raise the flag from outside after 100ms — mid-park on the select's
+        // settle window. The 500ms timed-exit tick polls it and breaks the
+        // loop; success is sub-second return (vs the 60s park regression).
+        let flag = Arc::clone(&pump.shutdown);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let events: Vec<WsEvent> = vec![WsEvent::BlockHeader {
+            number: 0xB000_0001,
+            timestamp: 1,
+            base_fee_per_gas: Some(1),
+            gas_used: 1,
+            gas_limit: 1,
+        }];
+        let started = std::time::Instant::now();
+        pump.run_test_loop(stream::iter(events).boxed(), 0xB000_0000)
+            .await;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "watch-raised shutdown must exit promptly, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_flag_exits_loop_promptly() {
+        let (mut pump, _sink) = pump_for_test(None);
+        // Pre-raise: the very first select! arm sees the watch fire and breaks.
+        pump.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let events: Vec<WsEvent> = vec![WsEvent::BlockHeader {
+            number: 0xB000_0001,
+            timestamp: 1,
+            base_fee_per_gas: Some(1),
+            gas_used: 1,
+            gas_limit: 1,
+        }];
+        let started = std::time::Instant::now();
+        pump.run_test_loop(stream::iter(events).boxed(), 0xB000_0000)
+            .await;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "shutdown flag must exit the loop promptly, took {:?}",
+            started.elapsed()
         );
     }
 }

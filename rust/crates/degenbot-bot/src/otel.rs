@@ -81,6 +81,15 @@ pub enum OtelInitError {
 /// background thread lives while the provider does).
 static HANDLE: OnceLock<OtelHandle> = OnceLock::new();
 
+/// The process-lifetime handle installed by [`init_otel_tracing`], if any.
+/// Exit paths (S53STH cooperative shutdown) flush + shut the provider down
+/// through this instead of reaching for `process::exit`.
+#[cfg(feature = "otel")]
+#[must_use]
+pub fn global_handle() -> Option<&'static OtelHandle> {
+    HANDLE.get()
+}
+
 /// Process-lifetime handle into the `OTel` tracer provider created by
 /// [`init_otel_tracing`]. Cloneable; cheap (the provider is internally
 /// shared).

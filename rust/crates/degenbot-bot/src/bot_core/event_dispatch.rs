@@ -118,6 +118,7 @@ impl DrainerHealth {
 
 /// Watchdog tick for the drainer-liveness backstop (U4UOIS): short enough to
 /// bound abort latency to ~one window + one tick, rare enough to be free.
+#[cfg(feature = "otel")]
 const STALL_WATCHDOG_TICK_MS: u64 = 5_000;
 
 /// How many **consecutive** no-progress pushes (the drainer picks nothing up)
@@ -223,6 +224,13 @@ impl StallWatch {
 /// Global depth gauge (drain-pipe backlog), written by `dispatch` and read by
 /// the watchdog task. `OnceLock` of one cell: the owner is unique per process.
 static DEPTH: OnceLock<AtomicU64> = OnceLock::new();
+/// S53STH: cooperative-shutdown token for the `StallWatch` task, installed by
+/// [`DispatchOwner::with_shutdown_token`]. Unset = never cancelled. Gated on
+/// `otel` (the only consumer is the hotpath timed exit) so default builds
+/// carry no tokio-util code at all.
+#[cfg(feature = "otel")]
+static SHUTDOWN_TOKEN: OnceLock<tokio_util::sync::CancellationToken> = OnceLock::new();
+
 /// Global drainer completion counter mirror for the watchdog.
 static PROCESSED: OnceLock<AtomicU64> = OnceLock::new();
 
@@ -350,10 +358,31 @@ impl DispatchOwner {
         // first sampler wins.
         let stall_watch = Arc::new(StallWatch::new());
         let watch_clone = Arc::clone(&stall_watch);
+        // S53STH: the watchdog samples a process-global cancellation token
+        // (installed by [`DispatchOwner::with_shutdown_token`] before or after
+        // construction - the owner is unique per process). Unset = never
+        // cancelled, identical to pre-S53STH behavior. On cooperative
+        // shutdown the watchdog stops ticking so no abort sample lands between
+        // the OTel flush and teardown.
         let _watchdog = tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_millis(STALL_WATCHDOG_TICK_MS)).await;
-                watch_clone.check_and_abort();
+                #[cfg(feature = "otel")]
+                tokio::select! {
+                    // Token unset = never cancelled; the sleep arm always wins.
+                    () = async {
+                        match SHUTDOWN_TOKEN.get() {
+                            Some(t) => t.cancelled().await,
+                            None => std::future::pending().await,
+                        }
+                    } => return,
+                    () = tokio::time::sleep(std::time::Duration::from_millis(
+                        STALL_WATCHDOG_TICK_MS,
+                    )) => watch_clone.check_and_abort(),
+                }
+                #[cfg(not(feature = "otel"))]
+                {
+                    watch_clone.check_and_abort();
+                }
             }
         });
 
@@ -365,6 +394,21 @@ impl DispatchOwner {
             stall_watch,
             header_ms,
         }
+    }
+
+    /// S53STH: hand the owner a cooperative-shutdown token. When cancelled,
+    /// the `StallWatch` watchdog stops sampling so no tick lands between the
+    /// `OTel` flush and process teardown during the hotpath timed exit.
+    /// Without this setter the watchdog uses a never-cancelled token —
+    /// identical to its pre-S53STH behavior.
+    #[cfg(feature = "otel")]
+    #[must_use]
+    pub fn with_shutdown_token(self, token: tokio_util::sync::CancellationToken) -> Self {
+        // Process-global cell (the owner is unique per process): the watchdog
+        // task reads it directly, so installation works before or after
+        // construction.
+        let _ = SHUTDOWN_TOKEN.set(token);
+        self
     }
 
     /// Shrink the stall window for a subprocess freeze test (test-only).
