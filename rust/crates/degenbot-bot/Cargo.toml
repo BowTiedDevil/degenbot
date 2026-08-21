@@ -41,9 +41,9 @@ futures-util = { version = "^0.3", default-features = false, features = ["async-
 # 0.33 is built against opentelemetry(-sdk) 0.32; bump them together.
 # opentelemetry-otlp: OTLP/HTTP-protobuf over rustls (no OpenSSL system dep);
 # http-proto pulls in the trace (+metrics proto) signal set.
-opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
+opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls"] }
-opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace", "experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio-current-thread"] }
+opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace", "metrics", "experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio-current-thread"] }
 tracing-opentelemetry = { version = "0.33", optional = true, default-features = false }
 # Regular (optional) counterpart of the dev-dependency below: init_otel_tracing
 # composes a tracing-subscriber registry at the call site, so the crate needs
@@ -58,6 +58,8 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
+opentelemetry-prometheus = { version = "0.32.0", optional = true }
+prometheus = { version = "0.14.0", default-features = false, optional = true }
 
 [features]
 # OpenTelemetry tracer bullet (see src/otel.rs). Enable with --features otel.
@@ -67,7 +69,10 @@ tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "s
 # DEGENBOT_OTEL=1. Release wheels and just build-rust-extension do NOT enable
 # this feature (the PyPI maturin build overrides the dev feature list, same
 # story as hotpath), so shipped artifacts carry zero OTel footprint.
-otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
+# T1 metrics pipeline rides the same feature gate: opentelemetry-prometheus
+# (Prometheus text-format reader for Grafana scrapes) + the prometheus crate
+# (registry + TextEncoder). Same zero-footprint rule as the trace deps.
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:opentelemetry-prometheus", "dep:prometheus"]
 # Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
@@ -75,6 +80,8 @@ otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", 
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+opentelemetry-prometheus = ["dep:opentelemetry-prometheus"]
+prometheus = ["dep:prometheus"]
 
 [dev-dependencies]
 proptest = "^1.11"

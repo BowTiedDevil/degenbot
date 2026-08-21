@@ -205,3 +205,78 @@ async fn drain_work_parents_under_the_dispatching_span() {
         "drain.work must parent under the span current at dispatch() time"
     );
 }
+
+/// T1 seam: a recorded counter is readable from the Prometheus registry text —
+/// the contract the Grafana scrape depends on.
+#[test]
+fn recorded_counter_is_rendered_in_prometheus_text() {
+    use degenbot_bot::metrics;
+    use opentelemetry::metrics::MeterProvider;
+    use opentelemetry::KeyValue;
+
+    let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
+    let meter = provider.meter("degenbot.test");
+    let counter = meter.u64_counter("probe_counter_total_check").build();
+    counter.add(7, &[KeyValue::new("verdict", "profitable")]);
+
+    let text = metrics::render(&registry);
+    // The exporter always attaches at least the otel_scope_name label, so
+    // assert on the family name and the sampled value, not a bare `name 7`.
+    let sample = text
+        .lines()
+        .find(|l| l.starts_with("probe_counter_total_check_total"))
+        .expect("probe counter family missing from prometheus text");
+    assert!(
+        sample.ends_with(" 7"),
+        "expected counter value 7, got: {sample}"
+    );
+}
+
+/// T1 seam: the /metrics HTTP server serves the registry text over TCP.
+#[test]
+fn metrics_http_server_serves_registry_text() {
+    use degenbot_bot::metrics;
+    use opentelemetry::metrics::MeterProvider;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
+    let meter = provider.meter("degenbot.test");
+    let counter = meter.u64_counter("http_probe_counter").build();
+    counter.add(3, &[]);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+    let addr = listener.local_addr().expect("local_addr");
+    let server_registry = registry.clone();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server_stop = std::sync::Arc::clone(&stop);
+    let handle = std::thread::spawn(move || {
+        let body = move || metrics::render(&server_registry);
+        metrics::serve_on_listener(&listener, &body, &server_stop);
+    });
+
+    // Give the accept loop a beat, then scrape it like Prometheus would.
+    std::thread::sleep(Duration::from_millis(50));
+    let mut stream = std::net::TcpStream::connect(addr).expect("connect");
+    stream
+        .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .expect("write request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+
+    assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
+    let sample = response
+        .lines()
+        .find(|l| l.starts_with("http_probe_counter_total"))
+        .expect("counter family missing from scraped body");
+    assert!(
+        sample.ends_with(" 3"),
+        "expected counter value 3, got: {sample}"
+    );
+
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Nudge the accept loop with a final connection so it observes `stop`.
+    let _ = std::net::TcpStream::connect(addr);
+    handle.join().expect("server thread");
+}

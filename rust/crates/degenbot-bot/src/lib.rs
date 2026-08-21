@@ -38,6 +38,8 @@
 
 pub mod bot_core;
 #[cfg(feature = "otel")]
+pub mod metrics;
+#[cfg(feature = "otel")]
 pub mod otel;
 pub mod profiling;
 pub mod solvers;

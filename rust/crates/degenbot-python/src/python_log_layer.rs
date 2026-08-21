@@ -550,6 +550,20 @@ pub fn init_logging_subscriber() {
                 tracing::debug!("OTel span layer inactive (set DEGENBOT_OTEL=1 to enable)");
                 None
             };
+            // T1: metrics ride the same DEGENBOT_OTEL gate — the Prometheus
+            // scrape endpoint (DEGENBOT_METRICS_ADDR, default 127.0.0.1:9464)
+            // serves whatever instruments the drain path records. Fail-open:
+            // a bind failure logs and the bot runs without scrapeable metrics.
+            if otel_layer.is_some() {
+                match degenbot_bot::metrics::init_global_metrics() {
+                    Ok(()) => tracing::info!(
+                        "Prometheus metrics endpoint active (DEGENBOT_METRICS_ADDR or 127.0.0.1:9464)"
+                    ),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "metrics endpoint disabled: exporter build failed");
+                    }
+                }
+            }
             match otel_layer {
                 Some(ol) => set_global_subscriber(build_base_registry_with_otel(
                     env_filter,
