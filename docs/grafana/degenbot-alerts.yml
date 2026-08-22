@@ -1,0 +1,98 @@
+# degenbot Prometheus alert rules (epic RMH23E T5).
+#
+# Companion to docs/grafana/ALERTS.md, which explains each rule. Metric
+# families come from rust/crates/degenbot-bot/src/instruments.rs; scrape
+# endpoint defaults to 127.0.0.1:9464 (DEGENBOT_METRICS_ADDR).
+#
+# Install: add to prometheus.yml
+#   rule_files:
+#     - /path/to/degenbot-alerts.yml
+# then reload/restart Prometheus.
+
+groups:
+  # Page-worthy: money or liveness at risk.
+  - name: degenbot-critical
+    rules:
+      - alert: DegenbotHeaderStall
+        expr: rate(degenbot_blocks_observed_total[1m]) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: degenbot header stall - bot is blind
+          description: >-
+            No blocks observed for 2m. The WS feed or the pump is dead while
+            the chain advances - every opportunity in that window is missed.
+
+      - alert: DegenbotDrainerStall
+        expr: degenbot_drain_queue_depth >= 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: degenbot drainer stall
+          description: >-
+            Drain queue depth has been >= 2 for 5m. The solver cannot keep up
+            with the feed or the drainer froze (the Rust-side backstop aborts
+            a full 30s stall; this catches slow degradation first).
+
+      - alert: DegenbotStateHeadDivergence
+        expr: abs(degenbot_state_head_lag_blocks) >= 3
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: degenbot state head divergence (freeze signature)
+          description: >-
+            Pool state head and engine clock disagree by 3+ blocks - the
+            precondition of the historical drain-freeze incident (ergo
+            3YA7ZJ).
+
+  # Warning-tier: degraded but not bleeding money this second.
+  - name: degenbot-warning
+    rules:
+      - alert: DegenbotSubmitFailures
+        expr: sum(rate(degenbot_submit_outcomes_total{outcome="skipped_broadcast_failed"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: degenbot submit failures
+          description: RPC/broadcast path degraded - profitable candidates are not reaching the network.
+
+      - alert: DegenbotMonitorExpirySpike
+        expr: >-
+          sum(rate(degenbot_monitor_outcomes_total{outcome="expired"}[15m]))
+          / clamp_min(sum(rate(degenbot_monitor_outcomes_total[15m])), 0.001) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: degenbot monitor expiry spike
+          description: >-
+            Over half of submitted txs are expiring unconfirmed - fee/nonce/
+            pool-contention problem.
+
+      - alert: DegenbotProfitEfficiencyDrop
+        expr: >-
+          degenbot_profit_missed_total
+          / clamp_min(degenbot_profit_realized_total + degenbot_profit_missed_total, 1) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: degenbot profit efficiency drop
+          description: More than 80% of found profit is being left on the table (unsubmitted).
+
+      - alert: DegenbotSimulateErrorRate
+        expr: >-
+          sum(rate(degenbot_simulate_verdicts_total{outcome="error"}[10m]))
+          / clamp_min(sum(rate(degenbot_simulate_verdicts_total[10m])), 0.001) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: degenbot simulate error rate high
+          description: >-
+            Over 10% of simulations erroring (not merely unprofitable) -
+            encoding/state problem upstream of the EVM sim.

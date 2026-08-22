@@ -1,4 +1,16 @@
-# degenbot alert suggestions (T5, epic RMH23E)
+# degenbot alerts (T5, epic RMH23E)
+
+**Install:** a ready-to-load rules file ships alongside this doc -
+[`degenbot-alerts.yml`](degenbot-alerts.yml). Add it to `prometheus.yml`:
+
+    rule_files:
+      - /path/to/degenbot-alerts.yml
+
+then restart/reload Prometheus. Check status at `http://<prometheus>:9090/alerts`
+(INACTIVE = healthy; PENDING = condition true, `for` window elapsing; FIRING = page).
+The expressions below document what each rule watches and why; label values
+match `instruments.rs` exactly (`skipped_broadcast_failed`, `expired`,
+`error`, ...).
 
 Prometheus rules matching the metrics exported by `degenbot-bot` (scrape
 endpoint: `DEGENBOT_METRICS_ADDR`, default `127.0.0.1:9464`). All expressions
