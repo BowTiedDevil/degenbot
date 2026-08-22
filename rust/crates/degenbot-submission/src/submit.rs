@@ -408,6 +408,10 @@ pub async fn dispatch_and_submit(
                 // `continue` on Web3Exception — the nonce is leaked until a
                 // manual cleanup or the dispatcher's reap). The monitor is
                 // NOT spawned (no tx to track).
+                degenbot_bot::telemetry::record_exception(
+                    degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                    format_args!("path {} broadcast failed: {e}", candidate.path_id),
+                );
                 if let Some(p) = degenbot_bot::instruments::pipeline() {
                     p.count_submit_outcome("skipped_broadcast_failed");
                     p.add_profit_missed(candidate_net_wei(&candidate));
@@ -468,7 +472,13 @@ pub async fn dispatch_and_submit(
                                 p.add_profit_realized(candidate_net);
                             }
                             Ok(_) => p.count_monitor_outcome("expired"),
-                            Err(_) => p.count_monitor_outcome("error"),
+                            Err(ref e) => {
+                                p.count_monitor_outcome("error");
+                                degenbot_bot::telemetry::record_exception(
+                                    degenbot_bot::telemetry::error_kind::MONITOR_FAILURE,
+                                    format_args!("tx monitor error: {e}"),
+                                );
+                            }
                         }
                     }
                 });

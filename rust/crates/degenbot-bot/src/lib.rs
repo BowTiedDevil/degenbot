@@ -95,6 +95,10 @@ pub mod instruments {
         pub fn add_profit_missed(&self, _wei: f64) {}
         /// no-op
         pub fn count_monitor_outcome(&self, _outcome: &str) {}
+        /// no-op
+        pub fn count_clamp(&self) {}
+        /// no-op
+        pub fn count_error(&self, _kind: &'static str) {}
     }
 
     /// Always `None` — metrics are compiled out of this build.

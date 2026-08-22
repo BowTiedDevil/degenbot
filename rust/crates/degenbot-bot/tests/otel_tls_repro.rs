@@ -12,6 +12,7 @@
 // This test proves the mechanism in isolation (child-process abort), so the
 // fix can be verified without a full soak.
 
+#![cfg(feature = "otel")]
 #![expect(clippy::expect_used)]
 
 use std::process::Command;

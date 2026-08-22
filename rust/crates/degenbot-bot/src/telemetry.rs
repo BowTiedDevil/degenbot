@@ -32,6 +32,10 @@ pub mod error_kind {
     pub const MONITOR_FAILURE: &str = "monitor_failure";
     /// Liquidity verification mismatch (registration verify-lifecycle).
     pub const VERIFY_MISMATCH: &str = "verify_mismatch";
+    /// Drain watchdog fired: backlog with no completion inside the window.
+    pub const DRAIN_STALL: &str = "drain_stall";
+    /// Drain channel closed: the background drainer task is dead.
+    pub const DRAIN_DEAD: &str = "drain_dead";
 }
 
 /// `EnvFilter` directive capping [`DIAGNOSTIC_TARGET`] at warn on console sinks.
@@ -55,6 +59,7 @@ pub const DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE: &str = "degenbot::diag=warn";
 /// task): an error storm must not become a counter/event storm. Errors use
 /// [`DIAGNOSTIC_TARGET`]'s uncapped sibling treatment — they are emitted at
 /// ERROR level, which passes EVERY sink including the console cap.
+#[cfg(feature = "otel")]
 pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
     let span = tracing::Span::current();
     span.record("otel.status_code", "ERROR");
@@ -73,6 +78,23 @@ pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
         p.count_error(kind);
     }
 }
+
+/// No-`otel`-feature twin: the console error line still fires (failures are
+/// ALWAYS visible on stdout), only the span status/exception/counter are
+/// compiled out. Keeps every failure seam ungated at the call site.
+#[cfg(not(feature = "otel"))]
+pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
+    tracing::error!(
+        target: DIAGNOSTIC_TARGET,
+        exception_type = kind,
+        exception_message = %err,
+        "exception"
+    );
+}
+
+/// No-op without the `otel` feature (nothing to flush).
+#[cfg(not(feature = "otel"))]
+pub fn flush_before_exit() {}
 
 #[cfg(all(test, feature = "otel"))]
 #[expect(clippy::expect_used)] // telemetry contract asserts loudly
@@ -141,5 +163,22 @@ mod otel_tests {
             attr_value("exception_message").is_some_and(|m| m.contains("+13 wei")),
             "exception.message must carry the error detail"
         );
+    }
+}
+
+/// Best-effort flush of the `OTel` span exporter.
+///
+/// `std::process::abort()` skips destructors, so the batched span processor
+/// would drop up to its whole export window — precisely at the failure sites
+/// where the evidence matters most. Failure seams call this BEFORE any abort
+/// decision. Best-effort by design: a flush failure is logged, never fatal
+/// (the abort that follows is the loud part).
+#[cfg(feature = "otel")]
+pub fn flush_before_exit() {
+    #[cfg(feature = "otel")]
+    if let Some(handle) = crate::otel::global_handle() {
+        if let Err(e) = handle.flush() {
+            tracing::warn!(error = %e, "otel flush before exit failed (continuing)");
+        }
     }
 }

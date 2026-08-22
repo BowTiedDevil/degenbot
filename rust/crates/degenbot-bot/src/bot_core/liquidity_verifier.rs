@@ -458,6 +458,13 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
                 total_ticks = tick_data.len(),
                 "[dbg-verify] LIQUIDITY MISMATCH"
             );
+            crate::telemetry::record_exception(
+                crate::telemetry::error_kind::VERIFY_MISMATCH,
+                format_args!(
+                    "V3 pool {pool_addr} {block_tag}: tick {} gross mismatch engine={our_gross} onchain={on_chain_gross}",
+                    d.tick
+                ),
+            );
             return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V3 pool {pool_addr} {block_tag}: tick {} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}",
@@ -466,6 +473,10 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
             }));
         }
         if our_net != on_chain_net {
+            crate::telemetry::record_exception(
+                crate::telemetry::error_kind::VERIFY_MISMATCH,
+                format_args!("V3 pool {pool_addr} {block_tag}: tick {} net mismatch engine={our_net} onchain={on_chain_net}", d.tick),
+            );
             return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V3 pool {pool_addr} {block_tag}: tick {} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}",

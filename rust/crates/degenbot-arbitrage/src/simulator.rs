@@ -410,6 +410,13 @@ impl FailBuckets {
         hop_outputs: Vec<u128>,
     ) {
         self.tally(bucket);
+        // D63GSE: every classified sim failure surfaces through OTel (span
+        // status + exception event + degenbot.errors counter). Callers hold
+        // the `degenbot.bundle.simulate` span, so path context rides along.
+        degenbot_bot::telemetry::record_exception(
+            degenbot_bot::telemetry::error_kind::SIM_FAILURE,
+            format_args!("path {path_id} bucket {bucket} fail_index {fail_index:?}"),
+        );
         self.failures.push(SimFailure {
             path_id,
             bucket: bucket.to_string(),

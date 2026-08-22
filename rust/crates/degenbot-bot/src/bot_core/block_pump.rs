@@ -709,6 +709,14 @@ impl BlockPump {
     /// — no task unwind, no wedge, no teardown hang (see the tripwire module
     /// docs for the panic/shutdown-wedge history; UO3JM4).
     fn trip_and_exit(d: &TripwireDivergence) -> ! {
+        crate::telemetry::record_exception(
+            crate::telemetry::error_kind::SOLVER_STATE_DESYNC,
+            format_args!(
+                "{:?} path_idx={} hop_idx={}",
+                d.class, d.path_idx, d.hop_idx
+            ),
+        );
+        crate::telemetry::flush_before_exit();
         tracing::error!(
             class = ?d.class,
             path_idx = d.path_idx,
@@ -1839,7 +1847,15 @@ impl BlockPump {
                 onchain.len(),
                 delivered_log_indices.len(),
             );
-            // Flush best-effort before abort.
+            crate::telemetry::record_exception(
+                crate::telemetry::error_kind::WS_COMPLETENESS,
+                format_args!(
+                    "live WS log drop at block {block}: {} of {} relevant logs missing (log_index {missing:?})",
+                    missing.len(),
+                    onchain.len()
+                ),
+            );
+            crate::telemetry::flush_before_exit();
             #[expect(clippy::print_stderr)] // invariant-failure diagnostic before abort
             {
                 eprintln!(

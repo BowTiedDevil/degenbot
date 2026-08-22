@@ -384,6 +384,8 @@ mod kind_tests {
             error_kind::SUBMIT_FAILURE,
             error_kind::MONITOR_FAILURE,
             error_kind::VERIFY_MISMATCH,
+            error_kind::DRAIN_STALL,
+            error_kind::DRAIN_DEAD,
         ];
         let unique: HashSet<&str> = kinds.iter().copied().collect();
         assert_eq!(unique.len(), kinds.len(), "duplicate failure kind");

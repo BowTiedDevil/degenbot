@@ -205,6 +205,11 @@ impl StallWatch {
         if !stalled(depth, since_healthy, BACKLOG_FLOOR, window) {
             return;
         }
+        crate::telemetry::record_exception(
+            crate::telemetry::error_kind::DRAIN_STALL,
+            format_args!("backlog {depth} with no completion for {window} ms"),
+        );
+        crate::telemetry::flush_before_exit();
         tracing::error!(
             since_healthy_ms = since_healthy,
             depth,
@@ -477,6 +482,11 @@ impl DispatchOwner {
         if tx.send((work, parent, now_millis())).is_ok() {
             self.drainer_health.enqueued.fetch_add(1, Ordering::Relaxed);
         } else {
+            crate::telemetry::record_exception(
+                crate::telemetry::error_kind::DRAIN_DEAD,
+                "drainer channel closed — solve/dispatch/publish can no longer be enqueued",
+            );
+            crate::telemetry::flush_before_exit();
             tracing::error!(
                 "[B4GX7C] drainer task dead: channel closed, cannot enqueue drain work"
             );
