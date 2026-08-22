@@ -748,9 +748,12 @@ impl BlockPump {
     // spans (below) are the trace roots now.
     pub async fn run_with_stream(
         &mut self,
-        mut combined: stream::BoxStream<'static, WsEvent>,
+        combined: stream::BoxStream<'static, WsEvent>,
         first_observed_block: u64,
     ) {
+        // Drained-settle solve gate (TQ7PD6 follow-up): peekable so the loop
+        // can probe "is another event already buffered?" WITHOUT consuming it.
+        let mut combined = combined.peekable();
         // [DIAG] newHeads-stall investigation: track header arrivals so the
         // log shows, in production, whether `BlockHeader` events actually stop
         // arriving (subscription silent) vs. arrive but the arm doesn't fire
@@ -1034,55 +1037,12 @@ impl BlockPump {
             // span in a strictly-synchronous scope and the few futures that
             // must carry block context across an await are wrapped with
             // `.instrument(…)` instead.
-            // Solve any dirty paths accumulated from the previous iteration's
-            // log(s). This naturally coalesces multiple logs that arrive
-            // between await points — only one solve per batch of WS events.
-            // Note: solving is decoupled from sending — the pump controls
-            // when result batches are dispatched to Python.
-            {
-                if self.sink.has_dirty_paths() {
-                    // Strictly-synchronous solve dispatch: enter the cursor
-                    // block span just long enough for dispatch() to capture it
-                    // as the drainer parent. No await inside this brace
-                    // (TQ7PD6 — never span the enter across a poll).
-                    let _solve_ctx = block_span.as_ref().map(tracing::Span::enter);
-                    // Pump-owned ACTIVE BLOCK promotion (QMSTSV/BO5FBS):
-                    // `current_block` is newHead+log driven (the promote
-                    // signal — a push WS cannot prove the last event for a
-                    // block arrived, so the new head IS the promote signal),
-                    // but on a header stall ordered backfill advances the
-                    // state fsm.clock past it. The solve anchor must never be
-                    // below the state it solves against (MQIZ5M +1-wei / IIA
-                    // class), so promote active_block = max(anchor,
-                    // pool_state_head()) ONCE here — the single pump-owned
-                    // transition that on_drain/solve/verify/sim all derive
-                    // from. `pool_state_head` is the state fsm.clock (max
-                    // update_block); the max catches the pump up on a stall.
-                    // This also makes the solver's internal re-anchor a
-                    // defensive no-op.
-                    //
-                    // Solver-release gate (ADR-008 D2 realization): the solve
-                    // anchor is the LOG-DRIVEN settled block
-                    // (`fsm.clock.latest_observed()`, `open_block` — headers do
-                    // NOT advance it), falling back to the header `fsm.current_block`
-                    // only when no block logs are open yet. This is the
-                    // "move the debounce gate to the solver" design: never
-                    // solve a block whose event burst has not settled — a
-                    // header that races a head ahead of the applied state
-                    // would otherwise make the solve consume a quiet path
-                    // pool pre-in-block-swap (the 0x99ac8c false-abort). The
-                    // `pool_state_head` max keeps the backfill-ahead semantics.
-                    let state_head = self.bot.state_arc().read().pool_state_head();
-                    let PumpDecision::Drain { block, metadata } = fsm.drain_decision(state_head)
-                    else {
-                        unreachable!("drain_decision always drains when called");
-                    };
-                    dispatch.dispatch(DrainWork::Drain { block, metadata });
-                    // LEZJAS: engine owns `last_solved_block` now — mark this
-                    // block solved so the next `finalize_block` guard no-ops.
-                    self.sink.set_last_solved_block(block);
-                }
-            }
+            //
+            // Solve dispatch moved OUT of the loop head to the drained-settle
+            // gate at the bottom of the loop (TQ7PD6 follow-up): the solver
+            // must not fire while buffered WS events are still unprocessed —
+            // the 2026-08-22 stall crash was exactly the loop-head solve
+            // racing a still-queued swap log.
 
             // ADR-008 D2: solver-release gate. `fsm.publish_pending` is set when a forward
             // log applies (block becomes quiesced). The flush below fires
@@ -1627,6 +1587,46 @@ impl BlockPump {
                     self.sink.on_pump_ended();
                     return;
                 }
+            }
+
+            // DRAINED-SETTLE SOLVE GATE (TQ7PD6 follow-up): the solve fires
+            // only once the combined stream is drained — no event is
+            // immediately buffered. "Freshest available state" therefore
+            // means "everything the WS has delivered so far has been applied",
+            // not "whatever happened to fit before the top of the loop". The
+            // peek below does NOT consume the next event, so a buffered event
+            // simply re-arms the drain loop and the solve happens exactly once
+            // at the end of the burst.
+            let has_buffered = std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(matches!(
+                    futures_util::stream::Peekable::poll_peek_mut(
+                        std::pin::Pin::new(&mut combined),
+                        cx
+                    ),
+                    std::task::Poll::Ready(Some(_))
+                ))
+            })
+            .await;
+            if !has_buffered && self.sink.has_dirty_paths() {
+                // Strictly-synchronous solve dispatch: enter the cursor
+                // block span just long enough for dispatch() to capture it
+                // as the drainer parent (no await inside — TQ7PD6).
+                let _solve_ctx = block_span.as_ref().map(tracing::Span::enter);
+                // Pump-owned ACTIVE BLOCK promotion (QMSTSV/BO5FBS): the
+                // solve anchor is the LOG-DRIVEN settled block
+                // (`fsm.clock.latest_observed()`, never a racing header),
+                // floored by the pool-state head so it is never below the
+                // state it solves against (MQIZ5M +1-wei / IIA class; the
+                // backfill-ahead semantics). `drain_decision` owns the
+                // exact rule.
+                let state_head = self.bot.state_arc().read().pool_state_head();
+                let PumpDecision::Drain { block, metadata } = fsm.drain_decision(state_head) else {
+                    unreachable!("drain_decision always drains when called");
+                };
+                dispatch.dispatch(DrainWork::Drain { block, metadata });
+                // LEZJAS: engine owns `last_solved_block` now — mark this
+                // block solved so the next `finalize_block` guard no-ops.
+                self.sink.set_last_solved_block(block);
             }
         }
         // S53STH: the loop has unwound — every span guard (pump iteration,
@@ -2831,6 +2831,100 @@ mod tests {
         assert!(
             drained.iter().all(|&b| b >= 103),
             "no on_drain may lag below the state clock: {drained:?}"
+        );
+    }
+
+    /// TQ7PD6 follow-up — drained-settle solve gate (header form): the solve
+    /// fires EXACTLY ONCE, after the buffered header burst is drained, at the
+    /// newest observed block — never eagerly at the top of every loop
+    /// iteration (the old behavior dispatched one solve per buffered event and
+    /// lagged each header by one block).
+    #[tokio::test]
+    async fn solve_gate_waits_for_drained_stream_headers() {
+        use stream::StreamExt;
+        let bot = Arc::new(Bot::new(1));
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
+        sink.set_dirty(true);
+
+        let events: Vec<WsEvent> = (101..=103)
+            .map(|number| WsEvent::BlockHeader {
+                number,
+                timestamp: number * 1_000,
+                base_fee_per_gas: Some(1_000_000_001),
+                gas_used: 10_000_001,
+                gas_limit: 30_000_001,
+            })
+            .collect();
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, 100).await;
+        drainer_settle(|| !sink.drained_blocks().is_empty()).await;
+
+        assert_eq!(
+            sink.drained_blocks(),
+            vec![103],
+            "solve must fire once, after the buffered header burst drains, at the newest block"
+        );
+    }
+
+    /// TQ7PD6 follow-up — drained-settle solve gate (log form): the solve must
+    /// NOT fire before a still-buffered log for the block is applied. Header
+    /// 101 + V2 Sync@101 are delivered back-to-back; the old loop-head solve
+    /// dispatched at block 100 (the pre-log anchor) before consuming the log.
+    /// The gate defers until both events are drained, then solves at 101 — the
+    /// freshest block, with the swap applied.
+    #[tokio::test]
+    async fn solve_gate_waits_for_buffered_log_before_solving() {
+        use alloy::primitives::{aliases::U112, Address as A};
+        use stream::StreamExt;
+        let bot = Arc::new(Bot::new(1));
+        {
+            let arc = bot.state_arc();
+            let mut core = arc.write();
+            core.register_v2_pool(&RegisterV2PoolParams {
+                address: A::from([0xccu8; 20]),
+                token0: A::from([0xa0u8; 20]),
+                token1: A::from([0xa1u8; 20]),
+                reserve0: U112::from(1_000),
+                reserve1: U112::from(2_000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: A::from([0xf0u8; 20]),
+                update_block: 100,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+        }
+        let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
+        sink.set_dirty(true);
+
+        let pool = A::from([0xccu8; 20]);
+        let events: Vec<WsEvent> = vec![
+            WsEvent::BlockHeader {
+                number: 101,
+                timestamp: 101_000,
+                base_fee_per_gas: Some(1_000_000_001),
+                gas_used: 10_000_001,
+                gas_limit: 30_000_001,
+            },
+            WsEvent::Log(make_v2_sync_log(
+                pool,
+                alloy::primitives::U256::from(1_000),
+                alloy::primitives::U256::from(2_000),
+                101,
+                false,
+            )),
+        ];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, 100).await;
+        drainer_settle(|| !sink.drained_blocks().is_empty()).await;
+
+        assert_eq!(
+            sink.drained_blocks(),
+            vec![101],
+            "solve must fire only after the buffered Sync log is applied (fresh block)"
         );
     }
 
