@@ -15,6 +15,25 @@
 /// Target for high-frequency diagnostic events (see module docs).
 pub const DIAGNOSTIC_TARGET: &str = "degenbot::diag";
 
+/// Closed failure-kind taxonomy for `degenbot.errors{kind}` and the
+/// `exception_type` attribute. Compile-time closed: callers pass these consts
+/// (`&'static str`), never arbitrary strings, so Prometheus series cannot
+/// blow up in cardinality. Pool/path detail belongs in the TRACE, not here.
+pub mod error_kind {
+    /// ADR-021 solver-state tripwire (engine view diverged from chain).
+    pub const SOLVER_STATE_DESYNC: &str = "solver_state_desync";
+    /// Pump completeness tripwire (WS log drop / dead stream).
+    pub const WS_COMPLETENESS: &str = "ws_completeness";
+    /// Simulated-arb failure classified at the dispatch seam.
+    pub const SIM_FAILURE: &str = "sim_failure";
+    /// Broadcast / node rejection on submission.
+    pub const SUBMIT_FAILURE: &str = "submit_failure";
+    /// Post-submit monitor verdict failure.
+    pub const MONITOR_FAILURE: &str = "monitor_failure";
+    /// Liquidity verification mismatch (registration verify-lifecycle).
+    pub const VERIFY_MISMATCH: &str = "verify_mismatch";
+}
+
 /// `EnvFilter` directive capping [`DIAGNOSTIC_TARGET`] at warn on console sinks.
 pub const DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE: &str = "degenbot::diag=warn";
 
@@ -26,7 +45,7 @@ pub const DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE: &str = "degenbot::diag=warn";
 /// 2. An `exception` event per `OTel` semantic conventions (`exception.type` /
 ///    `exception.message`) is recorded onto that span, so one click shows
 ///    WHAT failed in full block/path/pool context.
-/// 3. (Task D63GSE-2) the `degenbot.errors{kind}` counter — detection is
+/// 3. The `degenbot.errors{kind}` counter — detection is
 ///    push-based via Prometheus; traces are for investigation.
 ///
 /// # Convention
@@ -50,6 +69,9 @@ pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
         exception_message = %err,
         "exception"
     );
+    if let Some(p) = crate::instruments::pipeline() {
+        p.count_error(kind);
+    }
 }
 
 #[cfg(all(test, feature = "otel"))]

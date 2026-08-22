@@ -52,6 +52,9 @@ pub struct PipelineInstruments {
     candidates_found: Counter<u64>,
     /// Solver CL-hop self-corrections (input/forward clamp + output align).
     clamps_applied: Counter<u64>,
+    /// Distinct failures surfaced through [`crate::telemetry::record_exception`],
+    /// labeled by the closed-set `kind` taxonomy.
+    errors_total: Counter<u64>,
     /// Per-path EVM simulation duration.
     simulate_duration: Histogram<f64>,
     /// Simulation outcomes, labeled by verdict string.
@@ -145,6 +148,10 @@ impl PipelineInstruments {
             clamps_applied: meter
                 .u64_counter("degenbot.solver.clamps")
                 .with_description("Solver CL-hop capacity/output alignment corrections")
+                .build(),
+            errors_total: meter
+                .u64_counter("degenbot.errors")
+                .with_description("Distinct failures by closed-set kind")
                 .build(),
             simulate_duration: meter
                 .f64_histogram("degenbot.simulate.duration")
@@ -275,6 +282,11 @@ impl PipelineInstruments {
         self.clamps_applied.add(1, &[]);
     }
 
+    /// Count one distinct failure of the given closed-set [`kind`](crate::telemetry::error_kind).
+    pub fn count_error(&self, kind: &'static str) {
+        self.errors_total.add(1, &[KeyValue::new("kind", kind)]);
+    }
+
     /// One per-path simulation completed.
     pub fn observe_simulate_duration(&self, secs: f64) {
         self.simulate_duration.record(secs, &[]);
@@ -350,4 +362,52 @@ pub fn pipeline() -> Option<&'static PipelineInstruments> {
             })
         })
         .as_ref()
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used)] // metric contract asserts loudly
+mod kind_tests {
+    use opentelemetry::metrics::MeterProvider as _;
+
+    use crate::instruments::PipelineInstruments;
+    use crate::telemetry::error_kind;
+    use std::collections::HashSet;
+
+    /// The taxonomy is a compile-time closed set: the consts are unique and
+    /// are the only values the `kind` label may take.
+    #[test]
+    fn error_kinds_are_unique() {
+        let kinds = [
+            error_kind::SOLVER_STATE_DESYNC,
+            error_kind::WS_COMPLETENESS,
+            error_kind::SIM_FAILURE,
+            error_kind::SUBMIT_FAILURE,
+            error_kind::MONITOR_FAILURE,
+            error_kind::VERIFY_MISMATCH,
+        ];
+        let unique: HashSet<&str> = kinds.iter().copied().collect();
+        assert_eq!(unique.len(), kinds.len(), "duplicate failure kind");
+    }
+
+    /// Acceptance: `degenbot.errors{kind=...}` is SCRAPEABLE — the counter
+    /// family renders in the Prometheus exposition format with the closed-set
+    /// kind label, via the production reader seam (`build_prometheus_provider`).
+    #[test]
+    fn count_error_is_scrapeable_by_kind() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test"));
+        instruments.count_error(error_kind::SIM_FAILURE);
+        instruments.count_error(error_kind::WS_COMPLETENESS);
+
+        let text = crate::metrics::render(&registry);
+        assert!(
+            text.contains("degenbot_errors_total"),
+            "errors family missing from exposition:\n{text}"
+        );
+        assert!(text.contains("kind=\"sim_failure\""));
+        assert!(text.contains("kind=\"ws_completeness\""));
+        // Provider stays alive to the end of the test (readers hold no strong ref).
+        drop(provider);
+    }
 }
