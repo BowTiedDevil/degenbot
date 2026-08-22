@@ -1082,58 +1082,6 @@ impl BotState {
         Ok(pool_id)
     }
 
-    /// XZSNH6: demote Live-Tracked V4 pools whose liquidity clock
-    /// (`tick_data_block`) trails `anchor_block` past `threshold_blocks` to
-    /// `Quarantined`, so the solver excludes them instead of pricing against a
-    /// seed-era snapshot (the soak-2026-08-22 ghost-price class).
-    ///
-    /// A quiet pool is not an error: its tick map is old *because no liquidity
-    /// event has touched it* - the correct response is exclusion + refresh, not
-    /// abort (which is what the opt-in `DEGENBOT_DELIVERY_LAG_TRIP_BLOCKS`
-    /// hard-fault is for, on ACTIVE pools whose price clock lags delivery).
-    /// Quarantined pools already defer events to the pump buffer (6N7XVR), so
-    /// the next lifecycle refresh drains and can re-promote.
-    ///
-    /// Returns the demoted numeric pool ids (for logging/requeue by the
-    /// caller). Threshold comes from `DEGENBOT_STALE_DOWNGRADE_BLOCKS`;
-    /// unset disables the sweep entirely (pre-XZSNH6 behavior).
-    pub fn demote_stale_live_v4_pools(&mut self, anchor_block: u64) -> Vec<u64> {
-        let Ok(raw) = std::env::var("DEGENBOT_STALE_DOWNGRADE_BLOCKS") else {
-            return Vec::new();
-        };
-        let Ok(threshold) = raw.trim().parse::<u64>() else {
-            return Vec::new();
-        };
-        if threshold == 0 {
-            return Vec::new(); // 0 = disabled (a Live pool is never 0 stale)
-        }
-        let mut demoted = Vec::new();
-        for (&id, entry) in &mut self.pools {
-            let PoolEntry::V4(_, state) = entry else {
-                continue;
-            };
-            if state.coverage != PoolTickCoverage::Tracked
-                || state.registration_lifecycle != RegistrationLifecycle::Live
-            {
-                continue;
-            }
-            if anchor_block.saturating_sub(state.tick_data_block) > threshold {
-                state.registration_lifecycle = RegistrationLifecycle::Quarantined;
-                demoted.push(id);
-            }
-        }
-        if !demoted.is_empty() {
-            tracing::warn!(
-                count = demoted.len(),
-                anchor_block,
-                threshold,
-                ids = ?demoted,
-                "[XZSNH6] staleness demotion: quiet Live-Tracked V4 pools -> Quarantined (excluded from solving until refreshed)"
-            );
-        }
-        demoted
-    }
-
     /// Apply a V4 Swap event to a registered pool (ADR-003 live path).
     pub fn apply_v4_swap(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
         // ADR-014 D1: delegate to the pool_id-keyed dispatcher (the V3

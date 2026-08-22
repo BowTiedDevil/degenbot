@@ -47,20 +47,6 @@ impl ArbitrageEngine {
         self.core.write().expire_v3_buffered(block_number);
         self.core.write().expire_v4_buffered(block_number);
 
-        // XZSNH6: exclude quiet Live-Tracked V4 pools from this solve cycle -
-        // a seed-era tick map priced against the current anchor produces ghost
-        // quotes (soak-2026-08-22 v7 MissedLog). Demoted pools are Quarantined
-        // (events defer to buffer) until a lifecycle refresh re-promotes them.
-        let demoted = self.core.write().demote_stale_live_v4_pools(block_number);
-        if !demoted.is_empty() {
-            // Paths touching demoted pools must not solve against ghost state:
-            // drop their dirty markers so rebuild skips them this cycle. The
-            // paths re-enter rotation when the pool is refreshed + re-promoted.
-            self.dirty_v4.retain(|id| !demoted.contains(id));
-            self.dirty_v3.retain(|id| !demoted.contains(id));
-            self.dirty_v2.retain(|id| !demoted.contains(id));
-        }
-
         // Take ownership of dirty sets to avoid borrow conflict
         let dirty_v2 = std::mem::take(&mut self.dirty_v2);
         let dirty_v3 = std::mem::take(&mut self.dirty_v3);
