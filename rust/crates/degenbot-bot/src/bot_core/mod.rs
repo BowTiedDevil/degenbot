@@ -194,12 +194,12 @@ pub struct BotState {
 /// env var so a single run surfaces the full event flow (WS delivery →
 /// decode → apply-route → buffer → drain → pin → verify) for the failing
 /// pool with no behavior change when unset.
-/// 42FL35: V4-aware DRAIN_DBG match. For V4, `log.address()` is the shared
-/// PoolManager contract - every V4 pool carries it, so an address-shape match
-/// cannot attribute a Swap to a specific pool. The PoolId lives in the event's
+/// `42FL35`: V4-aware `DRAIN_DBG` match. For V4, `log.address()` is the shared
+/// `PoolManager` contract - every V4 pool carries it, so an address-shape match
+/// cannot attribute a Swap to a specific pool. The `PoolId` lives in the event's
 /// indexed topics (`topics[1]` for V4 Swap/ModifyLiquidity). This matcher
 /// accepts EITHER shape: the env value matches the address, or it matches any
-/// indexed topic (PoolId hex). Zero cost when the env is unset.
+/// indexed topic (`PoolId` hex). Zero cost when the env is unset.
 fn drain_dbg_match_v4(address: Address, topics: &[alloy::primitives::B256]) -> bool {
     let Ok(env) = std::env::var("DEGENBOT_DRAIN_DBG") else {
         return false;
@@ -352,12 +352,13 @@ pub(crate) fn trace_ws_log_dispatch(
 ) {
     use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
     use degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
-    let topic0 = topics
+    let first_topic = topics
         .first()
         .copied()
         .unwrap_or(alloy::primitives::B256::ZERO);
-    let is_liquidity =
-        topic0 == V3_MINT_TOPIC || topic0 == V3_BURN_TOPIC || topic0 == V4_MODIFY_LIQUIDITY_TOPIC;
+    let is_liquidity = first_topic == V3_MINT_TOPIC
+        || first_topic == V3_BURN_TOPIC
+        || first_topic == V4_MODIFY_LIQUIDITY_TOPIC;
     // 42FL35: V4-aware match - for V4 events the address is the shared
     // PoolManager, so attribution requires the indexed PoolId in topics[1].
     let pool_match = drain_dbg_match_v4(address, topics);
@@ -370,7 +371,7 @@ pub(crate) fn trace_ws_log_dispatch(
         block = block_number,
         log_index = ?log_index,
         tx_index = ?tx_index,
-        topic0 = %topic0, // full topic — greppable by short prefix
+        topic0 = %first_topic, // full topic — greppable by short prefix
         topic1 = ?topics.get(1), // 42FL35: V4 PoolId lives here - greppable
         removed,
         decision = %decision,
@@ -3100,6 +3101,86 @@ mod tests {
     // These tests cover the CORE lifecycle + deferral invariants; the
     // positional 25647112 reproduction + concurrent-registration stress live
     // in the wiring/seam task (6XG2NC) and the robust-suite task (BWUHVX).
+
+    // -- XZSNH6: staleness-driven lifecycle demotion ----------------------
+
+    /// Serialize DEGENBOT_STALE_DOWNGRADE_BLOCKS env mutation across tests.
+    static DOWNGRADE_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn set_downgrade_env(v: Option<&str>) {
+        // Caller must hold DOWNGRADE_ENV_MUTEX (tests acquire it for their
+        // whole body - env mutation + assertions must be atomic together).
+        match v {
+            Some(v) => std::env::set_var("DEGENBOT_STALE_DOWNGRADE_BLOCKS", v),
+            None => std::env::remove_var("DEGENBOT_STALE_DOWNGRADE_BLOCKS"),
+        }
+    }
+
+    #[test]
+    fn xzsnh6_stale_live_v4_pool_is_demoted_to_quarantined() {
+        let _env = DOWNGRADE_ENV_MUTEX.lock().unwrap();
+        set_downgrade_env(Some("100"));
+        let mut core = BotState::new();
+        let id = register_v4_on_core(&mut core, 25_765_262);
+        // Force lifecycle to Live (registration defaults Tracked -> Quarantined).
+        if let Some(crate::bot_core::PoolEntry::V4(_, state)) = core.pools.get_mut(&id) {
+            state.registration_lifecycle = crate::bot_core::RegistrationLifecycle::Live;
+            state.tick_data_block = 25_765_262;
+        }
+        let anchor = 25_765_262 + 1000; // far past the 100-block threshold
+        let demoted = core.demote_stale_live_v4_pools(anchor);
+        assert_eq!(demoted, vec![id], "stale Live pool must be demoted");
+        if let Some(crate::bot_core::PoolEntry::V4(_, state)) = core.pools.get(&id) {
+            assert_eq!(
+                state.registration_lifecycle,
+                crate::bot_core::RegistrationLifecycle::Quarantined,
+                "demoted pool must be Quarantined"
+            );
+        }
+        set_downgrade_env(None);
+    }
+
+    #[test]
+    fn xzsnh6_fresh_live_v4_pool_is_not_demoted() {
+        let _env = DOWNGRADE_ENV_MUTEX.lock().unwrap();
+        set_downgrade_env(Some("100"));
+        let mut core = BotState::new();
+        let id = register_v4_on_core(&mut core, 25_900_000);
+        if let Some(crate::bot_core::PoolEntry::V4(_, state)) = core.pools.get_mut(&id) {
+            state.registration_lifecycle = crate::bot_core::RegistrationLifecycle::Live;
+            state.tick_data_block = 25_900_000;
+        }
+        let anchor = 25_900_000 + 50; // within the 100-block threshold
+        let demoted = core.demote_stale_live_v4_pools(anchor);
+        assert!(demoted.is_empty(), "fresh Live pool must stay Live");
+        if let Some(crate::bot_core::PoolEntry::V4(_, state)) = core.pools.get(&id) {
+            assert_eq!(
+                state.registration_lifecycle,
+                crate::bot_core::RegistrationLifecycle::Live,
+            );
+        }
+        set_downgrade_env(None);
+    }
+
+    #[test]
+    fn xzsnh6_unset_env_disables_the_sweep() {
+        let _env = DOWNGRADE_ENV_MUTEX.lock().unwrap();
+        set_downgrade_env(None);
+        let mut core = BotState::new();
+        let id = register_v4_on_core(&mut core, 1);
+        if let Some(crate::bot_core::PoolEntry::V4(_, state)) = core.pools.get_mut(&id) {
+            state.registration_lifecycle = crate::bot_core::RegistrationLifecycle::Live;
+            state.tick_data_block = 1;
+        }
+        let demoted = core.demote_stale_live_v4_pools(u64::MAX / 2);
+        assert!(demoted.is_empty(), "unset env must disable the sweep");
+        if let Some(crate::bot_core::PoolEntry::V4(_, state)) = core.pools.get(&id) {
+            assert_eq!(
+                state.registration_lifecycle,
+                crate::bot_core::RegistrationLifecycle::Live,
+            );
+        }
+    }
 
     /// Register a V4 pool on `core` with a single tick at 60 (gross/net 100)
     /// and `update_block`, returning its `pool_id`. Test helper. `pool_id`
