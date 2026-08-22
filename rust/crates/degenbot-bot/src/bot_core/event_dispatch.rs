@@ -118,7 +118,8 @@ impl DrainerHealth {
 
 /// Watchdog tick for the drainer-liveness backstop (U4UOIS): short enough to
 /// bound abort latency to ~one window + one tick, rare enough to be free.
-#[cfg(feature = "otel")]
+/// Used by BOTH feature arms of the watchdog loop (the not-otel arm must
+/// yield on it too — a synchronous loop starves current-thread runtimes).
 const STALL_WATCHDOG_TICK_MS: u64 = 5_000;
 
 /// How many **consecutive** no-progress pushes (the drainer picks nothing up)
@@ -381,6 +382,13 @@ impl DispatchOwner {
                 }
                 #[cfg(not(feature = "otel"))]
                 {
+                    // MUST yield: this task is spawned on the runtime, and a
+                    // synchronous loop here would starve the executor. On
+                    // current_thread test runtimes (#[tokio::test]) that hangs
+                    // every DispatchOwner-constructing test forever (the
+                    // regression S53STH briefly introduced).
+                    tokio::time::sleep(std::time::Duration::from_millis(STALL_WATCHDOG_TICK_MS))
+                        .await;
                     watch_clone.check_and_abort();
                 }
             }
