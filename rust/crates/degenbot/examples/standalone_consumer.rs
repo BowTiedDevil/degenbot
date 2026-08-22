@@ -433,11 +433,11 @@ fn main() {
 fn registration_lifecycle_standalone_slice() {
     use std::collections::HashMap;
 
+    use degenbot::bot_core::state_lock::StateLock;
     use degenbot::bot_core::{PoolTickCoverage, RegistrationLifecycle, TickInfo};
     use degenbot::{run_cl_v3_lifecycle, RegisterV3PoolParams};
-    use parking_lot::RwLock;
 
-    let core = RwLock::new(BotState::new());
+    let core = StateLock::new(BotState::new());
     let addr = address!("000000000000000000000000000000000000000D");
     let mut tick_data = HashMap::new();
     tick_data.insert(
