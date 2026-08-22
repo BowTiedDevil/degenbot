@@ -196,7 +196,22 @@ pub fn provider_from_endpoint(
 pub fn layer(
     tracer: SdkTracer,
 ) -> tracing_opentelemetry::OpenTelemetryLayer<tracing_subscriber::Registry, SdkTracer> {
-    tracing_opentelemetry::OpenTelemetryLayer::new(tracer)
+    // Soak-2026-08-22 (v6): context activation MUST stay off. With it on,
+    // `on_enter` pushes an `opentelemetry::ContextGuard` onto
+    // tracing-opentelemetry's per-thread GUARD_STACK; at thread exit the stack
+    // dtor drops those guards, and each guard's Drop touches opentelemetry's
+    // OWN thread-local - already destroyed by then (destructor order across
+    // the two crates' TLS vars is unspecified). Any thread that dies with a
+    // leftover guard aborts: `AccessError` -> panic-in-dtor -> process abort.
+    // Observed on CPython ThreadPoolExecutor workers during mass V4
+    // registration (faulthandler + addr2line symbolized the full chain).
+    //
+    // Disabling activation empties GUARD_STACK forever - the hazard class
+    // cannot occur. Parentage is unaffected: contextual parents fall back to
+    // the tracing span tree (`ctx.lookup_current()`), which is our model
+    // anyway (JYCTXI explicit roots + MQUKB6 tree); nothing in this
+    // workspace reads the ambient OTel context.
+    tracing_opentelemetry::OpenTelemetryLayer::new(tracer).with_context_activation(false)
 }
 
 /// Install the global tracing subscriber for pure-Rust consumers:
