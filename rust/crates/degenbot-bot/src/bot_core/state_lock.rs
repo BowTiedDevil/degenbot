@@ -242,6 +242,17 @@ pub fn dump_active_holds() -> String {
 /// Writer waits and long-lived reads above
 /// [`warn_threshold_ms`](self::warn_threshold_ms) emit `tracing::warn!`
 /// diagnostics naming the acquire sites.
+///
+/// # NEVER NEST ACQUISITIONS ON THE SAME LOCK
+///
+/// A second `.read()` acquired while a first read guard is still alive
+/// (e.g. inside a closure fed by the first guard's data) self-deadlocks
+/// when a writer queues between the two acquisitions: read#2 parks behind
+/// the writer, the writer waits on read#1, and read#1 lives until the
+/// expression completes — which needs read#2. Both soak-2026-08-22
+/// deadlocks (`a3ab1c676` V3, `decf7cd8a` V4) were exactly this shape.
+/// Scope the first guard explicitly so it drops before the second
+/// acquires; the compiler cannot catch this class.
 pub struct StateLock<T> {
     inner: RwLock<T>,
 }
