@@ -548,6 +548,16 @@ impl LogDispatcher {
     /// re-solves at the next drain tick with no distinct reorg path.
     pub fn notify(&self, pool_id: u64) {
         let Some(subs) = self.subscribers.lock().get(&pool_id).cloned() else {
+            // 42FL35: a state apply with NO subscriber means the engine never
+            // learns the pool changed - solver reads stay stale forever while
+            // BotState advances (the frozen-update_block signature). Silent
+            // before this trace; env-gated like its siblings.
+            if std::env::var("DEGENBOT_TRACE_DISPATCH").is_ok() {
+                tracing::warn!(
+                    pool_id,
+                    "dispatch: NOTIFY MISS - state applied but no subscriber attached"
+                );
+            }
             return;
         };
         for weak in subs {
