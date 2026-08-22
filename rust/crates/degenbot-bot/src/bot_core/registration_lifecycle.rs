@@ -257,10 +257,14 @@ where
     if let Some(snapshot_block) = snapshot_block {
         let seed = { core.write().take_v4_snapshot_seed(pool_manager, &pool_id) };
         if let Some(seed) = seed {
-            let own = core
-                .read()
-                .v4_pool_id_by_key(pool_manager, &pool_id)
-                .map_or(0, |id| core.read().pool_tick_data_block(id));
+            // Same nested-read self-deadlock shape as the V3 site (see the
+            // scoped fix there / soak-2026-08-22): read#1 held as the expression
+            // temporary while the closure acquires read#2; a queued writer
+            // between them cycles the lock. Scope read#1 so it drops first.
+            let own = {
+                let id = { core.read().v4_pool_id_by_key(pool_manager, &pool_id) };
+                id.map_or(0, |id| core.read().pool_tick_data_block(id))
+            };
             let seed_block = if own > 0 { own } else { snapshot_block };
             verify_seed(seed, seed_block).await?;
         }
