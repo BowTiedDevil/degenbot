@@ -163,10 +163,19 @@ where
     if let Some(snapshot_block) = snapshot_block {
         let seed = { core.write().take_v3_snapshot_seed(address) };
         if let Some(seed) = seed {
-            let own = core
-                .read()
-                .pool_id_by_address(&address)
-                .map_or(0, |id| core.read().pool_tick_data_block(id));
+            // S53STH-soak follow-up: the previous single-expression form held
+            // read#1 as the expression temporary while the `map_or` closure
+            // acquired read#2 on the SAME lock. With a writer queued between
+            // them (e.g. the frozen registration worker's `build_v3_pool`
+            // write intent), read#2 parks behind the writer while the writer
+            // waits on read#1 — a self-deadlock (soak-2026-08-22, held=296s+
+            // in the thread-registry dump). Scoping read#1 drops it before
+            // read#2 acquires; the second acquisition can still park behind
+            // a writer, but that is benign backpressure, not a cycle.
+            let own = {
+                let id = { core.read().pool_id_by_address(&address) };
+                id.map_or(0, |id| core.read().pool_tick_data_block(id))
+            };
             let seed_block = if own > 0 { own } else { snapshot_block };
             verify_seed(seed, seed_block).await?;
         }
