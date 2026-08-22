@@ -63,6 +63,16 @@ class OtelSettings(BaseModel):
     # http://localhost:4318.
     endpoint: HttpUrl | None = None
 
+    # Master switch for dev OTel telemetry (spans + metrics). Precedence:
+    # DEGENBOT_OTEL env var wins over this key ("0" disables, any other
+    # value enables); when both are unset, telemetry defaults to ON in dev
+    # builds (the otel feature does not compile into release wheels).
+    enabled: bool | None = None
+
+    # Prometheus scrape endpoint for drain-path metrics. Precedence:
+    # DEGENBOT_METRICS_ADDR env var wins over this key; default 127.0.0.1:9464.
+    metrics_addr: str | None = None
+
 
 class DegenbotConfig(BaseSettings):
     """DegenbotConfig class."""

@@ -33,7 +33,7 @@ use thiserror::Error;
 const METER_NAME: &str = "degenbot-bot";
 
 /// Default scrape endpoint (Prometheus convention range, dev-safe bind).
-const DEFAULT_METRICS_ADDR: &str = "127.0.0.1:9464";
+pub const DEFAULT_METRICS_ADDR: &str = "127.0.0.1:9464";
 
 /// Env var overriding the scrape endpoint.
 const METRICS_ADDR_ENV: &str = "DEGENBOT_METRICS_ADDR";
@@ -171,11 +171,22 @@ struct GlobalMetrics {
 /// Returns [`MetricsInitError::Exporter`] if the exporter cannot be built, or
 /// [`MetricsInitError::Bind`] if the scrape endpoint cannot be resolved/bound.
 pub fn init_global_metrics() -> Result<(), MetricsInitError> {
+    init_global_metrics_with_addr(metrics_addr_from_env()?)
+}
+
+/// [`init_global_metrics`] with an explicit scrape endpoint - for consumers
+/// that resolve the address from their own config layer (the Python-driven
+/// path: `DEGENBOT_METRICS_ADDR` env > `otel.metrics_addr` in config.toml >
+/// default). Idempotent like the env variant.
+///
+/// # Errors
+///
+/// Same contract as [`init_global_metrics`].
+pub fn init_global_metrics_with_addr(addr: SocketAddr) -> Result<(), MetricsInitError> {
     if GLOBAL.get().is_some() {
         return Ok(());
     }
     let (provider, registry) = build_prometheus_provider()?;
-    let addr = metrics_addr_from_env()?;
     let listener = TcpListener::bind(addr)?;
     let stop = std::sync::Arc::new(AtomicBool::new(false));
     let global = GlobalMetrics {
