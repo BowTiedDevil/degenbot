@@ -395,7 +395,6 @@ impl PumpState {
     /// `VerificationMismatchError` (fatal tripwire) / `VerificationRpcError`
     /// (transient) from the underlying verify, or `VerificationRpcError` when
     /// no verify provider was configured.
-    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn run_v3_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
@@ -417,15 +416,31 @@ impl PumpState {
         };
         let provider = self.verify_provider.lock().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            use tracing::Instrument as _;
+
             use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-            degenbot_bot::bot_core::run_v3_registration_lifecycle(
+            // Telemetry: the whole quarantine→seed-verify→drain+pin→post-drain-
+            // verify→set_live choreography is ONE Jaeger span (`.instrument`
+            // carries context across awaits / worker threads).
+            let lifecycle_span = tracing::info_span!(
+                "degenbot.pool.verify_lifecycle",
+                pool.version = "v3",
+                pool.address = %address,
+            );
+            let result = degenbot_bot::bot_core::run_v3_registration_lifecycle(
                 &core,
                 provider.as_ref(),
                 pool_addr,
                 snapshot_block,
             )
-            .await
-            .map_err(|err| match err {
+            .instrument(lifecycle_span)
+            .await;
+            if result.is_ok() {
+                tracing::info!(target: "degenbot::state", version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
+            } else {
+                tracing::warn!(target: "degenbot::state", version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
+            }
+            result.map_err(|err| match err {
                 RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
                 RegistrationLifecycleError::MissingProvider => {
                     crate::bot::engine::VerificationRpcError::new_err(err.to_string())
@@ -442,7 +457,6 @@ impl PumpState {
     /// using the stored `verify_state_view` contract address. A **tracked** V4
     /// pool with no `state_view` surfaced as `PyValueError` (D-C no-config
     /// fail-fast); Sparse pools never require `state_view`.
-    #[expect(clippy::needless_pass_by_value)]
     pub(crate) fn run_v4_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
@@ -464,8 +478,17 @@ impl PumpState {
         };
         let provider = self.verify_provider.lock().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            use tracing::Instrument as _;
+
             use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-            degenbot_bot::bot_core::run_v4_registration_lifecycle(
+            // Telemetry: V4 twin of the V3 verify-lifecycle span.
+            let lifecycle_span = tracing::info_span!(
+                "degenbot.pool.verify_lifecycle",
+                pool.version = "v4",
+                pool.manager = %pool_manager_address,
+                pool.id = %pool_id_hex,
+            );
+            let result = degenbot_bot::bot_core::run_v4_registration_lifecycle(
                 &core,
                 provider.as_ref(),
                 pool_manager,
@@ -473,8 +496,14 @@ impl PumpState {
                 state_view,
                 snapshot_block,
             )
-            .await
-            .map_err(|err| match err {
+            .instrument(lifecycle_span)
+            .await;
+            if result.is_ok() {
+                tracing::info!(target: "degenbot::state", version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
+            } else {
+                tracing::warn!(target: "degenbot::state", version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
+            }
+            result.map_err(|err| match err {
                 RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
                 RegistrationLifecycleError::MissingProvider => {
                     crate::bot::engine::VerificationRpcError::new_err(err.to_string())

@@ -78,6 +78,61 @@ impl ArbitrageEngine {
         }
         Some(Ok(PathInfo::new(hops)))
     }
+
+    /// Human-readable hop summary for telemetry, e.g.
+    /// `"path_id=7 [V2:0xabc..(zfo=1) -> V3:0xdef..(zfo=0)]"`.
+    ///
+    /// Telemetry-only: resolves each hop's concrete pool identity from the
+    /// shared `BotState` so a trace field names the POOLS in a path, not just
+    /// the numeric id (the operator-facing ask: "clearly see which pools are
+    /// in the path"). Unresolvable identities degrade to the raw `pool_id`.
+    #[must_use]
+    pub fn describe_path(&self, path_id: u64) -> String {
+        let Some(path) = self.path_pools.get(&path_id) else {
+            return format!("path_id={path_id} (unregistered)");
+        };
+        let core = self.core.read();
+        let hops: Vec<String> = path
+            .pools
+            .iter()
+            .map(|r| describe_hop(&core, r.hop_type, r.pool_key, r.zero_for_one))
+            .collect();
+        format!("path_id={path_id} [{}]", hops.join(" -> "))
+    }
+}
+
+/// Telemetry helper: render one hop as `FAMILY:pool(zfo=N)`. Unresolvable
+/// identities degrade to the raw `pool_id` rather than failing — this only
+/// ever feeds trace fields, never solver or encoder logic.
+#[must_use]
+pub(crate) fn describe_hop(
+    core: &BotState,
+    hop_type: HopType,
+    pool_id: u64,
+    zero_for_one: bool,
+) -> String {
+    let zfo = u8::from(zero_for_one);
+    match hop_type {
+        HopType::V2 => core.get_v2_identity(pool_id).map_or_else(
+            || format!("V2:pool_id={pool_id}(zfo={zfo})"),
+            |id| format!("V2:{:#x}(zfo={zfo})", id.address),
+        ),
+        HopType::V3 => core.get_v3_identity(pool_id).map_or_else(
+            || format!("V3:pool_id={pool_id}(zfo={zfo})"),
+            |id| format!("V3:{:#x}(zfo={zfo})", id.address),
+        ),
+        HopType::V4 => core.get_v4_identity(pool_id).map_or_else(
+            || format!("V4:pool_id={pool_id}(zfo={zfo})"),
+            |id| {
+                format!(
+                    "V4:{:#x}:0x{}(zfo={zfo})",
+                    id.pool_manager,
+                    alloy::hex::encode(id.pool_id)
+                )
+            },
+        ),
+        other => format!("{other:?}:pool_id={pool_id}"),
+    }
 }
 
 /// Resolve one registered hop to its encoder descriptor.
@@ -246,6 +301,36 @@ mod tests {
         assert_eq!(v2.token1_address, Address::ZERO);
         assert_eq!(v2.fee, 30);
         assert!(v2.zfo);
+    }
+
+    /// Telemetry: `describe_path` names the CONCRETE pool addresses (the
+    /// operator ask — "which pools are in the path"), degrading to raw
+    /// `pool_id` for unregistered ids.
+    #[test]
+    fn describe_path_names_concrete_pools() {
+        let mut engine = ArbitrageEngine::new();
+        let pool_addr = Address::from([0x44u8; 20]);
+        let pid = engine.register_v2_pool(
+            pool_addr,
+            usdc(1_000_000),
+            weth(500),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine
+            .register_path(vec![PoolHop {
+                pool_id: pid,
+                zero_for_one: true,
+            }])
+            .expect("register_path");
+
+        let desc = engine.describe_path(path_id);
+        assert!(
+            desc.contains("V2:0x4444"),
+            "describe_path must carry the concrete pool address: {desc}"
+        );
+        assert!(desc.contains("zfo=1"), "zfo flag missing: {desc}");
+        assert_eq!(engine.describe_path(99_999), "path_id=99999 (unregistered)");
     }
 
     /// Reverse direction selects `fee_token1` (identical fee here) + `zfo: false`.

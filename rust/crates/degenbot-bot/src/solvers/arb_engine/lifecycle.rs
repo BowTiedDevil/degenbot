@@ -66,6 +66,12 @@ impl ArbitrageEngine {
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState`.
     pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, String> {
+        // Telemetry: one Jaeger node per path registration (a root span on the
+        // registration worker thread — there is no ambient pump context during
+        // `build_paths`). The completion event below carries the CONCRETE hop
+        // list so the trace answers "which pools are in this path" directly.
+        let reg_span = tracing::info_span!("degenbot.path.register", hops.count = hops.len());
+        let _reg_guard = reg_span.enter();
         let path_id = self.next_path_id;
         self.next_path_id += 1;
 
@@ -74,6 +80,7 @@ impl ArbitrageEngine {
         // hop_type is derived, not caller-supplied.
         let core = self.core.read();
         let mut pool_refs = Vec::with_capacity(hops.len());
+        let mut hop_descs = Vec::with_capacity(hops.len());
         for hop in hops {
             let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
                 return Err(format!(
@@ -81,6 +88,12 @@ impl ArbitrageEngine {
                     hop.pool_id
                 ));
             };
+            hop_descs.push(super::path_info::describe_hop(
+                &core,
+                hop_type,
+                hop.pool_id,
+                hop.zero_for_one,
+            ));
             pool_refs.push(MixedPoolRef {
                 hop_type,
                 pool_key: hop.pool_id,
@@ -110,7 +123,17 @@ impl ArbitrageEngine {
                 tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
             }
         }
+        let path_valid = resolved.valid;
         self.path_resolved.insert(path_id, resolved);
+
+        tracing::info!(
+            target: "degenbot::path",
+            path_id = path_id,
+            hops.count = hop_descs.len(),
+            hops = %hop_descs.join(" -> "),
+            valid = path_valid,
+            "[path] registered"
+        );
 
         Ok(path_id)
     }

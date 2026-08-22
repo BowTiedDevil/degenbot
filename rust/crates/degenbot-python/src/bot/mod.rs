@@ -651,8 +651,20 @@ impl PyBot {
         // the read end across provider fetches, and a parked GIL-writer
         // freezes every GIL consumer (main asyncio, log drainer, gil-probe).
         // Evidence: /tmp/degenbot-gil-deadlock-2026-08-20 (26 readers, state 0x1b).
-        self.with_state_mut(py, |s| s.register_v2_pool(&p))
-            .map_err(map_register_v2_err)
+        let pool_id = self
+            .with_state_mut(py, |s| s.register_v2_pool(&p))
+            .map_err(map_register_v2_err)?;
+        // Telemetry: see build_v2_pool — one Jaeger node per V2 registration.
+        let _reg = tracing::info_span!(
+            "degenbot.pool.register",
+            pool.version = "v2",
+            pool.address = %addr,
+            token0 = %t0,
+            token1 = %t1,
+            pool.id = pool_id,
+        )
+        .entered();
+        Ok(pool_id)
     }
 
     /// Build + register a V2 pool through the Rust `PoolBuilder` (T4 / 4GQWZ4
@@ -708,6 +720,19 @@ impl PyBot {
         let pool_id = self
             .with_state_mut(py, |s| s.register_v2_pool(&params))
             .map_err(map_register_v2_err)?;
+        // Telemetry: one Jaeger node per pool construction+registration
+        // (zero-duration span carrying the full identity — root span on the
+        // registration worker thread, batch-exported with startup).
+        let _reg = tracing::info_span!(
+            "degenbot.pool.register",
+            pool.version = "v2",
+            pool.address = %identity.2,
+            token0 = %identity.0,
+            token1 = %identity.1,
+            dex = %identity.3,
+            pool.id = pool_id,
+        )
+        .entered();
         Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
 
@@ -896,6 +921,17 @@ impl PyBot {
         let pool_id = self
             .with_state_mut(py, |s| s.register_v3_pool(&params))
             .map_err(map_register_v3_err)?;
+        // Telemetry: see build_v2_pool — one Jaeger node per V3 registration.
+        let _reg = tracing::info_span!(
+            "degenbot.pool.register",
+            pool.version = "v3",
+            pool.address = %identity.2,
+            token0 = %identity.0,
+            token1 = %identity.1,
+            dex = %identity.3,
+            pool.id = pool_id,
+        )
+        .entered();
         Ok((pool_id, identity.0, identity.1, identity.2, identity.3))
     }
 
@@ -1097,6 +1133,17 @@ impl PyBot {
         let pool_id = self
             .with_state_mut(py, |s| s.register_v4_pool(&params))
             .map_err(map_register_v4_err)?;
+        // Telemetry: see build_v2_pool — one Jaeger node per V4 registration
+        // (pool.manager is the PoolManager; pool.id is the 32-byte id).
+        let _reg = tracing::info_span!(
+            "degenbot.pool.register",
+            pool.version = "v4",
+            pool.manager = %identity_ret.2,
+            pool.id = %identity_ret.6,
+            fee = identity_ret.3,
+            tick_spacing = identity_ret.4,
+        )
+        .entered();
         // Return `(pool_id, coverage, identity..., protocol_fee, lp_fee)` so the
         // Python driver can set the companion's `_sparse_liquidity_map` (from
         // coverage), the normalized identity, and the fee overrides

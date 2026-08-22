@@ -438,6 +438,17 @@ impl LogDispatcher {
         if let Some(p) = crate::instruments::pipeline() {
             p.count_log_received();
         }
+        // Telemetry: raw-event arrival (field exprs evaluate lazily — zero
+        // cost unless RUST_LOG enables debug for this target). Attaches to the
+        // per-log dispatch span, which parents under `degenbot.pump.block`.
+        tracing::debug!(
+            target: "degenbot::dispatch",
+            block = log.block_number,
+            address = format!("{:#x}", log.address()),
+            topic0 = format!("{:#x}", log.topics().first().copied().unwrap_or_default()),
+            tx = ?log.transaction_hash,
+            "log received"
+        );
         let decode_start = std::time::Instant::now();
         let decoded = hotpath::measure_block!("dispatch.decode", {
             self.decoders.iter().find_map(|d| d.try_decode(log))
@@ -450,14 +461,17 @@ impl LogDispatcher {
             // NO decoder recognized. Distinct from "apply miss". Zero-cost unless
             // the env is set. (The WS_COMPLETENESS assert below only fires in strict
             // loud mode; this surfaces the same miss in dry runs.)
-            if std::env::var("DEGENBOT_TRACE_DISPATCH").is_ok() {
-                tracing::warn!(
-                    block = log.block_number,
-                    topic0 = format!("{:#x}", log.topics().first().copied().unwrap_or_default()),
-                    address = format!("{:#x}", log.address()),
-                    "dispatch: DECODE MISS — relevant-topic log matched no decoder"
-                );
-            }
+            // Telemetry: always-on DEBUG (was DEGENBOT_TRACE_DISPATCH-gated
+            // WARN — a decode miss on a pre-filtered relevant-topic log is
+            // abnormal enough to keep visible whenever debug is enabled, and
+            // the strict-mode assert below remains the loud gate).
+            tracing::debug!(
+                target: "degenbot::dispatch",
+                block = log.block_number,
+                topic0 = format!("{:#x}", log.topics().first().copied().unwrap_or_default()),
+                address = format!("{:#x}", log.address()),
+                "DECODE MISS — relevant-topic log matched no decoder"
+            );
             // LOUD failure: a log carrying a KNOWN degenbot event signature
             // (topic0 in RELEVANT_TOPICS) failed every decoder. The forward
             // path only dispatches logs that already passed the relevant-topic
@@ -495,32 +509,27 @@ impl LogDispatcher {
         if let Some(p) = crate::instruments::pipeline() {
             p.observe_state_apply(apply_start.elapsed().as_secs_f64());
         }
-        // [trace-dispatch] report the apply outcome (applied pool vs "not
-        // registered / dropped by apply") for the 0x99ac8c / PancakeSwap desync
-        // investigation. Zero-cost unless the env is set.
-        if std::env::var("DEGENBOT_TRACE_DISPATCH").is_ok() {
-            let topic0_s = format!("{:#x}", log.topics().first().copied().unwrap_or_default());
-            let address_s = format!("{:#x}", log.address());
-            if let Some(pid) = pool_id {
-                tracing::info!(
-                    block = log.block_number,
-                    pool_id = pid,
-                    %topic0_s,
-                    %address_s,
-                    "dispatch: applied to pool"
-                );
-            } else {
-                // 42FL35: name the missed pool. Without this the MISS line
-                // cannot discriminate which pool's swaps were dropped, which
-                // is exactly what the soak-v9 investigation needs.
-                tracing::warn!(
-                    block = log.block_number,
-                    %topic0_s,
-                    %address_s,
-                    %identity,
-                    "dispatch: APPLY MISS — decoded event matched no registered pool"
-                );
-            }
+        // Telemetry: ALWAYS-ON structured outcome events (was
+        // DEGENBOT_TRACE_DISPATCH-gated). The applied event is the
+        // "pool event processed + state updated" node in every Jaeger trace:
+        // it names the concrete pool identity AND the engine pool_id. An APPLY
+        // MISS (decoded but unregistered pool) stays visible at DEBUG with the
+        // 42FL35 identity naming.
+        if let Some(pid) = pool_id {
+            tracing::info!(
+                target: "degenbot::state",
+                block = log.block_number,
+                pool.id = pid,
+                pool = %identity,
+                "[state] pool event applied"
+            );
+        } else {
+            tracing::debug!(
+                target: "degenbot::state",
+                block = log.block_number,
+                pool = %identity,
+                "APPLY MISS — decoded event matched no registered pool"
+            );
         }
         let Some(pool_id) = pool_id else {
             return;

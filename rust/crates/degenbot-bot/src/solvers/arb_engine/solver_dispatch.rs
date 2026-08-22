@@ -312,6 +312,7 @@ impl ArbitrageEngine {
     /// Uses the `pool_to_paths` reverse index to identify `affected_path_ids`,
     /// then re-resolves and re-solves only those. Unaffected paths carry
     /// their previous results forward.
+    #[expect(clippy::too_many_lines)] // telemetry events + solve pipeline are one narrative
     pub fn rebuild_and_solve_affected(
         &mut self,
         v2_affected: &HashSet<u64>,
@@ -383,6 +384,23 @@ impl ArbitrageEngine {
         if affected_path_ids.is_empty() {
             self.results_block = solve_block;
             return;
+        }
+
+        // Telemetry: name EVERY path the dirty-pool fan-out just activated,
+        // with its concrete hop list — a Jaeger trace now answers "which pools
+        // are in this path" without cross-referencing Python state. Runs under
+        // the drainer's `degenbot.arb.solve` span, so the events parent there.
+        for &path_id in &affected_path_ids {
+            tracing::info!(
+                target: "degenbot::engine",
+                block_number = solve_block,
+                path.id = path_id,
+                path.hops = %self.describe_path(path_id),
+                dirty.v2 = v2_affected.len(),
+                dirty.v3 = v3_affected.len(),
+                dirty.v4 = v4_affected.len(),
+                "[path] activated by dirty pool"
+            );
         }
 
         // Re-resolve and solve only affected paths — update results in-place
@@ -527,6 +545,17 @@ impl ArbitrageEngine {
         // would march empty bitmap words on-chain — UO3JM4).
         for (pid, mut solve_result) in solved {
             self.clamp_cl_hop_capacity(pid, &mut solve_result);
+            // Telemetry: profitable solves are the signal in the noise — emit
+            // the economics + the concrete hop list on the solve span.
+            tracing::info!(
+                target: "degenbot::solver",
+                block_number = solve_block,
+                path.id = pid,
+                input = %solve_result.optimal_input,
+                profit = %solve_result.profit,
+                path.hops = %self.describe_path(pid),
+                "[path] profitable solve"
+            );
             self.results.insert(pid, solve_result);
         }
 
