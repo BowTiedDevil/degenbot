@@ -196,6 +196,25 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
         tracing::debug!("[init] pyo3_async_runtimes already bound to a runtime");
     }
 
+    // Soak-2026-08-22 forensics: every worker panic gets a loud, timestamped
+    // ERROR with the thread name BEFORE the default hook runs. The v4 TLS
+    // AccessError abort surfaced with zero preceding context - the default
+    // hook's stderr output raced the abort and we could not tell whether a
+    // panic or an external shutdown initiated runtime teardown. This hook
+    // guarantees a first-mover log line through our subscriber (which the
+    // PythonLogLayer forwards to Python logging) for ANY panic anywhere.
+    {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            tracing::error!(
+                thread = std::thread::current().name().unwrap_or("<unnamed>"),
+                payload = %info,
+                "[teardown] panic captured - runtime may be unwinding"
+            );
+            default_hook(info);
+        }));
+    }
+
     // Name the rayon solve pool so thread dumps attribute solver workers
     // correctly (see degenbot_bot::configure_rayon_solver_pool).
     degenbot_bot::configure_rayon_solver_pool();
