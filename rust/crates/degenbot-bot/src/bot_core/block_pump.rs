@@ -810,17 +810,16 @@ impl BlockPump {
         let snapshot_seed = self.bot.state_arc().read().snapshot_seed_block();
         if current_block == 0 && first_observed_block > 0 {
             current_block = first_observed_block;
-            if let Some(seed) = snapshot_seed {
-                if seed > 0 && seed < first_observed_block {
-                    tracing::info!(
-                        first_observed_block,
-                        backfill_start = seed + 1,
-                        backfill_end = first_observed_block,
-                        "BlockPump: resuming from block (backfilled snapshot gap)"
-                    );
-                } else {
-                    tracing::info!(first_observed_block, "BlockPump: cold start from block");
-                }
+            // One resume/cold-start line either way (audit: the two identical
+            // cold-start lines across branches were collapsed).
+            if matches!(snapshot_seed, Some(seed) if seed > 0 && seed < first_observed_block) {
+                let seed = snapshot_seed.unwrap_or_default();
+                tracing::info!(
+                    first_observed_block,
+                    backfill_start = seed + 1,
+                    backfill_end = first_observed_block,
+                    "BlockPump: resuming from block (backfilled snapshot gap)"
+                );
             } else {
                 tracing::info!(first_observed_block, "BlockPump: cold start from block");
             }

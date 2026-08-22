@@ -159,7 +159,10 @@ async def _apply_block_if_ready(fut: asyncio.Task[dict[str, int]], session: _Ses
         oldest_bn, _oldest_ts = dispatcher.block_times_oldest()
         if block_number != oldest_bn:
             latency = time.time() - block_timestamp
-            bot_logger.info(
+            # 2026-08-22 audit: this is a per-block METRIC, not an event — it
+            # flooded stdout every block. Debug on the console; the scrapeable
+            # latency signal lives in Prometheus (degenbot.submit.latency et al.).
+            bot_logger.debug(
                 f"[block: {block_number}]"
                 f"[latency: {latency:.1f}s]"
                 f"[base fee: {base_fee / 10**9:.5f}, {base_fee_next / 10**9:.5f} next]",

@@ -141,15 +141,8 @@ impl PyArbitrageEngine {
         // (2026-07-14 hotpath capture: 71 notifies → 0 dirties).
         let subscriber = self.engine_handle.subscriber_weak();
         for pool_id in pool_ids {
-            // 42FL35: record the attach so a later NOTIFY MISS for the same
-            // numeric id proves the subscription keyed a stale generation.
-            if std::env::var("DEGENBOT_TRACE_DISPATCH").is_ok() {
-                tracing::info!(
-                    path_id,
-                    pool_id,
-                    "dispatch: engine attached - subscriber keyed to numeric id"
-                );
-            }
+            // 42FL35 attach provenance now lives on the `degenbot.path.register`
+            // span (hops list); a NOTIFY MISS still names the stale generation.
             self.pump.bot.attach_engine(pool_id, subscriber.clone());
         }
         Ok(path_id)
@@ -201,14 +194,6 @@ impl PyArbitrageEngine {
         // ADR-006 D4: subscribe the engine to each pool_id (see `register_path`).
         let subscriber = self.engine_handle.subscriber_weak();
         for pool_id in pool_ids {
-            // 42FL35: attach-time trace - see register_path.
-            if std::env::var("DEGENBOT_TRACE_DISPATCH").is_ok() {
-                tracing::info!(
-                    path_id,
-                    pool_id,
-                    "dispatch: engine attached - subscriber keyed to numeric id"
-                );
-            }
             self.pump.bot.attach_engine(pool_id, subscriber.clone());
         }
         Ok(path_id)

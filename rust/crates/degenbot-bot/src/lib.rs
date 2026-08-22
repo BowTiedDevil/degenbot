@@ -111,6 +111,7 @@ pub mod metrics;
 pub mod otel;
 pub mod profiling;
 pub mod solvers;
+pub mod telemetry;
 
 /// Configure the process-global rayon pool used by the engine's
 /// `par_iter` solve fan-out ([`crate::solvers`]).

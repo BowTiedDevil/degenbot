@@ -446,6 +446,7 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
             // TEMP DEBUG: dump journal depth + update_block for the failing pool
             // so we can tell whether ANY events were applied since the snapshot seed.
             tracing::info!(
+                target: crate::telemetry::DIAGNOSTIC_TARGET,
                 pool_addr = %pool_addr,
                 tick_idx = d.tick,
                 block_tag = %block_tag,

@@ -285,7 +285,9 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
         ct = rec.get("call_trace") or []
 
         if ct:
-            bot_logger.info(f"[sim-trace] path={path_id} frames={';'.join(str(x) for x in ct)}")
+            # 2026-08-22 audit: per-failure detail rides at debug; the [sim-fail]
+            # bucket summary above is the operator-grade line.
+            bot_logger.debug(f"[sim-trace] path={path_id} frames={';'.join(str(x) for x in ct)}")
 
         weth_before = rec.get("weth_before")
 
@@ -298,7 +300,7 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
 
             d_w, d_e, d_f = weth_after - weth_before, ea - eb, fa - fb
 
-            bot_logger.info(
+            bot_logger.debug(
                 f"[sim-bals] path={path_id} weth {weth_before}->{weth_after} (d={d_w:+d}) "
                 f"| eth {eb}->{ea} (d={d_e:+d}) | erc6909 {fb}->{fa} (d={d_f:+d}) "
                 f"| combined d={d_w + d_e + d_f:+d}"
@@ -309,7 +311,7 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
 
             n_rev = len(rec.get("reverted_swaps") or [])
 
-            bot_logger.info(
+            bot_logger.debug(
                 f"[sim-logfull] path={path_id} log_full={rec.get('log_full_count')} "
                 f"captured={n_swap} reverted={n_rev} "
                 "(dropped if log_full>captured+reverted)"
@@ -323,9 +325,9 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
                 for s in rs
             )
 
-            bot_logger.info(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
+            bot_logger.debug(f"[sim-revswaps] path={path_id} n={len(rs)} {brief}")
 
-        bot_logger.info(
+        bot_logger.debug(
             format_sim_diag_line(
                 rec,
                 path_id=path_id,
@@ -383,7 +385,7 @@ def _render_fot_tokens(dispatcher: Dispatcher, current_block: int) -> None:
         bot_logger.info(f"[fot] confirmed fee-on-transfer token: {token}")
 
     if fot_tokens:
-        bot_logger.info(f"[fot] total dropped (lifetime): {dispatcher.total_fot_dropped}")
+        bot_logger.debug(f"[fot] total dropped (lifetime): {dispatcher.total_fot_dropped}")
 
 
 def format_failure_breakdown(buckets: dict[str, int]) -> str:

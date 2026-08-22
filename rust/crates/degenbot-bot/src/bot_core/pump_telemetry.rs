@@ -78,6 +78,7 @@ impl PumpTelemetry {
             self.last_header_at.elapsed().as_secs_f64()
         };
         tracing::info!(
+            target: crate::telemetry::DIAGNOSTIC_TARGET,
             number,
             diag_header_count = self.header_count,
             gap_secs = %format!("{:.1}", gap),
@@ -117,6 +118,7 @@ impl PumpTelemetry {
         }
         let last_header_secs = self.last_header_at.elapsed().as_secs();
         tracing::info!(
+            target: crate::telemetry::DIAGNOSTIC_TARGET,
             diag_header_count = self.header_count,
             diag_log_count = self.log_count,
             last_header_secs = last_header_secs,

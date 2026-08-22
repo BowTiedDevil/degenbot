@@ -2,7 +2,7 @@
 //!
 //! Replaces `pyo3_log::init()` (per-record `Python::attach`) with a
 //! batched-drain pattern: events are pushed onto a bounded
-//! [`ArrayQueue`](crossbeam_queue::ArrayQueue) from any thread (no GIL
+//! [`SegQueue`](crossbeam_queue::SegQueue) from any thread (no GIL
 //! needed), and a dedicated OS thread drains the queue, batching up to 256
 //! records or every 50 ms, then forwarding the batch to Python `logging`
 //! via ONE `Python::attach` per flush.
@@ -23,16 +23,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_queue::ArrayQueue;
+use crossbeam_queue::SegQueue;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use tracing_subscriber::layer::{Context, Layer, Layered};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Registry;
-
-/// Maximum number of log records buffered before dropping oldest.
-const QUEUE_CAPACITY: usize = 1024;
 
 /// Maximum batch size forwarded per `Python::attach` flush.
 const BATCH_SIZE: usize = 256;
@@ -55,7 +52,7 @@ struct PythonLogRecord {
 /// Shared state between the tracing [`Layer`] and the drainer thread.
 struct PythonLogLayerState {
     /// Bounded, lock-free queue shared with the drainer thread.
-    queue: ArrayQueue<PythonLogRecord>,
+    queue: SegQueue<PythonLogRecord>,
     /// Set to `true` to signal the drainer thread to shut down.
     shutdown: AtomicBool,
 }
@@ -63,7 +60,7 @@ struct PythonLogLayerState {
 /// A [`tracing_subscriber::Layer`] that forwards events to Python logging
 /// via a batched, GIL-free channel.
 ///
-/// Events are formatted and pushed onto a bounded queue. A dedicated OS
+/// Events are formatted and pushed onto an unbounded queue. A dedicated OS
 /// thread drains the queue and flushes batches to Python via one
 /// `Python::attach` per flush. See module-level docs.
 pub struct PythonLogLayer {
@@ -81,7 +78,7 @@ impl PythonLogLayer {
     #[must_use]
     pub fn new() -> Self {
         let state = Arc::new(PythonLogLayerState {
-            queue: ArrayQueue::new(QUEUE_CAPACITY),
+            queue: SegQueue::new(),
             shutdown: AtomicBool::new(false),
         });
         let drainer_state = Arc::clone(&state);
@@ -164,13 +161,14 @@ where
             message,
         };
 
-        // Push onto the queue; drop oldest on overflow.
-        if let Err(dropped) = self.state.queue.push(record) {
-            // Queue is full — the record is dropped. The dropped oldest
-            // record from the `push` return is not forwarded, but since
-            // this is a diagnostic path, dropping is acceptable.
-            let _ = dropped;
-        }
+        // Unbounded by design (2026-08-22 audit): ACCURATE LOGGING beats
+        // memory frugality on this channel — the old bounded queue silently
+        // dropped the OLDEST records under load, which is exactly backwards
+        // (the oldest records are the ones the operator was already reading).
+        // The drainer batches + forwards as fast as Python logging consumes,
+        // and the console filter keeps high-frequency diagnostics off this
+        // path entirely, so memory stays bounded in practice.
+        self.state.queue.push(record);
     }
 }
 
@@ -510,7 +508,7 @@ static INIT_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 /// connection failures); only INFO/DEBUG/TRACE are dropped. degenbot's own
 /// `degenbot_*` targets are untouched. An explicit `RUST_LOG` overrides this
 /// default entirely.
-fn default_env_filter() -> EnvFilter {
+fn base_env_filter() -> EnvFilter {
     let mut filter = EnvFilter::new("info");
     for target in [
         "alloy_pubsub",
@@ -532,6 +530,25 @@ fn default_env_filter() -> EnvFilter {
         }
     }
     filter
+}
+
+/// The CONSOLE filter (stderr fmt + Python forwarder): base directives PLUS
+/// the diagnostic cap — high-frequency `degenbot::diag` events stay off
+/// stdout while remaining visible on the `OTel` layer (2026-08-22 audit).
+fn default_env_filter() -> EnvFilter {
+    let mut filter = base_env_filter();
+    if let Ok(cap) = degenbot_bot::telemetry::DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE.parse() {
+        filter = filter.add_directive(cap);
+    }
+    filter
+}
+
+/// The RECORD-level filter for the `OTel` layer: same base directives as the
+/// console filter but WITHOUT the diagnostic cap, so Jaeger keeps every
+/// diagnostic event. (Feature-gated: only the `OTel` stack has a second sink.)
+#[cfg(feature = "otel")]
+fn record_env_filter() -> EnvFilter {
+    base_env_filter()
 }
 
 /// Install the tracing subscriber stack.
@@ -585,18 +602,30 @@ where
 }
 
 #[cfg(feature = "otel")]
+/// The `OTel` layer gated by the RECORD-level filter (uncapped diagnostics).
+type OtelRecordGated<L> =
+    Layered<tracing_subscriber::filter::Filtered<L, EnvFilter, Registry>, Registry>;
+
+/// The stderr fmt layer gated by the CONSOLE filter (diagnostics capped).
 type MiddleRegistryOtel<L> = Layered<
-    tracing_subscriber::fmt::Layer<
-        Layered<EnvFilter, Layered<L, Registry>>,
-        tracing_subscriber::fmt::format::DefaultFields,
-        tracing_subscriber::fmt::format::Format<tracing_subscriber::fmt::format::Full>,
-        tracing_subscriber::fmt::writer::BoxMakeWriter,
+    tracing_subscriber::filter::Filtered<
+        tracing_subscriber::fmt::Layer<
+            OtelRecordGated<L>,
+            tracing_subscriber::fmt::format::DefaultFields,
+            tracing_subscriber::fmt::format::Format<tracing_subscriber::fmt::format::Full>,
+            tracing_subscriber::fmt::writer::BoxMakeWriter,
+        >,
+        EnvFilter,
+        OtelRecordGated<L>,
     >,
-    Layered<EnvFilter, Layered<L, Registry>>,
+    OtelRecordGated<L>,
 >;
 
 #[cfg(feature = "otel")]
-type BaseRegistryOtel<P, L> = Layered<P, MiddleRegistryOtel<L>>;
+type BaseRegistryOtel<P, L> = Layered<
+    tracing_subscriber::filter::Filtered<P, EnvFilter, MiddleRegistryOtel<L>>,
+    MiddleRegistryOtel<L>,
+>;
 
 /// Assembles the base registry with the `OTel` span layer pinned at the
 /// bottom of the stack (the SDK layer can only layer onto the bare
@@ -605,7 +634,8 @@ type BaseRegistryOtel<P, L> = Layered<P, MiddleRegistryOtel<L>>;
 #[cfg(feature = "otel")]
 #[cfg(feature = "otel")]
 pub(crate) fn build_base_registry_with_otel<P, L>(
-    env_filter: EnvFilter,
+    console_filter: EnvFilter,
+    record_filter: EnvFilter,
     otel_layer: L,
     python_layer: P,
 ) -> BaseRegistryOtel<P, L>
@@ -613,18 +643,23 @@ where
     P: Layer<MiddleRegistryOtel<L>> + 'static,
     L: Layer<Registry> + 'static,
 {
+    use tracing_subscriber::layer::Layer as _;
     use tracing_subscriber::layer::SubscriberExt;
     tracing_subscriber::registry()
-        .with(otel_layer)
-        .with(env_filter)
+        // Per-layer filters (2026-08-22 audit): the OTel layer sees the
+        // RECORD-level filter (diagnostics uncapped — Jaeger keeps full
+        // detail); the console sinks see the console filter (diagnostics
+        // capped at warn). A single global filter could not split them.
+        .with(otel_layer.with_filter(record_filter))
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(tracing_subscriber::fmt::writer::BoxMakeWriter::new(
                     std::io::stderr,
                 ))
-                .with_ansi(true),
+                .with_ansi(true)
+                .with_filter(console_filter.clone()),
         )
-        .with(python_layer)
+        .with(python_layer.with_filter(console_filter))
 }
 
 pub fn init_logging_subscriber() {
@@ -646,7 +681,21 @@ pub fn init_logging_subscriber() {
         // `RUST_LOG` if set, otherwise default to `info` (matching pyo3-log's
         // unconditional forwarding — Python `logging` handles its own
         // per-logger level filtering).
-        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter());
+        // Console vs record filters (2026-08-22 audit): explicit RUST_LOG is
+        // honored verbatim on EVERY sink (no implicit caps); the default caps
+        // `degenbot::diag` on console sinks only.
+        #[cfg(feature = "otel")]
+        let (console_filter, record_filter) = if std::env::var_os("RUST_LOG").is_some() {
+            (
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter()),
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter()),
+            )
+        } else {
+            (default_env_filter(), record_env_filter())
+        };
+        #[cfg(not(feature = "otel"))]
+        let console_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter());
 
         #[cfg(feature = "otel")]
         {
@@ -719,17 +768,18 @@ pub fn init_logging_subscriber() {
             }
             match otel_layer {
                 Some(ol) => set_global_subscriber(build_base_registry_with_otel(
-                    env_filter,
+                    console_filter,
+                    record_filter,
                     ol,
                     python_layer,
                 )),
-                None => set_global_subscriber(build_base_registry(env_filter, python_layer)),
+                None => set_global_subscriber(build_base_registry(console_filter, python_layer)),
             }
         }
 
         #[cfg(not(feature = "otel"))]
         {
-            set_global_subscriber(build_base_registry(env_filter, python_layer));
+            set_global_subscriber(build_base_registry(console_filter, python_layer));
         }
     });
 }
@@ -822,7 +872,16 @@ mod tests {
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
 
         let capture = Capture::default();
+        // Console filter carries the diagnostic cap; the record filter does
+        // not — exactly the production default split.
         let subscriber = build_base_registry_with_otel(
+            EnvFilter::new(
+                format!(
+                    "info,{}",
+                    degenbot_bot::telemetry::DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE
+                )
+                .as_str(),
+            ),
             EnvFilter::new("info"),
             otel::layer(tracer),
             capture.clone(),
@@ -841,7 +900,35 @@ mod tests {
             "seam.c.span missing from the OTel exporter; got {:?}",
             spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
         );
+        // Console-vs-trace split invariant: a high-frequency diagnostic event
+        // (degenbot::diag INFO) must reach the OTel layer (uncapped record
+        // filter) while being capped OFF the console sinks.
+        tracing::info_span!("seam.c.diag.span").in_scope(|| {
+            tracing::info!(
+                target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
+                "seam c diag event"
+            );
+        });
+        provider.force_flush().expect("flush after diag event");
+
+        let spans = exporter
+            .get_finished_spans()
+            .expect("spans after diag event");
+        assert!(
+            spans
+                .iter()
+                .any(|sp| sp.events.iter().any(|e| e.name == "seam c diag event")),
+            "diagnostic event missing from the OTel layer — the record filter \
+             must NOT carry the console cap"
+        );
+
         let records = capture.0.lock().expect("test lock").clone();
+        assert!(
+            !records
+                .iter()
+                .any(|(target, _)| target.contains("degenbot.diag")),
+            "diagnostic event leaked to the console sink — the cap is broken"
+        );
         assert!(
             records
                 .iter()

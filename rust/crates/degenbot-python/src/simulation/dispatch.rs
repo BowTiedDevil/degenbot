@@ -60,6 +60,7 @@ use pyo3::types::PyList;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tracing::Instrument as _;
 
 /// The signature re-exported so the `#[pyo3(signature)]` reference stays in
 /// sync with the exposed type (mirrors the convention in `submit.rs`).
@@ -197,11 +198,13 @@ pub fn dispatch_profitable_py<'py>(
     // the start/end of the body on a tokio worker.
     let phase_candidate_count = built.len();
     tracing::info!(
+        target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
         current_block,
         phase_candidate_count,
-        "[dispatch-phase] future body START"
+        "[dispatch-phase] future body START (emitted synchronously — its absence \
+         past this point means the GIL was already parked)"
     );
-    future_into_py(py, async move {
+    let dispatch_body = async move {
         let phase_started = std::time::Instant::now();
         // ergo 66H3KJ phase marker: the dispatch fan-out body is about to run
         // on a tokio worker. The pyo3-log emit here is the FIRST GIL-acquire
@@ -210,6 +213,7 @@ pub fn dispatch_profitable_py<'py>(
         // NOT appear until the GIL frees; its absence in the log vs the
         // `[dispatch-phase] future body START` line above pinpoints the block.
         tracing::info!(
+            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
             current_block,
             phase_candidate_count,
             "[dispatch-phase] fan-out ENTER"
@@ -243,6 +247,7 @@ pub fn dispatch_profitable_py<'py>(
             warm_cache,
         );
         tracing::info!(
+            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
             current_block,
             elapsed_ms = %phase_started.elapsed().as_millis(),
             survivors = outcome.gas_profitable.len(),
@@ -278,6 +283,7 @@ pub fn dispatch_profitable_py<'py>(
         // thread starves. If this line appears but the next block never
         // advances, the result-setter is the blocked step.
         tracing::info!(
+            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
             current_block,
             "[dispatch-phase] future body END — handing to set_result via Python::attach"
         );
@@ -287,7 +293,18 @@ pub fn dispatch_profitable_py<'py>(
             &outcome,
             success_captured_swaps,
         ))
-    })
+    };
+    // Telemetry (2026-08-22 audit): ONE Jaeger span per simulate fan-out.
+    // `.instrument` (not a held `enter()` guard) is mandatory — this future
+    // hops tokio workers, and a thread-local guard would strand the span
+    // context on the wrong thread. The GIL-probe phase markers ride it as
+    // events on the degenbot::diag target (capped off the console sinks).
+    let dispatch_span = tracing::info_span!(
+        "degenbot.simulate.dispatch",
+        current_block,
+        phase_candidate_count
+    );
+    future_into_py(py, dispatch_body.instrument(dispatch_span))
 }
 
 /// Join a [`SimResult`] + its originating path hops → a [`SubmitCandidate`].

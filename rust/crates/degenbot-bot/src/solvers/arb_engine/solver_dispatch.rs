@@ -224,7 +224,11 @@ impl ArbitrageEngine {
             // `input_consumed - margin` when over-fed (the empty-march class).
             if let Some(clamped) = input_clamp {
                 if clamped < requested {
+                    if let Some(p) = crate::instruments::pipeline() {
+                        p.count_clamp();
+                    }
                     tracing::info!(
+                        target: crate::telemetry::DIAGNOSTIC_TARGET,
                         "[clamp-cl] path_id={path_id} hop={i} family={:?} input requested={requested} \
                          clamped={clamped} reduction={}",
                         pool_ref.hop_type,
@@ -240,7 +244,11 @@ impl ArbitrageEngine {
             // truth, so the published hop_outputs become byte-exact too.
             if let Some(hop_out) = result.hop_outputs.get_mut(i) {
                 if *hop_out != out {
+                    if let Some(p) = crate::instruments::pipeline() {
+                        p.count_clamp();
+                    }
                     tracing::info!(
+                        target: crate::telemetry::DIAGNOSTIC_TARGET,
                         "[clamp-cl-hop] path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
                          twin_out={out} delta={}",
                         pool_ref.hop_type,
@@ -257,7 +265,11 @@ impl ArbitrageEngine {
             if i + 1 < pools.len() {
                 let forward = result.consumed_inputs[i + 1];
                 if out < forward {
+                    if let Some(p) = crate::instruments::pipeline() {
+                        p.count_clamp();
+                    }
                     tracing::info!(
+                        target: crate::telemetry::DIAGNOSTIC_TARGET,
                         "[clamp-cl-out] path_id={path_id} hop={i} family={:?} forward={forward} \
                          twin_out={out} reduction={}",
                         pool_ref.hop_type,
@@ -321,12 +333,6 @@ impl ArbitrageEngine {
         block_number: u64,
         _metadata: &BlockMetadata,
     ) {
-        tracing::debug!(
-            "[solver-dbg] rebuild_and_solve_affected called block={block_number} dirty v2={} v3={} v4={}",
-            v2_affected.len(),
-            v3_affected.len(),
-            v4_affected.len()
-        );
         // MQUKB6-T0: rayon worker threads have no ambient tracing context — any
         // span emitted inside a par_iter closure would orphan into a root trace.
         // Capture the caller's span (the drainer's `degenbot.arb.solve`) once
@@ -581,10 +587,6 @@ impl ArbitrageEngine {
     /// `solve_all_paths` entry).
     #[must_use]
     pub fn solve_all(&self) -> HashMap<u64, SolvePathResult> {
-        tracing::debug!(
-            "[solver-dbg] solve_all called, resolved_paths={}",
-            self.path_resolved.len()
-        );
         // MQUKB6-T0: same rayon context re-entry as rebuild_and_solve_affected.
         let solve_span = tracing::Span::current();
         self.path_resolved

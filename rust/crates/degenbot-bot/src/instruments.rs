@@ -50,6 +50,8 @@ pub struct PipelineInstruments {
     registered_paths: Gauge<f64>,
     /// Candidates entering the simulate fan-out (per-batch sizes summed).
     candidates_found: Counter<u64>,
+    /// Solver CL-hop self-corrections (input/forward clamp + output align).
+    clamps_applied: Counter<u64>,
     /// Per-path EVM simulation duration.
     simulate_duration: Histogram<f64>,
     /// Simulation outcomes, labeled by verdict string.
@@ -139,6 +141,10 @@ impl PipelineInstruments {
             candidates_found: meter
                 .u64_counter("degenbot.candidates.found")
                 .with_description("Candidates entering the simulate fan-out")
+                .build(),
+            clamps_applied: meter
+                .u64_counter("degenbot.solver.clamps")
+                .with_description("Solver CL-hop capacity/output alignment corrections")
                 .build(),
             simulate_duration: meter
                 .f64_histogram("degenbot.simulate.duration")
@@ -263,6 +269,10 @@ impl PipelineInstruments {
     /// A batch of `n` candidates entered the simulate fan-out.
     pub fn count_candidates_found(&self, n: u64) {
         self.candidates_found.add(n, &[]);
+    }
+    /// Count one solver CL-hop correction (input/forward clamp or output align).
+    pub fn count_clamp(&self) {
+        self.clamps_applied.add(1, &[]);
     }
 
     /// One per-path simulation completed.
