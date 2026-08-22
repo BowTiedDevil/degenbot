@@ -107,6 +107,7 @@ pub mod instruments {
         None
     }
 }
+pub mod failure_policy;
 #[cfg(feature = "otel")]
 pub mod instruments;
 #[cfg(feature = "otel")]

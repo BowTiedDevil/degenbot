@@ -96,6 +96,42 @@ pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
 #[cfg(not(feature = "otel"))]
 pub fn flush_before_exit() {}
 
+/// Mode-aware, storm-deduped variant of [`record_exception`].
+///
+/// `primary_id` is the stable per-bug identity (pool address, `path_id`, bucket
+/// string): inside [`COOLDOWN_BLOCKS`](crate::failure_policy::COOLDOWN_BLOCKS)
+/// of the same fingerprint neither the exception event nor the counter fires
+/// again — trace spans still carry every occurrence. Returns `true` when the
+/// failure WAS surfaced (first sighting / window elapsed), `false` when
+/// suppressed; abort-seam callers combine this with
+/// [`crate::failure_policy::failure_mode`] to decide what happens next.
+#[must_use]
+pub fn record_exception_keyed(
+    kind: &'static str,
+    primary_id: &str,
+    block: u64,
+    err: impl std::fmt::Display,
+) -> bool {
+    use crate::failure_policy::{cooldowns, failure_mode};
+
+    let admitted = cooldowns().admit(kind, primary_id, block);
+    if admitted {
+        record_exception(kind, err);
+    } else {
+        // Suppressed for alerting surfaces, but still visible at DEBUG so a
+        // developer who opts into the firehose sees the repeats.
+        tracing::debug!(
+            target: DIAGNOSTIC_TARGET,
+            exception_type = kind,
+            fingerprint = %primary_id,
+            block_number = block,
+            "[error] repeat suppressed by cooldown"
+        );
+    }
+    let _ = failure_mode(); // resolve once; mode decisions live at the seams
+    admitted
+}
+
 #[cfg(all(test, feature = "otel"))]
 #[expect(clippy::expect_used)] // telemetry contract asserts loudly
 mod otel_tests {

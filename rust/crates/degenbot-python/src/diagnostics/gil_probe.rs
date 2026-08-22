@@ -76,6 +76,19 @@ fn now_ms() -> u64 {
 ///
 /// Cheap: one relaxed atomic store. Safe to call from any thread holding
 /// the GIL (the example's main loop) — no allocation, no I/O.
+/// The resolved `DEGENBOT_FAILURE_MODE` policy (`exit` | `harden` | `continue`).
+///
+/// Single source of truth for the Python driver's trap behavior (the Rust
+/// core owns resolution; Python must not duplicate the env parse).
+#[pyfunction]
+fn failure_mode() -> &'static str {
+    match degenbot_bot::failure_policy::failure_mode() {
+        degenbot_bot::failure_policy::FailureMode::Exit => "exit",
+        degenbot_bot::failure_policy::FailureMode::Harden => "harden",
+        degenbot_bot::failure_policy::FailureMode::Continue => "continue",
+    }
+}
+
 #[pyfunction]
 fn mark_progress() {
     LAST_PROGRESS_MS.store(now_ms(), Ordering::Relaxed);
@@ -338,6 +351,7 @@ pub fn add_diagnostics_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let submod = PyModule::new(py, "degenbot._ffi.diagnostics")?;
     submod.add_function(wrap_pyfunction!(start_gil_probe, &submod)?)?;
     submod.add_function(wrap_pyfunction!(mark_progress, &submod)?)?;
+    submod.add_function(wrap_pyfunction!(failure_mode, &submod)?)?;
     m.add_submodule(&submod)?;
     py.import("sys")?
         .getattr("modules")?

@@ -360,15 +360,31 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
 
             _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
 
-            bot_logger.error(
-                f"[sim-trap] exiting on first sim failure at block={current_block} "
-                f"(DEGENBOT_SIM_EXIT_ON_FAIL=1) — see [sim-fixture] above",
-            )
+            # D63GSE (NNYZAU): the failure POLICY decides what happens next —
+            # `exit` keeps today's fail-fast; `harden`/`continue` log loudly and
+            # keep the main loop alive so the failure surfaces through OTel and
+            # iteration continues. Single source of truth is the Rust core's
+            # DEGENBOT_FAILURE_MODE resolution (`degenbot.diagnostics.failure_mode`).
+            from degenbot.diagnostics import failure_mode as _policy
 
-            for h in bot_logger.handlers:
-                h.flush()
+            mode = _policy()
+            if mode == "exit":
+                bot_logger.error(
+                    f"[sim-trap] exiting on first sim failure at block={current_block} "
+                    f"(DEGENBOT_FAILURE_MODE=exit / DEGENBOT_SIM_EXIT_ON_FAIL=1) "
+                    f"— see [sim-fixture] above",
+                )
 
-            sys.exit(3)
+                for h in bot_logger.handlers:
+                    h.flush()
+
+                sys.exit(3)
+            else:
+                bot_logger.error(
+                    f"[sim-trap] {len(trap_failures)} sim failure(s) at block={current_block} "
+                    f"(DEGENBOT_FAILURE_MODE={mode}) — continuing; failures surface via OTel "
+                    f"(degenbot.errors{{kind=sim_failure}}). See [sim-fixture] above.",
+                )
 
     overflow = len(failures) - cap
 

@@ -1,7 +1,9 @@
 def start_gil_probe(interval_ms: int, threshold_ms: int, stuck_ms: int) -> None: ...
+def failure_mode() -> str: ...
 def mark_progress() -> None: ...
 
 __all__ = [
+    "failure_mode",
     "mark_progress",
     "start_gil_probe",
 ]
