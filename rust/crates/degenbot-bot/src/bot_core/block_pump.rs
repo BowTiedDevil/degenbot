@@ -1342,12 +1342,10 @@ impl BlockPump {
                     if fsm.should_drop_recovered_forward(log_block, log.removed) {
                         crate::bot_core::trace_ws_log_dispatch(
                             log.address(),
+                            log.topics(),
                             log_block,
                             log.log_index,
                             log.transaction_index,
-                            *log.topics()
-                                .first()
-                                .unwrap_or(&alloy::primitives::B256::ZERO),
                             log.removed,
                             "DroppedRecovery",
                         );
@@ -1380,12 +1378,10 @@ impl BlockPump {
                     // for other pools / when the env var is unset.
                     crate::bot_core::trace_ws_log_dispatch(
                         log.address(),
+                        log.topics(),
                         log_block,
                         log.log_index,
                         log.transaction_index,
-                        *log.topics()
-                            .first()
-                            .unwrap_or(&alloy::primitives::B256::ZERO),
                         log.removed,
                         match log_decision {
                             LogDecision::EnterReorg(_) => "EnterReorg",

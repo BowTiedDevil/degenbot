@@ -194,6 +194,26 @@ pub struct BotState {
 /// env var so a single run surfaces the full event flow (WS delivery →
 /// decode → apply-route → buffer → drain → pin → verify) for the failing
 /// pool with no behavior change when unset.
+/// 42FL35: V4-aware DRAIN_DBG match. For V4, `log.address()` is the shared
+/// PoolManager contract - every V4 pool carries it, so an address-shape match
+/// cannot attribute a Swap to a specific pool. The PoolId lives in the event's
+/// indexed topics (`topics[1]` for V4 Swap/ModifyLiquidity). This matcher
+/// accepts EITHER shape: the env value matches the address, or it matches any
+/// indexed topic (PoolId hex). Zero cost when the env is unset.
+fn drain_dbg_match_v4(address: Address, topics: &[alloy::primitives::B256]) -> bool {
+    let Ok(env) = std::env::var("DEGENBOT_DRAIN_DBG") else {
+        return false;
+    };
+    let want = env.trim_start_matches("0x");
+    if format!("{address:x}").eq_ignore_ascii_case(want) {
+        return true;
+    }
+    topics
+        .iter()
+        .skip(1)
+        .any(|t| format!("{t:x}").eq_ignore_ascii_case(want))
+}
+
 pub(crate) fn drain_dbg_pool_match(address: Address) -> bool {
     std::env::var("DEGENBOT_DRAIN_DBG")
         .is_ok_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")))
@@ -323,18 +343,24 @@ fn drain_dbg_log_buf(
 /// a liquidity-mutating one (V3 Mint/Burn, V4 `ModifyLiquidity`)..
 pub(crate) fn trace_ws_log_dispatch(
     address: Address,
+    topics: &[alloy::primitives::B256],
     block_number: u64,
     log_index: Option<u64>,
     tx_index: Option<u64>,
-    topic0: alloy::primitives::B256,
     removed: bool,
     decision: &str,
 ) {
     use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
     use degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
+    let topic0 = topics
+        .first()
+        .copied()
+        .unwrap_or(alloy::primitives::B256::ZERO);
     let is_liquidity =
         topic0 == V3_MINT_TOPIC || topic0 == V3_BURN_TOPIC || topic0 == V4_MODIFY_LIQUIDITY_TOPIC;
-    let pool_match = drain_dbg_pool_match(address);
+    // 42FL35: V4-aware match - for V4 events the address is the shared
+    // PoolManager, so attribution requires the indexed PoolId in topics[1].
+    let pool_match = drain_dbg_match_v4(address, topics);
     let global_liquidity_hit = trace_liquidity_global() && is_liquidity;
     if !pool_match && !global_liquidity_hit {
         return;
@@ -345,6 +371,7 @@ pub(crate) fn trace_ws_log_dispatch(
         log_index = ?log_index,
         tx_index = ?tx_index,
         topic0 = %topic0, // full topic — greppable by short prefix
+        topic1 = ?topics.get(1), // 42FL35: V4 PoolId lives here - greppable
         removed,
         decision = %decision,
         "[trace] ws-log"
