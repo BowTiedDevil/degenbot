@@ -47,6 +47,7 @@ use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
 use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
+use tracing::Instrument;
 
 use crate::bot_core::event_dispatch::{DispatchOwner, DrainWork, SolverVerifyRequest};
 use crate::bot_core::solver_state_tripwire::{
@@ -1022,14 +1023,17 @@ impl BlockPump {
         // MQUKB6-T0: the current block's span, replaced by each accepted header.
         let mut block_span: Option<tracing::Span> = None;
         loop {
-            // The per-block span stays current across the whole iteration — the
-            // loop-head drain dispatch and the log/settle arms nest under the
-            // block whose event burst they belong to.
-            // Own the clone so the header arm can replace `block_span` while
-            // this guard is alive (the guard borrows `iteration_span`, a local,
-            // not the mutable cursor).
-            let iteration_span: Option<tracing::Span> = block_span.clone();
-            let _iteration_guard = iteration_span.as_ref().map(tracing::Span::enter);
+            // Span lifecycle (TQ7PD6 fix): an enter guard must never outlive a
+            // single poll. This task runs on a multi-threaded tokio runtime and
+            // may migrate between worker threads at any `.await`; a guard
+            // entered on one thread and dropped on another leaks the span's
+            // entered state in that worker's TLS forever (observed as 23
+            // nested pump.block spans; the leaked spans never close, so OTel
+            // never exports them and every child span orphanes in Jaeger).
+            // No loop-wide enter here: each dispatch site enters the cursor
+            // span in a strictly-synchronous scope and the few futures that
+            // must carry block context across an await are wrapped with
+            // `.instrument(…)` instead.
             // Solve any dirty paths accumulated from the previous iteration's
             // log(s). This naturally coalesces multiple logs that arrive
             // between await points — only one solve per batch of WS events.
@@ -1037,6 +1041,11 @@ impl BlockPump {
             // when result batches are dispatched to Python.
             {
                 if self.sink.has_dirty_paths() {
+                    // Strictly-synchronous solve dispatch: enter the cursor
+                    // block span just long enough for dispatch() to capture it
+                    // as the drainer parent. No await inside this brace
+                    // (TQ7PD6 — never span the enter across a poll).
+                    let _solve_ctx = block_span.as_ref().map(tracing::Span::enter);
                     // Pump-owned ACTIVE BLOCK promotion (QMSTSV/BO5FBS):
                     // `current_block` is newHead+log driven (the promote
                     // signal — a push WS cannot prove the last event for a
@@ -1136,7 +1145,9 @@ impl BlockPump {
                     ) {
                         match decision {
                             PumpDecision::Recover => {
-                                self.handle_timeout_eager(&mut fsm).await;
+                                self.handle_timeout_eager(&mut fsm)
+                                    .instrument(block_span.clone().unwrap_or_else(tracing::Span::none))
+                                    .await;
                             }
                             PumpDecision::LogSilence => {
                                 // Logs-subscription liveness watchdog (inverse
@@ -1185,6 +1196,7 @@ impl BlockPump {
                                 // `open`, the LOG-DRIVEN quiesced block, NOT the
                                 // racing header.
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
+                                let _ctx = block_span.as_ref().map(tracing::Span::enter);
                                 dispatch.dispatch(DrainWork::Publish {
                                     open,
                                     metadata,
@@ -1194,7 +1206,11 @@ impl BlockPump {
                             PumpDecision::Backfill { from, to } => {
                                 // No activity for 60s — backfill `[from, to)`.
                                 debug_assert!(from == fsm.current_block() + 1 && to.is_none());
-                                self.handle_timeout_eager(&mut fsm).await;
+                                self.handle_timeout_eager(&mut fsm)
+                                    .instrument(
+                                        block_span.clone().unwrap_or_else(tracing::Span::none),
+                                    )
+                                    .await;
                             }
                             other => {
                                 unreachable!("on_settle only emits Publish|Backfill, got {other:?}")
@@ -1237,15 +1253,21 @@ impl BlockPump {
                     // subsequent iterations (logs, settle decisions) nest under it
                     // until the next header replaces it.
                     block_span = Some(new_block_span.clone());
-                    let _entered = new_block_span.enter();
-                    // [DIAG] newHeads-liveness: HEADER count, gap, and 20s stall
-                    // warning → one call on the telemetry seam.
-                    telemetry.on_header(number);
-                    // T2: blocks-observed counter + the header→solved anchor.
-                    if let Some(p) = crate::instruments::pipeline() {
-                        p.count_block();
+                    // Sync-only header-processing scope (TQ7PD6): this enter
+                    // guard dies before the first await below, so it can never
+                    // leak across a task migration. The backfill future below
+                    // carries the same span across ITS await via Instrument.
+                    {
+                        let _ctx = new_block_span.enter();
+                        // [DIAG] newHeads-liveness: HEADER count, gap, and 20s stall
+                        // warning → one call on the telemetry seam.
+                        telemetry.on_header(number);
+                        // T2: blocks-observed counter + the header→solved anchor.
+                        if let Some(p) = crate::instruments::pipeline() {
+                            p.count_block();
+                        }
+                        dispatch.note_header_accepted();
                     }
-                    dispatch.note_header_accepted();
                     // ADR-028: THE header decision lives in the FSM. Feeding
                     // the header (metadata + a wall-clock `now_ms` for the
                     // watchdog anchors) emits, in order, the effects the driver
@@ -1277,16 +1299,20 @@ impl BlockPump {
                                     to_block = to,
                                     "BlockPump: gap from block to block — backfilling"
                                 );
-                                self.backfill_range(from, to, &mut fsm).await;
+                                self.backfill_range(from, to, &mut fsm)
+                                    .instrument(new_block_span.clone())
+                                    .await;
                             }
                             PumpDecision::SetLastSolved { block } => {
                                 // LEZJAS: the backfill/first header solved up
                                 // to `block` already — mark it solved so the
                                 // first `finalize_block` guard no-ops.
+                                let _ctx = new_block_span.enter();
                                 self.sink.set_last_solved_block(block);
                             }
                             PumpDecision::Notify { block, metadata } => {
                                 // Python's block fsm.clock tracks `newHeads`.
+                                let _ctx = new_block_span.enter();
                                 dispatch.notify_block(block, &metadata);
                             }
                             other => {
@@ -1505,11 +1531,15 @@ impl BlockPump {
                                     )
                                 };
                                 self.assert_ws_block_complete(block, delivered_log_indices)
+                                    .instrument(
+                                        block_span.clone().unwrap_or_else(tracing::Span::none),
+                                    )
                                     .await;
                             }
                             let prev_meta = fsm
                                 .block_metadata_for(prev)
                                 .unwrap_or(fsm.current_metadata());
+                            let _ctx = block_span.as_ref().map(tracing::Span::enter);
                             dispatch.dispatch(DrainWork::Finalize {
                                 block: prev,
                                 metadata: prev_meta,
@@ -1572,6 +1602,7 @@ impl BlockPump {
                         match decision {
                             PumpDecision::Publish { open, metadata } => {
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
+                                let _ctx = block_span.as_ref().map(tracing::Span::enter);
                                 dispatch.dispatch(DrainWork::Publish {
                                     open,
                                     metadata,
@@ -5306,6 +5337,87 @@ mod tests {
             next_span.span_context.trace_id(),
             block_span.span_context.trace_id(),
             "consecutive headers must be separate traces (mega-trace regression)"
+        );
+    }
+
+    /// TQ7PD6 regression: a header burst through the pump must CLOSE (export)
+    /// every per-block span, never leaking still-entered spans on worker
+    /// threads (the pre-fix loop-wide `Span::enter()` guard lived across the
+    /// select's await points; when the multi-threaded runtime migrated the task
+    /// between workers, it entered on one thread and dropped on another, so the
+    /// span stayed entered in the abandoned worker's TLS — never closed, never
+    /// exported, every child orphaned). The DETERMINISTIC defense is the
+    /// structural fix (no `enter` guard may outlive a poll); this test locks
+    /// the observable symptom — all N spans closed — and exercises cross-await
+    /// parking so CI load that DOES migrate the task surfaces the old leak.
+    #[cfg(feature = "otel")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn header_burst_closes_every_block_span() {
+        use crate::otel;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        const BASE: u64 = 0xBEEF_0000;
+        const COUNT: u64 = 32;
+
+        let (mut pump, _sink) = pump_for_test(None);
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+        // NB: set_global_default can only be installed once per process. This
+        // test and the sibling header-span test both take it; cargo runs each
+        // lib test in its own process by default, but to be robust against a
+        // shared process use set_default (thread-local) where possible. The
+        // header_arms test above uses the global slot; this one uses a local
+        // guard so they can coexist under `--test-threads`.
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let events: Vec<WsEvent> = (0..COUNT)
+            .map(|i| WsEvent::BlockHeader {
+                number: BASE + i,
+                timestamp: 1,
+                base_fee_per_gas: Some(1),
+                gas_used: 1,
+                gas_limit: 1,
+            })
+            .collect();
+        // Force a park between headers: a ready stream never suspends, so the
+        // task would stay on one worker and the pre-fix leaked-enter bug (which
+        // only manifests when the task MIGRATES across an enter guard) would not
+        // be exercised. A 1ms sleep makes every inter-header await pend, giving
+        // the multi-threaded runtime a migration opportunity each iteration.
+        let combined = stream::iter(events)
+            .then(|e| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                e
+            })
+            .boxed();
+        pump.run_test_loop(combined, BASE - 1).await;
+        // The channels may still be flushing; give the idle settle one beat.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+
+        let mut seen = std::collections::HashSet::new();
+        for sp in &spans {
+            if sp.name.as_ref() == "degenbot.pump.block" {
+                for kv in &sp.attributes {
+                    if kv.key == opentelemetry::Key::from_static_str("block.number") {
+                        if let opentelemetry::Value::String(ref v) = kv.value {
+                            if let Ok(n) = v.as_str().parse::<u64>() {
+                                seen.insert(n);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            seen.len(),
+            usize::try_from(COUNT).unwrap_or(usize::MAX),
+            "every header must export a CLOSED pump.block span; got {}/{}",
+            seen.len(),
+            COUNT
         );
     }
 
