@@ -36,6 +36,9 @@
 
 use std::sync::OnceLock;
 
+#[cfg(feature = "otel")]
+use opentelemetry_otlp::WithHttpConfig;
+
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::error::OTelSdkResult;
@@ -126,6 +129,77 @@ impl OtelHandle {
     }
 }
 
+/// Custom OTLP HTTP client: `reqwest::Client::new()` (no client-level total
+/// timeout) plus an explicit per-request `tokio::time::timeout`.
+///
+/// WHY NOT THE DEFAULT: opentelemetry-otlp 0.32 builds its reqwest client
+/// with `.timeout(d)` (a total request timeout). Under reqwest 0.13 that
+/// combination fails INSTANTLY with a connect error when driven from a
+/// current-thread tokio runtime - which is exactly what the SDK's
+/// `BatchSpanProcessor(TokioCurrentThread)` uses. Every span export died
+/// before a socket was opened, so Jaeger silently never received a single
+/// trace from the bot (diagnosed 2026-08-22 via the `otel_jaeger_e2e` tests:
+/// raw reqwest + multi-thread runtime both succeed; builder-timeout +
+/// current-thread fails). A client without the builder timeout works on
+/// both flavors, so we apply the deadline ourselves around `execute`.
+#[derive(Debug, Clone)]
+pub struct ReqwestClient {
+    inner: reqwest::Client,
+    timeout: std::time::Duration,
+}
+
+impl ReqwestClient {
+    /// Client with the given per-request deadline (OTLP default 10s).
+    #[must_use]
+    pub fn new(timeout: std::time::Duration) -> Self {
+        Self {
+            inner: reqwest::Client::new(),
+            timeout,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl opentelemetry_http::HttpClient for ReqwestClient {
+    async fn send_bytes(
+        &self,
+        request: http::Request<opentelemetry_http::Bytes>,
+    ) -> Result<
+        opentelemetry_http::Response<opentelemetry_http::Bytes>,
+        opentelemetry_http::HttpError,
+    > {
+        let request = request.try_into()?;
+        let fut = async {
+            let mut resp = self.inner.execute(request).await?;
+            let status = resp.status();
+            let headers = std::mem::take(resp.headers_mut());
+            let body = resp.bytes().await?;
+            let mut builder = http::Response::builder().status(status);
+            for (k, v) in &headers {
+                builder = builder.header(k, v);
+            }
+            builder
+                .body(body)
+                .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e.to_string()))
+        };
+        match tokio::time::timeout(self.timeout, fut).await {
+            Ok(Ok(resp)) => Ok(resp),
+            Ok(Err(e)) => Err(opentelemetry_http::HttpError::from(e)),
+            Err(_) => Err(opentelemetry_http::HttpError::from(Box::<
+                dyn std::error::Error + Send + Sync,
+            >::from(
+                "OTLP export timed out",
+            ))),
+        }
+    }
+}
+
+/// OTLP spec default request deadline (`OTEL_EXPORTER_OTLP_TIMEOUT`).
+#[must_use]
+pub fn default_otlp_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(10)
+}
+
 /// Build a tracer provider over an injectable span exporter, with the bot
 /// resource and a batch span processor.
 ///
@@ -166,6 +240,7 @@ where
 pub fn provider_from_env_endpoint() -> Result<(SdkTracerProvider, SdkTracer), OtelInitError> {
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
+        .with_http_client(ReqwestClient::new(default_otlp_timeout()))
         .build()?;
     Ok(provider_with_exporter(exporter))
 }
@@ -180,9 +255,20 @@ pub fn provider_from_endpoint(
     endpoint: &str,
 ) -> Result<(SdkTracerProvider, SdkTracer), OtelInitError> {
     use opentelemetry_otlp::WithExportConfig;
+    // otlp 0.32 uses a programmatic endpoint AS-IS (no signal-path append;
+    // only env-resolved endpoints get it), so append /v1/traces ourselves
+    // when the caller passed a bare collector base URL.
+    let full = if endpoint.contains("/v1/traces") {
+        endpoint.to_owned()
+    } else if endpoint.ends_with('/') {
+        format!("{endpoint}v1/traces")
+    } else {
+        format!("{endpoint}/v1/traces")
+    };
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
-        .with_endpoint(endpoint)
+        .with_endpoint(full)
+        .with_http_client(ReqwestClient::new(default_otlp_timeout()))
         .build()?;
     Ok(provider_with_exporter(exporter))
 }
