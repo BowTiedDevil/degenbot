@@ -14,7 +14,10 @@ groups:
   - name: degenbot-critical
     rules:
       - alert: DegenbotHeaderStall
-        expr: rate(degenbot_blocks_observed_total[1m]) == 0
+        # Guarded on the scrape target being UP so a stopped bot does not
+        # fire this - only a bot that Prometheus can see but that observes
+        # no headers (WS feed dead) pages. job name must match prometheus.yml.
+        expr: rate(degenbot_blocks_observed_total[1m]) == 0 and on() up{job="degenbot"} == 1
         for: 2m
         labels:
           severity: critical
