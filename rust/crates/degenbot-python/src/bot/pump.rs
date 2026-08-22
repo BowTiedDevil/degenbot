@@ -512,6 +512,26 @@ pub(crate) fn map_liquidity_verify_error(
     }
 }
 
+/// Soak-2026-08-22 forensics: name teardown paths that bypass [`Self::stop`].
+/// The v4 TLS abort happened with zero logged shutdown initiator; this makes
+/// wrapper destruction visible. If the pump task handle was still armed at
+/// drop time, Python-side unwinding tore down the wrapper without calling
+/// `stop()` - exactly the silent-exit shape we are hunting.
+impl Drop for PumpState {
+    fn drop(&mut self) {
+        let running = self.pump_handle.lock().is_some();
+        tracing::warn!(
+            pump_task_still_armed = running,
+            "[shutdown] PumpState dropped{}",
+            if running {
+                " WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
+            } else {
+                ""
+            }
+        );
+    }
+}
+
 #[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -711,26 +731,6 @@ mod tests {
         assert!(
             pump.pump_handle.lock().is_none(),
             "stop() must consume the pump handle"
-        );
-    }
-}
-
-/// Soak-2026-08-22 forensics: name teardown paths that bypass [`Self::stop`].
-/// The v4 TLS abort happened with zero logged shutdown initiator; this makes
-/// wrapper destruction visible. If the pump task handle was still armed at
-/// drop time, Python-side unwinding tore down the wrapper without calling
-/// `stop()` - exactly the silent-exit shape we are hunting.
-impl Drop for PumpState {
-    fn drop(&mut self) {
-        let running = self.pump_handle.lock().is_some();
-        tracing::warn!(
-            pump_task_still_armed = running,
-            "[shutdown] PumpState dropped{}",
-            if running {
-                " WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
-            } else {
-                ""
-            }
         );
     }
 }

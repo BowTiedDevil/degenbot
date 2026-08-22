@@ -363,7 +363,7 @@ fn solver_instruments_render_with_verdict_labels() {
         .find(|l| l.starts_with("degenbot_simulate_verdicts_total") && l.contains("\"profitable\""))
         .expect("profitable verdict series missing");
     assert!(
-        profitable.ends_with("2"),
+        profitable.ends_with('2'),
         "expected 2 profitable, got: {profitable}"
     );
 }
