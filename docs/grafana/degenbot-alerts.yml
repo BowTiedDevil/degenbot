@@ -99,3 +99,21 @@ groups:
           description: >-
             Over 10% of simulations erroring (not merely unprofitable) -
             encoding/state problem upstream of the EVM sim.
+
+  # D63GSE (A3WJWC): any recorded failure kind blips here within one scrape
+  # interval. `kind` is the closed taxonomy from telemetry::error_kind — use a
+  # per-kind variant for triage (e.g. degenbot_errors_total{kind="sim_failure"}).
+  - name: degenbot-errors
+    rules:
+      - alert: DegenbotErrorRate
+        expr: sum(rate(degenbot_errors_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: degenbot recorded failures (any kind)
+          description: >-
+            At least one failure was recorded in the last 5 minutes. Open
+            Jaeger and filter traces by tag error=true (service degenbot-bot)
+            for full context; the exception_type attribute names the failure
+            kind.

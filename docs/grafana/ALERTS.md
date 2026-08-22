@@ -59,7 +59,20 @@ More than 80% of found profit is being left on the table (unsubmitted).
     expr: sum(rate(degenbot_simulate_verdicts_total{outcome="error"}[10m]))
       / clamp_min(sum(rate(degenbot_simulate_verdicts_total[10m])), 0.001) > 0.1
 
+### Recorded failures (epic D63GSE)
+    expr: sum(rate(degenbot_errors_total[5m])) > 0
+Any failure surfaced through `telemetry::record_exception` (solver-state
+desync, WS log drop, sim failure, submit/monitor failure, verify mismatch,
+drain stall) increments `degenbot_errors_total{kind=...}`. The `kind` label is
+a CLOSED SET (`telemetry::error_kind`) — triage with e.g.
+`degenbot_errors_total{kind="sim_failure"}`. Full context lives in Jaeger:
+filter traces by tag `error=true` (service `degenbot-bot`); the failed span
+carries an `exception` event with `exception_type` / `exception_message`.
+The `DEGENBOT_FAILURE_MODE` env var selects whether the bot exits (default),
+quarantines-and-continues (`harden`), or just continues (`continue`).
+
 ## Notes
+
 
 - Import `docs/grafana/degenbot-overview.json` for the companion dashboard;
   point it at the Prometheus data source scraping the bot endpoint.

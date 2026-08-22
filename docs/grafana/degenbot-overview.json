@@ -4,15 +4,29 @@
   "schemaVersion": 39,
   "version": 1,
   "refresh": "10s",
-  "time": { "from": "now-30m", "to": "now" },
-  "tags": ["degenbot", "mev"],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "tags": [
+    "degenbot",
+    "mev"
+  ],
   "panels": [
     {
       "id": 1,
       "title": "Header \u2192 solved latency (p50/p95) - THE race number",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(degenbot_block_header_to_solved_seconds_bucket[5m])) by (le))",
@@ -23,14 +37,27 @@
           "legendFormat": "p95"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 2,
       "title": "Solve duration (p50/p95)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(degenbot_solve_duration_seconds_bucket[5m])) by (le))",
@@ -41,14 +68,27 @@
           "legendFormat": "p95"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 3,
       "title": "Pipeline phase durations (p95): decode / apply / queue wait",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(degenbot_log_decode_seconds_bucket[5m])) by (le))",
@@ -63,14 +103,27 @@
           "legendFormat": "drain queue wait"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 4,
       "title": "Throughput: blocks observed / logs received / logs applied",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "rate(degenbot_blocks_observed_total[1m])",
@@ -89,14 +142,27 @@
           "legendFormat": "backfills/min"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 5,
       "title": "Liveness: drain queue depth + state head lag (freeze signature)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "degenbot_drain_queue_depth",
@@ -107,14 +173,27 @@
           "legendFormat": "state head lag (blocks)"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 6,
       "title": "Solver load: registered paths / solves executed / candidates found",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "degenbot_engine_registered_paths",
@@ -129,14 +208,27 @@
           "legendFormat": "candidates/min"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 7,
       "title": "Simulate: duration p95 + verdict mix",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(degenbot_simulate_duration_seconds_bucket[5m])) by (le))",
@@ -155,28 +247,54 @@
           "legendFormat": "error"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 8,
       "title": "Submit outcomes by reason",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "sum(rate(degenbot_submit_outcomes_total[5m])) by (outcome)",
           "legendFormat": "{{outcome}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 9,
       "title": "Cumulative P&L: realized vs missed (wei)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "degenbot_profit_realized_total",
@@ -187,14 +305,28 @@
           "legendFormat": "missed (found, unsubmitted)"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0
+        },
+        "overrides": []
+      }
     },
     {
       "id": 10,
       "title": "Monitor outcomes + submit latency p95",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "sum(rate(degenbot_monitor_outcomes_total[5m])) by (outcome)",
@@ -205,7 +337,50 @@
           "legendFormat": "submit latency p95"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Recorded failures by kind (degenbot.errors) - epic D63GSE",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(degenbot_errors_total[5m])) by (kind)",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(degenbot_errors_total[30m])) by (kind)",
+          "legendFormat": "{{kind}} (30m total)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "description": "Failures surfaced through record_exception, by the closed-set kind taxonomy. Any non-zero rate should send you to Jaeger filtered on error=true for the failing span + exception event."
     }
   ],
   "templating": {
