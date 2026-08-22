@@ -3,6 +3,7 @@
 // Compiled only under the `otel` feature so the default-feature test build
 // compiles zero OpenTelemetry code (same gating as the module itself).
 #![cfg(feature = "otel")]
+#![expect(clippy::expect_used)]
 
 //! Seam A: the otel plumbing — provider builder + resource + layer — is
 //! verified against an in-memory span exporter on a LOCAL subscriber (a

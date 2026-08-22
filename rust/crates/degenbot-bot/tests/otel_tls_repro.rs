@@ -12,6 +12,8 @@
 // This test proves the mechanism in isolation (child-process abort), so the
 // fix can be verified without a full soak.
 
+#![expect(clippy::expect_used)]
+
 use std::process::Command;
 
 /// Spawn a child that enters an OTel-context span, leaks the guard, and exits.
@@ -42,15 +44,16 @@ fn leaked_otel_guard_on_thread_exit_aborts() {
     );
 }
 
-/// The child: enter a span under the OTel layer, deliberately leak the guard,
-/// then exit the thread. Expected: AccessError in TLS dtor -> abort.
+/// The child: enter a span under the `OTel` layer, deliberately leak the guard,
+/// then exit the thread. Expected: `AccessError` in TLS dtor -> abort.
 #[test]
 fn child_leaks_guard() {
     use degenbot_bot::otel;
     use opentelemetry_sdk::trace::InMemorySpanExporter;
+    use tracing_subscriber::layer::SubscriberExt;
+
     let (provider, tracer) = otel::provider_with_exporter(InMemorySpanExporter::default());
     let layer = otel::layer(tracer);
-    use tracing_subscriber::layer::SubscriberExt;
     // Bare registry + OTel layer only - no fmt layer, so the repro isolates
     // GUARD_STACK's dtor from the fmt-layer TLS (both died in v6; one variable
     // at a time). Local default, not global: the child is a dedicated process.
@@ -66,13 +69,13 @@ fn child_leaks_guard() {
         // so GUARD_STACK's dtor drops guards into an already-dead context.
         let outer = tracing::info_span!("repro.outer");
         let _detached = outer.set_parent(opentelemetry::context::Context::new());
-        let _o = outer.enter();
+        let leak_outer = outer.enter();
         let inner = tracing::info_span!("repro.inner");
-        let _i = inner.enter();
+        let leak_inner = inner.enter();
         tracing::info!("repro event inside inner");
         // Simulate the imbalance: thread exits with BOTH guards alive.
-        std::mem::forget(_o);
-        std::mem::forget(_i);
+        std::mem::forget(leak_outer);
+        std::mem::forget(leak_inner);
         // Thread exits here -> TLS dtors run -> expected AccessError -> abort.
     });
     let _ = handle.join(); // join Err expected if the thread aborted mid-run
