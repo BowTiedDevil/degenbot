@@ -141,6 +141,32 @@ impl DecodedPoolEvent {
         }
     }
 
+    /// 42FL35: displayable pool identity WITHOUT resolving against BotState -
+    /// used by the APPLY MISS trace so a failed lookup still names WHICH pool
+    /// was missed (the whole point of that trace). V4 renders the
+    /// `(pool_manager, pool_id)` key; V2/V3 render the pool address.
+    #[must_use]
+    pub fn display_identity(&self) -> String {
+        match self {
+            Self::V2Sync { pool_address, .. }
+            | Self::V3Swap { pool_address, .. }
+            | Self::V3Liquidity { pool_address, .. } => format!("{pool_address:x}"),
+            Self::V4Swap {
+                pool_manager,
+                pool_id,
+                ..
+            }
+            | Self::V4Liquidity {
+                pool_manager,
+                pool_id,
+                ..
+            } => {
+                let id_hex = degenbot_core::hex_utils::encode_hex(pool_id);
+                format!("{pool_manager:x}/{id_hex}")
+            }
+        }
+    }
+
     /// Apply this event to `bot_state`, returning the affected `pool_id` (or
     /// `None` if the pool isn't registered / the event is a no-op).
     fn apply(self, bot_state: &mut BotState) -> Option<u64> {
@@ -460,6 +486,9 @@ impl LogDispatcher {
             );
             return;
         };
+        // 42FL35: capture displayable identity BEFORE apply consumes the event
+        // - the APPLY MISS trace below needs to name WHICH pool was missed.
+        let identity = decoded.display_identity();
         // Apply under the write guard, then RELEASE before notifying.
         let apply_start = std::time::Instant::now();
         let pool_id = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
@@ -481,10 +510,14 @@ impl LogDispatcher {
                     "dispatch: applied to pool"
                 );
             } else {
+                // 42FL35: name the missed pool. Without this the MISS line
+                // cannot discriminate which pool's swaps were dropped, which
+                // is exactly what the soak-v9 investigation needs.
                 tracing::warn!(
                     block = log.block_number,
                     %topic0_s,
                     %address_s,
+                    %identity,
                     "dispatch: APPLY MISS — decoded event matched no registered pool"
                 );
             }
