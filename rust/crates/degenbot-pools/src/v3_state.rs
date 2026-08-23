@@ -236,11 +236,31 @@ pub struct V3SwapUpdate {
 // V3 pool state
 // ---------------------------------------------------------------------------
 
+/// Cached state of a tick-range computation for one direction.
+///
+/// Three states: `StillEmpty` (not computed since last invalidation),
+/// `Hit` (`compute_tick_ranges` returned `Some`), `Miss` (returned `None`).
+/// Caching `Miss` prevents re-walking pools whose state hasn't changed
+/// since the last failed walk — the dominant cost in live solve cycles
+/// (1300-9600 `SequenceUnavailable` rejections per cycle, each re-walking
+/// O(tick-walk) from scratch). `invalidate_tick_range_cache` resets both
+/// slots to `StillEmpty` on every Swap/Mint/Burn (ergo 2SGSE3).
+#[derive(Clone, Debug, Default)]
+pub enum CachedTickRanges {
+    /// Not computed since the last invalidation — the next call must walk.
+    #[default]
+    StillEmpty,
+    /// `compute_tick_ranges` returned `Some` — cached for reuse.
+    Hit(Arc<[V3TickRangeForSolver]>),
+    /// `compute_tick_ranges` returned `None` — cached to avoid re-walking.
+    Miss,
+}
+
 /// Cached tick ranges for a single pool, keyed by direction.
 #[derive(Clone, Debug, Default)]
 pub struct TickRangeCache {
-    zfo: Option<Arc<[V3TickRangeForSolver]>>,
-    ofz: Option<Arc<[V3TickRangeForSolver]>>,
+    zfo: CachedTickRanges,
+    ofz: CachedTickRanges,
 }
 
 /// Immutable V3 registration identity (ADR-005 identity slice).
@@ -682,8 +702,8 @@ impl V3PoolState {
     /// Invalidate the cached tick ranges (call after any state mutation).
     pub fn invalidate_tick_range_cache(&self) {
         let mut cache = self.cached_tick_ranges.lock();
-        cache.zfo = None;
-        cache.ofz = None;
+        cache.zfo = CachedTickRanges::StillEmpty;
+        cache.ofz = CachedTickRanges::StillEmpty;
     }
 
     /// Get cached tick ranges for the given direction, computing and caching
@@ -696,8 +716,10 @@ impl V3PoolState {
         {
             let cache = self.cached_tick_ranges.lock();
             let slot = if zero_for_one { &cache.zfo } else { &cache.ofz };
-            if let Some(ranges) = slot {
-                return Some(Arc::clone(ranges));
+            match slot {
+                CachedTickRanges::Hit(ranges) => return Some(Arc::clone(ranges)),
+                CachedTickRanges::Miss => return None, // cached negative
+                CachedTickRanges::StillEmpty => {}     // fall through to compute
             }
         }
 
@@ -717,12 +739,24 @@ impl V3PoolState {
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 
-        if let Some(ref r) = ranges {
-            let mut cache = self.cached_tick_ranges.lock();
-            if zero_for_one {
-                cache.zfo = Some(Arc::clone(r));
-            } else {
-                cache.ofz = Some(Arc::clone(r));
+        // Cache the result regardless of Some/None (2SGSE3: caching None
+        // avoids re-walking pools whose state hasn't changed since the last
+        // failed walk).
+        let mut cache = self.cached_tick_ranges.lock();
+        match ranges {
+            Some(ref r) => {
+                if zero_for_one {
+                    cache.zfo = CachedTickRanges::Hit(Arc::clone(r));
+                } else {
+                    cache.ofz = CachedTickRanges::Hit(Arc::clone(r));
+                }
+            }
+            None => {
+                if zero_for_one {
+                    cache.zfo = CachedTickRanges::Miss;
+                } else {
+                    cache.ofz = CachedTickRanges::Miss;
+                }
             }
         }
 
@@ -1455,8 +1489,14 @@ mod apply_inherent_tests {
         // (5) cache invalidated (both directions cleared).
         {
             let cache = state.cached_tick_ranges.lock();
-            assert!(cache.zfo.is_none(), "zfo cache must be invalidated");
-            assert!(cache.ofz.is_none(), "ofz cache must be invalidated");
+            assert!(
+                matches!(cache.zfo, CachedTickRanges::StillEmpty),
+                "zfo cache must be invalidated"
+            );
+            assert!(
+                matches!(cache.ofz, CachedTickRanges::StillEmpty),
+                "ofz cache must be invalidated"
+            );
         }
     }
 
@@ -1745,8 +1785,8 @@ mod apply_inherent_tests {
         // (4) cache invalidated.
         {
             let cache = state.cached_tick_ranges.lock();
-            assert!(cache.zfo.is_none());
-            assert!(cache.ofz.is_none());
+            assert!(matches!(cache.zfo, CachedTickRanges::StillEmpty));
+            assert!(matches!(cache.ofz, CachedTickRanges::StillEmpty));
         }
         // Scalars untouched.
         assert_eq!(state.sqrt_price_x96, sp_before);
@@ -2111,6 +2151,87 @@ mod tests {
         let (identity, state) = pool_1to1_with_position(10_000_000_000_000u128);
         let seq = state.build_int_v3_sequence(identity.tick_spacing, identity.fee, true, 24);
         assert_eq!(seq.expect("built").ranges.len(), 1);
+    }
+
+    /// 2SGSE3: a `None` from `get_cached_tick_ranges` must be cached so the
+    /// next call returns `None` without re-walking `compute_tick_ranges`.
+    /// Without caching None, every solve cycle re-walks the same failing
+    /// pools (1300-9600 `SequenceUnavailable` rejections per cycle in live
+    /// traces — each doing an O(tick-walk) that returns None).
+    ///
+    /// Safety: `invalidate_tick_range_cache()` is already called on every
+    /// V3/V4 state mutation (Swap/Mint/Burn), so a pool that was unviable
+    /// and later receives liquidity will have its cached None cleared, and
+    /// the next solve re-walks fresh.
+    #[test]
+    fn none_tick_ranges_cached_to_avoid_rewalk() {
+        let (_id, mut state) = pool_1to1_with_position(10_000_000_000_000u128);
+        // Clear tick_data so compute_tick_ranges returns None (no initialized
+        // ticks ahead in either direction).
+        state.tick_data.clear();
+        state.coverage = PoolTickCoverage::Tracked;
+
+        // First call: walks, returns None.
+        let first = state.get_cached_tick_ranges(60, true);
+        assert!(first.is_none(), "empty tick data should yield None");
+
+        // The cache slot must now reflect a computed Miss — NOT StillEmpty.
+        // Before the fix, the slot is StillEmpty because None was not cached,
+        // meaning every subsequent call re-walks from scratch.
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(
+                !matches!(cache.zfo, CachedTickRanges::StillEmpty),
+                "zfo slot must be cached (Miss) after the first None result,                  not StillEmpty (which causes a re-walk every cycle)"
+            );
+            assert!(
+                matches!(cache.zfo, CachedTickRanges::Miss),
+                "zfo slot should be Miss"
+            );
+            assert!(
+                matches!(cache.ofz, CachedTickRanges::StillEmpty),
+                "ofz slot should still be StillEmpty (not called)"
+            );
+        }
+
+        // After invalidation, both slots reset to StillEmpty.
+        state.invalidate_tick_range_cache();
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(matches!(cache.zfo, CachedTickRanges::StillEmpty));
+            assert!(matches!(cache.ofz, CachedTickRanges::StillEmpty));
+        }
+
+        // After adding liquidity + invalidation, should return Some.
+        let liq = U256::from(1_000_000u64).to::<U128>();
+        state.tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq,
+                liquidity_net: I256::try_from(1_000_000i128).unwrap(),
+                block: 0,
+            },
+        );
+        state.tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: liq,
+                liquidity_net: I256::try_from(-1_000_000i128).unwrap(),
+                block: 0,
+            },
+        );
+        let third = state.get_cached_tick_ranges(60, true);
+        assert!(
+            third.is_some(),
+            "after adding liquidity + invalidation, should be Some"
+        );
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(
+                matches!(cache.zfo, CachedTickRanges::Hit(_)),
+                "zfo slot should be Hit after computing Some"
+            );
+        }
     }
 
     #[test]

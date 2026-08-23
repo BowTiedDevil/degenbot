@@ -263,8 +263,8 @@ pub struct V4SwapUpdate {
 /// Cached tick ranges for a single pool, keyed by direction.
 #[derive(Clone, Debug, Default)]
 struct TickRangeCache {
-    zfo: Option<Arc<[V3TickRangeForSolver]>>,
-    ofz: Option<Arc<[V3TickRangeForSolver]>>,
+    zfo: crate::v3_state::CachedTickRanges,
+    ofz: crate::v3_state::CachedTickRanges,
 }
 
 /// Immutable V4 registration identity (ADR-005 identity slice).
@@ -574,8 +574,8 @@ impl V4PoolState {
     /// Invalidate the cached tick ranges (call after any state mutation).
     pub fn invalidate_tick_range_cache(&self) {
         let mut cache = self.cached_tick_ranges.lock();
-        cache.zfo = None;
-        cache.ofz = None;
+        cache.zfo = crate::v3_state::CachedTickRanges::StillEmpty;
+        cache.ofz = crate::v3_state::CachedTickRanges::StillEmpty;
     }
 
     fn get_cached_tick_ranges(
@@ -586,8 +586,10 @@ impl V4PoolState {
         {
             let cache = self.cached_tick_ranges.lock();
             let slot = if zero_for_one { &cache.zfo } else { &cache.ofz };
-            if let Some(ranges) = slot {
-                return Some(Arc::clone(ranges));
+            match slot {
+                crate::v3_state::CachedTickRanges::Hit(ranges) => return Some(Arc::clone(ranges)),
+                crate::v3_state::CachedTickRanges::Miss => return None,
+                crate::v3_state::CachedTickRanges::StillEmpty => {}
             }
         }
 
@@ -603,12 +605,22 @@ impl V4PoolState {
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 
-        if let Some(ref r) = ranges {
-            let mut cache = self.cached_tick_ranges.lock();
-            if zero_for_one {
-                cache.zfo = Some(Arc::clone(r));
-            } else {
-                cache.ofz = Some(Arc::clone(r));
+        // Cache the result regardless of Some/None (2SGSE3: twin of V3).
+        let mut cache = self.cached_tick_ranges.lock();
+        match ranges {
+            Some(ref r) => {
+                if zero_for_one {
+                    cache.zfo = crate::v3_state::CachedTickRanges::Hit(Arc::clone(r));
+                } else {
+                    cache.ofz = crate::v3_state::CachedTickRanges::Hit(Arc::clone(r));
+                }
+            }
+            None => {
+                if zero_for_one {
+                    cache.zfo = crate::v3_state::CachedTickRanges::Miss;
+                } else {
+                    cache.ofz = crate::v3_state::CachedTickRanges::Miss;
+                }
             }
         }
 
@@ -1183,8 +1195,14 @@ mod apply_inherent_tests {
         assert_eq!(state.journal.newest_block(), Some(7));
         {
             let cache = state.cached_tick_ranges.lock();
-            assert!(cache.zfo.is_none());
-            assert!(cache.ofz.is_none());
+            assert!(matches!(
+                cache.zfo,
+                crate::v3_state::CachedTickRanges::StillEmpty
+            ));
+            assert!(matches!(
+                cache.ofz,
+                crate::v3_state::CachedTickRanges::StillEmpty
+            ));
         }
     }
 
@@ -1241,7 +1259,8 @@ mod apply_inherent_tests {
         {
             let cache = state.cached_tick_ranges.lock();
             assert!(
-                cache.zfo.is_none() && cache.ofz.is_none(),
+                matches!(cache.zfo, crate::v3_state::CachedTickRanges::StillEmpty)
+                    && matches!(cache.ofz, crate::v3_state::CachedTickRanges::StillEmpty),
                 "cache invalidated"
             );
         }
@@ -1426,8 +1445,14 @@ mod apply_inherent_tests {
         assert!(!state.tick_data.contains_key(&-60));
         {
             let cache = state.cached_tick_ranges.lock();
-            assert!(cache.zfo.is_none());
-            assert!(cache.ofz.is_none());
+            assert!(matches!(
+                cache.zfo,
+                crate::v3_state::CachedTickRanges::StillEmpty
+            ));
+            assert!(matches!(
+                cache.ofz,
+                crate::v3_state::CachedTickRanges::StillEmpty
+            ));
         }
     }
 
