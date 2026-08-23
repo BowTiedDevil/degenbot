@@ -2102,6 +2102,17 @@ mod tests {
     // --- swap_is_viable (directional viability, ported from the archived
     // Python v3_liquidity_pool.py::swap_is_viable) ---
 
+    /// Probe: single position NEAR the price ([-600,+600], spacing 60) —
+    /// does range building succeed?
+    #[test]
+    fn single_straddling_position_builds_one_range() {
+        // A single reachable position is enough for range building — the
+        // solver does not require multiple positions.
+        let (identity, state) = pool_1to1_with_position(10_000_000_000_000u128);
+        let seq = state.build_int_v3_sequence(identity.tick_spacing, identity.fee, true, 24);
+        assert_eq!(seq.expect("built").ranges.len(), 1);
+    }
+
     #[test]
     fn empty_tick_data_is_not_viable_in_either_direction() {
         // What: a pool with NO initialized ticks cannot host a swap in either

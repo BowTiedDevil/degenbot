@@ -22,6 +22,7 @@ degenbot-uniswap.workspace = true
 
 [dev-dependencies]
 proptest = "^1.11"
+parking_lot = { version = "^0.12" }
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
 # Network-gated V3 mainnet-fixture reproduction (ergo E7ALWT): the live trap
 # captured a +13 V3-hop over-prediction whose bias is INDEPENDENT of amount —

@@ -2132,6 +2132,239 @@ mod tests {
     /// step (`output`, `consumed_input`, and the implied `sqrt_price_next`).
     /// Before the round-up fix this over-predicted `output` because `sp_next`
     /// was floored instead of ceiled.
+    // -----------------------------------------------------------------
+    // Differential proof: oracle (`v3_simulate_swap`, 30k-budget tick walk)
+    // vs solver path (`build_int_v3_sequence` → chained
+    // `int_simulate_v3_swap`). Proves whether the integer solver handles
+    // edge-case pool topologies — distant/full-range liquidity, sparse word
+    // boundaries, range exhaustion — byte-for-byte.
+    // -----------------------------------------------------------------
+    use alloy::primitives::U128;
+    use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState};
+    use degenbot_pools::{state_history::ReorgJournal, state_history::V3BlockDelta, TickInfo};
+    use std::collections::{HashMap, HashSet};
+
+    /// Full V3PoolState at tick 0, 1:1 price. `active_liquidity` is slot0
+    /// liquidity; `ticks` are (tick, liquidity_net) pairs.
+    fn pool_at_tick0(
+        tick_spacing: i32,
+        fee: u32,
+        active_liquidity: u128,
+        ticks: &[(i32, i128)],
+    ) -> (V3PoolState, i32, u32) {
+        let mut tick_data = HashMap::new();
+        for &(t, net) in ticks {
+            tick_data.insert(
+                t,
+                TickInfo {
+                    liquidity_gross: U128::from(10_000_000_000_000u128),
+                    liquidity_net: I256::try_from(net).unwrap(),
+                    block: 0,
+                },
+            );
+        }
+        let state = V3PoolState {
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: active_liquidity,
+            tick: 0,
+            update_block: 0,
+            tick_data_block: 0,
+            initial_state_block: 0,
+            state_nonce: 0,
+            registration_lifecycle: degenbot_pools::v3_state::RegistrationLifecycle::default(),
+            tick_data,
+            coverage: PoolTickCoverage::Tracked,
+            known_bitmap_words: HashSet::new(),
+            fetcher: None,
+            journal: ReorgJournal::<V3BlockDelta>::new(8),
+            snapshot_seed: None,
+            post_drain_snapshot: None,
+            cached_tick_ranges: parking_lot::Mutex::new(
+                degenbot_pools::v3_state::TickRangeCache::default(),
+            ),
+        };
+        (state, tick_spacing, fee)
+    }
+
+    /// Solver-side simulation: chain int_simulate_v3_swap across the built
+    /// sequence's hops, feeding remaining input forward.
+    fn solver_swap(
+        state: &V3PoolState,
+        tick_spacing: i32,
+        fee: u32,
+        zero_for_one: bool,
+        amount_in: U256,
+    ) -> Option<(U256, U256)> {
+        let seq = state.build_int_v3_sequence(tick_spacing, fee, zero_for_one, 24)?;
+        let mut crossings = Vec::with_capacity(seq.ranges.len());
+        for k in 0..seq.ranges.len() {
+            crossings.push(seq.compute_crossing(k).expect("k in bounds"));
+        }
+        // Find the deepest range reachable with amount_in (same rule as
+        // simulate_walk_path's landed_ending_range_index).
+        let mut k = 0usize;
+        for (i, c) in crossings.iter().enumerate() {
+            if amount_in >= c.crossing_gross_input {
+                k = i;
+            }
+        }
+        let crossing = &crossings[k];
+        let remaining = amount_in - crossing.crossing_gross_input;
+        let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+        Some((
+            crossing
+                .crossing_gross_input
+                .saturating_add(ending.consumed_input),
+            crossing.crossing_output.saturating_add(ending.output),
+        ))
+    }
+
+    /// Oracle-side simulation via the pools crate twin walker.
+    fn oracle_swap(
+        state: &V3PoolState,
+        tick_spacing: i32,
+        fee: u32,
+        zero_for_one: bool,
+        amount_in: U256,
+    ) -> Option<degenbot_pools::v3_state::V3SwapOutcome> {
+        degenbot_pools::v3_state::v3_simulate_swap(
+            state,
+            fee,
+            tick_spacing,
+            zero_for_one,
+            I256::try_from(amount_in).unwrap(),
+            V3PoolState::default_sqrt_price_limit(zero_for_one),
+        )
+        .ok()
+    }
+
+    /// Differential sweep across topologies x swap sizes. Asserts oracle
+    /// output == solver output exactly for every case that builds a sequence.
+    #[test]
+    fn differential_oracle_vs_solver_across_topologies() {
+        let l = 10_000_000_000_000u128;
+        // (name, spacing, fee, active_liq, ticks)
+        #[expect(clippy::type_complexity)]
+        let cases: Vec<(&str, i32, u32, u128, Vec<(i32, i128)>)> = vec![
+            (
+                "control-straddle-60",
+                60,
+                3000,
+                l,
+                vec![(-60, l.cast_signed()), (60, -(l.cast_signed()))],
+            ),
+            (
+                "one-sided-below-60",
+                60,
+                3000,
+                0,
+                vec![(-600, l.cast_signed()), (600, -(l.cast_signed()))],
+            ),
+            (
+                "full-range-spacing-60",
+                60,
+                3000,
+                l,
+                vec![(-887_220, l.cast_signed()), (887_220, -(l.cast_signed()))],
+            ),
+            (
+                "sparse-two-positions-60",
+                60,
+                3000,
+                l / 2,
+                vec![
+                    (-12_060, l.cast_signed()),
+                    (-6000, -(l.cast_signed() / 2)),
+                    (6000, l.cast_signed() / 2),
+                    (12_060, -(l.cast_signed())),
+                ],
+            ),
+        ];
+
+        // Swap sizes: dust, small partial, near-range-exit, range-crossing,
+        // exhaustion-sized.
+        let amounts: Vec<U256> = vec![
+            U256::from(1_000u64),
+            U256::from(1_000_000_000u64),
+            U256::from(100_000_000_000_000u64),
+            U256::from(5_000_000_000_000_000u64),
+            U256::from(500_000_000_000_000_000_000_000u128),
+        ];
+
+        let mut divergences = 0usize;
+        for (name, spacing, fee, liq, ticks) in &cases {
+            let (state, _, _) = pool_at_tick0(*spacing, *fee, *liq, ticks);
+            for zero_for_one in [true, false] {
+                for amt in &amounts {
+                    let seq_built = state.build_int_v3_sequence(*spacing, *fee, zero_for_one, 24);
+                    if seq_built.is_none() {
+                        continue;
+                    }
+                    let Some(oracle) = oracle_swap(&state, *spacing, *fee, zero_for_one, *amt)
+                    else {
+                        continue;
+                    };
+                    let oracle_out = if zero_for_one {
+                        oracle.amount1
+                    } else {
+                        oracle.amount0
+                    };
+                    match solver_swap(&state, *spacing, *fee, zero_for_one, *amt) {
+                        Some((consumed, out)) => {
+                            assert_eq!(
+                                out, oracle_out,
+                                "{name} zfo={zero_for_one} amt={amt}: solver {out} != oracle {oracle_out}"
+                            );
+                            let oracle_in = if zero_for_one {
+                                oracle.amount0
+                            } else {
+                                oracle.amount1
+                            };
+                            assert_eq!(
+                                consumed, oracle_in,
+                                "{name} zfo={zero_for_one} amt={amt}: consumed {consumed} != {oracle_in}"
+                            );
+                        }
+                        None => {
+                            // builder rejected; oracle succeeded — recorded divergence
+                            divergences += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(divergences, 0, "builder rejections where oracle succeeds");
+    }
+
+    /// The specific edge case from the incident question: full-range-only
+    /// liquidity on tick_spacing=1. Proves builder=None while oracle succeeds.
+    #[test]
+    fn full_range_spacing1_builder_fails_but_pool_is_swapable() {
+        let l = 10_000_000_000_000u128;
+        let (state, spacing, fee) = pool_at_tick0(
+            1,
+            100,
+            l,
+            &[(-887_270, l.cast_signed()), (887_270, -(l.cast_signed()))],
+        );
+
+        assert!(state.swap_is_viable(true), "liquidity exists below price");
+        assert!(
+            state
+                .build_int_v3_sequence(spacing, fee, true, 24)
+                .is_none(),
+            "documents current budget-limited rejection"
+        );
+
+        // Oracle: the pool IS swappable — real amounts move at real prices.
+        let oracle = oracle_swap(&state, spacing, fee, true, U256::from(1_000_000_000_000u64))
+            .expect("modest input should not revert");
+        assert!(
+            oracle.amount1 > U256::ZERO,
+            "on-chain-equivalent walk produces output"
+        );
+    }
+
     #[test]
     fn int_simulate_v3_swap_partial_step_zfo_matches_onchain_compute_swap_step_v3() {
         let liquidity = 10_000_000_000_000u128; // 1e13

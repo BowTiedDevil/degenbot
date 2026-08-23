@@ -2380,6 +2380,7 @@ dependencies = [
  "degenbot-uniswap",
  "num-bigint 0.5.1",
  "num-integer",
+ "parking_lot",
  "proptest",
  "thiserror 2.0.20",
  "tokio",
