@@ -1315,6 +1315,50 @@ Commands accepting `--to-block` support the following formats:
 DEGENBOT_DEBUG=1 python my_script.py
 ```
 
+### Logging
+
+Degenbot logs through Python's standard library `logging` module. The internal logger is named `degenbot.logging`; it attaches a single handler that writes to `stdout` and emits bare messages (no level or timestamp prefix), so output is readable directly in a terminal.
+
+Both variables are read once when `degenbot.logging` is imported, so they must be set **before** `degenbot` is imported (e.g. on the command line, as shown below).
+
+| Variable | Values | Effect |
+|----------|--------|--------|
+| `DEGENBOT_DEBUG` | `1`, `true`, `yes` | Sets the logger level to `DEBUG` (otherwise `INFO`). Reveals the `logger.debug(...)` calls found throughout the arbitrage and pool helpers. |
+| `DEGENBOT_DEBUG_FUNCTION_CALLS` | `1`, `true`, `yes` | Activates the `@log_function_call` decorator, which logs each decorated call's bound arguments and return value. |
+
+> **Note:** Function-call traces are emitted at `DEBUG` level, so setting `DEGENBOT_DEBUG_FUNCTION_CALLS` alone has no visible effect. You must also set `DEGENBOT_DEBUG`, otherwise the logger stays at `INFO` and the traces are filtered out.
+
+Enable both to trace decorated calls:
+
+```bash
+DEGENBOT_DEBUG=1 DEGENBOT_DEBUG_FUNCTION_CALLS=1 python my_script.py
+```
+
+Example output (formats taken from the actual `logger.debug(...)` and `@log_function_call` code paths in `src/degenbot/`; numeric values and function names are illustrative):
+
+```
+Initializing pool without liquidity snapshot
+best_profit=1000000000000000, weth_out=2000000000000000, weth_in=1000000000000000
+compute_amount_out(amount_in=1000000, decimals=18)
+compute_amount_out -> 997000
+```
+
+The first line is an `INFO`-level message (visible by default); the rest are `DEBUG`-level and require `DEGENBOT_DEBUG`. A decorated call prints an entry line `name(arg=value, ...)` — with defaults filled in via `inspect.signature` — followed by a return line `name -> <repr of result>`. The `@log_function_call` decorator is provided as a utility; it is not currently applied to any internal function, so `DEGENBOT_DEBUG_FUNCTION_CALLS` only affects functions you decorate yourself.
+
+The logger is created with `propagate = False`, so configuring the root logger (e.g. `logging.basicConfig(...)`) will **not** capture degenbot's messages. To redirect output — for example, to a rotating log file — reach into the named logger and replace its handler:
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+degenbot_logger = logging.getLogger("degenbot.logging")
+degenbot_logger.handlers.clear()
+
+handler = RotatingFileHandler("degenbot.log", maxBytes=10_000_000, backupCount=5)
+handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+degenbot_logger.addHandler(handler)
+```
+
 ### Configuration File
 
 Degenbot uses a TOML configuration file located at `~/.config/degenbot/config.toml`:
