@@ -70,6 +70,21 @@ impl ArbitrageEngine {
         // registration worker thread — there is no ambient pump context during
         // `build_paths`). The completion event below carries the CONCRETE hop
         // list so the trace answers "which pools are in this path" directly.
+        // FPGOYX: dedup — if the same (pool_id, zero_for_one) sequence is
+        // already registered, return the existing path_id instead of creating
+        // a duplicate. Without this, `build_paths` re-entry accumulated
+        // hundreds of thousands of duplicate paths, OOM-killing the bot.
+        let sig: Vec<(u64, bool)> = hops.iter().map(|h| (h.pool_id, h.zero_for_one)).collect();
+        if let Some(&existing_id) = self.path_signatures.get(&sig) {
+            tracing::debug!(
+                target: "degenbot::path",
+                path_id = existing_id,
+                hops.count = hops.len(),
+                "[path] duplicate registration skipped (dedup)"
+            );
+            return Ok(existing_id);
+        }
+
         let reg_span = tracing::info_span!("degenbot.path.register", hops.count = hops.len());
         let _reg_guard = reg_span.enter();
         let path_id = self.next_path_id;
@@ -125,6 +140,7 @@ impl ArbitrageEngine {
         }
         let path_valid = resolved.valid;
         self.path_resolved.insert(path_id, resolved);
+        self.path_signatures.insert(sig, path_id);
 
         tracing::info!(
             target: "degenbot::path",

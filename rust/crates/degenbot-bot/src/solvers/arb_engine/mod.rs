@@ -354,6 +354,13 @@ pub struct ArbitrageEngine {
     /// Accumulated dirty V4 pool keys from `apply_log` calls since the last
     /// `finalize_block`. Used by the pump for eager log processing.
     dirty_v4: HashSet<u64>,
+    /// Dedup index: canonical `(pool_id, zero_for_one)` sequence → existing
+    /// `path_id`. `register_path` is idempotent: re-registering the same hop
+    /// sequence returns the existing `path_id` instead of allocating a new
+    /// one. Without this, `build_paths` re-entry (reconnects, snapshot
+    /// rebuilds) accumulated duplicate paths indefinitely — 8.7k → 107k in
+    /// 25 min, causing OOM kills and multi-second CPU-bound solves (FPGOYX).
+    path_signatures: HashMap<Vec<(u64, bool)>, u64>,
     /// Engine lifecycle phase (ZU7RAF — core-OWNED). Enforces ordering
     /// `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`.
     /// Previously the `AtomicU8` lived on the pyo3 `PumpState` wrapper;
@@ -404,6 +411,7 @@ impl ArbitrageEngine {
             pending_new_paths: HashSet::new(),
             last_solved_path_ids: HashSet::new(),
             next_path_id: 1, // path IDs start at 1
+            path_signatures: HashMap::new(),
             delivery: DeliveryPolicy::default(),
             dirty_v2: HashSet::new(),
             dirty_v3: HashSet::new(),

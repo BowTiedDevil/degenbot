@@ -503,6 +503,102 @@ mod tests {
             .unwrap();
     }
 
+    /// FPGOYX: registering the same path (same pools + directions) twice
+    /// must be idempotent — return the SAME `path_id`, not a new one.
+    /// Unbounded registration growth (8.7k -> 107k in 25 min) caused OOM kills
+    /// and multi-second CPU-bound solves because every dirty-pool fan-out
+    /// re-solved an ever-growing duplicate set.
+    #[test]
+    fn register_path_dedup_returns_same_id() {
+        let mut engine = ArbitrageEngine::new();
+        let v2_addr = Address::from([0x11u8; 20]);
+        let v2_fwd =
+            engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
+        let v2_addr2 = Address::from([0x12u8; 20]);
+        let v2_fwd2 = engine.register_v2_pool(
+            v2_addr2,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        let hops = vec![
+            PoolHop {
+                pool_id: v2_fwd,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: v2_fwd2,
+                zero_for_one: true,
+            },
+        ];
+
+        let id1 = engine.register_path(hops.clone()).expect("first register");
+        let id2 = engine.register_path(hops).expect("second register (dedup)");
+
+        assert_eq!(
+            id1, id2,
+            "duplicate path registration must return the same path_id"
+        );
+        assert_eq!(
+            engine.path_count(),
+            1,
+            "engine must not grow on duplicate registration"
+        );
+    }
+
+    /// FPGOYX: a path with the same pools but reversed directions is a
+    /// different path and must get its own id.
+    #[test]
+    fn register_path_reversed_direction_is_distinct() {
+        let mut engine = ArbitrageEngine::new();
+        let v2_addr = Address::from([0x11u8; 20]);
+        let v2_fwd =
+            engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
+        let v2_addr2 = Address::from([0x12u8; 20]);
+        let v2_fwd2 = engine.register_v2_pool(
+            v2_addr2,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        let id_fwd = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd2,
+                    zero_for_one: true,
+                },
+            ])
+            .expect("fwd register");
+
+        let id_rev = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: false,
+                },
+                PoolHop {
+                    pool_id: v2_fwd2,
+                    zero_for_one: false,
+                },
+            ])
+            .expect("rev register");
+
+        assert_ne!(id_fwd, id_rev, "reversed-direction path must be distinct");
+        assert_eq!(
+            engine.path_count(),
+            2,
+            "two distinct paths should be registered"
+        );
+    }
+
     #[test]
     fn register_and_solve_path_eagerly_solves() {
         let mut engine = ArbitrageEngine::new();
