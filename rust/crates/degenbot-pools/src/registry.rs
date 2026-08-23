@@ -649,6 +649,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
         // clocks, and records both pre-event clock values for reorg restore
         // (two-stamp OB7UNY).
+        let tick_before = self.tick;
         let update_block_before = self.update_block;
         let tick_data_block_before = self.tick_data_block;
         self.journal.push_delta(V3BlockDelta {
@@ -683,7 +684,15 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
             }
         }
         self.state_nonce = self.state_nonce.wrapping_add(1);
-        self.invalidate_tick_range_cache();
+        // Only invalidate the tick-range cache when the swap actually
+        // changes the walk inputs (tick_data via tick_priors, or current
+        // tick). An in-range swap that stays at the same tick without
+        // crossing any initialized ticks leaves the walk result identical,
+        // so the cache is preserved (2SGSE3 H1a: dominant case for active
+        // pools — they swap within their current range every block).
+        if tick != tick_before || !tick_priors.is_empty() {
+            self.invalidate_tick_range_cache();
+        }
     }
 
     fn apply_liquidity_update(
@@ -839,6 +848,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
         // clocks, and records both pre-event clock values for reorg restore
         // (two-stamp OB7UNY).
+        let tick_before = self.tick;
         let update_block_before = self.update_block;
         let tick_data_block_before = self.tick_data_block;
         self.journal.push_delta(V3BlockDelta {
@@ -873,7 +883,15 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
             }
         }
         self.state_nonce = self.state_nonce.wrapping_add(1);
-        self.invalidate_tick_range_cache();
+        // Only invalidate the tick-range cache when the swap actually
+        // changes the walk inputs (tick_data via tick_priors, or current
+        // tick). An in-range swap that stays at the same tick without
+        // crossing any initialized ticks leaves the walk result identical,
+        // so the cache is preserved (2SGSE3 H1a: dominant case for active
+        // pools — they swap within their current range every block).
+        if tick != tick_before || !tick_priors.is_empty() {
+            self.invalidate_tick_range_cache();
+        }
     }
 
     fn apply_liquidity_update(

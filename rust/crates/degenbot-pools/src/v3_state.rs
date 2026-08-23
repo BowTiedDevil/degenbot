@@ -1448,6 +1448,68 @@ mod apply_inherent_tests {
         }
     }
 
+    /// In-range swap (same tick, empty `tick_priors`) preserves the tick-range
+    /// cache: the walk result depends on `tick_data` + `current_tick`, neither of
+    /// which changed.
+    #[test]
+    fn apply_swap_in_range_preserves_cache() {
+        let mut state = state_with_position(10_000_000_000_000u128);
+
+        // Populate the cache.
+        let _ = state.get_cached_tick_ranges(60, true);
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(
+                matches!(cache.zfo, CachedTickRanges::Hit(_)),
+                "cache populated"
+            );
+        }
+
+        // Apply a swap that stays at tick 0 (same tick, no tick_priors).
+        state.apply_swap(
+            U256::from(2u128) << 95,
+            11_000_000_000_000u128,
+            0, // SAME tick
+            1,
+            &[],
+        );
+
+        // The cache must be preserved.
+        let cache = state.cached_tick_ranges.lock();
+        assert!(
+            matches!(cache.zfo, CachedTickRanges::Hit(_)),
+            "in-range swap must preserve the tick-range cache"
+        );
+    }
+
+    /// Tick-crossing swap (different tick) invalidates the cache.
+    #[test]
+    fn apply_swap_cross_tick_invalidates_cache() {
+        let mut state = state_with_position(10_000_000_000_000u128);
+
+        // Populate the cache.
+        let _ = state.get_cached_tick_ranges(60, true);
+        {
+            let cache = state.cached_tick_ranges.lock();
+            assert!(matches!(cache.zfo, CachedTickRanges::Hit(_)));
+        }
+
+        // Apply a swap that crosses into tick 1 (different tick).
+        state.apply_swap(
+            U256::from(2u128) << 96,
+            11_000_000_000_000u128,
+            1, // tick CHANGED
+            1,
+            &[],
+        );
+
+        let cache = state.cached_tick_ranges.lock();
+        assert!(
+            matches!(cache.zfo, CachedTickRanges::StillEmpty),
+            "tick-crossing swap must invalidate the cache"
+        );
+    }
+
     #[test]
     fn apply_swap_updates_scalars_advances_block_invalidates_cache_and_journals_priors() {
         // What: apply_swap must (1) overwrite the slot0 scalars with the
