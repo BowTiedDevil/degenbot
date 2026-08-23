@@ -27,7 +27,8 @@ use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_math::cl::functions::tick_position;
 use degenbot_math::cl::swap_math::compute_swap_step_v4;
 use degenbot_math::cl::tick_math::{
-    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal,
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
+    MIN_SQRT_RATIO,
 };
 
 // ---------------------------------------------------------------------------
@@ -390,6 +391,39 @@ impl Clone for V4PoolState {
 }
 
 impl V4PoolState {
+    /// Directional swap viability — V4 twin of [`V3PoolState::swap_is_viable`].
+    /// Same O(1) extremes check; see that method for the full contract.
+    #[must_use]
+    pub fn swap_is_viable(&self, zero_for_one: bool) -> bool {
+        if self.sqrt_price_x96.is_zero() {
+            return false;
+        }
+        let sp = self.sqrt_price_x96;
+        if zero_for_one {
+            if sp <= U256::from(MIN_SQRT_RATIO) + U256::from(1u64) {
+                return false;
+            }
+            match self.tick_data.keys().min() {
+                Some(&min_tick) => match get_sqrt_ratio_at_tick_internal(min_tick) {
+                    Ok(t) => U256::from(t) < sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
+        } else {
+            if sp >= U256::from(MAX_SQRT_RATIO) - U256::from(1u64) {
+                return false;
+            }
+            match self.tick_data.keys().max() {
+                Some(&max_tick) => match get_sqrt_ratio_at_tick_internal(max_tick) {
+                    Ok(t) => U256::from(t) > sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
+        }
+    }
+
     /// Word position holding `tick` (V3/V4-shared helper).
     #[must_use]
     pub fn word_of(tick: i32, tick_spacing: i32) -> i32 {
@@ -1068,6 +1102,59 @@ mod apply_inherent_tests {
             post_drain_snapshot: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
+    }
+
+    // --- swap_is_viable (directional viability, V4 twin of the archived
+    // Python v3_liquidity_pool.py::swap_is_viable) ---
+
+    #[test]
+    fn v4_empty_tick_data_is_not_viable_in_either_direction() {
+        let mut state = state_with_position(10_000_000_000_000u128);
+        state.tick_data.clear();
+
+        assert!(!state.swap_is_viable(true));
+        assert!(!state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn v4_uninitialized_price_is_not_viable_in_either_direction() {
+        let mut state = state_with_position(10_000_000_000_000u128);
+        state.sqrt_price_x96 = U256::ZERO;
+
+        assert!(!state.swap_is_viable(true));
+        assert!(!state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn v4_straddling_position_is_viable_in_both_directions() {
+        let state = state_with_position(10_000_000_000_000u128);
+
+        assert!(state.swap_is_viable(true));
+        assert!(state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn v4_one_sided_liquidity_is_direction_dependent() {
+        let mut state = state_with_position(10_000_000_000_000u128);
+        // Price far BELOW every initialized tick: zfo walks DOWN into nothing.
+        state.tick = -100_000;
+        state.sqrt_price_x96 = U256::from(get_sqrt_ratio_at_tick_internal(-100_000).unwrap());
+
+        assert!(!state.swap_is_viable(true));
+        assert!(state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn v4_price_at_sqrt_ratio_boundary_is_not_viable_in_the_exiting_direction() {
+        let mut state = state_with_position(10_000_000_000_000u128);
+        state.sqrt_price_x96 = U256::from(MIN_SQRT_RATIO) + U256::from(1u64);
+
+        assert!(!state.swap_is_viable(true));
+        assert!(state.swap_is_viable(false));
+
+        state.sqrt_price_x96 = U256::from(MAX_SQRT_RATIO) - U256::from(1u64);
+        assert!(state.swap_is_viable(true));
+        assert!(!state.swap_is_viable(false));
     }
 
     #[test]

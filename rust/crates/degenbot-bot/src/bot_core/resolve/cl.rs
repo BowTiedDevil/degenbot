@@ -11,6 +11,7 @@ use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
+use crate::solvers::arb_engine::PoolTickCoverage;
 
 /// V3 projection: read pool state + identity off `core` (ADR-003) and build
 /// the integer tick-range sequence the CL solver consumes lock-free.
@@ -21,6 +22,15 @@ pub(crate) fn project_v3(
     let pool_state = core
         .get_v3_pool(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
+    // Directional viability gate (archived-Python port): reject a dead
+    // direction with an O(1) extremes check BEFORE the O(tick_data) walk in
+    // `build_int_v3_sequence`. Sparse-coverage pools default viable (no data
+    // to judge — mirrors Python's `sparse_liquidity_map` early-True).
+    if pool_state.coverage == PoolTickCoverage::Tracked
+        && !pool_state.swap_is_viable(pool_ref.zero_for_one)
+    {
+        return Err(MissingHopReason::NotViable);
+    }
     let identity = core
         .get_v3_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
@@ -49,6 +59,12 @@ pub(crate) fn project_v4(
     let pool_state = core
         .get_v4_pool(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
+    // Directional viability gate — V4 twin of the V3 site above.
+    if pool_state.coverage == PoolTickCoverage::Tracked
+        && !pool_state.swap_is_viable(pool_ref.zero_for_one)
+    {
+        return Err(MissingHopReason::NotViable);
+    }
     let identity = core
         .get_v4_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
@@ -147,6 +163,56 @@ mod tests {
         .expect("v3 registration")
     }
 
+    // --- directional viability gate (ported from the archived Python
+    // swap_is_viable pattern): non-viable hops fail with MissingHopReason::NotViable
+    // BEFORE any tick-range walk ---
+
+    #[test]
+    fn project_v3_one_sided_liquidity_is_not_viable_in_dead_direction() {
+        // What: all initialized ticks ABOVE the current price → a zfo
+        // projection (walking DOWN) is NotViable, not SequenceUnavailable.
+        // Why: the viability gate must reject the ~65% dead population with an
+        // O(1) extremes check before the O(tick_data) range walk runs.
+        let mut core = BotState::new();
+        let mut ticks = two_ticks();
+        ticks.remove(&-120); // leave only the tick ABOVE current price (120)
+        let v3_id = register_v3(&mut core, ticks);
+
+        let reason = project_v3(&core, &v3_ref(v3_id, true)).unwrap_err();
+        assert_eq!(reason, MissingHopReason::NotViable);
+        // The live direction still projects.
+        assert!(project_v3(&core, &v3_ref(v3_id, false)).is_ok());
+    }
+
+    #[test]
+    fn project_v3_empty_tick_map_is_not_viable() {
+        // What: no initialized ticks at all → NotViable in both directions.
+        let mut core = BotState::new();
+        let v3_id = register_v3(&mut core, HashMap::new());
+
+        assert_eq!(
+            project_v3(&core, &v3_ref(v3_id, true)).unwrap_err(),
+            MissingHopReason::NotViable
+        );
+        assert_eq!(
+            project_v3(&core, &v3_ref(v3_id, false)).unwrap_err(),
+            MissingHopReason::NotViable
+        );
+    }
+
+    #[test]
+    fn project_v4_one_sided_liquidity_is_not_viable_in_dead_direction() {
+        // What: V4 twin of the one-sided check.
+        let mut core = BotState::new();
+        let mut ticks = two_ticks();
+        ticks.remove(&120); // only the tick BELOW price remains; ofz walks UP → dead
+        let v4_id = register_v4(&mut core, ticks);
+
+        let reason = project_v4(&core, &v4_ref(v4_id, false)).unwrap_err();
+        assert_eq!(reason, MissingHopReason::NotViable);
+        assert!(project_v4(&core, &v4_ref(v4_id, true)).is_ok());
+    }
+
     #[test]
     fn project_v3_builds_tick_range_sequence_in_both_directions() {
         let mut core = BotState::new();
@@ -171,11 +237,14 @@ mod tests {
     }
 
     #[test]
-    fn project_v3_without_tick_data_is_sequence_unavailable() {
+    fn project_v3_without_tick_data_is_not_viable() {
+        // Empty tick map → the viability gate rejects before any walk. (This
+        // case used to surface as SequenceUnavailable; NotViable is strictly
+        // earlier and O(1).)
         let mut core = BotState::new();
         let v3_id = register_v3(&mut core, HashMap::new());
         let reason = project_v3(&core, &v3_ref(v3_id, true)).unwrap_err();
-        assert_eq!(reason, MissingHopReason::SequenceUnavailable);
+        assert_eq!(reason, MissingHopReason::NotViable);
     }
 
     fn register_v4(core: &mut BotState, tick_data: HashMap<i32, TickInfo>) -> u64 {
@@ -225,10 +294,11 @@ mod tests {
     }
 
     #[test]
-    fn project_v4_without_tick_data_is_sequence_unavailable() {
+    fn project_v4_without_tick_data_is_not_viable() {
+        // V4 twin of the empty-map gate rejection.
         let mut core = BotState::new();
         let v4_id = register_v4(&mut core, HashMap::new());
         let reason = project_v4(&core, &v4_ref(v4_id, true)).unwrap_err();
-        assert_eq!(reason, MissingHopReason::SequenceUnavailable);
+        assert_eq!(reason, MissingHopReason::NotViable);
     }
 }

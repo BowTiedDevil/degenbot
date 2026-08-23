@@ -440,6 +440,58 @@ impl Clone for V3PoolState {
 }
 
 impl V3PoolState {
+    /// Directional swap viability — can this pool host a swap in the given
+    /// direction with its CURRENT state?
+    ///
+    /// O(1) using the tick-map extremes; ported from the archived Python
+    /// `v3_liquidity_pool.py::swap_is_viable`, keeping its directional
+    /// precision (Python's coarse empty-map early-out is subsumed by the
+    /// directional test, which an empty map also fails).
+    ///
+    /// Checks, in order:
+    /// 1. uninitialized price (`sqrt_price_x96 == 0`) → not viable;
+    /// 2. price at the `MIN`/`MAX_SQRT_RATIO` protocol boundary in the swap's
+    ///    direction → not viable (the swap would drive price past the limit);
+    /// 3. no initialized tick strictly ahead in the walk direction → not
+    ///    viable (a zfo walk descends and needs a position below; ofz ascends
+    ///    and needs one above).
+    ///
+    /// NOTE: unlike `build_int_v3_sequence`, this does NOT consult or populate
+    /// the tick-range cache — it is safe to call under contention and costs
+    /// two hashmap-extreme scans at worst (amortized O(1) via BTreeMap-free
+    /// iteration over keys; tick maps are small).
+    #[must_use]
+    pub fn swap_is_viable(&self, zero_for_one: bool) -> bool {
+        if self.sqrt_price_x96.is_zero() {
+            return false;
+        }
+        let sp = self.sqrt_price_x96;
+        if zero_for_one {
+            if sp <= U256::from(MIN_SQRT_RATIO) + U256::from(1u64) {
+                return false;
+            }
+            // Viable iff some initialized tick sits strictly below the price.
+            match self.tick_data.keys().min() {
+                Some(&min_tick) => match get_sqrt_ratio_at_tick_internal(min_tick) {
+                    Ok(t) => U256::from(t) < sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
+        } else {
+            if sp >= U256::from(MAX_SQRT_RATIO) - U256::from(1u64) {
+                return false;
+            }
+            match self.tick_data.keys().max() {
+                Some(&max_tick) => match get_sqrt_ratio_at_tick_internal(max_tick) {
+                    Ok(t) => U256::from(t) > sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
+        }
+    }
+
     /// Default V3/V4 `sqrt_price_limit` bounds (widened `U160` → `U256`).
     ///
     /// The swap cannot cross these regardless of amount. Callers without a
@@ -2045,6 +2097,78 @@ mod tests {
                 registration_lifecycle: RegistrationLifecycle::default(),
             },
         )
+    }
+
+    // --- swap_is_viable (directional viability, ported from the archived
+    // Python v3_liquidity_pool.py::swap_is_viable) ---
+
+    #[test]
+    fn empty_tick_data_is_not_viable_in_either_direction() {
+        // What: a pool with NO initialized ticks cannot host a swap in either
+        // direction — the solver has no range to walk.
+        // Why: the cheapest rejection; mirrors Python `tick_data == {}`.
+        let (_identity, mut state) = pool_1to1_with_position(10_000_000_000_000u128);
+        state.tick_data.clear();
+
+        assert!(!state.swap_is_viable(true));
+        assert!(!state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn uninitialized_price_is_not_viable_in_either_direction() {
+        // What: a pool whose sqrt_price_x96 is zero was never initialized on
+        // chain and cannot host a swap.
+        // Why: mirrors Python `sqrt_price_x96 == 0` guard.
+        let (_identity, mut state) = pool_1to1_with_position(10_000_000_000_000u128);
+        state.sqrt_price_x96 = U256::ZERO;
+
+        assert!(!state.swap_is_viable(true));
+        assert!(!state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn liquidity_ahead_of_price_is_viable_in_both_directions() {
+        // What: the 1:1 pool with [-60,+60] straddling the current tick has
+        // initialized ticks BOTH below (-60) and above (+60) the price —
+        // viable in both directions.
+        let (_identity, state) = pool_1to1_with_position(10_000_000_000_000u128);
+
+        assert!(state.swap_is_viable(true));
+        assert!(state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn one_sided_liquidity_is_direction_dependent() {
+        // What: all initialized ticks ABOVE the current price → a zfo swap
+        // (walking DOWN) finds no liquidity ahead and is not viable, while
+        // ofz (walking UP) is viable. This is the directional precision the
+        // Python check had via min/max tick comparison.
+        // Why: this exact population produces the one-sided pools that die as
+        // SequenceUnavailable in only one direction.
+        let (_identity, mut state) = pool_1to1_with_position(10_000_000_000_000u128);
+        // Move the price far BELOW every initialized tick (tick -100000): a
+        // zfo swap walks DOWN from here and finds no position ahead.
+        state.tick = -100_000;
+        state.sqrt_price_x96 = U256::from(get_sqrt_ratio_at_tick_internal(-100_000).unwrap());
+
+        assert!(!state.swap_is_viable(true));
+        assert!(state.swap_is_viable(false));
+    }
+
+    #[test]
+    fn price_at_sqrt_ratio_boundary_is_not_viable_in_the_exiting_direction() {
+        // What: a price at/below MIN_SQRT_RATIO+1 cannot go further DOWN
+        // (zfo); a price at/above MAX_SQRT_RATIO-1 cannot go further UP (ofz).
+        // Why: protocol limit guard from the Python port.
+        let (_identity, mut state) = pool_1to1_with_position(10_000_000_000_000u128);
+        state.sqrt_price_x96 = U256::from(MIN_SQRT_RATIO) + U256::from(1u64);
+
+        assert!(!state.swap_is_viable(true));
+        assert!(state.swap_is_viable(false));
+
+        state.sqrt_price_x96 = U256::from(MAX_SQRT_RATIO) - U256::from(1u64);
+        assert!(state.swap_is_viable(true));
+        assert!(!state.swap_is_viable(false));
     }
 
     #[test]

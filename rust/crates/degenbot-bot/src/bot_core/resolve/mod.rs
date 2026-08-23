@@ -55,6 +55,10 @@ pub(crate) enum MissingHopReason {
     SequenceUnavailable,
     /// The balancer-stable invariant calculation errored.
     InvariantError,
+    /// The pool cannot host a swap in this direction at its current state
+    /// (directional viability gate — ported from the archived Python
+    /// `swap_is_viable`; O(1), checked BEFORE any tick-range walk).
+    NotViable,
 }
 
 impl std::fmt::Display for MissingHopReason {
@@ -68,6 +72,7 @@ impl std::fmt::Display for MissingHopReason {
             Self::OutOfRange => "pairwise index out of range",
             Self::SequenceUnavailable => "integer tick-range sequence unavailable",
             Self::InvariantError => "stable invariant calculation failed",
+            Self::NotViable => "pool not viable in the swap direction",
         };
         f.write_str(s)
     }
