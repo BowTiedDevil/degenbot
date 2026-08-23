@@ -216,7 +216,17 @@ where
     // exporter (which returns a future — the OTLP/HTTP client needs a tokio
     // reactor) from a bare std thread and panics with "there is no reactor
     // running".
+    // Span-event cap (incident: trace a8c1bf/81d006 analysis): the SDK
+    // default max_events_per_span is 128 — our per-path activation events hit
+    // exactly that on every busy solve, silently dropping the phase events
+    // emitted AFTER them (fan-out/resolve/rayon/clamp). Raise the ceiling so
+    // the diagnostic tail survives a full fan-out.
+    let span_limits = opentelemetry_sdk::trace::SpanLimits {
+        max_events_per_span: 600,
+        ..opentelemetry_sdk::trace::SpanLimits::default()
+    };
     let provider = SdkTracerProvider::builder()
+        .with_span_limits(span_limits)
         .with_resource(bot_resource())
         .with_span_processor(
             opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor::builder(
