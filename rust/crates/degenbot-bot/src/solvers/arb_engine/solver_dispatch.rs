@@ -28,6 +28,10 @@ use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 use crate::bot_core::resolve::resolve_hops;
 use ::degenbot_solvers::mixed::{HopType, ResolvedMixedPath, SolvePathResult};
 
+/// How many slowest-path entries the solve-cycle completion event names
+/// (D63GSE intra-solve visibility).
+const SLOWEST_PATHS_K: usize = 5;
+
 impl ArbitrageEngine {
     /// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
     /// before it is committed). VAASFM decision: 1 wei — commit
@@ -87,16 +91,21 @@ impl ArbitrageEngine {
     /// Balancer / Solidly consume their full input at the boundary and need no
     /// clamp.
     #[expect(clippy::too_many_lines)] // multi-hop CL twin loop + post-clamp profit recompute
-    pub(crate) fn clamp_cl_hop_capacity(&self, path_id: u64, result: &mut SolvePathResult) {
+    /// Returns the number of twin simulations executed (telemetry:
+    /// `clamp.twins` on the solve-cycle completion event).
+    pub(crate) fn clamp_cl_hop_capacity(&self, path_id: u64, result: &mut SolvePathResult) -> u64 {
         let Some(path) = self.path_pools.get(&path_id) else {
-            return; // Unknown path → nothing to clamp
+            return 0; // Unknown path → nothing to clamp
         };
         let pools = &path.pools;
         if pools.len() != result.consumed_inputs.len() {
-            return; // Index misalignment — never clamp a wrong hop
+            return 0; // Index misalignment — never clamp a wrong hop
         }
         let margin = Self::cl_hop_clamp_margin();
         let core = self.core.read();
+        // D63GSE: successful twin simulations executed this call (returned to
+        // the caller for the solve-cycle completion event).
+        let mut twins_executed: u64 = 0;
         for (i, pool_ref) in pools.iter().enumerate() {
             let requested = result.consumed_inputs[i];
             // Run the tier-3-validated twin once per clamped family so we can
@@ -142,6 +151,7 @@ impl ArbitrageEngine {
                     } else {
                         twin.amount0
                     };
+                    twins_executed += 1;
                     (out, twin.exact_input_clamp_bound(requested, margin))
                 }
                 HopType::V4 => {
@@ -175,6 +185,7 @@ impl ArbitrageEngine {
                     } else {
                         twin.amount0
                     };
+                    twins_executed += 1;
                     (out, twin.exact_input_clamp_bound(requested, margin))
                 }
                 HopType::V2 => {
@@ -214,6 +225,7 @@ impl ArbitrageEngine {
                     .ok() else {
                         continue; // overflow reverts on-chain → nothing to align
                     };
+                    twins_executed += 1;
                     (out, None)
                 }
                 // Curve / Balancer / Solidly — no byte-exact twin at this
@@ -300,6 +312,7 @@ impl ArbitrageEngine {
                 result.profit = recomputed;
             }
         }
+        twins_executed
     }
 
     /// Recompute a path result's selection profit from its CLAMPED
@@ -338,6 +351,10 @@ impl ArbitrageEngine {
         // Capture the caller's span (the drainer's `degenbot.arb.solve`) once
         // and re-enter it per work item below.
         let solve_span = tracing::Span::current();
+        // D63GSE visibility: phase timing so a multi-second solve EXPLAINS
+        // itself — fan-out / resolve / par-solve / clamp are separate events,
+        // and the K slowest paths name where the wall-clock went.
+        let cycle_start = std::time::Instant::now();
         // Collect affected path IDs from the reverse index
         let mut affected_path_ids: HashSet<u64> = HashSet::new();
 
@@ -409,6 +426,20 @@ impl ArbitrageEngine {
             );
         }
 
+        // Telemetry: fan-out summary (activations above can be hundreds of
+        // events; this one line carries the aggregate).
+        let fanout_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX);
+        tracing::info!(
+            target: "degenbot::solver",
+            block_number = solve_block,
+            paths.affected = affected_path_ids.len(),
+            dirty.v2 = v2_affected.len(),
+            dirty.v3 = v3_affected.len(),
+            dirty.v4 = v4_affected.len(),
+            phase_us = fanout_us,
+            "[solve-phase] fanned out to affected paths"
+        );
+
         // Re-resolve and solve only affected paths — update results in-place
         // without cloning unchanged entries.
 
@@ -469,6 +500,16 @@ impl ArbitrageEngine {
             }
         }
 
+        // Telemetry: resolve phase complete (core-lock window + hop re-derive).
+        tracing::info!(
+            target: "degenbot::solver",
+            block_number = solve_block,
+            paths.resolved = affected_path_ids.len(),
+            paths.deferred_future_price = deferred_paths.len(),
+            phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+            "[solve-phase] resolved hop snapshots"
+        );
+
         // Remove old results for affected paths (they'll be re-solved below).
         // A deferred path's result is dropped too: it is excluded from this
         // live solve (its pool is stale, so its prior result is stale as well).
@@ -523,11 +564,31 @@ impl ArbitrageEngine {
 
         // Filter out empty/profitless results in the same pass that produces
         // them — the contract is identical to the prior serial loop.
+        // D63GSE: per-path wall time is captured so the K slowest paths can be
+        // named on the completion event (a min-heap keeps this O(K) memory;
+        // the closure itself only does one Instant pair + map insert).
+        let path_times: std::sync::Mutex<
+            std::collections::BinaryHeap<std::cmp::Reverse<(u128, u64)>>,
+        > = std::sync::Mutex::new(std::collections::BinaryHeap::new());
         let solved: Vec<(u64, SolvePathResult)> = to_solve
             .par_iter()
             .filter_map(|(pid, resolved)| {
                 let _solve_ctx = solve_span.enter();
-                ::degenbot_solvers::mixed::solve_path(resolved).map(|r| (*pid, r))
+                let t0 = std::time::Instant::now();
+                let result = ::degenbot_solvers::mixed::solve_path(resolved);
+                let micros = t0.elapsed().as_micros();
+                if let Ok(mut heap) = path_times.lock() {
+                    let worst = heap
+                        .peek()
+                        .map_or(u128::MAX, |std::cmp::Reverse((w, _))| *w);
+                    if heap.len() < SLOWEST_PATHS_K || micros > worst {
+                        heap.push(std::cmp::Reverse((micros, *pid)));
+                        if heap.len() > SLOWEST_PATHS_K {
+                            heap.pop();
+                        }
+                    }
+                }
+                result.map(|r| (*pid, r))
             })
             // Log solver pool state for every solved path (including
             // unprofitable) — diagnostic cross-referencing against sim
@@ -543,14 +604,34 @@ impl ArbitrageEngine {
             .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
             .collect();
 
+        // Telemetry: pure solver phase done — name the K slowest paths.
+        let slowest: Vec<String> = path_times
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|std::cmp::Reverse((us, pid))| format!("{pid}:{us}us"))
+            .collect();
+        tracing::info!(
+            target: "degenbot::solver",
+            block_number = solve_block,
+            paths.solved = to_solve.len(),
+            profitable = solved.len(),
+            slowest.paths = %slowest.join(","),
+            phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+            "[solve-phase] rayon solve complete"
+        );
+
         // Sequential merge — no lock acquisition; workers above owned their
         // clones. Apply the pool-state-aware CL-hop capacity clamp per path
         // (reads `core` to reconcile each CL hop's committed input against the
         // pools twin) BEFORE inserting, so the stored result carries truthful
         // `consumed_inputs` (a CL hop fed past its max-convertible capacity
         // would march empty bitmap words on-chain — UO3JM4).
+        let clamp_twins_start = std::time::Instant::now();
+        let mut clamp_twin_count: u64 = 0;
+        let solved_count = solved.len();
         for (pid, mut solve_result) in solved {
-            self.clamp_cl_hop_capacity(pid, &mut solve_result);
+            clamp_twin_count += self.clamp_cl_hop_capacity(pid, &mut solve_result);
             // Telemetry: profitable solves are the signal in the noise — emit
             // the economics + the concrete hop list on the solve span.
             tracing::info!(
@@ -564,6 +645,19 @@ impl ArbitrageEngine {
             );
             self.results.insert(pid, solve_result);
         }
+
+        // Telemetry: clamp phase done — the twin simulations are a known
+        // multi-second contributor on CL-heavy batches, so they get their own
+        // line item.
+        tracing::info!(
+            target: "degenbot::solver",
+            block_number = solve_block,
+            clamp.paths = solved_count,
+            clamp.twins = clamp_twin_count,
+            clamp.phase_us = u64::try_from(clamp_twins_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+            total_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+            "[solve-phase] cycle complete (clamp done)"
+        );
 
         self.results_block = solve_block;
         // Note: no compute_diff_and_send here — the pump controls when
