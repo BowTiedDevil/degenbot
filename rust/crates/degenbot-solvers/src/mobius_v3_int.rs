@@ -2336,10 +2336,12 @@ mod tests {
         assert_eq!(divergences, 0, "builder rejections where oracle succeeds");
     }
 
-    /// The specific edge case from the incident question: full-range-only
-    /// liquidity on tick_spacing=1. Proves builder=None while oracle succeeds.
+    /// The edge case from the incident question: full-range-only liquidity
+    /// on tick_spacing=1 (~3.4k word boundaries between price and position).
+    /// The builder must SUCCEED (distance-aware walk budget) and solver
+    /// output must equal the oracle exactly.
     #[test]
-    fn full_range_spacing1_builder_fails_but_pool_is_swapable() {
+    fn full_range_spacing1_builds_and_matches_oracle() {
         let l = 10_000_000_000_000u128;
         let (state, spacing, fee) = pool_at_tick0(
             1,
@@ -2349,20 +2351,26 @@ mod tests {
         );
 
         assert!(state.swap_is_viable(true), "liquidity exists below price");
+        let built = state.build_int_v3_sequence(spacing, fee, true, 24);
         assert!(
-            state
-                .build_int_v3_sequence(spacing, fee, true, 24)
-                .is_none(),
-            "documents current budget-limited rejection"
+            built.is_some(),
+            "distance-aware budget must reach distant liquidity"
         );
 
-        // Oracle: the pool IS swappable — real amounts move at real prices.
-        let oracle = oracle_swap(&state, spacing, fee, true, U256::from(1_000_000_000_000u64))
-            .expect("modest input should not revert");
-        assert!(
-            oracle.amount1 > U256::ZERO,
-            "on-chain-equivalent walk produces output"
-        );
+        // Solver == oracle exactly across a size sweep.
+        for amt in [
+            U256::from(1_000u64),
+            U256::from(1_000_000_000_000u64),
+            U256::from(100_000_000_000_000u64),
+            U256::from(500_000_000_000_000_000_000_000u128),
+        ] {
+            let oracle = oracle_swap(&state, spacing, fee, true, amt)
+                .expect("oracle computes for every size");
+            let (consumed, out) =
+                solver_swap(&state, spacing, fee, true, amt).expect("builder succeeds");
+            assert_eq!(out, oracle.amount1, "output amt={amt}");
+            assert_eq!(consumed, oracle.amount0, "consumed amt={amt}");
+        }
     }
 
     #[test]

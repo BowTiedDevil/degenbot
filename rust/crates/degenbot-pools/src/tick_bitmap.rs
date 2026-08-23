@@ -329,6 +329,55 @@ fn collapse_walk_to_range_boundaries(
     (range_boundary_ticks, range_interiors)
 }
 
+/// Hard ceiling on the merged walk length: keeps a pathological state
+/// bounded even when liquidity is extremely distant in tick space.
+const WALK_CEILING: usize = 4096;
+
+/// Size the merged initialized+word-boundary walk so it can actually reach
+/// the `max_ranges`-th nearest initialized tick in the swap direction.
+///
+/// Word boundaries dominate the walk when liquidity is far from the price in
+/// tick space: a full-range position on `tick_spacing=1` sits ~3.4k words
+/// away, so a flat `max_ranges*4+16` budget exhausts on pure boundary entries
+/// before ever seeing an initialized tick, and range building permanently
+/// fails for a perfectly swapable pool (ergo QHYOAB). We know where the
+/// initialized ticks are (the map keys), so count the words in between
+/// explicitly. Dense pools compute nearly the old flat number; results are
+/// cached per pool+direction so larger one-time walks amortize to zero.
+fn walk_budget_for<S: std::hash::BuildHasher>(
+    tick_data: &HashMap<i32, TickInfo, S>,
+    current_tick: i32,
+    tick_spacing: i32,
+    zero_for_one: bool,
+    max_ranges: usize,
+) -> usize {
+    let floor = max_ranges * 4 + 16;
+    let mut ahead: Vec<i32> = tick_data
+        .keys()
+        .copied()
+        .filter(|&t| {
+            if zero_for_one {
+                t <= current_tick
+            } else {
+                t > current_tick
+            }
+        })
+        .collect();
+    if ahead.is_empty() {
+        return floor;
+    }
+    ahead.sort_unstable_by(|a, b| {
+        let da = (a - current_tick).abs();
+        let db = (b - current_tick).abs();
+        da.cmp(&db)
+    });
+    let kth_tick = ahead[ahead.len().min(max_ranges) - 1];
+    let dist = i64::from(current_tick - kth_tick).abs();
+    let words = dist / i64::from(256 * tick_spacing) + 2;
+    let budget = ahead.len() + usize::try_from(words).unwrap_or(0) + 16;
+    budget.clamp(floor, WALK_CEILING)
+}
+
 /// # Returns
 ///
 /// A tuple `(ranges, current_range_index)` or `None` if insufficient ranges.
@@ -358,15 +407,20 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // predicting output by the missing per-boundary rounding — the root cause
     // of the residual V4 `CurrencyNotSettled` (ergo ON5QMD). See
     // `v4_word_boundary_solver_divergence.rs`.
+    // Distance-aware walk budget (ergo QHYOAB): see `walk_budget_for`.
+    let budget = walk_budget_for(
+        tick_data,
+        current_tick,
+        tick_spacing,
+        zero_for_one,
+        max_ranges,
+    );
     let ticks = gen_ticks(
         tick_data,
         current_tick,
         tick_spacing,
         less_than_or_equal,
-        // Boundaries can dominate for sparse-tick pools (one initialized tick
-        // every several words); request generously so `max_ranges` initialized-
-        // tick ranges are still reachable after boundary interleaving.
-        max_ranges * 4 + 16,
+        budget,
     )
     .ok()?;
 
@@ -389,7 +443,10 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         }
 
         all_walk.push((tick, tp.is_initialized));
-        if all_walk.len() > max_ranges * 4 + 16 {
+        // Same budget as the gen_ticks call above — a second hardcoded cap
+        // here would truncate the walk before it reaches distant liquidity
+        // even when the budget was sized to reach it (ergo QHYOAB).
+        if all_walk.len() > budget {
             break;
         }
     }
@@ -654,14 +711,6 @@ mod tests {
         }
     }
 
-    // T2 (FBJTUM, epic OU4SYZ) — RED test 3. Flip-equivalence: the apply path
-    // maintains `bit ⟺ row`. Under derivation (the FFI
-    // `tick_bitmap_snapshot` sets a bit for every `tick_data` key), the
-    // archived `flip_tick` discipline is free: a liquidity event that FLIPS a
-    // tick (initializes 0↔nonzero gross) must add/remove the row so the
-    // derived bit flips in lockstep. This pins that transition — the T3
-    // intake gate trusts it (a row with gross>0 is an initialized tick whose
-    // bit is set; a full burn removes the row, clearing the bit).
     #[test]
     fn flip_equivalence_apply_maintains_bit_row_consistency() {
         let spacing = 60i32; // tick 0 → word0 bit0; tick 60 → word0 bit1
