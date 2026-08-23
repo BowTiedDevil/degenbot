@@ -466,6 +466,11 @@ impl ArbitrageEngine {
         // price case below; genuine chain/solver divergence is left to the ADR-021
         // verifier, which fatal-aborts loudly (the preferred failure, esp. in dev).
         let mut deferred_paths: HashSet<u64> = HashSet::new();
+        // Invalidation reason histogram — names WHY the invalid slice of the
+        // affected set dies before solving (SequenceUnavailable vs MissingState
+        // vs ...). Emitted on the resolve phase event.
+        let mut invalid_reasons: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
         {
             let core = self.core.read();
             for &path_id in &affected_path_ids {
@@ -494,6 +499,7 @@ impl ArbitrageEngine {
                 }
                 let mut resolved = ResolvedMixedPath::default();
                 if let Some(reason) = resolve_hops(&core, &path.pools, &mut resolved) {
+                    *invalid_reasons.entry(reason.to_string()).or_insert(0u64) += 1;
                     tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
                 }
                 self.path_resolved.insert(path_id, resolved);
@@ -506,6 +512,7 @@ impl ArbitrageEngine {
             block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
             paths.deferred_future_price = deferred_paths.len(),
+            invalid.reasons = %invalid_reasons.iter().map(|(r, c)| format!("{c}x {r}")).collect::<Vec<_>>().join(", "),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
             "[solve-phase] resolved hop snapshots"
         );
@@ -543,11 +550,13 @@ impl ArbitrageEngine {
         // Pre-collect the work items (path_id + resolved-snapshot). The clone
         // drops the immutable borrow on `self.path_resolved` that would block
         // parallel dispatch.
+        let mut invalid_count: u64 = 0;
         let to_solve: Vec<(u64, ResolvedMixedPath)> = solve_path_ids
             .iter()
             .filter_map(|&pid| {
                 let resolved = self.path_resolved.get(&pid)?;
                 if !resolved.valid {
+                    invalid_count += 1;
                     return None;
                 }
                 // A path whose `max_update_block` is AHEAD of the drain
@@ -570,6 +579,9 @@ impl ArbitrageEngine {
         let path_times: std::sync::Mutex<
             std::collections::BinaryHeap<std::cmp::Reverse<(u128, u64)>>,
         > = std::sync::Mutex::new(std::collections::BinaryHeap::new());
+        // Total CPU µs across all solved paths — dividing by the rayon wall
+        // time yields achieved parallelism (8 workers ⇒ target ≈ 8.0).
+        let solve_cpu_us: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let solved: Vec<(u64, SolvePathResult)> = to_solve
             .par_iter()
             .filter_map(|(pid, resolved)| {
@@ -577,6 +589,10 @@ impl ArbitrageEngine {
                 let t0 = std::time::Instant::now();
                 let result = ::degenbot_solvers::mixed::solve_path(resolved);
                 let micros = t0.elapsed().as_micros();
+                solve_cpu_us.fetch_add(
+                    u64::try_from(micros).unwrap_or(u64::MAX),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 if let Ok(mut heap) = path_times.lock() {
                     let worst = heap
                         .peek()
@@ -615,6 +631,8 @@ impl ArbitrageEngine {
             target: "degenbot::solver",
             block_number = solve_block,
             paths.solved = to_solve.len(),
+            paths.invalid = invalid_count,
+            solve.cpu_us = solve_cpu_us.load(std::sync::atomic::Ordering::Relaxed),
             profitable = solved.len(),
             slowest.paths = %slowest.join(","),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
