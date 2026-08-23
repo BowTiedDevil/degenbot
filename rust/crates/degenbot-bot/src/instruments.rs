@@ -351,15 +351,16 @@ static PIPELINE: OnceLock<Option<PipelineInstruments>> = OnceLock::new();
 pub fn pipeline() -> Option<&'static PipelineInstruments> {
     PIPELINE
         .get_or_init(|| {
-            crate::metrics::try_global_meter().map(|meter| {
-                let instruments = PipelineInstruments::new(&meter);
-                // Touch one instrument so an empty scrape is distinguishable
-                // from "instruments never registered" in Grafana.
-                instruments
-                    .blocks_observed
-                    .add(0, &[KeyValue::new("init", "true")]);
-                instruments
-            })
+            // NOTE: do NOT "touch" an instrument with a marker attribute here.
+            // A previous version added blocks_observed.add(0, {init:"true"}) to
+            // make an empty scrape distinguishable from "never registered" —
+            // but attributes are LABELS, so that touch created a permanent,
+            // frozen-at-zero SECOND series (`degenbot_blocks_observed_total{
+            // init="true"}`) that Prometheus alerts matching on rate()==0 fire
+            // against forever (observed live 2026-08-22: DegenbotHeaderStall
+            // stuck FIRING while the real series advanced). Empty-vs-absent
+            // scrapes are already distinguishable via target_info.
+            crate::metrics::try_global_meter().map(|meter| PipelineInstruments::new(&meter))
         })
         .as_ref()
 }

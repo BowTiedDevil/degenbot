@@ -17,7 +17,10 @@ groups:
         # Guarded on the scrape target being UP so a stopped bot does not
         # fire this - only a bot that Prometheus can see but that observes
         # no headers (WS feed dead) pages. job name must match prometheus.yml.
-        expr: rate(degenbot_blocks_observed_total[1m]) == 0 and on() up{job="degenbot"} == 1
+        # {init!="true"}: ignore placeholder series (a stale marker label
+        # creates a frozen-at-zero duplicate that rate()==0 matches forever —
+        # live incident 2026-08-22, alert stuck FIRING on a healthy bot).
+        expr: rate(degenbot_blocks_observed_total{init!="true"}[1m]) == 0 and on() up{job="degenbot"} == 1
         for: 2m
         labels:
           severity: critical
@@ -28,7 +31,7 @@ groups:
             the chain advances - every opportunity in that window is missed.
 
       - alert: DegenbotDrainerStall
-        expr: degenbot_drain_queue_depth >= 2
+        expr: degenbot_drain_queue_depth{init!="true"} >= 2
         for: 5m
         labels:
           severity: critical
@@ -40,7 +43,7 @@ groups:
             a full 30s stall; this catches slow degradation first).
 
       - alert: DegenbotStateHeadDivergence
-        expr: abs(degenbot_state_head_lag_blocks) >= 3
+        expr: abs(degenbot_state_head_lag_blocks{init!="true"}) >= 3
         for: 1m
         labels:
           severity: critical

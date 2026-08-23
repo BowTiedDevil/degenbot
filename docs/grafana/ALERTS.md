@@ -71,6 +71,15 @@ carries an `exception` event with `exception_type` / `exception_message`.
 The `DEGENBOT_FAILURE_MODE` env var selects whether the bot exits (default),
 quarantines-and-continues (`harden`), or just continues (`continue`).
 
+### Placeholder-series gotcha (`init="true"`, incident 2026-08-22)
+Metric attributes are Prometheus LABELS: a one-shot "marker" observation
+(e.g. `blocks_observed.add(0, {init="true"})`) creates a PERMANENT second
+time series frozen at zero. `rate(...[1m]) == 0` matches that series
+forever, so the header-stall alert fired continuously on a healthy bot.
+The stall rules now carry `{init!="true"}` guards, and the marker touch was
+removed from `instruments.rs` — never add marker-attribute observations to
+shared instruments.
+
 ## Notes
 
 
