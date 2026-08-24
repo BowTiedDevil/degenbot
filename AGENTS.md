@@ -100,3 +100,7 @@ The database schema is **Alembic-owned during the 0.6.x point releases** and bec
 - the `PRAGMA query_only=on` setting on the `AlembicCurrent` path in `DegenbotDb::open`.
 
 **An import falling out of use is not permission to delete it.** If a 0.6.x task makes an Alembic/SQLAlchemy symbol unused, leave it in place and note the orphaned symbol in the task completion summary; removal is the 0.7 retirement task's exclusive responsibility.
+
+## Complex System State
+
+Prefer enum-based finite state machines to manage transitions within systems. When you encounter an existing system with ad-hoc rules and detailed comments meant to clarify complex interactions, propose a refactor to encapsulate that logic into a state machine.
