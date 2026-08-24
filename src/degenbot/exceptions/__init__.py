@@ -22,6 +22,7 @@ from degenbot._ffi.db import DatabaseSchemaStale
 from degenbot.exceptions.arbitrage import (
     ArbCalculationError,
     ArbitrageError,
+    DirectionResolutionError,
     DuplicatePoolError,
     HopCountExceededError,
     HopCountInsufficientError,
@@ -102,6 +103,7 @@ __all__ = (
     "DegenbotError",
     "DegenbotTypeError",
     "DegenbotValueError",
+    "DirectionResolutionError",
     "DuplicatePoolError",
     "DynamicFeePoolRejectedError",
     "EVMRevertError",

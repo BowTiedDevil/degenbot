@@ -56,6 +56,17 @@ class InvalidSwapPathError(ArbitrageError):
     """Raised in arbitrage helper constructors when the provided path is invalid."""
 
 
+class DirectionResolutionError(ArbitrageError):
+    """A discovered path's hop directions could not be resolved to a closed token cycle.
+
+    The pathfinder contract guarantees every yielded path starts and ends at
+    one of the requested boundary tokens ({WETH, native}), so a failure here
+    is an invariant violation between the DB subgraph edges and the
+    constructed pool objects (e.g. a pool built with different token0/token1
+    than the subgraph edge used) — a bug, not a skippable condition.
+    """
+
+
 class PathRejectedError(ArbitrageError):
     """A path candidate was rejected by a path-composition policy predicate.
 
