@@ -2,8 +2,8 @@
   "title": "degenbot observability overview",
   "uid": "degenbot-overview",
   "schemaVersion": 39,
-  "version": 3,
-  "refresh": "10s",
+  "version": 4,
+  "refresh": "1s",
   "time": {
     "from": "now-30m",
     "to": "now"
@@ -94,6 +94,19 @@
           "unit": "short",
           "color": {
             "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
@@ -106,7 +119,7 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
         "justifyMode": "auto"
       }
@@ -143,6 +156,23 @@
           "unit": "short",
           "color": {
             "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
           }
         },
         "overrides": []
@@ -155,7 +185,7 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
         "justifyMode": "auto"
       }
@@ -241,6 +271,23 @@
           "unit": "s",
           "color": {
             "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
           }
         },
         "overrides": []
@@ -253,7 +300,7 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
         "justifyMode": "auto"
       }
@@ -290,6 +337,23 @@
           "unit": "s",
           "color": {
             "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
           }
         },
         "overrides": []
@@ -302,7 +366,7 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
         "justifyMode": "auto"
       }
@@ -310,7 +374,7 @@
     {
       "id": 7,
       "type": "row",
-      "title": "Latency - the race",
+      "title": "Health & accounting (lag & funnel)",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -322,13 +386,367 @@
     },
     {
       "id": 8,
-      "title": "Header -> solved latency (p50/p90/p95/p99)",
+      "title": "Log funnel: received / applied / apply-miss",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
         "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(degenbot_logs_received_total[1m])",
+          "legendFormat": "received/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(degenbot_logs_applied_total[1m])",
+          "legendFormat": "applied/s",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(degenbot_logs_received_total[1m]) - rate(degenbot_logs_applied_total[1m])",
+          "legendFormat": "apply-miss/s",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "State head lag (freeze signature)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "degenbot_state_head_lag_blocks",
+          "legendFormat": "state head lag (blocks)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line",
+              "colorMode": "var"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 4
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Blocks observed (head tracking)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(degenbot_blocks_observed_total[5m])",
+          "legendFormat": "blocks rate/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "degenbot_blocks_observed_total",
+          "legendFormat": "cumulative blocks",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Drain queue depth (backlog)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "degenbot_drain_queue_depth",
+          "legendFormat": "drain queue depth",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Apply-miss rate (5m)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(degenbot_logs_received_total[5m])) - sum(rate(degenbot_logs_applied_total[5m]))",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Latency - the race",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "title": "Header -> solved latency (p50/p90/p95/p99)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
       },
       "datasource": {
         "type": "prometheus",
@@ -399,14 +817,14 @@
       }
     },
     {
-      "id": 9,
+      "id": 15,
       "title": "Solve duration (p50/p90/p95/p99)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 5
+        "y": 26
       },
       "datasource": {
         "type": "prometheus",
@@ -477,14 +895,14 @@
       }
     },
     {
-      "id": 10,
+      "id": 16,
       "title": "Header -> solved latency distribution",
       "type": "heatmap",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 13
+        "y": 34
       },
       "datasource": {
         "type": "prometheus",
@@ -527,14 +945,14 @@
       }
     },
     {
-      "id": 11,
+      "id": 17,
       "title": "Solve duration distribution",
       "type": "heatmap",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 13
+        "y": 34
       },
       "datasource": {
         "type": "prometheus",
@@ -577,7 +995,7 @@
       }
     },
     {
-      "id": 12,
+      "id": 18,
       "type": "row",
       "title": "Pump & pipeline",
       "collapsed": false,
@@ -585,19 +1003,19 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 42
       },
       "panels": []
     },
     {
-      "id": 13,
+      "id": 19,
       "title": "Pipeline phase durations (p95): decode / apply / queue wait",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 22
+        "y": 43
       },
       "datasource": {
         "type": "prometheus",
@@ -659,14 +1077,14 @@
       }
     },
     {
-      "id": 14,
+      "id": 20,
       "title": "Throughput: blocks / logs received / logs applied",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 22
+        "y": 43
       },
       "datasource": {
         "type": "prometheus",
@@ -737,7 +1155,7 @@
       }
     },
     {
-      "id": 15,
+      "id": 21,
       "type": "row",
       "title": "Solve & simulate",
       "collapsed": false,
@@ -745,19 +1163,19 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 51
       },
       "panels": []
     },
     {
-      "id": 16,
+      "id": 22,
       "title": "Solver load: registered paths / solves / candidates",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 52
       },
       "datasource": {
         "type": "prometheus",
@@ -819,14 +1237,14 @@
       }
     },
     {
-      "id": 17,
+      "id": 23,
       "title": "Simulate: duration p95 + verdict mix",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 52
       },
       "datasource": {
         "type": "prometheus",
@@ -897,7 +1315,7 @@
       }
     },
     {
-      "id": 18,
+      "id": 24,
       "type": "row",
       "title": "Submission & P&L",
       "collapsed": false,
@@ -905,19 +1323,19 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 60
       },
       "panels": []
     },
     {
-      "id": 19,
+      "id": 25,
       "title": "Submit outcomes by reason",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 61
       },
       "datasource": {
         "type": "prometheus",
@@ -961,14 +1379,14 @@
       }
     },
     {
-      "id": 20,
+      "id": 26,
       "title": "Cumulative P&L: realized vs missed",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 40
+        "y": 61
       },
       "datasource": {
         "type": "prometheus",
@@ -1021,14 +1439,14 @@
       }
     },
     {
-      "id": 21,
+      "id": 27,
       "title": "Monitor outcomes + submit latency p95",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 69
       },
       "datasource": {
         "type": "prometheus",
@@ -1081,7 +1499,7 @@
       }
     },
     {
-      "id": 22,
+      "id": 28,
       "type": "row",
       "title": "Liveness & errors",
       "collapsed": false,
@@ -1089,19 +1507,19 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 77
       },
       "panels": []
     },
     {
-      "id": 23,
+      "id": 29,
       "title": "Liveness: drain queue depth + state head lag (freeze signature)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 57
+        "y": 78
       },
       "datasource": {
         "type": "prometheus",
@@ -1154,14 +1572,14 @@
       }
     },
     {
-      "id": 24,
+      "id": 30,
       "title": "Recorded failures by kind",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 57
+        "y": 78
       },
       "datasource": {
         "type": "prometheus",
