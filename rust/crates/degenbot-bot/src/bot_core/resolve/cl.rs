@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
-use degenbot_solvers::mobius_v3_int::build_cl_word_profiles;
+use degenbot_solvers::mobius_v3_int::ClWordProfileCache;
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -21,6 +21,7 @@ use crate::solvers::arb_engine::PoolTickCoverage;
 pub(crate) fn project_v3(
     core: &BotState,
     pool_ref: &MixedPoolRef,
+    profile_cache: &mut ClWordProfileCache,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
         .get_v3_pool(pool_ref.pool_key)
@@ -49,7 +50,7 @@ pub(crate) fn project_v3(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    let word_profiles = build_cl_word_profiles(&int_seq);
+    let word_profiles = profile_cache.prepare(&int_seq);
     Ok((
         ResolvedHop::V3 {
             int_seq,
@@ -65,6 +66,7 @@ pub(crate) fn project_v3(
 pub(crate) fn project_v4(
     core: &BotState,
     pool_ref: &MixedPoolRef,
+    profile_cache: &mut ClWordProfileCache,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
         .get_v4_pool(pool_ref.pool_key)
@@ -89,7 +91,7 @@ pub(crate) fn project_v4(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    let word_profiles = build_cl_word_profiles(&int_seq);
+    let word_profiles = profile_cache.prepare(&int_seq);
     Ok((
         ResolvedHop::V4 {
             int_seq,
@@ -111,7 +113,18 @@ mod tests {
     };
     use crate::solvers::arb_engine::PoolTickCoverage;
     use alloy::primitives::{Address, I256, U128, U256};
-    use degenbot_solvers::mixed::{HopType, MixedPoolRef};
+    use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
+    use degenbot_solvers::mobius_v3_int::ClWordProfileCache;
+
+    /// Projection with a throwaway per-pool profile cache. Tests here don't need
+    /// cross-call reuse (the per-range reuse property lives in the solvers cache
+    /// tests); these are just the valid per-pool-cache stand-in.
+    fn proj3(core: &BotState, r: &MixedPoolRef) -> Result<(ResolvedHop, u64), MissingHopReason> {
+        project_v3(core, r, &mut ClWordProfileCache::default())
+    }
+    fn proj4(core: &BotState, r: &MixedPoolRef) -> Result<(ResolvedHop, u64), MissingHopReason> {
+        project_v4(core, r, &mut ClWordProfileCache::default())
+    }
 
     // -----------------------------------------------------------------
     // Per-family projection tests. CL guardrail: V3 and
@@ -195,10 +208,10 @@ mod tests {
         ticks.remove(&-120); // leave only the tick ABOVE current price (120)
         let v3_id = register_v3(&mut core, ticks);
 
-        let reason = project_v3(&core, &v3_ref(v3_id, true)).unwrap_err();
+        let reason = proj3(&core, &v3_ref(v3_id, true)).unwrap_err();
         assert_eq!(reason, MissingHopReason::NotViable);
         // The live direction still projects.
-        assert!(project_v3(&core, &v3_ref(v3_id, false)).is_ok());
+        assert!(proj3(&core, &v3_ref(v3_id, false)).is_ok());
     }
 
     #[test]
@@ -208,11 +221,11 @@ mod tests {
         let v3_id = register_v3(&mut core, HashMap::new());
 
         assert_eq!(
-            project_v3(&core, &v3_ref(v3_id, true)).unwrap_err(),
+            proj3(&core, &v3_ref(v3_id, true)).unwrap_err(),
             MissingHopReason::NotViable
         );
         assert_eq!(
-            project_v3(&core, &v3_ref(v3_id, false)).unwrap_err(),
+            proj3(&core, &v3_ref(v3_id, false)).unwrap_err(),
             MissingHopReason::NotViable
         );
     }
@@ -225,9 +238,9 @@ mod tests {
         ticks.remove(&120); // only the tick BELOW price remains; ofz walks UP → dead
         let v4_id = register_v4(&mut core, ticks);
 
-        let reason = project_v4(&core, &v4_ref(v4_id, false)).unwrap_err();
+        let reason = proj4(&core, &v4_ref(v4_id, false)).unwrap_err();
         assert_eq!(reason, MissingHopReason::NotViable);
-        assert!(project_v4(&core, &v4_ref(v4_id, true)).is_ok());
+        assert!(proj4(&core, &v4_ref(v4_id, true)).is_ok());
     }
 
     #[test]
@@ -236,7 +249,7 @@ mod tests {
         let v3_id = register_v3(&mut core, two_ticks());
 
         for zero_for_one in [true, false] {
-            let (hop, nonce) = project_v3(&core, &v3_ref(v3_id, zero_for_one)).unwrap();
+            let (hop, nonce) = proj3(&core, &v3_ref(v3_id, zero_for_one)).unwrap();
             let seq = hop.as_int_sequence().expect("hop is a CL sequence");
             assert!(
                 !seq.ranges.is_empty(),
@@ -249,7 +262,7 @@ mod tests {
     #[test]
     fn project_v3_unregistered_pool_is_missing_state() {
         let core = BotState::new();
-        let reason = project_v3(&core, &v3_ref(111_111, true)).unwrap_err();
+        let reason = proj3(&core, &v3_ref(111_111, true)).unwrap_err();
         assert_eq!(reason, MissingHopReason::MissingState);
     }
 
@@ -260,7 +273,7 @@ mod tests {
         // earlier and O(1).)
         let mut core = BotState::new();
         let v3_id = register_v3(&mut core, HashMap::new());
-        let reason = project_v3(&core, &v3_ref(v3_id, true)).unwrap_err();
+        let reason = proj3(&core, &v3_ref(v3_id, true)).unwrap_err();
         assert_eq!(reason, MissingHopReason::NotViable);
     }
 
@@ -294,7 +307,7 @@ mod tests {
         let mut core = BotState::new();
         let v4_id = register_v4(&mut core, two_ticks());
 
-        let (hop, nonce) = project_v4(&core, &v4_ref(v4_id, true)).unwrap();
+        let (hop, nonce) = proj4(&core, &v4_ref(v4_id, true)).unwrap();
         let seq = hop.as_int_sequence().expect("hop is a CL sequence");
         assert!(
             !seq.ranges.is_empty(),
@@ -306,7 +319,7 @@ mod tests {
     #[test]
     fn project_v4_unregistered_pool_is_missing_state() {
         let core = BotState::new();
-        let reason = project_v4(&core, &v4_ref(222_222, true)).unwrap_err();
+        let reason = proj4(&core, &v4_ref(222_222, true)).unwrap_err();
         assert_eq!(reason, MissingHopReason::MissingState);
     }
 
@@ -315,7 +328,7 @@ mod tests {
         // V4 twin of the empty-map gate rejection.
         let mut core = BotState::new();
         let v4_id = register_v4(&mut core, HashMap::new());
-        let reason = project_v4(&core, &v4_ref(v4_id, true)).unwrap_err();
+        let reason = proj4(&core, &v4_ref(v4_id, true)).unwrap_err();
         assert_eq!(reason, MissingHopReason::NotViable);
     }
 }

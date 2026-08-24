@@ -51,6 +51,7 @@ use self::delivery_policy::DeliveryPolicy;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
+use degenbot_solvers::mobius_v3_int::ClWordProfileCache;
 
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
 mod delivery_lifecycle;
@@ -307,6 +308,10 @@ pub struct ArbitrageEngine {
     /// all resolve call sites so a dirty pool's tick walk runs once per
     /// state change and serves every referencing path from the cache.
     hop_projection_cache: HopProjectionCache,
+    /// Per-pool CL word-profile caches (survive the per-`(pool,dir)` projection
+    /// evictions so a liquidity update only rebuilds the touched band, not the
+    /// whole pool). See `ClWordProfileCache` + `resolve_hops`.
+    word_profile_cache: HashMap<u64, ClWordProfileCache>,
     /// Monotonic count of actual family projections (cache misses). Test-
     /// observable; emitted on the solve-phase resolve event.
     hop_projection_count: u64,
@@ -411,6 +416,7 @@ impl ArbitrageEngine {
             path_pools: HashMap::new(),
             path_resolved: HashMap::new(),
             hop_projection_cache: HashMap::new(),
+            word_profile_cache: HashMap::new(),
             hop_projection_count: 0,
             pool_to_paths: HashMap::new(),
             results: HashMap::new(),

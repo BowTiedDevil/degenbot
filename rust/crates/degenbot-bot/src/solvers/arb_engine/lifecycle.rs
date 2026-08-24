@@ -139,6 +139,7 @@ impl ArbitrageEngine {
                 &path.pools,
                 &mut resolved,
                 &mut self.hop_projection_cache,
+                &mut self.word_profile_cache,
                 Some(&mut self.hop_projection_count),
             ) {
                 tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
@@ -309,6 +310,7 @@ impl ArbitrageEngine {
                     &path.pools,
                     &mut resolved,
                     &mut self.hop_projection_cache,
+                    &mut self.word_profile_cache,
                     Some(&mut self.hop_projection_count),
                 );
                 self.path_resolved.insert(path_id, resolved);
