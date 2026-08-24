@@ -607,6 +607,7 @@ type OtelRecordGated<L> =
     Layered<tracing_subscriber::filter::Filtered<L, EnvFilter, Registry>, Registry>;
 
 /// The stderr fmt layer gated by the CONSOLE filter (diagnostics capped).
+#[cfg(feature = "otel")]
 type MiddleRegistryOtel<L> = Layered<
     tracing_subscriber::filter::Filtered<
         tracing_subscriber::fmt::Layer<
