@@ -1279,3 +1279,58 @@ fn v3_pool_sparse_crossing_byte_exact() {
         }
     }
 }
+
+/// The word-profile dense threshold (`WORD_PROFILE_THRESHOLD = 128`) is
+/// REACHABLE for a low tick-spacing pool but STRUCTURALLY UNREACHABLE for every
+/// real Uniswap V3 fee tier. A single tick range is span-bounded by +−MAX_TICK
+/// (887272), so its interior word-boundary count tops out at
+/// `2 * 887272 / (256 * tick_spacing)` - ~70 at spacing=100 (0.01%, the widest
+/// real tier) and ~1 at spacing=3000 (0.3%, typical). Both are far under 128;
+/// reaching 128 needs tick_spacing <= 54, i.e. a fee tier below 0.01% that V3
+/// does not deploy. This also CORRECTS an earlier note: the walk budget is
+/// distance-aware (clamped to `WALK_CEILING`, not a short 24-step cap), so a
+/// wide low-spacing pool DOES cross 128 (spacing=1 -> ~3.4k) - the reason real
+/// pools stay light is the tick-span ceiling, not the walk. Pins why the dense
+/// `ClWordProfileCache` path (the content-keyed Stage-2 refinement) is dormant
+/// for production V3 pools, while remaining exercisable on a synthetic pool.
+#[test]
+fn v3_word_profile_dense_threshold_vs_fee_tiers() {
+    let fee = 3000u32;
+    let cur = 0i32;
+    let max_span = 880_000i32; // just under MAX_TICK (887272)
+                               // (tick_spacing, expect_dense): spacing=1 proves low-spacing can be dense;
+                               // every real fee tier (100/500/3000/10000) must stay light.
+    for (spacing, expect_dense) in [
+        (1i32, true),
+        (100, false),
+        (500, false),
+        (3000, false),
+        (10000, false),
+    ] {
+        let positions = vec![ArbV3Position {
+            lower: -max_span,
+            upper: max_span,
+            liquidity: 1_000_000_000_000_000u128,
+        }];
+        let state = build_arbitrary_v3_state(cur, spacing, &positions);
+        let seq = state
+            .build_int_v3_sequence(spacing, fee, true, 48)
+            .unwrap_or_else(|| panic!("no sequence for spacing={spacing}"));
+        let maxwb = seq
+            .ranges
+            .iter()
+            .map(|r| r.word_boundary_prices.len())
+            .max()
+            .unwrap_or(0);
+        let upper: usize = (2 * 887272i32 / (256 * spacing)).max(0) as usize;
+        assert!(
+            maxwb <= upper + 2,
+            "spacing={spacing}: {maxwb} word bounds exceeds the tick-span upper bound {upper}"
+        );
+        assert_eq!(
+            maxwb >= 128,
+            expect_dense,
+            "spacing={spacing}: max_word_bounds={maxwb} (span-cap upper bound {upper})"
+        );
+    }
+}
