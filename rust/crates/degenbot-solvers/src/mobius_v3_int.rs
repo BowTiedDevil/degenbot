@@ -248,6 +248,10 @@ enum WalkHop<'a> {
     Cl {
         /// Crossing data for every ending-range index `k` in `0..ranges.len()`.
         crossings: Vec<IntTickRangeCrossing>,
+        /// Optional precomputed forward word-boundary profile per `crossings[k]`
+        /// (dense ranges only; `None` keeps those on the linear walk). Parallel to
+        /// `crossings`. See [`cl_walk_hop`] / [`build_word_profiles`].
+        profiles: Vec<Option<V3WordProfile>>,
     },
 }
 
@@ -308,12 +312,18 @@ fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
                 hop_outputs.push(out);
                 current = out;
             }
-            WalkHop::Cl { crossings, .. } => {
+            WalkHop::Cl {
+                crossings,
+                profiles,
+            } => {
                 let k = landed_ending_range_index(crossings, current);
                 landed.push(k);
                 let crossing = &crossings[k];
                 let remaining = current - crossing.crossing_gross_input;
-                let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+                let ending = match &profiles[k] {
+                    Some(profile) => profile.swap(remaining),
+                    None => int_simulate_v3_swap(remaining, &crossing.ending_range),
+                };
                 let out = crossing.crossing_output.saturating_add(ending.output);
                 hop_outputs.push(out);
                 current = out;
@@ -608,6 +618,10 @@ thread_local! {
     pub(crate) static WALK_PIECES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // See `WALK_PIECES_VISITED`.
     pub(crate) static WALK_PATH_SIMULATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // Total `compute_swap_step_v3` steps executed inside `int_simulate_v3_swap`
+    //'s word-boundary walk — the per-simulation cost driver for dense
+    // (many-word-boundary) CL ranges. `sims × per-sim steps` is the real cost.
+    pub(crate) static WALK_WORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Reset the walk counters on the calling thread. The rayon solve calls this at
@@ -616,6 +630,7 @@ thread_local! {
 pub fn reset_walk_stats() {
     WALK_PIECES_VISITED.with(|c| c.set(0));
     WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+    WALK_WORD_STEPS.with(|c| c.set(0));
 }
 
 /// Read-and-clear the walk counters on the calling thread and return
@@ -625,6 +640,14 @@ pub fn take_last_walk_stats() -> (usize, usize) {
     let s = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
     reset_walk_stats();
     (p, s)
+}
+
+/// Read-and-clear the word-boundary step counter (see `WALK_WORD_STEPS`).
+/// The always-on mirror of `take_last_walk_stats` for the step-level cost.
+pub fn take_last_word_boundary_steps() -> usize {
+    let s = WALK_WORD_STEPS.with(std::cell::Cell::get);
+    WALK_WORD_STEPS.with(|c| c.set(0));
+    s
 }
 
 /// Solve an arbitrary V2/CL path with the active-set piecewise Möbius walk.
@@ -732,7 +755,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
 
     let single_piece_path = hops.iter().all(|h| match h {
         WalkHop::ConstantProduct(_) => true,
-        WalkHop::Cl { crossings } => crossings.len() == 1,
+        WalkHop::Cl { crossings, .. } => crossings.len() == 1,
     });
 
     for _ in 0..iteration_cap {
@@ -856,14 +879,7 @@ pub fn int_solve_v3_v3(
     seq1: &IntV3TickRangeSequence,
     seq2: &IntV3TickRangeSequence,
 ) -> Option<(U256, U256, Vec<U256>)> {
-    solve_active_set_path(&[
-        WalkHop::Cl {
-            crossings: build_crossing_table(seq1),
-        },
-        WalkHop::Cl {
-            crossings: build_crossing_table(seq2),
-        },
-    ])
+    solve_active_set_path(&[cl_walk_hop(seq1), cl_walk_hop(seq2)])
 }
 
 /// Pre-compute the crossing data for every ending-range index of a CL
@@ -882,6 +898,33 @@ fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossin
         .collect()
 }
 
+/// A CL `ending_range` with FEWER than this many word boundaries stays on the linear `int_simulate_v3_swap` walk (the profile is not worth building); denser ranges get a precomputed [`V3WordProfile`].
+const WORD_PROFILE_THRESHOLD: usize = 128;
+
+/// Precomputed forward word-boundary profiles, parallel to `crossings`. A dense range re-walks the same word-boundary prefix on nearly every one of a path's ~`sims` evaluations, so we precompute its forward profile once per path; a light range stays `None` (linear walk, zero build overhead).
+fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<V3WordProfile>> {
+    crossings
+        .iter()
+        .map(|c| {
+            if c.ending_range.word_boundary_prices.len() >= WORD_PROFILE_THRESHOLD {
+                V3WordProfile::build(&c.ending_range)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Build a `WalkHop::Cl` (crossing table + its word-boundary profiles) for one CL sequence - the single place a CL walk hop is assembled.
+fn cl_walk_hop(seq: &IntV3TickRangeSequence) -> WalkHop<'_> {
+    let crossings = build_crossing_table(seq);
+    let profiles = build_word_profiles(&crossings);
+    WalkHop::Cl {
+        crossings,
+        profiles,
+    }
+}
+
 /// Solve an N-hop concentrated-liquidity arbitrage path with the active-set
 /// piecewise Möbius walk (ergo 7J22EQ; replaces the capped mixed-radix
 /// ending-range enumeration — there is no tuple budget any more).
@@ -893,12 +936,7 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
     if sequences.is_empty() {
         return None;
     }
-    let hops: Vec<WalkHop> = sequences
-        .iter()
-        .map(|seq| WalkHop::Cl {
-            crossings: build_crossing_table(seq),
-        })
-        .collect();
+    let hops: Vec<WalkHop> = sequences.iter().map(|seq| cl_walk_hop(seq)).collect();
     solve_active_set_path(&hops)
 }
 
@@ -1000,6 +1038,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
         if remaining <= I256::ZERO {
             break;
         }
+        WALK_WORD_STEPS.with(|c| c.set(c.get() + 1));
         let Ok(step) = compute_swap_step_v3(sp, *target, liquidity, remaining, fee_pips) else {
             return V3SwapResult::default();
         };
@@ -1025,6 +1064,135 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
     }
 }
 
+/// One-time precomputed forward word-boundary profile of a single dense CL
+/// `ending_range` for `int_simulate_v3_swap`. The active-set walk calls
+/// `int_simulate_v3_swap` ~`sims` times on the SAME ending range (fixed entry
+/// price, liquidity, fee, and word-boundary list — only `amount_in` varies), so
+/// the per-boundary prefix is recomputed on nearly every simulation. For a range
+/// with K word boundaries that is ~`sims × K` `compute_swap_step_v3` calls; the
+/// profile reduces a query to a binary search + one partial landing step (~1
+/// call) after a one-time O(K) build.
+///
+/// Byte-for-byte equivalent to the linear walk: the prefix is built with a
+/// maximal `remaining` (I256::MAX) so each step reaches its boundary exactly as
+/// a per-sim walk would; the landing step is then computed live with the
+/// candidate's real remaining. `consumed` is non-decreasing.
+#[derive(Clone, Debug)]
+struct V3WordProfile {
+    liquidity: i128,
+    fee_pips: U256,
+    /// `price[j]` = price after completing `j` full steps (j=0 is the entry).
+    price: Vec<U256>,
+    /// `target[j]` = the boundary/exit price the (j+1)-th step runs toward.
+    target: Vec<U256>,
+    /// `consumed[j]` / `output[j]` = cumulative gross input / output after `j`
+    /// full steps (j = 0..=target.len()).
+    consumed: Vec<U256>,
+    output: Vec<U256>,
+}
+
+impl V3WordProfile {
+    /// Build the profile with one full walk. `None` for a degenerate hop (zero
+    /// liquidity or no word boundaries) which the linear walk already handles.
+    fn build(v3_hop: &IntV3TickRangeHop) -> Option<Self> {
+        use alloy::primitives::I256;
+        use degenbot_math::cl::swap_math::compute_swap_step_v3;
+        let liquidity = i128::try_from(v3_hop.liquidity).ok()?;
+        if v3_hop.liquidity == 0 || v3_hop.word_boundary_prices.is_empty() {
+            return None;
+        }
+        let fee_pips = U256::from(v3_hop.fee_denom - v3_hop.gamma_numer);
+        let exit_price = if v3_hop.zero_for_one {
+            v3_hop.sqrt_price_lower_x96
+        } else {
+            v3_hop.sqrt_price_upper_x96
+        };
+        let full = I256::MAX;
+        let nb = v3_hop.word_boundary_prices.len();
+        let mut price = Vec::with_capacity(nb + 1);
+        let mut target = Vec::with_capacity(nb);
+        let mut consumed = Vec::with_capacity(nb + 1);
+        let mut output = Vec::with_capacity(nb + 1);
+        let mut sp = v3_hop.sqrt_price_x96;
+        let mut cum_c = U256::ZERO;
+        let mut cum_o = U256::ZERO;
+        price.push(sp);
+        consumed.push(U256::ZERO);
+        output.push(U256::ZERO);
+        for target_price in v3_hop
+            .word_boundary_prices
+            .iter()
+            .copied()
+            .chain(std::iter::once(exit_price))
+        {
+            WALK_WORD_STEPS.with(|c| c.set(c.get() + 1));
+            let Ok(step) = compute_swap_step_v3(sp, target_price, liquidity, full, fee_pips) else {
+                return None;
+            };
+            target.push(target_price);
+            cum_c = cum_c.saturating_add(step.amount_in.saturating_add(step.fee_amount));
+            cum_o = cum_o.saturating_add(step.amount_out);
+            consumed.push(cum_c);
+            output.push(cum_o);
+            sp = step.sqrt_price_next;
+            price.push(sp);
+        }
+        Some(Self {
+            liquidity,
+            fee_pips,
+            price,
+            target,
+            consumed,
+            output,
+        })
+    }
+
+    /// O(log K) replacement for `int_simulate_v3_swap(amount_in, v3_hop)` on the
+    /// hop this profile was built from.
+    fn swap(&self, amount_in: U256) -> V3SwapResult {
+        use alloy::primitives::I256;
+        use degenbot_math::cl::swap_math::compute_swap_step_v3;
+        if amount_in.is_zero() {
+            return V3SwapResult::default();
+        }
+        let n = self.target.len();
+        // `j` = largest index with `consumed[j] <= amount_in` (`consumed[0] ==
+        // 0`, so the partition point is >=1 and `j >= 0`). `j == n` means the
+        // input covers the full walk to the exit.
+        let j = self.consumed.partition_point(|c| c <= &amount_in) - 1;
+        if j >= n {
+            return V3SwapResult {
+                consumed_input: self.consumed[n],
+                output: self.output[n],
+            };
+        }
+        let base_c = self.consumed[j];
+        let base_o = self.output[j];
+        let remaining = amount_in - base_c;
+        if remaining.is_zero() {
+            return V3SwapResult {
+                consumed_input: base_c,
+                output: base_o,
+            };
+        }
+        WALK_WORD_STEPS.with(|c| c.set(c.get() + 1));
+        let Ok(step) = compute_swap_step_v3(
+            self.price[j],
+            self.target[j],
+            self.liquidity,
+            I256::try_from(remaining).unwrap_or(I256::MAX),
+            self.fee_pips,
+        ) else {
+            return V3SwapResult::default();
+        };
+        let c = step.amount_in.saturating_add(step.fee_amount);
+        V3SwapResult {
+            consumed_input: base_c.saturating_add(c),
+            output: base_o.saturating_add(step.amount_out),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Integer V3 Exact Solver
 // ---------------------------------------------------------------------------
@@ -1042,9 +1210,7 @@ pub fn exact_solve_mixed_v2_v3_sequence(
     v3_first: bool,
 ) -> Option<(U256, U256, Vec<U256>)> {
     let mut hops: Vec<WalkHop> = Vec::with_capacity(v2_hops.len() + 1);
-    let cl_hop = WalkHop::Cl {
-        crossings: build_crossing_table(v3_sequence),
-    };
+    let cl_hop = cl_walk_hop(v3_sequence);
     if v3_first {
         hops.push(cl_hop);
         hops.extend(v2_hops.iter().map(WalkHop::ConstantProduct));
@@ -1216,9 +1382,7 @@ pub fn exact_solve_mixed_path_n(
         if is_v2 {
             hops.push(WalkHop::ConstantProduct(v2_hops[i].as_ref()?));
         } else {
-            hops.push(WalkHop::Cl {
-                crossings: build_crossing_table(cl_sequences[i].as_ref()?),
-            });
+            hops.push(cl_walk_hop(cl_sequences[i].as_ref()?));
         }
     }
     solve_active_set_path(&hops)
@@ -2969,14 +3133,7 @@ mod tests {
         // The solver's optimal input must LAND hop 2 BEYOND the legacy
         // 10-tuple prefix (indices 0..=9): in the deep range 10, possibly
         // spilling into the last thin range 11 at the saturation corner.
-        let hops = [
-            WalkHop::Cl {
-                crossings: build_crossing_table(&seq1),
-            },
-            WalkHop::Cl {
-                crossings: build_crossing_table(&seq2),
-            },
-        ];
+        let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
         let landed = simulate_walk_path(x, &hops).landed;
         assert!(
             landed[1] >= 10,
@@ -3176,14 +3333,7 @@ mod tests {
                 liquidities[deep_index] = deep_liquidity;
                 let seq2 = multi_range_sequence(0, 60, false, &liquidities);
                 let seqs = [&seq1, &seq2];
-                let hops = [
-                    WalkHop::Cl {
-                        crossings: build_crossing_table(&seq1),
-                    },
-                    WalkHop::Cl {
-                        crossings: build_crossing_table(&seq2),
-                    },
-                ];
+                let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
                 let oracle = grid_oracle_profit(&hops);
                 let solver = int_solve_cl_path(&seqs);
                 let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
@@ -3289,14 +3439,7 @@ mod tests {
         liquidities.push(10_000_000_000_000u128);
         liquidities.push(1_000_000_000u128);
         let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-        let hops = [
-            WalkHop::Cl {
-                crossings: build_crossing_table(&seq1),
-            },
-            WalkHop::Cl {
-                crossings: build_crossing_table(&seq2),
-            },
-        ];
+        let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
         let ks = vec![0usize, 10];
 
         let exact = walk_piece_anchor(&hops, &ks);
@@ -3348,14 +3491,7 @@ mod tests {
                         continue;
                     };
                     assert!(!profit.is_zero());
-                    let hops = [
-                        WalkHop::Cl {
-                            crossings: build_crossing_table(&seq1),
-                        },
-                        WalkHop::Cl {
-                            crossings: build_crossing_table(&seq2),
-                        },
-                    ];
+                    let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
                     let ks = simulate_walk_path(x_star, &hops).landed;
                     let anchor = walk_piece_anchor(&hops, &ks);
                     let x_l = piece_window_left_edge(&hops, &ks, anchor);
@@ -3592,7 +3728,11 @@ mod tests {
         let gross_in = lead_in + last_leg_gross;
         let oracle_out = lead_out + last_leg_out;
 
-        let hops = [WalkHop::Cl { crossings }];
+        let profiles = build_word_profiles(&crossings);
+        let hops = [WalkHop::Cl {
+            crossings,
+            profiles,
+        }];
         let outcome = simulate_walk_path(gross_in, &hops);
         let got = outcome.hop_outputs[0];
         // vs the validated step-faithful oracle: the residual is per-step
@@ -3609,5 +3749,60 @@ mod tests {
         // 25641224, and the in-tree drain test pins pool state at 25641224).
         // Outstanding until a fresh `cast` cross-check — do not enshrine the
         // doc's 1109518347 literal here.
+    }
+
+    #[test]
+    fn v3_word_profile_matches_linear_walk_on_dense_hop() {
+        // Real on-chain dense range (path 36864 hop1): a wide band whose ~2400
+        // active-liquidity tick boundaries make `int_simulate_v3_swap` re-walk the
+        // same word-boundary prefix on nearly every walk evaluation. This test
+        // locks that the precomputed `V3WordProfile::swap` is byte-for-byte equal
+        // to the linear walk across a sweep of inputs (partial landings deep into
+        // the band AND full traversal past the exit).
+        let entry: U256 = "158834591426315835485322".parse().unwrap();
+        let lower: U256 = "4345239809".parse().unwrap();
+        let upper: U256 = "158832211214966470446833".parse().unwrap();
+        let n = 300u128;
+        // 300 decreasing boundaries between entry and lower (zfo swap order),
+        // evenly spaced in the band — the same shape as the capture's active set.
+        let span = entry - lower;
+        let word_boundary_prices: Vec<U256> = (1..=n)
+            .map(|i| entry - span * U256::from(i) / U256::from(n + 1))
+            .collect();
+        let hop = IntV3TickRangeHop {
+            liquidity: 69_602_725_527,
+            sqrt_price_x96: entry,
+            sqrt_price_lower_x96: lower,
+            sqrt_price_upper_x96: upper,
+            gamma_numer: 999_875,
+            fee_denom: 1_000_000,
+            zero_for_one: true,
+            word_boundary_prices,
+        };
+        assert!(
+            hop.word_boundary_prices.len() >= WORD_PROFILE_THRESHOLD,
+            "test hop must be dense enough to take the profile path"
+        );
+        let prof = V3WordProfile::build(&hop).expect("profile builds for a valid dense hop");
+        let full = prof.consumed.last().copied().expect("non-empty profile");
+        assert!(!full.is_zero(), "dense crossing capacity must be nonzero");
+        // 0 ..= 4x full traversal: partial landings (i < 32) and full traversal
+        // (i >= 32) both covered, with distinct amounts.
+        let mut any_nonzero = false;
+        for i in 0..=128u128 {
+            let x = full * U256::from(i) / U256::from(32);
+            let linear = int_simulate_v3_swap(x, &hop);
+            let profile = prof.swap(x);
+            assert_eq!(
+                linear.consumed_input, profile.consumed_input,
+                "consumed mismatch at x={x}"
+            );
+            assert_eq!(linear.output, profile.output, "output mismatch at x={x}");
+            any_nonzero = any_nonzero || !linear.output.is_zero();
+        }
+        assert!(
+            any_nonzero,
+            "sweep produced no output — simulate inputs invalid?"
+        );
     }
 }

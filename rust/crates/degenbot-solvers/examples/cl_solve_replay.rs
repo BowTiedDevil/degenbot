@@ -16,7 +16,9 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{int_solve_cl_path, reset_walk_stats, take_last_walk_stats};
+use degenbot_solvers::mobius_v3_int::{
+    int_solve_cl_path, reset_walk_stats, take_last_walk_stats, take_last_word_boundary_steps,
+};
 use serde_json::Value;
 
 fn u256(s: &str) -> Result<U256, String> {
@@ -160,6 +162,7 @@ fn main() {
                 }
             }
         }
+        let wsteps = take_last_word_boundary_steps();
         let (pieces, sims) = take_last_walk_stats();
         if !consistent {
             eprintln!("path {pid}: NON-DETERMINISTIC across {iters} runs — active-set walk order-dependent?");
@@ -244,7 +247,7 @@ fn main() {
             .map(|r| r.word_boundary_prices.len())
             .sum();
         println!(
-            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} pieces={pieces}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
+            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} pieces={pieces} wsteps={wsteps}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
             if ok { "OK" } else { "MISMATCH" }
         );
         n_paths += 1;
