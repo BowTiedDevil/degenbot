@@ -60,6 +60,7 @@ mkdir -p "$LOGDIR"
 DEFAULT_RUST_LOG="info,degenbot_bot=debug,degenbot_arbitrage=debug,degenbot_simulation=debug,degenbot_solvers=debug,alloy_pubsub=warn,alloy_transport=warn,alloy_transport_ws=warn,alloy_transport_ipc=warn,alloy_transport_http=warn,alloy_provider=warn,alloy_rpc=warn,alloy_network=warn,alloy_contract=warn,tungstenite=warn"
 export RUST_LOG="${RUST_LOG:-$DEFAULT_RUST_LOG}"
 export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-1}"
+export DEGENBOT_OTEL="${DEGENBOT_OTEL:-1}"
 
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).
