@@ -155,6 +155,14 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
 MAX_REGISTERED_PATHS = int(os.environ.get("DEGENBOT_MAX_PATHS", "50000"))
 
 
+class DiscoveryCrawlComplete(Exception):
+    """Raised by ``_consume`` when the registered-path budget is full, to
+    unwind the registration pipeline's producer (a benign abort: the crawl
+    has nothing left to register). Caught by ``build_paths`` — NOT an error
+    condition, so it must never escape to the caller.
+    """
+
+
 def resolve_directions(
     pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
     input_token_address: str,
@@ -552,9 +560,15 @@ class PathRegistrationPipeline:
             if self.cap_skip_count == 1:
                 bot_logger.info(
                     f"[build_paths] Path cap reached ({MAX_REGISTERED_PATHS} "
-                    "registered) — discarding further candidates until restart"
+                    "registered) — stopping discovery crawl"
                 )
-            return
+            # Unwind the whole pipeline: with the budget full, every further
+            # candidate is dead on arrival (~2400 discarded/sec observed),
+            # so continuing the crawl burns CPU purely to increment a counter
+            # while competing with the solve hot path. The pipeline treats any
+            # consume-exception as fatal (cancels producer + siblings);
+            # build_paths catches this sentinel and proceeds normally.
+            raise DiscoveryCrawlComplete
 
         steps = list(path_steps)
         pool_type_strs: list[str] = []
@@ -786,7 +800,14 @@ async def build_paths(
     discovery_producer: AsyncIterable[object] = pipeline.discovery_sweep()
     bot_logger.info("[build_paths] Discovery: single pass over the DB subgraph")
 
-    await pipeline.run_registration(producer=discovery_producer)
+    try:
+        await pipeline.run_registration(producer=discovery_producer)
+    except DiscoveryCrawlComplete:
+        bot_logger.info(
+            f"[build_paths] Registration stopped at the path cap "
+            f"({pipeline.path_count} registered, {pipeline.cap_skip_count} "
+            "candidates discarded post-cap)"
+        )
 
     # INN6TK observability: always emit the skip-reason breakdown at completion,
     # even if the time-throttled cadence fell on a throttled tick.

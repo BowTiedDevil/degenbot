@@ -338,13 +338,17 @@ def test_path_cap_discards_candidates_without_build_work() -> None:
     must count them as cap skips.
 
     RED phase: no gate existed — build/register ran for every item.
-    GREEN: only the first two items do work; the third is discarded.
+    GREEN: the capped item raises DiscoveryCrawlComplete (which un-winds the
+    pipeline producer in production) before any build/register work.
     """
     import threading
     from types import SimpleNamespace
 
     from degenbot.database.models.pools import UniswapV2PoolTableBase
-    from degenbot.runner.build_paths import MAX_REGISTERED_PATHS
+    from degenbot.runner.build_paths import (
+        MAX_REGISTERED_PATHS,
+        DiscoveryCrawlComplete,
+    )
     from degenbot.runner.build_paths import PathRegistrationPipeline
 
     work_calls: list[int] = []
@@ -381,7 +385,8 @@ def test_path_cap_discards_candidates_without_build_work() -> None:
     pipe.path_count = MAX_REGISTERED_PATHS
 
     step = SimpleNamespace(type=UniswapV2PoolTableBase, address="0x" + "2" * 40)
-    asyncio.run(pipe._consume([step], directions=[True]))
+    with pytest.raises(DiscoveryCrawlComplete):
+        asyncio.run(pipe._consume([step], directions=[True]))
 
     assert not work_calls, "capped candidate must not reach pool-build work"
     assert not registered_paths, "capped candidate must not register"
