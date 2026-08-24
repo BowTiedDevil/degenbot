@@ -503,6 +503,25 @@ impl LogDispatcher {
         // 42FL35: capture displayable identity BEFORE apply consumes the event
         // - the APPLY MISS trace below needs to name WHICH pool was missed.
         let identity = decoded.display_identity();
+        // Funnel: ~3/4 of relevant-topic logs decode to a pool that is NOT
+        // registered (apply-miss). resolve_pool_id uses the same registration
+        // gate as apply_* (pool_id_by_address / v4_pool_id_by_key), so check it
+        // under a SHARED read lock and skip the EXCLUSIVE state.write() for the
+        // no-op misses - the write lock would otherwise serialize all pipelined
+        // readers/writers for work that mutates nothing. apply_* still re-checks
+        // under the write guard (and may return None for a no-op apply).
+        if decoded.resolve_pool_id(&state.read()).is_none() {
+            tracing::debug!(
+                target: "degenbot::state",
+                block = log.block_number,
+                pool = %identity,
+                "APPLY MISS - decoded event matched no registered pool (skipped write lock)"
+            );
+            if let Some(p) = crate::instruments::pipeline() {
+                p.count_log_apply_missed();
+            }
+            return;
+        }
         // Apply under the write guard, then RELEASE before notifying.
         let apply_start = std::time::Instant::now();
         let pool_id = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
@@ -714,6 +733,97 @@ mod tests {
                 write_guard_free: true,
             }],
             "subscriber must be notified exactly once for pool_id=1, after the write guard released"
+        );
+    }
+
+    /// RED: the apply-miss funnel pre-check (a read-side `resolve_pool_id`)
+    /// must agree with what `apply` would do under the write lock. If they
+    /// diverge, the funnel could skip a real apply or pessimistically take the
+    /// write lock for a guaranteed no-op. Guard the invariant: `resolve == Some`
+    /// exactly when `apply != None`.
+    #[test]
+    fn apply_miss_resolve_matches_apply_registration_gate() {
+        let registered = alloy::primitives::Address::from([0x33u8; 20]);
+        let unregistered = alloy::primitives::Address::from([0x44u8; 20]);
+        let state = Arc::new(StateLock::new(BotState::new()));
+        state
+            .write()
+            .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
+                address: registered,
+                token0: alloy::primitives::Address::ZERO,
+                token1: alloy::primitives::Address::ZERO,
+                reserve0: alloy::primitives::aliases::U112::from(1000),
+                reserve1: alloy::primitives::aliases::U112::from(2000),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: alloy::primitives::Address::ZERO,
+                update_block: 0,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+                ..Default::default()
+            })
+            .expect("test setup: V2 registration");
+
+        let mk = |addr, block| DecodedPoolEvent::V2Sync {
+            pool_address: addr,
+            reserve0: alloy::primitives::aliases::U112::from(1),
+            reserve1: alloy::primitives::aliases::U112::from(2),
+            block_number: block,
+        };
+
+        // Registered pool: read-side resolve finds it AND apply mutates.
+        let ev = mk(registered, 1);
+        assert_eq!(
+            ev.resolve_pool_id(&state.read()),
+            Some(1),
+            "resolve must find the registered pool"
+        );
+        assert_eq!(
+            ev.apply(&mut state.write()),
+            Some(1),
+            "apply must apply the registered pool"
+        );
+
+        // Unregistered pool: resolve says miss AND apply no-ops - so the funnel
+        // may skip the write lock without losing a real apply.
+        let miss = mk(unregistered, 1);
+        assert_eq!(
+            miss.resolve_pool_id(&state.read()),
+            None,
+            "resolve must miss the unregistered pool"
+        );
+        assert_eq!(
+            miss.apply(&mut state.write()),
+            None,
+            "apply must no-op for the unregistered pool"
+        );
+    }
+
+    /// RED: dispatching a log that decodes but targets an unregistered pool is
+    /// a silent apply-miss through the funnel early-return - no subscriber
+    /// notify, no state mutation.
+    #[test]
+    fn dispatch_unregistered_pool_is_apply_miss_no_notify() {
+        let pool_address = alloy::primitives::Address::from([0x55u8; 20]);
+        let state = Arc::new(StateLock::new(BotState::new()));
+        // NOTE: the pool is intentionally NOT registered.
+        let mut dispatcher = LogDispatcher::new();
+        dispatcher.register_decoder(Box::new(FakeDecoder { pool_address }));
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = RecordingSubscriber {
+            calls: Arc::clone(&calls),
+            state: Arc::clone(&state),
+        };
+        let subscriber: Arc<dyn PoolStateSubscriber> = Arc::new(subscriber);
+        dispatcher.subscribe(1, Arc::downgrade(&subscriber));
+
+        dispatcher.dispatch(&sentinel_log(), &state);
+
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "apply-miss must not notify any subscriber"
         );
     }
 

@@ -49,6 +49,8 @@ pub struct PipelineInstruments {
     logs_received: Counter<u64>,
     /// Logs applied to a registered pool.
     logs_applied: Counter<u64>,
+    /// Relevant-topic logs that decoded but matched no registered pool (apply-miss).
+    apply_missed: Counter<u64>,
     /// Header-gap / settle backfills executed.
     backfills_executed: Counter<u64>,
     /// Drain FIFO depth at dispatch time (approximate backlog signal).
@@ -133,6 +135,10 @@ impl PipelineInstruments {
             logs_applied: meter
                 .u64_counter("degenbot.logs.applied")
                 .with_description("Logs applied to a registered pool")
+                .build(),
+            apply_missed: meter
+                .u64_counter("degenbot.logs.apply_missed")
+                .with_description("Relevant-topic logs decoded but no registered pool (apply-miss)")
                 .build(),
             backfills_executed: meter
                 .u64_counter("degenbot.backfills.executed")
@@ -256,6 +262,11 @@ impl PipelineInstruments {
     /// One successful pool apply.
     pub fn count_log_applied(&self) {
         self.logs_applied.add(1, &[]);
+    }
+
+    /// One relevant-topic log that decoded but matched no registered pool.
+    pub fn count_log_apply_missed(&self) {
+        self.apply_missed.add(1, &[]);
     }
 
     /// One executed backfill range.
