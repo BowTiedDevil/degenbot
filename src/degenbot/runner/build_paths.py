@@ -481,12 +481,37 @@ class PathRegistrationPipeline:
 
     async def run_registration(self, *, producer: AsyncIterable[object]) -> None:
         """Run the bounded producer/consumer pipeline against ``producer``."""
-        await run_registration_pipeline(
-            producer=producer,
-            consume=self._consume,
-            queue_size=REG_QUEUE_BOUND,
-            worker_count=REG_WORKERS,
-        )
+        try:
+            await run_registration_pipeline(
+                producer=producer,
+                consume=self._consume,
+                queue_size=REG_QUEUE_BOUND,
+                worker_count=REG_WORKERS,
+            )
+        finally:
+            # Drain the bounded build thread pool so every worker that cloned
+            # the Arc<SnapshotDb> (offloaded assemble_*_tick_map / pool-build
+            # RPC) has finished + dropped its handle BEFORE build_paths returns.
+            # On a cap/cancel abort run_in_executor cannot cancel a running
+            # thread, so without this an in-flight worker keeps a SnapshotDb
+            # clone alive and the close_snapshot_tx() Arc::try_unwrap canary
+            # fires a spurious "SnapshotDb Arc still held" RuntimeError at state
+            # trim (EZOKDR on the NORMAL completion path).
+            self._shutdown_build_executor()
+
+    def _shutdown_build_executor(self) -> None:
+        """Shut down + join the bounded build thread pool (35NMBX).
+
+        ``shutdown(wait=True)`` blocks until every queued/running task has
+        completed and the worker threads have exited, which is exactly what
+        guarantees all cloned ``Arc<SnapshotDb>`` handles are dropped before the
+        snapshot read-tx canary runs. The executor is lazily recreated on the
+        next call if a later operator surface (e.g. ``trigger_discovery``)
+        needs it.
+        """
+        if self._build_pool_executor is not None:
+            self._build_pool_executor.shutdown(wait=True)
+            self._build_pool_executor = None
 
     async def enqueue_path(
         self,
