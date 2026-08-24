@@ -19,6 +19,20 @@ use std::sync::OnceLock;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 use opentelemetry::KeyValue;
 
+/// Latency histogram bucket boundaries, in SECONDS (the instruments' unit).
+///
+/// The OTel SDK default explicit buckets for f64 histograms are seconds-scale
+/// (`[0, 5, 10, 25, ...]`), so millisecond-scale drain-path operations (solve
+/// ~670 ms, header→solved ~620 ms, sim ~4.5 ms) collapse entirely into the
+/// first `le=5` bucket — Grafana then interpolates every quantile inside that
+/// single 0–5 s bucket, rendering flat p50/p95 lines that are meaningless.
+/// These boundaries give ~2.5× resolution from 100 µs through 10 s so real
+/// latency distributions actually separate.
+const LATENCY_BUCKETS_SECONDS: &[f64] = &[
+    0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+    5.0, 10.0,
+];
+
 /// Every drain-path instrument, built from one meter.
 pub struct PipelineInstruments {
     /// Header accepted → solve completed (the race number).
@@ -87,21 +101,25 @@ impl PipelineInstruments {
             header_to_solved: meter
                 .f64_histogram("degenbot.block.header_to_solved")
                 .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Header accepted to solve completed")
                 .build(),
             drain_queue_wait: meter
                 .f64_histogram("degenbot.drain.queue_wait")
                 .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("DrainWork queue time before the drainer picks it up")
                 .build(),
             log_decode: meter
                 .f64_histogram("degenbot.log.decode")
                 .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Log decode phase duration")
                 .build(),
             state_apply: meter
                 .f64_histogram("degenbot.state.apply")
                 .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Log apply phase duration (successful applies)")
                 .build(),
             blocks_observed: meter
@@ -131,6 +149,7 @@ impl PipelineInstruments {
             solve_duration: meter
                 .f64_histogram("degenbot.solve.duration")
                 .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Dirty-carrying solve cycle duration")
                 .build(),
             solves_executed: meter
@@ -156,6 +175,7 @@ impl PipelineInstruments {
             simulate_duration: meter
                 .f64_histogram("degenbot.simulate.duration")
                 .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Per-path EVM simulation duration")
                 .build(),
             simulate_verdicts: meter
@@ -183,6 +203,7 @@ impl PipelineInstruments {
             submit_latency: meter
                 .f64_histogram("degenbot.submit.latency")
                 .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Candidate loop start to broadcast")
                 .build(),
             profit_realized: meter
@@ -411,6 +432,34 @@ mod kind_tests {
         assert!(text.contains("kind=\"sim_failure\""));
         assert!(text.contains("kind=\"ws_completeness\""));
         // Provider stays alive to the end of the test (readers hold no strong ref).
+        drop(provider);
+    }
+
+    /// Acceptance: latency histograms carry MILLISECOND-scale explicit
+    /// boundaries, so a ~0.67 s solve actually separates across buckets.
+    /// With the OTel SDK default seconds buckets (le=5, 10, 25, ...) every
+    /// drain-path observation collapses into a single le=5 bucket and
+    /// Grafana interpolates flat, meaningless p50/p95 lines. This guards
+    /// that regression: if the boundaries are dropped, le="0.5" / le="1"
+    /// vanish from the exposition (the defaults are 5/10/25/...).
+    #[test]
+    fn latency_histograms_emit_millisecond_buckets() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test_lat"));
+        // A realistic solve: ~0.67 s. Must land BETWEEN 0.5 and 1.0 buckets.
+        instruments.observe_solve_duration(0.67);
+        let text = crate::metrics::render(&registry);
+        // Assert ms-scale le values are present (explicit boundaries replaced
+        // the 5s-first default bucket set).
+        for le in ["0.001", "0.5", "1", "0.01"] {
+            assert!(
+                text.contains(&format!("le=\"{}\"", le)),
+                "latency histogram missing millisecond bucket le={le} (default coarse buckets in use?):\n{text}"
+            );
+        }
+        // Sanity: solve_duration family is scrapeable.
+        assert!(text.contains("degenbot_solve_duration_seconds_bucket"));
         drop(provider);
     }
 }
