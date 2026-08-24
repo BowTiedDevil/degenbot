@@ -126,7 +126,10 @@ fn main() {
             if !err.is_empty() {
                 break;
             }
-            seqs.push(IntV3TickRangeSequence { ranges });
+            seqs.push(IntV3TickRangeSequence {
+                ranges,
+                truncated: false,
+            });
         }
         if !err.is_empty() {
             eprintln!("path {pid}: skip ({err})");

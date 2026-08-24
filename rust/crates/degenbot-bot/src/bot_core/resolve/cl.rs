@@ -50,6 +50,19 @@ pub(crate) fn project_v3(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
+    if int_seq.truncated {
+        tracing::warn!(
+            target: "degenbot::engine",
+            pool = %identity.address,
+            fee = identity.fee,
+            tick_spacing = identity.tick_spacing,
+            zfo = pool_ref.zero_for_one,
+            "[cl] V3 tick-range sequence TRUNCATED at the max_range=24 cap: an \
+             initialized tick (a liquidity activation) exists beyond the farthest \
+             modeled range and is omitted from the projected sequence (coverage \
+             miss - the solver cannot price a landing past the last modeled range)"
+        );
+    }
     let word_profiles = profile_cache.prepare(&int_seq);
     Ok((
         ResolvedHop::V3 {
@@ -91,6 +104,19 @@ pub(crate) fn project_v4(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
+    if int_seq.truncated {
+        tracing::warn!(
+            target: "degenbot::engine",
+            pool_id = ?identity.pool_id,
+            tick_spacing = identity.pool_key.tick_spacing,
+            fee = identity.pool_key.fee,
+            zfo = pool_ref.zero_for_one,
+            "[cl] V4 tick-range sequence TRUNCATED at the max_range=24 cap: an \
+             initialized tick (a liquidity activation) exists beyond the farthest \
+             modeled range and is omitted from the projected sequence (coverage \
+             miss - the solver cannot price a landing past the last modeled range)"
+        );
+    }
     let word_profiles = profile_cache.prepare(&int_seq);
     Ok((
         ResolvedHop::V4 {

@@ -733,7 +733,26 @@ impl V4PoolState {
             });
         }
 
-        IntV3TickRangeSequence::new(int_ranges).ok()
+        // Truncation = an initialized tick still exists beyond the farthest
+        // modeled range's swap-direction boundary (a liquidity change the
+        // max_ranges cap dropped). Budget-independent: it reads tick_data
+        // directly, so it holds even when the walk didn't reach the far side.
+        let truncated = use_ranges.last().map_or(false, |last| {
+            let far = if zero_for_one {
+                last.tick_lower
+            } else {
+                last.tick_upper
+            };
+            self.tick_data
+                .keys()
+                .any(|&t| if zero_for_one { t < far } else { t > far })
+        });
+        IntV3TickRangeSequence::new(int_ranges)
+            .map(|mut seq| {
+                seq.truncated = truncated;
+                seq
+            })
+            .ok()
     }
 }
 

@@ -307,6 +307,11 @@ impl IntV3TickRangeHop {
 pub struct IntV3TickRangeSequence {
     /// Ordered tick ranges in the swap direction.
     pub ranges: Vec<IntV3TickRangeHop>,
+    /// True when the `max_ranges` cap dropped initialized-tick ranges that still
+    /// exist beyond the farthest modeled range in the swap direction (a coverage
+    /// truncation: a liquidity change the sequence does not model). Surfaced so
+    /// the cap's bound is detectable instead of silently losing far-side ranges.
+    pub truncated: bool,
 }
 
 impl IntV3TickRangeSequence {
@@ -333,7 +338,10 @@ impl IntV3TickRangeSequence {
             }
         }
 
-        Ok(Self { ranges })
+        Ok(Self {
+            ranges,
+            truncated: false,
+        })
     }
 
     /// Combined effective reserves of all ranges, as a single `IntHopState`.
