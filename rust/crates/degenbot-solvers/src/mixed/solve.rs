@@ -121,8 +121,13 @@ pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
             .iter()
             .filter_map(ResolvedHop::as_int_sequence)
             .collect();
+        let cl_profiles: Vec<_> = resolved
+            .hops
+            .iter()
+            .filter_map(ResolvedHop::as_word_profiles)
+            .collect();
         if int_sequences.len() >= 2 {
-            crate::mobius_v3_int::int_solve_cl_path(&int_sequences).map(
+            crate::mobius_v3_int::int_solve_cl_path_with_profiles(&int_sequences, &cl_profiles).map(
                 |(optimal_input, _profit, hop_outputs)| {
                     // consumed_inputs[0] = optimal_input (first hop always consumes
                     // its full input for single-range paths; no partial fill).
@@ -214,7 +219,7 @@ pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
             .hops
             .iter()
             .map(|hop| match hop {
-                ResolvedHop::V3 { int_seq } | ResolvedHop::V4 { int_seq } => {
+                ResolvedHop::V3 { int_seq, .. } | ResolvedHop::V4 { int_seq, .. } => {
                     if let Some(range) = int_seq.ranges.first() {
                         let family = if matches!(hop, ResolvedHop::V3 { .. }) {
                             "V3"

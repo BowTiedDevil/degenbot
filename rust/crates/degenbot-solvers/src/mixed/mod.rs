@@ -12,10 +12,12 @@
 //! Relocated from `degenbot-bot/src/solvers/arb_engine/mod.rs`; re-exported
 //! at the old path so callers compile unchanged during the staged relocation.
 
-use alloy::primitives::{Address, U256};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::mobius_v3_int::IntV3TickRangeSequence;
+use alloy::primitives::{Address, U256};
+
+use crate::mobius_v3_int::{IntV3TickRangeSequence, V3WordProfile};
 use degenbot_math::balancer::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::v2::IntHopState;
@@ -279,10 +281,20 @@ pub struct CurveStableswapHopState {
 pub enum ResolvedHop {
     /// V2 constant-product hop
     V2 { state: IntHopState },
-    /// V3 concentrated-liquidity hop
-    V3 { int_seq: IntV3TickRangeSequence },
-    /// V4 concentrated-liquidity hop (same CL math as V3, different settlement)
-    V4 { int_seq: IntV3TickRangeSequence },
+    /// V3 concentrated-liquidity hop. `word_profiles` is the Stage-1 precomputed
+    /// dense-range word-boundary profile table (parallel to `int_seq.ranges`), built
+    /// once per `(pool, direction)` projection and shared via `Arc` so N paths
+    /// reusing the pool re-walk a dense range once, not once per solve.
+    V3 {
+        int_seq: IntV3TickRangeSequence,
+        word_profiles: Arc<Vec<Option<V3WordProfile>>>,
+    },
+    /// V4 concentrated-liquidity hop (same CL math as V3, different settlement).
+    /// `word_profiles`: as `Self::V3`.
+    V4 {
+        int_seq: IntV3TickRangeSequence,
+        word_profiles: Arc<Vec<Option<V3WordProfile>>>,
+    },
     /// Solidly/Aerodrome/Camelot stable or volatile hop. Owns its own solve
     /// branch — NOT concentrated-liquidity, so `as_int_sequence()` returns
     /// `None`. See [`SolidlyHopState`].
@@ -328,6 +340,20 @@ impl ResolvedHop {
     pub const fn as_int_sequence(&self) -> Option<&IntV3TickRangeSequence> {
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
+            Self::V2 { .. }
+            | Self::SolidlyStable { .. }
+            | Self::BalancerWeighted { .. }
+            | Self::BalancerStable { .. }
+            | Self::CurveStableswap { .. } => None,
+        }
+    }
+
+    /// The precomputed dense-range word-boundary profile table (Stage-1 cache),
+    /// if this is a CL hop (V3 or V4). `Arc`-shared across paths reusing the hop.
+    #[must_use]
+    pub fn as_word_profiles(&self) -> Option<&Arc<Vec<Option<V3WordProfile>>>> {
+        match self {
+            Self::V3 { word_profiles, .. } | Self::V4 { word_profiles, .. } => Some(word_profiles),
             Self::V2 { .. }
             | Self::SolidlyStable { .. }
             | Self::BalancerWeighted { .. }

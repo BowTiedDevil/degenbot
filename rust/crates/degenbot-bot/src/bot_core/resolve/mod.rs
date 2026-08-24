@@ -222,3 +222,153 @@ pub(crate) fn resolve_hops(
     resolved.valid = true;
     None
 }
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::bot_core::{BotState, PoolTickCoverage, RegisterV3PoolParams, TickInfo};
+    use alloy::primitives::{Address, I256, U128, U256};
+    use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
+    use degenbot_solvers::mobius_v3_int::V3WordProfile;
+
+    fn ref_v3(pool_key: u64) -> MixedPoolRef {
+        MixedPoolRef {
+            hop_type: HopType::V3,
+            pool_key,
+            zero_for_one: true,
+        }
+    }
+
+    fn register_v3(core: &mut BotState, addr: [u8; 20]) -> u64 {
+        let mut t = HashMap::new();
+        t.insert(
+            120,
+            TickInfo {
+                liquidity_gross: U128::from(10_000),
+                liquidity_net: I256::try_from(5_000i128).unwrap(),
+                block: 0,
+            },
+        );
+        t.insert(
+            -120,
+            TickInfo {
+                liquidity_gross: U128::from(8_000),
+                liquidity_net: I256::try_from(-4_000i128).unwrap(),
+                block: 0,
+            },
+        );
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: Address::from(addr),
+            token0: Address::from([0x30u8; 20]),
+            token1: Address::from([0x31u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336u128),
+            liquidity: 10_000_000_000_000,
+            tick: 0,
+            tick_data: t,
+            update_block: 42,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("v3 registration")
+    }
+
+    /// The allocation pointer of the cached hop's word-boundary profile `Arc` -
+    /// stable while the cache entry is unchanged, new after re-projection.
+    fn profile_ptr(
+        cache: &HopProjectionCache,
+        key: &(HopType, u64, bool),
+    ) -> *const Vec<Option<V3WordProfile>> {
+        match &cache[key] {
+            (CachedProjection::Hop(arc), _) => match arc.as_ref() {
+                ResolvedHop::V3 { word_profiles, .. } => Arc::as_ptr(word_profiles),
+                _ => panic!("expected a cached V3 hop"),
+            },
+            (CachedProjection::Invalid(_), _) => panic!("expected a cached hop, got invalid"),
+        }
+    }
+
+    /// Stage-1 word-profile cache invariant: a liquidity event on one pool
+    /// re-projects (rebuilds the profile for) ONLY that pool; every sibling
+    /// pool's cached profile `Arc` is reused untouched. The nonce comparison is
+    /// the invalidation, so nothing outside the modified pool is invalidated.
+    #[test]
+    fn word_profile_cache_invalidates_only_modified_pool() {
+        let mut core = BotState::new();
+        let p = register_v3(&mut core, [0xa1u8; 20]);
+        let q = register_v3(&mut core, [0xb2u8; 20]);
+        let refs = [ref_v3(p), ref_v3(q)];
+        let mut cache = HopProjectionCache::new();
+
+        // 1) First resolve: both pools project (their profile Arcs are built + cached).
+        let mut r1 = ResolvedMixedPath::default();
+        let mut pc = 0u64;
+        assert!(
+            resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc)).is_none(),
+            "both pools project"
+        );
+        assert_eq!(pc, 2, "first resolve projects both pools");
+        let p0 = profile_ptr(&cache, &(HopType::V3, p, true));
+        let q0 = profile_ptr(&cache, &(HopType::V3, q, true));
+
+        // 2) Re-resolve with no state change: both are cache hits - no re-projection,
+        // both profile Arcs are the same allocations (reused, not rebuilt).
+        let mut r2 = ResolvedMixedPath::default();
+        let mut pc2 = 0u64;
+        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2)).is_none());
+        assert_eq!(pc2, 0, "unchanged pools are cache hits (no re-projection)");
+        assert_eq!(
+            profile_ptr(&cache, &(HopType::V3, p, true)),
+            p0,
+            "P profile Arc reused"
+        );
+        assert_eq!(
+            profile_ptr(&cache, &(HopType::V3, q, true)),
+            q0,
+            "Q profile Arc reused"
+        );
+
+        // 3) A real Mint/Burn on P ([low, high] straddling the current tick) changes
+        // P's tick_data + active liquidity, bumping ONLY P's state_nonce.
+        let p_nonce_before = core.pool_state_nonce(p);
+        let q_nonce_before = core.pool_state_nonce(q);
+        core.apply_v3_liquidity_update_by_pool_id(p, -120, 120, 1_000_000, 43)
+            .expect("mint applied to P (pool_id path, no buffering)");
+        assert_ne!(
+            core.pool_state_nonce(p),
+            p_nonce_before,
+            "mint bumps P's state_nonce"
+        );
+        assert_eq!(
+            core.pool_state_nonce(q),
+            q_nonce_before,
+            "sibling Q's nonce is untouched"
+        );
+
+        // 4) Re-resolve: only P is stale (nonce mismatch) so only P re-projects.
+        // P's profile Arc is a fresh allocation; Q's is the SAME allocation.
+        let mut r3 = ResolvedMixedPath::default();
+        let mut pc3 = 0u64;
+        assert!(resolve_hops(&core, &refs, &mut r3, &mut cache, Some(&mut pc3)).is_none());
+        assert_eq!(pc3, 1, "only the minted pool re-projects; Q is a cache hit");
+        assert_ne!(
+            profile_ptr(&cache, &(HopType::V3, p, true)),
+            p0,
+            "P's profile was rebuilt (new Arc allocation)"
+        );
+        assert_eq!(
+            profile_ptr(&cache, &(HopType::V3, q, true)),
+            q0,
+            "Q's cached profile Arc is untouched (nothing outside the modified range invalidates)"
+        );
+    }
+}

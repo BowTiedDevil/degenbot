@@ -30,6 +30,8 @@
 
 #![expect(clippy::too_many_lines)]
 
+use std::sync::Arc;
+
 use alloy::primitives::U256;
 #[cfg(test)]
 use alloy::primitives::U512;
@@ -250,8 +252,10 @@ enum WalkHop<'a> {
         crossings: Vec<IntTickRangeCrossing>,
         /// Optional precomputed forward word-boundary profile per `crossings[k]`
         /// (dense ranges only; `None` keeps those on the linear walk). Parallel to
-        /// `crossings`. See [`cl_walk_hop`] / [`build_word_profiles`].
-        profiles: Vec<Option<V3WordProfile>>,
+        /// `crossings`. `Arc`-backed so the projection's precomputed profile (on
+        /// the [`crate::mixed::ResolvedHop`]) is shared - not re-cloned - across
+        /// every path reusing the hop (Stage-1 word-profile cache).
+        profiles: Arc<Vec<Option<V3WordProfile>>>,
     },
 }
 
@@ -879,7 +883,7 @@ pub fn int_solve_v3_v3(
     seq1: &IntV3TickRangeSequence,
     seq2: &IntV3TickRangeSequence,
 ) -> Option<(U256, U256, Vec<U256>)> {
-    solve_active_set_path(&[cl_walk_hop(seq1), cl_walk_hop(seq2)])
+    solve_active_set_path(&[cl_walk_hop(seq1, None), cl_walk_hop(seq2, None)])
 }
 
 /// Pre-compute the crossing data for every ending-range index of a CL
@@ -915,10 +919,29 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<V3WordP
         .collect()
 }
 
-/// Build a `WalkHop::Cl` (crossing table + its word-boundary profiles) for one CL sequence - the single place a CL walk hop is assembled.
-fn cl_walk_hop(seq: &IntV3TickRangeSequence) -> WalkHop<'_> {
+/// Build the dense-range word-boundary profiles for a CL sequence - the
+/// projection-side precompute (Stage-1 word-profile cache). Result is parallel
+/// to `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`). Held on
+/// the `ResolvedHop` behind an `Arc` so N paths reusing the same pool re-walk a
+/// dense range once per projection, not once per solve.
+#[must_use]
+pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> Vec<Option<V3WordProfile>> {
+    build_word_profiles(&build_crossing_table(seq))
+}
+
+/// Build a `WalkHop::Cl` (crossing table + word-boundary profiles) for one CL
+/// sequence - the single place a CL walk hop is assembled. `profiles` is a
+/// precomputed profile table from the projection (Stage-1 cache), cloned from
+/// its `Arc` in O(1); `None` builds one for dense ranges here.
+fn cl_walk_hop<'a>(
+    seq: &'a IntV3TickRangeSequence,
+    profiles: Option<&Arc<Vec<Option<V3WordProfile>>>>,
+) -> WalkHop<'a> {
     let crossings = build_crossing_table(seq);
-    let profiles = build_word_profiles(&crossings);
+    let profiles = match profiles {
+        Some(p) => Arc::clone(p),
+        None => Arc::new(build_word_profiles(&crossings)),
+    };
     WalkHop::Cl {
         crossings,
         profiles,
@@ -936,7 +959,28 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
     if sequences.is_empty() {
         return None;
     }
-    let hops: Vec<WalkHop> = sequences.iter().map(|seq| cl_walk_hop(seq)).collect();
+    let hops: Vec<WalkHop> = sequences.iter().map(|seq| cl_walk_hop(seq, None)).collect();
+    solve_active_set_path(&hops)
+}
+
+/// Stage-1 all-CL solve consuming the projection's precomputed word-boundary
+/// profiles (built once per `(pool, direction)` in `HopProjectionCache`, shared
+/// via `Arc` across paths). `profiles[k]` is parallel to `sequences[k]` (its
+/// `Arc<Vec<Option<V3WordProfile>>>`). Mirrors [`int_solve_cl_path`], which
+/// rebuilds profiles per call.
+#[must_use]
+pub fn int_solve_cl_path_with_profiles(
+    sequences: &[&IntV3TickRangeSequence],
+    profiles: &[&Arc<Vec<Option<V3WordProfile>>>],
+) -> Option<(U256, U256, Vec<U256>)> {
+    if sequences.is_empty() || sequences.len() != profiles.len() {
+        return None;
+    }
+    let hops: Vec<WalkHop> = sequences
+        .iter()
+        .zip(profiles)
+        .map(|(seq, p)| cl_walk_hop(seq, Some(p)))
+        .collect();
     solve_active_set_path(&hops)
 }
 
@@ -1078,7 +1122,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
 /// a per-sim walk would; the landing step is then computed live with the
 /// candidate's real remaining. `consumed` is non-decreasing.
 #[derive(Clone, Debug)]
-struct V3WordProfile {
+pub struct V3WordProfile {
     liquidity: i128,
     fee_pips: U256,
     /// `price[j]` = price after completing `j` full steps (j=0 is the entry).
@@ -1210,7 +1254,7 @@ pub fn exact_solve_mixed_v2_v3_sequence(
     v3_first: bool,
 ) -> Option<(U256, U256, Vec<U256>)> {
     let mut hops: Vec<WalkHop> = Vec::with_capacity(v2_hops.len() + 1);
-    let cl_hop = cl_walk_hop(v3_sequence);
+    let cl_hop = cl_walk_hop(v3_sequence, None);
     if v3_first {
         hops.push(cl_hop);
         hops.extend(v2_hops.iter().map(WalkHop::ConstantProduct));
@@ -1382,7 +1426,7 @@ pub fn exact_solve_mixed_path_n(
         if is_v2 {
             hops.push(WalkHop::ConstantProduct(v2_hops[i].as_ref()?));
         } else {
-            hops.push(cl_walk_hop(cl_sequences[i].as_ref()?));
+            hops.push(cl_walk_hop(cl_sequences[i].as_ref()?, None));
         }
     }
     solve_active_set_path(&hops)
@@ -3133,7 +3177,7 @@ mod tests {
         // The solver's optimal input must LAND hop 2 BEYOND the legacy
         // 10-tuple prefix (indices 0..=9): in the deep range 10, possibly
         // spilling into the last thin range 11 at the saturation corner.
-        let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
+        let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
         let landed = simulate_walk_path(x, &hops).landed;
         assert!(
             landed[1] >= 10,
@@ -3333,7 +3377,7 @@ mod tests {
                 liquidities[deep_index] = deep_liquidity;
                 let seq2 = multi_range_sequence(0, 60, false, &liquidities);
                 let seqs = [&seq1, &seq2];
-                let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
+                let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
                 let oracle = grid_oracle_profit(&hops);
                 let solver = int_solve_cl_path(&seqs);
                 let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
@@ -3439,7 +3483,7 @@ mod tests {
         liquidities.push(10_000_000_000_000u128);
         liquidities.push(1_000_000_000u128);
         let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-        let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
+        let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
         let ks = vec![0usize, 10];
 
         let exact = walk_piece_anchor(&hops, &ks);
@@ -3491,7 +3535,7 @@ mod tests {
                         continue;
                     };
                     assert!(!profit.is_zero());
-                    let hops = [cl_walk_hop(&seq1), cl_walk_hop(&seq2)];
+                    let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
                     let ks = simulate_walk_path(x_star, &hops).landed;
                     let anchor = walk_piece_anchor(&hops, &ks);
                     let x_l = piece_window_left_edge(&hops, &ks, anchor);
@@ -3728,7 +3772,7 @@ mod tests {
         let gross_in = lead_in + last_leg_gross;
         let oracle_out = lead_out + last_leg_out;
 
-        let profiles = build_word_profiles(&crossings);
+        let profiles = Arc::new(build_word_profiles(&crossings));
         let hops = [WalkHop::Cl {
             crossings,
             profiles,

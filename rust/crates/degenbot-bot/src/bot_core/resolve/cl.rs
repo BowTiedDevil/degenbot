@@ -7,7 +7,10 @@
 //! combined `swapFee`), current-tick drain framing (V3 leading hop vs V4
 //! `base_liquidity` fold), and per-range net-sign direction (V4 only).
 
+use std::sync::Arc;
+
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
+use degenbot_solvers::mobius_v3_int::build_cl_word_profiles;
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -46,7 +49,14 @@ pub(crate) fn project_v3(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    Ok((ResolvedHop::V3 { int_seq }, pool_state.state_nonce))
+    let word_profiles = build_cl_word_profiles(&int_seq);
+    Ok((
+        ResolvedHop::V3 {
+            int_seq,
+            word_profiles: Arc::new(word_profiles),
+        },
+        pool_state.state_nonce,
+    ))
 }
 
 /// V4 projection: identical CL math as V3 (BotState-owned, ADR-003), with
@@ -79,7 +89,14 @@ pub(crate) fn project_v4(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    Ok((ResolvedHop::V4 { int_seq }, pool_state.state_nonce))
+    let word_profiles = build_cl_word_profiles(&int_seq);
+    Ok((
+        ResolvedHop::V4 {
+            int_seq,
+            word_profiles: Arc::new(word_profiles),
+        },
+        pool_state.state_nonce,
+    ))
 }
 
 #[cfg(test)]
