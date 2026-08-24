@@ -152,7 +152,7 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
 #: counted as a ``path-cap`` skip); the engine then reaches steady state with
 #: a bounded path universe so solve performance is observable without ongoing
 #: registration load. Override with DEGENBOT_MAX_PATHS (0 = uncapped).
-MAX_REGISTERED_PATHS = int(os.environ.get("DEGENBOT_MAX_PATHS", "50000"))
+MAX_REGISTERED_PATHS = int(os.environ.get("DEGENBOT_MAX_PATHS", "100000"))
 
 
 class DiscoveryCrawlComplete(Exception):
