@@ -11,6 +11,7 @@ rules:
       - test
       - chore
       - remove
+      - perf
 
   type-case:
     - 2
