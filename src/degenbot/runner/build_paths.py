@@ -36,6 +36,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTableBase,
 )
 from degenbot.exceptions import (
+    DirectionResolutionError,
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
     VerificationMismatchError,
@@ -161,9 +162,10 @@ def resolve_directions(
     our profit token is always WETH.
     """
     addr = get_checksum_address(input_token_address)
+    start_addr = addr
     zfo_list: list[bool] = []
 
-    for pool in pools:
+    for i, pool in enumerate(pools):
         token0_addr = get_checksum_address(pool.token0.address)
         token1_addr = get_checksum_address(pool.token1.address)
 
@@ -178,13 +180,32 @@ def resolve_directions(
         elif token1_addr == addr:
             zfo = False  # selling token1 (input) for token0
         else:
-            return None
+            # Fatal: the pathfinder contract guarantees every yielded path's
+            # hops chain from a requested boundary token, so a mid-path token
+            # mismatch means the constructed pool object disagrees with the DB
+            # subgraph edge (wrong pool built, stale subgraph, or a builder
+            # bug). This is an invariant violation — skip-and-continue would
+            # silently drop every path touching that pool (observed live:
+            # 85k skips, 0 registrations), so fail-stop loudly instead.
+            raise DirectionResolutionError(
+                message=(
+                    f"hop {i}/{len(pools)}: pool {pool} has "
+                    f"token0={token0_addr} token1={token1_addr}; expected either "
+                    f"to carry the tracked input token {addr} "
+                    f"(path starts at {start_addr})"
+                )
+            )
 
         addr = token1_addr if zfo else token0_addr
         zfo_list.append(zfo)
 
     if addr != get_checksum_address(input_token_address):
-        return None
+        raise DirectionResolutionError(
+            message=(
+                f"cycle does not close: final output {addr} != input "
+                f"{start_addr}; pools={[str(pool) for pool in pools]}"
+            )
+        )
 
     return zfo_list
 
@@ -376,7 +397,6 @@ class PathRegistrationPipeline:
         self.token_filter_count = 0
         self.engine_reject_count = 0
         self.dup_count = 0
-        self.direction_fail_count = 0
         self.register_fail_count = 0
         self.v4_pool_count = 0
         self.v4_hook_rejected = 0
@@ -436,7 +456,6 @@ class PathRegistrationPipeline:
             f"[build_paths] Progress: {self.path_count} paths registered, "
             f"{self.skip_count} skipped, {self.token_filter_count} token-filtered, "
             f"{self.engine_reject_count} engine-rejected, "
-            f"{self.direction_fail_count} direction-fail, "
             f"{self.register_fail_count} register-fail, "
             f"{self.dup_count} duplicates "
             f"{{skip_reasons: {breakdown}}}",
@@ -650,12 +669,12 @@ class PathRegistrationPipeline:
             )
             return
 
-        # Resolve directions and register path
+        # Resolve directions and register path. A resolution failure is a
+        # fatal invariant violation (subgraph vs constructed-pool disagree);
+        # the raised DirectionResolutionError aborts the registration pipeline
+        # and propagates to shut the bot down loudly (same contract as
+        # VerificationMismatchError below).
         zfo_list = self._resolve_path_directions(pools, directions)
-        if zfo_list is None:
-            self.direction_fail_count += 1
-            self._record_skip("direction-fail")
-            return
 
         pool_sigs: list[str] = []
         for p in pools:
@@ -756,7 +775,6 @@ async def build_paths(
         f"{pipeline.v4_hook_rejected} V4 hook-rejected, "
         f"{pipeline.v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
         f"{pipeline.dup_count} duplicates, "
-        f"{pipeline.direction_fail_count} direction-failed, "
         f"{pipeline.register_fail_count} register-failed",
     )
     bot_logger.info(
