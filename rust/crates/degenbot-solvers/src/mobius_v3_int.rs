@@ -342,16 +342,6 @@ fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
     }
 }
 
-/// Transitional per-piece anchor (ergo EHSWSX replaces it with the exact
-/// affine-shifted closed form): model-optimal input of the piece's
-/// UNshifted ending-range Möbius composition, plus the sum of per-hop
-/// crossing gross inputs.
-///
-/// The anchor is a heuristic entry point into the piece — the walk's
-/// correcting signal is the landed tuple of the simulated candidate, not
-/// anchor precision — so the unshifted approximation is acceptable for the
-/// transition. Downstream crossings are actually paid from an upstream hop's
-/// OUTPUT, not the path input, which is the approximation EHSWSX removes.
 /// Build the per-hop shifted-piece inputs for tuple `ks`: each hop's
 /// ending-range (or V2) state plus its crossing translations.
 fn build_shifted_piece_hops(
@@ -383,6 +373,21 @@ fn build_shifted_piece_hops(
         .collect()
 }
 
+/// Per-piece entry anchor (ergo EHSWSX): the exact affine-shifted Möbius
+/// argmax of the piece's ending-range composition. Within one ending-range
+/// piece the N-hop output is exactly Möbius (SL(2) closure of the per-hop CP
+/// maps composed with the tick-crossing translations), so the argmax of
+/// `P(x) = O(x) − x` is closed form:
+/// `x* = (isqrt(A·D − B·C) − D)/C` — 0–2 wei from the window-refined discrete
+/// argmax on interior-optimum pieces (see `mobius_shifted_piece`; the
+/// pre-EHSWSX unshifted+additive-gross formula is retained cfg(test)-only as
+/// the A/B baseline).
+///
+/// Heuristic entry point only: the walk's correcting signal is the landed
+/// tuple of the simulated candidate, not anchor precision, so correctness
+/// never depends on the anchor. A piece whose optimum is a range-saturation
+/// corner (the smooth argmax runs past the pinned edge) is owned by
+/// `walk_refine_window`, which searches for the discrete peak.
 fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
     let pieces = build_shifted_piece_hops(hops, ks);
     let coeffs = crate::mobius_shifted_piece::compute_shifted_piece_mobius_coefficients(&pieces);
