@@ -212,3 +212,6 @@ tests/standalone_anvil/out/build-info/
 **/architecture-review*
 # Local crates.io publish token (S7R5K4); CI uses the CRATES_IO_TOKEN secret.
 .crates-io-token
+
+# transient live solver-capture artifact (grows at runtime; cl_capture_offline.jsonl is the committed baseline)
+tests/fixtures/heavy_cl_solve_captures.jsonl

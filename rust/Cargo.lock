@@ -2382,6 +2382,7 @@ dependencies = [
  "num-integer",
  "parking_lot",
  "proptest",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
 ]

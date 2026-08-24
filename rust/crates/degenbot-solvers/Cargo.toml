@@ -31,6 +31,8 @@ criterion = { version = "^0.8", default-features = false, features = ["cargo_ben
 # the real pool state on demand; the test is env-gated so CI never hits the net.
 degenbot-rpc.workspace = true
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
+# Offline heavy-CL-path replay harness (examples/cl_solve_replay.rs).
+serde_json = { version = "^1.0" }
 
 
 [[bench]]
