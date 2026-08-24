@@ -1604,16 +1604,44 @@ impl BlockPump {
             // peek below does NOT consume the next event, so a buffered event
             // simply re-arms the drain loop and the solve happens exactly once
             // at the end of the burst.
-            let has_buffered = std::future::poll_fn(|cx| {
-                std::task::Poll::Ready(matches!(
-                    futures_util::stream::Peekable::poll_peek_mut(
-                        std::pin::Pin::new(&mut combined),
-                        cx
-                    ),
-                    std::task::Poll::Ready(Some(_))
-                ))
-            })
-            .await;
+            //
+            // MBNASQ: the original `poll_fn` was a single non-yielding poll —
+            // it checked the stream's internal channel once without giving the
+            // tokio runtime a chance to schedule the WS socket reader task. If
+            // the WS delivered logs in multiple frames with brief gaps (5-70ms
+            // between frames), the poll found the channel empty and the solve
+            // fired prematurely. The next frame then triggered ANOTHER solve,
+            // producing 2-3 serial solves per block whose total wall-time was
+            // the sum. Replaced with a 50ms timed `peek()` await: if the WS
+            // has another event ready within 50ms, this resolves `Ok` and the
+            // solve is skipped (the loop processes the new event + re-checks).
+            // If no event arrives in 50ms, the stream is genuinely quiet and
+            // the solve fires — coalescing all logs in the burst into one
+            // solve. 50ms is well within the 12s block interval and is the
+            // same `DEBOUNCE_MS` already used for the publish gate.
+            let has_buffered = if self.sink.has_dirty_paths() {
+                // Only await when there's work to solve — otherwise skip
+                // straight to the select (no dirty paths = nothing to do).
+                // `peek()` resolves immediately when an event is buffered or
+                // the stream has ended (Ready(None)); it returns Pending (and
+                // yields to the runtime so the WS task can deliver) only when
+                // the stream is alive but momentarily empty. The 50ms timeout
+                // fires only in that latter case — coalescing burst gaps without
+                // adding latency to streams with ready events.
+                use std::pin::Pin;
+                match tokio::time::timeout(
+                    Duration::from_millis(DEBOUNCE_MS),
+                    Pin::new(&mut combined).peek(),
+                )
+                .await
+                {
+                    Ok(Some(_)) => true, // event buffered — skip solve
+                    // stream ended OR 50ms elapsed — dispatch solve
+                    _ => false,
+                }
+            } else {
+                false
+            };
             if !has_buffered && self.sink.has_dirty_paths() {
                 // Strictly-synchronous solve dispatch: enter the cursor
                 // block span just long enough for dispatch() to capture it
