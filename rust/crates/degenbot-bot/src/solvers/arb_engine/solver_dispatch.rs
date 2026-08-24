@@ -498,7 +498,13 @@ impl ArbitrageEngine {
                     continue;
                 }
                 let mut resolved = ResolvedMixedPath::default();
-                if let Some(reason) = resolve_hops(&core, &path.pools, &mut resolved) {
+                if let Some(reason) = resolve_hops(
+                    &core,
+                    &path.pools,
+                    &mut resolved,
+                    &mut self.hop_projection_cache,
+                    Some(&mut self.hop_projection_count),
+                ) {
                     *invalid_reasons.entry(reason.to_string()).or_insert(0u64) += 1;
                     tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
                 }
@@ -511,6 +517,7 @@ impl ArbitrageEngine {
             target: "degenbot::solver",
             block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
+            hop.projections = self.hop_projection_count,
             paths.deferred_future_price = deferred_paths.len(),
             invalid.reasons = %invalid_reasons.iter().map(|(r, c)| format!("{c}x {r}")).collect::<Vec<_>>().join(", "),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),

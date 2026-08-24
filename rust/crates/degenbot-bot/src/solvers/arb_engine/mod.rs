@@ -48,6 +48,7 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
 
 use self::delivery_policy::DeliveryPolicy;
+use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
 
@@ -302,6 +303,13 @@ pub struct ArbitrageEngine {
     pub(crate) path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
     path_resolved: HashMap<u64, ResolvedMixedPath>,
+    /// Hop-projection memo (pool,direction) -> snapshot@nonce. Shared across
+    /// all resolve call sites so a dirty pool's tick walk runs once per
+    /// state change and serves every referencing path from the cache.
+    hop_projection_cache: HopProjectionCache,
+    /// Monotonic count of actual family projections (cache misses). Test-
+    /// observable; emitted on the solve-phase resolve event.
+    hop_projection_count: u64,
     /// Reverse index: (`hop_type`, `pool_key`) maps to list of `path_ids` that use this pool.
     /// Vec instead of `HashSet` — sets are typically 1-4 entries, dedup at collection time.
     pool_to_paths: HashMap<(HopType, u64), Vec<u64>>,
@@ -402,6 +410,8 @@ impl ArbitrageEngine {
             core,
             path_pools: HashMap::new(),
             path_resolved: HashMap::new(),
+            hop_projection_cache: HashMap::new(),
+            hop_projection_count: 0,
             pool_to_paths: HashMap::new(),
             results: HashMap::new(),
             results_block: 0,

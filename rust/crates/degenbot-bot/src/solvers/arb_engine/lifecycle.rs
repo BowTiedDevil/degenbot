@@ -134,7 +134,13 @@ impl ArbitrageEngine {
         let mut resolved = ResolvedMixedPath::default();
         if let Some(path) = self.path_pools.get(&path_id) {
             let core = self.core.read();
-            if let Some(reason) = resolve_hops(&core, &path.pools, &mut resolved) {
+            if let Some(reason) = resolve_hops(
+                &core,
+                &path.pools,
+                &mut resolved,
+                &mut self.hop_projection_cache,
+                Some(&mut self.hop_projection_count),
+            ) {
                 tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
             }
         }
@@ -298,7 +304,13 @@ impl ArbitrageEngine {
             let core = self.core.read();
             for (&path_id, path) in &self.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                resolve_hops(&core, &path.pools, &mut resolved);
+                resolve_hops(
+                    &core,
+                    &path.pools,
+                    &mut resolved,
+                    &mut self.hop_projection_cache,
+                    Some(&mut self.hop_projection_count),
+                );
                 self.path_resolved.insert(path_id, resolved);
             }
         }
@@ -335,6 +347,13 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn path_count(&self) -> usize {
         self.path_pools.len()
+    }
+
+    /// Total actual hop projections performed (cache misses) since engine
+    /// construction. Test + telemetry observable for the projection memo.
+    #[must_use]
+    pub fn hop_projection_count(&self) -> u64 {
+        self.hop_projection_count
     }
 
     /// Return the list of registered V4 `PoolManager` addresses.

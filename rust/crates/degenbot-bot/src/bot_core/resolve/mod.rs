@@ -27,9 +27,49 @@ pub(crate) mod curve;
 pub(crate) mod solidly;
 pub(crate) mod v2;
 
-use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
 
 use super::BotState;
+
+/// A cached hop projection: either a successfully built [`ResolvedHop`] or
+/// the terminal invalidation reason, tagged with the pool `state_nonce` it
+/// was built against.
+#[derive(Clone, Debug)]
+pub(crate) enum CachedProjection {
+    /// A built hop snapshot. Shared via `Arc` so N paths referencing the
+    /// same (pool, direction) clone one allocation instead of re-walking.
+    Hop(Arc<ResolvedHop>),
+    /// The projection failed for this nonce (e.g. `SequenceUnavailable`).
+    /// Cached too: the failed CL tick-walk is the expensive case, and live
+    /// data shows roughly half of affected paths die here every cycle.
+    Invalid(MissingHopReason),
+}
+
+impl CachedProjection {
+    /// Re-materialize the projection into a path's hop list: an owned hop
+    /// clone for `Ok`, the reason for an invalid entry. (Nonces are re-read
+    /// from `core` by the caller — never trusted from a cached entry.)
+    fn materialize(&self) -> Result<ResolvedHop, MissingHopReason> {
+        match self {
+            Self::Hop(arc) => Ok((**arc).clone()),
+            Self::Invalid(reason) => Err(*reason),
+        }
+    }
+}
+
+/// Per-(pool, direction) hop-projection memo shared across paths and solve
+/// cycles. Keyed by `(HopType, pool_key, zero_for_one)`; every entry carries
+/// the `state_nonce` it was built against, so a stale entry is detected by
+/// comparing against `core.pool_state_nonce` before reuse — correctness does
+/// not depend on invalidation hooks (every state mutation bumps the nonce,
+/// including reorg rollback).
+///
+/// Growth is bounded by the number of distinct (pool, direction) pairs ever
+/// touched by resolution — the registered pool universe, not per-path work.
+pub(crate) type HopProjectionCache = HashMap<(HopType, u64, bool), (CachedProjection, u64)>;
 
 /// Why a `project_<family>` hop could not be projected. Granular-but-grouped:
 /// each variant maps 1:1 to a failure mode the flat match today encodes as a
@@ -96,10 +136,23 @@ fn log_invalidation(pool_ref: &MixedPoolRef, hop_index: usize, reason: MissingHo
 /// invalidation; returns the `MissingHopReason` of the first unprojectable
 /// hop (its hop-level detail also goes to `debug` via `log_invalidation`),
 /// or `None` when the whole path projected.
+///
+/// Projections are MEMOIZED in `cache` keyed by `(pool_type, pool_key,
+/// zero_for_one)` and validated against the pool's live `state_nonce`: a
+/// hit re-clones the shared snapshot (no tick walk); a miss (first touch,
+/// or any state mutation since — every mutation including reorg rollback
+/// bumps the nonce) projects fresh and stores. The nonce comparison IS the
+/// invalidation; there are no invalidation hooks to miss.
+///
+/// `projection_count` (optional probe) counts actual family projections —
+/// the cache-miss metric separating "N paths re-walked one dirty pool"
+/// from "one walk served N paths" (tests + solve-phase telemetry).
 pub(crate) fn resolve_hops(
     core: &BotState,
     pool_refs: &[MixedPoolRef],
     resolved: &mut ResolvedMixedPath,
+    cache: &mut HopProjectionCache,
+    mut projection_count: Option<&mut u64>,
 ) -> Option<MissingHopReason> {
     resolved.hops.clear();
     resolved.valid = false;
@@ -117,19 +170,46 @@ pub(crate) fn resolve_hops(
         resolved.max_update_block = resolved
             .max_update_block
             .max(core.pool_update_block(pool_ref.pool_key));
-        let projection = match pool_ref.hop_type {
-            HopType::V2 => v2::project_v2(core, pool_ref),
-            HopType::V3 => cl::project_v3(core, pool_ref),
-            HopType::V4 => cl::project_v4(core, pool_ref),
-            HopType::SolidlyStable => solidly::project_solidly(core, pool_ref),
-            HopType::BalancerWeighted => {
-                balancer_weighted::project_balancer_weighted(core, pool_ref)
+
+        let cache_key = (pool_ref.hop_type, pool_ref.pool_key, pool_ref.zero_for_one);
+        let current_nonce = core.pool_state_nonce(pool_ref.pool_key);
+
+        let cached_hit = match cache.get(&cache_key) {
+            // Nonce unchanged since the entry was built → reuse it.
+            Some((cached, built_nonce)) if *built_nonce == current_nonce => {
+                Some(cached.materialize())
             }
-            HopType::BalancerStable => balancer_stable::project_balancer_stable(core, pool_ref),
-            HopType::CurveStableswap => curve::project_curve(core, pool_ref),
+            // Stale or absent — project fresh below.
+            _ => None,
         };
+
+        let projection = if let Some(replay) = cached_hit {
+            replay.map(|hop| (hop, current_nonce))
+        } else {
+            if let Some(count) = projection_count.as_deref_mut() {
+                *count += 1;
+            }
+            let projected = match pool_ref.hop_type {
+                HopType::V2 => v2::project_v2(core, pool_ref),
+                HopType::V3 => cl::project_v3(core, pool_ref),
+                HopType::V4 => cl::project_v4(core, pool_ref),
+                HopType::SolidlyStable => solidly::project_solidly(core, pool_ref),
+                HopType::BalancerWeighted => {
+                    balancer_weighted::project_balancer_weighted(core, pool_ref)
+                }
+                HopType::BalancerStable => balancer_stable::project_balancer_stable(core, pool_ref),
+                HopType::CurveStableswap => curve::project_curve(core, pool_ref),
+            };
+            let entry = match &projected {
+                Ok((hop, _nonce)) => CachedProjection::Hop(Arc::new(hop.clone())),
+                Err(reason) => CachedProjection::Invalid(*reason),
+            };
+            cache.insert(cache_key, (entry, current_nonce));
+            projected
+        };
+
         let (hop, nonce) = match projection {
-            Ok(hop) => hop,
+            Ok(pair) => pair,
             Err(reason) => {
                 log_invalidation(pool_ref, hop_index, reason);
                 return Some(reason);

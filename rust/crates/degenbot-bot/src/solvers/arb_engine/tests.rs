@@ -1971,7 +1971,13 @@ mod tests {
             let core = engine.core.read();
             for (&path_id, path) in &engine.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                let _ = crate::bot_core::resolve::resolve_hops(&core, &path.pools, &mut resolved);
+                let _ = crate::bot_core::resolve::resolve_hops(
+                    &core,
+                    &path.pools,
+                    &mut resolved,
+                    &mut engine.hop_projection_cache,
+                    None,
+                );
                 engine.path_resolved.insert(path_id, resolved);
             }
         }
@@ -2855,6 +2861,80 @@ mod tests {
         // Key: previously this returned None due to hop_types.len() != 2
         let result = ::degenbot_solvers::mixed::solve_path(resolved);
         let _ = result;
+    }
+
+    // Hop-projection cache (shared-pool dedup): a dirty pool shared by N
+    // paths must be projected ONCE per solve cycle, not once per path; a
+    // quiet co-hop must not re-project at all while its state_nonce holds.
+    #[test]
+    fn hop_projection_cached_until_pool_state_nonce_advances() {
+        let mut engine = ArbitrageEngine::new();
+
+        // Three V2 pools: A-B and A-C cycles share pool A.
+        let pool_a = Address::from([0x11u8; 20]);
+        let pool_b = Address::from([0x12u8; 20]);
+        let pool_c = Address::from([0x13u8; 20]);
+        let id_a =
+            engine.register_v2_pool(pool_a, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
+        let id_b =
+            engine.register_v2_pool(pool_b, weth(800), usdc(1_500_000), GAMMA_03, FEE_DENOM_03);
+        let id_c =
+            engine.register_v2_pool(pool_c, weth(900), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
+
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: id_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: id_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: id_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: id_c,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
+
+        // Cycle 1: both paths resolve; every UNIQUE (pool,direction) is a
+        // miss. Pool A appears in both paths with the same direction, so its
+        // single projection serves both paths: A+B+C = 3, not 4 hops.
+        engine.solve_dirty(4, &BlockMetadata::default());
+        assert_eq!(engine.hop_projection_count(), 3);
+
+        // Cycle 2: only pool B is dirty. Shared pool A must NOT re-project;
+        // only B's hop in path 1 pays the walk (C's hops are untouched).
+        engine.process_updates(
+            &[(pool_b, usdc(1_000_000), weth(800))],
+            &[],
+            5,
+            &BlockMetadata::default(),
+        );
+        engine.solve_dirty(5, &BlockMetadata::default());
+        // Only B's projection is fresh; A and C replay from the cache.
+        assert_eq!(engine.hop_projection_count(), 4);
+
+        // Cycle 3: A goes dirty. Its cached projection invalidates (nonce
+        // advanced) and re-projects ONCE — both paths then share the fresh
+        // entry; B and C's quiet hops still do not re-project.
+        engine.process_updates(
+            &[(pool_a, usdc(1_250_000), weth(800))],
+            &[],
+            6,
+            &BlockMetadata::default(),
+        );
+        engine.solve_dirty(6, &BlockMetadata::default());
+        assert_eq!(engine.hop_projection_count(), 5);
     }
 
     #[test]
