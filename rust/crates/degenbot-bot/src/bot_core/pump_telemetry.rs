@@ -40,6 +40,7 @@ pub struct PumpTelemetry {
     header_count: u64,
     log_count: u64,
     last_header_at: Instant,
+    last_apply_at: Instant,
     last_stats_at: Instant,
     stats_interval: Duration,
     stall_window: Duration,
@@ -61,6 +62,7 @@ impl PumpTelemetry {
             header_count: 0,
             log_count: 0,
             last_header_at: now,
+            last_apply_at: now,
             last_stats_at: now,
             stats_interval,
             stall_window,
@@ -100,6 +102,13 @@ impl PumpTelemetry {
         self.log_count += 1;
     }
 
+    /// Stamp "a log was just applied to engine state" - the `seconds_since_apply`
+    /// freeze gauge reference. Called by the pump after each forward/backfill
+    /// log apply (alongside `fsm.on_log_applied`).
+    pub fn note_apply(&mut self) {
+        self.last_apply_at = Instant::now();
+    }
+
     /// Emit the periodic `[DIAG] stats`/freeze-probe log at most once per
     /// `stats_interval`. `current_block` is the pump's engine clock, and
     /// `pool_state_head` the max pool `update_block` — the two fields whose
@@ -115,6 +124,13 @@ impl PumpTelemetry {
             let head = i64::from(u32::try_from(pool_state_head).unwrap_or(i32::MAX as u32));
             let clock = i64::from(u32::try_from(current_block).unwrap_or(i32::MAX as u32));
             p.set_state_head_lag(head - clock);
+            // Liveness ages (freeze/stall detection): `seconds_since_header`
+            // grows if the newHeads feed stops; `seconds_since_apply` grows if
+            // the pump stops applying logs to state. A freeze = headers still
+            // arriving (header age low) while the apply age rises and
+            // state_head_lag goes more negative - not a single-number level.
+            p.set_seconds_since_header(self.last_header_at.elapsed().as_secs_f64());
+            p.set_seconds_since_apply(self.last_apply_at.elapsed().as_secs_f64());
         }
         let last_header_secs = self.last_header_at.elapsed().as_secs();
         tracing::info!(

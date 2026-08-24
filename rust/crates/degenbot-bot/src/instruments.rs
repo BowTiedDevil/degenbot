@@ -55,8 +55,12 @@ pub struct PipelineInstruments {
     backfills_executed: Counter<u64>,
     /// Drain FIFO depth at dispatch time (approximate backlog signal).
     drain_queue_depth: Gauge<f64>,
-    /// `pool_state_head - engine clock` divergence (the freeze signature).
+    /// `pool_state_head - engine clock` divergence.
     state_head_lag_blocks: Gauge<f64>,
+    /// Seconds since the newest accepted `newHeads` header (pump/feed liveness).
+    pump_seconds_since_header: Gauge<f64>,
+    /// Seconds since the newest log applied to state (state-advance liveness).
+    pump_seconds_since_apply: Gauge<f64>,
     /// Solve lock-hold duration (dirty solves only — no-op solves are gated
     /// out of the span path and the histogram alike).
     solve_duration: Histogram<f64>,
@@ -150,7 +154,21 @@ impl PipelineInstruments {
                 .build(),
             state_head_lag_blocks: meter
                 .f64_gauge("degenbot.state.head_lag_blocks")
-                .with_description("pool_state_head minus engine clock (freeze signature)")
+                .with_description(
+                    "pool_state_head minus engine clock (negative = pools trail the pump clock)",
+                )
+                .build(),
+            pump_seconds_since_header: meter
+                .f64_gauge("degenbot.pump.seconds_since_header")
+                .with_description(
+                    "Seconds since the newest accepted newHeads header (pump/feed liveness)",
+                )
+                .build(),
+            pump_seconds_since_apply: meter
+                .f64_gauge("degenbot.pump.seconds_since_apply")
+                .with_description(
+                    "Seconds since the newest log applied to state (state-advance liveness)",
+                )
                 .build(),
             solve_duration: meter
                 .f64_histogram("degenbot.solve.duration")
@@ -287,6 +305,16 @@ impl PipelineInstruments {
         let clamped = head_minus_clock.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
         self.state_head_lag_blocks
             .record(f64::from(i32::try_from(clamped).unwrap_or_default()), &[]);
+    }
+
+    /// Age (seconds) of the newest accepted header; grows on a feed stall.
+    pub fn set_seconds_since_header(&self, secs: f64) {
+        self.pump_seconds_since_header.record(secs, &[]);
+    }
+
+    /// Age (seconds) of the newest log applied to state; grows on a freeze.
+    pub fn set_seconds_since_apply(&self, secs: f64) {
+        self.pump_seconds_since_apply.record(secs, &[]);
     }
 
     /// One dirty-carrying solve cycle's duration.

@@ -1550,6 +1550,7 @@ impl BlockPump {
                     // split or drop either write.
                     self.bot.dispatch_log(&log);
                     fsm.on_log_applied(log_block);
+                    telemetry.note_apply();
 
                     // LEZJAS: engine owns `has_logs_this_block` now — routed
                     // through the sink so the next `finalize_block` sees it.

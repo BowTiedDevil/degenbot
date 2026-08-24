@@ -72,6 +72,10 @@ pub mod instruments {
         /// no-op
         pub fn set_state_head_lag(&self, _head_minus_clock: i64) {}
         /// no-op
+        pub fn set_seconds_since_header(&self, _secs: f64) {}
+        /// no-op
+        pub fn set_seconds_since_apply(&self, _secs: f64) {}
+        /// no-op
         pub fn observe_solve_duration(&self, _secs: f64) {}
         /// no-op
         pub fn count_solves_executed(&self) {}
