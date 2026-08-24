@@ -14,10 +14,11 @@ the `_POOL_KIND_TO_BASE` family-base fallback.
 both pools under ONE id, so the walker could use both edges as if they were a
 single pool and yield paths that cannot close (148,896 broken paths measured).
 Fixed by namespacing V4 graph ids above `_V4_POOL_ID_OFFSET` (Rust
-`V4_POOL_ID_OFFSET`), with demangling in `_build_path_steps`. In production the
-V4 id passed here is `managed_pool_id + 1 << 32`; this legacy-shape test
-documents the `(pool_id, pool_kind)`-key disambiguation that remains the last
-defense for any pre-namespace input.
+`V4_POOL_ID_OFFSET`). The Rust seam keys every emitted V4 map (`v4_lookups`,
+`pool_id_to_kind*`, `edges`) by `managed_pool_id + 1 << 32`, and
+`_build_path_steps` looks up `v4_lookups[pool_id]` with that namespaced id
+directly. This test documents the `(pool_id, pool_kind)`-key disambiguation
+plus the namespaced-key `v4_lookups` lookup contract.
 """
 
 from degenbot.database.models.pools import (
@@ -46,12 +47,13 @@ def test_build_path_steps_disambiguates_colliding_v2_v4_pool_id():
 
     Under the namespace contract, the V4 pool's graph id is
     ``managed_pool_id + _V4_POOL_ID_OFFSET``, so the two pools' graph ids
-    are distinct even though their numeric ids collide; `_build_path_steps`
-    demangles the V4 graph id back to the raw ``managed_pool_id`` before the
-    `v4_lookups` lookup. The `(pool_id, pool_kind_u8)`-typed entry in
-    `pool_id_to_type` uses the NAMESPACED id (that's what the Rust seam
-    emits), and the V2 family recovers via the `_POOL_KIND_TO_BASE`
-    fallback.
+    are distinct even though their numeric ids collide. The Rust seam keys
+    EVERY emitted V4 map (`v4_lookups`, `pool_id_to_kind*`, `edges`) by the
+    NAMESPACED graph id, and `_build_path_steps` therefore looks up
+    `v4_lookups[pool_id]` with the namespaced id directly — no demangle.
+    The `(pool_id, pool_kind_u8)`-typed entry in `pool_id_to_type` uses the
+    same NAMESPACED id, and the V2 family recovers via the
+    `_POOL_KIND_TO_BASE` fallback.
     """
     shared_numeric_id = 7  # V2 pools.id and V4 managed_pool_id collide
 
@@ -60,8 +62,10 @@ def test_build_path_steps_disambiguates_colliding_v2_v4_pool_id():
     v4_graph_id = v4_managed_id + _V4_POOL_ID_OFFSET
 
     v2v3_addresses = {v2_graph_id: V2_ADDRESS}
-    # v4_lookups is keyed by the RAW managed_pool_id (post-demangle).
-    v4_lookups = {v4_managed_id: (V4_MANAGER, V4_POOL_HASH)}
+    # v4_lookups is keyed by the NAMESPACED graph id (the Rust seam emits
+    # namespaced keys in `v4_lookups` + `pool_id_to_kind*` + `edges`);
+    # `_build_path_steps` looks up the namespaced `pool_id` directly.
+    v4_lookups = {v4_graph_id: (V4_MANAGER, V4_POOL_HASH)}
 
     # The Rust seam's kind maps are keyed by the NAMESPACED graph id.
     pool_id_to_type = {(v4_graph_id, _POOL_KIND_V4): UniswapV4PoolTable}
@@ -83,8 +87,9 @@ def test_build_path_steps_disambiguates_colliding_v2_v4_pool_id():
     assert steps[0].address == V2_ADDRESS
     assert steps[0].hash is None
 
-    # Hop 1 is the V4 pool: typed V4 family, hash from v4_lookups — and the
-    # namespaced graph id demangled to the raw managed_pool_id on lookup.
+    # Hop 1 is the V4 pool: typed V4 family, hash from v4_lookups — looked
+    # up by the NAMESPACED graph id (the `pool_id` the DFS yields), matching
+    # the Rust seam's namespaced `v4_lookups` keys.
     assert issubclass(steps[1].type, UniswapV4PoolTableBase), (
         f"V4 hop mis-typed as {steps[1].type.__name__}"
     )

@@ -45,9 +45,12 @@ _POOL_KIND_V4: int = 2
 # collided pair aliased two distinct pools under one graph id, letting the
 # DFS walk both edges as if they were ONE pool and yield paths that cannot
 # close in token space (148,896 broken paths measured on the live DB;
-# surfaced as 85k direction-fail registration skips). Graph pool ids at or
-# above this offset are V4; subtract to recover the raw `managed_pool_id`
-# for the v4 lookup maps.
+# surfaced as 85k direction-fail registration skips). Graph pool ids at or above this offset are V4. The Rust
+# `build_path_graph`/`fetch_path_graph_edges` seam applies the offset to V4 ids
+# in EVERY emitted map (`edges`, `v4_lookups`, `pool_id_to_kind`+
+# `pool_id_to_kind_string`), so the DFS and `_build_path_steps` always deal in
+# NAMESPACED ids and look up `v4_lookups[pool_id]` directly - no demangle (a
+# stale demangle looked up the raw id against the namespaced map and KeyError'd).
 _V4_POOL_ID_OFFSET: int = 1 << 32
 
 # The family-base class for each pool-kind u8 (AF7OEL option B — family-only
@@ -315,10 +318,13 @@ def _build_path_steps(
             pool_base = _POOL_KIND_TO_BASE.get(pool_kind_u8)
             pool_type = cast("type[LiquidityPoolTable | UniswapV4PoolTable]", pool_base)
         if pool_kind_u8 == _POOL_KIND_V4:
-            # Demangle the namespaced graph id back to the raw
-            # managed_pool_id before the v4_lookups lookup.
-            managed_id = pool_id - _V4_POOL_ID_OFFSET
-            manager_address, pool_hash = v4_lookups[managed_id]
+            # v4_lookups is keyed by the SAME namespaced graph id the DFS
+            # yields (the Rust seam namespaces V4 ids in `edges`, `v4_lookups`,
+            # `pool_id_to_kind` + `pool_id_to_kind_string`), so use `pool_id`
+            # directly - consistent with `pool_id_to_type` above. The old
+            # demangle (pool_id - _V4_POOL_ID_OFFSET) looked up the RAW id
+            # against a NAMESPACED map and KeyError'd on any colliding V4 pool.
+            manager_address, pool_hash = v4_lookups[pool_id]
             steps.append(PathStep(address=manager_address, hash=pool_hash, type=pool_type))
         else:
             steps.append(PathStep(address=v2v3_addresses[pool_id], type=pool_type))
