@@ -38,6 +38,18 @@ _POOL_KIND_V2: int = 0
 _POOL_KIND_V3: int = 1
 _POOL_KIND_V4: int = 2
 
+# Namespace offset for V4 graph-level pool ids, mirroring Rust
+# `V4_POOL_ID_OFFSET` (crates/degenbot-db/src/pathfinding.rs). The V4
+# `managed_pools.id` counter is INDEPENDENT of the V2/V3 `pools.id`
+# counter, so bare numeric ids collide (116k of 125k live V4 ids) — a
+# collided pair aliased two distinct pools under one graph id, letting the
+# DFS walk both edges as if they were ONE pool and yield paths that cannot
+# close in token space (148,896 broken paths measured on the live DB;
+# surfaced as 85k direction-fail registration skips). Graph pool ids at or
+# above this offset are V4; subtract to recover the raw `managed_pool_id`
+# for the v4 lookup maps.
+_V4_POOL_ID_OFFSET: int = 1 << 32
+
 # The family-base class for each pool-kind u8 (AF7OEL option B — family-only
 # `PathStep.type` parity). The Rust seam returns `pool_id → pool_kind_u8`
 # (V2/V3/V4 family); the concrete subclass (UniswapV2 vs SushiswapV2) is not
@@ -295,15 +307,18 @@ def _build_path_steps(
     steps: list[PathStep] = []
     for pool_id, pool_kind_u8 in path:
         # Key by ``(pool_id, pool_kind_u8)`` and fall back to the family base
-        # (`_POOL_KIND_TO_BASE`) so a V2/V4 pool-id collision (independent id
-        # counters) never collapses a pool to the wrong family — the Rust
-        # seam's `pool_id_to_kind*` maps can only keep ONE family per id.
+        # when no concrete entry survived. V4 graph ids are namespaced above
+        # ``_V4_POOL_ID_OFFSET`` (see its doc), so a collided numeric id can
+        # no longer alias a V2/V3 row — the id itself now carries the family.
         pool_type = pool_id_to_type.get((pool_id, pool_kind_u8))
         if pool_type is None:
             pool_base = _POOL_KIND_TO_BASE.get(pool_kind_u8)
             pool_type = cast("type[LiquidityPoolTable | UniswapV4PoolTable]", pool_base)
         if pool_kind_u8 == _POOL_KIND_V4:
-            manager_address, pool_hash = v4_lookups[pool_id]
+            # Demangle the namespaced graph id back to the raw
+            # managed_pool_id before the v4_lookups lookup.
+            managed_id = pool_id - _V4_POOL_ID_OFFSET
+            manager_address, pool_hash = v4_lookups[managed_id]
             steps.append(PathStep(address=manager_address, hash=pool_hash, type=pool_type))
         else:
             steps.append(PathStep(address=v2v3_addresses[pool_id], type=pool_type))

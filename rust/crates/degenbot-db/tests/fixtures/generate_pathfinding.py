@@ -29,11 +29,16 @@ import pathlib
 from sqlalchemy import select
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.erc20 import Erc20TokenTable
 from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import PoolManagerTable, UniswapV2PoolTable, UniswapV3PoolTable, UniswapV4PoolTable
+from degenbot.database.models.erc20 import Erc20TokenTable
+from degenbot.database.models.pools import (
+    PoolManagerTable,
+    UniswapV2PoolTable,
+    UniswapV3PoolTable,
+    UniswapV4PoolTable,
+)
 from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
-from degenbot.pathfinding import _get_tokens_with_min_degree, _prepare_graph
+from degenbot.pathfinding import build_path_graph
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parent
 DB_PATH = FIXTURE_DIR / "pathfinding.db"
@@ -70,11 +75,15 @@ def _build_db() -> None:
 
     with session() as s:  # type: Session
         tokens = [
-            Erc20TokenTable(chain=CHAIN, address=WETH_ADDR, name="WETH", symbol="WETH", decimals=18),
+            Erc20TokenTable(
+                chain=CHAIN, address=WETH_ADDR, name="WETH", symbol="WETH", decimals=18
+            ),
             Erc20TokenTable(chain=CHAIN, address=USDC_ADDR, name="USDC", symbol="USDC", decimals=6),
             Erc20TokenTable(chain=CHAIN, address=USDT_ADDR, name="USDT", symbol="USDT", decimals=6),
             Erc20TokenTable(chain=CHAIN, address=DAI_ADDR, name="DAI", symbol="DAI", decimals=18),
-            Erc20TokenTable(chain=CHAIN, address=DEAD_ADDR, name="Dead", symbol="DEAD", decimals=18),
+            Erc20TokenTable(
+                chain=CHAIN, address=DEAD_ADDR, name="Dead", symbol="DEAD", decimals=18
+            ),
         ]
         s.add_all(tokens)
         s.flush()
@@ -251,6 +260,10 @@ def _build_db() -> None:
 
 
 _POOL_KIND_V2 = 0
+# Mirrors Rust `V4_POOL_ID_OFFSET` (crates/degenbot-db/src/pathfinding.rs):
+# V4 pool ids are namespaced above any realistic `pools.id` so a collided
+# V2/V3 row cannot alias a V4 pool's edges (116k collisions measured live).
+_V4_POOL_ID_OFFSET = 1 << 32
 _POOL_KIND_V3 = 1
 _POOL_KIND_V4 = 2
 
@@ -258,35 +271,36 @@ POOL_TYPES = [UniswapV2PoolTable, UniswapV3PoolTable, UniswapV4PoolTable]
 
 
 def _dump_oracle() -> dict:
-    session = get_scoped_sqlite_session(DB_PATH)
-    with session() as s:  # type: Session
-        # Unfiltered edges: select ALL pools (per-class) without the candidate
-        # filter, so the Rust `fetch_path_graph_edges` (which returns all) can
-        # be compared against the raw select. We assemble the same shape the
-        # Rust fn returns: edges + v2v3_addresses + v4_lookups + pool_id_to_kind.
-        edges: list[list[int]] = []
-        v2v3_addresses: dict[str, str] = {}
-        v4_lookups: dict[str, list[str]] = {}
-        pool_id_to_kind: dict[str, int] = {}
+    """The oracle is the PRODUCTION FFI seam (build_path_graph) for everything
+    candidate-filtered, plus raw selects for the unfiltered edge list.
 
+    V4 ids carry the Rust V4_POOL_ID_OFFSET namespace in both the unfiltered
+    edges and the seam output (managed_pools.id + 1<<32).
+    """
+    raw = build_path_graph(
+        database_path=str(DB_PATH),
+        chain_id=CHAIN,
+        pool_kinds={0, 1, 2},
+    )
+
+    # Unfiltered edges (mirrors fetch_path_graph_edges exactly, incl. offset).
+    session = get_scoped_sqlite_session(DB_PATH)
+    edges: list[list[int]] = []
+    with session() as s:  # type: Session
         for pool_type in POOL_TYPES:
             if pool_type is UniswapV4PoolTable:
-
                 rows = s.execute(
                     select(
                         pool_type.id,
                         pool_type.currency0_id,
                         pool_type.currency1_id,
-                        PoolManagerTable.address,
-                        pool_type.pool_hash,
                     )
                     .join(pool_type.manager)
                     .where(pool_type.manager.has(chain=CHAIN)),
                 ).all()
-                for pid, c0, c1, mgr_addr, phash in rows:
-                    edges.append([c0, c1, pid, _POOL_KIND_V4])
-                    v4_lookups[str(pid)] = [mgr_addr, phash]
-                    pool_id_to_kind[str(pid)] = _POOL_KIND_V4
+                for pid, c0, c1 in rows:
+                    graph_pid = pid + _V4_POOL_ID_OFFSET
+                    edges.append([c0, c1, graph_pid, _POOL_KIND_V4])
             else:
                 kind = _POOL_KIND_V2 if pool_type is UniswapV2PoolTable else _POOL_KIND_V3
                 rows = s.execute(
@@ -294,53 +308,47 @@ def _dump_oracle() -> dict:
                         pool_type.id,
                         pool_type.token0_id,
                         pool_type.token1_id,
-                        pool_type.address,
                     ).where(pool_type.chain == CHAIN),
                 ).all()
-                for pid, t0, t1, addr in rows:
+                for pid, t0, t1 in rows:
                     edges.append([t0, t1, pid, kind])
-                    v2v3_addresses[str(pid)] = addr
-                    pool_id_to_kind[str(pid)] = kind
+    edges.sort()
 
-        candidate_tokens = sorted(
-            _get_tokens_with_min_degree(
-                degree=2, session=s, chain_id=CHAIN, pool_types=POOL_TYPES,
-            ),
-        )
+    # Candidate tokens, filtered edges, and the lookup maps are all read
+    # straight from the production seam (single source of truth for the
+    # offset contract).
+    candidate_tokens = sorted(int(t) for t in raw["candidate_tokens"])
+    filtered_edges = sorted([
+        [int(t0), int(t1), int(pid), int(kind)] for (t0, t1, pid, kind) in raw["edges"]
+    ])
+    pool_id_to_kind = {str(int(pid)): int(k) for pid, k in raw["pool_id_to_kind"].items()}
+    v2v3_addresses = {str(int(pid)): addr for pid, addr in raw["v2v3_addresses"].items()}
+    v4_lookups = {str(int(pid)): [mgr, hsh] for pid, (mgr, hsh) in raw["v4_lookups"].items()}
 
-        # The filtered _prepare_graph output (edges with both tokens in
-        # candidate_tokens) — tests the composition.
-        prepared = _prepare_graph(
-            chain_id=CHAIN, pool_types=POOL_TYPES, session=s,
-        )
-        filtered_edges = sorted(
-            [[t0, t1, pid, kind] for (t0, t1, pid, kind) in prepared.edges],
-        )
+    # Token-by-address for ALL tokens.
+    all_addrs = [WETH_ADDR, USDC_ADDR, USDT_ADDR, DAI_ADDR, DEAD_ADDR]
+    from degenbot.database.models.erc20 import Erc20TokenTable
 
-        # Token-by-address for ALL tokens.
-        all_addrs = [WETH_ADDR, USDC_ADDR, USDT_ADDR, DAI_ADDR, DEAD_ADDR]
-        from degenbot.database.models.erc20 import Erc20TokenTable
-
+    with session() as s:  # type: Session
         rows = s.execute(
             select(Erc20TokenTable.id, Erc20TokenTable.address).where(
-                Erc20TokenTable.chain == CHAIN, Erc20TokenTable.address.in_(all_addrs),
+                Erc20TokenTable.chain == CHAIN,
+                Erc20TokenTable.address.in_(all_addrs),
             ),
         ).all()
         token_by_address = {addr: tid for tid, addr in rows}
 
-        # Sort edges for deterministic JSON comparison.
-        edges.sort()
-
-        return {
-            "chain_id": CHAIN,
-            "edges": edges,
-            "filtered_edges": filtered_edges,
-            "candidate_tokens": candidate_tokens,
-            "v2v3_addresses": v2v3_addresses,
-            "v4_lookups": v4_lookups,
-            "pool_id_to_kind": pool_id_to_kind,
-            "token_by_address": {addr: tid for addr, tid in token_by_address.items()},
-        }
+    # Sort edges for deterministic JSON comparison.
+    return {
+        "chain_id": CHAIN,
+        "edges": edges,
+        "filtered_edges": filtered_edges,
+        "candidate_tokens": candidate_tokens,
+        "v2v3_addresses": v2v3_addresses,
+        "v4_lookups": v4_lookups,
+        "pool_id_to_kind": pool_id_to_kind,
+        "token_by_address": {addr: int(tid) for addr, tid in token_by_address.items()},
+    }
 
 
 def main() -> None:

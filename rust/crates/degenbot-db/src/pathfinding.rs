@@ -48,6 +48,33 @@ use crate::schema::table::{
 /// [`degenbot_pathfinding::PathGraph::from_edges`](degenbot_pathfinding::PathGraph::from_edges).
 pub type PathEdge = (u64, u64, u64, PoolKind);
 
+/// Offset applied to V4 pool ids in the pathfinding graph's edge list.
+///
+/// The V2/V3 `pools.id` counter and the V4 `managed_pools.id` counter are
+/// INDEPENDENT, so a bare numeric id is ambiguous: on mainnet, 116k of 125k
+/// V4 pool ids collide with a V2/V3 id (measured). A collided pair put TWO
+/// edges under one `pool_id`, so the DFS walked e.g. WETH→USDC through one
+/// real pool and USDT→WETH through another while believing it used ONE pool
+/// — yielding paths that cannot close (148,896 broken paths observed live;
+/// surfaced as 85k `direction-fail` registration skips).
+///
+/// Every emitted V4 id is `managed_pool_id + [`V4_POOL_ID_OFFSET`]`, which
+/// places V4 ids strictly above any realistic `pools.id` (mainnet max
+/// ~678k). Consumers demangle with [`demangle_v4_pool_id`] / [`is_v4_graph_id`].
+pub const V4_POOL_ID_OFFSET: u64 = 1 << 32;
+
+/// Whether a graph-level pool id carries the V4 offset.
+#[must_use]
+pub const fn is_v4_graph_id(graph_id: u64) -> bool {
+    graph_id >= V4_POOL_ID_OFFSET
+}
+
+/// Recover the raw `managed_pools.id` from an offset V4 graph id.
+#[must_use]
+pub const fn demangle_v4_pool_id(graph_id: u64) -> u64 {
+    graph_id - V4_POOL_ID_OFFSET
+}
+
 /// The flat edge list + address lookup maps produced by
 /// [`DegenbotDb::fetch_path_graph_edges`] — the Rust analogue of the Python
 /// `_PreparedGraph`.
@@ -203,12 +230,16 @@ impl DegenbotDb {
                 let c1 = u64::try_from(currency1_id).map_err(|e| {
                     DbError::Decode(format!("currency1_id {currency1_id} out of u64 range: {e}"))
                 })?;
-                data.edges.push((c0, c1, pool_id, PoolKind::V4));
+                // Namespace the V4 id above every possible `pools.id` so a
+                // collided V2/V3 row cannot alias this pool's edges or maps
+                // (see [`V4_POOL_ID_OFFSET`]).
+                let graph_id = pool_id + V4_POOL_ID_OFFSET;
+                data.edges.push((c0, c1, graph_id, PoolKind::V4));
                 data.v4_lookups
-                    .insert(pool_id, (decode_address(&manager_address)?, pool_hash));
-                data.pool_id_to_kind.insert(pool_id, PoolKind::V4);
+                    .insert(graph_id, (decode_address(&manager_address)?, pool_hash));
+                data.pool_id_to_kind.insert(graph_id, PoolKind::V4);
                 data.pool_id_to_kind_string
-                    .insert(pool_id, "uniswap_v4".to_string());
+                    .insert(graph_id, "uniswap_v4".to_string());
             }
         }
 
