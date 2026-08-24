@@ -287,7 +287,7 @@ mod tests {
     fn profile_ptr(
         cache: &HopProjectionCache,
         key: &(HopType, u64, bool),
-    ) -> *const Vec<Option<V3WordProfile>> {
+    ) -> *const Vec<Option<Arc<V3WordProfile>>> {
         match &cache[key] {
             (CachedProjection::Hop(arc), _) => match arc.as_ref() {
                 ResolvedHop::V3 { word_profiles, .. } => Arc::as_ptr(word_profiles),

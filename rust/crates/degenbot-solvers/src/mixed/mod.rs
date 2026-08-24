@@ -287,13 +287,13 @@ pub enum ResolvedHop {
     /// reusing the pool re-walk a dense range once, not once per solve.
     V3 {
         int_seq: IntV3TickRangeSequence,
-        word_profiles: Arc<Vec<Option<V3WordProfile>>>,
+        word_profiles: Arc<Vec<Option<Arc<V3WordProfile>>>>,
     },
     /// V4 concentrated-liquidity hop (same CL math as V3, different settlement).
     /// `word_profiles`: as `Self::V3`.
     V4 {
         int_seq: IntV3TickRangeSequence,
-        word_profiles: Arc<Vec<Option<V3WordProfile>>>,
+        word_profiles: Arc<Vec<Option<Arc<V3WordProfile>>>>,
     },
     /// Solidly/Aerodrome/Camelot stable or volatile hop. Owns its own solve
     /// branch — NOT concentrated-liquidity, so `as_int_sequence()` returns
@@ -351,7 +351,7 @@ impl ResolvedHop {
     /// The precomputed dense-range word-boundary profile table (Stage-1 cache),
     /// if this is a CL hop (V3 or V4). `Arc`-shared across paths reusing the hop.
     #[must_use]
-    pub fn as_word_profiles(&self) -> Option<&Arc<Vec<Option<V3WordProfile>>>> {
+    pub fn as_word_profiles(&self) -> Option<&Arc<Vec<Option<Arc<V3WordProfile>>>>> {
         match self {
             Self::V3 { word_profiles, .. } | Self::V4 { word_profiles, .. } => Some(word_profiles),
             Self::V2 { .. }
