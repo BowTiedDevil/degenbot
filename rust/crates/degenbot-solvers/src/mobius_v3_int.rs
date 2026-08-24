@@ -285,7 +285,6 @@ struct WalkPathOutcome {
 /// lands in — which is what makes it usable as the walk's ground truth for
 /// any candidate.
 fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
-    #[cfg(test)]
     WALK_PATH_SIMULATIONS.with(|c| c.set(c.get() + 1));
     let n_hops = hops.len();
     let mut hop_outputs = Vec::with_capacity(n_hops);
@@ -602,11 +601,30 @@ fn walk_refine_window(
 //
 // Thread-local because `cargo test` runs tests (and their solves) on
 // separate threads concurrently — a shared static would mix counts.
-#[cfg(test)]
 thread_local! {
+    // Production-scoped walk-combinator counters (see `WALK_STATS_SCOPE`).
+    // Always-on: the rayon solve resets + reads them once per path to name the
+    // cost driver of slow solves (pieces × simulations × word-boundary walk).
     pub(crate) static WALK_PIECES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // See `WALK_PIECES_VISITED`.
     pub(crate) static WALK_PATH_SIMULATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Reset the walk counters on the calling thread. The rayon solve calls this at
+/// the start of each path's solve so a `take_last_walk_stats` right after
+/// `solve_path` returns this path's piece/simulation counts in isolation.
+pub fn reset_walk_stats() {
+    WALK_PIECES_VISITED.with(|c| c.set(0));
+    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+}
+
+/// Read-and-clear the walk counters on the calling thread and return
+/// `(pieces_visited, path_simulations)` accumulated since the last reset.
+pub fn take_last_walk_stats() -> (usize, usize) {
+    let p = WALK_PIECES_VISITED.with(std::cell::Cell::get);
+    let s = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
+    reset_walk_stats();
+    (p, s)
 }
 
 /// Solve an arbitrary V2/CL path with the active-set piecewise Möbius walk.
@@ -692,8 +710,8 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         return None;
     }
 
-    #[cfg(test)]
     WALK_PIECES_VISITED.with(|c| c.set(0));
+    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
 
     let iteration_cap: usize = hops
         .iter()
@@ -721,7 +739,6 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         if !visited.insert(ks.clone()) {
             break;
         }
-        #[cfg(test)]
         WALK_PIECES_VISITED.with(|c| c.set(c.get() + 1));
 
         // Transitional anchor: extra candidates (±2 sweep) and edge-growth

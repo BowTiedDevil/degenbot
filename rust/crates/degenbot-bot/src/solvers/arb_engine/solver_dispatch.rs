@@ -583,16 +583,27 @@ impl ArbitrageEngine {
         // D63GSE: per-path wall time is captured so the K slowest paths can be
         // named on the completion event (a min-heap keeps this O(K) memory;
         // the closure itself only does one Instant pair + map insert).
+        // (time_us, pieces_visited, path_sims, pid) for the K-slowest
+        // attribution — lets the completion event name the walk-combinatorial
+        // cost driver of the slowest routes, not just their wall time.
         let path_times: std::sync::Mutex<
-            std::collections::BinaryHeap<std::cmp::Reverse<(u128, u64)>>,
+            std::collections::BinaryHeap<std::cmp::Reverse<(u128, u64, u64, u64)>>,
         > = std::sync::Mutex::new(std::collections::BinaryHeap::new());
         // Total CPU µs across all solved paths — dividing by the rayon wall
         // time yields achieved parallelism (8 workers ⇒ target ≈ 8.0).
         let solve_cpu_us: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        // Walk-combinatorial totals across the solve cycle (Σ pieces visited,
+        // Σ path simulations) — the diagnostic multiplier behind a slow solve.
+        let walk_pieces_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let walk_sims_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let solved: Vec<(u64, SolvePathResult)> = to_solve
             .par_iter()
             .filter_map(|(pid, resolved)| {
                 let _solve_ctx = solve_span.enter();
+                // Scope the walk counters to THIS path (same rayon worker
+                // thread runs solve_path synchronously; the walk spawns no
+                // sub-tasks, so the per-thread Cell is consistent).
+                ::degenbot_solvers::mobius_v3_int::reset_walk_stats();
                 let t0 = std::time::Instant::now();
                 let result = ::degenbot_solvers::mixed::solve_path(resolved);
                 let micros = t0.elapsed().as_micros();
@@ -600,12 +611,26 @@ impl ArbitrageEngine {
                     u64::try_from(micros).unwrap_or(u64::MAX),
                     std::sync::atomic::Ordering::Relaxed,
                 );
+                let (pieces, sims) = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats();
+                walk_pieces_total.fetch_add(
+                    u64::try_from(pieces).unwrap_or(0),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                walk_sims_total.fetch_add(
+                    u64::try_from(sims).unwrap_or(0),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 if let Ok(mut heap) = path_times.lock() {
                     let worst = heap
                         .peek()
-                        .map_or(u128::MAX, |std::cmp::Reverse((w, _))| *w);
+                        .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _))| *w);
                     if heap.len() < SLOWEST_PATHS_K || micros > worst {
-                        heap.push(std::cmp::Reverse((micros, *pid)));
+                        heap.push(std::cmp::Reverse((
+                            micros,
+                            u64::try_from(pieces).unwrap_or(0),
+                            u64::try_from(sims).unwrap_or(0),
+                            *pid,
+                        )));
                         if heap.len() > SLOWEST_PATHS_K {
                             heap.pop();
                         }
@@ -632,7 +657,9 @@ impl ArbitrageEngine {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .map(|std::cmp::Reverse((us, pid))| format!("{pid}:{us}us"))
+            .map(|std::cmp::Reverse((us, pieces, sims, pid))| {
+                format!("{pid}:{us}us:sims={sims}:pieces={pieces}")
+            })
             .collect();
         tracing::info!(
             target: "degenbot::solver",
@@ -640,6 +667,8 @@ impl ArbitrageEngine {
             paths.solved = to_solve.len(),
             paths.invalid = invalid_count,
             solve.cpu_us = solve_cpu_us.load(std::sync::atomic::Ordering::Relaxed),
+            walk.pieces = walk_pieces_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.sims = walk_sims_total.load(std::sync::atomic::Ordering::Relaxed),
             profitable = solved.len(),
             slowest.paths = %slowest.join(","),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
