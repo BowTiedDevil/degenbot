@@ -147,6 +147,14 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
 # ──────────────────────────────────────────────────────────────────
 
 
+#: Hard cap on registered paths per process. Registration stops accepting
+#: new paths once ``path_count`` reaches this value (each capped candidate is
+#: counted as a ``path-cap`` skip); the engine then reaches steady state with
+#: a bounded path universe so solve performance is observable without ongoing
+#: registration load. Override with DEGENBOT_MAX_PATHS (0 = uncapped).
+MAX_REGISTERED_PATHS = int(os.environ.get("DEGENBOT_MAX_PATHS", "50000"))
+
+
 def resolve_directions(
     pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
     input_token_address: str,
@@ -393,6 +401,7 @@ class PathRegistrationPipeline:
 
         # Summary counters + registered-path dedup set.
         self.path_count = 0
+        self.cap_skip_count = 0
         self.skip_count = 0
         self.token_filter_count = 0
         self.engine_reject_count = 0
@@ -457,6 +466,7 @@ class PathRegistrationPipeline:
             f"{self.skip_count} skipped, {self.token_filter_count} token-filtered, "
             f"{self.engine_reject_count} engine-rejected, "
             f"{self.register_fail_count} register-fail, "
+            f"{self.cap_skip_count} cap-skipped, "
             f"{self.dup_count} duplicates "
             f"{{skip_reasons: {breakdown}}}",
         )
@@ -529,6 +539,22 @@ class PathRegistrationPipeline:
         # Time-throttled periodic progress summary — fire independently of the
         # path_count==1000 gate so a discovery-heavy skip-fest stays visible.
         self.emit_registration_progress()
+
+        # Registered-path budget (MAX_REGISTERED_PATHS): once reached, every
+        # further discovered candidate is discarded before any pool-build or
+        # RPC work so registration load cannot grow the engine's path universe
+        # past the bound. The gate sits here rather than on the dedup set size
+        # because path_count counts only paths that actually registered.
+        if MAX_REGISTERED_PATHS and self.path_count >= MAX_REGISTERED_PATHS:
+            self.skip_count += 1
+            self.cap_skip_count += 1
+            self._record_skip("path-cap")
+            if self.cap_skip_count == 1:
+                bot_logger.info(
+                    f"[build_paths] Path cap reached ({MAX_REGISTERED_PATHS} "
+                    "registered) — discarding further candidates until restart"
+                )
+            return
 
         steps = list(path_steps)
         pool_type_strs: list[str] = []

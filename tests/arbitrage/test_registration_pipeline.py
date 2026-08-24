@@ -329,3 +329,60 @@ def test_consume_offloads_pool_build_off_the_event_loop_thread() -> None:
     assert build_thread[0] != loop_thread[0], (
         "pool build ran on the asyncio loop thread; offload did not happen"
     )
+
+
+def test_path_cap_discards_candidates_without_build_work() -> None:
+    """Once path_count reaches MAX_REGISTERED_PATHS, _consume must discard
+    every further candidate BEFORE pool-build/registration work (the budget
+    exists to bound engine memory, so capped items must be nearly free) and
+    must count them as cap skips.
+
+    RED phase: no gate existed — build/register ran for every item.
+    GREEN: only the first two items do work; the third is discarded.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from degenbot.database.models.pools import UniswapV2PoolTableBase
+    from degenbot.runner.build_paths import MAX_REGISTERED_PATHS
+    from degenbot.runner.build_paths import PathRegistrationPipeline
+
+    work_calls: list[int] = []
+    registered_paths: list[object] = []
+
+    class FakeBot:
+        def build_pool(self, address: str, *, silent: bool = False, **kwargs: object):
+            work_calls.append(1)
+            return SimpleNamespace(address=address)
+
+    class FakeRegistry:
+        def register_v2_pool(self, pool: object) -> int:
+            return 1
+
+        def register_path(self, path: object) -> None:
+            registered_paths.append(path)
+            return None
+
+    ctx = SimpleNamespace(
+        bot=FakeBot(),
+        uniswap_v3_tracker=None,
+        sushiswap_v3_tracker=None,
+        pancakeswap_v3_tracker=None,
+        db=None,
+        chain_id=1,
+        weth=SimpleNamespace(address="0x" + "0" * 40),
+    )
+    pipe = PathRegistrationPipeline(
+        context=ctx,  # type: ignore[arg-type]
+        engine_registry=FakeRegistry(),  # type: ignore[arg-type]
+    )
+
+    # Simulate a full registry without doing real work.
+    pipe.path_count = MAX_REGISTERED_PATHS
+
+    step = SimpleNamespace(type=UniswapV2PoolTableBase, address="0x" + "2" * 40)
+    asyncio.run(pipe._consume([step], directions=[True]))
+
+    assert not work_calls, "capped candidate must not reach pool-build work"
+    assert not registered_paths, "capped candidate must not register"
+    assert pipe.cap_skip_count == 1, "the discard must be counted as a cap skip"
