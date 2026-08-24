@@ -558,6 +558,35 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
     Some(lo)
 }
 
+/// Chain-saturation corner of a single-piece path (F1 guard): the first hop's
+/// range edge — the path input at which the upstream hop exhausts its range.
+/// The first hop's input equals the path input, so its range edge is the sharp
+/// kink the unclamped smooth anchor can overshoot: `P(x) = O(x) − x` turns
+/// down past it, so the profit peak can sit right at the edge where an
+/// anchor-±2 probe already lands in the negative post-cliff region. The
+/// single-piece analogue of the ≤4-wei `piece_window_right_edge` (which is
+/// `None` when a hop has a single range). Returns `None` when no hop has a
+/// bounded range (pure constant product / unbounded), so callers fall back to
+/// the anchor.
+fn single_piece_saturation_edge(hops: &[WalkHop]) -> Option<U256> {
+    // Chain-saturation input of a single-piece path: the first hop's range
+    // edge. The first hop's input equals the path input, so its range edge
+    // is the sharp kink the unclamped anchor can overshoot (past it the
+    // upstream hop stops adding output and `P(x) = O(x) − x` turns down).
+    // Downstream hops drain at ≥ this path input (their input is the
+    // upstream output, which grows ≤ the path input), so the first hop's edge
+    // is the chain's saturation corner. A constant-product first hop has no
+    // range edge (unbounded) → the anchor is the reference instead.
+    for hop in hops {
+        if let WalkHop::Cl { crossings, .. } = hop {
+            if let Some(c) = crossings.first() {
+                return Some(c.ending_range.max_gross_input_in_range());
+            }
+        }
+    }
+    None
+}
+
 /// Maximum width the refine ternary settles to before the final probe grid.
 /// `P(x)` per piece is concave with a shallow peak for liquid pools, so a
 /// ~10⁶-wei bracket already contains a profit-optimal input; the caller pins
@@ -831,6 +860,31 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
             }
         }
         if single_piece_path {
+            // F1 corner guard (adversarial review): the exact unclamped smooth
+            // anchor can overshoot this piece's saturation corner (the
+            // chain-saturation input), where a sharp kink holds the true max —
+            // the `anchor ± 2` probe above is then in the negative post-cliff
+            // region and records nothing. Refine the terminal window (lo=0)
+            // with hi floored at the piece's saturation edge, so the corner is
+            // always bracketed; interior single-piece peaks (anchor inside the
+            // range) are a strict superset search and stay correct. Bounded
+            // (multi-piece) paths are untouched.
+            let sat = single_piece_saturation_edge(hops);
+            // The saturation corner (the kink) is a flat-plateau peak a
+            // ternary/grid refine can land short of, and it is the true max
+            // exactly when the anchor overshoots it — so probe it (and the wei
+            // just below, where the peak may sit) directly. Covers anchor =
+            // 0/MAX (the corner is the floor). Pure-CP (no corner) → skip.
+            if let Some(e) = sat {
+                if e > U256::ZERO {
+                    rec.eval_and_record(e, hops);
+                    rec.eval_and_record(e - U256::from(1), hops);
+                }
+            }
+            let hi = sat.map_or(anchor.max(U256::from(1024)), |e| e.max(anchor));
+            if hi > U256::ZERO {
+                walk_refine_window(hops, U256::ZERO, hi, &mut rec);
+            }
             break;
         }
 
@@ -3896,6 +3950,53 @@ mod tests {
         assert!(
             any_nonzero,
             "sweep produced no output — simulate inputs invalid?"
+        );
+    }
+
+    /// F1 (adversarial review): a single-piece CL path whose **exact
+    /// unclamped smooth argmax overshoots the piece's saturation cliff**. The
+    /// discrete profit peaks at the chain-saturation corner (a sharp kink), not
+    /// at the anchor. The old single-piece fast path probed only `anchor ± 2`
+    /// then `break`d without refining the terminal window, so it recorded
+    /// nothing and returned `None` — a silent under-shoot (skipped
+    /// arbitrage) that only manifests when the anchor overshoots the corner
+    /// (here by ~1.3e11 wei).
+    ///
+    /// Guard: for single-piece paths the landed profit must never fall below
+    /// the real profit at the saturation corner. The cell encodes the
+    /// regression: the smooth anchor (~3.24e11) overshoots x_sat (~1.93e11),
+    /// so an anchor-±2-only search is deep in the (negative) post-cliff region.
+    #[test]
+    fn single_piece_saturation_kink_is_not_missed() {
+        let (seq1, seq2) = (
+            multi_range_sequence(750, 4, true, &[1_000_000_000_000_000u128]),
+            multi_range_sequence(0, 1200, false, &[10_000_000_000_000u128]),
+        );
+        let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
+        // Chain-saturation corner: the max path input in the upstream (hop0,
+        // zfo) range — past it, hop0 stops adding output and profit falls.
+        let x_sat = seq1.ranges[0].max_gross_input_in_range();
+        let sat = simulate_walk_path(x_sat, &hops);
+        let corner_profit = sat.final_output.checked_sub(x_sat).unwrap_or(U256::ZERO);
+        assert!(
+            corner_profit > U256::ZERO,
+            "oracle sanity: the saturation corner must be profitable in this cell"
+        );
+        // Cell sanity: this is an F1 cell only because the smooth anchor
+        // overshoots the corner (the regression precondition).
+        let anchor = walk_piece_anchor(&hops, &[0usize, 0]);
+        assert!(
+            anchor > x_sat,
+            "cell sanity: requires anchor > x_sat (got anchor={anchor}, x_sat={x_sat})"
+        );
+        let Some((x, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]) else {
+            panic!(
+                "F1 silent under-shoot: solver=None while the saturation corner x={x_sat} is worth {corner_profit} (anchor={anchor}); the single-piece terminal refine must bracket the corner"
+            );
+        };
+        assert!(
+            profit >= corner_profit,
+            "solver profit {profit} < saturation-corner profit {corner_profit} (x*={x}, x_sat={x_sat})"
         );
     }
 }
