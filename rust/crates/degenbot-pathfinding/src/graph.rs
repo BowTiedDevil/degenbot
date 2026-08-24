@@ -601,16 +601,20 @@ impl OwnedPathFinder {
             .as_ref()
             .map(|filter| graph.compute_node_valid_depths(filter));
 
-        // Remap external start/end token IDs to compact indices.
+        // Remap external start/end token IDs to compact indices. If EITHER
+        // boundary token is absent from the (filtered) graph, no start->end path
+        // exists - yield nothing. `end` must NOT fall back to a synthetic index:
+        // remapping an absent end to compact index 0 made the DFS search for
+        // cycles ending at an unrelated token (compact 0), yielding non-closing
+        // paths that tripped the direction-resolution fail-stop.
         let start_idx = graph.compact_index(start);
-        let end_idx = graph.compact_index(end).unwrap_or(0);
+        let end_idx = graph.compact_index(end);
 
-        let stack = if let Some(s) = start_idx {
-            vec![(s, 0, false)]
-        } else {
-            Vec::new()
+        let (stack, done) = match (start_idx, end_idx) {
+            (Some(s), Some(_e)) => (vec![(s, 0, false)], false),
+            _ => (Vec::new(), true),
         };
-        let done = stack.is_empty();
+        let end_idx = end_idx.unwrap_or(0);
         let n_pools = graph.pools.len();
 
         // Precompute, per node, the pool indices of edges that reach `end`.
@@ -1023,14 +1027,15 @@ impl PathGraph {
         let filter_len = pool_type_per_depth.map_or(0, <[Option<Vec<PoolKind>>]>::len);
 
         let start_idx = self.compact_index(start);
-        let end_idx = self.compact_index(end).unwrap_or(0);
+        let end_idx = self.compact_index(end);
 
-        let stack = if let Some(s) = start_idx {
-            vec![(s, 0, false)]
-        } else {
-            Vec::new()
+        // Match OwnedPathFinder::new: a boundary token absent from the graph
+        // must yield NO paths (no `end` fallback to a synthetic index 0).
+        let (stack, done) = match (start_idx, end_idx) {
+            (Some(s), Some(_e)) => (vec![(s, 0, false)], false),
+            _ => (Vec::new(), true),
         };
-        let done = stack.is_empty();
+        let end_idx = end_idx.unwrap_or(0);
 
         PathFinder {
             graph: self,
@@ -1227,6 +1232,36 @@ mod tests {
             forward.len() * 2,
             "include_reverse should double the output count"
         );
+    }
+
+    #[test]
+    fn test_absent_end_token_yields_no_paths() {
+        // A boundary token that is NOT a node in the (filtered) graph - e.g. a
+        // NATIVE/0x0 token with no connecting pool among the candidate edges -
+        // must yield NO paths. Regression: the old
+        // `compact_index(end).unwrap_or(0)` silently remapped an absent end to
+        // compact index 0, so a "WETH -> <absent-token>" search actually ran as
+        // a "<index-0> -> ..." search and emitted non-closing cycles that
+        // tripped the direction-resolution fail-stop on the live bot.
+        let graph = build_fixture_graph();
+        // start present, end absent -> no paths.
+        let paths = graph.find_paths(WETH, 9999, 3, Some(3), true, None, None);
+        assert!(paths.is_empty(), "absent end token must yield no paths");
+        // start absent -> no paths.
+        let paths_start = graph.find_paths(9999, WETH, 3, Some(3), true, None, None);
+        assert!(
+            paths_start.is_empty(),
+            "absent start token must yield no paths"
+        );
+        // both absent -> no paths.
+        let paths_both = graph.find_paths(9999, 9998, 3, Some(3), true, None, None);
+        assert!(
+            paths_both.is_empty(),
+            "absent start+end must yield no paths"
+        );
+        // Sanity: a present end still yields its cycles.
+        let ok = graph.find_paths(WETH, WETH, 3, Some(3), false, None, None);
+        assert!(!ok.is_empty(), "present end (WETH) must still yield cycles");
     }
 
     #[test]
