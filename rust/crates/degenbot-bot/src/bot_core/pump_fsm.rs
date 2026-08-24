@@ -59,16 +59,6 @@ pub enum PumpDecision {
     /// fresh but no log arrived in the window). The driver emits one diagnostic
     /// warning per silence episode, then re-arms on the next log.
     LogSilence,
-    /// WS-delivery completeness cross-check (DFQYM5 / WS-DROP): a block has
-    /// been tombstoned (confirmed fully delivered); the FSM hands the tracked
-    /// delivered relevant log-index set to the driver, which fetches
-    /// `eth_getLogs` and aborts on any on-chain log the websocket missed. The
-    /// FSM owns *when* to verify (only a complete block); the abort is the
-    /// executor's consequence of the authoritative mismatch.
-    VerifyCompleteness {
-        block: u64,
-        delivered_log_indices: HashSet<u64>,
-    },
 }
 
 impl PumpDecision {
@@ -77,6 +67,29 @@ impl PumpDecision {
     pub fn stops(&self) -> bool {
         matches!(self, PumpDecision::Stop)
     }
+}
+
+/// The verdict of the WS-delivery completeness rule at a tombstone
+/// (DFQYM5 / WS-DROP). The FSM owns the whole accountability policy: whether
+/// the live websocket is even answerable for the tombstoned block. The
+/// driver only executes the `Verify` arm (fetch `eth_getLogs`, abort on any
+/// on-chain relevant log the websocket missed) and ignores `BackfillOwned`.
+#[derive(Debug)]
+pub enum CompletenessDecision {
+    /// The single-writer rule owns this block: it lies at or below the
+    /// recovery anchor (`record_backfill`), so an authoritative catch-up —
+    /// not the live websocket — delivered its logs. WS delivery is not
+    /// accountable; any tracked set is stale residue and is consumed to
+    /// bound the tracking map. Verifying here would false-abort on every
+    /// post-catch-up tombstone (an empty delivered set is EXPECTED, not a
+    /// drop).
+    BackfillOwned,
+    /// A live-WS-owned complete block: the driver cross-checks the tracked
+    /// delivered set against `eth_getLogs` and aborts on a real drop.
+    Verify {
+        block: u64,
+        delivered_log_indices: HashSet<u64>,
+    },
 }
 
 /// The pure, stateful decision machine for the block pump. Owns every rule
@@ -358,18 +371,27 @@ impl PumpFSM {
         decisions
     }
 
-    /// The WS-completeness verdict decision (DFQYM5 / WS-DROP) at a block's
-    /// tombstone. The FSM owns the rule — only a just-confirmed-complete block
-    /// (`prev`, tombstoned by the first log of N+1) is verified, and only when
-    /// it was actually tracked (a block with no delivered relevant logs has
-    /// nothing to cross-check; the authoritative side is also empty). Hands the
-    /// tracked delivered log-index set to the driver, which runs the `eth_getLogs`
-    /// cross-check and aborts on a live-websocket log drop.
+    /// The WS-completeness verdict (DFQYM5 / WS-DROP) at a block's tombstone.
+    /// The FSM owns the full accountability policy, deriving BOTH arms from
+    /// the same single-writer rule that governs recovered-forward dedup:
+    ///
+    /// - Blocks at/below `recovery_anchor` were owned by an authoritative
+    ///   `eth_getLogs` catch-up; the live websocket is NOT their delivery
+    ///   authority, so the cross-check is vacuous → [`CompletenessDecision::BackfillOwned`].
+    /// - Any other just-confirmed-complete block is verified against the
+    ///   tracked delivered set → [`CompletenessDecision::Verify`].
     #[must_use]
-    pub fn completeness_decision(&mut self, prev: u64) -> PumpDecision {
-        PumpDecision::VerifyCompleteness {
-            block: prev,
-            delivered_log_indices: self.ws_delivered.remove(&prev).unwrap_or_default(),
+    pub fn completeness_decision(&mut self, prev: u64) -> CompletenessDecision {
+        // Consume any tracked set in both arms: the map must stay bounded
+        // regardless of the verdict.
+        let delivered = self.ws_delivered.remove(&prev).unwrap_or_default();
+        if self.recovery_anchor > 0 && prev <= self.recovery_anchor {
+            CompletenessDecision::BackfillOwned
+        } else {
+            CompletenessDecision::Verify {
+                block: prev,
+                delivered_log_indices: delivered,
+            }
         }
     }
 
@@ -539,12 +561,12 @@ mod tests {
 
         // Tombstone → the FSM passes the delivered set to the driver and
         // clears the tracking map (one-shot: a re-verify yields empty).
-        let PumpDecision::VerifyCompleteness {
+        let CompletenessDecision::Verify {
             block,
             delivered_log_indices,
         } = fsm.completeness_decision(201)
         else {
-            unreachable!("completeness_decision must emit VerifyCompleteness");
+            unreachable!("completeness_decision must emit Verify");
         };
         assert_eq!(block, 201);
         assert_eq!(delivered_log_indices, HashSet::from([7, 8, 9]));
@@ -552,7 +574,7 @@ mod tests {
 
         // A block with no tracked relevant logs yields an empty set (the
         // authoritative side is empty too, so the cross-check is a no-op).
-        let PumpDecision::VerifyCompleteness {
+        let CompletenessDecision::Verify {
             delivered_log_indices,
             ..
         } = fsm.completeness_decision(202)
@@ -560,6 +582,47 @@ mod tests {
             unreachable!()
         };
         assert!(delivered_log_indices.is_empty());
+    }
+
+    #[test]
+    fn completeness_backfill_owned_block_is_not_ws_accountable() {
+        // Single-writer rule (DFQYM5/BQ7ZBC): a block <= recovery_anchor was
+        // owned by an authoritative eth_getLogs catch-up, so the live WS is
+        // NOT its delivery authority — the completeness cross-check is
+        // vacuous there (an empty delivered set is expected, not a drop).
+        // Regression guard for the false abort observed live: the inactivity
+        // watchdog backfilled [25821576..25821578], then the first WS log of
+        // 25821579 tombstoned 25821578 and the check compared 2 on-chain
+        // logs against an empty delivered set -> spurious process abort.
+        let mut fsm = PumpFSM::new(200, 0);
+        fsm.record_backfill(205);
+
+        // An owned block must yield BackfillOwned even if a racing WS log
+        // left a stale tracked set behind (cleared to bound the map).
+        fsm.ws_delivered.entry(204).or_default().insert(3);
+        assert!(matches!(
+            fsm.completeness_decision(204),
+            CompletenessDecision::BackfillOwned
+        ));
+        assert!(
+            !fsm.ws_delivered.contains_key(&204),
+            "stale tracked set consumed on the skip path too"
+        );
+
+        // A live-WS-owned block above the anchor still verifies.
+        fsm.ws_delivered.entry(206).or_default().extend([7, 8]);
+        match fsm.completeness_decision(206) {
+            CompletenessDecision::Verify {
+                block,
+                delivered_log_indices,
+            } => {
+                assert_eq!(block, 206);
+                assert_eq!(delivered_log_indices, HashSet::from([7, 8]));
+            }
+            CompletenessDecision::BackfillOwned => {
+                unreachable!("block above the anchor must verify")
+            }
+        }
     }
 
     #[test]

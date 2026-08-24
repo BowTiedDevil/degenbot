@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::bot_core::pump_fsm::{PumpDecision, PumpFSM};
+use crate::bot_core::pump_fsm::{CompletenessDecision, PumpDecision, PumpFSM};
 
 use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
@@ -1484,24 +1484,28 @@ impl BlockPump {
                             // the registration drain reads.
                             // LOUD WS-completeness check: block `prev` is now
                             // confirmed complete (tombstoned by the first log of
-                            // N+1); the FSM emits the VerifyCompleteness verdict
-                            // (the tracked delivered set); the driver cross-checks
-                            // vs `eth_getLogs` and aborts on a websocket drop.
+                            // N+1). The FSM owns the whole accountability policy
+                            // (single-writer ownership included): `Verify` means
+                            // the live WS is answerable for this block — fetch
+                            // `eth_getLogs` and abort on a real drop;
+                            // `BackfillOwned` means an authoritative catch-up
+                            // delivered it, so the cross-check is vacuous.
                             if ws_completeness_enabled {
-                                let PumpDecision::VerifyCompleteness {
-                                    block,
-                                    delivered_log_indices,
-                                } = fsm.completeness_decision(prev)
-                                else {
-                                    unreachable!(
-                                        "completeness_decision always emits VerifyCompleteness"
-                                    )
-                                };
-                                self.assert_ws_block_complete(block, delivered_log_indices)
-                                    .instrument(
-                                        block_span.clone().unwrap_or_else(tracing::Span::none),
-                                    )
-                                    .await;
+                                match fsm.completeness_decision(prev) {
+                                    CompletenessDecision::Verify {
+                                        block,
+                                        delivered_log_indices,
+                                    } => {
+                                        self.assert_ws_block_complete(block, delivered_log_indices)
+                                            .instrument(
+                                                block_span
+                                                    .clone()
+                                                    .unwrap_or_else(tracing::Span::none),
+                                            )
+                                            .await;
+                                    }
+                                    CompletenessDecision::BackfillOwned => {}
+                                }
                             }
                             let prev_meta = fsm
                                 .block_metadata_for(prev)
