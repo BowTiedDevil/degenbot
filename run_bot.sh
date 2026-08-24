@@ -25,15 +25,16 @@ mkdir -p "$LOGDIR"
 #   DEGENBOT_DUMP_CALL_TRACE     (full revm call trace on sim failure)
 #   DEGENBOT_V2_CALC_TRACE       (V2 reserves slot8 before each sim)
 #   DEGENBOT_SIM_LOG_REVERTED_SWAPS (per-hop actual-vs-predicted on revert)
-#   DEGENBOT_SIM_EXIT_ON_FAIL=1  (stop on first sim failure) + IGNORE_BUCKETS
-#     default "" (empty allowlist = trap on EVERY bucket, sys.exit(3))
+#   DEGENBOT_SIM_EXIT_ON_FAIL  (stop on first sim failure) - see below: this
+#     script DEFAULTS it to 0; failing sims are identified via OTel traces.
 #   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-
 #     check; NEW default-ON since B4GX7C, so a live WS log drop aborts loudly)
 # Per-target/high-noise (still OFF): DEGENBOT_DRAIN_DBG, DEGENBOT_TRACE_REGISTER_SEED
 #
-# To run a long-lived soak that trades through thin-margin/no-profit reverts
-# (the routine arb-filter outcome), override the fail-fast:
-#   DEGENBOT_SIM_EXIT_ON_FAIL=0 ./run_bot.sh
+# Sim-failure policy: this script DEFAULTS DEGENBOT_SIM_EXIT_ON_FAIL=0 (keep
+# running through thin-margin/no-profit reverts - the routine arb-filter
+# outcome). Failing simulations are identified from OTel traces/metrics going
+# forward, not by killing the bot. Override to 1 to restore the old fail-fast.
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
@@ -61,6 +62,7 @@ DEFAULT_RUST_LOG="info,degenbot_bot=debug,degenbot_arbitrage=debug,degenbot_simu
 export RUST_LOG="${RUST_LOG:-$DEFAULT_RUST_LOG}"
 export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-1}"
 export DEGENBOT_OTEL="${DEGENBOT_OTEL:-1}"
+export DEGENBOT_SIM_EXIT_ON_FAIL="${DEGENBOT_SIM_EXIT_ON_FAIL:-0}"
 
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).
