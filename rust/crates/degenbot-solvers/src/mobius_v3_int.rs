@@ -553,18 +553,35 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
     Some(lo)
 }
 
-/// Maximize profit over the piece window `[lo, hi]` by ternary search to a
-/// ≤64-wide bracket, then a dense sweep of the bracket.
+/// Maximum width the refine ternary settles to before the final probe grid.
+/// `P(x)` per piece is concave with a shallow peak for liquid pools, so a
+/// ~10⁶-wei bracket already contains a profit-optimal input; the caller pins
+/// `hi` to the ≤4-wei right edge in the bounded (range-saturation) case, so
+/// the grid always captures a corner max exactly. Measured to keep the
+/// returned profit within ε of the exact-wei optimum (see the profit-ε gate
+/// + the corner-profit test).
+const REFINE_BRACKET_WEI: u64 = 1_000_000;
+/// Points probed across the final bracket (endpoints + interior) when the
+/// bracket is wide. Concavity ⇒ the argmax sits in `[l, r]`; the grid (both
+/// endpoints included) catches a flat interior top or an edge/corner max.
+const REFINE_GRID_POINTS: u64 = 33;
+/// Final-bracket width (wei) at/below which the refine sweeps to the wei
+/// instead of using the coarse grid — narrow brackets (small ranges) may peak
+/// sharply in the interior, so exactness there is worth the (≤1025) probes.
+const REFINE_DENSE_SPAN: u64 = 1024;
+
+/// Maximize profit over the piece window `[lo, hi]`: ternary to a coarse
+/// bracket, then a probe grid over that bracket (or a wei-precise sweep for
+/// narrow brackets).
 ///
-/// Returns `(piece_argmax_x, piece_best_score)` — the direction test needs
-/// the argmax LOCATION: an argmax hugging the window's right edge (within 4)
-/// means the profit is still climbing into the next piece.
+/// Returns `(piece_argmax_x, piece_best_score)` — the location is informational
+/// (candidates feed the shared [`WalkRecorder`], which owns the global argmax).
 ///
 /// `P(x)` is concave (the EVM floor staircase perturbs it at wei scale
-/// only), so ternary search converges to the discrete argmax neighborhood
-/// and the dense sweep picks the discrete maximizer — the same two-layer
-/// discipline as `exact_mobius_solve`'s closed form + ±2 sweep, generalized
-/// to windows.
+/// only), so ternary converges to the argmax neighborhood; the grid/sweep
+/// picks the maximizer. This is a **profit-ε** search (not exact-wei): the
+/// flat interior top makes the coarse grid profit-equivalent, and the bounded
+/// corner is captured because `hi` is the pinned right edge.
 fn walk_refine_window(
     hops: &[WalkHop],
     lo: U256,
@@ -575,6 +592,7 @@ fn walk_refine_window(
     let mut argmax_x = lo;
     let mut best_score = I256::MIN;
     let mut probe = |x: U256, hops: &[WalkHop], rec: &mut WalkRecorder| -> I256 {
+        WALK_REFINE_SIMS.with(|c| c.set(c.get() + 1));
         let o = rec.eval_and_record(x, hops);
         let s = walk_profit_score(o.final_output, x);
         if s > best_score {
@@ -585,7 +603,7 @@ fn walk_refine_window(
     };
     let mut l = lo;
     let mut r = hi;
-    while r.saturating_sub(l) > U256::from(64u64) {
+    while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
         let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
         let m1 = l + third;
         let m2 = r - third;
@@ -597,14 +615,27 @@ fn walk_refine_window(
             r = m2.saturating_sub(U256::from(1u64));
         }
     }
-    // Dense sweep of the final bracket (≤65 points).
-    let mut x = l;
-    loop {
-        probe(x, hops, rec);
-        if x >= r {
-            break;
+    let span = r.saturating_sub(l);
+    if span <= U256::from(REFINE_DENSE_SPAN) {
+        // Narrow bracket → wei-precise sweep (cheap + exact for sharp peaks).
+        let mut x = l;
+        loop {
+            probe(x, hops, rec);
+            if x >= r {
+                break;
+            }
+            x += U256::from(1u64);
         }
-        x += U256::from(1u64);
+    } else {
+        // Wide bracket → coarse probe grid (endpoints + interior). Concavity ⇒
+        // argmax in [l, r]; endpoints l (left) and r (the pinned right edge in
+        // the bounded case) are both probed, so an interior flat top or a
+        // range-saturation corner is both captured at profit-ε.
+        let n = REFINE_GRID_POINTS;
+        for i in 0..n {
+            let x = l + (span * U256::from(i)) / U256::from(n - 1);
+            probe(x, hops, rec);
+        }
     }
     (argmax_x, best_score)
 }
@@ -626,6 +657,9 @@ thread_local! {
     //'s word-boundary walk — the per-simulation cost driver for dense
     // (many-word-boundary) CL ranges. `sims × per-sim steps` is the real cost.
     pub(crate) static WALK_WORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // Stop-time refinement (`walk_refine_window` ternary + dense sweep) sim
+    // count — the measurement split for the 64-wei refinement-resolution cost.
+    pub(crate) static WALK_REFINE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Reset the walk counters on the calling thread. The rayon solve calls this at
@@ -635,6 +669,7 @@ pub fn reset_walk_stats() {
     WALK_PIECES_VISITED.with(|c| c.set(0));
     WALK_PATH_SIMULATIONS.with(|c| c.set(0));
     WALK_WORD_STEPS.with(|c| c.set(0));
+    WALK_REFINE_SIMS.with(|c| c.set(0));
 }
 
 /// Read-and-clear the walk counters on the calling thread and return
@@ -644,6 +679,12 @@ pub fn take_last_walk_stats() -> (usize, usize) {
     let s = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
     reset_walk_stats();
     (p, s)
+}
+
+/// Read (without clearing) the stop-time refinement sim count accumulated on
+/// the calling thread since the last `reset_walk_stats`.
+pub fn last_refine_sims() -> usize {
+    WALK_REFINE_SIMS.with(|c| c.get())
 }
 
 /// Read-and-clear the word-boundary step counter (see `WALK_WORD_STEPS`).

@@ -17,9 +17,15 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::mobius_v3_int::{
-    int_solve_cl_path, reset_walk_stats, take_last_walk_stats, take_last_word_boundary_steps,
+    int_solve_cl_path, last_refine_sims, reset_walk_stats, take_last_walk_stats,
+    take_last_word_boundary_steps,
 };
 use serde_json::Value;
+
+/// Max acceptable profit under-shoot (wei) of the exact-wei golden for the
+/// coarsened search to count as OK — mirrors the solver's "never under-shoot
+/// the fine-grid oracle" contract at a diagnostic epsilon.
+const PROFIT_EPS: u128 = 100_000;
 
 fn u256(s: &str) -> Result<U256, String> {
     s.trim().parse::<U256>().map_err(|e| e.to_string())
@@ -166,6 +172,7 @@ fn main() {
             }
         }
         let wsteps = take_last_word_boundary_steps();
+        let refine = last_refine_sims();
         let (pieces, sims) = take_last_walk_stats();
         if !consistent {
             eprintln!("path {pid}: NON-DETERMINISTIC across {iters} runs — active-set walk order-dependent?");
@@ -202,21 +209,49 @@ fn main() {
                         .get("optimal_input")
                         .and_then(Value::as_str)
                         .unwrap_or("");
-                    if opt.to_string() != go {
-                        eprintln!("path {pid}: optimal_input replay={} golden={go}", opt);
-                        ok = false;
-                    }
-                    let gh: Option<Vec<String>> = golden
+                    let gh: Vec<String> = golden
                         .get("hop_outputs")
                         .and_then(Value::as_array)
                         .map(|a| {
                             a.iter()
                                 .filter_map(|x| x.as_str().map(String::from))
                                 .collect::<Vec<String>>()
-                        });
-                    let rh: Vec<String> = ho.iter().map(|o| o.to_string()).collect();
-                    if gh.as_ref().map(|v| v.as_slice()) != Some(rh.as_slice()) {
-                        eprintln!("path {pid}: hop_outputs mismatch");
+                        })
+                        .unwrap_or_default();
+                    let go_in: U256 = go.parse().unwrap_or(U256::ZERO);
+                    let go_out = gh
+                        .last()
+                        .cloned()
+                        .and_then(|s: String| s.parse().ok())
+                        .unwrap_or(U256::ZERO);
+                    let golden_profit = go_out.saturating_sub(go_in);
+                    let replay_profit = ho
+                        .last()
+                        .copied()
+                        .unwrap_or(U256::ZERO)
+                        .saturating_sub(*opt);
+                    // The solver's contract (cl_path_solver_matches_fine_grid_oracle)
+                    // is to never under-shoot the optimum. The under-shoot vs the
+                    // exact-wei golden is the gate for the coarsened search.
+                    let under = golden_profit.saturating_sub(replay_profit);
+                    let in_delta = if *opt >= go_in {
+                        opt - go_in
+                    } else {
+                        go_in - opt
+                    };
+                    eprintln!(
+                        "path {pid}: input_delta={in_delta} wei  under_shoot={under} wei (vs exact-wei golden)",
+                    );
+                    if opt.to_string() != go {
+                        eprintln!(
+                            "path {pid}: optimal_input replay={} golden={go} (informational; gate = under-shoot <= {PROFIT_EPS})",
+                            opt,
+                        );
+                    }
+                    if under > U256::from(PROFIT_EPS) {
+                        eprintln!(
+                            "path {pid}: under_shoot {under} wei > PROFIT_EPS {PROFIT_EPS} — search lost profit to the exact optimum"
+                        );
                         ok = false;
                     }
                 }
@@ -250,7 +285,7 @@ fn main() {
             .map(|r| r.word_boundary_prices.len())
             .sum();
         println!(
-            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} pieces={pieces} wsteps={wsteps}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
+            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} refine={refine} pieces={pieces} wsteps={wsteps}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
             if ok { "OK" } else { "MISMATCH" }
         );
         n_paths += 1;
