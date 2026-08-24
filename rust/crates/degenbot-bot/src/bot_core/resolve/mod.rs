@@ -31,7 +31,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
-use degenbot_solvers::mobius_v3_int::ClWordProfileCache;
 
 use super::BotState;
 
@@ -153,7 +152,6 @@ pub(crate) fn resolve_hops(
     pool_refs: &[MixedPoolRef],
     resolved: &mut ResolvedMixedPath,
     cache: &mut HopProjectionCache,
-    word_profile_cache: &mut HashMap<u64, ClWordProfileCache>,
     mut projection_count: Option<&mut u64>,
 ) -> Option<MissingHopReason> {
     resolved.hops.clear();
@@ -193,14 +191,8 @@ pub(crate) fn resolve_hops(
             }
             let projected = match pool_ref.hop_type {
                 HopType::V2 => v2::project_v2(core, pool_ref),
-                HopType::V3 => {
-                    let pc = word_profile_cache.entry(pool_ref.pool_key).or_default();
-                    cl::project_v3(core, pool_ref, pc)
-                }
-                HopType::V4 => {
-                    let pc = word_profile_cache.entry(pool_ref.pool_key).or_default();
-                    cl::project_v4(core, pool_ref, pc)
-                }
+                HopType::V3 => cl::project_v3(core, pool_ref),
+                HopType::V4 => cl::project_v4(core, pool_ref),
                 HopType::SolidlyStable => solidly::project_solidly(core, pool_ref),
                 HopType::BalancerWeighted => {
                     balancer_weighted::project_balancer_weighted(core, pool_ref)
@@ -305,24 +297,23 @@ mod tests {
         }
     }
 
-    /// Stage-1 word-profile cache invariant: a liquidity event on one pool
+    /// Hop-projection memoization invariant: a liquidity event on one pool
     /// re-projects (rebuilds the profile for) ONLY that pool; every sibling
     /// pool's cached profile `Arc` is reused untouched. The nonce comparison is
     /// the invalidation, so nothing outside the modified pool is invalidated.
     #[test]
-    fn word_profile_cache_invalidates_only_modified_pool() {
+    fn memoization_reprojects_only_the_modified_pool() {
         let mut core = BotState::new();
         let p = register_v3(&mut core, [0xa1u8; 20]);
         let q = register_v3(&mut core, [0xb2u8; 20]);
         let refs = [ref_v3(p), ref_v3(q)];
         let mut cache = HopProjectionCache::new();
-        let mut pwc = HashMap::new();
 
         // 1) First resolve: both pools project (their profile Arcs are built + cached).
         let mut r1 = ResolvedMixedPath::default();
         let mut pc = 0u64;
         assert!(
-            resolve_hops(&core, &refs, &mut r1, &mut cache, &mut pwc, Some(&mut pc)).is_none(),
+            resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc)).is_none(),
             "both pools project"
         );
         assert_eq!(pc, 2, "first resolve projects both pools");
@@ -333,9 +324,7 @@ mod tests {
         // both profile Arcs are the same allocations (reused, not rebuilt).
         let mut r2 = ResolvedMixedPath::default();
         let mut pc2 = 0u64;
-        assert!(
-            resolve_hops(&core, &refs, &mut r2, &mut cache, &mut pwc, Some(&mut pc2)).is_none()
-        );
+        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2)).is_none());
         assert_eq!(pc2, 0, "unchanged pools are cache hits (no re-projection)");
         assert_eq!(
             profile_ptr(&cache, &(HopType::V3, p, true)),
@@ -369,9 +358,7 @@ mod tests {
         // P's profile Arc is a fresh allocation; Q's is the SAME allocation.
         let mut r3 = ResolvedMixedPath::default();
         let mut pc3 = 0u64;
-        assert!(
-            resolve_hops(&core, &refs, &mut r3, &mut cache, &mut pwc, Some(&mut pc3)).is_none()
-        );
+        assert!(resolve_hops(&core, &refs, &mut r3, &mut cache, Some(&mut pc3)).is_none());
         assert_eq!(pc3, 1, "only the minted pool re-projects; Q is a cache hit");
         assert_ne!(
             profile_ptr(&cache, &(HopType::V3, p, true)),

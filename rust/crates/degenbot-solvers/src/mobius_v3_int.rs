@@ -254,7 +254,7 @@ enum WalkHop<'a> {
         /// (dense ranges only; `None` keeps those on the linear walk). Parallel to
         /// `crossings`. `Arc`-backed so the projection's precomputed profile (on
         /// the [`crate::mixed::ResolvedHop`]) is shared - not re-cloned - across
-        /// every path reusing the hop (Stage-1 word-profile cache).
+        /// every path reusing the hop (the hop-projection memoization).
         profiles: Arc<Vec<Option<Arc<V3WordProfile>>>>,
     },
 }
@@ -909,8 +909,8 @@ const WORD_PROFILE_THRESHOLD: usize = 128;
 /// range re-walks the same word-boundary prefix on nearly every one of a path's
 /// ~`sims` evaluations, so we precompute its forward profile once; a light range
 /// stays `None` (linear walk, zero build overhead). Each dense range's profile is
-/// `Arc`-backed so it is shared - not re-cloned - across every path / `prepare`
-/// that reuses it (word-profile cache).
+/// `Arc`-backed so it is shared - not re-cloned - across every path that reuses
+/// it (the hop-projection memoization).
 fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3WordProfile>>> {
     crossings
         .iter()
@@ -924,99 +924,6 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3W
         .collect()
 }
 
-/// Lossless content key for a dense `ending_range`'s precomputed profile.
-/// `V3WordProfile::build` is a pure function of exactly the hop's fields, so a
-/// cached profile is reusable iff this key (all profile-input fields, lossless
-/// decimal encoding) matches bit-for-bit. A Mint/Burn on tick band
-/// `[tkLo, tkHi)` changes only the in-band ranges' `liquidity`, so it changes
-/// only those ranges' keys - every other band reuses its cached profile.
-fn word_profile_key(hop: &IntV3TickRangeHop) -> String {
-    const SEP: char = '\u{1f}';
-    let mut s = String::new();
-    s.push_str(&hop.liquidity.to_string());
-    s.push(SEP);
-    s.push_str(&hop.sqrt_price_x96.to_string());
-    s.push(SEP);
-    s.push_str(&hop.sqrt_price_lower_x96.to_string());
-    s.push(SEP);
-    s.push_str(&hop.sqrt_price_upper_x96.to_string());
-    s.push(SEP);
-    s.push_str(&hop.gamma_numer.to_string());
-    s.push(SEP);
-    s.push_str(&hop.fee_denom.to_string());
-    s.push(SEP);
-    s.push_str(&hop.zero_for_one.to_string());
-    s.push(SEP);
-    s.push_str(&hop.word_boundary_prices.len().to_string());
-    s.push(SEP);
-    for p in &hop.word_boundary_prices {
-        s.push_str(&p.to_string());
-        s.push(SEP);
-    }
-    s
-}
-
-/// A per-pool, content-keyed cache of dense range word-boundary profiles.
-/// A liquidity update re-projects the pool, but only the ranges whose content
-/// changed miss [`Self::prepare`] and rebuild; the rest reuse their cached `Arc`
-/// (see [`word_profile_key`]). The `builds` / `reuses` counters expose how much
-/// work a re-projection actually did - the detector for the over-invalidation we
-/// are guarding against (needless recomputation of untouched bands).
-///
-/// The map is bounded: a pool's range-content churn is unbounded over time, so
-/// once it exceeds [`Self::MAX_ENTRIES`] the whole table is dropped. Correctness
-/// never depends on a cached entry (a miss just rebuilds), so clearing is safe -
-/// it merely loses reuse.
-/// Coarse bound on distinct cached range contents per pool. Dropping the table
-/// on overflow is always correct (a miss rebuilds); it merely loses reuse.
-const CL_PROFILE_CACHE_MAX_ENTRIES: usize = 8192;
-
-#[derive(Default)]
-pub struct ClWordProfileCache {
-    map: std::collections::HashMap<String, Arc<V3WordProfile>>,
-    /// Total dense-range profiles BUILT (cache misses) across all `prepare` calls.
-    pub builds: u64,
-    /// Total profile reuses (cache hits) across all `prepare` calls.
-    pub reuses: u64,
-}
-
-impl ClWordProfileCache {
-    /// Build a profile table parallel to `seq.ranges`, reusing already-built
-    /// profiles whose content key is unchanged and building only the ranges a
-    /// liquidity update touched. This is what keeps a Mint/Burn on tick band
-    /// `[tkLo, tkHi)` from rebuilding every other band's profile in the pool.
-    #[must_use]
-    pub fn prepare(&mut self, seq: &IntV3TickRangeSequence) -> Vec<Option<Arc<V3WordProfile>>> {
-        build_crossing_table(seq)
-            .into_iter()
-            .map(|c| {
-                if c.ending_range.word_boundary_prices.len() < WORD_PROFILE_THRESHOLD {
-                    return None;
-                }
-                let key = word_profile_key(&c.ending_range);
-                match self.map.get(&key) {
-                    Some(arc) => {
-                        self.reuses += 1;
-                        Some(Arc::clone(arc))
-                    }
-                    None => match V3WordProfile::build(&c.ending_range) {
-                        Some(p) => {
-                            if self.map.len() > CL_PROFILE_CACHE_MAX_ENTRIES {
-                                self.map.clear();
-                            }
-                            let arc = Arc::new(p);
-                            self.map.insert(key, Arc::clone(&arc));
-                            self.builds += 1;
-                            Some(arc)
-                        }
-                        None => None,
-                    },
-                }
-            })
-            .collect()
-    }
-}
-
 /// Cache-less dense-range profiles for a CL sequence (offline replays and the
 /// direct `int_solve_cl_path` path, which build per call). Result is parallel to
 /// `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`).
@@ -1027,8 +934,8 @@ pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> Vec<Option<Arc<V3
 
 /// Build a `WalkHop::Cl` (crossing table + word-boundary profiles) for one CL
 /// sequence - the single place a CL walk hop is assembled. `profiles` is a
-/// precomputed profile table from the projection (word-profile cache), cloned
-/// from its `Arc` in O(1); `None` builds one for dense ranges here.
+/// precomputed profile table from the projection (Arc-shared through the hop
+/// memoization), cloned in O(1); `None` builds one for dense ranges here.
 fn cl_walk_hop<'a>(
     seq: &'a IntV3TickRangeSequence,
     profiles: Option<&Arc<Vec<Option<Arc<V3WordProfile>>>>>,
@@ -1576,168 +1483,6 @@ mod tests {
             zero_for_one: zfo,
             word_boundary_prices: Vec::new(),
         }
-    }
-
-    // ===== Word-profile cache: per-range (content-keyed) invalidation =====
-    // A Mint/Burn on tick band [tkLo, tkHi) changes only the in-band ranges'
-    // active liquidity; content-keyed per-range caching must reuse every other
-    // band's profile Arc (not recompute it) -> no over-invalidation.
-
-    /// A CL `ending_range` band `[bot_tick, top_tick]` with `n_word` interior
-    /// word boundaries (140 >= WORD_PROFILE_THRESHOLD -> profiled; 0 -> light,
-    /// stays on the linear walk). zfo walk runs top -> boundaries -> bottom.
-    fn band(top_tick: i32, bot_tick: i32, liquidity: u128, n_word: usize) -> IntV3TickRangeHop {
-        let top = U256::from(get_sqrt_ratio_at_tick_internal(top_tick).unwrap());
-        let bot = U256::from(get_sqrt_ratio_at_tick_internal(bot_tick).unwrap());
-        let span = top - bot;
-        let mut wb = Vec::with_capacity(n_word);
-        for j in 1..=n_word {
-            wb.push(top - span * U256::from(j as u64) / U256::from(n_word as u64 + 1));
-        }
-        IntV3TickRangeHop {
-            liquidity,
-            sqrt_price_x96: top,
-            sqrt_price_lower_x96: bot,
-            sqrt_price_upper_x96: top,
-            gamma_numer: 997_000,
-            fee_denom: 1_000_000,
-            zero_for_one: true,
-            word_boundary_prices: wb,
-        }
-    }
-
-    /// A 3-range zfo CL sequence (bands [60,120], [0,60], [-60,0]) with distinct
-    /// per-band liquidity, so each band gets its own dense profile.
-    fn three_dense_sequence(l0: u128, l1: u128, l2: u128) -> IntV3TickRangeSequence {
-        IntV3TickRangeSequence::new(vec![
-            band(120, 60, l0, 140),
-            band(60, 0, l1, 140),
-            band(0, -60, l2, 140),
-        ])
-        .expect("3 dense-band sequence is well-formed")
-    }
-
-    fn assert_same_profile(a: &Arc<V3WordProfile>, b: &Arc<V3WordProfile>) {
-        assert_eq!(**a, **b, "profile contents differ (stale cache value?)");
-    }
-
-    /// A Mint/Burn on one band invalidates ONLY that band's cached profile:
-    /// unchanged bands reuse their exact `Arc` allocation (not recomputed), only
-    /// the minted band rebuilds, and every delivered profile is byte-identical to
-    /// a fresh (rebuild-all) build. The "no over-invalidation" invariant.
-    #[test]
-    fn cl_word_profile_cache_only_invalidates_affected_range() {
-        let seq0 = three_dense_sequence(1_000_000, 2_000_000, 3_000_000);
-        let mut cache = ClWordProfileCache::default();
-        let t0 = cache.prepare(&seq0);
-        assert_eq!(cache.builds, 3, "first prepare builds all 3 dense profiles");
-        assert_eq!(cache.reuses, 0);
-        assert!(
-            t0.iter().all(Option::is_some),
-            "all 3 bands dense (profiled)"
-        );
-
-        // Mint on the MIDDLE band only.
-        let mut seq1 = seq0.clone();
-        seq1.ranges[1].liquidity += 5_000_000;
-
-        let t1 = cache.prepare(&seq1);
-        assert_eq!(cache.builds, 4, "only the minted mid band rebuilt");
-        assert_eq!(cache.reuses, 2, "top + bottom bands reused");
-
-        // Unchanged bands: the SAME allocation (reused, not recomputed).
-        assert!(
-            Arc::ptr_eq(t0[0].as_ref().unwrap(), t1[0].as_ref().unwrap()),
-            "top band profile Arc reused (not recomputed)"
-        );
-        assert!(
-            Arc::ptr_eq(t0[2].as_ref().unwrap(), t1[2].as_ref().unwrap()),
-            "bottom band profile Arc reused (not recomputed)"
-        );
-        // Minted band: a NEW allocation.
-        assert!(
-            !Arc::ptr_eq(t0[1].as_ref().unwrap(), t1[1].as_ref().unwrap()),
-            "minted band profile Arc is a fresh allocation"
-        );
-
-        // Byte-correctness: delivered (mixed) table == a fresh rebuild-all.
-        let fresh = build_cl_word_profiles(&seq1);
-        assert_same_profile(t1[0].as_ref().unwrap(), fresh[0].as_ref().unwrap());
-        assert_same_profile(t1[1].as_ref().unwrap(), fresh[1].as_ref().unwrap());
-        assert_same_profile(t1[2].as_ref().unwrap(), fresh[2].as_ref().unwrap());
-    }
-
-    /// A subsequent walk on the mixed (reused + rebuilt) table produces the same
-    /// result as a fresh (rebuild-all) walk: the walk consumed the cached values
-    /// for the untouched bands and the updated (rebuilt) value for the minted
-    /// band. A following mint on the same band re-updates only that one band.
-    #[test]
-    fn cl_word_profile_walk_reuses_cached_and_updates_invalidated() {
-        let a0 = three_dense_sequence(1_000_000, 2_000_000, 3_000_000);
-        // A distinct second pool for the walk's 2nd hop.
-        let b = three_dense_sequence(11_000_000, 12_000_000, 13_000_000);
-        let mut cache_a = ClWordProfileCache::default();
-        let mut cache_b = ClWordProfileCache::default();
-        let _ = cache_a.prepare(&a0);
-        let _ = cache_b.prepare(&b);
-
-        // Mint on pool A's mid band, then a second (further) mint on the same band.
-        let mut a1 = a0.clone();
-        a1.ranges[1].liquidity += 5_000_000;
-        let _ta1 = cache_a.prepare(&a1);
-        assert_eq!(cache_a.builds, 4, "only A's minted mid band rebuilt");
-        assert_eq!(cache_a.reuses, 2, "A's top + bottom reused");
-
-        let mut a2 = a1.clone();
-        a2.ranges[1].liquidity += 25;
-        let ta2 = cache_a.prepare(&a2);
-        assert_eq!(
-            cache_a.builds, 5,
-            "second mint re-updates only A's mid band"
-        );
-        assert_eq!(
-            cache_a.reuses, 4,
-            "A's top + bottom reused on every re-projection"
-        );
-
-        // Subsequent 2-hop walk on the mixed table (A: reused+rebuilt, B: reused)
-        // matches a fresh (rebuild-all) walk.
-        let fresh = int_solve_cl_path(&[&a2, &b]);
-        let ta2a = Arc::new(ta2);
-        let tb = Arc::new(cache_b.prepare(&b));
-        let cached = int_solve_cl_path_with_profiles(&[&a2, &b], &[&ta2a, &tb]);
-        assert_eq!(
-            cached, fresh,
-            "walk used the cached values and matched a fresh build"
-        );
-    }
-
-    /// A Mint/Burn on a band below `WORD_PROFILE_THRESHOLD` is never profiled, so
-    /// it triggers no profile build (no needless computation); the dense band's
-    /// profile is simply reused.
-    #[test]
-    fn cl_word_profile_light_range_never_builds_a_profile() {
-        let seq0 = IntV3TickRangeSequence::new(vec![
-            band(120, 60, 1_000_000, 140), // dense -> profiled
-            band(60, 0, 2_000_000, 0),     // light -> linear walk, no profile
-        ])
-        .expect("dense + light sequence");
-        let mut cache = ClWordProfileCache::default();
-        let t0 = cache.prepare(&seq0);
-        assert_eq!(cache.builds, 1, "only the dense band is profiled");
-        assert!(t0[0].is_some());
-        assert!(t0[1].is_none(), "light band stays on the linear walk");
-
-        let mut seq1 = seq0.clone();
-        seq1.ranges[1].liquidity += 7; // in-band mint on the light band
-        let t1 = cache.prepare(&seq1);
-        assert_eq!(cache.builds, 1, "minting a light band builds no profile");
-        assert_eq!(cache.reuses, 1, "dense band reused");
-        assert!(t1[1].is_none(), "light band is still not profiled");
-        assert!(
-            Arc::ptr_eq(t0[0].as_ref().unwrap(), t1[0].as_ref().unwrap()),
-            "dense band profile Arc reused"
-        );
     }
 
     #[test]

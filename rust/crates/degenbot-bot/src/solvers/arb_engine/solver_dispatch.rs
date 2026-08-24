@@ -503,7 +503,6 @@ impl ArbitrageEngine {
                     &path.pools,
                     &mut resolved,
                     &mut self.hop_projection_cache,
-                    &mut self.word_profile_cache,
                     Some(&mut self.hop_projection_count),
                 ) {
                     *invalid_reasons.entry(reason.to_string()).or_insert(0u64) += 1;

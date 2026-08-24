@@ -1291,8 +1291,8 @@ fn v3_pool_sparse_crossing_byte_exact() {
 /// distance-aware (clamped to `WALK_CEILING`, not a short 24-step cap), so a
 /// wide low-spacing pool DOES cross 128 (spacing=1 -> ~3.4k) - the reason real
 /// pools stay light is the tick-span ceiling, not the walk. Pins why the dense
-/// `ClWordProfileCache` path (the content-keyed Stage-2 refinement) is dormant
-/// for production V3 pools, while remaining exercisable on a synthetic pool.
+/// word-profile optimization is dormant for production V3 pools (the tick-span
+/// ceiling keeps ranges light), while remaining exercisable on a synthetic pool.
 #[test]
 fn v3_word_profile_dense_threshold_vs_fee_tiers() {
     let fee = 3000u32;

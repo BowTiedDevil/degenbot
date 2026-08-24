@@ -1976,7 +1976,6 @@ mod tests {
                     &path.pools,
                     &mut resolved,
                     &mut engine.hop_projection_cache,
-                    &mut engine.word_profile_cache,
                     None,
                 );
                 engine.path_resolved.insert(path_id, resolved);

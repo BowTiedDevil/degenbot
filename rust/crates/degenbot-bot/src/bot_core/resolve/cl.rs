@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
-use degenbot_solvers::mobius_v3_int::ClWordProfileCache;
+use degenbot_solvers::mobius_v3_int::build_cl_word_profiles;
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -21,7 +21,6 @@ use crate::solvers::arb_engine::PoolTickCoverage;
 pub(crate) fn project_v3(
     core: &BotState,
     pool_ref: &MixedPoolRef,
-    profile_cache: &mut ClWordProfileCache,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
         .get_v3_pool(pool_ref.pool_key)
@@ -63,7 +62,7 @@ pub(crate) fn project_v3(
              miss - the solver cannot price a landing past the last modeled range)"
         );
     }
-    let word_profiles = profile_cache.prepare(&int_seq);
+    let word_profiles = build_cl_word_profiles(&int_seq);
     Ok((
         ResolvedHop::V3 {
             int_seq,
@@ -79,7 +78,6 @@ pub(crate) fn project_v3(
 pub(crate) fn project_v4(
     core: &BotState,
     pool_ref: &MixedPoolRef,
-    profile_cache: &mut ClWordProfileCache,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
         .get_v4_pool(pool_ref.pool_key)
@@ -117,7 +115,7 @@ pub(crate) fn project_v4(
              miss - the solver cannot price a landing past the last modeled range)"
         );
     }
-    let word_profiles = profile_cache.prepare(&int_seq);
+    let word_profiles = build_cl_word_profiles(&int_seq);
     Ok((
         ResolvedHop::V4 {
             int_seq,
@@ -140,16 +138,14 @@ mod tests {
     use crate::solvers::arb_engine::PoolTickCoverage;
     use alloy::primitives::{Address, I256, U128, U256};
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
-    use degenbot_solvers::mobius_v3_int::ClWordProfileCache;
 
-    /// Projection with a throwaway per-pool profile cache. Tests here don't need
-    /// cross-call reuse (the per-range reuse property lives in the solvers cache
-    /// tests); these are just the valid per-pool-cache stand-in.
+    /// Projection stand-in for tests: the word-profile table is built fresh per
+    /// call (`build_cl_word_profiles`, no cross-call reuse).
     fn proj3(core: &BotState, r: &MixedPoolRef) -> Result<(ResolvedHop, u64), MissingHopReason> {
-        project_v3(core, r, &mut ClWordProfileCache::default())
+        project_v3(core, r)
     }
     fn proj4(core: &BotState, r: &MixedPoolRef) -> Result<(ResolvedHop, u64), MissingHopReason> {
-        project_v4(core, r, &mut ClWordProfileCache::default())
+        project_v4(core, r)
     }
 
     // -----------------------------------------------------------------
