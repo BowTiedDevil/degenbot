@@ -76,7 +76,11 @@ fn solve_path_gated(
         None => GATE_UNSUPPORTED.with(|c| c.set(c.get() + 1)),
         Some(bound) => {
             GATE_EVALUATED.with(|c| c.set(c.get() + 1));
-            if bound < min_profit {
+            // `<=`: a path whose rigorous max profit cannot STRICTLY exceed the
+            // floor is unexecutable at that floor (dispatch discards zero-profit
+            // results downstream), so skipping is outcome-identical and saves
+            // the walk.
+            if bound <= min_profit {
                 GATE_SKIPPED.with(|c| c.set(c.get() + 1));
                 return None;
             }
@@ -1366,16 +1370,25 @@ mod gate_tests {
     }
 
     #[test]
-    fn gate_zero_floor_never_skips_v2_only_path() {
-        // V2-only paths are exactly Möbius-solvable; their envelope is tight
-        // around the true curve, so floor 0 must never discard them.
-        let p = profitable_path();
-        let ungated = solve_path_inner(&p);
-        let gated = solve_path_gated(&p, U256::ZERO, true);
-        assert_eq!(gated, ungated);
+    fn gate_zero_floor_skips_provably_unprofitable_path() {
+        // Identical V2 pools both ways: fees guarantee the round trip can
+        // never net positive, so the envelope bound must be ZERO and the
+        // path must be skipped even at floor 0.
+        let p = ResolvedMixedPath {
+            hops: vec![v2_hop(1_000_000, 1_000_000), v2_hop(1_000_000, 1_000_000)],
+            valid: true,
+            state_nonces: vec![1, 2],
+            max_update_block: 0,
+        };
+        let _ = take_last_gate_stats();
+        let r = solve_path_gated(&p, U256::ZERO, true);
+        assert!(
+            r.is_none(),
+            "fee-dominated round trip must be skipped at floor 0"
+        );
         let stats = take_last_gate_stats();
+        assert_eq!(stats.skipped, 1);
         assert_eq!(stats.evaluated, 1);
-        assert_eq!(stats.skipped, 0);
     }
 
     #[test]
