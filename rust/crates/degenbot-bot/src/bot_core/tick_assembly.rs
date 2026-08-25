@@ -180,6 +180,15 @@ pub(crate) fn dump_tick_map_seed(
     }
 }
 
+/// Assemble a V3 pool's tick map with `Db → Chain` precedence.
+///
+/// Tries the DB snapshot arm first; if absent, falls back to RPC bootstrap.
+///
+/// # Errors
+///
+/// Propagates the DB fetch error from the snapshot arm, or the
+/// [`TickBootstrapRpc`] bootstrap
+/// error when the chain arm is exercised.
 pub fn assemble_v3_tick_map(
     db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     address: Address,

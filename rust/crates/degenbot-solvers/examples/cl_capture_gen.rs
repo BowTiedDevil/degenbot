@@ -1,21 +1,36 @@
+// Dev/example-only harness: an offline capture generator run by hand against live RPC.
+// Pedantic + restriction lints that production code denies are relaxed here.
+#![allow(
+    clippy::doc_lazy_continuation,
+    clippy::expect_used,
+    clippy::if_same_then_else,
+    clippy::manual_let_else,
+    clippy::no_effect_underscore_binding,
+    clippy::print_stderr,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    clippy::unwrap_used
+)]
+
 //! Offline generator for the all-CL capture fixture.
 //!
 //! For a curated set of REAL, liquid UNI V3 pools (heavy tick maps,
-//! tick_spacing 1/5/10) at a pinned block, fetches on-chain slot0/liquidity,
-//! backfills the tick map via a giant bidirectional v3_simulate_swap (the
+//! `tick_spacing` 1/5/10) at a pinned block, fetches on-chain slot0/liquidity,
+//! backfills the tick map via a giant bidirectional `v3_simulate_swap` (the
 //! production sparse-backfill pattern, pull real tick words from the archive
-//! node), builds each pool's IntV3TickRangeSequence via the same
-//! build_int_v3_sequence the bot uses, forms valid 2-hop all-CL paths by
-//! shared token, runs int_solve_cl_path on each, and writes (input sequences
-//! + golden) to a JSONL consumed by cl_solve_replay. Deterministic,
+//! node), builds each pool's `IntV3TickRangeSequence` via the same
+//! `build_int_v3_sequence` the bot uses, forms valid 2-hop all-CL paths by
+//! shared token, runs `int_solve_cl_path` on each, and writes (input sequences
+//! + golden) to a JSONL consumed by `cl_solve_replay`. Deterministic,
 //! network-gated source of real heavy-CL data, no full bot soak.
 //!
-//!   DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545/ //!   DEGENBOT_CLCAP_BLOCK=25826800 //!   cargo run -p degenbot-solvers --example cl_capture_gen
-//!   cargo run -p degenbot-solvers --example cl_solve_replay <capture.jsonl>
+//!   `DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545`/ //!   `DEGENBOT_CLCAP_BLOCK=25826800` //!   cargo run -p degenbot-solvers --example `cl_capture_gen`
+//!   cargo run -p degenbot-solvers --example `cl_solve_replay` <capture.jsonl>
 //!
 //! A `.block` sidecar is written next to the output recording the pinned block
 //! + regen command so the offline fixture is reproducible. Raise
-//! DEGENBOT_CLCAP_MAX_FETCHES (default 320) to backfill a denser active set.
+//! `DEGENBOT_CLCAP_MAX_FETCHES` (default 320) to backfill a denser active set.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -148,7 +163,7 @@ fn hop_ranges(s: &IntV3TickRangeSequence) -> Value {
         "sqrt_price_upper_x96": r.sqrt_price_upper_x96.to_string(),
         "gamma_numer": r.gamma_numer, "fee_denom": r.fee_denom,
         "zero_for_one": r.zero_for_one,
-        "word_boundary_prices": r.word_boundary_prices.iter().map(|w| w.to_string()).collect::<Vec<_>>(),
+        "word_boundary_prices": r.word_boundary_prices.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
     })).collect::<Vec<_>>();
     Value::Array(ranges)
 }
@@ -158,12 +173,11 @@ fn main() -> ExitCode {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(MAX_FETCHES);
-    let rpc = match std::env::var("DEGENBOT_CLCAP_RPC") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("DEGENBOT_CLCAP_RPC unset (network-gated). Aborting.");
-            return ExitCode::FAILURE;
-        }
+    let rpc = if let Ok(v) = std::env::var("DEGENBOT_CLCAP_RPC") {
+        v
+    } else {
+        eprintln!("DEGENBOT_CLCAP_RPC unset (network-gated). Aborting.");
+        return ExitCode::FAILURE;
     };
     let block = std::env::var("DEGENBOT_CLCAP_BLOCK")
         .ok()
@@ -272,9 +286,9 @@ fn main() -> ExitCode {
     let mut file = std::fs::File::create(&out).expect("create capture file");
     let mut n_paths = 0usize;
     let mut n_profitable = 0usize;
-    'outer: for (ia, sa) in seqs.iter() {
+    'outer: for (ia, sa) in &seqs {
         let (a_t0, a_t1) = (addr(POOLS[*ia].3), addr(POOLS[*ia].4));
-        for (ib, sb) in seqs.iter() {
+        for (ib, sb) in &seqs {
             if ia == ib {
                 continue;
             }
@@ -305,7 +319,7 @@ fn main() -> ExitCode {
             let res = int_solve_cl_path(&[sa, sb]);
             let micros = t0.elapsed().as_micros();
             let (pieces, sims) = take_last_walk_stats();
-            let profitable = matches!(&res, Some(_));
+            let profitable = res.is_some();
             n_paths += 1;
             if profitable {
                 n_profitable += 1;
@@ -314,7 +328,7 @@ fn main() -> ExitCode {
                 None => Value::Null,
                 Some((opt, _profit, hop_outputs)) => json!({
                     "optimal_input": opt.to_string(),
-                    "hop_outputs": hop_outputs.iter().map(|o| o.to_string()).collect::<Vec<_>>(),
+                    "hop_outputs": hop_outputs.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
                     "n_hops": hop_outputs.len() }),
             };
             let na = sa.ranges.len();
@@ -336,7 +350,7 @@ fn main() -> ExitCode {
                 "hops": [hop_ranges(sa), hop_ranges(sb)],
                 "pools": [POOLS[*ia].0, POOLS[*ib].0],
             });
-            writeln!(file, "{}", line.to_string()).expect("write line");
+            writeln!(file, "{}", line).expect("write line");
             eprintln!("path {} [{}x{}] ranges=({},{}) t={micros}us sims={sims} pieces={pieces} profitable={profitable}",
                 ia * 100 + ib, POOLS[*ia].0, POOLS[*ib].0, na, nb);
             if n_paths >= PATH_CAP {

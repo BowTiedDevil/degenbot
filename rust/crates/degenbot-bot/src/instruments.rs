@@ -21,7 +21,7 @@ use opentelemetry::KeyValue;
 
 /// Latency histogram bucket boundaries, in SECONDS (the instruments' unit).
 ///
-/// The OTel SDK default explicit buckets for f64 histograms are seconds-scale
+/// The `OTel` SDK default explicit buckets for f64 histograms are seconds-scale
 /// (`[0, 5, 10, 25, ...]`), so millisecond-scale drain-path operations (solve
 /// ~670 ms, header→solved ~620 ms, sim ~4.5 ms) collapse entirely into the
 /// first `le=5` bucket — Grafana then interpolates every quantile inside that
@@ -476,7 +476,7 @@ mod kind_tests {
 
     /// Acceptance: latency histograms carry MILLISECOND-scale explicit
     /// boundaries, so a ~0.67 s solve actually separates across buckets.
-    /// With the OTel SDK default seconds buckets (le=5, 10, 25, ...) every
+    /// With the `OTel` SDK default seconds buckets (le=5, 10, 25, ...) every
     /// drain-path observation collapses into a single le=5 bucket and
     /// Grafana interpolates flat, meaningless p50/p95 lines. This guards
     /// that regression: if the boundaries are dropped, le="0.5" / le="1"
@@ -493,7 +493,7 @@ mod kind_tests {
         // the 5s-first default bucket set).
         for le in ["0.001", "0.5", "1", "0.01"] {
             assert!(
-                text.contains(&format!("le=\"{}\"", le)),
+                text.contains(&format!("le=\"{le}\"")),
                 "latency histogram missing millisecond bucket le={le} (default coarse buckets in use?):\n{text}"
             );
         }

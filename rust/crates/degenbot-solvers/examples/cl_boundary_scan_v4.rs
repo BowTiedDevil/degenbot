@@ -1,8 +1,23 @@
+// Dev/example-only harness: a throwaway V4 boundary-scanning tool for offline analysis.
+// Pedantic + restriction lints that production code denies are relaxed here.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::expect_used,
+    clippy::format_push_string,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::print_stderr,
+    clippy::print_stdout,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::unwrap_used
+)]
+
 //! Offline word-boundary DENSITY scan for the bot's real V4 heavy-solve pools:
-//! build the live V4PoolState via the V4 StateView + tick bootstrap, backfill,
+//! build the live `V4PoolState` via the V4 `StateView` + tick bootstrap, backfill,
 //! build the 24-range integer sequence, report max word-boundary count per
 //! range + whether any range is "dense" (>= 128). Shares the exact mechanism
-//! with V3 (IntV3TickRangeSequence / compute_tick_ranges / 128 threshold).
+//! with V3 (`IntV3TickRangeSequence` / `compute_tick_ranges` / 128 threshold).
 use std::collections::HashMap;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -75,12 +90,11 @@ impl TickWordFetcher for BF {
 }
 
 fn main() -> ExitCode {
-    let rpc = match std::env::var("DEGENBOT_CLCAP_RPC") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("DEGENBOT_CLCAP_RPC unset. Aborting.");
-            return ExitCode::FAILURE;
-        }
+    let rpc = if let Ok(v) = std::env::var("DEGENBOT_CLCAP_RPC") {
+        v
+    } else {
+        eprintln!("DEGENBOT_CLCAP_RPC unset. Aborting.");
+        return ExitCode::FAILURE;
     };
     let list_path = std::env::args()
         .nth(1)
@@ -121,7 +135,7 @@ fn main() -> ExitCode {
                     )),
                     Err(e) => {
                         eprintln!("v4 slot0 fail {pid:?}: {e:?}");
-                        out.push((U256::ZERO, I256::ZERO, 0, 10, 0))
+                        out.push((U256::ZERO, I256::ZERO, 0, 10, 0));
                     }
                 }
             }
@@ -200,32 +214,29 @@ fn main() -> ExitCode {
                 Err(_) => break,
             }
         }
-        match state.build_int_v4_sequence(*spacing, fee, false, MAX_RANGE) {
-            Some(seq) => {
-                let per_range: Vec<usize> = seq
-                    .ranges
-                    .iter()
-                    .map(|r| r.word_boundary_prices.len())
-                    .collect();
-                let maxw = *per_range.iter().max().unwrap_or(&0);
-                max_wb_all = max_wb_all.max(maxw);
-                let dense = maxw >= DENSE;
-                if dense {
-                    dense_count += 1;
-                }
-                let total_bnd: usize = per_range.iter().sum();
-                let nr = seq.ranges.len();
-                let trunc = seq.truncated;
-                let tag = if dense { "DENSE" } else { "" };
-                println!("{i:>4} sp={spacing:>4} fee={fee:>6} pid=0x{} nbnd_max={maxw:>4} nbnd_total={total_bnd:>4} n_ranges={nr:>2} fetches={fetches} trunc={trunc} {tag}", hex(&pool_id[..8]));
+        if let Some(seq) = state.build_int_v4_sequence(*spacing, fee, false, MAX_RANGE) {
+            let per_range: Vec<usize> = seq
+                .ranges
+                .iter()
+                .map(|r| r.word_boundary_prices.len())
+                .collect();
+            let maxw = *per_range.iter().max().unwrap_or(&0);
+            max_wb_all = max_wb_all.max(maxw);
+            let dense = maxw >= DENSE;
+            if dense {
+                dense_count += 1;
             }
-            None => {
-                let tag = "seq=None";
-                println!(
-                    "{i:>4} sp={spacing:>4} fee={fee:>6} pid=0x{} fetches={fetches} {tag}",
-                    hex(&pool_id[..8])
-                );
-            }
+            let total_bnd: usize = per_range.iter().sum();
+            let nr = seq.ranges.len();
+            let trunc = seq.truncated;
+            let tag = if dense { "DENSE" } else { "" };
+            println!("{i:>4} sp={spacing:>4} fee={fee:>6} pid=0x{} nbnd_max={maxw:>4} nbnd_total={total_bnd:>4} n_ranges={nr:>2} fetches={fetches} trunc={trunc} {tag}", hex(&pool_id[..8]));
+        } else {
+            let tag = "seq=None";
+            println!(
+                "{i:>4} sp={spacing:>4} fee={fee:>6} pid=0x{} fetches={fetches} {tag}",
+                hex(&pool_id[..8])
+            );
         }
     }
     println!(

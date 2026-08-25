@@ -843,45 +843,15 @@ impl V3PoolState {
         }
 
         for (i, r) in use_ranges.iter().enumerate() {
-            let sqrt_price_x96 = if i == 0 {
-                if has_leading_current_segment {
-                    // leading hop already starts at current; this first computed
-                    // range enters at sqrt(currentTick)
-                    U256::from(
-                        get_sqrt_ratio_at_tick_internal(self.tick)
-                            .unwrap_or(alloy::primitives::U160::ZERO),
-                    )
-                } else {
-                    self.sqrt_price_x96
-                }
-            } else if zero_for_one {
-                use_ranges[i - 1].sqrt_price_upper
-            } else {
-                use_ranges[i - 1].sqrt_price_lower
-            };
-
-            let range_liquidity = if i == 0 {
-                if base_liquidity < 0 {
-                    0
-                } else {
-                    base_liquidity.cast_unsigned()
-                }
-            } else {
-                let mut l = base_liquidity;
-                for prev_range in &use_ranges[..i] {
-                    let net = prev_range.liquidity_net;
-                    if zero_for_one {
-                        l -= net;
-                    } else {
-                        l += net;
-                    }
-                }
-                if l.is_negative() {
-                    0u128
-                } else {
-                    l.cast_unsigned()
-                }
-            };
+            let sqrt_price_x96 = int_range_entry_sqrt_price(
+                i,
+                has_leading_current_segment,
+                zero_for_one,
+                self.sqrt_price_x96,
+                self.tick,
+                use_ranges,
+            );
+            let range_liquidity = int_range_liquidity(i, base_liquidity, zero_for_one, use_ranges);
 
             int_ranges.push(IntV3TickRangeHop {
                 liquidity: range_liquidity,
@@ -913,7 +883,7 @@ impl V3PoolState {
         // modeled range's swap-direction boundary (a liquidity change the
         // max_ranges cap dropped). Budget-independent: it reads tick_data
         // directly, so it holds even when the walk didn't reach the far side.
-        let truncated = use_ranges.last().map_or(false, |last| {
+        let truncated = use_ranges.last().is_some_and(|last| {
             let far = if zero_for_one {
                 last.tick_lower
             } else {
@@ -929,6 +899,73 @@ impl V3PoolState {
                 seq
             })
             .ok()
+    }
+}
+
+/// Entry sqrt price for computed range `i` of an integer V3 walk.
+///
+/// Range 0 enters at sqrt(currentTick) when a leading current-tick segment
+/// was modeled (the leading hop already covers [current, sqrt(currentTick)]);
+/// otherwise it enters at the pool's current sqrt price. Later ranges enter
+/// at the previous range's swap-direction boundary.
+fn int_range_entry_sqrt_price(
+    i: usize,
+    has_leading_current_segment: bool,
+    zero_for_one: bool,
+    current_sqrt_price_x96: U256,
+    current_tick: i32,
+    use_ranges: &[V3TickRangeForSolver],
+) -> U256 {
+    if i == 0 {
+        if has_leading_current_segment {
+            // leading hop already starts at current; this first computed
+            // range enters at sqrt(currentTick)
+            U256::from(
+                get_sqrt_ratio_at_tick_internal(current_tick)
+                    .unwrap_or(alloy::primitives::U160::ZERO),
+            )
+        } else {
+            current_sqrt_price_x96
+        }
+    } else if zero_for_one {
+        use_ranges[i - 1].sqrt_price_upper
+    } else {
+        use_ranges[i - 1].sqrt_price_lower
+    }
+}
+
+/// Stored-liquidity-adjusted liquidity of computed range `i`.
+///
+/// Range 0 carries the leading-segment-corrected base liquidity; each later
+/// range applies every prior range's boundary net in swap order, flooring
+/// negative results at zero.
+fn int_range_liquidity(
+    i: usize,
+    base_liquidity: i128,
+    zero_for_one: bool,
+    use_ranges: &[V3TickRangeForSolver],
+) -> u128 {
+    if i == 0 {
+        if base_liquidity < 0 {
+            0
+        } else {
+            base_liquidity.cast_unsigned()
+        }
+    } else {
+        let mut l = base_liquidity;
+        for prev_range in &use_ranges[..i] {
+            let net = prev_range.liquidity_net;
+            if zero_for_one {
+                l -= net;
+            } else {
+                l += net;
+            }
+        }
+        if l.is_negative() {
+            0u128
+        } else {
+            l.cast_unsigned()
+        }
     }
 }
 
@@ -2234,7 +2271,7 @@ mod tests {
         assert_eq!(seq.expect("built").ranges.len(), 1);
     }
 
-    /// Max_range=24 truncation must be OBSERVABLE, not silent (ergo EIIIZW):
+    /// `Max_range=24` truncation must be OBSERVABLE, not silent (ergo EIIIZW):
     /// a 40-initialized-tick active set (zfo) exceeds the cap -> the sequence
     /// must report `truncated`; a 3-tick set must not. This is the signal that
     /// lets us measure whether the live 24-range cap is dropping a real

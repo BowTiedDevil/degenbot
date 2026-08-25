@@ -269,7 +269,7 @@ pub(crate) fn resolve_hops(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used)]
+    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use std::collections::HashMap;
     use std::sync::Arc;

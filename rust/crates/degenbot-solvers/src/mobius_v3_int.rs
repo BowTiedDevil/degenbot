@@ -572,9 +572,7 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
 /// has no bounded range (constant product / unbounded), so callers fall back
 /// to the anchor.
 fn single_piece_saturation_edge(hops: &[WalkHop]) -> Option<U256> {
-    let Some(hop) = hops.first() else {
-        return None;
-    };
+    let hop = hops.first()?;
     match hop {
         WalkHop::Cl { crossings, .. } => crossings
             .first()
@@ -751,6 +749,7 @@ pub fn take_last_walk_stats_full() -> WalkStats {
 
 /// Read-and-clear the walk counters on the calling thread and return
 /// `(pieces_visited, path_simulations)` accumulated since the last reset.
+#[must_use]
 pub fn take_last_walk_stats() -> (usize, usize) {
     let ws = take_last_walk_stats_full();
     (ws.pieces, ws.sims)
@@ -758,8 +757,9 @@ pub fn take_last_walk_stats() -> (usize, usize) {
 
 /// Read (without clearing) the stop-time refinement sim count accumulated on
 /// the calling thread since the last `reset_walk_stats`.
+#[must_use]
 pub fn last_refine_sims() -> usize {
-    WALK_REFINE_SIMS.with(|c| c.get())
+    WALK_REFINE_SIMS.with(std::cell::Cell::get)
 }
 
 /// Read-and-clear the word-boundary step counter (see `WALK_WORD_STEPS`).
@@ -1072,7 +1072,7 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3W
         let n = c.ending_range.word_boundary_prices.len();
         WALK_MAX_DENSE_WORDS.with(|m| {
             if n > m.get() {
-                m.set(n)
+                m.set(n);
             }
         });
         // Q3 telemetry (one-shot): the DB audit finds ~161 registered sparse
@@ -1083,7 +1083,7 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3W
         if n >= DENSE_OBSERVE_THRESHOLD
             && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
         {
-            eprintln!(
+            tracing::warn!(
                 "Q3-DENSE: a CL range reached {n} word boundaries (>= {DENSE_OBSERVE_THRESHOLD}); dense is load-bearing (KEEP) - harvest a real capture from one of the ~27 current-tick-in-gap pools"
             );
         }
@@ -1635,6 +1635,7 @@ fn u512_to_u256(v: U512) -> U256 {
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::print_stderr,
+    clippy::panic,
     clippy::similar_names
 )]
 mod tests {
@@ -4157,7 +4158,8 @@ mod tests {
     /// optimum agrees with the fine oracle's local slope. Replace with a real
     /// dense capture the moment the telemetry hook observes one.
     #[test]
-    #[ignore]
+    // Gated OFF CI — synthetic dense guard; run manually with --ignored.
+    #[ignore = "synthetic stopgap until a real dense capture replaces it (see doc comment)"]
     fn dense_edge_direction_guard_synthetic() {
         let mut seq0 = multi_range_sequence(750, 4, true, &[1_000_000_000_000_000u128]);
         {

@@ -32,6 +32,14 @@ use ::degenbot_solvers::mixed::{HopType, ResolvedMixedPath, SolvePathResult};
 /// (D63GSE intra-solve visibility).
 const SLOWEST_PATHS_K: usize = 5;
 
+/// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
+/// `path_sims`, `word_steps`, `refine_sims`, `path_id`) — lets the
+/// completion event name the walk-combinatorial cost driver of the slowest
+/// routes, not just wall time.
+type PathTimeRecord = (u128, u64, u64, u64, u64, u64);
+/// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
+type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
+
 impl ArbitrageEngine {
     /// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
     /// before it is committed). VAASFM decision: 1 wei — commit
@@ -630,9 +638,8 @@ impl ArbitrageEngine {
         // (time_us, pieces_visited, path_sims, pid) for the K-slowest
         // attribution — lets the completion event name the walk-combinatorial
         // cost driver of the slowest routes, not just their wall time.
-        let path_times: std::sync::Mutex<
-            std::collections::BinaryHeap<std::cmp::Reverse<(u128, u64, u64, u64, u64, u64)>>,
-        > = std::sync::Mutex::new(std::collections::BinaryHeap::new());
+        let path_times: std::sync::Mutex<PathTimesHeap> =
+            std::sync::Mutex::new(std::collections::BinaryHeap::new());
         // Total CPU µs across all solved paths — dividing by the rayon wall
         // time yields achieved parallelism (8 workers ⇒ target ≈ 8.0).
         let solve_cpu_us: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -705,7 +712,7 @@ impl ArbitrageEngine {
                 if let Some(cap) = capture_ref {
                     cap.maybe_capture(
                         *pid,
-                        u64::try_from(solve_block).unwrap_or(0),
+                        solve_block,
                         u64::try_from(micros).unwrap_or(u64::MAX),
                         u64::try_from(sims).unwrap_or(0),
                         u64::try_from(pieces).unwrap_or(0),
@@ -865,6 +872,149 @@ impl Default for ArbitrageEngine {
     }
 }
 
+/// One-shot capture of the exact all-CL solver input for heavy paths, so the
+/// CL solver (`int_solve_cl_path` / active-set walk) can be optimized against
+/// real captured pool state offline, without a full bot run.
+///
+/// Gated by `DEGENBOT_SOLVER_CAPTURE=1` (`from_env` yields `None` otherwise).
+/// For each heavy all-CL path (the first `DEGENBOT_SOLVER_CAPTURE_CAP`, deduped
+/// by path id, heavy = `time_us >= MIN_US` or `sims >= MIN_SIMS`) it appends one
+/// JSON line to `DEGENBOT_SOLVER_CAPTURE_OUT` with the per-hop
+/// `IntV3TickRangeSequence` ranges, the measured (time, walk sims, pieces), and
+/// the golden result - so the offline replay harness asserts determinism.
+struct HeavyClPathCapture {
+    min_us: u64,
+    min_sims: u64,
+    max_captures: u64,
+    out_path: std::path::PathBuf,
+    seen: std::sync::Mutex<std::collections::HashSet<u64>>,
+    count: std::sync::atomic::AtomicU64,
+}
+
+impl HeavyClPathCapture {
+    fn from_env() -> Option<Self> {
+        std::env::var_os("DEGENBOT_SOLVER_CAPTURE")?;
+        Some(Self {
+            min_us: std::env::var("DEGENBOT_SOLVER_CAPTURE_MIN_US")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(50_000),
+            min_sims: std::env::var("DEGENBOT_SOLVER_CAPTURE_MIN_SIMS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2_000),
+            max_captures: std::env::var("DEGENBOT_SOLVER_CAPTURE_CAP")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(16),
+            out_path: std::env::var("DEGENBOT_SOLVER_CAPTURE_OUT").map_or_else(
+                |_| {
+                    // Default to the same canonical solver fixtures dir the offline
+                    // replay + CI read, resolved machine-independently from the bot
+                    // crate root (degenbot-bot/../degenbot-solvers/tests/fixtures/).
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl")
+                },
+                std::path::PathBuf::from,
+            ),
+            seen: std::sync::Mutex::new(std::collections::HashSet::new()),
+            count: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    /// Append the CL pool state for a resolved heavy path, if it is a heavy,
+    /// not-yet-captured all-CL path.
+    // The capture record is a flat diagnostic tuple; a params struct would
+    // obscure the field-for-field mapping to the JSONL schema.
+    #[expect(clippy::too_many_arguments)]
+    fn maybe_capture(
+        &self,
+        pid: u64,
+        block: u64,
+        micros_us: u64,
+        sims: u64,
+        pieces: u64,
+        golden: Option<&SolvePathResult>,
+        resolved: &ResolvedMixedPath,
+    ) {
+        if self.count.load(std::sync::atomic::Ordering::Relaxed) >= self.max_captures {
+            return;
+        }
+        if micros_us < self.min_us && sims < self.min_sims {
+            return;
+        }
+        // Must be a pure-CL path (every hop resolves to an int sequence, at
+        // least 2 hops) to replay `int_solve_cl_path` directly offline.
+        if resolved.hops.len() < 2 || !resolved.hops.iter().all(|h| h.as_int_sequence().is_some()) {
+            return;
+        }
+        let Ok(mut seen) = self.seen.lock() else {
+            return;
+        };
+        if !seen.insert(pid) {
+            return;
+        }
+        self.count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Per path hop -> its `IntV3TickRangeSequence.ranges`; each range as the
+        // 8 primitive fields (big ints as decimal strings, so no alloy serde).
+        let hops = resolved
+            .hops
+            .iter()
+            .filter_map(|h| {
+                // Every hop carries an int sequence (checked above), so this
+                // never drops an element — the `?` just satisfies the type
+                // checker without an `unwrap`.
+                Some(
+                    h.as_int_sequence()?
+                        .ranges
+                        .iter()
+                        .map(|r| {
+                            serde_json::json!({
+                                "liquidity": r.liquidity.to_string(),
+                                "sqrt_price_x96": r.sqrt_price_x96.to_string(),
+                                "sqrt_price_lower_x96": r.sqrt_price_lower_x96.to_string(),
+                                "sqrt_price_upper_x96": r.sqrt_price_upper_x96.to_string(),
+                                "gamma_numer": r.gamma_numer,
+                                "fee_denom": r.fee_denom,
+                                "zero_for_one": r.zero_for_one,
+                                "word_boundary_prices": r.word_boundary_prices
+                                    .iter()
+                                    .map(std::string::ToString::to_string)
+                                    .collect::<Vec<_>>(),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let golden_json = golden.map(|g| {
+            serde_json::json!({
+                "optimal_input": g.optimal_input.to_string(),
+                "profit": g.profit.to_string(),
+                "hop_outputs": g.hop_outputs.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
+            })
+        });
+        let doc = serde_json::json!({
+            "path_id": pid,
+            "block": block,
+            "n_hops": resolved.hops.len(),
+            "hops": hops,
+            "measured": { "time_us": micros_us, "sims": sims, "pieces": pieces },
+            "golden": golden_json,
+        });
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.out_path)
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "{doc}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod profit_clamp_recompute_tests {
     #![expect(clippy::expect_used)] // tests assert recompute invariants
@@ -953,143 +1103,5 @@ mod profit_clamp_recompute_tests {
     fn degenerate_path_returns_none() {
         let r = SolvePathResult::default();
         assert!(ArbitrageEngine::recompute_clamped_profit(&r).is_none());
-    }
-}
-
-/// One-shot capture of the exact all-CL solver input for heavy paths, so the
-/// CL solver (`int_solve_cl_path` / active-set walk) can be optimized against
-/// real captured pool state offline, without a full bot run.
-///
-/// Gated by `DEGENBOT_SOLVER_CAPTURE=1` (`from_env` yields `None` otherwise).
-/// For each heavy all-CL path (the first `DEGENBOT_SOLVER_CAPTURE_CAP`, deduped
-/// by path id, heavy = `time_us >= MIN_US` or `sims >= MIN_SIMS`) it appends one
-/// JSON line to `DEGENBOT_SOLVER_CAPTURE_OUT` with the per-hop
-/// `IntV3TickRangeSequence` ranges, the measured (time, walk sims, pieces), and
-/// the golden result - so the offline replay harness asserts determinism.
-struct HeavyClPathCapture {
-    min_us: u64,
-    min_sims: u64,
-    max_captures: u64,
-    out_path: std::path::PathBuf,
-    seen: std::sync::Mutex<std::collections::HashSet<u64>>,
-    count: std::sync::atomic::AtomicU64,
-}
-
-impl HeavyClPathCapture {
-    fn from_env() -> Option<Self> {
-        if std::env::var_os("DEGENBOT_SOLVER_CAPTURE").is_none() {
-            return None;
-        }
-        Some(Self {
-            min_us: std::env::var("DEGENBOT_SOLVER_CAPTURE_MIN_US")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(50_000),
-            min_sims: std::env::var("DEGENBOT_SOLVER_CAPTURE_MIN_SIMS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(2_000),
-            max_captures: std::env::var("DEGENBOT_SOLVER_CAPTURE_CAP")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(16),
-            out_path: std::env::var("DEGENBOT_SOLVER_CAPTURE_OUT")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    // Default to the same canonical solver fixtures dir the offline
-                    // replay + CI read, resolved machine-independently from the bot
-                    // crate root (degenbot-bot/../degenbot-solvers/tests/fixtures/).
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("../degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl")
-                }),
-            seen: std::sync::Mutex::new(std::collections::HashSet::new()),
-            count: std::sync::atomic::AtomicU64::new(0),
-        })
-    }
-
-    /// Append the CL pool state for a resolved heavy path, if it is a heavy,
-    /// not-yet-captured all-CL path.
-    fn maybe_capture(
-        &self,
-        pid: u64,
-        block: u64,
-        micros_us: u64,
-        sims: u64,
-        pieces: u64,
-        golden: Option<&SolvePathResult>,
-        resolved: &ResolvedMixedPath,
-    ) {
-        if self.count.load(std::sync::atomic::Ordering::Relaxed) >= self.max_captures {
-            return;
-        }
-        if micros_us < self.min_us && sims < self.min_sims {
-            return;
-        }
-        // Must be a pure-CL path (every hop resolves to an int sequence, at
-        // least 2 hops) to replay `int_solve_cl_path` directly offline.
-        if resolved.hops.len() < 2 || !resolved.hops.iter().all(|h| h.as_int_sequence().is_some()) {
-            return;
-        }
-        let mut seen = match self.seen.lock() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-        if !seen.insert(pid) {
-            return;
-        }
-        self.count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        // Per path hop -> its `IntV3TickRangeSequence.ranges`; each range as the
-        // 8 primitive fields (big ints as decimal strings, so no alloy serde).
-        let hops = resolved
-            .hops
-            .iter()
-            .map(|h| {
-                h.as_int_sequence()
-                    .unwrap()
-                    .ranges
-                    .iter()
-                    .map(|r| {
-                        serde_json::json!({
-                            "liquidity": r.liquidity.to_string(),
-                            "sqrt_price_x96": r.sqrt_price_x96.to_string(),
-                            "sqrt_price_lower_x96": r.sqrt_price_lower_x96.to_string(),
-                            "sqrt_price_upper_x96": r.sqrt_price_upper_x96.to_string(),
-                            "gamma_numer": r.gamma_numer,
-                            "fee_denom": r.fee_denom,
-                            "zero_for_one": r.zero_for_one,
-                            "word_boundary_prices": r.word_boundary_prices
-                                .iter()
-                                .map(|w| w.to_string())
-                                .collect::<Vec<_>>(),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let golden_json = golden.map(|g| {
-            serde_json::json!({
-                "optimal_input": g.optimal_input.to_string(),
-                "profit": g.profit.to_string(),
-                "hop_outputs": g.hop_outputs.iter().map(|o| o.to_string()).collect::<Vec<_>>(),
-            })
-        });
-        let doc = serde_json::json!({
-            "path_id": pid,
-            "block": block,
-            "n_hops": resolved.hops.len(),
-            "hops": hops,
-            "measured": { "time_us": micros_us, "sims": sims, "pieces": pieces },
-            "golden": golden_json,
-        });
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.out_path)
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "{}", doc);
-        }
     }
 }

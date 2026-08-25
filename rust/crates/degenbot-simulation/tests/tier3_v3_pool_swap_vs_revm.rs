@@ -1322,7 +1322,7 @@ fn v3_word_profile_dense_threshold_vs_fee_tiers() {
             .map(|r| r.word_boundary_prices.len())
             .max()
             .unwrap_or(0);
-        let upper: usize = (2 * 887272i32 / (256 * spacing)).max(0) as usize;
+        let upper: usize = (2 * 887_272i32 / (256 * spacing)).max(0) as usize;
         assert!(
             maxwb <= upper + 2,
             "spacing={spacing}: {maxwb} word bounds exceeds the tick-span upper bound {upper}"

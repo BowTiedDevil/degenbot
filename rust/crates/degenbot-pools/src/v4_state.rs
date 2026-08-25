@@ -737,7 +737,7 @@ impl V4PoolState {
         // modeled range's swap-direction boundary (a liquidity change the
         // max_ranges cap dropped). Budget-independent: it reads tick_data
         // directly, so it holds even when the walk didn't reach the far side.
-        let truncated = use_ranges.last().map_or(false, |last| {
+        let truncated = use_ranges.last().is_some_and(|last| {
             let far = if zero_for_one {
                 last.tick_lower
             } else {

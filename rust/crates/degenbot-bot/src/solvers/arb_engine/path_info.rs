@@ -240,7 +240,7 @@ fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
     fee_bips
 }
 
-#[expect(clippy::expect_used, clippy::panic)]
+#[expect(clippy::expect_used, clippy::panic, clippy::similar_names)]
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

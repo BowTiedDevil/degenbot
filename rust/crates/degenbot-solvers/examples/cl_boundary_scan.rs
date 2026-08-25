@@ -1,5 +1,19 @@
+// Dev/example-only harness: a throwaway boundary-scanning tool for offline analysis.
+// Pedantic + restriction lints that production code denies are relaxed here.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::expect_used,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::print_stderr,
+    clippy::print_stdout,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::unwrap_used
+)]
+
 //! Offline word-boundary DENSITY scan for real bot pools (V3): build the live
-//! V3PoolState via RPC bootstrap, backfill tick words, build the 24-range
+//! `V3PoolState` via RPC bootstrap, backfill tick words, build the 24-range
 //! integer sequence, report max word-boundary count per range + whether any
 //! range is "dense" (>= the 128 profile threshold).
 use std::collections::HashMap;
@@ -57,12 +71,11 @@ impl TickWordFetcher for BF {
 }
 
 fn main() -> ExitCode {
-    let rpc = match std::env::var("DEGENBOT_CLCAP_RPC") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("DEGENBOT_CLCAP_RPC unset. Aborting.");
-            return ExitCode::FAILURE;
-        }
+    let rpc = if let Ok(v) = std::env::var("DEGENBOT_CLCAP_RPC") {
+        v
+    } else {
+        eprintln!("DEGENBOT_CLCAP_RPC unset. Aborting.");
+        return ExitCode::FAILURE;
     };
     let list_path = std::env::args()
         .nth(1)
@@ -95,7 +108,7 @@ fn main() -> ExitCode {
                     Ok(t) => out.push(t),
                     Err(e) => {
                         eprintln!("slot0 fail {a}: {e:?}");
-                        out.push((U256::ZERO, I256::ZERO, U256::ZERO))
+                        out.push((U256::ZERO, I256::ZERO, U256::ZERO));
                     }
                 }
             }
@@ -163,31 +176,28 @@ fn main() -> ExitCode {
                 Err(_) => break,
             }
         }
-        match state.build_int_v3_sequence(*spacing, *fee, false, MAX_RANGE) {
-            Some(seq) => {
-                let per_range: Vec<usize> = seq
-                    .ranges
-                    .iter()
-                    .map(|r| r.word_boundary_prices.len())
-                    .collect();
-                let maxw = *per_range.iter().max().unwrap_or(&0);
-                max_wb_all = max_wb_all.max(maxw);
-                let dense = maxw >= DENSE;
-                if dense {
-                    dense_count += 1;
-                }
-                let total_bnd: usize = per_range.iter().sum();
-                let nr = seq.ranges.len();
-                let trunc = seq.truncated;
-                let tag = if dense { "DENSE" } else { "" };
-                println!(
-                    "{i:>4} sp={spacing:>4} fee={fee:>6} {address} nbnd_max={maxw:>4} nbnd_total={total_bnd:>4} n_ranges={nr:>2} fetches={fetches} trunc={trunc} {tag}"
-                );
+        if let Some(seq) = state.build_int_v3_sequence(*spacing, *fee, false, MAX_RANGE) {
+            let per_range: Vec<usize> = seq
+                .ranges
+                .iter()
+                .map(|r| r.word_boundary_prices.len())
+                .collect();
+            let maxw = *per_range.iter().max().unwrap_or(&0);
+            max_wb_all = max_wb_all.max(maxw);
+            let dense = maxw >= DENSE;
+            if dense {
+                dense_count += 1;
             }
-            None => {
-                let tag = "seq=None";
-                println!("{i:>4} sp={spacing:>4} fee={fee:>6} {address} fetches={fetches} {tag}");
-            }
+            let total_bnd: usize = per_range.iter().sum();
+            let nr = seq.ranges.len();
+            let trunc = seq.truncated;
+            let tag = if dense { "DENSE" } else { "" };
+            println!(
+                "{i:>4} sp={spacing:>4} fee={fee:>6} {address} nbnd_max={maxw:>4} nbnd_total={total_bnd:>4} n_ranges={nr:>2} fetches={fetches} trunc={trunc} {tag}"
+            );
+        } else {
+            let tag = "seq=None";
+            println!("{i:>4} sp={spacing:>4} fee={fee:>6} {address} fetches={fetches} {tag}");
         }
     }
     println!(

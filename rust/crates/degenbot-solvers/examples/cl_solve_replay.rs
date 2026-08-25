@@ -1,21 +1,31 @@
+// Dev/example-only harness: an offline replay harness for captured solver fixtures.
+// Pedantic + restriction lints that production code denies are relaxed here.
+#![allow(
+    clippy::collapsible_else_if,
+    clippy::manual_let_else,
+    clippy::print_stderr,
+    clippy::print_stdout,
+    clippy::too_many_lines
+)]
+
 //! Offline heavy-CL-path replay harness with N-repeat stable timing.
 //!
 //! Usage:
-//!   cargo run -p degenbot-solvers --example cl_solve_replay [-- <capture.jsonl>]
-//!   DR_REPLAY_ITERS=25 ...   // more reps for tighter p95 (default 9)
+//!   cargo run -p degenbot-solvers --example `cl_solve_replay` [-- <capture.jsonl>]
+//!   `DR_REPLAY_ITERS=25` ...   // more reps for tighter p95 (default 9)
 //!
 //! Re-reads a capture JSONL produced by the live hook
-//! (solver_dispatch DEGENBOT_SOLVER_CAPTURE=1) or by cl_capture_gen, rebuilds
+//! (`solver_dispatch` `DEGENBOT_SOLVER_CAPTURE=1`) or by `cl_capture_gen`, rebuilds
 //! each Vec<IntV3TickRangeSequence> from the per-range fields, and re-runs
-//! int_solve_cl_path — the production all-CL solver (the exact call
-//! mixed::solve_path makes, initial input ONE) — OFFLINE, with no bot / RPC /
+//! `int_solve_cl_path` — the production all-CL solver (the exact call
+//! `mixed::solve_path` makes, initial input ONE) — OFFLINE, with no bot / RPC /
 //! DB. Each path is solved N times; the median / p95 / min of the per-run wall
-//! time is the stable A/B signal. As a bonus the N runs must agree — int_solve
+//! time is the stable A/B signal. As a bonus the N runs must agree — `int_solve`
 //! is pure math, so per-run nondeterminism (e.g. HashMap-iteration order in the
 //! active-set walk) is flagged, which also bears on the desync investigation.
 //!
 //! F2 two-sided golden gate: exits 1 (so CI blocks merge) if any path (a)
-//! under-shoots the recorded golden profit beyond PROFIT_EPS, (b) over-shoots
+//! under-shoots the recorded golden profit beyond `PROFIT_EPS`, (b) over-shoots
 //! it past the few-wei tolerance (phantom profit / stale golden, never silent),
 //! or (c) is nondeterministic across reps.
 
@@ -125,12 +135,11 @@ fn main() {
         let mut seqs: Vec<IntV3TickRangeSequence> = Vec::new();
         let mut err = String::new();
         for hop in &hops_v {
-            let ra = match hop.as_array() {
-                Some(a) => a,
-                None => {
-                    err = "hop not an array".into();
-                    break;
-                }
+            let ra = if let Some(a) = hop.as_array() {
+                a
+            } else {
+                err = "hop not an array".into();
+                break;
             };
             if ra.is_empty() {
                 err = "empty hop".into();
@@ -172,7 +181,7 @@ fn main() {
             times.push(t0.elapsed().as_micros());
             match r.as_ref() {
                 Some((opt, _p, ho)) => match &first {
-                    None => first = Some((opt.clone(), ho.clone())),
+                    None => first = Some((*opt, ho.clone())),
                     Some((fo, fh)) => {
                         if fo != opt || fh != ho {
                             consistent = false;
@@ -189,10 +198,10 @@ fn main() {
         let wsteps = take_last_word_boundary_steps();
         let refine = last_refine_sims();
         let (pieces, sims) = take_last_walk_stats();
-        if !consistent {
-            eprintln!("path {pid}: NON-DETERMINISTIC across {iters} runs — active-set walk order-dependent?");
-        } else {
+        if consistent {
             n_consistent += 1;
+        } else {
+            eprintln!("path {pid}: NON-DETERMINISTIC across {iters} runs — active-set walk order-dependent?");
         }
         times.sort_unstable();
         let n = times.len();
@@ -202,7 +211,7 @@ fn main() {
 
         // Golden check against the (first) run's result.
         let golden = doc.get("golden").cloned().unwrap_or(Value::Null);
-        let replay_profitable = first.as_ref().map_or(false, |(opt, ho)| {
+        let replay_profitable = first.as_ref().is_some_and(|(opt, ho)| {
             !opt.is_zero()
                 && ho
                     .last()
@@ -218,71 +227,67 @@ fn main() {
                 ok = false;
             }
         } else {
-            match &first {
-                Some((opt, ho)) => {
-                    let go = golden
-                        .get("optimal_input")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    let gh: Vec<String> = golden
-                        .get("hop_outputs")
-                        .and_then(Value::as_array)
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|x| x.as_str().map(String::from))
-                                .collect::<Vec<String>>()
-                        })
-                        .unwrap_or_default();
-                    let go_in: U256 = go.parse().unwrap_or(U256::ZERO);
-                    let go_out = gh
-                        .last()
-                        .cloned()
-                        .and_then(|s: String| s.parse().ok())
-                        .unwrap_or(U256::ZERO);
-                    let golden_profit = go_out.saturating_sub(go_in);
-                    let replay_profit = ho
-                        .last()
-                        .copied()
-                        .unwrap_or(U256::ZERO)
-                        .saturating_sub(*opt);
-                    // The solver's contract (cl_path_solver_matches_fine_grid_oracle)
-                    // is to never under-shoot the optimum. The under-shoot vs the
-                    // exact-wei golden is the gate for the coarsened search;
-                    // F2 adds the mirror over-shoot gate so BOTH profit
-                    // directions are pinned vs the recorded golden.
-                    let under = golden_profit.saturating_sub(replay_profit);
-                    let over = replay_profit.saturating_sub(golden_profit);
-                    let in_delta = if *opt >= go_in {
-                        opt - go_in
-                    } else {
-                        go_in - opt
-                    };
+            if let Some((opt, ho)) = &first {
+                let go = golden
+                    .get("optimal_input")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let gh: Vec<String> = golden
+                    .get("hop_outputs")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect::<Vec<String>>()
+                    })
+                    .unwrap_or_default();
+                let go_in: U256 = go.parse().unwrap_or(U256::ZERO);
+                let go_out = gh
+                    .last()
+                    .cloned()
+                    .and_then(|s: String| s.parse().ok())
+                    .unwrap_or(U256::ZERO);
+                let golden_profit = go_out.saturating_sub(go_in);
+                let replay_profit = ho
+                    .last()
+                    .copied()
+                    .unwrap_or(U256::ZERO)
+                    .saturating_sub(*opt);
+                // The solver's contract (cl_path_solver_matches_fine_grid_oracle)
+                // is to never under-shoot the optimum. The under-shoot vs the
+                // exact-wei golden is the gate for the coarsened search;
+                // F2 adds the mirror over-shoot gate so BOTH profit
+                // directions are pinned vs the recorded golden.
+                let under = golden_profit.saturating_sub(replay_profit);
+                let over = replay_profit.saturating_sub(golden_profit);
+                let in_delta = if *opt >= go_in {
+                    opt - go_in
+                } else {
+                    go_in - opt
+                };
+                eprintln!(
+                    "path {pid}: input_delta={in_delta} wei  under_shoot={under} wei  over_shoot={over} wei (vs recorded golden)",
+                );
+                if opt.to_string() != go {
                     eprintln!(
-                        "path {pid}: input_delta={in_delta} wei  under_shoot={under} wei  over_shoot={over} wei (vs recorded golden)",
+                        "path {pid}: optimal_input replay={opt} golden={go} (informational; gate = profit both directions)",
                     );
-                    if opt.to_string() != go {
-                        eprintln!(
-                            "path {pid}: optimal_input replay={} golden={go} (informational; gate = profit both directions)",
-                            opt,
-                        );
-                    }
-                    if under > U256::from(PROFIT_EPS) {
-                        eprintln!(
-                            "path {pid}: under_shoot {under} wei > PROFIT_EPS {PROFIT_EPS} — search lost profit vs the recorded optimum"
-                        );
-                        ok = false;
-                    }
-                    if over > U256::from(OVER_SHOOT_TOLERANCE_WEI) {
-                        eprintln!(
-                            "path {pid}: over_shoot {over} wei > tolerance {OVER_SHOOT_TOLERANCE_WEI} — solver exceeds the recorded golden (phantom profit or stale golden)"
-                        );
-                        ok = false;
-                    }
                 }
-                None => {
-                    eprintln!("path {pid}: replay=None but golden present");
+                if under > U256::from(PROFIT_EPS) {
+                    eprintln!(
+                        "path {pid}: under_shoot {under} wei > PROFIT_EPS {PROFIT_EPS} — search lost profit vs the recorded optimum"
+                    );
                     ok = false;
                 }
+                if over > U256::from(OVER_SHOOT_TOLERANCE_WEI) {
+                    eprintln!(
+                        "path {pid}: over_shoot {over} wei > tolerance {OVER_SHOOT_TOLERANCE_WEI} — solver exceeds the recorded golden (phantom profit or stale golden)"
+                    );
+                    ok = false;
+                }
+            } else {
+                eprintln!("path {pid}: replay=None but golden present");
+                ok = false;
             }
         }
         if ok {
@@ -292,16 +297,13 @@ fn main() {
         let meas = doc.get("measured").cloned().unwrap_or(Value::Null);
         let ctime = meas
             .get("time_us")
-            .map(|x| x.to_string())
-            .unwrap_or_else(|| "?".into());
+            .map_or_else(|| "?".into(), std::string::ToString::to_string);
         let csims = meas
             .get("sims")
-            .map(|x| x.to_string())
-            .unwrap_or_else(|| "?".into());
+            .map_or_else(|| "?".into(), std::string::ToString::to_string);
         let cpieces = meas
             .get("pieces")
-            .map(|x| x.to_string())
-            .unwrap_or_else(|| "?".into());
+            .map_or_else(|| "?".into(), std::string::ToString::to_string);
         let ranges_per_hop: Vec<usize> = seqs.iter().map(|s| s.ranges.len()).collect();
         let n_wbp: usize = seqs
             .iter()

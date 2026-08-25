@@ -23,6 +23,7 @@
 //! On ANY mismatch, returns `Err` — the bot must not operate with stale tick data.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use alloy::primitives::{Address, Bytes, U256};
 
@@ -140,7 +141,7 @@ fn serialize_divergences(ds: &[TickDivergence]) -> String {
             Some((lg, ln)) => format!("{lg},{ln}"),
             None => "nil".to_string(),
         };
-        out.push_str(&format!("{}:e[{s}]/oc[{o}];", d.tick));
+        let _ = write!(out, "{}:e[{s}]/oc[{o}];", d.tick);
     }
     out
 }
@@ -149,6 +150,10 @@ fn serialize_divergences(ds: &[TickDivergence]) -> String {
 /// full divergence set (always) + the full engine/on-chain maps (gated behind
 /// `DEGENBOT_DUMP_TICK_MAPS=1`). UO3JM4/ADR-021 re-assembly aid — lets an
 /// investigation re-assemble the exact map that went into the verifier.
+//
+// The argument list mirrors the tracing event's field-for-field diagnostic
+// payload; a params struct would just be re-destructured into the macro.
+#[expect(clippy::too_many_arguments)]
 fn log_tick_map_desync(
     pool_ident: &str,
     block_tag: &str,

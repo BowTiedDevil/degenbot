@@ -89,6 +89,7 @@ impl PathSolveStatus {
 }
 
 #[cfg(test)]
+#[expect(clippy::panic)]
 mod tests {
     use super::*;
     use crate::bot_core::resolve::MissingHopReason;

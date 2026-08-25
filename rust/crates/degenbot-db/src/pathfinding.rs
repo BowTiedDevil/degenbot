@@ -58,7 +58,7 @@ pub type PathEdge = (u64, u64, u64, PoolKind);
 /// — yielding paths that cannot close (148,896 broken paths observed live;
 /// surfaced as 85k `direction-fail` registration skips).
 ///
-/// Every emitted V4 id is `managed_pool_id + [`V4_POOL_ID_OFFSET`]`, which
+/// Every emitted V4 id is `managed_pool_id + [``V4_POOL_ID_OFFSET``]`, which
 /// places V4 ids strictly above any realistic `pools.id` (mainnet max
 /// ~678k). Consumers demangle with [`demangle_v4_pool_id`] / [`is_v4_graph_id`].
 pub const V4_POOL_ID_OFFSET: u64 = 1 << 32;
