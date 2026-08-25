@@ -714,11 +714,24 @@ mod tests {
             997,
             1000,
         );
+        let v2_sec = engine.register_v2_pool(
+            Address::from([0x13u8; 20]),
+            usdc(1_600_000),
+            weth(850),
+            997,
+            1000,
+        );
         let path_id = engine
-            .register_path(vec![PoolHop {
-                pool_id: v2_fwd,
-                zero_for_one: true,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_sec,
+                    zero_for_one: true,
+                },
+            ])
             .unwrap();
 
         // No solve_dirty yet → both `solve_block` and

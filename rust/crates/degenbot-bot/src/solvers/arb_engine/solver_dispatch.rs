@@ -358,19 +358,51 @@ impl ArbitrageEngine {
         // Collect affected path IDs from the reverse index
         let mut affected_path_ids: HashSet<u64> = HashSet::new();
 
+        // R522XA: the state machine decides which touched paths actually need a
+        // (re)resolve. Solvable/Unresolved re-check on any hop dirty; an Invalid
+        // path re-checks ONLY when a responsible pool goes dirty AND the
+        // container empties (last faulty pool cleared). Unrelated co-hop dirt
+        // leaves an Invalid path untouched — no 100k-path re-resolve churn.
         for pool_key in v2_affected {
             if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V2, *pool_key)) {
-                affected_path_ids.extend(path_ids);
+                for &path_id in path_ids {
+                    if self
+                        .path_status
+                        .entry(path_id)
+                        .or_default()
+                        .on_pool_dirty((HopType::V2, *pool_key))
+                    {
+                        affected_path_ids.insert(path_id);
+                    }
+                }
             }
         }
         for pool_key in v3_affected {
             if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *pool_key)) {
-                affected_path_ids.extend(path_ids);
+                for &path_id in path_ids {
+                    if self
+                        .path_status
+                        .entry(path_id)
+                        .or_default()
+                        .on_pool_dirty((HopType::V3, *pool_key))
+                    {
+                        affected_path_ids.insert(path_id);
+                    }
+                }
             }
         }
         for pool_key in v4_affected {
             if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V4, *pool_key)) {
-                affected_path_ids.extend(path_ids);
+                for &path_id in path_ids {
+                    if self
+                        .path_status
+                        .entry(path_id)
+                        .or_default()
+                        .on_pool_dirty((HopType::V4, *pool_key))
+                    {
+                        affected_path_ids.insert(path_id);
+                    }
+                }
             }
         }
 
@@ -498,17 +530,29 @@ impl ArbitrageEngine {
                     continue;
                 }
                 let mut resolved = ResolvedMixedPath::default();
-                if let Some(reason) = resolve_hops(
+                let deficits = resolve_hops(
                     &core,
                     &path.pools,
                     &mut resolved,
                     &mut self.hop_projection_cache,
                     Some(&mut self.hop_projection_count),
-                ) {
-                    *invalid_reasons.entry(reason.to_string()).or_insert(0u64) += 1;
-                    tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
+                );
+                for d in &deficits {
+                    *invalid_reasons.entry(d.reason.to_string()).or_insert(0u64) += 1;
+                    tracing::debug!(
+                        %path_id,
+                        hop_type = ?d.hop_type,
+                        pool_key = d.pool_key,
+                        reason = %d.reason,
+                        "[resolve] path invalid at resolve"
+                    );
                 }
                 self.path_resolved.insert(path_id, resolved);
+                // R522XA: drive the path state machine from the full deficit set.
+                self.path_status
+                    .entry(path_id)
+                    .or_default()
+                    .set_resolved(&deficits);
             }
         }
 

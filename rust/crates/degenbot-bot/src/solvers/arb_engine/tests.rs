@@ -387,6 +387,13 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
+        let a2 = engine.register_v2_pool(
+            Address::from([0x13u8; 20]),
+            usdc(1_100_000),
+            weth(510),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let b = engine.register_v2_pool(
             Address::from([0x12u8; 20]),
             usdc(2_000_000),
@@ -394,17 +401,36 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
+        let b2 = engine.register_v2_pool(
+            Address::from([0x14u8; 20]),
+            usdc(2_100_000),
+            weth(910),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let _path_a = engine
-            .register_path(vec![PoolHop {
-                pool_id: a,
-                zero_for_one: true,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id: a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: a2,
+                    zero_for_one: true,
+                },
+            ])
             .unwrap();
         let _path_b = engine
-            .register_path(vec![PoolHop {
-                pool_id: b,
-                zero_for_one: true,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id: b,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: b2,
+                    zero_for_one: true,
+                },
+            ])
             .unwrap();
 
         // Solve only path A's pool this block — B must stay out of the set.
@@ -423,7 +449,7 @@ mod tests {
             "change set must contain only the re-solved path, got {} paths",
             change.len()
         );
-        assert_eq!(change[0].len(), 1);
+        assert_eq!(change[0].len(), 2);
         assert_eq!(
             change[0][0].pool_key, a,
             "change set must reference path A's pool, not the whole set"
@@ -432,7 +458,7 @@ mod tests {
             change
                 .iter()
                 .flat_map(|p| p.iter())
-                .all(|r| r.pool_key == a),
+                .all(|r| r.pool_key == a || r.pool_key == a2),
             "no path referencing pool B may leak into A's change set"
         );
 
@@ -457,8 +483,102 @@ mod tests {
             change2
                 .iter()
                 .flat_map(|p| p.iter())
-                .all(|r| r.pool_key == b),
+                .all(|r| r.pool_key == b || r.pool_key == b2),
             "a fresh solve must carry only the newly-re-solved path"
+        );
+    }
+    /// R522XA wiring: an Invalid path (empty V3 hop) is NOT re-resolved when an
+    /// unrelated co-hop is dirty, but IS re-checked when its own responsible
+    /// pool goes dirty — the container-clearing transition driven through the
+    /// production reverse-index fan-out.
+    #[test]
+    fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
+        use crate::solvers::arb_engine::path_lifecycle::PathSolveStatus;
+
+        let mut engine = ArbitrageEngine::new();
+
+        // Empty V3 (Tracked coverage, no initialized ticks → NotViable).
+        let empty_v3 = engine.register_v3_pool(&RegisterV3PoolParams {
+            address: Address::from([0x55u8; 20]),
+            token0: Address::from([0u8; 20]),
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 0,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            tick_data_block: None,
+            coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        });
+        let v2 = engine.register_v2_pool(
+            Address::from([0x56u8; 20]),
+            usdc(1_000_000),
+            weth(500),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // 2-hop V3(empty) → V2. Registering succeeds (NotViable is recoverable,
+        // not structural), but the path is Invalid with responsible={empty_v3}.
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: empty_v3,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+        match &engine.path_status[&path_id] {
+            PathSolveStatus::Invalid { responsible } => {
+                assert_eq!(responsible.len(), 1);
+                assert!(responsible.contains(&(HopType::V3, empty_v3)));
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+
+        // Unrelated dirty (the V2 co-hop) must NOT re-resolve the invalid path.
+        engine.rebuild_and_solve_affected(
+            &HashSet::from([v2]),
+            &HashSet::new(),
+            &HashSet::new(),
+            5,
+            &BlockMetadata::default(),
+        );
+        let change = engine.take_solver_path_pool_refs_change_set();
+        assert!(
+            change.is_empty(),
+            "unrelated dirty co-hop must skip the invalid path"
+        );
+        match &engine.path_status[&path_id] {
+            PathSolveStatus::Invalid { responsible } => {
+                assert_eq!(responsible.len(), 1);
+                assert!(responsible.contains(&(HopType::V3, empty_v3)));
+            }
+            other => panic!("expected still Invalid, got {other:?}"),
+        }
+
+        // Dirtying the path's OWN responsible empty pool clears the container
+        // and re-checks it (still empty → Invalid again, but it WAS re-checked).
+        engine.rebuild_and_solve_affected(
+            &HashSet::new(),
+            &HashSet::from([empty_v3]),
+            &HashSet::new(),
+            6,
+            &BlockMetadata::default(),
+        );
+        let change = engine.take_solver_path_pool_refs_change_set();
+        assert_eq!(
+            change.len(),
+            1,
+            "dirtying the path's own responsible pool must re-check it"
         );
     }
 
@@ -2479,11 +2599,24 @@ mod tests {
             })
             .expect("V4 registration failed");
 
+        let v2_id = engine.register_v2_pool(
+            Address::from([0x77u8; 20]),
+            usdc(1_600_000),
+            weth(900),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let path_id = engine
-            .register_path(vec![PoolHop {
-                pool_id: v4_id,
-                zero_for_one: false,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v4_id,
+                    zero_for_one: false,
+                },
+                PoolHop {
+                    pool_id: v2_id,
+                    zero_for_one: true,
+                },
+            ])
             .unwrap();
 
         // A tiny in-capacity input — the pool fully converts it, no clamp.
@@ -2491,9 +2624,9 @@ mod tests {
         let mut result = SolvePathResult {
             optimal_input: small,
             profit: U256::ONE,
-            hop_outputs: vec![U256::ONE],
-            consumed_inputs: vec![small],
-            state_nonces: vec![0],
+            hop_outputs: vec![U256::ONE, U256::ONE],
+            consumed_inputs: vec![small, small],
+            state_nonces: vec![0, 0],
             solver_pool_states: Vec::new(),
         };
 

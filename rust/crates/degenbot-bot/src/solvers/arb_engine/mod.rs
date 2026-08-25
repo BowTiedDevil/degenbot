@@ -61,6 +61,7 @@ pub mod engine_subscriber;
 mod event_routing;
 mod lifecycle;
 pub mod path_info;
+mod path_lifecycle;
 pub mod snapshot_verify;
 mod solver_dispatch;
 #[cfg(test)]
@@ -303,6 +304,10 @@ pub struct ArbitrageEngine {
     pub(crate) path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
     path_resolved: HashMap<u64, ResolvedMixedPath>,
+    /// Path solve-eligibility state machine (R522XA): per registered path the
+    /// `PathSolveStatus` that decides whether a dirty-pool fan-out must
+    /// (re)resolve it. Replaces the scattered `valid` bool + ad-hoc skip rules.
+    path_status: HashMap<u64, path_lifecycle::PathSolveStatus>,
     /// Hop-projection memo (pool,direction) -> snapshot@nonce. Shared across
     /// all resolve call sites so a dirty pool's tick walk runs once per
     /// state change and serves every referencing path from the cache.
@@ -410,6 +415,7 @@ impl ArbitrageEngine {
             core,
             path_pools: HashMap::new(),
             path_resolved: HashMap::new(),
+            path_status: HashMap::new(),
             hop_projection_cache: HashMap::new(),
             hop_projection_count: 0,
             pool_to_paths: HashMap::new(),

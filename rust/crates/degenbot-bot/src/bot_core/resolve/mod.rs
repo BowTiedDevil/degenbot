@@ -8,10 +8,12 @@
 //! `degenbot-bot` and never reached by `PyO3`. ADR-015 placement is unchanged —
 //! the projection stays in degenbot-bot; only its internals moved here.
 //!
-//! Invalidation preserves the engine's mid-loop semantics exactly: the first
-//! per-family `Err` stops the loop, prior successful hops remain pushed, and
-//! `valid` stays false (the caller discards the path). The reason is logged
-//! at `debug` so "why was this path rejected" is answerable on demand but
+//! `resolve_hops` collects EVERY failing hop (R522XA) — it does not stop at
+//! the first `Err`. Prior successful hops still project; each failure is
+//! returned as a `HopDeficit` so the path state machine can track every
+//! responsible pool independently and clear it as it becomes suitable.
+//! `valid` stays false whenever ANY hop failed. Reasons are logged at
+//! `debug` so "why was this path rejected" is answerable on demand but
 //! invisible in normal runs.
 //!
 //! CL guardrail: [`cl`] holds two SELF-CONTAINED entries. There is deliberately
@@ -101,6 +103,19 @@ pub(crate) enum MissingHopReason {
     NotViable,
 }
 
+/// One unprojectable hop inside a resolved path (R522XA): the failing pool
+/// plus the reason. `resolve_hops` returns the FULL set (not just the first
+/// failure) so the path state machine can clear each responsible pool
+/// independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HopDeficit {
+    /// The hop's pool family + key (identifies the responsible pool).
+    pub hop_type: HopType,
+    /// The hop's pool key within its family.
+    pub pool_key: u64,
+    /// Why this hop could not be projected.
+    pub reason: MissingHopReason,
+}
 impl std::fmt::Display for MissingHopReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -115,6 +130,21 @@ impl std::fmt::Display for MissingHopReason {
             Self::NotViable => "pool not viable in the swap direction",
         };
         f.write_str(s)
+    }
+}
+
+impl MissingHopReason {
+    /// R522XA: structural/topology failures that can never self-heal from a
+    /// pool going dirty — a misconfigured pool or path shape, not a state
+    /// that can clear. A path with one must be REJECTED LOUDLY at
+    /// construction (`register_path`), not stored as a state that could
+    /// silently evade detection.
+    #[must_use]
+    pub(crate) const fn is_structurally_unroutable(self) -> bool {
+        matches!(
+            self,
+            Self::TooFewTokens | Self::UnknownVariant | Self::OutOfRange
+        )
     }
 }
 
@@ -153,17 +183,22 @@ pub(crate) fn resolve_hops(
     resolved: &mut ResolvedMixedPath,
     cache: &mut HopProjectionCache,
     mut projection_count: Option<&mut u64>,
-) -> Option<MissingHopReason> {
+) -> Vec<HopDeficit> {
     resolved.hops.clear();
     resolved.valid = false;
     resolved.state_nonces.clear();
 
+    // R522XA: a path with <2 hops is rejected loudly at `register_path`,
+    // so reaching here is a programming error. Return no deficits rather than
+    // fabricating a responsible pool that could never clear.
     if pool_refs.len() < 2 {
-        return Some(MissingHopReason::TooFewTokens);
+        tracing::error!(hops = pool_refs.len(), "resolve_hops: path has <2 hops");
+        return Vec::new();
     }
 
     resolved.hops.reserve(pool_refs.len());
     resolved.state_nonces.reserve(pool_refs.len());
+    let mut deficits: Vec<HopDeficit> = Vec::new();
 
     for (hop_index, pool_ref) in pool_refs.iter().enumerate() {
         // Capture the max price-clock `update_block` across all hops.
@@ -208,19 +243,28 @@ pub(crate) fn resolve_hops(
             projected
         };
 
-        let (hop, nonce) = match projection {
-            Ok(pair) => pair,
+        match projection {
+            Ok((hop, nonce)) => {
+                resolved.hops.push(hop);
+                resolved.state_nonces.push(nonce);
+            }
             Err(reason) => {
                 log_invalidation(pool_ref, hop_index, reason);
-                return Some(reason);
+                // R522XA: CONTINUE past this failure — collect every failing
+                // pool so the path state machine can clear them independently.
+                deficits.push(HopDeficit {
+                    hop_type: pool_ref.hop_type,
+                    pool_key: pool_ref.pool_key,
+                    reason,
+                });
             }
-        };
-        resolved.hops.push(hop);
-        resolved.state_nonces.push(nonce);
+        }
     }
 
-    resolved.valid = true;
-    None
+    if deficits.is_empty() {
+        resolved.valid = true;
+    }
+    deficits
 }
 
 #[cfg(test)]
@@ -313,7 +357,7 @@ mod tests {
         let mut r1 = ResolvedMixedPath::default();
         let mut pc = 0u64;
         assert!(
-            resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc)).is_none(),
+            resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc)).is_empty(),
             "both pools project"
         );
         assert_eq!(pc, 2, "first resolve projects both pools");
@@ -324,7 +368,7 @@ mod tests {
         // both profile Arcs are the same allocations (reused, not rebuilt).
         let mut r2 = ResolvedMixedPath::default();
         let mut pc2 = 0u64;
-        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2)).is_none());
+        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2)).is_empty());
         assert_eq!(pc2, 0, "unchanged pools are cache hits (no re-projection)");
         assert_eq!(
             profile_ptr(&cache, &(HopType::V3, p, true)),
@@ -358,7 +402,7 @@ mod tests {
         // P's profile Arc is a fresh allocation; Q's is the SAME allocation.
         let mut r3 = ResolvedMixedPath::default();
         let mut pc3 = 0u64;
-        assert!(resolve_hops(&core, &refs, &mut r3, &mut cache, Some(&mut pc3)).is_none());
+        assert!(resolve_hops(&core, &refs, &mut r3, &mut cache, Some(&mut pc3)).is_empty());
         assert_eq!(pc3, 1, "only the minted pool re-projects; Q is a cache hit");
         assert_ne!(
             profile_ptr(&cache, &(HopType::V3, p, true)),

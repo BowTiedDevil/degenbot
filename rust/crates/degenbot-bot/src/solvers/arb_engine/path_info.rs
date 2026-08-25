@@ -281,18 +281,31 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
+        let pool2_id = engine.register_v2_pool(
+            Address::from([0x12u8; 20]),
+            usdc(1_600_000),
+            weth(820),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let path_id = engine
-            .register_path(vec![PoolHop {
-                pool_id,
-                zero_for_one: true,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: pool2_id,
+                    zero_for_one: true,
+                },
+            ])
             .expect("register_path");
 
         let path = engine
             .path_info_for(path_id)
             .expect("path exists")
             .expect("v2 supported");
-        assert_eq!(path.hops.len(), 1);
+        assert_eq!(path.hops.len(), 2);
         let HopInfo::V2(v2) = &path.hops[0] else {
             panic!("expected V2 hop, got {:?}", path.hops[0]);
         };
@@ -317,11 +330,24 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
+        let pid2 = engine.register_v2_pool(
+            Address::from([0x45u8; 20]),
+            usdc(1_100_000),
+            weth(510),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let path_id = engine
-            .register_path(vec![PoolHop {
-                pool_id: pid,
-                zero_for_one: true,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id: pid,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: pid2,
+                    zero_for_one: true,
+                },
+            ])
             .expect("register_path");
 
         let desc = engine.describe_path(path_id);
@@ -345,11 +371,24 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
+        let pool2_id = engine.register_v2_pool(
+            Address::from([0x23u8; 20]),
+            usdc(1_100_000),
+            weth(510),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let path_id = engine
-            .register_path(vec![PoolHop {
-                pool_id,
-                zero_for_one: false,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id,
+                    zero_for_one: false,
+                },
+                PoolHop {
+                    pool_id: pool2_id,
+                    zero_for_one: true,
+                },
+            ])
             .expect("register_path");
         let path = engine
             .path_info_for(path_id)
@@ -383,11 +422,24 @@ mod tests {
             init_hash: alloy::primitives::B256::ZERO,
             ..Default::default()
         });
+        let pool2_id = engine.register_v2_pool(
+            Address::from([0x34u8; 20]),
+            usdc(1_200_000),
+            weth(520),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let path_id = engine
-            .register_path(vec![PoolHop {
-                pool_id,
-                zero_for_one: true,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: pool2_id,
+                    zero_for_one: true,
+                },
+            ])
             .expect("register_path");
         let path = engine
             .path_info_for(path_id)
@@ -430,11 +482,24 @@ mod tests {
                 fetcher: None,
             })
             .expect("register_v4_pool");
+        let pool2_id = engine.register_v2_pool(
+            Address::from([0x46u8; 20]),
+            usdc(1_300_000),
+            weth(530),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
         let path_id = engine
-            .register_path(vec![PoolHop {
-                pool_id,
-                zero_for_one: true,
-            }])
+            .register_path(vec![
+                PoolHop {
+                    pool_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: pool2_id,
+                    zero_for_one: true,
+                },
+            ])
             .expect("register_path");
         let path = engine
             .path_info_for(path_id)

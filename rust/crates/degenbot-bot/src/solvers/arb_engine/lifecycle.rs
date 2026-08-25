@@ -66,6 +66,15 @@ impl ArbitrageEngine {
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState`.
     pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, String> {
+        // R522XA: fewer than two hops is a structural caller bug, not a state —
+        // reject loudly at construction.
+        if hops.len() < 2 {
+            return Err(format!(
+                "register_path: path has {} hops (need >= 2) — structurally unroutable",
+                hops.len()
+            ));
+        }
+
         // Telemetry: one Jaeger node per path registration (a root span on the
         // registration worker thread — there is no ambient pump context during
         // `build_paths`). The completion event below carries the CONCRETE hop
@@ -87,65 +96,79 @@ impl ArbitrageEngine {
 
         let reg_span = tracing::info_span!("degenbot.path.register", hops.count = hops.len());
         let _reg_guard = reg_span.enter();
-        let path_id = self.next_path_id;
-        self.next_path_id += 1;
-
         // Resolve each hop's family from the BotState + validate the pool_id
         // exists there. The engine never constructs pools (ADR-006 D3), so
         // hop_type is derived, not caller-supplied.
-        let core = self.core.read();
         let mut pool_refs = Vec::with_capacity(hops.len());
         let mut hop_descs = Vec::with_capacity(hops.len());
-        for hop in hops {
-            let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
-                return Err(format!(
-                    "register_path: pool_id {} is not registered in the associated BotState",
-                    hop.pool_id
+        {
+            let core = self.core.read();
+            for hop in hops {
+                let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
+                    return Err(format!(
+                        "register_path: pool_id {} is not registered in the associated BotState",
+                        hop.pool_id
+                    ));
+                };
+                hop_descs.push(super::path_info::describe_hop(
+                    &core,
+                    hop_type,
+                    hop.pool_id,
+                    hop.zero_for_one,
                 ));
-            };
-            hop_descs.push(super::path_info::describe_hop(
-                &core,
-                hop_type,
-                hop.pool_id,
-                hop.zero_for_one,
-            ));
-            pool_refs.push(MixedPoolRef {
-                hop_type,
-                pool_key: hop.pool_id,
-                zero_for_one: hop.zero_for_one,
-            });
+                pool_refs.push(MixedPoolRef {
+                    hop_type,
+                    pool_key: hop.pool_id,
+                    zero_for_one: hop.zero_for_one,
+                });
+            }
         }
-        drop(core);
 
-        // Build the reverse index entries
+        // R522XA: resolve BEFORE storing so an unroutable hop rejects the
+        // registration loudly and leaves no half-registered state behind.
+        let mut resolved = ResolvedMixedPath::default();
+        let deficits = {
+            let core = self.core.read();
+            resolve_hops(
+                &core,
+                &pool_refs,
+                &mut resolved,
+                &mut self.hop_projection_cache,
+                Some(&mut self.hop_projection_count),
+            )
+        };
+        if let Some(unroutable) = deficits
+            .iter()
+            .find(|d| d.reason.is_structurally_unroutable())
+        {
+            return Err(format!(
+                "register_path: hop ({hop_type:?} pool {pool_key}) is structurally unroutable ({reason}) — rejecting path at construction",
+                hop_type = format!("{:?}", unroutable.hop_type),
+                pool_key = unroutable.pool_key,
+                reason = unroutable.reason,
+            ));
+        }
+
+        // Only now allocate the path id (no gaps from rejected registrations)
+        // and store the immutable pool refs + reverse index.
+        let path_id = self.next_path_id;
+        self.next_path_id += 1;
         for pool_ref in &pool_refs {
             self.pool_to_paths
                 .entry((pool_ref.hop_type, pool_ref.pool_key))
                 .or_default()
                 .push(path_id);
         }
-
-        // Store the immutable pool refs
         self.path_pools
             .insert(path_id, MixedPath { pools: pool_refs });
 
-        // Resolve the path immediately (no solve yet). V2 state is read from
-        // BotState under the core lock (ADR-003).
-        let mut resolved = ResolvedMixedPath::default();
-        if let Some(path) = self.path_pools.get(&path_id) {
-            let core = self.core.read();
-            if let Some(reason) = resolve_hops(
-                &core,
-                &path.pools,
-                &mut resolved,
-                &mut self.hop_projection_cache,
-                Some(&mut self.hop_projection_count),
-            ) {
-                tracing::debug!(%path_id, %reason, "[resolve] path invalid at resolve");
-            }
-        }
+        // Store the resolve snapshot + drive the state machine.
         let path_valid = resolved.valid;
         self.path_resolved.insert(path_id, resolved);
+        self.path_status
+            .entry(path_id)
+            .or_default()
+            .set_resolved(&deficits);
         self.path_signatures.insert(sig, path_id);
 
         tracing::info!(
@@ -304,7 +327,7 @@ impl ArbitrageEngine {
             let core = self.core.read();
             for (&path_id, path) in &self.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                resolve_hops(
+                let deficits = resolve_hops(
                     &core,
                     &path.pools,
                     &mut resolved,
@@ -312,6 +335,11 @@ impl ArbitrageEngine {
                     Some(&mut self.hop_projection_count),
                 );
                 self.path_resolved.insert(path_id, resolved);
+                // R522XA: cold-start full sweep also refreshes the state machine.
+                self.path_status
+                    .entry(path_id)
+                    .or_default()
+                    .set_resolved(&deficits);
             }
         }
 
