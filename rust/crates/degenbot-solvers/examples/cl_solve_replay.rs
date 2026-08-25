@@ -35,6 +35,7 @@ use degenbot_solvers::mobius_v3_int::{
     int_solve_cl_path, last_refine_sims, reset_walk_stats, take_last_walk_stats,
     take_last_word_boundary_steps,
 };
+use degenbot_solvers::profit_envelope::{path_profit_bound, HopMath};
 use serde_json::Value;
 
 /// Max acceptable profit under-shoot (wei) of the exact-wei golden for the
@@ -115,6 +116,8 @@ fn main() {
         std::process::exit(2);
     });
     let mut n_paths = 0u64;
+    // Gate A/B rows (SU7MAE N6NBUY): (path_id, golden JSON, derived bound).
+    let mut gate_rows: Vec<(u64, Value, Option<U256>)> = Vec::new();
     let mut n_golden_ok = 0u64;
     let mut n_consistent = 0u64;
     let mut heaviest: (u128, u64) = (0, 0); // (median_us, path_id)
@@ -166,6 +169,23 @@ fn main() {
             continue;
         }
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
+
+        // Gate A/B (SU7MAE N6NBUY): derive the profit-envelope bound and time
+        // it, so the end-of-run floor analysis can name would-be skips and the
+        // derivation overhead per path.
+        let views: Vec<Option<HopMath<'_>>> = seqs.iter().map(|s| Some(HopMath::Cl(s))).collect();
+        let bound_t0 = std::time::Instant::now();
+        let bound = path_profit_bound(&views);
+        let bound_us = bound_t0.elapsed().as_micros();
+        gate_rows.push((
+            pid,
+            doc.get("golden").cloned().unwrap_or(Value::Null),
+            bound,
+        ));
+        eprintln!(
+            "path {pid}: envelope_derivation={bound_us}us bound={}",
+            bound.map_or_else(|| "None(unsupported)".into(), |b| b.to_string())
+        );
 
         // N independent repetitions for a stable A/B (no single-shot noise).
         // int_solve_cl_path is pure math, so all runs must agree; per-run
@@ -318,6 +338,46 @@ fn main() {
         if med > heaviest.0 {
             heaviest = (med, pid);
         }
+    }
+    // Gate floor analysis (SU7MAE N6NBUY): for each candidate min_profit
+    // floor, how many captured paths would the gate have skipped, and would
+    // ANY skip have discarded a path whose golden profit clears the floor
+    // (a false skip — must be zero by soundness)?
+    println!("---- gate floor analysis (heavy-CL capture):");
+    for &floor_wei in &[0u64, 1_000_000, 1_000_000_000, 1_000_000_000_000] {
+        let floor = U256::from(floor_wei);
+        let mut skipped = 0u32;
+        let mut false_skips = 0u32;
+        let mut goldens = 0u32;
+        for (pid, golden, bound) in &gate_rows {
+            let Some(b) = bound else { continue };
+            if *b < floor {
+                skipped += 1;
+                if !golden.is_null() {
+                    goldens += 1;
+                    let go_in: U256 = golden["optimal_input"]
+                        .as_str()
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(U256::ZERO);
+                    let go_out: U256 = golden["hop_outputs"]
+                        .as_array()
+                        .and_then(|a| a.last())
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(U256::ZERO);
+                    let gp = go_out.saturating_sub(go_in);
+                    if gp >= floor && !gp.is_zero() {
+                        false_skips += 1;
+                        eprintln!("FALSE SKIP: path {pid} bound {b} < floor {floor} but golden profit {gp} >= floor");
+                    }
+                }
+            }
+        }
+        println!(
+            "floor {floor_wei} wei: would_skip {skipped}/{} | goldens checked {goldens} | false skips {false_skips}",
+            gate_rows.len()
+        );
     }
     println!(
         "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{n_paths} match | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest median: path {} = {}us | file={path}",

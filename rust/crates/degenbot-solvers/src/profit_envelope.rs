@@ -326,12 +326,21 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
 /// Narrow a non-negative bound value; `None` on overflow (>U256::MAX is
 /// treated conservatively as "no usable bound").
 fn narrow(v: I512) -> Option<U256> {
-    let (_, mag512) = v.into_sign_and_abs();
+    // Callers guard non-negativity; keep the check here too so a future
+    // call-site mistake fails conservative (ZERO = no skip) instead of
+    // returning |negative| as a bogus positive bound.
+    let neg = v.is_negative();
+    let mag512 = v.abs();
     let mag = mag512.as_limbs();
-    if mag[4] != 0 || mag[5] != 0 || mag[6] != 0 || mag[7] != 0 {
-        return None;
+    if !neg && mag[4] == 0 && mag[5] == 0 && mag[6] == 0 && mag[7] == 0 {
+        return Some(U256::from_limbs([mag[0], mag[1], mag[2], mag[3]]));
     }
-    Some(U256::from_limbs([mag[0], mag[1], mag[2], mag[3]]))
+    if neg {
+        // Negative bound at the argmax is impossible for x >= 0; treat like
+        // any other unusable value.
+        return Some(U256::ZERO);
+    }
+    None
 }
 #[must_use]
 pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U256> {
