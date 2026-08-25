@@ -85,7 +85,13 @@ impl Line {
 fn ceil_div(n: I512, d: I512) -> I512 {
     debug_assert!(d > I512::ZERO);
     if n >= I512::ZERO {
-        (n + (d - I512::ONE)) / d
+        // `n` may be I512::MAX (eval() saturates on overflow), so the +d-1
+        // bump must not wrap. On overflow return I512::MAX directly: it is
+        // >= any ceiling of n/d, i.e. still a rigorous upper bound.
+        match n.checked_add(d - I512::ONE) {
+            Some(bumped) => bumped / d,
+            None => I512::MAX,
+        }
     } else {
         n / d
     }
@@ -368,4 +374,26 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
         return Some(U256::ZERO);
     }
     narrow(best)
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used)] // tiny literals; panic on typo is the point
+mod tests {
+    use super::*;
+
+    /// Regression (SU7MAE 7SI5G2): eval() saturates to I512::MAX on overflow,
+    /// and ceil_div previously did a bare `n + d - 1` that overflowed on that
+    /// saturated input, panicking inside register_and_solve_path at startup.
+    #[test]
+    fn ceil_div_saturates_on_max_numerator() {
+        let d = I512::try_from(3u8).expect("3 fits");
+        // Saturated input must not panic and must stay an UPPER bound:
+        // result >= exact ceiling of MAX/d.
+        let got = ceil_div(I512::MAX, d);
+        let exact_ceil = I512::MAX / d + I512::ONE; // ceil((2^511-1)/3)
+        assert!(got >= exact_ceil);
+        // Ordinary values stay exact-ceiling.
+        let n = I512::try_from(10i64).expect("10 fits");
+        assert_eq!(ceil_div(n, d), I512::try_from(4i64).expect("4 fits"));
+    }
 }
