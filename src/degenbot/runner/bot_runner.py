@@ -504,7 +504,7 @@ class BotRunner:
             if self._registration_task is not None:
                 await self._await_main_loop_with_registration_fail_fast()
             else:
-                await self._result_consumer_task
+                await self._await_main_loop_with_pump_watchdog()
         finally:
             registration_task = self._registration_task
             if (
@@ -688,23 +688,142 @@ class BotRunner:
         assert main_task is not None
         registration_task = self._registration_task
         assert registration_task is not None
-        while registration_task is not None and not main_task.done():
-            done, _pending = await asyncio.wait(
-                {main_task, registration_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if registration_task in done:
-                exc = registration_task.exception()
-                if exc is not None and not isinstance(exc, asyncio.CancelledError):
-                    # Fatal registration error → fail loudly: stop the hot loop.
+        watchdog_task = asyncio.create_task(
+            self._pump_finished_watchdog(), name="pump-finished-watchdog"
+        )
+        pump_ended = False
+        watchdog_active = True
+        try:
+            # The watchdog stays in the watch-set for the WHOLE loop — including
+            # after registration completes (only the main loop remains then, but
+            # a timed-exit pump can still finish, and must not be missed).
+            while not main_task.done():
+                watch = {main_task}
+                if watchdog_active:
+                    watch.add(watchdog_task)
+                if registration_task is not None:
+                    watch.add(registration_task)
+                done, _pending = await asyncio.wait(
+                    watch,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                # Fail-fast outranks everything: a fatal registration error must
+                # be surfaced even when the watchdog fired in the same wait
+                # batch (injected/fake engines return from the watchdog
+                # instantly — that completion is NOT a pump end).
+                if registration_task is not None and registration_task in done:
+                    exc = registration_task.exception()
+                    if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                        # Fatal registration error → fail loudly: stop the hot loop.
+                        main_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await main_task
+                        raise exc
+                    # Registration finished cleanly; stop watching, keep
+                    # blocking on {main, watchdog}.
+                    registration_task = None
+                if watchdog_active and watchdog_task in done:
+                    if watchdog_task.result():
+                        # Pump finished outside stop() (timed exit / stream end /
+                        # abort): the watchdog already cancelled the consumer —
+                        # leave via the normal teardown so the process exits.
+                        pump_ended = True
+                        if registration_task is not None and not registration_task.done():
+                            registration_task.cancel()
+                        break
+                    # No pump-finished surface (injected engine): drop it from
+                    # the watch-set instead of misreading instant completion as
+                    # a pump end — that would deadlock on an un-cancelled
+                    # consumer while swallowing any later registration failure.
+                    watchdog_active = False
+            if pump_ended:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await main_task
+            else:
+                await main_task
+        finally:
+            watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watchdog_task
+
+    async def _await_main_loop_with_pump_watchdog(self) -> None:
+        """Await the consumer while watching the pump (inline-registration form).
+
+        When registration runs synchronously (`_registration_task is None`,
+        the injected/test seam, and any production path that awaits
+        `build_paths` inline), the fail-fast loop above still must notice a
+        finished pump. This smaller twin watches {consumer, pump watchdog} and
+        tears down gracefully when the pump ends outside `stop()`.
+        """
+        main_task = self._result_consumer_task
+        assert main_task is not None
+        watchdog_task = asyncio.create_task(
+            self._pump_finished_watchdog(), name="pump-finished-watchdog"
+        )
+        pump_ended = False
+        watchdog_active = True
+        try:
+            while not main_task.done():
+                watch = {main_task}
+                if watchdog_active:
+                    watch.add(watchdog_task)
+                done, _pending = await asyncio.wait(
+                    watch,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if watchdog_active and watchdog_task in done:
+                    if watchdog_task.result():
+                        # Pump finished; the watchdog already cancelled the
+                        # consumer.
+                        pump_ended = True
+                        break
+                    # No pump-finished surface (injected engine): stop watching.
+                    # Treating instant completion as a pump end would leave the
+                    # un-cancelled consumer as the only pending task — deadlock.
+                    watchdog_active = False
+            if pump_ended:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await main_task
+            else:
+                await main_task
+        finally:
+            watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watchdog_task
+
+    async def _pump_finished_watchdog(self) -> None:
+        """Poll the Rust pump task; when it finishes outside ``stop()``, shut down.
+
+        The hotpath timed exit (``HOTPATH_SHUTDOWN_MS``) makes the pump return
+        normally after writing its report. Without a watcher the runner's idle
+        consumer task keeps the process alive forever on a dead engine —
+        ``run_bot.sh`` then reports "running" while nothing progresses (the
+        post-unwind wedge: gil-probe idle for minutes after the pump exited).
+        Join-handle completion also covers a pump panic, so this doubles as a
+        panic fail-safe. Injected/test engines that lack ``pump_finished``
+        simply get no watchdog (no behavioral change on those paths).
+
+        Returns True when a real pump finished outside stop() (the consumer was
+        cancelled here), False when there is no pump-finished surface at all —
+        callers must NOT treat False as "pump ended", or an injected/fake-engine
+        session deadlocks awaiting a consumer nobody cancelled (the fail-fast
+        channel must still own that path).
+        """
+        engine = self.engine_registry.engine if self.engine_registry is not None else None
+        pump_finished = getattr(engine, "pump_finished", None) if engine is not None else None
+        if pump_finished is None:
+            return False
+        while True:
+            await asyncio.sleep(0.5)
+            if pump_finished():
+                bot_logger.warning(
+                    "[shutdown] pump task completed outside stop() — "
+                    "cancelling the consumer for a graceful teardown"
+                )
+                main_task = self._result_consumer_task
+                if main_task is not None and not main_task.done():
                     main_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await main_task
-                    raise exc
-                # Registration finished cleanly; stop watching, block on the
-                # main loop alone.
-                registration_task = None
-        await main_task
+                return True
 
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod

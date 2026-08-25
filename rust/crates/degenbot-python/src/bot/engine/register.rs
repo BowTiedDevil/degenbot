@@ -250,6 +250,15 @@ impl PyArbitrageEngine {
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
         self.pump.stop()
     }
+
+    /// `true` once the spawned pump task has finished — cooperative timed
+    /// exit (`HOTPATH_SHUTDOWN_MS`), WS stream end, or abort/panic. The
+    /// Python runner's pump watchdog polls this so a completed pump triggers
+    /// the ordinary graceful shutdown instead of the runner idling forever
+    /// on a dead engine.
+    fn pump_finished(&self) -> bool {
+        self.pump.pump_finished()
+    }
 }
 
 // --- Pool-registration error mapping (free helpers, F2EVV6) ---

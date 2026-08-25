@@ -343,6 +343,21 @@ impl PumpState {
         Ok(())
     }
 
+    /// `true` when the spawned pump task (`BlockPump::run_with_stream`) has
+    /// finished — the cooperative timed exit (`HOTPATH_SHUTDOWN_MS`), WS
+    /// stream end, or an abort/panic. Lets the Python runner NOTICE a
+    /// completed pump and shut down gracefully: without it a timed-exit
+    /// unwind writes the hotpath report and returns, but the runner's idle
+    /// main loop keeps the process alive on a dead engine (the post-unwind
+    /// wedge — `run_bot.sh` still reported "running" while nothing
+    /// progressed).
+    pub(crate) fn pump_finished(&self) -> bool {
+        self.pump_handle
+            .lock()
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+    }
+
     // -- Verify config (ADR-006 D4 T4) --------------------------------------
     //
     // The whole-batch liquidity-map verifier (`verify_liquidity_maps` and its
@@ -546,18 +561,26 @@ pub(crate) fn map_liquidity_verify_error(
 /// wrapper destruction visible. If the pump task handle was still armed at
 /// drop time, Python-side unwinding tore down the wrapper without calling
 /// `stop()` - exactly the silent-exit shape we are hunting.
+///
+/// Leveling: only the bypassed-`stop()` shape is WARN — it is the anomaly this
+/// drop hook exists to catch. A post-`stop()` drop (`pump_task_still_armed =
+/// false`) is the *healthy* path every session takes at exit; warning there
+/// trains operators to dismiss the log line and buries the real signal.
+/// Healthy teardowns stay visible at `debug`.
 impl Drop for PumpState {
     fn drop(&mut self) {
         let running = self.pump_handle.lock().is_some();
-        tracing::warn!(
-            pump_task_still_armed = running,
-            "[shutdown] PumpState dropped{}",
-            if running {
-                " WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
-            } else {
-                ""
-            }
-        );
+        if running {
+            tracing::warn!(
+                pump_task_still_armed = true,
+                "[shutdown] PumpState dropped WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
+            );
+        } else {
+            tracing::debug!(
+                pump_task_still_armed = false,
+                "[shutdown] PumpState dropped after stop()"
+            );
+        }
     }
 }
 

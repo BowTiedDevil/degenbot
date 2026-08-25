@@ -1595,3 +1595,72 @@ class TestSessionOperatorSurface:
         assert fake_pipeline.enqueue_calls == 1
         assert fake_pipeline.trigger_calls == 1
         assert added == [(["hop-a", "hop-b"], [True, False])]
+
+
+class TestPumpFinishedWatchdog:
+    """Pump watchdog: when the Rust pump task finishes OUTSIDE ``stop()``
+    (hotpath timed exit / WS stream end / panic), the runner must notice and
+    tear down gracefully instead of idling forever on a dead engine.
+    """
+
+    async def test_pump_finished_outside_stop_ends_run_gracefully(self) -> None:
+        engine_registry = _FakeEngineRegistry()
+
+        class _FinishingEngine(_FakeEngine):
+            def __init__(self) -> None:
+                super().__init__()
+                self._polls = 0
+
+            def pump_finished(self) -> bool:
+                # finish on the second poll (first 0.5s tick is alive)
+                self._polls += 1
+                return self._polls > 1
+
+        engine_registry.engine = _FinishingEngine()
+
+        consumer_exited = asyncio.Event()
+
+        async def hanging_consumer(**kwargs):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                consumer_exited.set()
+                raise
+
+        session = BotRunner(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=hanging_consumer,
+        )
+        await session.start()
+        # run() must RETURN (not hang) once the watchdog fires.
+        async with session:
+            await session.run()
+
+        assert consumer_exited.is_set(), "watchdog must cancel the idling consumer"
+
+    async def test_watchdog_noop_for_engines_without_pump_finished(self) -> None:
+        # Injected/test engines that lack `pump_finished` keep the pre-watchdog
+        # behavior entirely: the watchdog returns immediately (the `getattr`
+        # guard) and the consumer is left untouched.
+        async def hanging_consumer(**kwargs):
+            await asyncio.Event().wait()
+
+        session = BotRunner(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=_FakeEngineRegistry(),
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=hanging_consumer,
+        )
+        await session.start()
+        async with session:
+            # plain _FakeEngine has no pump_finished → watchdog returns at once
+            await asyncio.wait_for(session._pump_finished_watchdog(), timeout=2.0)
+
