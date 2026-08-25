@@ -10,8 +10,6 @@
 //! The CL hop uses `crate::mobius_v3_int::*` (same crate); the V2 + CL
 //! Möbius arms call `crate::mobius_int::*` / `crate::mobius_int_exact::*`.
 
-use std::sync::OnceLock;
-
 use alloy::primitives::{U256, U512};
 
 use crate::profit_envelope::{path_profit_bound, HopMath};
@@ -47,7 +45,10 @@ pub fn solve_path_with_min_profit(
     resolved: &ResolvedMixedPath,
     min_profit: U256,
 ) -> Option<SolvePathResult> {
-    solve_path_gated(resolved, min_profit, gate_enabled())
+    // Hard cutover (SU7MAE task 7SI5G2): the gate is unconditional. The
+    // `enabled` flag survives only as a test seam (env flags are process-global
+    // and untestable in a shared test binary).
+    solve_path_gated(resolved, min_profit, true)
 }
 
 /// Gate logic split out for direct testing (env flags are process-global and
@@ -87,12 +88,6 @@ fn solve_path_gated(
         }
     }
     solve_path_inner(resolved)
-}
-
-fn gate_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED
-        .get_or_init(|| std::env::var_os("DEGENBOT_SOLVER_PROFIT_GATE").is_some_and(|v| v == "1"))
 }
 
 #[must_use]
