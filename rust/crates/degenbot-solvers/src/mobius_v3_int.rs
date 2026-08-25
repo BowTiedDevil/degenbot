@@ -558,33 +558,29 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
     Some(lo)
 }
 
-/// Chain-saturation corner of a single-piece path (F1 guard): the first hop's
-/// range edge — the path input at which the upstream hop exhausts its range.
-/// The first hop's input equals the path input, so its range edge is the sharp
-/// kink the unclamped smooth anchor can overshoot: `P(x) = O(x) − x` turns
-/// down past it, so the profit peak can sit right at the edge where an
-/// anchor-±2 probe already lands in the negative post-cliff region. The
+/// Chain-saturation corner of a single-piece path (F1 guard), in PATH-INPUT
+/// units: `hops[0]`'s range edge. The first hop's input equals the path input,
+/// so its range edge is the sharp kink the unclamped smooth anchor can
+/// overshoot — `P(x) = O(x) − x` turns down past it, so the peak can sit right
+/// at the edge where an anchor-±2 probe already lands in the negative
+/// post-cliff region. Only `hops[0]` is in path-input units: a later CL hop's
+/// range edge is in ITS input units (the upstream output) and is deliberately
+/// not compared to the path input here (such a kink is still bracketed by the
+/// smooth anchor, see `single_piece_hop1_binding_kink_is_not_dropped`). The
 /// single-piece analogue of the ≤4-wei `piece_window_right_edge` (which is
-/// `None` when a hop has a single range). Returns `None` when no hop has a
-/// bounded range (pure constant product / unbounded), so callers fall back to
-/// the anchor.
+/// `None` when a hop has a single range). Returns `None` when the first hop
+/// has no bounded range (constant product / unbounded), so callers fall back
+/// to the anchor.
 fn single_piece_saturation_edge(hops: &[WalkHop]) -> Option<U256> {
-    // Chain-saturation input of a single-piece path: the first hop's range
-    // edge. The first hop's input equals the path input, so its range edge
-    // is the sharp kink the unclamped anchor can overshoot (past it the
-    // upstream hop stops adding output and `P(x) = O(x) − x` turns down).
-    // Downstream hops drain at ≥ this path input (their input is the
-    // upstream output, which grows ≤ the path input), so the first hop's edge
-    // is the chain's saturation corner. A constant-product first hop has no
-    // range edge (unbounded) → the anchor is the reference instead.
-    for hop in hops {
-        if let WalkHop::Cl { crossings, .. } = hop {
-            if let Some(c) = crossings.first() {
-                return Some(c.ending_range.max_gross_input_in_range());
-            }
-        }
+    let Some(hop) = hops.first() else {
+        return None;
+    };
+    match hop {
+        WalkHop::Cl { crossings, .. } => crossings
+            .first()
+            .map(|c| c.ending_range.max_gross_input_in_range()),
+        WalkHop::ConstantProduct(_) => None,
     }
-    None
 }
 
 /// Maximum width the refine ternary settles to before the final probe grid.
@@ -3997,6 +3993,72 @@ mod tests {
         assert!(
             profit >= corner_profit,
             "solver profit {profit} < saturation-corner profit {corner_profit} (x*={x}, x_sat={x_sat})"
+        );
+    }
+
+    /// F1-adjacent (containment, review): a single-piece path whose binding
+    /// profit kink is at hop1, not hop0. hop0 is a wide, deep zfo range that
+    /// never caps in the reachable input region; hop1 is a thin ofz range that
+    /// saturates within it, so the true peak sits at hop1's cap. The unclamped
+    /// smooth anchor lies at/above that kink (marginal≥1 there), so the
+    /// terminal refine's hi (`max(corner, anchor)`) brackets it and it resolves
+    /// to the post-coarsening profit-eps rather than being silently dropped.
+    #[test]
+    fn single_piece_hop1_binding_kink_is_not_dropped() {
+        let (seq0, seq1) = (
+            multi_range_sequence(750, 4, true, &[1_000_000_000_000_000u128]),
+            multi_range_sequence(0, 10, false, &[1_000_000_000_000u128]),
+        );
+        let hops = [cl_walk_hop(&seq0, None), cl_walk_hop(&seq1, None)];
+        // hop1's saturation input, in hop1's input units (= hop0's output).
+        let y_cap = seq1.ranges[0].max_gross_input_in_range();
+        let hop0_max_in = seq0.ranges[0].max_gross_input_in_range();
+        let outcome_at = |x: U256| simulate_walk_path(x, &hops);
+        let profit_at = |x: U256| {
+            outcome_at(x)
+                .final_output
+                .checked_sub(x)
+                .unwrap_or(U256::ZERO)
+        };
+        // x_cap = smallest path input at which hop0's output saturates hop1.
+        let saturates = |x: U256| outcome_at(x).hop_outputs[0] >= y_cap;
+        assert!(
+            saturates(hop0_max_in),
+            "cell needs hop1 to saturate within hop0's reach (hop0_max={hop0_max_in})"
+        );
+        let (mut lo, mut hi) = (U256::ZERO, hop0_max_in);
+        while lo + U256::from(1) < hi {
+            let mid = lo + (hi - lo) / U256::from(2);
+            if saturates(mid) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        let x_cap = hi;
+        let corner_profit = profit_at(x_cap);
+        // cell sanity: hop0 is far from capping near the hop1 kink (the kink
+        // is hop1's, not hop0's).
+        assert!(
+            hop0_max_in > x_cap * U256::from(8u64),
+            "cell needs hop0 to never cap near the hop1 kink (hop0_max={hop0_max_in}, x_cap={x_cap})"
+        );
+        // oracle sanity: the kink is a substantial net-positive peak.
+        assert!(
+            corner_profit > U256::from(1_000_000u64),
+            "cell needs a substantial hop1-binding profit (got {corner_profit})"
+        );
+        let Some((x, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]) else {
+            panic!(
+                "hop1-binding kink dropped: solver=None while x_cap={x_cap} is worth {corner_profit}; the terminal refine must not silently skip it"
+            );
+        };
+        // Coarsened refine resolves the kink to the profit-eps contract rather
+        // than dropping it (REFINE_BRACKET_WEI bounds the 33-pt grid step).
+        let eps = U256::from(REFINE_BRACKET_WEI);
+        assert!(
+            profit >= corner_profit.saturating_sub(eps),
+            "hop1-binding kink under-shoot: solver profit {profit} < corner {corner_profit} - eps {eps} (x*={x}, x_cap={x_cap})"
         );
     }
 }
