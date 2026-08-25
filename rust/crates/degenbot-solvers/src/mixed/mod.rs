@@ -445,4 +445,4 @@ pub mod solve;
 // Re-export the solve dispatcher + the simulate entry points reached by the
 // orchestrator/tests so callers can use `degenbot_solvers::mixed::solve_path`
 // without descending into `solve`.
-pub use solve::{simulate_solidly_path, solve_path};
+pub use solve::{simulate_solidly_path, solve_path, solve_path_with_min_profit};

@@ -32,6 +32,22 @@ use ::degenbot_solvers::mixed::{HopType, ResolvedMixedPath, SolvePathResult};
 /// (D63GSE intra-solve visibility).
 const SLOWEST_PATHS_K: usize = 5;
 
+/// Pre-solve profitability floor for the profit-envelope gate (SU7MAE).
+/// Precedence: `DEGENBOT_MIN_PROFIT_WEI` (decimal wei) > default 0. Default 0
+/// skips only paths whose rigorous upper bound proves zero-or-negative profit.
+/// The full fee-aware derivation (`gas × base_fee_next + priority_fee`, the
+/// same shape as degenbot-execution's assess rule) replaces this once live
+/// numbers justify it — the solver API needs no change for that.
+fn min_profit_floor() -> U256 {
+    static FLOOR: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
+    *FLOOR.get_or_init(|| {
+        std::env::var("DEGENBOT_MIN_PROFIT_WEI")
+            .ok()
+            .and_then(|s| s.parse::<U256>().ok())
+            .unwrap_or(U256::ZERO)
+    })
+}
+
 /// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
 /// `path_sims`, `word_steps`, `refine_sims`, `path_id`) — lets the
 /// completion event name the walk-combinatorial cost driver of the slowest
@@ -651,6 +667,13 @@ impl ArbitrageEngine {
             std::sync::atomic::AtomicU64::new(0);
         let walk_refine_sims_total: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(0);
+        // Profit-envelope gate totals (SU7MAE): evaluated / skipped /
+        // unsupported across this solve cycle's paths.
+        let gate_evaluated_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_skipped_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let gate_unsupported_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
@@ -664,13 +687,22 @@ impl ArbitrageEngine {
                 // thread runs solve_path synchronously; the walk spawns no
                 // sub-tasks, so the per-thread Cell is consistent).
                 ::degenbot_solvers::mobius_v3_int::reset_walk_stats();
+                ::degenbot_solvers::profit_envelope::reset_gate_stats();
                 let t0 = std::time::Instant::now();
-                let result = ::degenbot_solvers::mixed::solve_path(resolved);
+                let result = ::degenbot_solvers::mixed::solve_path_with_min_profit(
+                    resolved,
+                    min_profit_floor(),
+                );
                 let micros = t0.elapsed().as_micros();
                 solve_cpu_us.fetch_add(
                     u64::try_from(micros).unwrap_or(u64::MAX),
                     std::sync::atomic::Ordering::Relaxed,
                 );
+                let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
+                gate_evaluated_total.fetch_add(gs.evaluated, std::sync::atomic::Ordering::Relaxed);
+                gate_skipped_total.fetch_add(gs.skipped, std::sync::atomic::Ordering::Relaxed);
+                gate_unsupported_total
+                    .fetch_add(gs.unsupported, std::sync::atomic::Ordering::Relaxed);
                 let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
                 let (pieces, sims, word_steps, refine_sims) =
                     (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
@@ -765,6 +797,10 @@ impl ArbitrageEngine {
             walk.sims = walk_sims_total.load(std::sync::atomic::Ordering::Relaxed),
             walk.steps = walk_word_steps_total.load(std::sync::atomic::Ordering::Relaxed),
             walk.refine_sims = walk_refine_sims_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.evaluated = gate_evaluated_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.skipped = gate_skipped_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.unsupported = gate_unsupported_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.min_profit = %min_profit_floor(),
             profitable = solved.len(),
             slowest.paths = %slowest.join(","),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
@@ -840,7 +876,7 @@ impl ArbitrageEngine {
                 if !resolved.valid {
                     return None;
                 }
-                ::degenbot_solvers::mixed::solve_path(resolved)
+                ::degenbot_solvers::mixed::solve_path_with_min_profit(resolved, min_profit_floor())
                     // Log solver pool state for diagnostic cross-referencing
                     // (path_id -> pool state at solve time).
                     .inspect(|r| {
