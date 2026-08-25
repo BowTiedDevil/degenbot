@@ -8,9 +8,14 @@
 
 - A solver review cycle proposed "window guard" logic to stop the active-set
   walk's terminal refine from under-shooting a sharp bounded piece corner, and
-  part of that work was subsequently reverted. Whether the V3/V4 window
-  guards should be re-landed is a pending review item (the re-land branch
-  lives on `degenbot/degenbot`, not this local clone).
+  part of that work was subsequently reverted. Whether the V3/V4 window guards
+  should be re-landed was a pending review item. The prior implementation is
+  NOT recoverable to verify against: it was dropped in the upstream tree
+  rewrap (side-line, unpushed — a batch-all-objects content search returns 0
+  hits and no local/origin branch carries it). This ADR records the re-land
+  *decision* without asserting what the lost code did; the decision stands on
+  the current core refine path's own corner safety, independent of the lost
+  implementation.
 
 - Independently, the F1 adversarial review surfaced a real instance of that
   under-shoot: a single-piece CL path whose exact unclamped smooth argmax
@@ -30,10 +35,13 @@ lives in the core refine path, in both cases the guards covered:
    bounded corner is always bracketed *by construction*, not by an added guard
    layer.
 2. **Multi-piece paths** — `walk_refine_window` (with the coarsened 1e6-wei
-   bracket, `56b3bdf21`) pins `hi` to the piece's right edge and resolves with
-   a ternary + grid to profit-ε; a bounded downstream kink is bracketed via
-   the smooth anchor and resolved to the coarsening ε, satisfying the same
-   profit-ε contract the guards enforced.
+   bracket, `56b3bdf21`) resolves each piece with a ternary + smooth-anchor
+   window to profit-ε. Bounded pieces pin `hi` to the bisected right edge
+   (`piece_window_right_edge`); terminal pieces (right edge = `None`) refine
+   `[x_l, max(4·anchor, 2·x_l, x_l+1024)]`, an anchor-keyed window that the Q1
+   proof shows contains the discrete argmax. A bounded downstream kink is
+   therefore bracketed and resolved to the coarsening ε, satisfying the same
+   profit-ε contract the guards would have enforced.
 
 Re-landing would re-introduce a superseded, parallel guard over a corner the
 core refine now guarantees, adding review surface and dead code with no new
@@ -55,3 +63,9 @@ for the hop1 case; a hop0-corner sibling is
 - V3/V4 guard branches stay un-merged; no re-land.
 - Corner safety is enforced by the core refine and pinned by two regression
   tests (single-piece saturation corner + hop1-binding kink).
+- Recurrence of the original refine runaway (multi-million sims) is
+  structurally capped: with the 1e6-wei bracket, worst-case refine sims per
+  piece are ~2·log₃(width/1e6) + 33 + ~1025 (dense) ≈ 350 even for a
+  2²⁵⁶-wide window. The old runaway came from a 64-wei dense sweep over giant
+  windows, which the bracket eliminated — that cap is the defense against
+  recurrence, not the lost guards.
