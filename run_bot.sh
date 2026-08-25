@@ -30,6 +30,8 @@ mkdir -p "$LOGDIR"
 #   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-
 #     check; NEW default-ON since B4GX7C, so a live WS log drop aborts loudly)
 # Per-target/high-noise (still OFF): DEGENBOT_DRAIN_DBG, DEGENBOT_TRACE_REGISTER_SEED
+#   DEGENBOT_DUMP_TICK_MAPS  (opt-in: dump full seed + verifier tick maps for the
+#     tick-map desync re-assembly aid; high volume, set only for an investigation)
 #
 # Sim-failure policy: this script DEFAULTS DEGENBOT_SIM_EXIT_ON_FAIL=0 (keep
 # running through thin-margin/no-profit reverts - the routine arb-filter

@@ -769,7 +769,10 @@ async fn assemble_db_or_chain_v3(
             // aborts the build with a typed error, never registers.
             match crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)? {
                 // Non-empty snapshot → Tracked + populated.
-                Some(hit) => return Ok(hit), // (ticks, Tracked)
+                Some(hit) => {
+                    crate::bot_core::tick_assembly::dump_tick_map_seed(&format!("{address}"), &hit);
+                    return Ok(hit); // (ticks, Tracked)
+                }
                 // Empty snapshot → a DB-registered pool with no mapped liquidity
                 // is a legitimately-empty Tracked pool (authoritative — it came
                 // from the DB). Do NOT fall through to the Sparse Chain arm: that
@@ -807,7 +810,13 @@ async fn assemble_db_or_chain_v4(
             // guard above.
             match crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)? {
                 // Non-empty snapshot → Tracked + populated.
-                Some(hit) => return Ok(hit), // (ticks, Tracked)
+                Some(hit) => {
+                    crate::bot_core::tick_assembly::dump_tick_map_seed(
+                        &degenbot_core::hex_utils::encode_hex(&pool_id),
+                        &hit,
+                    );
+                    return Ok(hit); // (ticks, Tracked)
+                }
                 // Empty snapshot → a DB-registered pool with no mapped liquidity
                 // is a legitimately-empty Tracked pool (authoritative — it came
                 // from the DB's uniswap_v4_pools/managed_pool_liquidity_positions).
