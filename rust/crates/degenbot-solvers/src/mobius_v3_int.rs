@@ -690,6 +690,12 @@ thread_local! {
     // Stop-time refinement (`walk_refine_window` ternary + dense sweep) sim
     // count — the measurement split for the 64-wei refinement-resolution cost.
     pub(crate) static WALK_REFINE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // Q3 telemetry: the largest word-boundary count any range reached on this
+    // thread — dense ranges never occur in the registered set (DB audit: max
+    // populated-word run is 41), so this observes the first one to approach
+    // the profile threshold instead of assuming.
+    pub(crate) static WALK_MAX_DENSE_WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static WALK_DENSE_ALERTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Reset the walk counters on the calling thread. The rayon solve calls this at
@@ -723,6 +729,15 @@ pub fn take_last_word_boundary_steps() -> usize {
     let s = WALK_WORD_STEPS.with(std::cell::Cell::get);
     WALK_WORD_STEPS.with(|c| c.set(0));
     s
+}
+
+/// Read (without clearing) the largest word-boundary count any range reached
+/// on this thread since the last `reset_walk_stats`. Q3: dense ranges
+/// (>= WORD_PROFILE_THRESHOLD) never occur in the registered set (the DB audit's
+/// max populated-word run is 41), so this surfaces the first range to approach
+/// the half threshold as an observation rather than an assumption.
+pub fn last_max_dense_words() -> usize {
+    WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get)
 }
 
 /// Solve an arbitrary V2/CL path with the active-set piecewise Möbius walk.
@@ -1000,6 +1015,10 @@ fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossin
 
 /// A CL `ending_range` with FEWER than this many word boundaries stays on the linear `int_simulate_v3_swap` walk (the profile is not worth building); denser ranges get a precomputed [`V3WordProfile`].
 const WORD_PROFILE_THRESHOLD: usize = 128;
+/// Q3: an observed range reaching half the dense threshold (64 word boundaries)
+/// is the signal to harvest a real dense capture and replace the synthetic
+/// guard (see the DB audit note on `WALK_MAX_DENSE_WORDS`).
+const DENSE_OBSERVE_THRESHOLD: usize = WORD_PROFILE_THRESHOLD / 2;
 
 /// Precomputed forward word-boundary profiles, parallel to `crossings`. A dense
 /// range re-walks the same word-boundary prefix on nearly every one of a path's
@@ -1008,6 +1027,23 @@ const WORD_PROFILE_THRESHOLD: usize = 128;
 /// `Arc`-backed so it is shared - not re-cloned - across every path that reuses
 /// it (the hop-projection memoization).
 fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3WordProfile>>> {
+    for c in crossings {
+        let n = c.ending_range.word_boundary_prices.len();
+        WALK_MAX_DENSE_WORDS.with(|m| {
+            if n > m.get() {
+                m.set(n)
+            }
+        });
+        // Q3 telemetry (one-shot alert): dense ranges never occur in the
+        // registered set, so if a range ever approaches half the profile
+        // threshold we want to know + harvest a real dense capture.
+        if n >= DENSE_OBSERVE_THRESHOLD && !WALK_DENSE_ALERTED.with(std::cell::Cell::get) {
+            WALK_DENSE_ALERTED.with(|a| a.set(true));
+            eprintln!(
+                "Q3-DENSE: a CL range reached {n} word boundaries (>= {DENSE_OBSERVE_THRESHOLD}); harvest a real capture to replace the synthetic dense guard"
+            );
+        }
+    }
     crossings
         .iter()
         .map(|c| {
@@ -4059,6 +4095,100 @@ mod tests {
         assert!(
             profit >= corner_profit.saturating_sub(eps),
             "hop1-binding kink under-shoot: solver profit {profit} < corner {corner_profit} - eps {eps} (x*={x}, x_cap={x_cap})"
+        );
+    }
+
+    /// Q3 SYNTHETIC dense guard (gated OFF CI — no registered pool clears the
+    /// 128-word dense threshold; the DB audit's global max populated-word run is
+    /// 41). A path whose hop0 carries a 300-word-boundary DENSE range takes the
+    /// word-profile path (WORD_PROFILE_THRESHOLD=128). This pins that (a) the
+    /// solver's landed profit stays >= a fine-grid oracle (never under-shoots on
+    /// a dense path) and (b) the ±64-wei direction-test straddle near the
+    /// optimum agrees with the fine oracle's local slope. Replace with a real
+    /// dense capture the moment the telemetry hook observes one.
+    #[test]
+    #[ignore]
+    fn dense_edge_direction_guard_synthetic() {
+        let mut seq0 = multi_range_sequence(750, 4, true, &[1_000_000_000_000_000u128]);
+        {
+            let r = &mut seq0.ranges[0];
+            let entry = r.sqrt_price_x96;
+            let lower = r.sqrt_price_lower_x96;
+            let span = entry - lower;
+            let n = 300u128;
+            r.word_boundary_prices = (1..=n)
+                .map(|i| entry - span * U256::from(i) / U256::from(n + 1))
+                .collect();
+            assert!(
+                r.word_boundary_prices.len() >= WORD_PROFILE_THRESHOLD,
+                "synthetic cell must be dense (>= {WORD_PROFILE_THRESHOLD} boundaries)"
+            );
+        }
+        // 2-range partner -> multi-piece, so the walk runs the ±64 direction
+        // test (single-piece paths take the F1 terminal branch instead).
+        let seq1 = multi_range_sequence(
+            0,
+            1200,
+            false,
+            &[10_000_000_000_000u128, 10_000_000_000_000u128],
+        );
+        let hops = [cl_walk_hop(&seq0, None), cl_walk_hop(&seq1, None)];
+        let o = |x: U256| simulate_walk_path(x, &hops).final_output;
+        let p = |x: U256| o(x).checked_sub(x).unwrap_or(U256::ZERO);
+
+        // Fine-grid oracle: coarse 128-step scan over [0, hi], then a fine
+        // 4k-wei sweep around the coarse peak.
+        let hi = seq0.ranges[0]
+            .max_gross_input_in_range()
+            .saturating_add(U256::from(1));
+        let coarse = hi / U256::from(128) + U256::from(1);
+        let (mut peak_x, mut peak_v) = (U256::ZERO, U256::ZERO);
+        let mut x = U256::ZERO;
+        while x < hi {
+            let v = p(x);
+            if v > peak_v {
+                peak_v = v;
+                peak_x = x;
+            }
+            x = x.saturating_add(coarse);
+        }
+        let lo = peak_x.saturating_sub(U256::from(1_000_000));
+        let hi2 = peak_x
+            .saturating_add(U256::from(1_000_000))
+            .saturating_add(U256::from(1));
+        let step = U256::from(4000);
+        let mut oracle_profit = peak_v;
+        x = lo;
+        while x < hi2 {
+            let v = p(x);
+            if v > oracle_profit {
+                oracle_profit = v;
+            }
+            x = x.saturating_add(step);
+        }
+
+        let eps = U256::from(REFINE_BRACKET_WEI);
+        let Some((xr, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]) else {
+            panic!("solver=None on a dense path while the fine oracle is {oracle_profit}");
+        };
+        assert!(
+            profit >= oracle_profit.saturating_sub(eps),
+            "dense path under-shoot: solver {profit} < fine oracle {oracle_profit} - eps {eps}"
+        );
+
+        // ±64 direction-test straddle at the optimum agrees with the fine
+        // oracle's local slope (the Q3 mechanism).
+        let back = xr.saturating_sub(U256::from(64));
+        let fwd = xr.saturating_add(U256::from(64));
+        let sb = walk_profit_score(o(back), back);
+        let sf = walk_profit_score(o(fwd), fwd);
+        let straddle_climbing = sf + I256::ONE >= sb;
+        // Fine-oracle truth: profit should be flat-to-falling at/just past the
+        // optimum, so it must agree that the edge is not climbing.
+        let oracle_rising = p(xr.saturating_add(U256::from(258))) >= profit;
+        assert_eq!(
+            straddle_climbing, oracle_rising,
+            "dense-edge ±64 direction test ({straddle_climbing}) disagrees with the fine oracle ({oracle_rising}) at x*={xr}"
         );
     }
 }
