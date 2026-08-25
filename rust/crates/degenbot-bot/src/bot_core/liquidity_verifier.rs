@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use alloy::primitives::{Address, Bytes, U256};
 
 use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
-use degenbot_pools::tick_map_verify::compare_tick_maps;
+use degenbot_pools::tick_map_verify::{compare_tick_maps, TickDivergence};
 use degenbot_rpc::abi::{
     decode_tick_bitmap, decode_tick_data, decode_v4_tick_bitmap, decode_v4_tick_data,
     encode_tick_bitmap, encode_tick_data, encode_v4_tick_bitmap, encode_v4_tick_data,
@@ -99,6 +99,84 @@ impl From<VerificationMismatch> for LiquidityVerifyError {
     fn from(m: VerificationMismatch) -> Self {
         Self::Mismatch(m)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Desync re-assembly helpers (UO3JM4 / ADR-021).
+// ---------------------------------------------------------------------------
+
+/// Serialize a full `(tick -> (liquidity_gross, liquidity_net))` map in
+/// ascending tick order into a compact, byte-stable `tick:lg,ln;...` string, so
+/// two dumps of the same map are directly comparable and the exact map that
+/// went into a consumer (the verifier) can be rebuilt. Used for the
+/// `DEGENBOT_DUMP_TICK_MAPS` desync aid.
+fn serialize_liquidity_map<S: std::hash::BuildHasher>(
+    map: &HashMap<i32, (u128, i128), S>,
+) -> String {
+    let mut ticks: Vec<&i32> = map.keys().collect();
+    ticks.sort_unstable();
+    ticks
+        .iter()
+        .map(|t| {
+            let (lg, ln) = map[*t];
+            format!("{t}:{lg},{ln}")
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Serialize the FULL divergence set (both sides, including on-chain-only
+/// ticks) as `tick:engine[lg,ln]/onchain[lg,ln];...` (`nil` marks an absent
+/// side). The historical code returned on the first divergent tick, losing the
+/// rest; this captures every divergence at once.
+fn serialize_divergences(ds: &[TickDivergence]) -> String {
+    let mut out = String::new();
+    for d in ds {
+        let s = match d.stored {
+            Some((lg, ln)) => format!("{lg},{ln}"),
+            None => "nil".to_string(),
+        };
+        let o = match d.on_chain {
+            Some((lg, ln)) => format!("{lg},{ln}"),
+            None => "nil".to_string(),
+        };
+        out.push_str(&format!("{}:e[{s}]/oc[{o}];", d.tick));
+    }
+    out
+}
+
+/// Emit the `[dbg-verify] TICK-MAP DESYNC` diagnostic on ANY divergence: the
+/// full divergence set (always) + the full engine/on-chain maps (gated behind
+/// `DEGENBOT_DUMP_TICK_MAPS=1`). UO3JM4/ADR-021 re-assembly aid — lets an
+/// investigation re-assemble the exact map that went into the verifier.
+fn log_tick_map_desync(
+    pool_ident: &str,
+    block_tag: &str,
+    tick_spacing: i32,
+    active_tick: i32,
+    update_block: u64,
+    journal_len: usize,
+    total_ticks: usize,
+    stored_map: &HashMap<i32, (u128, i128)>,
+    observed_map: &HashMap<i32, (u128, i128)>,
+    divergences: &[TickDivergence],
+) {
+    let dump_maps = crate::bot_core::bot_env_flag_default_off("DEGENBOT_DUMP_TICK_MAPS");
+    tracing::info!(
+        target: crate::telemetry::DIAGNOSTIC_TARGET,
+        pool = %pool_ident,
+        block_tag = %block_tag,
+        tick_spacing,
+        active_tick,
+        update_block,
+        journal_len,
+        total_ticks,
+        divergence_count = divergences.len(),
+        divergences = %serialize_divergences(divergences),
+        engine_map = %(if dump_maps { serialize_liquidity_map(stored_map) } else { "omitted; set DEGENBOT_DUMP_TICK_MAPS=1".to_string() }),
+        observed_map = %(if dump_maps { serialize_liquidity_map(observed_map) } else { "omitted; set DEGENBOT_DUMP_TICK_MAPS=1".to_string() }),
+        "[dbg-verify] TICK-MAP DESYNC (full divergence set + engine/on-chain maps; UO3JM4 re-assembly aid)"
+    );
 }
 
 // ── ABI encode/decode primitives live in `degenbot_rpc::abi` (the single deep
@@ -435,6 +513,21 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
     let stored_map = stored_tick_map(tick_data);
     let observed_map: HashMap<i32, (u128, i128)> = rows.iter().copied().collect();
     let divergences = compare_tick_maps(&stored_map, &observed_map);
+
+    if !divergences.is_empty() {
+        log_tick_map_desync(
+            &format!("{pool_addr}"),
+            &block_tag,
+            tick_spacing,
+            active_tick,
+            pool.dbg_update_block(),
+            pool.dbg_journal_len(),
+            tick_data.len(),
+            &stored_map,
+            &observed_map,
+            &divergences,
+        );
+    }
 
     for d in &divergences {
         if d.stored.is_none() {
@@ -774,6 +867,21 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     let observed_map: HashMap<i32, (u128, i128)> = rows.iter().copied().collect();
     let divergences = compare_tick_maps(&stored_map, &observed_map);
 
+    if !divergences.is_empty() {
+        log_tick_map_desync(
+            &format!("0x{pool_id_hex}"),
+            &block_tag,
+            tick_spacing,
+            active_tick,
+            pool.dbg_update_block(),
+            pool.dbg_journal_len(),
+            tick_data.len(),
+            &stored_map,
+            &observed_map,
+            &divergences,
+        );
+    }
+
     for d in &divergences {
         if d.stored.is_none() {
             continue;
@@ -951,6 +1059,56 @@ mod tests {
     //   if (tick < 0 && tick % tickSpacing != 0) compressed--;
     //
     // Python: tick // tickSpacing (Python // already floors)
+
+    // --- desync re-assembly serializers (UO3JM4 / ADR-021) ---
+
+    #[test]
+    fn serialize_liquidity_map_sorts_ascending_and_round_trips() {
+        let mut m: HashMap<i32, (u128, i128)> = HashMap::new();
+        m.insert(200, (20, -1));
+        m.insert(100, (10, 1));
+        m.insert(50, (0, 0));
+        let s = serialize_liquidity_map(&m);
+        assert_eq!(s, "50:0,0;100:10,1;200:20,-1");
+        let rebuilt: HashMap<i32, (u128, i128)> = s
+            .split(';')
+            .map(|part| {
+                let (t, v) = part.split_once(':').unwrap();
+                let (lg, ln) = v.split_once(',').unwrap();
+                (
+                    t.parse().unwrap(),
+                    (lg.parse().unwrap(), ln.parse().unwrap()),
+                )
+            })
+            .collect();
+        assert_eq!(rebuilt, m);
+    }
+
+    #[test]
+    fn serialize_divergences_renders_both_sides_and_nil() {
+        use degenbot_pools::tick_map_verify::TickDivergence;
+        let ds = vec![
+            TickDivergence {
+                tick: 100,
+                stored: Some((10, 1)),
+                on_chain: Some((9, 1)),
+            },
+            TickDivergence {
+                tick: 200,
+                stored: Some((5, 2)),
+                on_chain: None,
+            },
+            TickDivergence {
+                tick: 300,
+                stored: None,
+                on_chain: Some((7, 0)),
+            },
+        ];
+        assert_eq!(
+            serialize_divergences(&ds),
+            "100:e[10,1]/oc[9,1];200:e[5,2]/oc[nil];300:e[nil]/oc[7,0];"
+        );
+    }
 
     #[test]
     fn compress_positive_tick_exact_division() {

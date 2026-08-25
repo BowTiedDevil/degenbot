@@ -144,6 +144,39 @@ pub type TickMapAssemblyResult =
 /// Propagates [`TickMapAssemblyError::Db`] from `fetch_liquidity_map` and
 /// [`TickMapAssemblyError::Chain`] from `bootstrap_v3_tick_word` (Decision 8
 /// (A) — neither is swallowed).
+/// Compact serialize of a `HashMap<i32, TickInfo>` (ascending tick) into
+/// `tick:gross,net;...`, for the snapshot-seed dump (UO3JM4/ADR-021
+/// re-assembly aid).
+fn serialize_tick_info_map(ticks: &HashMap<i32, TickInfo>) -> String {
+    let mut keys: Vec<&i32> = ticks.keys().collect();
+    keys.sort_unstable();
+    keys.iter()
+        .map(|t| {
+            let ti = &ticks[*t];
+            format!("{t}:{},{}", ti.liquidity_gross, ti.liquidity_net)
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Dump the snapshot-seed tick map (Db snapshot + backfill) under
+/// `DEGENBOT_DUMP_TICK_MAPS=1`, so it can be compared against the map that
+/// later went into the verifier (UO3JM4/ADR-021 re-assembly aid). No-op unless
+/// the flag is set — zero cost in default runs.
+fn dump_tick_map_seed(pool_ident: &str, seed: &(HashMap<i32, TickInfo>, PoolTickCoverage)) {
+    if crate::bot_core::bot_env_flag_default_off("DEGENBOT_DUMP_TICK_MAPS") {
+        tracing::info!(
+            target: crate::telemetry::DIAGNOSTIC_TARGET,
+            pool = %pool_ident,
+            seed_origin = "db-snapshot",
+            coverage = ?seed.1,
+            tick_count = seed.0.len(),
+            seed_map = %serialize_tick_info_map(&seed.0),
+            "tick-map snapshot-seed (DEGENBOT_DUMP_TICK_MAPS=1; UO3JM4 re-assembly aid)"
+        );
+    }
+}
+
 pub fn assemble_v3_tick_map(
     db: Option<&dyn degenbot_db::snapshot::TickMapDb>,
     address: Address,
@@ -156,6 +189,7 @@ pub fn assemble_v3_tick_map(
     // guard.
     if let Some(db) = db {
         if let Some(db_hit) = fetch_v3_tick_map_from_db(db, address, tick_spacing)? {
+            dump_tick_map_seed(&format!("{address}"), &db_hit);
             return Ok(Some(db_hit));
         }
     }
@@ -200,6 +234,7 @@ pub fn assemble_v4_tick_map(
     // 1. Db arm.
     if let Some(db) = db {
         if let Some(db_hit) = fetch_v4_tick_map_from_db(db, pool_manager, pool_id, tick_spacing)? {
+            dump_tick_map_seed(&format!("{pool_id:?}"), &db_hit);
             return Ok(Some(db_hit));
         }
     }
