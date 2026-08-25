@@ -930,9 +930,8 @@ impl HeavyClPathCapture {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(16),
             out_path: std::path::PathBuf::from(
-                std::env::var("DEGENBOT_SOLVER_CAPTURE_OUT").unwrap_or_else(|_| {
-                    "/workspaces/degenbot/tests/fixtures/heavy_cl_solve_captures.jsonl".to_string()
-                }),
+                std::env::var("DEGENBOT_SOLVER_CAPTURE_OUT")
+                    .unwrap_or_else(|_| "tests/fixtures/heavy_cl_solve_captures.jsonl".to_string()),
             ),
             seen: std::sync::Mutex::new(std::collections::HashSet::new()),
             count: std::sync::atomic::AtomicU64::new(0),
