@@ -716,13 +716,44 @@ pub fn reset_walk_stats() {
     WALK_REFINE_SIMS.with(|c| c.set(0));
 }
 
+/// One path's walk-combinator counters (D63GSE follow-up): the FULL set, so
+/// solve telemetry can name the real cost driver — `sims × per-sim word_steps`
+/// vs `refine_sims` (input-partition refinement probes).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WalkStats {
+    /// Tick-range pieces visited by the monotone walk.
+    pub pieces: usize,
+    /// Full path simulations (`simulate_walk_path` calls).
+    pub sims: usize,
+    /// `compute_swap_step_v3` word-boundary steps inside every sim — the
+    /// per-simulation cost driver for dense (many-word) CL ranges.
+    pub word_steps: usize,
+    /// Stop-time refinement probes (`walk_refine_window` ternary + grid).
+    pub refine_sims: usize,
+}
+
+/// Read-and-clear ALL walk counters on the calling thread and return them
+/// locked in one value (no torn reads between the individually-countered
+/// stats).
+pub fn take_last_walk_stats_full() -> WalkStats {
+    let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
+    let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
+    let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
+    let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
+    reset_walk_stats();
+    WalkStats {
+        pieces,
+        sims,
+        word_steps,
+        refine_sims,
+    }
+}
+
 /// Read-and-clear the walk counters on the calling thread and return
 /// `(pieces_visited, path_simulations)` accumulated since the last reset.
 pub fn take_last_walk_stats() -> (usize, usize) {
-    let p = WALK_PIECES_VISITED.with(std::cell::Cell::get);
-    let s = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
-    reset_walk_stats();
-    (p, s)
+    let ws = take_last_walk_stats_full();
+    (ws.pieces, ws.sims)
 }
 
 /// Read (without clearing) the stop-time refinement sim count accumulated on

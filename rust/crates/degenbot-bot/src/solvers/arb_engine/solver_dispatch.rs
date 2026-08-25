@@ -631,7 +631,7 @@ impl ArbitrageEngine {
         // attribution — lets the completion event name the walk-combinatorial
         // cost driver of the slowest routes, not just their wall time.
         let path_times: std::sync::Mutex<
-            std::collections::BinaryHeap<std::cmp::Reverse<(u128, u64, u64, u64)>>,
+            std::collections::BinaryHeap<std::cmp::Reverse<(u128, u64, u64, u64, u64, u64)>>,
         > = std::sync::Mutex::new(std::collections::BinaryHeap::new());
         // Total CPU µs across all solved paths — dividing by the rayon wall
         // time yields achieved parallelism (8 workers ⇒ target ≈ 8.0).
@@ -640,6 +640,10 @@ impl ArbitrageEngine {
         // Σ path simulations) — the diagnostic multiplier behind a slow solve.
         let walk_pieces_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let walk_sims_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let walk_word_steps_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let walk_refine_sims_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
@@ -660,7 +664,9 @@ impl ArbitrageEngine {
                     u64::try_from(micros).unwrap_or(u64::MAX),
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                let (pieces, sims) = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats();
+                let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
+                let (pieces, sims, word_steps, refine_sims) =
+                    (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
                 walk_pieces_total.fetch_add(
                     u64::try_from(pieces).unwrap_or(0),
                     std::sync::atomic::Ordering::Relaxed,
@@ -669,15 +675,25 @@ impl ArbitrageEngine {
                     u64::try_from(sims).unwrap_or(0),
                     std::sync::atomic::Ordering::Relaxed,
                 );
+                walk_word_steps_total.fetch_add(
+                    u64::try_from(word_steps).unwrap_or(0),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                walk_refine_sims_total.fetch_add(
+                    u64::try_from(refine_sims).unwrap_or(0),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 if let Ok(mut heap) = path_times.lock() {
                     let worst = heap
                         .peek()
-                        .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _))| *w);
+                        .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _))| *w);
                     if heap.len() < SLOWEST_PATHS_K || micros > worst {
                         heap.push(std::cmp::Reverse((
                             micros,
                             u64::try_from(pieces).unwrap_or(0),
                             u64::try_from(sims).unwrap_or(0),
+                            u64::try_from(word_steps).unwrap_or(0),
+                            u64::try_from(refine_sims).unwrap_or(0),
                             *pid,
                         )));
                         if heap.len() > SLOWEST_PATHS_K {
@@ -726,8 +742,10 @@ impl ArbitrageEngine {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .map(|std::cmp::Reverse((us, pieces, sims, pid))| {
-                format!("{pid}:{us}us:sims={sims}:pieces={pieces}")
+            .map(|std::cmp::Reverse((us, pieces, sims, word_steps, refine_sims, pid))| {
+                format!(
+                    "{pid}:{us}us:sims={sims}:pieces={pieces}:steps={word_steps}:refine={refine_sims}"
+                )
             })
             .collect();
         tracing::info!(
@@ -738,6 +756,8 @@ impl ArbitrageEngine {
             solve.cpu_us = solve_cpu_us.load(std::sync::atomic::Ordering::Relaxed),
             walk.pieces = walk_pieces_total.load(std::sync::atomic::Ordering::Relaxed),
             walk.sims = walk_sims_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.steps = walk_word_steps_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.refine_sims = walk_refine_sims_total.load(std::sync::atomic::Ordering::Relaxed),
             profitable = solved.len(),
             slowest.paths = %slowest.join(","),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
