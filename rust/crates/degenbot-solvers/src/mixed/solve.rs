@@ -10,7 +10,12 @@
 //! The CL hop uses `crate::mobius_v3_int::*` (same crate); the V2 + CL
 //! Möbius arms call `crate::mobius_int::*` / `crate::mobius_int_exact::*`.
 
+use std::sync::OnceLock;
+
 use alloy::primitives::{U256, U512};
+
+use crate::profit_envelope::{path_profit_bound, HopMath};
+use crate::profit_envelope::{GATE_EVALUATED, GATE_SKIPPED, GATE_UNSUPPORTED};
 
 use crate::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
@@ -28,8 +33,67 @@ use crate::mixed::{
 /// `solve_all` invoke `solve_path` from a rayon `par_iter` closure without
 /// borrowing `self` (which would conflict with the `&mut self` write to
 /// `self.results` that follows the solve).
-#[expect(clippy::too_many_lines)]
+#[must_use]
 pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+    solve_path_with_min_profit(resolved, U256::ZERO)
+}
+
+/// [`solve_path`] with the profit-envelope gate active at floor `min_profit`:
+/// when the rigorous upper bound on path profit falls below the floor, the
+/// path is provably unprofitable and returns `None` WITHOUT running any
+/// walk. See CONTEXT.md → "Profit envelope gate".
+#[must_use]
+pub fn solve_path_with_min_profit(
+    resolved: &ResolvedMixedPath,
+    min_profit: U256,
+) -> Option<SolvePathResult> {
+    solve_path_gated(resolved, min_profit, gate_enabled())
+}
+
+/// Gate logic split out for direct testing (env flags are process-global and
+/// untestable in a shared test binary).
+fn solve_path_gated(
+    resolved: &ResolvedMixedPath,
+    min_profit: U256,
+    enabled: bool,
+) -> Option<SolvePathResult> {
+    if !enabled {
+        return solve_path_inner(resolved);
+    }
+    let views: Vec<Option<crate::profit_envelope::HopMath<'_>>> = resolved
+        .hops
+        .iter()
+        .map(|h| match h {
+            ResolvedHop::V2 { state } => Some(HopMath::V2(state)),
+            ResolvedHop::V3 { int_seq, .. } | ResolvedHop::V4 { int_seq, .. } => {
+                Some(HopMath::Cl(int_seq))
+            }
+            _ => None,
+        })
+        .collect();
+    match path_profit_bound(&views) {
+        // Unsupported families are SOLVED unscreened, never skipped.
+        None => GATE_UNSUPPORTED.with(|c| c.set(c.get() + 1)),
+        Some(bound) => {
+            GATE_EVALUATED.with(|c| c.set(c.get() + 1));
+            if bound < min_profit {
+                GATE_SKIPPED.with(|c| c.set(c.get() + 1));
+                return None;
+            }
+        }
+    }
+    solve_path_inner(resolved)
+}
+
+fn gate_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED
+        .get_or_init(|| std::env::var_os("DEGENBOT_SOLVER_PROFIT_GATE").is_some_and(|v| v == "1"))
+}
+
+#[must_use]
+#[expect(clippy::too_many_lines)]
+pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
         return None;
@@ -1247,5 +1311,99 @@ fn curve_brute_force_best(hops: &[ResolvedHop], start: U256) -> Option<U256> {
         None
     } else {
         Some(best_input)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Profit-envelope gate wiring tests (SU7MAE WNQB3V)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use crate::mixed::ResolvedMixedPath;
+    use crate::profit_envelope::take_last_gate_stats;
+    use degenbot_math::v2::IntHopState;
+    use degenbot_uniswap::dex_identity::DexVariant;
+
+    fn v2_hop(r_in: u64, r_out: u64) -> ResolvedHop {
+        ResolvedHop::V2 {
+            state: IntHopState::new(U256::from(r_in), U256::from(r_out), 997_000, 1_000_000),
+        }
+    }
+
+    /// A trivially profitable V2 round trip: 1000 A→B then B→A with the
+    /// second pool's price shifted so the round trip nets positive output.
+    fn profitable_path() -> ResolvedMixedPath {
+        ResolvedMixedPath {
+            hops: vec![v2_hop(1_000_000, 1_000_000), v2_hop(1_010_000, 990_000)],
+            valid: true,
+            state_nonces: vec![1, 2],
+            max_update_block: 0,
+        }
+    }
+
+    #[test]
+    fn gate_disabled_matches_ungated_result() {
+        let p = profitable_path();
+        assert_eq!(
+            solve_path_gated(&p, U256::from(u64::MAX), false),
+            solve_path_inner(&p),
+            "flag OFF must be bit-for-bit identical"
+        );
+    }
+
+    #[test]
+    fn gate_huge_floor_skips_and_counts() {
+        let p = profitable_path();
+        let _ = take_last_gate_stats(); // clear thread counters
+        let r = solve_path_gated(&p, U256::MAX, true);
+        assert!(r.is_none(), "infinite floor skips every screened path");
+        let stats = take_last_gate_stats();
+        assert_eq!(stats.skipped, 1, "skip must be counted");
+        assert_eq!(stats.evaluated, 1);
+        assert_eq!(stats.unsupported, 0);
+    }
+
+    #[test]
+    fn gate_zero_floor_never_skips_v2_only_path() {
+        // V2-only paths are exactly Möbius-solvable; their envelope is tight
+        // around the true curve, so floor 0 must never discard them.
+        let p = profitable_path();
+        let ungated = solve_path_inner(&p);
+        let gated = solve_path_gated(&p, U256::ZERO, true);
+        assert_eq!(gated, ungated);
+        let stats = take_last_gate_stats();
+        assert_eq!(stats.evaluated, 1);
+        assert_eq!(stats.skipped, 0);
+    }
+
+    #[test]
+    fn unsupported_family_counts_unsupported_and_still_solves() {
+        // Solidly hops have no envelope yet; the path must still be SOLVED
+        // (never skipped) and counted as unsupported.
+        let solidly = ResolvedHop::SolidlyStable {
+            state: crate::mixed::SolidlyHopState {
+                reserves_0: U256::from(1_000_000u64),
+                reserves_1: U256::from(1_000_000u64),
+                decimals_0: U256::from(1_000_000_000_000_000_000u64),
+                decimals_1: U256::from(1_000_000_000_000_000_000u64),
+                token_in: 0,
+                fee_numer: U256::from(3u64),
+                fee_denom: U256::from(1000u64),
+                stable: true,
+                variant: DexVariant::AerodromeV2Stable,
+            },
+        };
+        let p = ResolvedMixedPath {
+            hops: vec![solidly],
+            valid: false, // invalid anyway; only counter behavior matters
+            state_nonces: vec![],
+            max_update_block: 0,
+        };
+        let _ = take_last_gate_stats();
+        let _ = solve_path_gated(&p, U256::ZERO, true);
+        let stats = take_last_gate_stats();
+        assert_eq!(stats.unsupported, 1);
     }
 }

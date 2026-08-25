@@ -222,6 +222,59 @@ fn prune(lines: &mut Vec<Line>) {
     *lines = survivors;
 }
 
+/// Gate telemetry: per-solve-cycle counters, thread-local like the walk
+/// stats (rayon workers aggregate them the same way). `unsupported` counts
+/// paths whose hop families lack an envelope — those are SOLVED normally,
+/// never skipped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GateStats {
+    /// Paths whose bound was derived and compared against `min_profit`.
+    pub evaluated: u64,
+    /// Paths skipped because `bound < min_profit` (provably unprofitable).
+    pub skipped: u64,
+    /// Paths with at least one unsupported hop family (solved unscreened).
+    pub unsupported: u64,
+}
+
+thread_local! {
+    pub(crate) static GATE_EVALUATED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_SKIPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_UNSUPPORTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Reset all gate counters on the calling thread (call at solve-cycle start,
+/// mirroring [`crate::mobius_v3_int::reset_walk_stats`]).
+pub fn reset_gate_stats() {
+    GATE_EVALUATED.with(|c| c.set(0));
+    GATE_SKIPPED.with(|c| c.set(0));
+    GATE_UNSUPPORTED.with(|c| c.set(0));
+}
+
+/// Read-and-clear the calling thread's gate counters.
+#[must_use]
+pub fn take_last_gate_stats() -> GateStats {
+    let evaluated = GATE_EVALUATED.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let skipped = GATE_SKIPPED.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let unsupported = GATE_UNSUPPORTED.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    GateStats {
+        evaluated,
+        skipped,
+        unsupported,
+    }
+}
+
 /// Rigorous upper bound on `max_x [path_output(x) − x]`, or `None` when any
 /// hop is unsupported/degenerate (callers MUST NOT skip on `None`).
 #[must_use]
