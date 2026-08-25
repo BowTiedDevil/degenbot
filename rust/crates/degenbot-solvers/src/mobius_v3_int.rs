@@ -692,7 +692,8 @@ thread_local! {
     pub(crate) static WALK_REFINE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // Q3 telemetry: the largest word-boundary count any range reached on this
     // thread — dense ranges never occur in the registered set (DB audit: max
-    // populated-word run is 41), so this observes the first one to approach
+    // populated-word run is 67, none reach 128), so this observes the first
+    // one to approach
     // the profile threshold instead of assuming.
     pub(crate) static WALK_MAX_DENSE_WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_DENSE_ALERTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -734,7 +735,8 @@ pub fn take_last_word_boundary_steps() -> usize {
 /// Read (without clearing) the largest word-boundary count any range reached
 /// on this thread since the last `reset_walk_stats`. Q3: dense ranges
 /// (>= WORD_PROFILE_THRESHOLD) never occur in the registered set (the DB audit's
-/// max populated-word run is 41), so this surfaces the first range to approach
+/// max populated-word run is 67, none reach 128), so this surfaces the first
+/// range to approach
 /// the half threshold as an observation rather than an assumption.
 pub fn last_max_dense_words() -> usize {
     WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get)
@@ -4100,7 +4102,8 @@ mod tests {
 
     /// Q3 SYNTHETIC dense guard (gated OFF CI — no registered pool clears the
     /// 128-word dense threshold; the DB audit's global max populated-word run is
-    /// 41). A path whose hop0 carries a 300-word-boundary DENSE range takes the
+    /// 67, none reach 128). A path whose hop0 carries a 300-word-boundary DENSE
+    /// range takes the
     /// word-profile path (WORD_PROFILE_THRESHOLD=128). This pins that (a) the
     /// solver's landed profit stays >= a fine-grid oracle (never under-shoots on
     /// a dense path) and (b) the ±64-wei direction-test straddle near the
