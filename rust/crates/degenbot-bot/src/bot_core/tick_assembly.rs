@@ -117,12 +117,15 @@ pub type TickMapAssemblyResult =
 
 /// Assemble a V3 pool's tick map with `Db → Chain` precedence.
 ///
-/// 1. **Db arm**: `db.fetch_liquidity_map(address)` is queried; a non-empty
+/// 1. **Db arm**: `db.fetch_liquidity_map(address)` is queried. A non-empty
 ///    map (both `tick_bitmap` AND `tick_data` populated — mirrors Python's
 ///    `if not init_maps or not liq_positions` heuristic) converts to `TickInfo`
-///    with `Tracked` coverage; an empty map OR a pool-not-found (`Ok(None)`)
-///    falls through to the Chain arm; an `Err(DbError)` is **propagated**
-///    (Decision 8 (A)).
+///    with `Tracked` coverage. A pool **found in the Db but with no mapped
+///    liquidity** converts to a **legitimately-empty Tracked** pool
+///    (authoritative: it is registered in the Db, so no Chain/RPC probe — a
+///    later liquidity event reactivates it) rather than degrading to Sparse.
+///    Only a pool-not-found (`Ok(None)`) falls through to the Chain arm; an
+///    `Err(DbError)` is **propagated** (Decision 8 (A)).
 /// 2. **Chain arm**: only on a Db miss AND `chain = Some`. Calls
 ///    [`TickBootstrapRpc::bootstrap_v3_tick_word`] for the word containing
 ///    `tick`; a hit returns `(ticks, Sparse)` (only one word seeded — the
@@ -218,9 +221,15 @@ fn fetch_v3_tick_map_from_db(
     tick_spacing: i32,
 ) -> TickMapAssemblyResult {
     let Some(map) = db.fetch_liquidity_map(address)? else {
-        return Ok(None);
+        return Ok(None); // pool not in Db -> Chain arm (new chain-discovered pool)
     };
-    liquidity_map_to_tick_info(map, tick_spacing)
+    // Pool IS in the Db. A non-empty map -> Tracked + populated; an empty map
+    // -> legitimately-empty Tracked (no liquidity on a registered pool is
+    // authoritative, not Sparse — it stays reactivatable via liquidity events).
+    Ok(Some(match liquidity_map_to_tick_info(map, tick_spacing)? {
+        Some(hit) => hit,
+        None => (HashMap::new(), PoolTickCoverage::Tracked),
+    }))
 }
 
 /// Db arm for V4: identical to V3 but routes through the V4 fetch.
@@ -235,9 +244,14 @@ fn fetch_v4_tick_map_from_db(
     // `B256` is `FixedBytes<32>` — same layout, so the conversion is infallible.
     let pool_id_hash = alloy::primitives::B256::from(pool_id);
     let Some(map) = db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)? else {
-        return Ok(None);
+        return Ok(None); // pool not in Db -> Chain arm (new chain-discovered pool)
     };
-    liquidity_map_to_tick_info(map, tick_spacing)
+    // Pool IS in the Db: a non-empty map -> Tracked + populated; an empty map
+    // -> legitimately-empty Tracked (V4 twin of the V3 arm above).
+    Ok(Some(match liquidity_map_to_tick_info(map, tick_spacing)? {
+        Some(hit) => hit,
+        None => (HashMap::new(), PoolTickCoverage::Tracked),
+    }))
 }
 
 /// Convert a Db `LiquidityMap` into the helper's hit/miss shape.

@@ -767,10 +767,19 @@ async fn assemble_db_or_chain_v3(
             // The Tracked intake reconciliation (T3 OMDCIY) runs inside
             // `liquidity_map_to_tick_info` — a self-contradictory snapshot
             // aborts the build with a typed error, never registers.
-            if let Some(hit) =
-                crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)?
-            {
-                return Ok(hit); // (ticks, Tracked)
+            match crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)? {
+                // Non-empty snapshot → Tracked + populated.
+                Some(hit) => return Ok(hit), // (ticks, Tracked)
+                // Empty snapshot → a DB-registered pool with no mapped liquidity
+                // is a legitimately-empty Tracked pool (authoritative — it came
+                // from the DB). Do NOT fall through to the Sparse Chain arm: that
+                // would fire a single-word RPC probe, mark the pool Sparse, and
+                // (because a resolve that cannot build an int sequence never
+                // reaches simulation) leave it never backfilled nor reactivatable.
+                // As Tracked-empty a path using it is cleanly invalid, and a later
+                // ModifyLiquidity/Mint/Burn event reactivates it via the normal
+                // tracked tick-data path.
+                None => return Ok((HashMap::new(), PoolTickCoverage::Tracked)),
             }
         }
     }
@@ -796,10 +805,20 @@ async fn assemble_db_or_chain_v4(
         if let Some(map) = db.fetch_liquidity_map_v4(pool_manager, B256::from(pool_id))? {
             // Tracked intake reconciliation (T3 OMDCIY) — V4 twin of the V3
             // guard above.
-            if let Some(hit) =
-                crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)?
-            {
-                return Ok(hit); // (ticks, Tracked)
+            match crate::bot_core::tick_assembly::liquidity_map_to_tick_info(map, tick_spacing)? {
+                // Non-empty snapshot → Tracked + populated.
+                Some(hit) => return Ok(hit), // (ticks, Tracked)
+                // Empty snapshot → a DB-registered pool with no mapped liquidity
+                // is a legitimately-empty Tracked pool (authoritative — it came
+                // from the DB's uniswap_v4_pools/managed_pool_liquidity_positions).
+                // Do NOT fall through to the Sparse Chain arm: that would fire a
+                // single-word RPC probe, mark the pool Sparse, and (because a
+                // resolve that cannot build an int sequence never reaches
+                // simulation) leave it never backfilled nor reactivatable. As
+                // Tracked-empty a path using it is cleanly invalid, and a later
+                // ModifyLiquidity event reactivates it via the normal tracked
+                // tick-data path.
+                None => return Ok((HashMap::new(), PoolTickCoverage::Tracked)),
             }
         }
     }

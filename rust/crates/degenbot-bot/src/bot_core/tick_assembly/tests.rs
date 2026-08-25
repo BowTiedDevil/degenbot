@@ -3,8 +3,11 @@
 //! Six branches per family, per the ME7I5P acceptance criteria:
 //!  1. Store hit  → `Ok(Some((ticks, Tracked)))`, store entry consumed.
 //!  2. Store miss + Db hit (non-empty)  → `Ok(Some((ticks, Tracked)))`.
-//!  3. Store miss + Db hit (empty map) → `Ok(None)`.
-//!  4. Store miss + Db miss (`Ok(None)`) → `Ok(None)`.
+//!  3. Store miss + Db hit (empty map) → `Ok(Some((empty, Tracked)))` — a
+//!     DB-registered pool with no mapped liquidity is a legitimately-empty
+//!     Tracked pool (no Chain probe; a liquidity event reactivates it). Previously
+//!     `Ok(None)` which degraded a registered-but-empty pool to Sparse.
+//!  4. Store miss + Db miss (`Ok(None)`, pool not in Db) → Chain arm / `Ok(None)`.
 //!  5. Store miss + Db error (`Err`) → `Err(DbError)` (propagated — Decision 8 (A)).
 //!  6. `db = None` (cold-start) → Store arm only; miss if store is empty.
 
@@ -221,14 +224,19 @@ fn v3_store_miss_db_hit_non_empty_returns_tracked_ticks() {
 }
 
 #[test]
-fn v3_store_miss_db_hit_empty_map_returns_miss() {
-    // Pool exists in the DB but has no init/liq rows — both tick_bitmap and
-    // tick_data are empty, so the helper returns Ok(None) (Python's
-    // `if not init_maps or not liq_positions: return ..., False` heuristic).
+fn v3_store_miss_db_hit_empty_map_returns_tracked_empty() {
+    // Pool exists in the DB but has no init/liq rows — an empty snapshot. That
+    // is a legitimately-empty TRACKED pool (authoritative: it came from the
+    // DB, so no Chain/RPC probe), not a miss; a later liquidity event
+    // reactivates it via the tracked tick-data path.
     let (db, _pool_id) = v3_db_with_pool();
 
     let result = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, None).unwrap();
-    assert!(result.is_none(), "empty LiquidityMap → miss");
+    let Some((ticks, coverage)) = result else {
+        panic!("empty Db snapshot should resolve to Tracked-empty, not a miss");
+    };
+    assert_eq!(coverage, PoolTickCoverage::Tracked);
+    assert!(ticks.is_empty(), "no mapped liquidity → empty tick map");
 }
 
 #[test]
@@ -298,7 +306,9 @@ fn v4_store_miss_db_hit_non_empty_returns_tracked_ticks() {
 }
 
 #[test]
-fn v4_store_miss_db_hit_empty_map_returns_miss() {
+fn v4_store_miss_db_hit_empty_map_returns_tracked_empty() {
+    // V4 twin: a DB-registered pool with an empty snapshot is a legitimately-
+    // empty TRACKED pool (no Chain probe; a ModifyLiquidity event reactivates).
     let (db, _managed_id, pool_id) = v4_db_with_pool();
     let result = assemble_v4_tick_map(
         Some(&db),
@@ -311,7 +321,11 @@ fn v4_store_miss_db_hit_empty_map_returns_miss() {
         None,
     )
     .unwrap();
-    assert!(result.is_none(), "empty LiquidityMap → miss");
+    let Some((ticks, coverage)) = result else {
+        panic!("empty Db snapshot should resolve to Tracked-empty, not a miss");
+    };
+    assert_eq!(coverage, PoolTickCoverage::Tracked);
+    assert!(ticks.is_empty(), "no mapped liquidity → empty tick map");
 }
 
 #[test]
@@ -446,9 +460,10 @@ fn chain_tick_info(tick: i32) -> TickInfo {
 
 #[test]
 fn v3_chain_hit_after_store_db_miss_returns_sparse_ticks() {
-    // (a) Store miss + Db miss + Chain hit → Some((ticks, Sparse)).
-    // Sparse (NOT Tracked): only one word's ticks seeded.
-    let (db, _pool_id) = v3_db_with_pool(); // pool exists but no ticks seeded → Db miss
+    // (a) Genuine Db miss (pool NOT in DB) + Chain hit → Some((ticks, Sparse)).
+    // Sparse (NOT Tracked): only one word's ticks seeded. An EMPTY Db map is
+    // now a Tracked-empty pool, so it no longer exercises the Chain arm.
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let addr = make_pool_addr();
     let chain_hit = BootstrapTickWord {
         word: 0,
@@ -473,9 +488,10 @@ fn v3_chain_hit_after_store_db_miss_returns_sparse_ticks() {
 
 #[test]
 fn v3_chain_zero_bitmap_returns_none() {
-    // (b) Chain returns None (all-zero bitmap) → Ok(None). The pool genuinely
-    // has no initialized ticks in this word.
-    let (db, _pool_id) = v3_db_with_pool();
+    // (b) Genuine Db miss + Chain returns None (all-zero bitmap) → Ok(None).
+    // An EMPTY Db map would be Tracked-empty, so a fresh DB (pool absent)
+    // exercises the Chain arm.
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let addr = make_pool_addr();
     let rpc = FakeChainRpc {
         hit: None,
@@ -488,9 +504,9 @@ fn v3_chain_zero_bitmap_returns_none() {
 
 #[test]
 fn v3_chain_rpc_error_is_propagated_not_swallowed() {
-    // (c) BootstrapTickError::Rpc surfaces as TickMapAssemblyError::Chain —
-    // NOT swallowed (Decision 8 (A) extended to the Chain arm).
-    let (db, _pool_id) = v3_db_with_pool();
+    // (c) Genuine Db miss (pool absent) + BootstrapTickError::Rpc surfaces as
+    // TickMapAssemblyError::Chain — NOT swallowed (Decision 8 (A)).
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let addr = make_pool_addr();
     let rpc = FakeChainRpc {
         hit: None,
@@ -507,9 +523,9 @@ fn v3_chain_rpc_error_is_propagated_not_swallowed() {
 
 #[test]
 fn v3_chain_none_falls_through_returns_none() {
-    // (d) chain=None → Chain arm doesn't fire; Db miss → Ok(None)
-    // (current behavior preserved).
-    let (db, _pool_id) = v3_db_with_pool();
+    // (d) chain=None → Chain arm doesn't fire; true Db miss (pool absent) →
+    // Ok(None). An EMPTY Db map is Tracked-empty, so it does not reach here.
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let addr = make_pool_addr();
 
     let result = assemble_v3_tick_map(Some(&db), addr, 10, 1, 100, None).unwrap();
@@ -518,8 +534,10 @@ fn v3_chain_none_falls_through_returns_none() {
 
 #[test]
 fn v4_chain_hit_after_store_db_miss_returns_sparse_ticks() {
-    // V4 Chain hit — twin of v3_chain_hit_after_store_db_miss_returns_sparse_ticks.
-    let (db, _managed_id, pool_id) = v4_db_with_pool();
+    // V4 Chain hit — twin of the V3 one. Pool ABSENT from the DB (genuine
+    // miss) so the Chain arm fires; an empty Db map is Tracked-empty.
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    let pool_id = [0xee; 32];
     let mgr = make_manager();
     let chain_hit = BootstrapTickWord {
         word: 0,
@@ -554,8 +572,10 @@ fn v4_chain_hit_after_store_db_miss_returns_sparse_ticks() {
 
 #[test]
 fn v4_chain_rpc_error_is_propagated_not_swallowed() {
-    // V4 Chain-error propagation — twin of the V3 test (c).
-    let (db, _managed_id, pool_id) = v4_db_with_pool();
+    // V4 Chain-error propagation — twin of the V3 test (c). Pool ABSENT from
+    // the DB (genuine miss) so the Chain arm runs.
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    let pool_id = [0xee; 32];
     let mgr = make_manager();
     let rpc = FakeChainRpc {
         hit: None,
