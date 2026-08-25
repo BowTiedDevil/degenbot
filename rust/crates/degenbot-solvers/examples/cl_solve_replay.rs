@@ -13,6 +13,11 @@
 //! time is the stable A/B signal. As a bonus the N runs must agree — int_solve
 //! is pure math, so per-run nondeterminism (e.g. HashMap-iteration order in the
 //! active-set walk) is flagged, which also bears on the desync investigation.
+//!
+//! F2 two-sided golden gate: exits 1 (so CI blocks merge) if any path (a)
+//! under-shoots the recorded golden profit beyond PROFIT_EPS, (b) over-shoots
+//! it past the few-wei tolerance (phantom profit / stale golden, never silent),
+//! or (c) is nondeterministic across reps.
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
@@ -26,6 +31,12 @@ use serde_json::Value;
 /// coarsened search to count as OK — mirrors the solver's "never under-shoot
 /// the fine-grid oracle" contract at a diagnostic epsilon.
 const PROFIT_EPS: u128 = 100_000;
+// Two-sided golden gate (F2): under-shoot of the exact golden is bounded by
+// PROFIT_EPS, and any over-shoot beyond this few-wei rounding tolerance is a
+// HARD FAIL — the golden is the recorded exact result, so a solver exceeding
+// it is either phantom profit (claiming profit that does not exist) or a stale
+// golden needing regeneration. Never silent.
+const OVER_SHOOT_TOLERANCE_WEI: u128 = 8;
 
 fn u256(s: &str) -> Result<U256, String> {
     s.trim().parse::<U256>().map_err(|e| e.to_string())
@@ -76,10 +87,14 @@ fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args
-        .get(1)
-        .cloned()
-        .unwrap_or_else(|| "tests/fixtures/heavy_cl_solve_captures.jsonl".to_string());
+    let path = args.get(1).cloned().unwrap_or_else(|| {
+        // CWD-independent: resolve from the crate root so the default works
+        // regardless of where `cargo run --example` is launched from.
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
+            .to_string_lossy()
+            .into_owned()
+    });
     let iters: usize = std::env::var("DR_REPLAY_ITERS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -232,25 +247,34 @@ fn main() {
                         .saturating_sub(*opt);
                     // The solver's contract (cl_path_solver_matches_fine_grid_oracle)
                     // is to never under-shoot the optimum. The under-shoot vs the
-                    // exact-wei golden is the gate for the coarsened search.
+                    // exact-wei golden is the gate for the coarsened search;
+                    // F2 adds the mirror over-shoot gate so BOTH profit
+                    // directions are pinned vs the recorded golden.
                     let under = golden_profit.saturating_sub(replay_profit);
+                    let over = replay_profit.saturating_sub(golden_profit);
                     let in_delta = if *opt >= go_in {
                         opt - go_in
                     } else {
                         go_in - opt
                     };
                     eprintln!(
-                        "path {pid}: input_delta={in_delta} wei  under_shoot={under} wei (vs exact-wei golden)",
+                        "path {pid}: input_delta={in_delta} wei  under_shoot={under} wei  over_shoot={over} wei (vs recorded golden)",
                     );
                     if opt.to_string() != go {
                         eprintln!(
-                            "path {pid}: optimal_input replay={} golden={go} (informational; gate = under-shoot <= {PROFIT_EPS})",
+                            "path {pid}: optimal_input replay={} golden={go} (informational; gate = profit both directions)",
                             opt,
                         );
                     }
                     if under > U256::from(PROFIT_EPS) {
                         eprintln!(
-                            "path {pid}: under_shoot {under} wei > PROFIT_EPS {PROFIT_EPS} — search lost profit to the exact optimum"
+                            "path {pid}: under_shoot {under} wei > PROFIT_EPS {PROFIT_EPS} — search lost profit vs the recorded optimum"
+                        );
+                        ok = false;
+                    }
+                    if over > U256::from(OVER_SHOOT_TOLERANCE_WEI) {
+                        eprintln!(
+                            "path {pid}: over_shoot {over} wei > tolerance {OVER_SHOOT_TOLERANCE_WEI} — solver exceeds the recorded golden (phantom profit or stale golden)"
                         );
                         ok = false;
                     }
@@ -297,4 +321,13 @@ fn main() {
         "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{n_paths} match | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest median: path {} = {}us | file={path}",
         heaviest.1, heaviest.0
     );
+    // F2: a CI build must FAIL if any path regresses (golden mismatch, either
+    // direction) or is nondeterministic — this is what makes the harness a
+    // gate rather than a report.
+    if n_golden_ok != n_paths || n_consistent != n_paths {
+        eprintln!(
+            "F2 GOLDEN GATE FAILED: golden {n_golden_ok}/{n_paths} match, deterministic {n_consistent}/{n_paths}"
+        );
+        std::process::exit(1);
+    }
 }

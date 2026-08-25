@@ -125,6 +125,36 @@ jobs:
       - name: Run Tests
         run: just test-rust
 
+  solver-replay-golden:
+    name: Solver Golden Replay (F2 gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run two-sided golden replay gate (offline, blocks merge)
+        run: |
+          cd rust
+          # Fail (nonzero exit) if any path regresses: profit under-shoot above
+          # PROFIT_EPS, profit over-shoot past the few-wei tolerance in either
+          # direction, or nondeterminism across reps. No RPC/DB needed.
+          cargo run -q -p degenbot-solvers --example cl_solve_replay -- \
+            crates/degenbot-solvers/tests/fixtures/cl_capture_offline.jsonl
+
+        # NOTE: add this job to the required checks in branch protection so a
+        # golden regression blocks merges.
+
   tier3-oracle:
     name: Tier-3 On-Chain Accuracy Oracle
     runs-on: ubuntu-latest

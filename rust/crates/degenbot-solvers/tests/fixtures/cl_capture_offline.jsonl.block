@@ -1,0 +1,2 @@
+block=25820000
+regen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK=25820000 DEGENBOT_CLCAP_MAX_FETCHES=2000 cargo run -q -p degenbot-solvers --example cl_capture_gen [-- <out.jsonl>]

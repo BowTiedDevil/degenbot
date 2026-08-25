@@ -12,6 +12,10 @@
 //!
 //!   DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545/ //!   DEGENBOT_CLCAP_BLOCK=25826800 //!   cargo run -p degenbot-solvers --example cl_capture_gen
 //!   cargo run -p degenbot-solvers --example cl_solve_replay <capture.jsonl>
+//!
+//! A `.block` sidecar is written next to the output recording the pinned block
+//! + regen command so the offline fixture is reproducible. Raise
+//! DEGENBOT_CLCAP_MAX_FETCHES (default 320) to backfill a denser active set.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -34,7 +38,9 @@ use degenbot_solvers::mobius_v3_int::{
 use serde_json::{json, Value};
 
 const MAX_RANGES: usize = 128; // cap ranges per hop (heavy but bounded)
-const MAX_FETCHES: usize = 320; // cap tick-word fetches per pool (bounds RPC)
+const MAX_FETCHES: usize = 320; // per-pool tick-word fetch cap, overridable
+                                // via DEGENBOT_CLCAP_MAX_FETCHES so a deep backfill can reach dense active
+                                // sets (a liquid pool's busy region can span thousands of tick words).
 const PATH_CAP: usize = 12;
 
 // (address, tick_spacing, fee_classic, token0, token1) — liquid UNI V3 pools
@@ -148,6 +154,10 @@ fn hop_ranges(s: &IntV3TickRangeSequence) -> Value {
 }
 
 fn main() -> ExitCode {
+    let max_fetches: usize = std::env::var("DEGENBOT_CLCAP_MAX_FETCHES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(MAX_FETCHES);
     let rpc = match std::env::var("DEGENBOT_CLCAP_RPC") {
         Ok(v) => v,
         Err(_) => {
@@ -223,8 +233,8 @@ fn main() -> ExitCode {
                     Ok(_) => break,
                     Err(SimulateSwapError::MissingTickWord(word)) => {
                         fetches += 1;
-                        if fetches >= MAX_FETCHES {
-                            eprintln!("pool {i} {a}: fetch cap {MAX_FETCHES}");
+                        if fetches >= max_fetches {
+                            eprintln!("pool {i} {a}: fetch cap {max_fetches}");
                             break;
                         }
                         match fetcher.fetch_missing_tick_word(0, word, block) {
@@ -335,5 +345,13 @@ fn main() -> ExitCode {
         }
     }
     eprintln!("---- wrote {n_paths} path(s), {n_profitable} profitable -> {out}");
+    // Record the pinned block + regen command in a sidecar so the offline
+    // fixture is reproducible and any drift is explainable.
+    let _ = std::fs::write(
+        format!("{out}.block"),
+        format!(
+            "block={block}\nregen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK={block} DEGENBOT_CLCAP_MAX_FETCHES={max_fetches} cargo run -q -p degenbot-solvers --example cl_capture_gen [-- <out.jsonl>]\n"
+        ),
+    );
     ExitCode::SUCCESS
 }
