@@ -691,13 +691,20 @@ thread_local! {
     // count — the measurement split for the 64-wei refinement-resolution cost.
     pub(crate) static WALK_REFINE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // Q3 telemetry: the largest word-boundary count any range reached on this
-    // thread — dense ranges never occur in the registered set (DB audit: max
-    // populated-word run is 67, none reach 128), so this observes the first
-    // one to approach
-    // the profile threshold instead of assuming.
+    // thread. DB audit (correct metric = max inter-init-tick gap in words,
+    // per-pool ts): 210/47,679 registered UNI V3 pools have a >=128-word gap,
+    // 161 fall in the solve window (<16 positions), and 27 have their current
+    // tick inside one — so dense is load-bearing on real sparse pools today.
+    // This observes the largest count, and a one-shot >= DENSE_OBSERVE_THRESHOLD
+    // alert fires when a range approaches the profile threshold.
     pub(crate) static WALK_MAX_DENSE_WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static WALK_DENSE_ALERTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+
+// Q3 one-shot alert flag, PROCESS-WIDE (not thread-local): the rayon solve
+// pool keeps many long-lived worker threads alive, so a per-thread flag would
+// print one line per worker; this logs once across the whole process.
+static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Reset the walk counters on the calling thread. The rayon solve calls this at
 /// the start of each path's solve so a `take_last_walk_stats` right after
@@ -734,10 +741,11 @@ pub fn take_last_word_boundary_steps() -> usize {
 
 /// Read (without clearing) the largest word-boundary count any range reached
 /// on this thread since the last `reset_walk_stats`. Q3: dense ranges
-/// (>= WORD_PROFILE_THRESHOLD) never occur in the registered set (the DB audit's
-/// max populated-word run is 67, none reach 128), so this surfaces the first
-/// range to approach
-/// the half threshold as an observation rather than an assumption.
+/// (>= WORD_PROFILE_THRESHOLD) are real — the DB audit finds ~161 registered
+/// sparse pools with an in-window dense gap (27 with the current tick inside
+/// it), so this surfaces the largest count observed as an observation rather
+/// than an assumption; a one-shot `>= DENSE_OBSERVE_THRESHOLD` alert fires
+/// when one approaches it.
 pub fn last_max_dense_words() -> usize {
     WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get)
 }
@@ -1036,15 +1044,23 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3W
                 m.set(n)
             }
         });
-        // Q3 telemetry (one-shot alert): dense ranges never occur in the
-        // registered set, so if a range ever approaches half the profile
-        // threshold we want to know + harvest a real dense capture.
-        if n >= DENSE_OBSERVE_THRESHOLD && !WALK_DENSE_ALERTED.with(std::cell::Cell::get) {
-            WALK_DENSE_ALERTED.with(|a| a.set(true));
+        // Q3 telemetry (one-shot): the DB audit finds ~161 registered sparse
+        // pools with an in-window dense gap (27 with the current tick inside
+        // one), so dense is real. If a range ever crosses the half threshold
+        // we log once so a real dense capture can be harvested from one of
+        // those pools (replacing the synthetic guard).
+        if n >= DENSE_OBSERVE_THRESHOLD
+            && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
             eprintln!(
-                "Q3-DENSE: a CL range reached {n} word boundaries (>= {DENSE_OBSERVE_THRESHOLD}); harvest a real capture to replace the synthetic dense guard"
+                "Q3-DENSE: a CL range reached {n} word boundaries (>= {DENSE_OBSERVE_THRESHOLD}); dense is load-bearing (KEEP) - harvest a real capture from one of the ~27 current-tick-in-gap pools"
             );
         }
+        // KEEP ledger (Stage-1 sharing): a dense profile builds ONCE per
+        // (pool, direction) and is Arc-shared across every path reusing the
+        // projection — build cost amortized over paths, O(1) clone per path,
+        // memory bounded to one profile per dense range. That amortization is
+        // the cost-accounted basis for KEEP given the M=27 live dense pools.
     }
     crossings
         .iter()
@@ -4100,10 +4116,10 @@ mod tests {
         );
     }
 
-    /// Q3 SYNTHETIC dense guard (gated OFF CI — no registered pool clears the
-    /// 128-word dense threshold; the DB audit's global max populated-word run is
-    /// 67, none reach 128). A path whose hop0 carries a 300-word-boundary DENSE
-    /// range takes the
+    /// Q3 SYNTHETIC dense guard (gated OFF CI — a stopgap until a real dense
+    /// capture from one of the ~27 current-tick-in-gap pools replaces it; the
+    /// DB audit shows dense is real + live). A path whose hop0 carries a
+    /// 300-word-boundary DENSE range takes the
     /// word-profile path (WORD_PROFILE_THRESHOLD=128). This pins that (a) the
     /// solver's landed profit stays >= a fine-grid oracle (never under-shoots on
     /// a dense path) and (b) the ±64-wei direction-test straddle near the
