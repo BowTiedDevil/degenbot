@@ -222,6 +222,16 @@ The seven `PoolEntry` variants fall into **three structural families**, grouped 
 
 **Closed — the hop-shape deepening (2026-07-19).** Resolved as a negative: the hop stays as `enum ResolvedHop` + match-based classifier. (1) Digest-cost motivation retired empirically — Balancer `D` / Curve `xp` are 0.04–4% of the per-path budget (spike 77LOQT, `rust/crates/degenbot-solvers/benches/digest.rs`); cross-path digest memoization rejected (CL caches justifiably, the light families don't amortize, stale-digest reorg risk > ~1% wall-time ceiling). (2) Composition-classifier motivation settled negative — `dyn PathHopSnapshot` removes the enum but not the work: the 9-way `solve_path` classifier survives as capability-query chains over trait objects with the same 9 branches (the per-composition search algorithms are path-level strategies, not per-hop plug-ins; a hop-level trait can't replace them). (3) Extensibility motivation negative — adding a DEX family under the enum is three local edits, under the trait it's more touch points (capability surface grows alongside the struct). Net: `dyn PathHopSnapshot` is wash-to-loss on depth and clear loss on runtime (heap-alloc `Box<dyn>` per hop at resolve vs inline enum payload, vtable indirection on the 25-iter simulate loop). The frozen per-solve snapshot survives on constraint #5 alone (lock-free solve: guard drops before `solve_path`). See ADR-015 CLOSURE section.
 
+### Profit envelope gate (2026-08 architecture review, epic `SU7MAE`)
+
+The pre-solve skip test that cuts CL path-solve volume. **Not** the directional swap viability gate (a per-hop direction check at registration) and **not** the Solver-state tripwire above — sibling vocabulary only.
+
+- **Profit envelope** — a piecewise-linear **concave upper bound** on a hop's output curve: slope on ending-range piece `j` never exceeds the marginal price at that piece's entry × (1−fee), so `Ô(x) ≤ min_j [O(w_{j−1}) + s_j·(x − w_{j−1})]` over piece boundaries `w_j`. Derived purely from data projection already builds (`build_crossing_table` + tick-math slopes); no simulation.
+- **Envelope gate** — skip test over the chained path bound. CL swaps are monotone non-decreasing ⇒ bounds chain across hops (`O₂(O₁(x)) ≤ u₂(u₁(x))`); `max_x [Ô_path(x) − x] < min_profit` ⇒ the active-set walk is provably unprofitable and is skipped without a single simulation. `min_profit` is owned by the caller (dispatch derives it from gas accounting; default 0 = skip only provably-zero-or-negative).
+- **Bound warning (load-bearing).** Extending the FIRST piece's Möbius map beyond its validity window is **NOT** an upper bound — deeper later ranges can beat it. Only the per-piece entry-slope envelope form is sound.
+- Evidence base (2026-08): production solve phases median 1.53 s / p95 2.95 s per block; 4,123 paths/block with ~92% unprofitable; 3.5 M sims/block of which 43% are stop-time refinement probes; avg 2.7 word-steps/sim (density is NOT the bottleneck — see the Stage-2 word-profile cache revert, `e226276c2`).
+
+### Construction-I/O executor
 ### Construction-I/O executor
 
 **Current shape — `PyBotIo`** (Rust `#[pyclass]`, `degenbot.bot.PyBotIo`)

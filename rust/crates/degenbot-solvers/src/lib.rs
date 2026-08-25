@@ -33,3 +33,4 @@ pub mod mobius_int_exact;
 pub mod mobius_shifted_piece;
 #[expect(clippy::doc_markdown)]
 pub mod mobius_v3_int;
+pub mod profit_envelope;
