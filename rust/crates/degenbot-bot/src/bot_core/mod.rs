@@ -919,123 +919,6 @@ impl BotState {
         }
     }
 
-    /// Calculate the input token amount required for a given output amount.
-    ///
-    /// Uses the constant-product invariant with EVM-exact integer arithmetic.
-    ///
-    /// Returns 0 if the pool is not found, the amount is 0,
-    /// or the output exceeds available reserves.
-    #[must_use]
-    pub fn calculate_tokens_in(&self, pool_id: u64, zero_for_one: bool, amount_out: U256) -> U256 {
-        let Some(entry) = self.pools.get(&pool_id) else {
-            return U256::ZERO;
-        };
-
-        match entry {
-            PoolEntry::V2(identity, state) => {
-                if amount_out.is_zero() {
-                    return U256::ZERO;
-                }
-
-                let (reserve_in, reserve_out, gamma_numer, fee_denom) = if zero_for_one {
-                    (
-                        state.reserve0.to::<U256>(),
-                        state.reserve1.to::<U256>(),
-                        identity.fee_token0.0,
-                        identity.fee_token0.1,
-                    )
-                } else {
-                    (
-                        state.reserve1.to::<U256>(),
-                        state.reserve0.to::<U256>(),
-                        identity.fee_token1.0,
-                        identity.fee_token1.1,
-                    )
-                };
-
-                if amount_out >= reserve_out {
-                    return U256::ZERO;
-                }
-
-                // constant_product_calc_exact_out:
-                // amount_in = 1 + (reserve_in * amount_out * fee_denom) //
-                //   ((reserve_out - amount_out) * gamma_numer)
-                let numerator = U256::from(reserve_in)
-                    .saturating_mul(amount_out)
-                    .saturating_mul(U256::from(fee_denom));
-                let denominator = (reserve_out.saturating_sub(amount_out))
-                    .saturating_mul(U256::from(gamma_numer));
-
-                if denominator.is_zero() {
-                    return U256::ZERO;
-                }
-
-                U256::from(1) + numerator / denominator
-            }
-            // V3 concentrated-liquidity math. Exact-output swap: amount_specified
-            // < 0 (V3 convention; magnitude = desired output). Input required is
-            // token0 for zfo, token1 for ofz (the callback receives the input).
-            PoolEntry::V3(identity, state) => {
-                if amount_out.is_zero() {
-                    return U256::ZERO;
-                }
-                let Some(spec) = I256::try_from(amount_out).ok() else {
-                    return U256::ZERO;
-                };
-                let Ok(outcome) = v3_simulate_swap(
-                    state,
-                    identity.fee,
-                    identity.tick_spacing,
-                    zero_for_one,
-                    -spec,
-                    V3PoolState::default_sqrt_price_limit(zero_for_one),
-                ) else {
-                    return U256::ZERO;
-                };
-                if zero_for_one {
-                    outcome.amount0
-                } else {
-                    outcome.amount1
-                }
-            }
-            // V4: exact-output. V4 sign convention is opposite to V3: V4
-            // exact-output uses `amountSpecified > 0` (positive). So the
-            // magnitude passed to the V4 simulator is already positive (no
-            // negation, unlike V3's `-spec`).
-            PoolEntry::V4(identity, state) => {
-                if amount_out.is_zero() {
-                    return U256::ZERO;
-                }
-                let Some(spec) = I256::try_from(amount_out).ok() else {
-                    return U256::ZERO;
-                };
-                let Ok(outcome) = v4_simulate_swap(
-                    state,
-                    identity.pool_key.fee,
-                    identity.pool_key.tick_spacing,
-                    zero_for_one,
-                    spec,
-                    V3PoolState::default_sqrt_price_limit(zero_for_one),
-                ) else {
-                    return U256::ZERO;
-                };
-                if zero_for_one {
-                    outcome.amount0
-                } else {
-                    outcome.amount1
-                }
-            }
-            // Curve (11a) + Balancer weighted (12a) + Balancer stable (12c):
-            // math not ported in their state-port sub-slices; see
-            // `calculate_tokens_out`'s combined arm. Returns 0 (the Python
-            // companion handles the calc).
-            PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => U256::ZERO,
-        }
-    }
-
     /// Get the pool ID for a given contract address.
     #[must_use]
     pub fn pool_id_by_address(&self, address: &Address) -> Option<u64> {
@@ -2298,6 +2181,29 @@ mod tests {
         assert_eq!(after, U256::from(47));
     }
 
+    /// Required-input read through the swap-simulation gate (ADR-037) — the
+    /// replacement for the deleted `calculate_tokens_in` seam. Exact-output
+    /// request (positive user-perspective); the required input is the
+    /// magnitude of the consumed delta.
+    fn tokens_in(core: &mut BotState, pool_id: u64, zero_for_one: bool, amount_out: U256) -> U256 {
+        match core.swap_simulation(
+            0,
+            pool_id,
+            SwapRequest {
+                zero_for_one,
+                amount_specified: I256::try_from(amount_out).unwrap(),
+                sqrt_price_limit: None,
+            },
+        ) {
+            SwapRead::Computed(outcome) => (-match &outcome {
+                SwapOutcome::V2(o) => o.consumed,
+                SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
+            })
+            .into_raw(),
+            f => panic!("exact-out calc must not fail on this fixture: {f:?}"),
+        }
+    }
+
     #[test]
     fn calculate_tokens_in_for_v2_pool() {
         let mut core = BotState::new();
@@ -2306,11 +2212,11 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Python: constant_product_calc_exact_out(50, 1000, 2000, 3/1000) = 26
-        let amount_in = core.calculate_tokens_in(pool_id, true, U256::from(50));
+        let amount_in = tokens_in(&mut core, pool_id, true, U256::from(50));
         assert_eq!(amount_in, U256::from(26));
 
         // Reverse: Python: constant_product_calc_exact_out(10, 2000, 1000, 3/1000) = 21
-        let amount_in_rev = core.calculate_tokens_in(pool_id, false, U256::from(10));
+        let amount_in_rev = tokens_in(&mut core, pool_id, false, U256::from(10));
         assert_eq!(amount_in_rev, U256::from(21));
     }
 

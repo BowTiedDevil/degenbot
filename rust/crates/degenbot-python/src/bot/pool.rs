@@ -667,8 +667,24 @@ impl PyLiquidityPool {
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        let result = self.with_state(py, |core| {
-            core.calculate_tokens_in(self.pool_id, zero_for_one, amount)
+        // ADR-037: exact-output request; required input = |consumed|. Legacy
+        // silent-0 contract preserved here until the Python tail task.
+        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+            zero_for_one,
+            amount_specified: I256::try_from(amount).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err("amount_out does not fit I256")
+            })?,
+            sqrt_price_limit: None,
+        };
+        let result = self.with_state_mut(py, |core| {
+            match core.swap_simulation(0, self.pool_id, request) {
+                SwapRead::Computed(outcome) => (-match &outcome {
+                    SwapOutcome::V2(o) => o.consumed,
+                    SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
+                })
+                .into_raw(),
+                _ => U256::ZERO,
+            }
         });
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())

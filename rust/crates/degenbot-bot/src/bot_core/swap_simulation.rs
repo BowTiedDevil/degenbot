@@ -266,6 +266,47 @@ pub(crate) fn cl_payload(
     }
 }
 
+/// `(reserve_in, reserve_out)` for a V2 swap direction, widened to U256.
+fn v2_reserves(entry: &PoolEntry, zero_for_one: bool) -> Option<(U256, U256)> {
+    match entry {
+        PoolEntry::V2(_, state) => {
+            let r0 = state.reserve0.to::<U256>();
+            let r1 = state.reserve1.to::<U256>();
+            Some(if zero_for_one { (r0, r1) } else { (r1, r0) })
+        }
+        _ => None,
+    }
+}
+
+/// Closed-form `constant_product_calc_exact_out`: the input required so that
+/// after fee, the pool's output-side reserve loses exactly `amount_out`.
+///
+/// Returns `None` on overdraw (`amount_out >= reserve_out`) or a vanishing
+/// denominator — the two legacy ZERO-sentinel cases.
+#[must_use]
+fn v2_required_input(
+    reserve_in: U256,
+    reserve_out: U256,
+    gamma_numer: u64,
+    fee_denom: u64,
+    amount_out: U256,
+) -> Option<U256> {
+    if amount_out.is_zero() || amount_out >= reserve_out {
+        return None;
+    }
+    // amount_in = 1 + (reserve_in * amount_out * fee_denom)
+    //                / ((reserve_out - amount_out) * gamma_numer)
+    let numerator = U256::from(reserve_in)
+        .saturating_mul(amount_out)
+        .saturating_mul(U256::from(fee_denom));
+    let denominator =
+        (reserve_out.saturating_sub(amount_out)).saturating_mul(U256::from(gamma_numer));
+    if denominator.is_zero() {
+        return None;
+    }
+    Some(U256::from(1) + numerator / denominator)
+}
+
 /// The policy driver's contract: recompute against a (possibly mutated)
 /// target, merge fetched words into it, and surface its stored fetcher.
 /// Splitting compute/merge/fetch across `&self` / `&mut self` methods keeps
@@ -414,21 +455,49 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => {
-                // Constant-product families: exact-input only (an exact-output
-                // request was NotComputable on every legacy path too).
-                if exact_output {
-                    return SwapRead::NotComputable;
-                }
-                match simulate_swap(entry, request.zero_for_one, magnitude) {
+            | PoolEntry::AerodromeV2(..) => match (exact_output, entry) {
+                // Exact-input: constant-product / ported invariant math.
+                (false, _) => match simulate_swap(entry, request.zero_for_one, magnitude) {
                     Ok(out) => SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
                         consumed: -unsigned_to_user_delta(magnitude),
                         delivered: unsigned_to_user_delta(out),
                         caveats: Caveats::default(),
                     })),
                     Err(_) => SwapRead::NotComputable,
+                },
+                // Exact-output for V2: the closed-form
+                // `constant_product_calc_exact_out` (formerly buried in
+                // `calculate_tokens_in`). Overdraw (amount_out >= reserve_out)
+                // is NotComputable — the legacy ZERO sentinel becomes typed.
+                (true, PoolEntry::V2(identity, _state)) => {
+                    let Some((reserve_in, reserve_out)) = v2_reserves(entry, request.zero_for_one)
+                    else {
+                        return SwapRead::NotComputable;
+                    };
+                    let (gamma_numer, fee_denom) = if request.zero_for_one {
+                        identity.fee_token0
+                    } else {
+                        identity.fee_token1
+                    };
+                    match v2_required_input(
+                        reserve_in,
+                        reserve_out,
+                        gamma_numer,
+                        fee_denom,
+                        magnitude,
+                    ) {
+                        Some(required) => SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                            consumed: -unsigned_to_user_delta(required),
+                            delivered: unsigned_to_user_delta(magnitude),
+                            caveats: Caveats::default(),
+                        })),
+                        None => SwapRead::NotComputable,
+                    }
                 }
-            }
+                // Curve/Balancer/Aerodrome: math not ported (see the former
+                // calculate_tokens_in arm); NotComputable as before.
+                (true, _) => SwapRead::NotComputable,
+            },
             PoolEntry::V3(_, v3_state) => {
                 let coverage = v3_state.coverage;
                 let family = EngineFamily::V3Engine;

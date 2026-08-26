@@ -37,7 +37,7 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{address, aliases::U112, I256, U256};
-use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
+use degenbot::bot_core::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::{BotState, RegisterV2PoolParams};
 
@@ -182,7 +182,20 @@ fn standalone_rust_consumer_reverse_matches_closed_form() {
         .expect("register canonical V2 pool");
     assert_eq!(pid, 1, "first registered pool gets id 1");
 
-    let amount_in = bot.calculate_tokens_in(pid, ZERO_FOR_ONE, U256::from(EXPECTED_AMOUNT_OUT));
+    // ADR-037: exact-output read through the swap-simulation gate; the
+    // required input is the consumed magnitude.
+    let amount_in = match bot.swap_simulation(
+        0,
+        pid,
+        SwapRequest {
+            zero_for_one: ZERO_FOR_ONE,
+            amount_specified: I256::try_from(U256::from(EXPECTED_AMOUNT_OUT)).unwrap(),
+            sqrt_price_limit: None,
+        },
+    ) {
+        SwapRead::Computed(SwapOutcome::V2(o)) => (-o.consumed).into_raw(),
+        f => panic!("reverse calc must not fail on this fixture: {f:?}"),
+    };
     assert_eq!(
         amount_in,
         U256::from(EXPECTED_AMOUNT_IN),

@@ -48,7 +48,7 @@ use crate::bot::token::PyErc20Token;
 use crate::diagnostics::thread_registry::{
     note_state_intent, StateIntentGuard, StateLockMode, StateLockPhase,
 };
-use degenbot_bot::bot_core::swap_simulation::{SwapRead, SwapRequest};
+use degenbot_bot::bot_core::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
     Bot, BotState, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
@@ -1359,8 +1359,25 @@ impl PyBot {
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        let result = self.with_state(py, |s| s.calculate_tokens_in(pool_id, zero_for_one, amount));
+        // ADR-037: exact-output request (positive user-perspective); the
+        // required input rides back as the consumed magnitude. Legacy numeric
+        // contract preserved at this seam: any non-computed outcome flattens
+        // to 0 (the Python tail task will surface typed outcomes instead).
+        let request = SwapRequest {
+            zero_for_one,
+            amount_specified: I256::try_from(amount).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err("amount_out does not fit I256")
+            })?,
+            sqrt_price_limit: None,
+        };
+        // GIL hygiene: write guard acquired inside py.detach (inversion class).
+        let result = self.with_state_mut(py, |s| match s.swap_simulation(0, pool_id, request) {
+            SwapRead::Computed(outcome) => match &outcome {
+                SwapOutcome::V2(o) => (-o.consumed).into_raw(),
+                SwapOutcome::V3(o) | SwapOutcome::V4(o) => (-o.consumed).into_raw(),
+            },
+            _ => alloy::primitives::U256::ZERO,
+        });
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
