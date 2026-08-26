@@ -511,15 +511,7 @@ impl LogDispatcher {
         // readers/writers for work that mutates nothing. apply_* still re-checks
         // under the write guard (and may return None for a no-op apply).
         if decoded.resolve_pool_id(&state.read()).is_none() {
-            tracing::debug!(
-                target: "degenbot::state",
-                block = log.block_number,
-                pool = %identity,
-                "APPLY MISS - decoded event matched no registered pool (skipped write lock)"
-            );
-            if let Some(p) = crate::instruments::pipeline() {
-                p.count_log_apply_missed();
-            }
+            Self::handle_apply_miss(decoded, log, &identity, state);
             return;
         }
         // Apply under the write guard, then RELEASE before notifying.
@@ -562,6 +554,57 @@ impl LogDispatcher {
         });
     }
 
+    /// Handle a decoded event whose pool is NOT registered (the APPLY-MISS
+    /// funnel). Two outcomes:
+    ///
+    /// - CL-family liquidity events (`V3Liquidity`/`V4Liquidity`) are routed
+    ///   through the write-lock apply path: `apply_v3/v4_liquidity_update`'s
+    ///   unregistered arm buffers them into the pump buffer for staged
+    ///   application at registration (`apply_pump_buffer_v3` drain +
+    ///   `set_*_pool_live` tail flush). FUWYUR: these events mutate
+    ///   `tick_data`, which a DB-row snapshot cannot retro-supply when
+    ///   registration lands AFTER the logs arrived (crawl mid-flight — the
+    ///   UO3JM4/ADR-021 missed-live-Mint desync).
+    /// - Swap/Sync events are dropped without touching the write lock: their
+    ///   scalar payload is re-seeded wholesale from the DB row at
+    ///   registration, so buffering them would be dead weight.
+    ///
+    /// Either way this is an apply-miss from the solve-path's perspective (no
+    /// subscriber notify): keep the counter + trace honest.
+    fn handle_apply_miss(
+        decoded: DecodedPoolEvent,
+        log: &Log,
+        identity: &str,
+        state: &Arc<StateLock<BotState>>,
+    ) {
+        if matches!(
+            decoded,
+            DecodedPoolEvent::V3Liquidity { .. } | DecodedPoolEvent::V4Liquidity { .. }
+        ) {
+            let applied =
+                hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
+            debug_assert!(
+                applied.is_none(),
+                "unregistered-pool liquidity event must buffer, not direct-apply"
+            );
+            tracing::debug!(
+                target: "degenbot::state",
+                block = log.block_number,
+                pool = %identity,
+                "APPLY MISS - unregistered pool; liquidity event buffered to pump buffer"
+            );
+        } else {
+            tracing::debug!(
+                target: "degenbot::state",
+                block = log.block_number,
+                pool = %identity,
+                "APPLY MISS - decoded event matched no registered pool (skipped write lock)"
+            );
+        }
+        if let Some(p) = crate::instruments::pipeline() {
+            p.count_log_apply_missed();
+        }
+    }
     /// Decode `log` into a [`DecodedPoolEvent`] via the decoder registry, or
     /// `None` if no decoder recognizes it. Used by `dispatch` (forward) and
     /// `ReorgCoordinator::dispatch_reorg_log` (removed) — both decode the pool
@@ -889,6 +932,73 @@ mod tests {
     /// `dispatch` path (`with_uniswap_decoders` → `V3MintBurnDecoder`) and
     /// asserts tick 201020 == seed + amount. Red => the Mint is mis-routed/
     /// dropped at the decode+apply seam.
+    /// FUWYUR (dispatcher level): dispatching a Mint whose pool is NOT yet
+    /// registered must route the event into the V3 pump buffer (staged
+    /// application at the later registration's drain+pin seam), NOT silently
+    /// drop it at the APPLY-MISS funnel. Liquidity events mutate `tick_data`,
+    /// which a DB-row snapshot cannot retro-supply when registration lands
+    /// AFTER these logs landed on the wire.
+    #[test]
+    fn fuwyur_unregistered_mint_is_buffered_not_dropped() {
+        use alloy::primitives::{Address, B256};
+        use std::str::FromStr;
+
+        const MINT_AMOUNT: u128 = 118_748_558_607_688;
+
+        let pool_addr = Address::from([0x66u8; 20]);
+        let state = Arc::new(StateLock::new(BotState::new()));
+        // Intentionally NO registration — crawl mid-flight.
+        let dispatcher = LogDispatcher::with_uniswap_decoders();
+
+        let mint_topic =
+            B256::from_str("0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde")
+                .unwrap();
+        let owner_topic =
+            B256::from_str("0x000000000000000000000000c36442b4a4522e871399cd717abdd847ab11fe88")
+                .unwrap();
+        let tick_lower_topic =
+            B256::from_str("0x000000000000000000000000000000000000000000000000000000000003113c")
+                .unwrap();
+        let tick_upper_topic =
+            B256::from_str("0x0000000000000000000000000000000000000000000000000000000000031a56")
+                .unwrap();
+
+        // data = abi.encode(sender, uint128 amount, uint256 amount0, uint256 amount1).
+        let mut data: Vec<u8> = Vec::with_capacity(128);
+        data.extend_from_slice(&[0u8; 12]); // sender left-pad
+        data.extend_from_slice(&[
+            0xc3u8, 0x64, 0x42, 0xb4, 0xa4, 0x52, 0x2e, 0x87, 0x13, 0x99, 0xcd, 0x71, 0x7a, 0xbd,
+            0xd8, 0x47, 0xab, 0x11, 0xfe, 0x88,
+        ]);
+        data.extend_from_slice(&[0u8; 16]); // amount word high half
+        data.extend_from_slice(&MINT_AMOUNT.to_be_bytes());
+        data.extend_from_slice(&[0u8; 32]); // amount0
+        data.extend_from_slice(&[0u8; 32]); // amount1
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_addr,
+            vec![mint_topic, owner_topic, tick_lower_topic, tick_upper_topic],
+            alloy::primitives::Bytes::from(data),
+        );
+        let log = Log {
+            inner,
+            block_hash: None,
+            block_number: Some(10),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        dispatcher.dispatch(&log, &state);
+
+        assert!(
+            state.read().buffered_v3_event_count(&pool_addr) > 0,
+            "FUWYUR: an unregistered pool's Mint must be buffered for staged \
+             application at registration — the APPLY-MISS funnel must not drop it"
+        );
+    }
+
     #[test]
     #[expect(clippy::too_many_lines)]
     fn v3_mint_log_lands_on_decoded_tick_lower() {

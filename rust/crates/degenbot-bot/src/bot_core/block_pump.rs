@@ -4705,6 +4705,100 @@ mod tests {
         );
     }
 
+    /// FUWYUR RED tracer — live-window Mint for a NOT-YET-REGISTERED pool must
+    /// survive late registration.
+    ///
+    /// Production shape (the 2026-08-25 20:51 UTC ADR-021 trip): crawl is
+    /// mid-flight when a Mint lands in block N for a Tracked pool that
+    /// `build_paths` has not registered yet; registration happens AFTER N
+    /// completed and pins pre-Mint DB data (`tick_data_block = N` with stale
+    /// gross). The dual buffer exists precisely for staged application at
+    /// registration — but `LogDispatcher::dispatch`'s APPLY-MISS funnel
+    /// early-returns BEFORE reaching `apply_v3_liquidity_update`'s
+    /// unregistered-buffering arm, so the event never reaches the buffer and
+    /// the pool goes Live permanently missing it (UO3JM4 desync class).
+    /// Uses the exact on-chain numbers from the trip: pool 0x88e6A0c2 tick
+    /// 193370 liquidityGross 244_132_769_082_101_7 -> 256_007_624_942_870_5.
+    #[tokio::test]
+    #[expect(clippy::too_many_lines)]
+    async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
+        use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
+        const SEED_GROSS: u128 = 244_132_769_082_101_7;
+        const MINT_DELTA: u128 = 118_748_558_607_688;
+        let block_n = 10u64;
+        let pool_addr = Address::from([0x34u8; 20]);
+        // Crawl mid-flight: NOTHING is registered yet.
+        let bot = Arc::new(Bot::new(1));
+        let (mut pump, _sink, _shutdown) =
+            pump_for_test_with_bot(Arc::clone(&bot), Some(block_n - 1));
+
+        // Live WS feed: Mint@N for the not-yet-registered pool, then Swap@N+1
+        // to tombstone N (completes the block for the cutoff).
+        let mint = make_v3_mint_log_with_block(pool_addr, -100, 7, MINT_DELTA, block_n);
+        let swap = make_v3_swap_log_with_block(pool_addr, block_n + 1);
+        let combined = stream::iter(vec![WsEvent::Log(mint), WsEvent::Log(swap)]).boxed();
+        pump.run_test_loop(combined, block_n - 1).await;
+
+        // LATE registration (crawl reaches the pool after block N completed):
+        // Tracked pool loads stale DB data and starts Quarantined.
+        {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            let mut tick_data = HashMap::new();
+            tick_data.insert(
+                7,
+                TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(SEED_GROSS),
+                    liquidity_net: alloy::primitives::I256::try_from(
+                        i128::try_from(SEED_GROSS).unwrap(),
+                    )
+                    .unwrap(),
+                    block: 0,
+                },
+            );
+            core.register_v3_pool(&RegisterV3PoolParams {
+                address: pool_addr,
+                token0: Address::from([0xa0u8; 20]),
+                token1: Address::from([0xa1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                factory: Address::from([0xf0u8; 20]),
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: block_n - 1,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+                ..Default::default()
+            })
+            .expect("late V3 registration");
+            core.set_v3_pool_quarantined(pool_addr);
+        }
+
+        // Registration drain+pin seam, then set_live flush of the retained
+        // tail — the standard staged-application contract.
+        let tick_data = {
+            let state = bot.state_arc();
+            let mut core = state.write();
+            core.apply_backfill_buffer_v3(&pool_addr);
+            core.apply_pump_buffer_v3(&pool_addr);
+            core.set_v3_pool_live(pool_addr);
+            let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
+            core.get_v3_pool(pool_id)
+                .expect("registered")
+                .tick_data
+                .clone()
+        };
+        assert_eq!(
+            tick_data.get(&7).expect("tick 7 seeded").liquidity_gross,
+            alloy::primitives::U128::from(SEED_GROSS + MINT_DELTA),
+            "FUWYUR: the live-window Mint for a not-yet-registered pool must \
+             reach the pump buffer and land via the registration drain/flush. \
+             RED means dispatch's APPLY-MISS funnel silently dropped it."
+        );
+    }
+
     /// Scenario A-race — the concurrent drain window: spawn the pump, feed
     /// Mint1@N, run the registration drain (cutoff < N so Mint1 is RETAINED,
     /// not drained), then feed Mint2@N + Swap@N+1. The pin captures
