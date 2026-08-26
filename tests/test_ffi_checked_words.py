@@ -168,7 +168,7 @@ def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
     try:
         conn.execute(
             "INSERT INTO erc20_tokens (id, chain, address, name, symbol, decimals) "
-            "VALUES (1, 1, ?1, NULL, NULL, NULL), (2, 1, ?2, NULL, NULL, NULL)",
+            "VALUES (1, 1, ?, NULL, NULL, NULL), (2, 1, ?, NULL, NULL, NULL)",
             [
                 "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48",
                 "0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2",
@@ -176,12 +176,12 @@ def test_assemble_v3_inconsistent_tracked_snapshot_rejected_at_intake(tmp_path):
         )
         conn.execute(
             "INSERT INTO exchanges (id, chain_id, name, active, last_update_block, factory, deployer) "
-            "VALUES (1, 1, 'uniswap_v3', 1, NULL, ?1, NULL)",
+            "VALUES (1, 1, 'uniswap_v3', 1, NULL, ?, NULL)",
             ["0x1F98431c8aD98523631AE4a59f267346ea31F984"],
         )
         conn.execute(
             "INSERT INTO pools (id, address, chain, kind, token0_id, token1_id, exchange_id) "
-            "VALUES (1, ?1, 1, 'uniswap_v3', 1, 2, 1)",
+            "VALUES (1, ?, 1, 'uniswap_v3', 1, 2, 1)",
             [pool_addr],
         )
         conn.execute(
