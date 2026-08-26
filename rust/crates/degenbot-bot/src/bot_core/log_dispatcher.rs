@@ -22,6 +22,7 @@ use std::sync::{Arc, Weak};
 
 use alloy::rpc::types::Log;
 
+use crate::bot_core::cl_route::ApplyOutcome;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
 use degenbot_decoders::v2_sync_decoder::decode_sync_log;
@@ -169,26 +170,36 @@ impl DecodedPoolEvent {
 
     /// Apply this event to `bot_state`, returning the affected `pool_id` (or
     /// `None` if the pool isn't registered / the event is a no-op).
-    fn apply(self, bot_state: &mut BotState) -> Option<u64> {
+    fn apply(self, bot_state: &mut BotState) -> ApplyOutcome {
         match self {
             Self::V2Sync {
                 pool_address,
                 reserve0,
                 reserve1,
                 block_number,
-            } => bot_state.apply_v2_sync(pool_address, reserve0, reserve1, block_number),
+            } => match bot_state.apply_v2_sync(pool_address, reserve0, reserve1, block_number) {
+                Some(pool_id) => ApplyOutcome::Applied(pool_id),
+                None => ApplyOutcome::NoOp(
+                    crate::bot_core::cl_route::NoOpReason::ScalarReseedAtRegistration,
+                ),
+            },
             Self::V3Swap {
                 pool_address,
                 sqrt_price_x96,
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.apply_v3_swap(
+            } => bot_state.route_v3_event(
+                crate::bot_core::cl_route::Phase::Live,
                 pool_address,
-                sqrt_price_x96,
-                liquidity.to::<u128>(),
-                tick,
-                block_number,
+                crate::bot_core::BufferedV3PoolEvent::Swap(
+                    degenbot_pools::v3_state::BufferedV3SwapEvent {
+                        sqrt_price_x96,
+                        liquidity: liquidity.to::<u128>(),
+                        tick,
+                        block_number,
+                    },
+                ),
                 &[],
             ),
             Self::V3Liquidity {
@@ -197,12 +208,18 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.apply_v3_liquidity_update(
+            } => bot_state.route_v3_event(
+                crate::bot_core::cl_route::Phase::Live,
                 pool_address,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
+                crate::bot_core::BufferedV3PoolEvent::Liquidity(
+                    degenbot_pools::v3_state::BufferedV3LiquidityUpdate {
+                        tick_lower,
+                        tick_upper,
+                        liquidity_delta,
+                        block_number,
+                    },
+                ),
+                &[],
             ),
             Self::V4Swap {
                 pool_manager,
@@ -211,16 +228,19 @@ impl DecodedPoolEvent {
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.apply_v4_swap(
-                &crate::bot_core::V4SwapUpdate {
-                    pool_manager,
-                    pool_id,
-                    sqrt_price_x96,
-                    liquidity: liquidity.to::<u128>(),
-                    tick,
-                    tick_priors: vec![],
-                },
-                block_number,
+            } => bot_state.route_v4_event(
+                crate::bot_core::cl_route::Phase::Live,
+                pool_manager,
+                pool_id,
+                crate::bot_core::BufferedV4PoolEvent::Swap(
+                    degenbot_pools::v4_state::BufferedV4SwapEvent {
+                        sqrt_price_x96,
+                        liquidity: liquidity.to::<u128>(),
+                        tick,
+                        block_number,
+                    },
+                ),
+                &[],
             ),
             Self::V4Liquidity {
                 pool_manager,
@@ -229,13 +249,19 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.apply_v4_liquidity_update(
+            } => bot_state.route_v4_event(
+                crate::bot_core::cl_route::Phase::Live,
                 pool_manager,
                 pool_id,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
+                crate::bot_core::BufferedV4PoolEvent::Liquidity(
+                    degenbot_pools::v4_state::BufferedV4LiquidityUpdate {
+                        tick_lower,
+                        tick_upper,
+                        liquidity_delta,
+                        block_number,
+                    },
+                ),
+                &[],
             ),
         }
     }
@@ -426,6 +452,7 @@ impl LogDispatcher {
     /// any subscriber notify — subscribers take only their own lock (D2's
     /// engine-then-core order preserved by not nesting).
     #[tracing::instrument(skip(self, log, state), fields(block = %log.block_number.unwrap_or_default()))]
+    #[expect(clippy::too_many_lines)]
     pub fn dispatch(&self, log: &Log, state: &Arc<StateLock<BotState>>) {
         // Phase-labeled `measure_block!` for the rolling-start dirty-path
         // diagnostic: distinguishes "decode miss" (no decoder recognized the
@@ -503,108 +530,86 @@ impl LogDispatcher {
         // 42FL35: capture displayable identity BEFORE apply consumes the event
         // - the APPLY MISS trace below needs to name WHICH pool was missed.
         let identity = decoded.display_identity();
-        // Funnel: ~3/4 of relevant-topic logs decode to a pool that is NOT
-        // registered (apply-miss). resolve_pool_id uses the same registration
-        // gate as apply_* (pool_id_by_address / v4_pool_id_by_key), so check it
-        // under a SHARED read lock and skip the EXCLUSIVE state.write() for the
-        // no-op misses - the write lock would otherwise serialize all pipelined
-        // readers/writers for work that mutates nothing. apply_* still re-checks
-        // under the write guard (and may return None for a no-op apply).
-        if decoded.resolve_pool_id(&state.read()).is_none() {
-            Self::handle_apply_miss(decoded, log, &identity, state);
+        // Verdict-only fast path (cl_route contract): a decoded event whose
+        // routing-table row is a confirmed Drop may skip the exclusive lock —
+        // absence of work IS the semantics (the router would return NoOp
+        // without mutating anything). Everything else falls through to the
+        // write-lock router: registered pools (any lifecycle), and
+        // unregistered TICK-MUTATION events which must stage into a buffer
+        // (FUWYUR: these were silently lost when this pre-check used to
+        // decide their fate itself).
+        let confirmed_drop = decoded.resolve_pool_id(&state.read()).is_none()
+            && matches!(
+                decoded,
+                DecodedPoolEvent::V2Sync { .. }
+                    | DecodedPoolEvent::V3Swap { .. }
+                    | DecodedPoolEvent::V4Swap { .. }
+            );
+        if confirmed_drop {
+            tracing::debug!(
+                target: "degenbot::state",
+                block = log.block_number,
+                pool = %identity,
+                "APPLY MISS - unregistered scalar refresh (row re-seed trust); skipped write lock"
+            );
+            if let Some(p) = crate::instruments::pipeline() {
+                p.count_log_apply_missed();
+            }
             return;
         }
-        // Apply under the write guard, then RELEASE before notifying.
+        // Route + execute under the write guard (cl_route table owns policy),
+        // then RELEASE before notifying.
         let apply_start = std::time::Instant::now();
-        let pool_id = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
+        let outcome = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
         if let Some(p) = crate::instruments::pipeline() {
             p.observe_state_apply(apply_start.elapsed().as_secs_f64());
         }
-        // Telemetry: ALWAYS-ON structured outcome events (was
-        // DEGENBOT_TRACE_DISPATCH-gated). The applied event is the
-        // "pool event processed + state updated" node in every Jaeger trace:
-        // it names the concrete pool identity AND the engine pool_id. An APPLY
-        // MISS (decoded but unregistered pool) stays visible at DEBUG with the
-        // 42FL35 identity naming.
-        if let Some(pid) = pool_id {
-            tracing::info!(
-                target: "degenbot::state",
-                block = log.block_number,
-                pool.id = pid,
-                pool = %identity,
-                "[state] pool event applied"
-            );
-        } else {
-            tracing::debug!(
-                target: "degenbot::state",
-                block = log.block_number,
-                pool = %identity,
-                "APPLY MISS — decoded event matched no registered pool"
-            );
+        match outcome {
+            ApplyOutcome::Applied(pool_id) => {
+                // Telemetry: ALWAYS-ON structured outcome events. This is the
+                // "pool event processed + state updated" node in every Jaeger
+                // trace: concrete pool identity AND engine pool_id.
+                tracing::info!(
+                    target: "degenbot::state",
+                    block = log.block_number,
+                    pool.id = pool_id,
+                    pool = %identity,
+                    "[state] pool event applied"
+                );
+                // T2: successful apply to a registered pool.
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_log_applied();
+                }
+                hotpath::measure_block!("dispatch.notify", {
+                    self.notify(pool_id);
+                });
+            }
+            ApplyOutcome::Buffered(kind) => {
+                tracing::debug!(
+                    target: "degenbot::state",
+                    block = log.block_number,
+                    pool = %identity,
+                    ?kind,
+                    "APPLY MISS - staged into buffer for registration drain/set_live"
+                );
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_log_apply_missed();
+                }
+            }
+            ApplyOutcome::NoOp(_) => {
+                tracing::debug!(
+                    target: "degenbot::state",
+                    block = log.block_number,
+                    pool = %identity,
+                    "APPLY MISS - no-op"
+                );
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_log_apply_missed();
+                }
+            }
         }
-        let Some(pool_id) = pool_id else {
-            return;
-        };
-        // T2: successful apply to a registered pool.
-        if let Some(p) = crate::instruments::pipeline() {
-            p.count_log_applied();
-        }
-        hotpath::measure_block!("dispatch.notify", {
-            self.notify(pool_id);
-        });
     }
 
-    /// Handle a decoded event whose pool is NOT registered (the APPLY-MISS
-    /// funnel). Two outcomes:
-    ///
-    /// - CL-family liquidity events (`V3Liquidity`/`V4Liquidity`) are routed
-    ///   through the write-lock apply path: `apply_v3/v4_liquidity_update`'s
-    ///   unregistered arm buffers them into the pump buffer for staged
-    ///   application at registration (`apply_pump_buffer_v3` drain +
-    ///   `set_*_pool_live` tail flush). FUWYUR: these events mutate
-    ///   `tick_data`, which a DB-row snapshot cannot retro-supply when
-    ///   registration lands AFTER the logs arrived (crawl mid-flight — the
-    ///   UO3JM4/ADR-021 missed-live-Mint desync).
-    /// - Swap/Sync events are dropped without touching the write lock: their
-    ///   scalar payload is re-seeded wholesale from the DB row at
-    ///   registration, so buffering them would be dead weight.
-    ///
-    /// Either way this is an apply-miss from the solve-path's perspective (no
-    /// subscriber notify): keep the counter + trace honest.
-    fn handle_apply_miss(
-        decoded: DecodedPoolEvent,
-        log: &Log,
-        identity: &str,
-        state: &Arc<StateLock<BotState>>,
-    ) {
-        if matches!(
-            decoded,
-            DecodedPoolEvent::V3Liquidity { .. } | DecodedPoolEvent::V4Liquidity { .. }
-        ) {
-            let applied =
-                hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
-            debug_assert!(
-                applied.is_none(),
-                "unregistered-pool liquidity event must buffer, not direct-apply"
-            );
-            tracing::debug!(
-                target: "degenbot::state",
-                block = log.block_number,
-                pool = %identity,
-                "APPLY MISS - unregistered pool; liquidity event buffered to pump buffer"
-            );
-        } else {
-            tracing::debug!(
-                target: "degenbot::state",
-                block = log.block_number,
-                pool = %identity,
-                "APPLY MISS - decoded event matched no registered pool (skipped write lock)"
-            );
-        }
-        if let Some(p) = crate::instruments::pipeline() {
-            p.count_log_apply_missed();
-        }
-    }
     /// Decode `log` into a [`DecodedPoolEvent`] via the decoder registry, or
     /// `None` if no decoder recognizes it. Used by `dispatch` (forward) and
     /// `ReorgCoordinator::dispatch_reorg_log` (removed) — both decode the pool
@@ -824,22 +829,26 @@ mod tests {
         );
         assert_eq!(
             ev.apply(&mut state.write()),
-            Some(1),
+            ApplyOutcome::Applied(1),
             "apply must apply the registered pool"
         );
 
-        // Unregistered pool: resolve says miss AND apply no-ops - so the funnel
-        // may skip the write lock without losing a real apply.
+        // Unregistered pool: resolve says miss AND apply is a named NoOp - so
+        // the verdict-only fast path may skip the write lock without losing a
+        // real apply.
         let miss = mk(unregistered, 1);
         assert_eq!(
             miss.resolve_pool_id(&state.read()),
             None,
             "resolve must miss the unregistered pool"
         );
+        // The funnel fast path may skip the write lock ONLY on this exact
+        // confirmed-Drop row (unregistered + scalar refresh): absence of work
+        // is the semantics. Tick mutations must never land here.
         assert_eq!(
             miss.apply(&mut state.write()),
-            None,
-            "apply must no-op for the unregistered pool"
+            ApplyOutcome::NoOp(crate::bot_core::cl_route::NoOpReason::ScalarReseedAtRegistration),
+            "apply must no-op (named Drop) for the unregistered scalar refresh"
         );
     }
 
