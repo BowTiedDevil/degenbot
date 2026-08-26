@@ -1110,8 +1110,9 @@ mod tests {
     }
 
     #[test]
-    fn unregistered_pool_and_zero_amount_are_not_computable() {
+    fn unregistered_pool_and_zero_amount_return_zero() {
         let mut bot = BotState::new();
+        // Unknown pool: legacy no-raise-on-miss → Computed(0).
         assert_eq!(
             bot.swap_simulation(
                 0,
@@ -1119,12 +1120,17 @@ mod tests {
                 SwapRequest {
                     zero_for_one: true,
                     amount_specified: -I256::ONE,
-                    sqrt_price_limit: None
+                    sqrt_price_limit: None,
                 }
             ),
-            SwapRead::NotComputable
+            SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                consumed: I256::ZERO,
+                delivered: I256::ZERO,
+                caveats: Caveats::default(),
+            }))
         );
         let pid = register_canonical_v3(&mut bot, PoolTickCoverage::Tracked, true);
+        // Zero input → zero output (on-chain getAmountOut(0) = 0).
         assert_eq!(
             bot.swap_simulation(
                 0,
@@ -1132,10 +1138,14 @@ mod tests {
                 SwapRequest {
                     zero_for_one: true,
                     amount_specified: I256::ZERO,
-                    sqrt_price_limit: None
+                    sqrt_price_limit: None,
                 }
             ),
-            SwapRead::NotComputable
+            SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                consumed: I256::ZERO,
+                delivered: I256::ZERO,
+                caveats: Caveats::default(),
+            }))
         );
     }
 
