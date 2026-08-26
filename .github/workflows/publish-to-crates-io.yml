@@ -93,6 +93,17 @@ jobs:
           fi
           echo "Tag/version match: $ws_ver"
 
+      - name: Check crates.io token is present
+        # Fail fast - before the ~4.5 min verified dry-run - when the repo secret
+        # `CRATES_IO_TOKEN` is missing/empty. Otherwise cargo publish fails only
+        # after verification with an opaque auth error.
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CRATES_IO_TOKEN repo secret is not set (or is empty) - add a crates.io API token at GitHub repo Settings -> Secrets and variables -> Actions." >&2
+            exit 1
+          fi
+          echo "crates.io token present"
+
       - name: Pre-publish verification (full verify, all members)
         # Release policy: never publish without verify. `cargo publish
         # --workspace --dry-run` packages every publishable member and
@@ -145,7 +156,10 @@ jobs:
             if cargo publish --workspace --allow-dirty "${excludes[@]}" >>"$log" 2>&1; then
               echo "=== publish complete at $ver ==="; exit 0
             fi
-            ra=$(grep -o 'try again after [A-Za-z]*, [0-9]* [A-Za-z]* [0-9]* [0-9:]* GMT' "$log" | tail -n 1 | sed 's/try again after //')
+            # `|| true` matters: the loop runs under `bash -e`, and a missing 429
+            # in the log makes this assignment exit 1 — silently skipping the
+            # diagnostic + log tail below. Keep the no-match case non-fatal.
+            ra=$(grep -o 'try again after [A-Za-z]*, [0-9]* [A-Za-z]* [0-9]* [0-9:]* GMT' "$log" | tail -n 1 | sed 's/try again after //' || true)
             if [ -n "$ra" ]; then
               ra_epoch=$(date -d "$ra" +%s) || { echo "::error::unparseable retry-after: $ra"; exit 1; }
               sleep_s=$(( ra_epoch - $(date +%s) + 120 ))
