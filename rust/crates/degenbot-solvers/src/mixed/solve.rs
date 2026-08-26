@@ -69,7 +69,58 @@ fn solve_path_gated(
             ResolvedHop::V3 { int_seq, .. } | ResolvedHop::V4 { int_seq, .. } => {
                 Some(HopMath::Cl(int_seq))
             }
-            _ => None,
+            // M6776W: Solidly volatile is the constant-product family → the
+            // fee-agnostic V2 lines. Solidly stable is a stableswap whose
+            // marginal rate is non-monotone → sound reserve cap only (loose);
+            // the amplification-bounded peak-rate slope is a follow-up.
+            ResolvedHop::SolidlyStable { state } => {
+                let (reserve_in, reserve_out) = if state.token_in == 0 {
+                    (state.reserves_0, state.reserves_1)
+                } else {
+                    (state.reserves_1, state.reserves_0)
+                };
+                if state.stable {
+                    Some(HopMath::ReserveCap { reserve_out })
+                } else {
+                    Some(HopMath::SolidlyVolatile {
+                        reserve_in,
+                        reserve_out,
+                    })
+                }
+            }
+            // Concave weighted-pool curve → entry-rate tangent dominates
+            // globally (sound) + the reserve asymptote caps it.
+            ResolvedHop::BalancerWeighted { state } => {
+                Some(crate::profit_envelope::HopMath::Weighted {
+                    balance_in: state.balance_in,
+                    balance_out: state.balance_out,
+                    weight_in: state.weight_in,
+                    weight_out: state.weight_out,
+                    scaling_in: state.scaling_factor_in,
+                    scaling_out: state.scaling_factor_out,
+                })
+            }
+            // Stableswap families (Balancer stable / Curve) → sound reserve
+            // cap only (see the Solidly-stable note above).
+            ResolvedHop::BalancerStable { state } => state
+                .balances
+                .get(state.token_index_out)
+                .copied()
+                .filter(|b| !b.is_zero() && !state.scaling_factor_out.is_zero())
+                .map(|b| HopMath::ReserveCap {
+                    reserve_out: b / state.scaling_factor_out,
+                }),
+            ResolvedHop::CurveStableswap { state } => {
+                // Native output-token reserve = xp[out] · PRECISION / rate_out
+                // (you can never extract more than the pool holds).
+                let xp_out = state.xp.get(state.token_index_out)?;
+                if state.rate_multiplier_out.is_zero() {
+                    return None;
+                }
+                Some(HopMath::ReserveCap {
+                    reserve_out: xp_out.saturating_mul(state.precision) / state.rate_multiplier_out,
+                })
+            }
         })
         .collect();
     match path_profit_bound(&views) {
@@ -1386,10 +1437,197 @@ mod gate_tests {
         assert_eq!(stats.evaluated, 1);
     }
 
+    // -----------------------------------------------------------------
+    // M6776W soundness proptests: the new bounds must point-wise dominate
+    // the REAL family math leaves (independent oracle = the same
+    // `simulate_*_hop` the solver walks). A bound that ever dips BELOW the
+    // true output would skip a profitable path -> WRONG. proptest over
+    // random reserves/weights/amounts exercises the slope + cap lines.
+    // -----------------------------------------------------------------
+    use crate::profit_envelope::{path_output_bound_at, HopMath};
+    use degenbot_math::balancer::constants::ONE;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Solidly volatile = constant-product: the fee-agnostic V2 rise+flat
+        /// lines must dominate `calc_exact_in_volatile` for every reserve/amount.
+        #[test]
+        fn m6776w_solidly_volatile_bound_dominates_real_leaf(
+            r0 in 1u64..10_000_000u64,
+            r1 in 1u64..10_000_000u64,
+            x in 0u64..10_000_000u64,
+            token_in in 0u8..2u8,
+        ) {
+            let (rin, rout) = if token_in == 0 { (r0, r1) } else { (r1, r0) };
+            let hop = HopMath::SolidlyVolatile {
+                reserve_in: U256::from(rin),
+                reserve_out: U256::from(rout),
+            };
+            let bound = path_output_bound_at(&[Some(hop)], &U256::from(x))
+                .unwrap_or(U256::ZERO);
+            let state = crate::mixed::SolidlyHopState {
+                reserves_0: U256::from(r0),
+                reserves_1: U256::from(r1),
+                decimals_0: U256::from(1_000_000u64),
+                decimals_1: U256::from(1_000_000u64),
+                token_in,
+                fee_numer: U256::from(3u64),
+                fee_denom: U256::from(1000u64),
+                stable: false,
+                variant: DexVariant::AerodromeV2Volatile,
+            };
+            let true_out = simulate_solidly_hop(U256::from(x), &state);
+            prop_assert!(
+                bound >= true_out,
+                "solidly-volatile bound {bound} < true {true_out} (r0={r0},r1={r1},x={x},t={token_in})"
+            );
+        }
+
+        /// Solidly stable (stableswap): the reserve cap must dominate the real
+        /// stable leaf output for every amount (guards the cap unit).
+        #[test]
+        fn m6776w_solidly_stable_reserve_cap_dominates_real_leaf(
+            r0 in 1u64..1_000_000_000u64,
+            r1 in 1u64..1_000_000_000u64,
+            x in 0u64..1_000_000_000u64,
+            token_in in 0u8..2u8,
+        ) {
+            let reserve_out = if token_in == 0 { r1 } else { r0 };
+            let hop = HopMath::ReserveCap { reserve_out: U256::from(reserve_out) };
+            let bound = path_output_bound_at(&[Some(hop)], &U256::from(x))
+                .unwrap_or(U256::ZERO);
+            let state = crate::mixed::SolidlyHopState {
+                reserves_0: U256::from(r0),
+                reserves_1: U256::from(r1),
+                decimals_0: U256::from(1_000_000u64),
+                decimals_1: U256::from(1_000_000u64),
+                token_in,
+                fee_numer: U256::from(3u64),
+                fee_denom: U256::from(1000u64),
+                stable: true,
+                variant: DexVariant::AerodromeV2Stable,
+            };
+            let true_out = simulate_solidly_hop(U256::from(x), &state);
+            prop_assert!(
+                bound >= true_out,
+                "solidly-stable cap {bound} < true {true_out} (r0={r0},r1={r1},x={x},t={token_in})"
+            );
+        }
+
+        /// Curve stableswap: the reserve cap (`xp[out]·PRECISION/rate_out` = the
+        /// native output-token reserve) must dominate the real Curve leaf output
+        /// for every amount — guards the rate-multiplier unit conversion.
+        #[test]
+        fn m6776w_curve_reserve_cap_dominates_real_leaf(
+            bal_in in 1_000_000u64..1_000_000_000_000u64,
+            bal_out in 1_000_000u64..1_000_000_000_000u64,
+            x in 0u64..1_000_000_000_000u64,
+            token_in in 0u8..2u8,
+        ) {
+            use degenbot_math::curve::stableswap::{DVariant, YVariant};
+            let precision = U256::from(1_000_000_000_000_000_000u64); // 1e18
+            // rate multiplier for a 6-decimal token = 10^30 (10^(18+12)).
+            let rate = U256::from(1_000_000_000u64)
+                * U256::from(1_000_000_000u64)
+                * U256::from(1_000_000_000_000u64); // 1e9 * 1e9 * 1e12 = 1e30
+            let (i, j) = if token_in == 0 { (0usize, 1usize) } else { (1, 0) };
+            let balances = [
+                if i == 0 { bal_in } else { bal_out },
+                if i == 1 { bal_in } else { bal_out },
+            ];
+            // xp[k] = balance[k] * rate / precision
+            let xp: Vec<U256> = balances
+                .iter()
+                .map(|&b| U256::from(b).saturating_mul(rate) / precision)
+                .collect();
+            // Sanity: the caller-side cap formula xp[j]*precision/rate_out
+            // equals the native reserve (exact: 1e30/1e18=1e12, no rounding).
+            let caller_cap = xp[j].saturating_mul(precision) / rate;
+            prop_assert!(
+                caller_cap == U256::from(balances[j]),
+                "curve cap unit mismatch: caller {caller_cap} != reserve {}",
+                U256::from(balances[j])
+            );
+            let hop = HopMath::ReserveCap {
+                reserve_out: U256::from(balances[j]),
+            };
+            let bound = path_output_bound_at(&[Some(hop)], &U256::from(x))
+                .unwrap_or(U256::ZERO);
+            let state = crate::mixed::CurveStableswapHopState {
+                amp: U256::from(1000u64),
+                a_precision: U256::from(100u64),
+                xp: xp.clone(),
+                token_index_in: i,
+                token_index_out: j,
+                n_coins: U256::from(2u64),
+                fee: U256::from(4_000_000u64),
+                fee_denom: U256::from(10_000_000_000u64),
+                precision,
+                rate_multiplier_in: rate,
+                rate_multiplier_out: rate,
+                y_variant: YVariant::Standard,
+                d_variant: DVariant::Standard,
+            };
+            let true_out = simulate_curve_hop(U256::from(x), &state);
+            if x > 0 && true_out.is_zero() {
+                return Ok(()); // leaf rejected the input; not soundness-relevant
+            }
+            prop_assert!(
+                bound >= true_out,
+                "curve cap {bound} < true {true_out} (bin={bal_in},bout={bal_out},x={x},t={token_in})"
+            );
+        }
+
+        /// Balancer weighted: the concave tangent (entry marginal rate) + the
+        /// reserve asymptote must dominate `calc_out_given_in` for every amount.
+        #[test]
+        fn m6776w_balancer_weighted_bound_dominates_real_leaf(
+            b_in in 1u64..1_000_000_000u64,
+            b_out in 1u64..1_000_000_000u64,
+            w_in_pct in 10u32..90u32,
+            x in 0u64..1_000_000_000u64,
+        ) {
+            let weight_in = U256::from(w_in_pct) * ONE / U256::from(100u32);
+            let weight_out = ONE - weight_in;
+            let state = crate::mixed::BalancerWeightedHopState {
+                balance_in: U256::from(b_in),
+                balance_out: U256::from(b_out),
+                weight_in,
+                weight_out,
+                swap_fee: U256::from(3u64) * ONE / U256::from(1000u64),
+                pow_version: degenbot_math::balancer::constants::PowVersion::V2,
+                scaling_factor_in: U256::from(1u64),
+                scaling_factor_out: U256::from(1u64),
+            };
+            let hop = HopMath::Weighted {
+                balance_in: state.balance_in,
+                balance_out: state.balance_out,
+                weight_in: state.weight_in,
+                weight_out: state.weight_out,
+                scaling_in: state.scaling_factor_in,
+                scaling_out: state.scaling_factor_out,
+            };
+            let bound = path_output_bound_at(&[Some(hop)], &U256::from(x))
+                .unwrap_or(U256::ZERO);
+            let true_out = simulate_balancer_weighted_hop(U256::from(x), &state);
+            // Skip cases the math leaf itself rejects (returns 0 with x>0):
+            // those are not soundness-relevant.
+            if x > 0 && true_out.is_zero() {
+                return Ok(());
+            }
+            prop_assert!(
+                bound >= true_out,
+                "weighted bound {bound} < true {true_out} (bin={b_in},bout={b_out},w={w_in_pct},x={x})"
+            );
+        }
+    }
+
     #[test]
-    fn unsupported_family_counts_unsupported_and_still_solves() {
-        // Solidly hops have no envelope yet; the path must still be SOLVED
-        // (never skipped) and counted as unsupported.
+    fn solidly_and_stableswap_hops_are_now_screened_not_unsupported() {
+        // M6776W: Solidly/Curve/Balancer hops now carry rigorous (or sound
+        // reserve-cap) bounds, so the path is EVALUATED by the gate rather
+        // than SOLVED unscreened. A single Solidly-stable hop yields a
+        // `Some` bound (reserve cap) → `evaluated`, NOT `unsupported`.
         let solidly = ResolvedHop::SolidlyStable {
             state: crate::mixed::SolidlyHopState {
                 reserves_0: U256::from(1_000_000u64),
@@ -1412,6 +1650,7 @@ mod gate_tests {
         let _ = take_last_gate_stats();
         let _ = solve_path_gated(&p, U256::ZERO, true);
         let stats = take_last_gate_stats();
-        assert_eq!(stats.unsupported, 1);
+        assert_eq!(stats.unsupported, 0);
+        assert_eq!(stats.evaluated, 1);
     }
 }

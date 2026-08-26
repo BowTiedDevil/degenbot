@@ -99,16 +99,56 @@ fn ceil_div(n: I512, d: I512) -> I512 {
 
 /// What the gate needs from one resolved hop. `None` slots (unsupported
 /// families) poison the whole path: no skip without a rigorous bound.
+///
+/// M6776W extends the gate beyond V2/CL to the Solidly/Curve/Balancer hop
+/// families. Each added variant carries a RIGOROUS upper bound proven against
+/// the family's real math leaf by the proptest suite in `profit_envelope_tests`.
+/// The stableswap families (Solidly stable / Curve / Balancer stable) get the
+/// SOUND reserve-cap bound only — their marginal rate is non-monotone (it can
+/// exceed the entry rate when the pool is imbalanced toward the input), so a
+/// tangent-at-zero slope is NOT sound and the amplification-bounded peak-rate
+/// derivation is a documented follow-up.
 #[derive(Clone, Copy, Debug)]
 pub enum HopMath<'a> {
     /// Constant-product hop (exact Möbius family: V2/Aerodrome-style state).
     V2(&'a IntHopState),
     /// Concentrated-liquidity hop (ordered tick-range sequence, swap direction).
     Cl(&'a IntV3TickRangeSequence),
+    /// Solidly volatile pool (constant-product family). SOUND: identical
+    /// Möbius family → the V2 rise+flat lines. The fee is taken on input,
+    /// which only reduces output, so the fee-agnostic bound stays rigorous
+    /// (over-estimates). Reserves are NATIVE (un-oriented) and must be
+    /// flipped to the swap direction by the caller.
+    SolidlyVolatile { reserve_in: U256, reserve_out: U256 },
+    /// Balancer V2 weighted pool. The output curve `1 − (1+x·sf_in/B_in)^(−w_in/w_out)`
+    /// is CONCAVE in the (native) input (diminishing returns), so the tangent
+    /// at x=0 — the entry marginal rate `B_out·sf_in·w_in/(B_in·w_out·sf_out)` —
+    /// point-wise dominates the curve (tangent-line property of concave
+    /// functions) → SOUND slope line. Plus the asymptote `B_out/sf_out` reserve
+    /// cap. All inputs are NATIVE token units (balances pre-divided by their
+    /// scaling factors; weights are raw 18-decimal fixed-point, the ratio is
+    /// exact as `w_in·1e18/w_out` evaluated lazily via the `C` denominator).
+    Weighted {
+        balance_in: U256,
+        balance_out: U256,
+        weight_in: U256,
+        weight_out: U256,
+        scaling_in: U256,
+        scaling_out: U256,
+    },
+    /// SOUND but LOOSE reserve-only cap for the stableswap families whose
+    /// marginal-rate peak needs amplification-bounded derivation (deferred).
+    /// `reserve_out` is the NATIVE output-token reserve: the most you can
+    /// ever extract is the pool's entire holding. Turns a `None` (unscreened,
+    /// solved unscreened) into a `Some` so provably-below-floor paths still
+    /// skip — a strictly-sound conservative step that never risks skipping a
+    /// profitable path.
+    ReserveCap { reserve_out: U256 },
 }
 
 /// Affine lines dominating one hop's output curve, plus the hop's maximum
 /// extractable output (used to cap the search domain).
+#[expect(clippy::too_many_lines)]
 fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
     match hop {
         HopMath::V2(h) => {
@@ -196,6 +236,83 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             // Overflow here just shrinks the search domain conservatively.
             let cap = acc_out.checked_add(step.amount_out)?;
             Some((lines, cap))
+        }
+        HopMath::SolidlyVolatile {
+            reserve_in,
+            reserve_out,
+        } => {
+            if reserve_in.is_zero() || reserve_out.is_zero() {
+                return None;
+            }
+            // Identical Möbius family — fee on input only reduces output, so
+            // the fee-agnostic V2 lines (rise `r_out/r_in·x` + flat `r_out`)
+            // are a rigorous point-wise upper bound.
+            let rise = Line {
+                a: I512::ZERO,
+                b: I512::try_from(U512::from(reserve_out)).ok()?,
+                c: I512::try_from(U512::from(reserve_in)).ok()?,
+            };
+            let flat = Line {
+                a: I512::try_from(U512::from(reserve_out)).ok()?,
+                b: I512::ZERO,
+                c: I512::ONE,
+            };
+            Some((vec![rise, flat], reserve_out))
+        }
+        HopMath::Weighted {
+            balance_in,
+            balance_out,
+            weight_in,
+            weight_out,
+            scaling_in,
+            scaling_out,
+        } => {
+            if balance_in.is_zero()
+                || balance_out.is_zero()
+                || weight_out.is_zero()
+                || scaling_out.is_zero()
+            {
+                return None;
+            }
+            // Slope (native units) = B_out · sf_in · w_in / (B_in · w_out · sf_out),
+            // computed in U512 to avoid overflow, then narrowed to I512.
+            let n512 = U512::from(balance_out)
+                .saturating_mul(U512::from(scaling_in))
+                .saturating_mul(U512::from(weight_in));
+            let d512 = U512::from(balance_in)
+                .saturating_mul(U512::from(weight_out))
+                .saturating_mul(U512::from(scaling_out));
+            if d512.is_zero() {
+                return None;
+            }
+            let n = I512::try_from(n512).ok()?;
+            let d = I512::try_from(d512).ok()?;
+            // Cap (native) = B_out / sf_out (the asymptotic reserve).
+            let cap = balance_out / scaling_out;
+            let rise = Line {
+                a: I512::ZERO,
+                b: n,
+                c: d,
+            };
+            let flat = Line {
+                a: I512::try_from(U512::from(cap)).ok()?,
+                b: I512::ZERO,
+                c: I512::ONE,
+            };
+            Some((vec![rise, flat], cap))
+        }
+        HopMath::ReserveCap { reserve_out } => {
+            if reserve_out.is_zero() {
+                return None;
+            }
+            // `out ≤ reserve_out` for ALL inputs (you cannot extract more
+            // than the pool holds). Flat-only — sound, loose.
+            let flat = Line {
+                a: I512::try_from(U512::from(reserve_out)).ok()?,
+                b: I512::ZERO,
+                c: I512::ONE,
+            };
+            Some((vec![flat], reserve_out))
         }
     }
 }
