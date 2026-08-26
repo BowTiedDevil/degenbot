@@ -498,3 +498,102 @@ fn extreme_entry_price_is_not_rejected() {
         "extreme entry price should not be rejected (real arbitrage opportunity)"
     );
 }
+
+// -----------------------------------------------------------------
+// Cap-tail overflow probe: synthetic CL sequences where the LAST range
+// has deep liquidity at an extreme price (or extreme liquidity), to
+// confirm the U512-based cap-tail computation accepts these without
+// rejecting the whole hop. The old code path
+//   let liq = i128::try_from(er.liquidity).ok()?;
+//   let step = compute_swap_step_v3(er.sqrt_price_x96, exit, liq,
+//                                    I256::MAX, ...).ok()?;
+//   let cap = acc_out.checked_add(step.amount_out)?;
+// rejected the hop on ANY of these failures — in practice only the i128
+// cast fires (for liquidity >= 2^127, type-legal on-chain uint128).
+// -----------------------------------------------------------------
+
+/// Wide position from tick 0 to tick 887272 (one_for_zero, extreme high).
+#[test]
+fn probe_cap_tail_extreme_ofz() {
+    let p0 = p_at_tick(0);
+    let p_max = p_at_tick(887_272);
+    let liq: u128 = 1_000_000_000_000_000;
+    let r0 = IntV3TickRangeHop {
+        zero_for_one: false,
+        ..mk_range(liq, p0, p0, p_at_tick(100))
+    };
+    let r1 = IntV3TickRangeHop {
+        zero_for_one: false,
+        ..mk_range(liq, p_at_tick(100), p_at_tick(100), p_max)
+    };
+    let seq = mk_seq(vec![r0, r1]);
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    assert!(
+        path_profit_bound(&views).is_some(),
+        "OFZ extreme should not be rejected"
+    );
+}
+
+/// Wide position from tick 0 to tick -887272 (zero_for_one, extreme low).
+#[test]
+fn probe_cap_tail_extreme_zfo() {
+    let p0 = p_at_tick(0);
+    let p_min = p_at_tick(-887_272);
+    let liq: u128 = 1_000_000_000_000_000;
+    let r0 = mk_range(liq, p0, p_at_tick(-100), p0);
+    let r1 = mk_range(liq, p_at_tick(-100), p_min, p_at_tick(-100));
+    let seq = mk_seq(vec![r0, r1]);
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    assert!(
+        path_profit_bound(&views).is_some(),
+        "ZFO extreme should not be rejected"
+    );
+}
+
+/// u128::MAX liquidity (> i128::MAX — the top bit is set). This is the
+/// REAL trigger for `i128::try_from(er.liquidity).ok()?` returning None
+/// and rejecting the whole hop. On-chain uint128 CAN hold this value.
+/// The pool has deep liquidity at a normal price (tick 0 -> 100).
+#[test]
+fn probe_cap_tail_u128_max_liquidity_rejects() {
+    let p0 = p_at_tick(0);
+    let p100 = p_at_tick(100);
+    let liq = u128::MAX; // 2^128 - 1 — exceeds i128::MAX
+
+    // Sanity: u128::MAX genuinely doesn't fit in i128.
+    assert!(
+        i128::try_from(liq).is_err(),
+        "u128::MAX must not fit in i128"
+    );
+
+    // Single range, normal price, extreme liquidity:
+    let r = mk_range(liq, p0, p0, p100);
+    let seq = mk_seq(vec![r]);
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    // u128::MAX liquidity exceeds i128::MAX, so the old cap-tail's
+    // `i128::try_from(er.liquidity).ok()?` rejected the whole hop. The
+    // U512-based cap-tail computes the same formula directly, accepting
+    // the on-chain uint128 liquidity type without truncation.
+    assert!(
+        path_profit_bound(&views).is_some(),
+        "u128::MAX liquidity should not be rejected (on-chain uint128 type)"
+    );
+}
+
+/// Same u128::MAX liquidity but at EXTREME price (tick 887272).
+#[test]
+fn probe_cap_tail_u128_max_liquidity_extreme_price() {
+    let p0 = p_at_tick(0);
+    let p_max = p_at_tick(887_272);
+    let liq = u128::MAX;
+    let r = IntV3TickRangeHop {
+        zero_for_one: false,
+        ..mk_range(liq, p0, p0, p_max)
+    };
+    let seq = mk_seq(vec![r]);
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    assert!(
+        path_profit_bound(&views).is_some(),
+        "u128::MAX liquidity at extreme price should not be rejected"
+    );
+}

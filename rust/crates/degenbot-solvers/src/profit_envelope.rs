@@ -25,8 +25,7 @@
 //! Unsupported hop families (Solidly/Curve/Balancer) make derivation return
 //! `None`; the caller must NOT skip in that case (conservative).
 
-use alloy::primitives::{aliases::I512, I256, U256, U512};
-use degenbot_math::cl::swap_math::compute_swap_step_v3;
+use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
@@ -354,6 +353,24 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             if lines.is_empty() {
                 return None;
             }
+            // Cap-tail: compute the asymptotic output of the LAST range
+            // (crossing it fully with infinite input) and add it to
+            // acc_out. We bypass `compute_swap_step_v3` (which takes
+            // `liquidity: i128`) and compute directly in U512 to accept
+            // u128::MAX liquidity — the on-chain `uint128` type whose top
+            // bit (>= 2^127) overflows i128 and would reject the hop.
+            //
+            // The formula mirrors `exact_in_step_to_target`'s output
+            // (byte-identical for i128-representable liquidity — both
+            // round DOWN, matching v3-core's getAmount0Delta/getAmount1Delta
+            // for the "target price reachable" branch taken by
+            // `compute_swap_step_v3(... I256::MAX ...)`):
+            //   zfo: output = L · (sp_entry − sp_exit) / Q96
+            //   ofz: output = L · Q96 · (sp_exit − sp_entry) / (sp_entry · sp_exit)
+            // Both fit comfortably in U512 for any u128 L and any uint160
+            // sqrt_price; the result narrows to U256 with saturation (a cap
+            // shrunk by saturation is still a sound search-domain bound —
+            // the binary search just explores a smaller input range).
             let cr_last = seq.compute_crossing(seq.ranges.len() - 1)?;
             let er = cr_last.ending_range;
             let exit = if er.zero_for_one {
@@ -361,17 +378,39 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             } else {
                 er.sqrt_price_upper_x96
             };
-            let liq = i128::try_from(er.liquidity).ok()?;
-            let step = compute_swap_step_v3(
-                er.sqrt_price_x96,
-                exit,
-                liq,
-                I256::MAX,
-                U256::from(er.fee_denom.saturating_sub(er.gamma_numer)),
-            )
-            .ok()?;
-            // Overflow here just shrinks the search domain conservatively.
-            let cap = acc_out.checked_add(step.amount_out)?;
+            let sp_entry = er.sqrt_price_x96;
+            let l_u512 = U512::from(er.liquidity);
+            let q96 = U512::from(1u8) << 96;
+            let last_range_out_u512 = if er.zero_for_one {
+                // sp_entry >= exit (price decreasing).
+                let sp_diff = U512::from(sp_entry.saturating_sub(exit));
+                if sp_diff.is_zero() {
+                    U512::ZERO
+                } else {
+                    (l_u512 * sp_diff) / q96
+                }
+            } else {
+                // exit >= sp_entry (price increasing).
+                let sp_diff = U512::from(exit.saturating_sub(sp_entry));
+                if sp_diff.is_zero() {
+                    U512::ZERO
+                } else {
+                    let denom = U512::from(sp_entry) * U512::from(exit);
+                    if denom.is_zero() {
+                        U512::ZERO
+                    } else {
+                        (l_u512 * q96 * sp_diff) / denom
+                    }
+                }
+            };
+            // Narrow to U256 with saturation (a saturated cap is still
+            // sound — see above). Then `cap = acc_out + last_range_out`.
+            let last_range_out = if last_range_out_u512 > U512::from(U256::MAX) {
+                U256::MAX
+            } else {
+                last_range_out_u512.to::<U256>()
+            };
+            let cap = acc_out.saturating_add(last_range_out);
             Some((lines, cap))
         }
         HopMath::SolidlyVolatile {
