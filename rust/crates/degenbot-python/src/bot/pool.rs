@@ -578,11 +578,15 @@ impl PyLiquidityPool {
                 // negative = exact-input. Engine conventions handled in-gate.
                 amount_specified: if exact_output {
                     I256::try_from(amount).map_err(|_| {
-                        pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256")
+                        pyo3::exceptions::PyValueError::new_err(
+                            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                        )
                     })?
                 } else {
                     -I256::try_from(amount).map_err(|_| {
-                        pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256")
+                        pyo3::exceptions::PyValueError::new_err(
+                            "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                        )
                     })?
                 },
                 sqrt_price_limit,
@@ -632,7 +636,9 @@ impl PyLiquidityPool {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let amount_specified = -I256::try_from(amount).map_err(|_| {
-            pyo3::exceptions::PyOverflowError::new_err("amount_in does not fit I256")
+            pyo3::exceptions::PyValueError::new_err(
+                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+            )
         })?;
         let result = self.with_state_mut(py, |core| {
             core.swap_simulation(
@@ -681,7 +687,9 @@ impl PyLiquidityPool {
         let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
             zero_for_one,
             amount_specified: I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err("amount_out does not fit I256")
+                pyo3::exceptions::PyValueError::new_err(
+                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                )
             })?,
             sqrt_price_limit: None,
         };
@@ -729,7 +737,9 @@ impl PyLiquidityPool {
         let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
             zero_for_one,
             amount_specified: -I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err("amount_in does not fit I256")
+                pyo3::exceptions::PyValueError::new_err(
+                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                )
             })?,
             sqrt_price_limit: None,
         };
@@ -779,6 +789,20 @@ impl PyLiquidityPool {
         let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);
         };
+        // ADR-037/X4EU3J: an amount-modifying hook may have invalidated the
+        // standard-math result — surface the archived exception (approximate
+        // amounts attached) instead of silently returning a wrong number.
+        if payload
+            .caveats
+            .contains(degenbot_bot::bot_core::swap_simulation::Caveats::HOOKED_POOL)
+        {
+            return Err(crate::bot::engine::PossibleInaccurateResult::new_err(
+                format!(
+                    "pool has an amount-modifying V4 hook; approximation consumed={} delivered={}",
+                    -payload.consumed, payload.delivered
+                ),
+            ));
+        }
         let (amount0, amount1) = payload.raw_token_amounts(zero_for_one);
         let tuple = pyo3::types::PyTuple::new(
             py,
@@ -809,8 +833,11 @@ impl PyLiquidityPool {
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
-        let amount_specified = I256::try_from(amount)
-            .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256"))?;
+        let amount_specified = I256::try_from(amount).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+            )
+        })?;
         let sqrt_price_limit = match sqrt_price_limit_x96 {
             Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
             _ => None,
@@ -828,6 +855,20 @@ impl PyLiquidityPool {
         let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);
         };
+        // ADR-037/X4EU3J: an amount-modifying hook may have invalidated the
+        // standard-math result — surface the archived exception (approximate
+        // amounts attached) instead of silently returning a wrong number.
+        if payload
+            .caveats
+            .contains(degenbot_bot::bot_core::swap_simulation::Caveats::HOOKED_POOL)
+        {
+            return Err(crate::bot::engine::PossibleInaccurateResult::new_err(
+                format!(
+                    "pool has an amount-modifying V4 hook; approximation consumed={} delivered={}",
+                    -payload.consumed, payload.delivered
+                ),
+            ));
+        }
         let (amount0, amount1) = payload.raw_token_amounts(zero_for_one);
         let tuple = pyo3::types::PyTuple::new(
             py,

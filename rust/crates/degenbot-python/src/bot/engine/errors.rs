@@ -107,3 +107,16 @@ create_exception!(
     crate::bot::engine::PoolRegistrationError,
     "A field on the pool registration params violates its on-chain Solidity bound (e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range). The message identifies the offending field, its value, and the bound it violates."
 );
+
+// ADR-037/X4EU3J: hooked V4 pools are admitted but their simulations use
+// standard CL math that hooks may invalidate — ported from the archived
+// Python `PossibleInaccurateResult` (archive/main-20260721
+// src/degenbot/exceptions/liquidity_pool.py:94). Raised by the pool-handle
+// sim seams with the APPROXIMATE consumed/delivered magnitudes attached so
+// callers can decide whether a possibly-wrong number is usable.
+create_exception!(
+    degenbot._ffi,
+    PossibleInaccurateResult,
+    pyo3::exceptions::PyValueError,
+    "The simulated swap crosses a pool whose amount-modifying hook may have invalidated the result; the attached amounts are the standard-math approximation."
+);

@@ -253,14 +253,19 @@ pub(crate) fn cl_payload(
     caveats: Caveats,
     fetched_words: Vec<i32>,
 ) -> ClSwapOutcome {
-    let delivered_raw = if zero_for_one {
-        outcome.amount1
+    // Per-token moved amounts (absolute): token0/token1 by direction.
+    // NOTE: do NOT derive these from `input_consumed` — that field is
+    // denominated on the SPECIFIED side (see v3_state.rs:1417), so for an
+    // exact-OUTPUT swap it carries the requested output magnitude, not the
+    // input. The direction-keyed amounts are authoritative.
+    let (input_moved_raw, output_moved_raw) = if zero_for_one {
+        (outcome.amount0, outcome.amount1)
     } else {
-        outcome.amount0
+        (outcome.amount1, outcome.amount0)
     };
     ClSwapOutcome {
-        consumed: -unsigned_to_user_delta(outcome.input_consumed),
-        delivered: unsigned_to_user_delta(delivered_raw),
+        consumed: -unsigned_to_user_delta(input_moved_raw),
+        delivered: unsigned_to_user_delta(output_moved_raw),
         end_sqrt_price_x96: outcome.sqrt_price_x96,
         end_liquidity: outcome.liquidity,
         end_tick: outcome.tick,
@@ -867,7 +872,8 @@ mod tests {
             input_consumed: U256::from(1_234_u64),
         };
         let payload = cl_payload(&outcome, true, Caveats::SPARSE_COVERAGE, vec![7]);
-        assert_eq!(payload.consumed, -I256::try_from(1_234_u64).unwrap());
+        // zfo: input side is token0 → consumed tracks amount0 (500).
+        assert_eq!(payload.consumed, -I256::try_from(500_u64).unwrap());
         assert_eq!(payload.delivered, I256::try_from(700_u64).unwrap());
         assert_eq!(payload.end_tick, -3);
         assert_eq!(payload.fetched_words, vec![7]);

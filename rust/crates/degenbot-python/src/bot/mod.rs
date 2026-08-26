@@ -1266,7 +1266,9 @@ impl PyBot {
         let request = SwapRequest {
             zero_for_one,
             amount_specified: -I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err("amount_in does not fit I256")
+                pyo3::exceptions::PyValueError::new_err(
+                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                )
             })?,
             sqrt_price_limit: None,
         };
@@ -1366,7 +1368,9 @@ impl PyBot {
         let request = SwapRequest {
             zero_for_one,
             amount_specified: I256::try_from(amount).map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err("amount_out does not fit I256")
+                pyo3::exceptions::PyValueError::new_err(
+                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                )
             })?,
             sqrt_price_limit: None,
         };

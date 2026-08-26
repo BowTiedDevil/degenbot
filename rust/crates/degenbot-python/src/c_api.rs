@@ -198,6 +198,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     #[cfg(feature = "bot")]
     m.add(
+        "PossibleInaccurateResult",
+        m.py()
+            .get_type::<crate::bot::engine::PossibleInaccurateResult>(),
+    )?;
+    #[cfg(feature = "bot")]
+    m.add(
         "HighFeePoolRejectedError",
         m.py()
             .get_type::<crate::bot::engine::HighFeePoolRejectedError>(),
