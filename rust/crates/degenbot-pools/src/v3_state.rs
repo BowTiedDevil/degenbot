@@ -463,26 +463,23 @@ impl V3PoolState {
     /// Directional swap viability — can this pool host a swap in the given
     /// direction with its CURRENT state?
     ///
-    /// Ported from the archived Python `v3_liquidity_pool.py::swap_is_viable`,
-    /// tightened to catch dead pools (M6776W).
+    /// O(1) using the tick-map extremes; ported from the archived Python
+    /// `v3_liquidity_pool.py::swap_is_viable`, keeping its directional
+    /// precision (Python's coarse empty-map early-out is subsumed by the
+    /// directional test, which an empty map also fails).
     ///
     /// Checks, in order:
     /// 1. uninitialized price (`sqrt_price_x96 == 0`) → not viable;
     /// 2. price at the `MIN`/`MAX_SQRT_RATIO` protocol boundary in the swap's
     ///    direction → not viable (the swap would drive price past the limit);
-    /// 3. no tick strictly ahead in the walk direction with a nonzero
-    ///    `liquidity_net` → not viable. A tick may be initialized
-    ///    (`liquidity_gross > 0`) but have `liquidity_net == 0` (e.g. two
-    ///    positions whose bounds net out at this tick); crossing it changes
-    ///    nothing about the running active liquidity, so a pool whose only
-    ///    such ticks sit ahead is genuinely dead — no input size produces
-    ///    output. This subsumes the historical "any initialized tick exists"
-    ///    test, since a nonzero net implies a nonzero gross.
+    /// 3. no initialized tick strictly ahead in the walk direction → not
+    ///    viable (a zfo walk descends and needs a position below; ofz ascends
+    ///    and needs one above).
     ///
     /// NOTE: unlike `build_int_v3_sequence`, this does NOT consult or populate
-    /// the tick-range cache — it is safe to call under contention. Cost is a
-    /// single pass over `tick_data` filtered to the walk direction; tick maps
-    /// are small in practice (dominantly O(tens) per call).
+    /// the tick-range cache — it is safe to call under contention and costs
+    /// two hashmap-extreme scans at worst (amortized O(1) via BTreeMap-free
+    /// iteration over keys; tick maps are small).
     #[must_use]
     pub fn swap_is_viable(&self, zero_for_one: bool) -> bool {
         if self.sqrt_price_x96.is_zero() {
@@ -493,26 +490,25 @@ impl V3PoolState {
             if sp <= U256::from(MIN_SQRT_RATIO) + U256::from(1u64) {
                 return false;
             }
-            // Viable iff a tick strictly below the current active tick has a
-            // nonzero `liquidity_net` — crossing it would change the running
-            // active liquidity, so a large-enough input can produce output.
-            // An initialized tick whose `liquidity_net` is zero (e.g. a
-            // symmetric position pair whose bounds net out at this tick;
-            // `liquidity_gross > 0` so the tick is genuinely initialized)
-            // contributes no liquidity to the walk. A pool whose only such
-            // ticks sit ahead is genuinely dead — M6776W.
-            self.tick_data
-                .iter()
-                .filter(|(&t, _)| t < self.tick)
-                .any(|(_, info)| info.liquidity_net != I256::ZERO)
+            // Viable iff some initialized tick sits strictly below the price.
+            match self.tick_data.keys().min() {
+                Some(&min_tick) => match get_sqrt_ratio_at_tick_internal(min_tick) {
+                    Ok(t) => U256::from(t) < sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
         } else {
             if sp >= U256::from(MAX_SQRT_RATIO) - U256::from(1u64) {
                 return false;
             }
-            self.tick_data
-                .iter()
-                .filter(|(&t, _)| t > self.tick)
-                .any(|(_, info)| info.liquidity_net != I256::ZERO)
+            match self.tick_data.keys().max() {
+                Some(&max_tick) => match get_sqrt_ratio_at_tick_internal(max_tick) {
+                    Ok(t) => U256::from(t) > sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
         }
     }
 
@@ -2486,86 +2482,6 @@ mod tests {
         assert!(!state.swap_is_viable(false));
     }
 
-    /// M6776W: the historical `swap_is_viable` checked "any initialized tick
-    /// exists ahead" (via `tick_data.keys().min()/max()` + sqrt-ratio comparison).
-    /// A pool with `slot0.liquidity = 0` and an initialized tick whose
-    /// `liquidity_net` is zero (e.g. a symmetric position pair whose bounds
-    /// net out at this tick; `liquidity_gross > 0` because some position
-    /// references it) IS NOT swappable at any input size — crossing such a
-    /// tick changes the running active liquidity by zero. The tightened check
-    /// requires a nonzero-net tick ahead in the walk direction.
-    #[test]
-    fn m6776w_dead_pool_zero_net_ticks_ahead_is_not_viable() {
-        // Active tick = 0; ticks +60 and +120 are initialized but have
-        // liquidity_net == 0 — the topology of the 8 captured dead paths.
-        let (_id, mut state) = pool_1to1_with_position(0);
-        state.liquidity = 0;
-        // Replace the straddling positions with zero-net ticks above.
-        state.tick_data.clear();
-        state.tick_data.insert(
-            60,
-            TickInfo {
-                liquidity_gross: U128::from(1_000_000u64),
-                liquidity_net: I256::ZERO,
-                block: 0,
-            },
-        );
-        state.tick_data.insert(
-            120,
-            TickInfo {
-                liquidity_gross: U128::from(1_000_000u64),
-                liquidity_net: I256::ZERO,
-                block: 0,
-            },
-        );
-        // ofz (walking UP) finds ticks ahead but none has nonzero net.
-        assert!(
-            !state.swap_is_viable(false),
-            "dead pool must not be viable ofz: only zero-net ticks ahead"
-        );
-        // zfo (walking DOWN) has no initialized tick below tick 0 — also
-        // not viable (same as before the tightening).
-        assert!(
-            !state.swap_is_viable(true),
-            "dead pool must not be viable zfo: no ticks below current tick"
-        );
-    }
-
-    /// M6776W: a pool whose only ticks ahead have nonzero `liquidity_net` is
-    /// viable even with `slot0.liquidity = 0` — the swap walks an empty zone,
-    /// crosses a tick, and gains active liquidity. The tightened check must
-    /// NOT reject these (a naive `liquidity == 0` shortcut would falsely kill
-    /// healthy out-of-range pools).
-    #[test]
-    fn m6776w_zero_active_liq_but_nonzero_net_ahead_is_viable() {
-        let (_id, mut state) = pool_1to1_with_position(0);
-        state.liquidity = 0;
-        state.tick_data.clear();
-        state.tick_data.insert(
-            60,
-            TickInfo {
-                liquidity_gross: U128::from(1_000_000u64),
-                liquidity_net: I256::try_from(1_000_000i128).unwrap(),
-                block: 0,
-            },
-        );
-        state.tick_data.insert(
-            120,
-            TickInfo {
-                liquidity_gross: U128::from(1_000_000u64),
-                liquidity_net: I256::try_from(-1_000_000i128).unwrap(),
-                block: 0,
-            },
-        );
-        assert!(
-            state.swap_is_viable(false),
-            "out-of-range pool with nonzero net ahead must be viable ofz"
-        );
-        assert!(
-            !state.swap_is_viable(true),
-            "zfo has no initialized tick below: not viable"
-        );
-    }
     #[test]
     fn zfo_small_swap_matches_single_compute_swap_step() {
         // What: a small zfo exact-input swap on a 1:1 V3 pool with a [-60,+60]

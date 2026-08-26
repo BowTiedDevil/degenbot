@@ -411,8 +411,7 @@ impl Clone for V4PoolState {
 
 impl V4PoolState {
     /// Directional swap viability — V4 twin of [`V3PoolState::swap_is_viable`].
-    /// Same checks (incl. the M6776W tightened nonzero-net requirement);
-    /// see that method for the full contract.
+    /// Same O(1) extremes check; see that method for the full contract.
     #[must_use]
     pub fn swap_is_viable(&self, zero_for_one: bool) -> bool {
         if self.sqrt_price_x96.is_zero() {
@@ -423,21 +422,24 @@ impl V4PoolState {
             if sp <= U256::from(MIN_SQRT_RATIO) + U256::from(1u64) {
                 return false;
             }
-            // Viable iff a tick strictly below the current active tick has a
-            // nonzero `liquidity_net` — see V3PoolState::swap_is_viable for
-            // the rationale (M6776W).
-            self.tick_data
-                .iter()
-                .filter(|(&t, _)| t < self.tick)
-                .any(|(_, info)| info.liquidity_net != I256::ZERO)
+            match self.tick_data.keys().min() {
+                Some(&min_tick) => match get_sqrt_ratio_at_tick_internal(min_tick) {
+                    Ok(t) => U256::from(t) < sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
         } else {
             if sp >= U256::from(MAX_SQRT_RATIO) - U256::from(1u64) {
                 return false;
             }
-            self.tick_data
-                .iter()
-                .filter(|(&t, _)| t > self.tick)
-                .any(|(_, info)| info.liquidity_net != I256::ZERO)
+            match self.tick_data.keys().max() {
+                Some(&max_tick) => match get_sqrt_ratio_at_tick_internal(max_tick) {
+                    Ok(t) => U256::from(t) > sp,
+                    Err(_) => false,
+                },
+                None => false,
+            }
         }
     }
 

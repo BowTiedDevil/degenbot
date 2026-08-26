@@ -1101,6 +1101,111 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // M6776W viability-check prototype: tighter swap_is_viable that
+    // distinguishes dead pools (no output at any input) from legitimately
+    // swappable zero-active-liquidity pools.
+    // -----------------------------------------------------------------
+
+    /// The current production `swap_is_viable` check — checks that an
+    /// initialized tick EXISTS in the swap direction (structural validity).
+    /// This is O(1) but doesn't catch pools with initialized ticks whose
+    /// `liquidity_net` is zero (positions that enter and exit symmetrically —
+    /// crossing them doesn't change the active liquidity from zero).
+    fn swap_is_viable_current(
+        liquidity: u128,
+        tick: i32,
+        tick_data: &std::collections::HashMap<i32, (u128, i128)>,
+        zero_for_one: bool,
+    ) -> bool {
+        if liquidity > 0 {
+            return true; // active liquidity at current price
+        }
+        // Current production check: any initialized tick exists ahead.
+        if zero_for_one {
+            tick_data.keys().any(|&t| t < tick)
+        } else {
+            tick_data.keys().any(|&t| t > tick)
+        }
+    }
+
+    /// The tighter check: viable iff EITHER (a) the pool has active liquidity
+    /// at the current price (`slot0.liquidity > 0`), OR (b) there exists an
+    /// initialized tick strictly ahead in the swap direction whose
+    /// `liquidity_net` is non-zero (crossing it would produce non-zero active
+    /// liquidity, enabling a profitable output for a large-enough swap).
+    ///
+    /// Pools with `slot0.liquidity = 0` AND all-`liquidity_net = 0` ticks ahead
+    /// are genuinely dead — no swap amount can ever produce output.
+    fn swap_is_viable_tight(
+        liquidity: u128,
+        tick: i32,
+        tick_data: &std::collections::HashMap<i32, (u128, i128)>,
+        zero_for_one: bool,
+    ) -> bool {
+        if liquidity > 0 {
+            return true; // (a) active liquidity at current price
+        }
+        // (b) scan ahead for a tick whose liquidity_net != 0 — crossing it
+        // would boost the active liquidity above zero.
+        if zero_for_one {
+            tick_data
+                .iter()
+                .filter(|(&t, _)| t < tick)
+                .any(|(_, &(_, net))| net != 0)
+        } else {
+            tick_data
+                .iter()
+                .filter(|(&t, _)| t > tick)
+                .any(|(_, &(_, net))| net != 0)
+        }
+    }
+
+    #[test]
+    fn m6776w_tighter_viability_catches_dead_pools_without_rejecting_healthy_ones() {
+        use std::collections::HashMap;
+
+        let mk = |g: u128, n: i128| (g, n);
+
+        // (1) Dead pool: slot0.liquidity=0, two initialized ticks with
+        // liquidity_net=0 (symmetric positions — e.g., two equal-size
+        // positions that start at the same tick but end at different ticks:
+        // +L - L = 0 net, but gross > 0 — ticks are genuinely initialized).
+        // This is the exact shape of the 8 captured dead paths.
+        // Ticks are ABOVE the current tick (ofz swap — the captured shape).
+        let dead = HashMap::from([(100i32, mk(1_000_000, 0)), (200, mk(1_000_000, 0))]);
+        // Tighter check correctly rejects (no active liq, no non-zero net):
+        assert!(!swap_is_viable_tight(0, 0, &dead, false));
+        // Current check WRONGLY passes (initialized ticks exist above):
+        assert!(swap_is_viable_current(0, 0, &dead, false));
+        // zfo (walking DOWN): no ticks below current tick → both reject:
+        assert!(!swap_is_viable_tight(0, 0, &dead, true));
+        assert!(!swap_is_viable_current(0, 0, &dead, true));
+
+        // (2) Healthy out-of-range pool: slot0.liquidity=0 (current tick
+        // not covered by any position) but an initialized tick ahead has
+        // liquidity_net != 0 — a swap that walks the empty zone crosses it
+        // and produces output. This must NOT be rejected.
+        // Ticks above with non-zero net (ofz: crossing tick 100 boosts
+        // active liquidity to 500_000 — the pool IS swappable for a large-enough input).
+        let healthy_oor =
+            HashMap::from([(100, mk(500_000, 500_000)), (200, mk(500_000, -500_000))]);
+        assert!(swap_is_viable_tight(0, 0, &healthy_oor, false));
+        // zfo: no ticks below → both reject (but this is a different direction):
+        assert!(!swap_is_viable_tight(0, 0, &healthy_oor, true));
+
+        // (3) Healthy active pool: slot0.liquidity > 0 — swap produces
+        // output immediately.
+        let active = HashMap::from([(100, mk(1_000_000, 1_000_000))]);
+        assert!(swap_is_viable_tight(500_000, 0, &active, false));
+        assert!(swap_is_viable_tight(500_000, 0, &active, true));
+
+        // (4) Empty pool: no initialized ticks at all — both checks reject.
+        let empty: HashMap<i32, (u128, i128)> = HashMap::new();
+        assert!(!swap_is_viable_tight(0, 0, &empty, false));
+        assert!(!swap_is_viable_current(0, 0, &empty, false));
+    }
+
     /// Verify the 8 captured dead paths all have zero active liquidity in
     /// EVERY range — the shape the tighter `swap_is_viable` catches.
     /// A range with `liquidity = 0` means either `slot0.liquidity = 0` (base)
