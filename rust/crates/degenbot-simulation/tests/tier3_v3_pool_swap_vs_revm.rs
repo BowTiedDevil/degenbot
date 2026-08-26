@@ -1208,7 +1208,7 @@ fn v3_pool_dense_swap_matches_solver_crossing_dual() {
     let state = tier3_v3_common::dense_state(liq, tick_spacing, k_positions, current_tick);
 
     let seq = state
-        .build_int_v3_sequence(tick_spacing, fee, true, 15)
+        .build_int_v3_sequence(tick_spacing, fee, true)
         .expect("build int sequence");
 
     for amount in 1u64..=5u64 {
@@ -1272,7 +1272,7 @@ fn v3_pool_sparse_crossing_byte_exact() {
         assert_eq!(res.post_liq, sim.liquidity, "sparse post liquidity");
 
         let seq = state
-            .build_int_v3_sequence(tick_spacing, fee, true, 15)
+            .build_int_v3_sequence(tick_spacing, fee, true)
             .expect("build sparse int sequence");
         if let Some(solver_out) = solver_crossing_output_v3(amount_u, &seq) {
             assert_eq!(res.amount1, solver_out, "sparse solver == onchain");
@@ -1314,7 +1314,7 @@ fn v3_word_profile_dense_threshold_vs_fee_tiers() {
         }];
         let state = build_arbitrary_v3_state(cur, spacing, &positions);
         let seq = state
-            .build_int_v3_sequence(spacing, fee, true, 48)
+            .build_int_v3_sequence(spacing, fee, true)
             .unwrap_or_else(|| panic!("no sequence for spacing={spacing}"));
         let maxwb = seq
             .ranges

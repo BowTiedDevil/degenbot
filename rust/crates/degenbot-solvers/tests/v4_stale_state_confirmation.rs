@@ -159,7 +159,7 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
     let state = onchain_v4_state_at_block_25635461(ONCHAIN_PROTOCOL_FEE_PACKED);
     let sim_out = sim_out_with_protocol_fee(&state, amount_in);
     let seq = state
-        .build_int_v4_sequence(TICK_SPACING, LP_FEE, false, 10)
+        .build_int_v4_sequence(TICK_SPACING, LP_FEE, false)
         .expect("on-chain state builds a tick-range sequence");
     let solver_out =
         solver_crossing_output(amount_in, &seq).expect("solver produces a crossing output");

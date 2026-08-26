@@ -996,10 +996,7 @@ mod tests {
                 })
             })
             .collect::<Option<Vec<_>>>()?;
-        Some(IntV3TickRangeSequence {
-            ranges,
-            truncated: false,
-        })
+        Some(IntV3TickRangeSequence { ranges })
     }
 
     /// The experiment: load the captured JSONL, reproduce each rejection

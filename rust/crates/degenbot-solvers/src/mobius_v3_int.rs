@@ -806,6 +806,15 @@ pub fn last_max_dense_words() -> usize {
 /// in the product order and landed tuples never retreat along an
 /// x-increasing walk, so at most Σ ranges pieces are visited (+2 slack); a
 /// visited set guards the pathological anchor-oscillation case.
+/// Diagnostic telemetry thresholds for `solve_active_set_path`: a single solve
+/// that exceeds either of these surfaces a `tracing::warn!` with per-hop range
+/// counts so the operator can investigate the pool. Conservative — the old
+/// `max_ranges=24` cap allowed at most ~74 pieces/3-hop; this threshold is ~7×
+/// that, so it only fires for genuinely pathological pools (no `max_ranges`
+/// cap means the walk visits every initialized tick).
+const SOLVE_TELEMETRY_PIECES_WARN: usize = 500;
+const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
+
 fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
@@ -1014,6 +1023,43 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         }
         refine_at_stop(hops, &ks, x_l, Some(xr), anchor, &mut rec);
         break;
+    }
+
+    // Post-hoc telemetry: pool's full liquidity width means the walk can
+    // visit many initialized ticks (no `max_ranges` cap); the solver's own
+    // bounds (`iteration_cap`, `prune`, `REFINE_GRID_POINTS`) prevent
+    // runaway cost, but a pathological pool can still burn excessive pieces
+    // or simulations. Surface those cases for diagnosis (not for screening —
+    // the solve still completes and returns its result). Both thresholds
+    // sit at module scope so the `take_last_walk_stats_full()` read stays
+    // expression-position (the clippy `items-after-statements` lint is a
+    // guardrail against heavy block-local consts).
+    let ws = take_last_walk_stats_full();
+    let over_threshold =
+        ws.pieces > SOLVE_TELEMETRY_PIECES_WARN || ws.sims > SOLVE_TELEMETRY_SIMS_WARN;
+    if over_threshold {
+        let n_hops = hops.len();
+        let mut range_counts = Vec::with_capacity(n_hops);
+        let mut total_ranges = 0usize;
+        for h in hops {
+            let n = match h {
+                WalkHop::ConstantProduct(_) => 1,
+                WalkHop::Cl { crossings, .. } => crossings.len(),
+            };
+            range_counts.push(n);
+            total_ranges += n;
+        }
+        tracing::warn!(
+            target: "degenbot_solvers::walk",
+            pieces = ws.pieces,
+            sims = ws.sims,
+            word_steps = ws.word_steps,
+            refine_sims = ws.refine_sims,
+            n_hops,
+            total_ranges,
+            range_counts = ?range_counts,
+            "active-set solve burned excessive solver time (no solve-side cap; surface for pool diagnosis)"
+        );
     }
 
     if rec.profit.is_zero() {
@@ -2605,7 +2651,7 @@ mod tests {
         zero_for_one: bool,
         amount_in: U256,
     ) -> Option<(U256, U256)> {
-        let seq = state.build_int_v3_sequence(tick_spacing, fee, zero_for_one, 24)?;
+        let seq = state.build_int_v3_sequence(tick_spacing, fee, zero_for_one)?;
         let mut crossings = Vec::with_capacity(seq.ranges.len());
         for k in 0..seq.ranges.len() {
             crossings.push(seq.compute_crossing(k).expect("k in bounds"));
@@ -2706,7 +2752,7 @@ mod tests {
             let (state, _, _) = pool_at_tick0(*spacing, *fee, *liq, ticks);
             for zero_for_one in [true, false] {
                 for amt in &amounts {
-                    let seq_built = state.build_int_v3_sequence(*spacing, *fee, zero_for_one, 24);
+                    let seq_built = state.build_int_v3_sequence(*spacing, *fee, zero_for_one);
                     if seq_built.is_none() {
                         continue;
                     }
@@ -2761,7 +2807,7 @@ mod tests {
         );
 
         assert!(state.swap_is_viable(true), "liquidity exists below price");
-        let built = state.build_int_v3_sequence(spacing, fee, true, 24);
+        let built = state.build_int_v3_sequence(spacing, fee, true);
         assert!(
             built.is_some(),
             "distance-aware budget must reach distant liquidity"
@@ -3884,7 +3930,7 @@ mod tests {
             // 24 = the solver feed depth (solver_dispatch passes the
             // same number; the range cache cap must be >= it). The swap is zfo
             // (DAI token0 in, WETH token1 out, price decreasing).
-            .build_int_v3_sequence(1, 100, true, 24)
+            .build_int_v3_sequence(1, 100, true)
             .expect("int v3 sequence");
         // The two feed invariants, asserted together:
         //  (1) current-tick drain: the leading hop models the contract-faithful

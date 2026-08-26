@@ -206,7 +206,7 @@ fn run_parity_sweep(
     let state =
         build_multi_tick_v3_state(base_liquidity, tick_count, tick_spacing, fee, zero_for_one);
     let seq = state
-        .build_int_v3_sequence(tick_spacing, fee, zero_for_one, 15)
+        .build_int_v3_sequence(tick_spacing, fee, zero_for_one)
         .expect("V3 state builds a tick-range sequence");
     let limit = unbounded_limit(zero_for_one);
 
@@ -436,7 +436,7 @@ fn run_sparse_range0_sweep(
         zero_for_one,
     );
     let seq = state
-        .build_int_v3_sequence(tick_spacing, fee, zero_for_one, 24)
+        .build_int_v3_sequence(tick_spacing, fee, zero_for_one)
         .expect("sparse state builds a sequence");
     let limit = unbounded_limit(zero_for_one);
 
@@ -613,7 +613,7 @@ fn fee1_word_boundary_current_tick_v3_parity() {
     for ts in [60i32, 1i32] {
         for zfo in [true, false] {
             let state = build_real_position_v3_state(liq, ts, 3_000);
-            let Some(seq) = state.build_int_v3_sequence(ts, 3_000, zfo, 12) else {
+            let Some(seq) = state.build_int_v3_sequence(ts, 3_000, zfo) else {
                 continue;
             };
             let limit = unbounded_limit(zfo);

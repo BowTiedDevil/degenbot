@@ -106,8 +106,19 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
         initialized_ticks.sort_unstable();
     }
 
-    // Merge boundary ticks and initialized ticks
-    let mut result = Vec::with_capacity(max_ticks);
+    // Merge boundary ticks and initialized ticks.
+    //
+    // Capacity hint: when max_ticks is `usize::MAX` (an unbounded walk — used by
+    // `compute_tick_ranges` which has no work cap), without a hint hint the
+    // vector grows naturally. The simulate_swap callers pass a real cap
+    // (30_000 — naturally bounded by MIN_TICK / MAX_TICK at ~7k entries for
+    // tick_spacing=1); use it as a hint there.
+    let cap_hint = if max_ticks == usize::MAX {
+        initialized_ticks.len() + 256
+    } else {
+        max_ticks
+    };
+    let mut result = Vec::with_capacity(cap_hint);
     let mut boundary_tick = first_boundary;
     let mut ii: usize = 0; // initialized tick index
 
@@ -245,7 +256,8 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
 /// * `tick_spacing` - Tick spacing for this pool
 /// * `liquidity` - Current active liquidity
 /// * `zero_for_one` - Swap direction
-/// * `max_ranges` - Maximum number of tick ranges to produce (default 3)
+///
+/// The walk visits every initialized tick in the swap direction.
 ///
 /// Collapse a swap-direction walk (`all_walk`, swap order) into the kept
 /// range-boundary ticks plus the interior word-boundary ticks collapsed OUT of
@@ -281,10 +293,14 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
 /// boundary ticks beyond the last initialized tick form a constant-liquidity
 /// unbounded tail the solver's bounded sequence cannot model, so they are
 /// dropped (keeping the parity fixtures interior to initialized ticks).
+///
+/// Emits every initialized-tick flanked boundary, so the
+/// pool's full liquidity width is modeled. The solver's own bounds
+/// (`iteration_cap`, `prune`, `REFINE_GRID_POINTS`) handle pathological cost
+/// post-hoc; the walk does not prescreen.
 fn collapse_walk_to_range_boundaries(
     all_walk: &[(i32, bool)],
     has_init_after: &[bool],
-    max_ranges: usize,
 ) -> (Vec<i32>, Vec<Vec<i32>>) {
     let mut range_boundary_ticks: Vec<i32> = Vec::new();
     let mut range_interiors: Vec<Vec<i32>> = Vec::new();
@@ -316,9 +332,6 @@ fn collapse_walk_to_range_boundaries(
                 continue;
             }
         }
-        if range_boundary_ticks.len() > max_ranges {
-            break;
-        }
         // This kept tick closes the range [prev_kept, this_kept]; attach the
         // pending interior boundaries collected since the last kept tick.
         if !range_boundary_ticks.is_empty() {
@@ -327,55 +340,6 @@ fn collapse_walk_to_range_boundaries(
         range_boundary_ticks.push(tick);
     }
     (range_boundary_ticks, range_interiors)
-}
-
-/// Hard ceiling on the merged walk length: keeps a pathological state
-/// bounded even when liquidity is extremely distant in tick space.
-const WALK_CEILING: usize = 4096;
-
-/// Size the merged initialized+word-boundary walk so it can actually reach
-/// the `max_ranges`-th nearest initialized tick in the swap direction.
-///
-/// Word boundaries dominate the walk when liquidity is far from the price in
-/// tick space: a full-range position on `tick_spacing=1` sits ~3.4k words
-/// away, so a flat `max_ranges*4+16` budget exhausts on pure boundary entries
-/// before ever seeing an initialized tick, and range building permanently
-/// fails for a perfectly swapable pool (ergo QHYOAB). We know where the
-/// initialized ticks are (the map keys), so count the words in between
-/// explicitly. Dense pools compute nearly the old flat number; results are
-/// cached per pool+direction so larger one-time walks amortize to zero.
-fn walk_budget_for<S: std::hash::BuildHasher>(
-    tick_data: &HashMap<i32, TickInfo, S>,
-    current_tick: i32,
-    tick_spacing: i32,
-    zero_for_one: bool,
-    max_ranges: usize,
-) -> usize {
-    let floor = max_ranges * 4 + 16;
-    let mut ahead: Vec<i32> = tick_data
-        .keys()
-        .copied()
-        .filter(|&t| {
-            if zero_for_one {
-                t <= current_tick
-            } else {
-                t > current_tick
-            }
-        })
-        .collect();
-    if ahead.is_empty() {
-        return floor;
-    }
-    ahead.sort_unstable_by(|a, b| {
-        let da = (a - current_tick).abs();
-        let db = (b - current_tick).abs();
-        da.cmp(&db)
-    });
-    let kth_tick = ahead[ahead.len().min(max_ranges) - 1];
-    let dist = i64::from(current_tick - kth_tick).abs();
-    let words = dist / i64::from(256 * tick_spacing) + 2;
-    let budget = ahead.len() + usize::try_from(words).unwrap_or(0) + 16;
-    budget.clamp(floor, WALK_CEILING)
 }
 
 /// # Returns
@@ -390,7 +354,6 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // `liquidity_net = 0` (the real PM floors without changing liquidity).
     _liquidity: u128,
     zero_for_one: bool,
-    max_ranges: usize,
 ) -> Option<(Vec<V3TickRangeForSolver>, usize)> {
     // Walk in the SAME direction as the swap — this is the key difference
     // from the Python code, which walks the opposite direction and then
@@ -407,20 +370,19 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // predicting output by the missing per-boundary rounding — the root cause
     // of the residual V4 `CurrencyNotSettled` (ergo ON5QMD). See
     // `v4_word_boundary_solver_divergence.rs`.
-    // Distance-aware walk budget (ergo QHYOAB): see `walk_budget_for`.
-    let budget = walk_budget_for(
-        tick_data,
-        current_tick,
-        tick_spacing,
-        zero_for_one,
-        max_ranges,
-    );
+    //
+    // No max_ticks cap: gen_ticks terminates naturally at MIN_TICK / MAX_TICK,
+    // so the walk visits every initialized tick in the swap direction. The
+    // result is O(tick_data.len() + word_boundaries_between) entries, then
+    // collapse_walk_to_range_boundaries drops interior-word boundaries whose
+    // only role is per-step `computeSwapStep` flooring (recorded on each range's
+    // `interior_boundaries` rather than kept as range endpoints).
     let ticks = gen_ticks(
         tick_data,
         current_tick,
         tick_spacing,
         less_than_or_equal,
-        budget,
+        usize::MAX,
     )
     .ok()?;
 
@@ -443,12 +405,6 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         }
 
         all_walk.push((tick, tp.is_initialized));
-        // Same budget as the gen_ticks call above — a second hardcoded cap
-        // here would truncate the walk before it reaches distant liquidity
-        // even when the budget was sized to reach it (ergo QHYOAB).
-        if all_walk.len() > budget {
-            break;
-        }
     }
 
     // gen_ticks does NOT yield the current tick when it is neither
@@ -479,7 +435,7 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     }
 
     let (range_boundary_ticks, range_interiors) =
-        collapse_walk_to_range_boundaries(&all_walk, &has_init_after, max_ranges);
+        collapse_walk_to_range_boundaries(&all_walk, &has_init_after);
 
     if range_boundary_ticks.len() < 2 {
         return None;
@@ -1006,7 +962,7 @@ mod tests {
         tick_data.insert(60, make_tick_info(300, 150));
         tick_data.insert(120, make_tick_info(400, 200));
 
-        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, true, 3);
+        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, true);
         let (ranges, current_idx) = result.expect("should produce ranges for zfo=true");
 
         assert_ranges_well_formed(&ranges);
@@ -1035,7 +991,7 @@ mod tests {
         tick_data.insert(60, make_tick_info(300, 150));
         tick_data.insert(120, make_tick_info(400, 200));
 
-        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, false, 3);
+        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, false);
         let (ranges, current_idx) = result.expect("should produce ranges for zfo=false");
 
         assert_ranges_well_formed(&ranges);
@@ -1060,13 +1016,13 @@ mod tests {
         tick_data.insert(60, make_tick_info(300, 150));
 
         // zfo=true: tick_lower = -60, we use tick_lower's liquidity_net = -100
-        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, true, 3);
+        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, true);
         let (ranges, _) = result.expect("should produce ranges");
         assert_ranges_well_formed(&ranges);
         assert_eq!(ranges[0].liquidity_net, -100);
 
         // zfo=false: tick_upper = 60, we use tick_upper's liquidity_net = 150
-        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, false, 3);
+        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, false);
         let (ranges, _) = result.expect("should produce ranges");
         assert_ranges_well_formed(&ranges);
         assert_eq!(ranges[0].liquidity_net, 150);
@@ -1081,7 +1037,7 @@ mod tests {
 
         // zfo=true needs initialized ticks <= 0. None exist except
         // the current tick itself — only 1 entry, not enough.
-        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, true, 3);
+        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, true);
         assert_eq!(result, None);
     }
 
@@ -1096,7 +1052,7 @@ mod tests {
 
         // zfo=false: ascending ticks above 0 → [0, 60, 120]
         // (tick 0 is initialized, so gen_ticks includes it)
-        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, false, 3);
+        let result = compute_tick_ranges(&tick_data, 0, 60, 1_000_000, false);
         let (ranges, current_idx) = result.expect("should produce ranges");
         assert_ranges_well_formed(&ranges);
         assert_eq!(ranges[0].tick_lower, 0);
@@ -1113,7 +1069,7 @@ mod tests {
         tick_data.insert(-1, make_tick_info(150, 75));
 
         // zfo=false: ascending from 0 → [0(current), 1, 2]
-        let result = compute_tick_ranges(&tick_data, 0, 1, 1_000_000, false, 3);
+        let result = compute_tick_ranges(&tick_data, 0, 1, 1_000_000, false);
         let (ranges, current_idx) = result.expect("should produce ranges");
         assert_ranges_well_formed(&ranges);
         assert_eq!(ranges[0].tick_lower, 0);
@@ -1163,7 +1119,7 @@ mod tests {
             make_tick_info(64_914_675_035_050_604, -64_914_675_035_050_604),
         );
 
-        let result = compute_tick_ranges(&tick_data, 0, 1, 5_407_362_545_736_161_987, true, 15);
+        let result = compute_tick_ranges(&tick_data, 0, 1, 5_407_362_545_736_161_987, true);
         let (ranges, _current_idx) = result.expect("should produce ranges");
         assert_ranges_well_formed(&ranges);
 
@@ -1233,8 +1189,7 @@ mod tests {
         }
         // Pre-swap state: tick=-74028, liquidity=5_407_362_545_736_161_987,
         // swap is zero_for_one (DAI->WETH, price descending).
-        let result =
-            compute_tick_ranges(&tick_data, -74028, 1, 5_407_362_545_736_161_987, true, 15);
+        let result = compute_tick_ranges(&tick_data, -74028, 1, 5_407_362_545_736_161_987, true);
         if let Some((ranges, _)) = result {
             eprintln!("[diag] mainnet DAI/WETH pool: {} ranges", ranges.len());
             for (i, r) in ranges.iter().enumerate() {
@@ -1286,7 +1241,6 @@ mod tests {
                         tick_spacing,
                         1_000_000,
                         zero_for_one,
-                        3,
                     );
 
                     if let Some((ranges, current_idx)) = result {

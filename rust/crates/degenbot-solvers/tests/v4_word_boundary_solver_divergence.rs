@@ -156,7 +156,7 @@ fn solver_over_predicts_when_range_spans_uninitialized_word_boundary_ofz() {
         &[(far_tick, net), (TICK_SPACING * 768, -net)],
     );
     let seq = state
-        .build_int_v4_sequence(TICK_SPACING, LP_FEE, false, 10)
+        .build_int_v4_sequence(TICK_SPACING, LP_FEE, false)
         .expect("V4 state builds a tick-range sequence");
     let limit = unbounded_limit(false);
 
@@ -237,7 +237,7 @@ fn solver_over_predicts_when_range_spans_uninitialized_word_boundary_zfo() {
     );
 
     let seq = state
-        .build_int_v4_sequence(TICK_SPACING, LP_FEE, true, 10)
+        .build_int_v4_sequence(TICK_SPACING, LP_FEE, true)
         .expect("V4 zfo state builds a tick-range sequence");
     let limit = unbounded_limit(true);
 

@@ -52,7 +52,6 @@ use degenbot_solvers::mobius_v3_int::{
 };
 use serde_json::{json, Value};
 
-const MAX_RANGES: usize = 128; // cap ranges per hop (heavy but bounded)
 const MAX_FETCHES: usize = 320; // per-pool tick-word fetch cap, overridable
                                 // via DEGENBOT_CLCAP_MAX_FETCHES so a deep backfill can reach dense active
                                 // sets (a liquid pool's busy region can span thousands of tick words).
@@ -265,7 +264,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        match state.build_int_v3_sequence(*ts, *fee, false, MAX_RANGES) {
+        match state.build_int_v3_sequence(*ts, *fee, false) {
             Some(seq) => {
                 eprintln!(
                     "pool {i} {a}: {} ranges after {fetches} word-fetches",

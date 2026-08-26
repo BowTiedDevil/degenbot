@@ -36,10 +36,7 @@ fn mk_range(liq: u128, p_entry: U256, p_lo: U256, p_hi: U256) -> IntV3TickRangeH
 }
 
 fn mk_seq(ranges: Vec<IntV3TickRangeHop>) -> IntV3TickRangeSequence {
-    IntV3TickRangeSequence {
-        ranges,
-        truncated: false,
-    }
+    IntV3TickRangeSequence { ranges }
 }
 
 /// Independent exact-in walk oracle over the sequence's ranges.

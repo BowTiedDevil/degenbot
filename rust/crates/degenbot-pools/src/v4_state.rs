@@ -618,9 +618,6 @@ impl V4PoolState {
             tick_spacing,
             self.liquidity,
             zero_for_one,
-            // T47PPB: 24 = the active-set walk feed depth (see the twin call
-            // in `v3_state.rs::get_cached_tick_ranges`).
-            24,
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 
@@ -657,10 +654,9 @@ impl V4PoolState {
         tick_spacing: i32,
         fee: u32,
         zero_for_one: bool,
-        max_ranges: usize,
     ) -> Option<IntV3TickRangeSequence> {
         let ranges = self.get_cached_tick_ranges(tick_spacing, zero_for_one)?;
-        let use_ranges = ranges.get(..ranges.len().min(max_ranges))?;
+        let use_ranges: &[V3TickRangeForSolver] = &ranges;
 
         // V4 charges the COMBINED `swapFee = calculateSwapFee(protocol_fee_dir,
         // lp_fee)`, NOT `lp_fee` alone, when `slot0.protocolFee > 0`. See
@@ -752,26 +748,7 @@ impl V4PoolState {
             });
         }
 
-        // Truncation = an initialized tick still exists beyond the farthest
-        // modeled range's swap-direction boundary (a liquidity change the
-        // max_ranges cap dropped). Budget-independent: it reads tick_data
-        // directly, so it holds even when the walk didn't reach the far side.
-        let truncated = use_ranges.last().is_some_and(|last| {
-            let far = if zero_for_one {
-                last.tick_lower
-            } else {
-                last.tick_upper
-            };
-            self.tick_data
-                .keys()
-                .any(|&t| if zero_for_one { t < far } else { t > far })
-        });
-        IntV3TickRangeSequence::new(int_ranges)
-            .map(|mut seq| {
-                seq.truncated = truncated;
-                seq
-            })
-            .ok()
+        IntV3TickRangeSequence::new(int_ranges).ok()
     }
 }
 
@@ -1254,7 +1231,7 @@ mod apply_inherent_tests {
         let liq = 1_000_000u128;
         let mut state = state_with_position(liq);
         // Seed the cache so the invalidate assertion is observable.
-        let _ = state.build_int_v4_sequence(60, 3_000, true, 15);
+        let _ = state.build_int_v4_sequence(60, 3_000, true);
         let fetched = crate::tick_fetch::FetchedTickWord {
             word: 7,
             ticks: {

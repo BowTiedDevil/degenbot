@@ -32,7 +32,6 @@ use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickBootstrapRpc;
 
-const MAX_RANGE: usize = 24;
 const MAX_FETCHES: usize = 250;
 const DENSE: usize = 128;
 
@@ -176,7 +175,7 @@ fn main() -> ExitCode {
                 Err(_) => break,
             }
         }
-        if let Some(seq) = state.build_int_v3_sequence(*spacing, *fee, false, MAX_RANGE) {
+        if let Some(seq) = state.build_int_v3_sequence(*spacing, *fee, false) {
             let per_range: Vec<usize> = seq
                 .ranges
                 .iter()
@@ -190,10 +189,9 @@ fn main() -> ExitCode {
             }
             let total_bnd: usize = per_range.iter().sum();
             let nr = seq.ranges.len();
-            let trunc = seq.truncated;
             let tag = if dense { "DENSE" } else { "" };
             println!(
-                "{i:>4} sp={spacing:>4} fee={fee:>6} {address} nbnd_max={maxw:>4} nbnd_total={total_bnd:>4} n_ranges={nr:>2} fetches={fetches} trunc={trunc} {tag}"
+                "{i:>4} sp={spacing:>4} fee={fee:>6} {address} nbnd_max={maxw:>4} nbnd_total={total_bnd:>4} n_ranges={nr:>2} fetches={fetches} {tag}"
             );
         } else {
             let tag = "seq=None";

@@ -755,7 +755,7 @@ impl BotState {
     ///
     /// The solve engine reads state by reference through this accessor
     /// (ADR-003: "Pool's authority over its own math") and calls
-    /// `build_int_v3_sequence(zfo, 10)` to build the per-hop state.
+    /// `build_int_v3_sequence(zfo)` to build the per-hop state.
     #[must_use]
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         self.pools

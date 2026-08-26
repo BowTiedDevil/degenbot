@@ -707,7 +707,9 @@ impl V3PoolState {
     }
 
     /// Get cached tick ranges for the given direction, computing and caching
-    /// if absent. Uses `max_ranges=15` so all callers can slice the result.
+    /// if absent. The walk visits every initialized tick in the swap direction.
+    /// Results are cached per pool+direction so the walk
+    /// amortizes to zero per cycle.
     fn get_cached_tick_ranges(
         &self,
         tick_spacing: i32,
@@ -730,12 +732,6 @@ impl V3PoolState {
             tick_spacing,
             self.liquidity,
             zero_for_one,
-            // T47PPB: the active-set walk has no tuple budget, so feed depth is
-            // bounded by data, not solvability. 24 visible ranges ≈ 2× the
-            // word-boundary ring around the current tick for dense inserted
-            // liquidity (block-25641093 pool 0xDcA4…65c9 needs ≥17 to see the
-            // -22900 liquidity activation past the mid-spine flank pairs).
-            24,
         )
         .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 
@@ -763,22 +759,23 @@ impl V3PoolState {
         ranges
     }
 
-    /// Build an integer V3 tick range sequence with up to `max_ranges` ranges,
-    /// using original U256 sqrt prices and i128→u128 liquidity (no f64 conversion).
+    /// Build an integer V3 tick range sequence using original U256 sqrt prices
+    /// and i128→u128 liquidity (no f64 conversion).
     ///
     /// Produces an [`IntV3TickRangeSequence`] suitable for the integer-exact
     /// V3-V3 solver, preserving full precision. Returns `None` if insufficient
-    /// tick data.
+    /// tick data. The walk visits every initialized tick in the swap direction;
+    /// the solver's own bounds (`iteration_cap`, `prune`, `REFINE_GRID_POINTS`)
+    /// handle pathological cost post-hoc.
     #[must_use]
     pub fn build_int_v3_sequence(
         &self,
         tick_spacing: i32,
         fee: u32,
         zero_for_one: bool,
-        max_ranges: usize,
     ) -> Option<IntV3TickRangeSequence> {
         let ranges = self.get_cached_tick_ranges(tick_spacing, zero_for_one)?;
-        let use_ranges = ranges.get(..ranges.len().min(max_ranges))?;
+        let use_ranges: &[V3TickRangeForSolver] = &ranges;
 
         let gamma_numer = u64::from(1_000_000 - fee);
         let fee_denom = 1_000_000u64;
@@ -879,26 +876,7 @@ impl V3PoolState {
             });
         }
 
-        // Truncation = an initialized tick still exists beyond the farthest
-        // modeled range's swap-direction boundary (a liquidity change the
-        // max_ranges cap dropped). Budget-independent: it reads tick_data
-        // directly, so it holds even when the walk didn't reach the far side.
-        let truncated = use_ranges.last().is_some_and(|last| {
-            let far = if zero_for_one {
-                last.tick_lower
-            } else {
-                last.tick_upper
-            };
-            self.tick_data
-                .keys()
-                .any(|&t| if zero_for_one { t < far } else { t > far })
-        });
-        IntV3TickRangeSequence::new(int_ranges)
-            .map(|mut seq| {
-                seq.truncated = truncated;
-                seq
-            })
-            .ok()
+        IntV3TickRangeSequence::new(int_ranges).ok()
     }
 }
 
@@ -2148,7 +2126,7 @@ mod apply_inherent_tests {
         //   r2   = 0
         //   r3   = 64_914_675_035_050_604 (crossing -84382 recovers liq)
         let seq = state
-            .build_int_v3_sequence(1, 100, true, 15)
+            .build_int_v3_sequence(1, 100, true)
             .expect("should build a sequence");
 
         let liqs: Vec<u128> = seq.ranges.iter().map(|r| r.liquidity).collect();
@@ -2176,7 +2154,7 @@ mod apply_inherent_tests {
         // and gt is exclusive → no zero-amount crossing at step 1.
         state.invalidate_tick_range_cache();
         let seq_ofz = state
-            .build_int_v3_sequence(1, 100, false, 15)
+            .build_int_v3_sequence(1, 100, false)
             .expect("should build an ofz sequence");
         let ofz_r0 = seq_ofz.ranges[0].liquidity;
         eprintln!("[drain-test] ofz r0 liquidity: {ofz_r0}");
@@ -2267,69 +2245,8 @@ mod tests {
         // A single reachable position is enough for range building — the
         // solver does not require multiple positions.
         let (identity, state) = pool_1to1_with_position(10_000_000_000_000u128);
-        let seq = state.build_int_v3_sequence(identity.tick_spacing, identity.fee, true, 24);
+        let seq = state.build_int_v3_sequence(identity.tick_spacing, identity.fee, true);
         assert_eq!(seq.expect("built").ranges.len(), 1);
-    }
-
-    /// `Max_range=24` truncation must be OBSERVABLE, not silent (ergo EIIIZW):
-    /// a 40-initialized-tick active set (zfo) exceeds the cap -> the sequence
-    /// must report `truncated`; a 3-tick set must not. This is the signal that
-    /// lets us measure whether the live 24-range cap is dropping a real
-    /// liquidity change we otherwise can't see.
-    #[test]
-    fn build_int_v3_sequence_reports_truncation_beyond_cap() {
-        use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
-        let spacing: i32 = 60;
-        let fee: u32 = 3000;
-        let sp_0 = U256::from(get_sqrt_ratio_at_tick_internal(0).unwrap());
-        let mk = |n: i32| {
-            let mut td = HashMap::new();
-            for i in 1..=n {
-                td.insert(
-                    -(i * spacing),
-                    TickInfo {
-                        liquidity_gross: U128::from(1_000u64),
-                        liquidity_net: I256::try_from(1_000i128).unwrap(),
-                        block: 0,
-                    },
-                );
-            }
-            V3PoolState {
-                sqrt_price_x96: sp_0,
-                liquidity: 1_000_000u128,
-                tick: 0,
-                update_block: 0,
-                tick_data_block: 0,
-                initial_state_block: 0,
-                tick_data: td,
-                coverage: PoolTickCoverage::Tracked,
-                known_bitmap_words: HashSet::new(),
-                fetcher: None,
-                journal: ReorgJournal::<V3BlockDelta>::new(8),
-                cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
-                snapshot_seed: None,
-                post_drain_snapshot: None,
-                state_nonce: 0,
-                registration_lifecycle: RegistrationLifecycle::default(),
-            }
-        };
-        let seq40 = mk(40)
-            .build_int_v3_sequence(spacing, fee, true, 24)
-            .expect("40-tick seq");
-        assert_eq!(seq40.ranges.len(), 24, "capped at max_ranges=24");
-        assert!(
-            seq40.truncated,
-            "40 init ticks -> 24th is not the farthest -> truncated=true"
-        );
-
-        let seq3 = mk(3)
-            .build_int_v3_sequence(spacing, fee, true, 24)
-            .expect("3-tick seq");
-        assert_eq!(seq3.ranges.len(), 3);
-        assert!(
-            !seq3.truncated,
-            "3 init ticks, all modeled -> not truncated"
-        );
     }
 
     /// 2SGSE3: a `None` from `get_cached_tick_ranges` must be cached so the

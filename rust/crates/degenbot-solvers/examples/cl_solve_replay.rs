@@ -159,10 +159,7 @@ fn main() {
             if !err.is_empty() {
                 break;
             }
-            seqs.push(IntV3TickRangeSequence {
-                ranges,
-                truncated: false,
-            });
+            seqs.push(IntV3TickRangeSequence { ranges });
         }
         if !err.is_empty() {
             eprintln!("path {pid}: skip ({err})");

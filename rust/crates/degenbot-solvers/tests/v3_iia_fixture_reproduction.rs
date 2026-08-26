@@ -230,7 +230,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
 
     // 4. Build the solver's sequence from the (now backfilled) state and run
     //    the solver crossing path on the SAME amount_in.
-    let Some(seq) = state.build_int_v3_sequence(TICK_SPACING, FEE, zero_for_one, 15) else {
+    let Some(seq) = state.build_int_v3_sequence(TICK_SPACING, FEE, zero_for_one) else {
         eprintln!(
             "[v3-iia-fixture] build_int_v3_sequence returned None — sparse backfill only \
              seeded words the swap touched; the solver's 24-range walk needs more. \

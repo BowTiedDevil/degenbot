@@ -38,30 +38,9 @@ pub(crate) fn project_v3(
         .get_v3_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     let int_seq = pool_state
-        .build_int_v3_sequence(
-            identity.tick_spacing,
-            identity.fee,
-            pool_ref.zero_for_one,
-            // 24 = the active-set walk feed depth. The enumeration-era
-            // value was 10 (tuple cap); the walk has no tuple cap, so depth
-            // is bounded by data availability (the range cache stores 24).
-            24,
-        )
+        .build_int_v3_sequence(identity.tick_spacing, identity.fee, pool_ref.zero_for_one)
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    if int_seq.truncated {
-        tracing::warn!(
-            target: "degenbot::engine",
-            pool = %identity.address,
-            fee = identity.fee,
-            tick_spacing = identity.tick_spacing,
-            zfo = pool_ref.zero_for_one,
-            "[cl] V3 tick-range sequence TRUNCATED at the max_range=24 cap: an \
-             initialized tick (a liquidity activation) exists beyond the farthest \
-             modeled range and is omitted from the projected sequence (coverage \
-             miss - the solver cannot price a landing past the last modeled range)"
-        );
-    }
     let word_profiles = build_cl_word_profiles(&int_seq);
     Ok((
         ResolvedHop::V3 {
@@ -107,25 +86,9 @@ pub(crate) fn project_v4(
             identity.pool_key.tick_spacing,
             identity.pool_key.fee,
             pool_ref.zero_for_one,
-            // 24 = the active-set walk feed depth (twin of the V3
-            // site above).
-            24,
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    if int_seq.truncated {
-        tracing::warn!(
-            target: "degenbot::engine",
-            pool_id = ?identity.pool_id,
-            tick_spacing = identity.pool_key.tick_spacing,
-            fee = identity.pool_key.fee,
-            zfo = pool_ref.zero_for_one,
-            "[cl] V4 tick-range sequence TRUNCATED at the max_range=24 cap: an \
-             initialized tick (a liquidity activation) exists beyond the farthest \
-             modeled range and is omitted from the projected sequence (coverage \
-             miss - the solver cannot price a landing past the last modeled range)"
-        );
-    }
     let word_profiles = build_cl_word_profiles(&int_seq);
     Ok((
         ResolvedHop::V4 {

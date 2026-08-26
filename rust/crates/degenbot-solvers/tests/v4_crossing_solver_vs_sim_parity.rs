@@ -177,7 +177,7 @@ fn v4_exact_in_output(outcome: &V3SwapOutcome, zero_for_one: bool) -> U256 {
 fn run_parity_sweep(zero_for_one: bool, base_liquidity: u128, tick_count: usize) -> Vec<String> {
     let state = build_multi_tick_v4_state(base_liquidity, tick_count, zero_for_one);
     let seq = state
-        .build_int_v4_sequence(60, 3_000, zero_for_one, 10)
+        .build_int_v4_sequence(60, 3_000, zero_for_one)
         .expect("V4 state builds a tick-range sequence");
     let limit = unbounded_limit(zero_for_one);
 
@@ -399,7 +399,7 @@ fn v4_fee1_solver_path_matches_v4_simulate_swap() {
 
     for &zfo in &[true, false] {
         let seq = state
-            .build_int_v4_sequence(1, 50, zfo, 10)
+            .build_int_v4_sequence(1, 50, zfo)
             .expect("V4 state builds a tick-range sequence");
         let limit = unbounded_limit(zfo);
 
@@ -1581,7 +1581,7 @@ fn v4_uni_9a5c1d2f_oracle_matches_recorded_actual_not_solver_overprediction() {
     // input) -> a solve-vs-sim state/amount divergence, NOT a crossing-math error
     // (see docs/tracked-failures-log-review-2026-08-03.md).
     let seq = state
-        .build_int_v4_sequence(60, 3_000, zero_for_one, 10)
+        .build_int_v4_sequence(60, 3_000, zero_for_one)
         .expect("build int v4 sequence");
     let solver_out =
         solver_crossing_output(input, &seq).expect("solver crossing output at delivered input");
@@ -1676,7 +1676,7 @@ fn fee1_76f75965_crossing_overprediction_at_4728() {
     // stays green until the W2UWZO fix lands (then re-run to check it flipped
     // to 4726 == oracle, i.e. the +1 is gone).
     let seq = state
-        .build_int_v4_sequence(1, 50, zero_for_one, 10)
+        .build_int_v4_sequence(1, 50, zero_for_one)
         .expect("fee-1 int sequence");
     // Crossing-exactness at the delivered input (proves it is NOT crossing math):
     let solver_out = solver_crossing_output(input, &seq);
@@ -1778,7 +1778,7 @@ fn cl_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
     let fee1 = build_fee1_76f75965_v4_state();
     for &zfo in &[true, false] {
         let seq = fee1
-            .build_int_v4_sequence(1, 50, zfo, 10)
+            .build_int_v4_sequence(1, 50, zfo)
             .expect("fee-1 sequence");
         for amount_in_u256 in [
             10u64, 100, 500, 1_000, 4_728, 4_729, 5_000, 9_000, 9_586, 20_000,
@@ -1811,7 +1811,7 @@ fn cl_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
     // surfaced the zfo partial-step round-up bug), representative liquidity.
     let mt = build_multi_tick_v4_state(10_000_000_000_000_000u128, 5, true);
     let seq = mt
-        .build_int_v4_sequence(60, 3_000, true, 10)
+        .build_int_v4_sequence(60, 3_000, true)
         .expect("multi-tick sequence");
     let gins: Vec<U256> = (0..seq.ranges.len())
         .map(|k| seq.compute_crossing(k).unwrap().crossing_gross_input)
