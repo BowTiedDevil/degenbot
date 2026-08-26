@@ -97,17 +97,29 @@ jobs:
           set -uo pipefail
           cd rust
           ver="${GITHUB_REF_NAME#v}"
-          members=$(cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.packages.map(p=>p.name).filter(n=>n!=="degenbot_rs"&&n!=="degenbot-execution-sample").join(" "))})')
+          # Publishable members from cargo metadata itself (publish:null), so a
+          # new non-publishable crate (publish=false -> []) is auto-skipped — no
+          # hardcoded name list to drift. Today that's degenbot_rs + degenbot-execution-sample.
+          read -r -a members <<< "$(cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.packages.filter(p=>p.publish==null).map(p=>p.name).join(" "))})')"
           log=/tmp/crates-publish.log
           : > "$log"
           for round in $(seq 1 30); do
-            excludes=""
-            for m in $members; do
-              if cargo search "$m" --limit 3 2>/dev/null | grep -q "^$m = \"$ver\""; then excludes="$excludes --exclude $m"; fi
+            excludes=()
+            live=0
+            for m in "${members[@]}"; do
+              # cargo search prints `name = "version"  # description` when live; grep
+              # only the anchored exact-name line so fuzzy search hits never false-match.
+              if cargo search "$m" --limit 3 2>/dev/null | grep -q "^$m = \"$ver\""; then
+                excludes+=(--exclude "$m")
+                live=$((live + 1))
+              fi
             done
-            if [ -z "$excludes" ]; then echo "all $ver members already live"; exit 0; fi
-            echo "=== round $round: $(( ($(echo $excludes) | wc -w) / 2 )) members already live — publishing the rest ==="
-            if cargo publish --workspace --allow-dirty $excludes >>"$log" 2>&1; then
+            if [ "$live" -eq "${#members[@]}" ]; then
+              echo "all ${#members[@]} members already live at $ver"
+              exit 0
+            fi
+            echo "=== round $round: $live/${#members[@]} members already live at $ver — publishing the rest ==="
+            if cargo publish --workspace --allow-dirty "${excludes[@]}" >>"$log" 2>&1; then
               echo "=== publish complete at $ver ==="; exit 0
             fi
             ra=$(grep -o 'try again after [A-Za-z]*, [0-9]* [A-Za-z]* [0-9]* [0-9:]* GMT' "$log" | tail -n 1 | sed 's/try again after //')
@@ -115,7 +127,8 @@ jobs:
               ra_epoch=$(date -d "$ra" +%s) || { echo "::error::unparseable retry-after: $ra"; exit 1; }
               sleep_s=$(( ra_epoch - $(date +%s) + 120 ))
               echo "429 new-crate rate limit — retry-after $ra (sleeping ${sleep_s}s)"
-              [ "$sleep_s" -gt 0 ] && sleep "$sleep_s" && continue
+              if [ "$sleep_s" -gt 0 ]; then sleep "$sleep_s"; fi
+              continue
             fi
             echo "::error::cargo publish failed without a 429 retry-after — last 50 log lines:"
             tail -n 50 "$log"
