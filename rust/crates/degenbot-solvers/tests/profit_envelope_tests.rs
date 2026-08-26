@@ -240,6 +240,69 @@ fn unsupported_family_poisons_bound() {
 }
 
 #[test]
+fn m6776w_overflow_paths_compose_without_poisoning() {
+    // Multi-hop paths with 1e24+ reserves previously overflowed I512 during
+    // compose, returning None (unsupported). The sound-reduction fix must
+    // return Some WITHOUT under-cutting the true curve.
+    use degenbot_solvers::profit_envelope::{path_output_bound_at, HopMath};
+    // 4-hop V2 path with 1e24-scale reserves: coefficient product ~1e96.
+    let big = U256::from_limbs([0, 0, 0x0DE0B6B3A7640000u64, 0]); // ~1e24
+    let v2 = HopMath::V2(&IntHopState::new(big, big, 997_000, 1_000_000));
+    let views = vec![Some(v2); 4];
+    // Must return Some (not None = unsupported).
+    let bound = path_profit_bound(&views).expect("reduced compose must not overflow");
+    // Soundness: the bound must still dominate the real output at any x.
+    let x = U256::from(1_000_000u64);
+    let out_bound = path_output_bound_at(&views, &x).expect("bound at x");
+    // True output of 4 identical V2 hops: r_out*(gamma*x/(r_in+gamma*x))^4.
+    // True CHAINED output of 4 identical V2 hops (each hop's output feeds
+    // the next — NOT the fourth power of a single hop).
+    let gamma = U512::from(997_000u64);
+    let fee_den = U512::from(1_000_000u64);
+    let mut current = U512::from(1_000_000u64);
+    for _ in 0..4 {
+        let aif = current * gamma / fee_den;
+        current = aif * U512::from(big) / (U512::from(big) + aif);
+    }
+    let out_bound_u512 = U512::from(out_bound);
+    assert!(
+        out_bound_u512 >= current,
+        "reduced bound {out_bound} under-cuts true chained output {current} on 4-hop big-reserve path"
+    );
+    let _ = bound;
+}
+
+#[test]
+fn m6776w_balancer_weighted_3hop_no_overflow() {
+    // The real prod overflow: 3-hop Balancer weighted with 1e24-scale balances
+    // and 1e18 weights. The slope coefficients are ~1e54 per hop; chaining
+    // 3 gives ~1e162 which overflows I512 (max ~6.7e153).
+    use degenbot_solvers::profit_envelope::{path_output_bound_at, HopMath};
+    let one = U256::from(1_000_000_000_000_000_000u64); // 1e18
+    let half = one / U256::from(2u64);
+    let bal = U256::from(1_000_000u64) * one; // 1e24 (upscaled)
+    let hop = HopMath::Weighted {
+        balance_in: bal,
+        balance_out: bal,
+        weight_in: half,
+        weight_out: half,
+        scaling_in: U256::from(1u64),
+        scaling_out: U256::from(1u64),
+    };
+    let views = vec![Some(hop); 3];
+    // Must return Some (not None = unsupported — the overflow case).
+    let bound = path_output_bound_at(&views, &U256::from(100u64))
+        .expect("reduced 3-hop weighted compose must not overflow");
+    // The weighted pool with equal weights/balances is symmetric — output
+    // is always <= input (fee-only). Bound must be >= true output (which is
+    // less than input after fees). A bound of at least 99 suffices.
+    assert!(
+        bound >= U256::from(99u64),
+        "3-hop weighted bound {bound} should be near input 100 (fee eats ~3%)"
+    );
+}
+
+#[test]
 fn m6776w_none_cause_classifies_each_exit() {
     // The per-cause counters should classify WHY path_profit_bound returned
     // None — used to diagnose the prod soak's still-high unsupported rate.

@@ -55,7 +55,35 @@ impl Line {
     /// Compose `self ∘ inner`: `y = self(inner(x))`. Both are affine, so the
     /// result is exact affine algebra:
     /// `(A₁ + B₁·(A₀ + B₀·x)/C₀)/C₁ = ((A₁·C₀ + B₁·A₀) + B₁·B₀·x)/(C₀·C₁)`.
+    ///
+    /// M6776W overflow fix: chaining affine lines across 3+ hops with
+    /// 1e24+ reserves overflows `I512` during the cross-multiplication. When
+    /// exact composition overflows, both operands are **sound-reduced**
+    /// (right-shifted with A/B ceiling and C flooring → the ratio can only
+    /// grow, i.e. the bound gets looser, never under-cuts) to `COMPOSE_TARGET_BITS`
+    /// and the exact composition is retried. Two 240-bit operands multiply to
+    /// ≤ 480 bits, comfortably within `I512` (511 bits). The lossy step adds
+    /// at most 1 ULP per reduction, negligible at 240-bit widths.
     fn compose(&self, inner: &Self) -> Option<Self> {
+        // Fast path: exact (no reduction, no loss).
+        if let Some(mut r) = self.compose_exact(inner) {
+            // Cap the result for the next hop's compose (M6776W overflow fix).
+            r.reduce(COMPOSE_TARGET_BITS);
+            return Some(r);
+        }
+        // Overflow: sound-reduce both operands and retry.
+        let mut s = *self;
+        let mut i = *inner;
+        s.reduce(COMPOSE_TARGET_BITS);
+        i.reduce(COMPOSE_TARGET_BITS);
+        let mut r = s.compose_exact(&i)?;
+        r.reduce(COMPOSE_TARGET_BITS);
+        Some(r)
+    }
+
+    /// Exact composition — the algebraic identity, no reduction. Returns
+    /// `None` on `I512` overflow (the caller retries after `reduce`).
+    fn compose_exact(&self, inner: &Self) -> Option<Self> {
         let c01 = self.c.checked_mul(inner.c)?;
         if c01 <= I512::ZERO {
             return None;
@@ -68,6 +96,40 @@ impl Line {
         Some(Self { a, b, c: c01 })
     }
 
+    /// Sound-reduce coefficient magnitude to ≤ `target_bits` by right-shifting
+    /// all three by the same `k`. Rounding is **sound** (never under-cuts the
+    /// bound): A and B are **ceil**-shifted (toward +∞ → larger ratio), C is
+    /// **floor**-shifted (toward 0 → smaller denominator → larger ratio), kept
+    /// ≥ 1. The error is ≤ 1 ULP at the shift width — negligible for a
+    /// profitability gate at 240+ bit coefficients.
+    fn reduce(&mut self, target_bits: u32) {
+        let max_bits = self.a.bits().max(self.b.bits()).max(self.c.bits());
+        if max_bits <= target_bits {
+            return;
+        }
+        let k = max_bits - target_bits;
+        // Guard against absurd shifts (max_bits can't exceed 511 for I512,
+        // but be defensive).
+        if k >= 500 {
+            // Catastrophic: keep only the sign.
+            self.a = if self.a > I512::ZERO {
+                I512::ONE
+            } else {
+                I512::ZERO
+            };
+            self.b = if self.b > I512::ZERO {
+                I512::ONE
+            } else {
+                I512::ZERO
+            };
+            self.c = I512::ONE;
+            return;
+        }
+        self.a = ceil_shr_i512(self.a, k);
+        self.b = ceil_shr_i512(self.b, k);
+        self.c = (self.c >> k).max(I512::ONE);
+    }
+
     /// Point-wise value, CEIL-rounded so a line never under-reads its exact
     /// rational value. Any arithmetic overflow saturates HIGH: inflating a
     /// bound keeps it an upper bound (the gate merely skips less).
@@ -78,6 +140,36 @@ impl Line {
         let bx = self.b.checked_mul(xu).unwrap_or(I512::MAX);
         let n = self.a.checked_add(bx).unwrap_or(I512::MAX);
         ceil_div(n, self.c)
+    }
+}
+
+/// Target coefficient width after sound-reduction: two operands of this
+/// width multiply to at most `2 x COMPOSE_TARGET_BITS` bits, comfortably
+/// within `I512` (511 bits). Leaves ~30 bits of headroom for the cross-term
+/// sum in `compose_exact`.
+const COMPOSE_TARGET_BITS: u32 = 240;
+
+/// Right-shift an `I512` by `k` with **ceiling** rounding (toward +infinity).
+/// For any sign: `ceil(v / 2^k)` -- the smallest integer `>= v / 2^k`.
+/// Used by `Line::reduce` to keep A/B from under-cutting the bound.
+fn ceil_shr_i512(v: I512, k: u32) -> I512 {
+    if k == 0 {
+        return v;
+    }
+    if k >= 512 {
+        return if v > I512::ZERO {
+            I512::ONE
+        } else {
+            I512::ZERO
+        };
+    }
+    let shifted = v >> k;
+    let mask = (I512::ONE << k).wrapping_sub(I512::ONE);
+    let has_remainder = (v & mask) != I512::ZERO;
+    if has_remainder {
+        shifted + I512::ONE
+    } else {
+        shifted
     }
 }
 
