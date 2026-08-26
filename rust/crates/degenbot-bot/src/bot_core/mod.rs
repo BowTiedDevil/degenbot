@@ -1244,16 +1244,17 @@ impl BotState {
                 }
             } else if *topic0 == degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC {
                 if let Some(event) = decode_v4_swap_log(log) {
-                    self.apply_v4_swap(
-                        &V4SwapUpdate {
-                            pool_manager: log.address(),
-                            pool_id: event.pool_id,
+                    self.route_v4_event(
+                        crate::bot_core::cl_route::Phase::Backfill,
+                        log.address(),
+                        event.pool_id,
+                        BufferedV4PoolEvent::Swap(BufferedV4SwapEvent {
                             sqrt_price_x96: event.sqrt_price_x96,
                             liquidity: event.liquidity.to::<u128>(),
                             tick: event.tick,
-                            tick_priors: vec![],
-                        },
-                        log_block,
+                            block_number: log_block,
+                        }),
+                        &[],
                     );
                     v4_touched = true;
                 }
@@ -1261,13 +1262,17 @@ impl BotState {
                 == degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
             {
                 if let Some(event) = decode_v4_modify_liquidity_log(log) {
-                    self.buffer_backfill_v4_liquidity_update(
+                    self.route_v4_event(
+                        crate::bot_core::cl_route::Phase::Backfill,
                         log.address(),
                         event.pool_id,
-                        event.tick_lower,
-                        event.tick_upper,
-                        event.liquidity_delta,
-                        log_block,
+                        BufferedV4PoolEvent::Liquidity(BufferedV4LiquidityUpdate {
+                            tick_lower: event.tick_lower,
+                            tick_upper: event.tick_upper,
+                            liquidity_delta: event.liquidity_delta,
+                            block_number: log_block,
+                        }),
+                        &[],
                     );
                     v4_touched = true;
                 }
