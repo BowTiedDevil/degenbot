@@ -357,12 +357,21 @@ pub struct GateStats {
     pub skipped: u64,
     /// Paths with at least one unsupported hop family (solved unscreened).
     pub unsupported: u64,
+    /// Per-cause breakdown of `unsupported` (M6776W diagnostic). At most one
+    /// counter advances per unsupported path (the FIRST cause early-returns).
+    pub none_hop_unmapped: u64,
+    pub none_degenerate: u64,
+    pub none_overflow: u64,
 }
 
 thread_local! {
     pub(crate) static GATE_EVALUATED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_SKIPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_UNSUPPORTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    // M6776W per-cause None breakdown (advance on the early-return path).
+    pub(crate) static GATE_NONE_HOP_UNMAPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_NONE_DEGENERATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_NONE_OVERFLOW: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Reset all gate counters on the calling thread (call at solve-cycle start,
@@ -371,6 +380,9 @@ pub fn reset_gate_stats() {
     GATE_EVALUATED.with(|c| c.set(0));
     GATE_SKIPPED.with(|c| c.set(0));
     GATE_UNSUPPORTED.with(|c| c.set(0));
+    GATE_NONE_HOP_UNMAPPED.with(|c| c.set(0));
+    GATE_NONE_DEGENERATE.with(|c| c.set(0));
+    GATE_NONE_OVERFLOW.with(|c| c.set(0));
 }
 
 /// Read-and-clear the calling thread's gate counters.
@@ -391,10 +403,28 @@ pub fn take_last_gate_stats() -> GateStats {
         c.set(0);
         v
     });
+    let none_hop_unmapped = GATE_NONE_HOP_UNMAPPED.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let none_degenerate = GATE_NONE_DEGENERATE.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let none_overflow = GATE_NONE_OVERFLOW.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
     GateStats {
         evaluated,
         skipped,
         unsupported,
+        none_hop_unmapped,
+        none_degenerate,
+        none_overflow,
     }
 }
 
@@ -405,19 +435,34 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     let mut lines = vec![Line::IDENTITY];
     let mut xmax = U256::ZERO;
     for slot in hops {
-        let hop = slot.as_ref()?;
-        let (hop_ls, cap) = hop_lines_and_cap(*hop)?;
+        let Some(hop) = slot.as_ref() else {
+            GATE_NONE_HOP_UNMAPPED.with(|c| c.set(c.get() + 1));
+            return None;
+        };
+        let Some((hop_ls, cap)) = hop_lines_and_cap(*hop) else {
+            GATE_NONE_DEGENERATE.with(|c| c.set(c.get() + 1));
+            return None;
+        };
         let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
         for outer in &hop_ls {
             for inner in &lines {
                 // outer(inner(x)): the new line maps path-input x through the
                 // chained-so-far line, then through this hop's line.
-                next.push(outer.compose(inner)?);
+                let Some(composed) = outer.compose(inner) else {
+                    GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+                    return None;
+                };
+                next.push(composed);
             }
         }
         prune(&mut next);
         lines = next;
-        xmax = xmax.checked_add(cap)?;
+        if let Some(v) = xmax.checked_add(cap) {
+            xmax = v;
+        } else {
+            GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+            return None;
+        }
     }
     // Discrete concave max of f(x) = min_lines(x) − x over [0, xmax].
     if xmax.is_zero() {
@@ -469,12 +514,19 @@ fn narrow(v: I512) -> Option<U256> {
 pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U256> {
     let mut lines = vec![Line::IDENTITY];
     for slot in hops {
-        let hop = slot.as_ref()?;
+        let Some(hop) = slot.as_ref() else {
+            GATE_NONE_HOP_UNMAPPED.with(|c| c.set(c.get() + 1));
+            return None;
+        };
         let (hop_ls, _cap) = hop_lines_and_cap(*hop)?;
         let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
         for outer in &hop_ls {
             for inner in &lines {
-                next.push(outer.compose(inner)?);
+                let Some(composed) = outer.compose(inner) else {
+                    GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+                    return None;
+                };
+                next.push(composed);
             }
         }
         prune(&mut next);

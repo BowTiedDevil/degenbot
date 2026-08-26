@@ -1412,7 +1412,7 @@ mod tests {
         Address::from([0xaa; 20])
     }
 
-    /// FUWYUR router contract (cl_route): route_v3_event is THE decision
+    /// FUWYUR router contract (`cl_route)`: `route_v3_event` is THE decision
     /// point — a live-phase tick mutation for an unregistered pool must
     /// stage into the pump buffer (not drop), and the buffered event lands
     /// in `v3_buffer` keyed by address for the registration drain+pin seam.

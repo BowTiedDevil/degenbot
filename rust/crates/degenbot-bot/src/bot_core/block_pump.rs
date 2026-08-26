@@ -4941,7 +4941,7 @@ mod tests {
                         )
                     });
                     let want = oracle[i].get(&t).copied().unwrap_or((0, 0));
-                    let actual_gross = actual.map(|a| a.0).unwrap_or(want.0);
+                    let actual_gross = actual.map_or(want.0, |a| a.0);
                     assert_eq!(
                         actual_gross, want.0,
                         "BAMKKI seed={seed} pool={i} role={} tick={t}: gross diverged \\
@@ -4967,7 +4967,7 @@ mod tests {
     /// unregistered-buffering arm, so the event never reaches the buffer and
     /// the pool goes Live permanently missing it (UO3JM4 desync class).
     /// Uses the exact on-chain numbers from the trip: pool 0x88e6A0c2 tick
-    /// 193370 liquidityGross 244_132_769_082_101_7 -> 256_007_624_942_870_5.
+    /// 193370 liquidityGross `244_132_769_082_101_7` -> `256_007_624_942_870_5`.
     #[tokio::test]
     #[expect(clippy::too_many_lines)]
     async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {

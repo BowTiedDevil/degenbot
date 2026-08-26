@@ -674,6 +674,16 @@ impl ArbitrageEngine {
         let gate_skipped_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let gate_unsupported_total: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(0);
+        // M6776W per-cause None breakdown of `unsupported`
+        // (hop_unmapped / degenerate / overflow) — diagnoses whether the
+        // still-high rate is a missing family, degenerate startup-warm pools,
+        // or an I512 coefficient overflow.
+        let gate_none_hop_unmapped_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_none_degenerate_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_none_overflow_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
@@ -703,6 +713,12 @@ impl ArbitrageEngine {
                 gate_skipped_total.fetch_add(gs.skipped, std::sync::atomic::Ordering::Relaxed);
                 gate_unsupported_total
                     .fetch_add(gs.unsupported, std::sync::atomic::Ordering::Relaxed);
+                gate_none_hop_unmapped_total
+                    .fetch_add(gs.none_hop_unmapped, std::sync::atomic::Ordering::Relaxed);
+                gate_none_degenerate_total
+                    .fetch_add(gs.none_degenerate, std::sync::atomic::Ordering::Relaxed);
+                gate_none_overflow_total
+                    .fetch_add(gs.none_overflow, std::sync::atomic::Ordering::Relaxed);
                 let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
                 let (pieces, sims, word_steps, refine_sims) =
                     (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
@@ -800,6 +816,9 @@ impl ArbitrageEngine {
             gate.evaluated = gate_evaluated_total.load(std::sync::atomic::Ordering::Relaxed),
             gate.skipped = gate_skipped_total.load(std::sync::atomic::Ordering::Relaxed),
             gate.unsupported = gate_unsupported_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.none_hop_unmapped = gate_none_hop_unmapped_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.none_degenerate = gate_none_degenerate_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.none_overflow = gate_none_overflow_total.load(std::sync::atomic::Ordering::Relaxed),
             gate.min_profit = %min_profit_floor(),
             profitable = solved.len(),
             slowest.paths = %slowest.join(","),

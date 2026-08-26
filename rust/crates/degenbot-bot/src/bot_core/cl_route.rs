@@ -318,7 +318,7 @@ mod tests {
     /// THE FUWYUR LIE SHAPE: engine witnessed events up to block 60 (its own
     /// applied history), then an external stamp claims freshness at 105 with
     /// empty buffers and no corroborating delivery. Must classify as
-    /// SeedTrustOnly with a non-zero horizon so the pin seam can warn loudly.
+    /// `SeedTrustOnly` with a non-zero horizon so the pin seam can warn loudly.
     #[test]
     fn pin_provenance_seed_trust_only_flags_fuyur_lie_shape() {
         assert_eq!(

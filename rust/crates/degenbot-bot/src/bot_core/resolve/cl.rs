@@ -332,7 +332,7 @@ mod tests {
                 currency1: Address::from([0x31u8; 20]),
                 fee: 500,
                 tick_spacing: 10,
-                hooks: Address::new(hooks.into()),
+                hooks: Address::new(hooks),
             },
             hook_flags,
             protocol_fee: 0,

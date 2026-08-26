@@ -239,6 +239,35 @@ fn unsupported_family_poisons_bound() {
     assert!(path_output_bound_at(&[None], &U256::from(1u64)).is_none());
 }
 
+#[test]
+fn m6776w_none_cause_classifies_each_exit() {
+    // The per-cause counters should classify WHY path_profit_bound returned
+    // None — used to diagnose the prod soak's still-high unsupported rate.
+    use degenbot_solvers::profit_envelope::{reset_gate_stats, take_last_gate_stats};
+    reset_gate_stats();
+    // Hop unmapped: a None slot (a hop family the gate doesn't map OR a
+    // degenerate hop_state the caller couldn't build).
+    assert!(path_profit_bound(&[None]).is_none());
+    let s = take_last_gate_stats();
+    assert_eq!(s.none_hop_unmapped, 1);
+    assert_eq!(s.none_degenerate, 0);
+    assert_eq!(s.none_overflow, 0);
+    reset_gate_stats();
+    // Degenerate: a HopMath slot whose hops_lines_and_cap rejects
+    // (zero reserves — a V2 hop with both reserves 0).
+    let v2_zero = degenbot_solvers::profit_envelope::HopMath::V2(&IntHopState::new(
+        U256::ZERO,
+        U256::ZERO,
+        0,
+        1,
+    ));
+    assert!(path_profit_bound(&[Some(v2_zero)]).is_none());
+    let s = take_last_gate_stats();
+    assert_eq!(s.none_hop_unmapped, 0);
+    assert_eq!(s.none_degenerate, 1);
+    assert_eq!(s.none_overflow, 0);
+}
+
 // ---------------------------------------------------------------------------
 // Golden-capture soundness: the bound must dominate the recorded golden
 // profit of every heavy-CL capture path.
