@@ -178,6 +178,14 @@ pub struct BotState {
     /// driver advances it on the tombstone verdict, and a resume never resets
     /// it.
     pump_complete_cutoff: u64,
+    /// Per-pool event-witnessed horizon (FUWYUR clock-provenance): the
+    /// highest block of any V3/V4 event ROUTED for this pool (applied
+    /// directly OR staged into a buffer). Advanced ONLY by routed events —
+    /// never by imported DB-row stamps — so it corroborates (or refutes) a
+    /// pin's freshness claim independently of the seed. Keyed like the
+    /// family buffers: address for V3, `(pool_manager, pool_id)` for V4.
+    v3_event_horizons: HashMap<Address, u64>,
+    v4_event_horizons: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
 }
 
 /// Diagnostic: log every V3 pump-buffer INSERTION for the pool address named
@@ -657,6 +665,8 @@ impl BotState {
             v4_state_views: HashMap::new(),
             snapshot_seed_block: None,
             pump_complete_cutoff: 0,
+            v3_event_horizons: HashMap::new(),
+            v4_event_horizons: HashMap::new(),
         }
     }
 

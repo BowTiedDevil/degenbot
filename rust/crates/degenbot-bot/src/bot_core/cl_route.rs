@@ -178,6 +178,44 @@ pub fn route_action(phase: Phase, presence: PoolPresence, kind: EventKind) -> Ro
     }
 }
 
+/// How the registration pin's freshness claim is corroborated. The pin may
+/// only claim block B when something INDEPENDENT of the imported DB-row stamp
+/// witnessed state at/beyond B: either the tombstone-confirmed WS delivery
+/// horizon (`cutoff` — every relevant event <= it was routed, post-FUWYUR),
+/// or an engine-witnessed event for THIS pool (highest routed event block).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinProvenance {
+    /// `liquidity_clock <= cutoff`: fully covered by tombstone-confirmed
+    /// delivery.
+    CorroboratedByDelivery,
+    /// Beyond the delivery horizon but within engine-witnessed events for
+    /// this pool.
+    WitnessedBeyondCutoff,
+    /// Rests solely on the external seed stamp:
+    /// - `witnessed_horizon == 0`: expected startup shape (fresh seed, no
+    ///   events routed yet) — benign, DEBUG-level interest.
+    /// - `witnessed_horizon > 0`: RE-SEED AFTER ACTIVITY — exactly the
+    ///   FUWYUR lie shape (engine personally processed older events, then a
+    ///   stamp arrived claiming fresher content). LOUD warn warranted.
+    SeedTrustOnly { witnessed_horizon: u64 },
+}
+
+/// Classify a pin's freshness claim against corroborating evidence.
+#[must_use]
+pub fn pin_provenance_verdict(
+    liquidity_clock: u64,
+    cutoff: u64,
+    witnessed_horizon: u64,
+) -> PinProvenance {
+    if liquidity_clock <= cutoff {
+        return PinProvenance::CorroboratedByDelivery;
+    }
+    if witnessed_horizon >= liquidity_clock && witnessed_horizon > 0 {
+        return PinProvenance::WitnessedBeyondCutoff;
+    }
+    PinProvenance::SeedTrustOnly { witnessed_horizon }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +291,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Pin provenance: clock covered by tombstone-confirmed delivery.
+    #[test]
+    fn pin_provenance_corroborated_by_delivery() {
+        assert_eq!(
+            pin_provenance_verdict(100, 110, 0),
+            PinProvenance::CorroboratedByDelivery
+        );
+        assert_eq!(
+            pin_provenance_verdict(110, 110, 0),
+            PinProvenance::CorroboratedByDelivery
+        );
+    }
+
+    /// Pin provenance: beyond delivery but within engine-witnessed events.
+    #[test]
+    fn pin_provenance_witnessed_beyond_cutoff() {
+        assert_eq!(
+            pin_provenance_verdict(105, 100, 110),
+            PinProvenance::WitnessedBeyondCutoff
+        );
+    }
+
+    /// THE FUWYUR LIE SHAPE: engine witnessed events up to block 60 (its own
+    /// applied history), then an external stamp claims freshness at 105 with
+    /// empty buffers and no corroborating delivery. Must classify as
+    /// SeedTrustOnly with a non-zero horizon so the pin seam can warn loudly.
+    #[test]
+    fn pin_provenance_seed_trust_only_flags_fuyur_lie_shape() {
+        assert_eq!(
+            pin_provenance_verdict(105, 100, 60),
+            PinProvenance::SeedTrustOnly {
+                witnessed_horizon: 60
+            }
+        );
+        // Benign startup shape: fresh seed, nothing witnessed yet.
+        assert_eq!(
+            pin_provenance_verdict(105, 100, 0),
+            PinProvenance::SeedTrustOnly {
+                witnessed_horizon: 0
+            }
+        );
     }
 
     /// Presence mapping: `None` lifecycle is Unregistered (the FUWYUR blind

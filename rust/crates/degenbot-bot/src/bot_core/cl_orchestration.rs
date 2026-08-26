@@ -153,6 +153,39 @@ impl BotState {
         state.invalidate_tick_range_cache();
     }
 
+    /// Event-witnessed horizon for a V3 pool (FUWYUR clock-provenance):
+    /// highest block of any routed event for this pool. `0` = none witnessed.
+    #[must_use]
+    pub fn v3_event_horizon(&self, pool_address: &Address) -> u64 {
+        self.v3_event_horizons
+            .get(pool_address)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn note_v3_event_block(&mut self, pool_address: Address, block_number: u64) {
+        let e = self.v3_event_horizons.entry(pool_address).or_insert(0);
+        *e = (*e).max(block_number);
+    }
+
+    /// Event-witnessed horizon for a V4 pool.
+    #[must_use]
+    pub fn v4_event_horizon(
+        &self,
+        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+    ) -> u64 {
+        self.v4_event_horizons.get(key).copied().unwrap_or(0)
+    }
+
+    fn note_v4_event_block(
+        &mut self,
+        key: (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+        block_number: u64,
+    ) {
+        let e = self.v4_event_horizons.entry(key).or_insert(0);
+        *e = (*e).max(block_number);
+    }
+
     /// Resolve a V3 pool's routing presence (`cl_route` axis).
     fn v3_presence(&self, pool_address: &Address) -> PoolPresence {
         let lifecycle =
@@ -188,6 +221,10 @@ impl BotState {
             BufferedV3PoolEvent::Liquidity(_) => EventKind::TickMutation,
         };
         let presence = self.v3_presence(&pool_address);
+        let event_block = match &event {
+            BufferedV3PoolEvent::Swap(s) => s.block_number,
+            BufferedV3PoolEvent::Liquidity(l) => l.block_number,
+        };
         let action = route_action(phase, presence, kind);
         match action {
             RouteAction::ApplyDirect => {
@@ -232,6 +269,7 @@ impl BotState {
                         );
                     }
                 }
+                self.note_v3_event_block(pool_address, event_block);
                 ApplyOutcome::Applied(pool_id)
             }
             RouteAction::Buffer(kind) => {
@@ -1143,6 +1181,10 @@ impl BotState {
             BufferedV4PoolEvent::Liquidity(_) => EventKind::TickMutation,
         };
         let presence = self.v4_presence(&(pool_manager, v4_pool_id));
+        let event_block = match &event {
+            BufferedV4PoolEvent::Swap(s) => s.block_number,
+            BufferedV4PoolEvent::Liquidity(l) => l.block_number,
+        };
         match route_action(phase, presence, kind) {
             RouteAction::ApplyDirect => {
                 // Table invariant: ApplyDirect implies registered. Defensive
@@ -1192,6 +1234,7 @@ impl BotState {
                         }
                     }
                 }
+                self.note_v4_event_block((pool_manager, v4_pool_id), event_block);
                 ApplyOutcome::Applied(id)
             }
             RouteAction::Buffer(kind) => {
@@ -1228,6 +1271,7 @@ impl BotState {
                         .v4_buffer
                         .buffer_pump((pool_manager, v4_pool_id), event),
                 }
+                self.note_v4_event_block((pool_manager, v4_pool_id), event_block);
                 ApplyOutcome::Buffered(kind)
             }
             RouteAction::Drop(reason) => ApplyOutcome::NoOp(reason),
