@@ -2486,6 +2486,149 @@ mod tests {
         assert!(!state.swap_is_viable(false));
     }
 
+    /// M6776W Layer-B: reconstruct each captured dead-pool topology from
+    /// the JSONL capture, build a real [`V3PoolState`] via production
+    /// `get_tick_at_sqrt_ratio_internal` on the captured sqrt-price
+    /// boundaries, and assert the tightened `swap_is_viable` rejects it in
+    /// the dead direction. The 8 captured dead paths all reduce to ONE unique
+    /// topology (same current `sqrt_price_x96`, same boundaries, same
+    /// direction); this test exercises production code against that real
+    /// captured shape, not a hand-rolled synthetic tick map.
+    #[test]
+    fn m6776w_captured_dead_pools_rejected_via_production_swap_is_viable() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../investigation/captures/gate_degenerate_2026-08-26.jsonl");
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return; // capture file not present
+        };
+
+        // Deduplicate topologies: (sqrt_price_x96, zfo, boundary_sqrt_prices)
+        // — identical across the 8 captured paths. We assert on the unique
+        // set so test failure messages aren't 8-fold redundant.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut tested = 0u32;
+
+        for line in content.lines().filter(|l| !l.trim().is_empty()) {
+            let doc: serde_json::Value = serde_json::from_str(line).expect("valid JSONL");
+            let reason = doc
+                .get("reject_reason")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if !reason.contains("zero_liq") {
+                continue;
+            }
+            let reject_hop: usize = doc
+                .get("reject_hop")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+                .try_into()
+                .unwrap_or(0);
+            let hops = doc
+                .get("hops")
+                .and_then(|v| v.as_array())
+                .expect("hops array");
+            let hop = &hops[reject_hop];
+            if hop.get("family").and_then(serde_json::Value::as_str) != Some("cl") {
+                continue;
+            }
+            let ranges = hop
+                .get("ranges")
+                .and_then(|v| v.as_array())
+                .expect("ranges");
+            if ranges.is_empty()
+                || !ranges
+                    .iter()
+                    .all(|r| r.get("liquidity").and_then(serde_json::Value::as_str) == Some("0"))
+            {
+                continue; // not an all-zero-range dead pool
+            }
+            let zfo = ranges[0]
+                .get("zero_for_one")
+                .and_then(serde_json::Value::as_bool)
+                .expect("zfo");
+            let cur_sp = ranges[0]
+                .get("sqrt_price_x96")
+                .and_then(serde_json::Value::as_str)
+                .expect("sp");
+            let boundaries: Vec<String> = std::iter::once(
+                ranges[0]
+                    .get("sqrt_price_lower_x96")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap()
+                    .to_string(),
+            )
+            .chain(ranges.iter().map(|r| {
+                r.get("sqrt_price_upper_x96")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap()
+                    .to_string()
+            }))
+            .collect();
+            if !seen.insert(format!("{cur_sp}|{zfo}|{}", boundaries.join(","))) {
+                continue; // duplicate of an already-tested topology
+            }
+
+            assert_dead_topology_rejected_by_swap_is_viable(cur_sp, zfo, &boundaries);
+            tested += 1;
+        }
+
+        assert!(
+            tested > 0,
+            "should have tested at least one unique dead-pool topology"
+        );
+    }
+
+    /// Helper for `m6776w_captured_dead_pools_rejected_via_production_swap_is_viable`:
+    /// rebuild a [`V3PoolState`] with the captured boundary ticks (all
+    /// `liquidity_net = 0`) and assert production `swap_is_viable` is false in
+    /// the dead direction. Real tick indices recovered from the captured
+    /// sqrt-price boundaries via the production tick-math inverse.
+    fn assert_dead_topology_rejected_by_swap_is_viable(
+        cur_sp: &str,
+        zfo: bool,
+        boundaries: &[String],
+    ) {
+        use degenbot_math::cl::tick_math::get_tick_at_sqrt_ratio_internal;
+
+        let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+        for sp_str in boundaries {
+            let sp = U256::from_str_radix(sp_str, 10).expect("decimal sp");
+            let tick = get_tick_at_sqrt_ratio_internal(U160::from(sp))
+                .expect("sp in range")
+                .as_i32();
+            tick_data.insert(
+                tick,
+                TickInfo {
+                    liquidity_gross: U128::from(1u64), // non-zero: tick IS initialized
+                    liquidity_net: I256::ZERO,         // dead-pool signature
+                    block: 0,
+                },
+            );
+        }
+        // Current active tick via the production inverse on the current
+        // sqrt_price_x96 (V3 convention: floor to the tick below price).
+        let cur_sp_u = U256::from_str_radix(cur_sp, 10).expect("decimal current sp");
+        let cur_tick = get_tick_at_sqrt_ratio_internal(U160::from(cur_sp_u))
+            .expect("cur sp in range")
+            .as_i32();
+
+        let (_id, mut state) = pool_1to1_with_position(0);
+        state.liquidity = 0; // dead pool: no active liquidity
+        state.tick = cur_tick;
+        state.sqrt_price_x96 = cur_sp_u;
+        state.tick_data.clear();
+        for (&tick_idx, info) in &tick_data {
+            state.tick_data.insert(tick_idx, info.clone());
+        }
+        state.coverage = PoolTickCoverage::Tracked;
+
+        assert!(
+            !state.swap_is_viable(zfo),
+            "captured dead pool (sp={cur_sp}, zfo={zfo}, ticks={:?}, cur_tick={cur_tick}) \
+             must be rejected by production swap_is_viable in the captured direction",
+            tick_data.keys().collect::<Vec<_>>()
+        );
+    }
     /// M6776W: the historical `swap_is_viable` checked "any initialized tick
     /// exists ahead" (via `tick_data.keys().min()/max()` + sqrt-ratio comparison).
     /// A pool with `slot0.liquidity = 0` and an initialized tick whose
