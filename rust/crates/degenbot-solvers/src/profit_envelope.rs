@@ -455,8 +455,9 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
 }
 
 /// Classify WHY a CL hop was rejected by `hop_lines_and_cap` (M6776W
-/// diagnostic). Mirrors the exact checks in the `HopMath::Cl` arm so the
-/// debug log identifies the precise rejection reason + range index.
+/// diagnostic). Runs only when production returned `None`, so it reports
+/// the *first* range that survived the zero-liq skip but failed (zero
+/// price, `compute_crossing` failure, all-zero, or `cap_tail` overflow).
 #[must_use]
 fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
     if seq.ranges.is_empty() {
@@ -470,8 +471,8 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
         let er = &cr.ending_range;
         // Zero-liquidity ranges are SKIPPED by the production envelope builder
         // (crossing is free in computeSwapStep L=0), so they are not a
-        // rejection reason. Mirror that here: skip them and only classify
-        // failures on ranges that actually contribute a tangent line.
+        // rejection reason. Skip them here; the first range that survives
+        // the skip but still fails is the rejection reason.
         if er.liquidity == 0 {
             continue;
         }
@@ -480,13 +481,9 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
         if p.is_zero() {
             return format!("reject=zero_price@k={k}");
         }
-        // Coefficient overflow is now a per-range SKIP in production (the
-        // tangent line is omitted, the envelope stays sound with fewer lines).
-        // Mirror that here: ranges whose coefficients would overflow I512 are
-        // skipped, not rejection reasons. An extreme entry price is not
-        // evidence of infeasibility — for zero_for_one it is exactly the
-        // recovery direction (a pool pushed far from fair value by a
-        // misrouted swap).
+        // Coefficient overflow is a per-range SKIP in production (the
+        // tangent line is omitted, the envelope stays sound with fewer
+        // lines). An extreme entry price is not a rejection reason.
     }
     if !any_real {
         // Every range was zero-liquidity — the envelope builder rejected
@@ -782,11 +779,10 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
                 }
                 HopMath::Cl(seq) => {
                     let empty = seq.ranges.is_empty();
-                    let zero_liq = seq.ranges.iter().any(|r| r.liquidity == 0);
                     let reason = classify_cl_rejection(seq);
                     format!(
-                        "Cl(ranges={},empty={empty},zero_liq={zero_liq},{reason})",
-                        seq.ranges.len()
+                        "Cl(ranges={n},empty={empty},{reason})",
+                        n = seq.ranges.len()
                     )
                 }
                 HopMath::SolidlyVolatile {
@@ -980,12 +976,14 @@ mod tests {
 
     /// The experiment: load the captured JSONL, reproduce each rejection
     /// with the current production code, then test the fixes.
+    ///
+    /// `#[ignore]` — loads a ~3MB fixture; run explicitly with
+    /// `cargo test -p degenbot-solvers -- --ignored m6776w_experiment`.
+    #[ignore = "loads a ~3MB capture fixture; run with --ignored"]
     #[test]
     fn m6776w_experiment_fixes_recover_captured_degenerate_paths() {
         // Post-refactor capture (max_ranges/WALK_CEILING removed + zero-liq
-        // skip in production). The pre-refactor capture
-        // (gate_degenerate_2026-08-26.jsonl) had WALK_CEILING-truncated ranges
-        // and is no longer representative.
+        // skip + P_ENTRY_LIMIT removal in production).
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../investigation/captures/gate_degenerate_post_refactor_2026-08-26.jsonl");
         let Ok(content) = std::fs::read_to_string(&path) else {

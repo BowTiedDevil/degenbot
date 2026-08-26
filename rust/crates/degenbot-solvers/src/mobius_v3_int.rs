@@ -808,10 +808,10 @@ pub fn last_max_dense_words() -> usize {
 /// visited set guards the pathological anchor-oscillation case.
 /// Diagnostic telemetry thresholds for `solve_active_set_path`: a single solve
 /// that exceeds either of these surfaces a `tracing::warn!` with per-hop range
-/// counts so the operator can investigate the pool. Conservative — the old
-/// `max_ranges=24` cap allowed at most ~74 pieces/3-hop; this threshold is ~7×
-/// that, so it only fires for genuinely pathological pools (no `max_ranges`
-/// cap means the walk visits every initialized tick).
+/// counts so the operator can investigate the pool. Conservative — the
+/// typical 3-hop solve visits tens of pieces; these thresholds only fire for
+/// genuinely pathological pools (the walk visits every initialized tick in
+/// the swap direction now that `max_ranges` is removed).
 const SOLVE_TELEMETRY_PIECES_WARN: usize = 500;
 const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 
@@ -1025,15 +1025,12 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         break;
     }
 
-    // Post-hoc telemetry: pool's full liquidity width means the walk can
-    // visit many initialized ticks (no `max_ranges` cap); the solver's own
-    // bounds (`iteration_cap`, `prune`, `REFINE_GRID_POINTS`) prevent
-    // runaway cost, but a pathological pool can still burn excessive pieces
-    // or simulations. Surface those cases for diagnosis (not for screening —
-    // the solve still completes and returns its result). Both thresholds
-    // sit at module scope so the `take_last_walk_stats_full()` read stays
-    // expression-position (the clippy `items-after-statements` lint is a
-    // guardrail against heavy block-local consts).
+    // Post-hoc telemetry: the walk now visits every initialized tick in
+    // the swap direction (no `max_ranges` cap). The solver's own bounds
+    // (`iteration_cap`, `prune`, `REFINE_GRID_POINTS`) prevent runaway cost,
+    // but a pathological pool can still burn excessive pieces or
+    // simulations. Surface those cases for diagnosis (not for screening —
+    // the solve still completes and returns its result).
     let ws = take_last_walk_stats_full();
     let over_threshold =
         ws.pieces > SOLVE_TELEMETRY_PIECES_WARN || ws.sims > SOLVE_TELEMETRY_SIMS_WARN;
