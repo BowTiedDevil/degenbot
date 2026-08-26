@@ -526,13 +526,60 @@ pub fn take_last_gate_stats() -> GateStats {
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     let mut lines = vec![Line::IDENTITY];
     let mut xmax = U256::ZERO;
-    for slot in hops {
+    for (hop_idx, slot) in hops.iter().enumerate() {
         let Some(hop) = slot.as_ref() else {
             GATE_NONE_HOP_UNMAPPED.with(|c| c.set(c.get() + 1));
             return None;
         };
         let Some((hop_ls, cap)) = hop_lines_and_cap(*hop) else {
             GATE_NONE_DEGENERATE.with(|c| c.set(c.get() + 1));
+            // M6776W degenerate diagnostic: log the hop family + the reject
+            // reason so the steady-state degenerate rate can be classified as
+            // the expected shape (sparse CL with empty active range / zero
+            // reserves) vs a real coverage gap. Debug-level: opt-in via
+            // `RUST_LOG=degenbot_solvers::profit_envelope=debug`.
+            let family = match hop {
+                HopMath::V2(h) => {
+                    let z = h.reserve_in.is_zero() || h.reserve_out.is_zero();
+                    format!("V2(zero_reserve={z})")
+                }
+                HopMath::Cl(seq) => {
+                    let empty = seq.ranges.is_empty();
+                    let zero_liq = seq.ranges.iter().any(|r| r.liquidity == 0);
+                    format!(
+                        "Cl(ranges={},empty={empty},zero_liq={zero_liq})",
+                        seq.ranges.len()
+                    )
+                }
+                HopMath::SolidlyVolatile {
+                    reserve_in,
+                    reserve_out,
+                } => {
+                    format!(
+                        "SolidlyVolatile(zero={})",
+                        reserve_in.is_zero() || reserve_out.is_zero()
+                    )
+                }
+                HopMath::Weighted {
+                    balance_in,
+                    balance_out,
+                    ..
+                } => {
+                    format!(
+                        "Weighted(zero={})",
+                        balance_in.is_zero() || balance_out.is_zero()
+                    )
+                }
+                HopMath::ReserveCap { reserve_out } => {
+                    format!("ReserveCap(zero={})", reserve_out.is_zero())
+                }
+            };
+            tracing::debug!(
+                target: "degenbot_solvers::profit_envelope",
+                hop_index = hop_idx,
+                family = %family,
+                "[gate] degenerate hop rejected (impossible to bound — solved unscreened)"
+            );
             return None;
         };
         let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());

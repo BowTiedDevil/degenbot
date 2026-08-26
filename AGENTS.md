@@ -8,7 +8,6 @@ Coordinate with other local pi sessions on related codebases. Use `/skill:pi-int
 **Principle:** Prefer `send` for notifications; `ask` only when blocked waiting for input.
 
 ## Architectural Vision
-
 **Long-term goal: a set of first-class standalone Rust crates that together form a complete, functional MEV bot.**
 
 `degenbot` is migrating from a pure-Python library to a Rust core composed of standalone crates. The end state has two equally first-class consumers:
@@ -23,6 +22,9 @@ Unless directed otherwise, design standalone features without a backwards compat
 
 ## Planning
 Use `ergo` for all feature planning. Discover usage with `ergo --help` and `ergo quickstart`. Include detailed implementation and planning notes in the body of each task.
+
+## Name Hygiene
+Avoid using `ergo` identifiers in function and file names.
 
 ## Refactoring & Feature Development
 Use red/green test-driven development when refactoring and adding new features. Use `/skill:tdd` for guidelines.
@@ -56,7 +58,6 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
 **Extending:** the pattern for new instrumentation is `#[hotpath::measure]` on a function (`impl_type = "Type"` for inherent methods, `label = "..."` for trait impls), or `hotpath::measure_block!("phase_name", { ... })` for sub-function phases. They're no-ops unless `hotpath` Cargo feature + `DEGENBOT_HOTPATH=1` are both on, so sprinkle liberally — same discipline as `log::debug!`. To widen coverage to a library crate, add the crate as a non-optional dep with `default-features = false` and gate the real `hotpath/hotpath` feature behind a Cargo feature on that crate (see `degenbot-bot/Cargo.toml` for the pattern).
 
 ## OTel Spans (Python-driven path)
-
 The `degenbot-python` global tracing subscriber can export OTLP spans
 (epic `KDUED5`): Rust-core span sources (e.g. `degenbot.pump.block`
 around the pump drain loop) flow through the same subscriber that
@@ -88,7 +89,6 @@ uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
   equivalent to the historical subscriber).
 
 ### Schema ownership & Alembic retention (see [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md))
-
 The database schema is **Alembic-owned during the 0.6.x point releases** and becomes **Rust-owned** in a 0.7 release. The cutover mechanism (`degenbot database cutover` + the `ensure_schema` `RustOwned` branch) is built and opt-in during 0.6.x so `pip` users can upgrade a stale database through the final Alembic revision and then cutover at a time of their choosing. Dropping the Alembic dependency and deleting the migration scripts is gated to 0.7 (ergo task `JFFQV2`).
 
 **Forbidden-until-0.7 kill list.** No change before the 0.7 retirement task may delete or stub any of:
@@ -102,5 +102,4 @@ The database schema is **Alembic-owned during the 0.6.x point releases** and bec
 **An import falling out of use is not permission to delete it.** If a 0.6.x task makes an Alembic/SQLAlchemy symbol unused, leave it in place and note the orphaned symbol in the task completion summary; removal is the 0.7 retirement task's exclusive responsibility.
 
 ## Complex System State
-
 Prefer enum-based finite state machines to manage transitions within systems. When you encounter an existing system with ad-hoc rules and detailed comments meant to clarify complex interactions, propose a refactor to encapsulate that logic into a state machine.
