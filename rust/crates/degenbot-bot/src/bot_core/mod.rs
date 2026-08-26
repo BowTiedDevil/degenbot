@@ -42,6 +42,7 @@ pub(crate) mod solve_anchor;
 pub mod solve_coordinator;
 pub mod solver_state_tripwire;
 pub mod state_lock;
+pub mod swap_simulation;
 pub mod tick_assembly;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
