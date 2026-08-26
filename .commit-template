@@ -1,6 +1,6 @@
 # type(scope): description
 #
-# Types:  feat | fix | refactor | docs | lint | test | chore | remove
+# Types:  feat | fix | refactor | docs | lint | test | chore | remove | perf
 # Scope:  optional & free-form, lower-case. Omit for cross-cutting changes.
 #         Any domain token is valid (v2/v3/v4, curve, balancer, arbitrage,
 #         builders, rust, python, backrun, solver, ...). One concept, one
@@ -16,5 +16,3 @@
 #   fix(v3): correct tick spacing calculation
 #   refactor: separate I/O from calculation in Aave position analysis
 #   remove: delete position_analysis.py shim
-#
-#   Plan: 029
