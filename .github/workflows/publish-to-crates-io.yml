@@ -78,6 +78,15 @@ jobs:
             -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)b([0-9]+)$/\1.\2.\3-beta.\4/' \
             -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)rc([0-9]+)$/\1.\2.\3-rc.\4/')
           ws_ver=$(sed -n 's/^version = //p' rust/Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
+          # ADR-009 lockstep: every [workspace.dependencies] version literal must
+          # equal the workspace version, or cargo packs 0.6.0-alpha.N crates whose
+          # manifests require stale sibling versions (0.6.0-alpha.N-1) — crates.io
+          # rejects the upload. Fail here, before the dry-run/publish steps.
+          dep_ver=$(sed -n '/^\[workspace.dependencies\]/,/^\[/p' rust/Cargo.toml | grep -o 'version = "[^"]*"' | sed -E 's/version = "([^"]+)"/\1/' | sort -u | grep -v "^$ws_ver$" | head -n 1)
+          if [ -n "$dep_ver" ]; then
+            echo "[workspace.dependencies] version '$dep_ver' is out of lockstep with workspace version '$ws_ver'" >&2
+            exit 1
+          fi
           if [ "$cargo_ver" != "$ws_ver" ]; then
             echo "Tag $GITHUB_REF_NAME does not match [workspace.package] version '$ws_ver'" >&2
             exit 1
@@ -106,7 +115,11 @@ jobs:
         run: |
           set -uo pipefail
           cd rust
-          ver="${GITHUB_REF_NAME#v}"
+          # The live-set audit below greps the crates.io index, which stores the
+          # SEMVER literal (0.6.0-alpha.6), not the PEP440 tag (0.6.0a6). Read the
+          # workspace version instead of deriving it from the tag so the grep
+          # always matches what crates.io reports.
+          ver=$(sed -n 's/^version = //p' Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
           # Publishable members from cargo metadata itself (publish:null), so a
           # new non-publishable crate (publish=false -> []) is auto-skipped — no
           # hardcoded name list to drift. Today that's degenbot_rs + degenbot-execution-sample.
