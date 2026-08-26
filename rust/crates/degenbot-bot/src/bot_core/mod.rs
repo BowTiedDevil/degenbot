@@ -19,6 +19,7 @@ pub mod block_clock_pipe;
 pub mod block_pump;
 pub mod bot;
 pub mod cl_orchestration;
+pub mod cl_route;
 pub mod construction_io;
 pub mod curve_data_provider_impl;
 pub mod curve_state;
