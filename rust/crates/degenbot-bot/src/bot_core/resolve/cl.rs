@@ -286,7 +286,7 @@ mod tests {
         // builder derives hook_flags from it, so craft the address to match.
         let mut hooks = [0u8; 20];
         hooks[18] = (hook_flags >> 8) as u8;
-        hooks[19] = hook_flags as u8;
+        hooks[19] = (hook_flags & 0xFF) as u8;
         core.register_v4_pool(&RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
             pool_id: [0xabu8; 32],

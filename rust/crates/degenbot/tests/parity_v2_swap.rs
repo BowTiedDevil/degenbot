@@ -1,4 +1,4 @@
-#![expect(clippy::expect_used)]
+#![expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — V2 swap calc (ADR-005 standalone
 //! claim, the behavioral tier).
 //!

@@ -1,4 +1,9 @@
-#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::items_after_statements
+)]
 //! Tier-2 behavioral dual-driver parity — V4 concentrated-liquidity swap
 //! (ADR-005 standalone claim, the behavioral tier).
 //!

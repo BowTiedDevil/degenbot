@@ -45,7 +45,8 @@ _POOL_KIND_V4: int = 2
 # collided pair aliased two distinct pools under one graph id, letting the
 # DFS walk both edges as if they were ONE pool and yield paths that cannot
 # close in token space (148,896 broken paths measured on the live DB;
-# surfaced as 85k direction-fail registration skips). Graph pool ids at or above this offset are V4. The Rust
+# surfaced as 85k direction-fail registration skips). Graph pool ids at or
+# above this offset are V4. The Rust
 # `build_path_graph`/`fetch_path_graph_edges` seam applies the offset to V4 ids
 # in EVERY emitted map (`edges`, `v4_lookups`, `pool_id_to_kind`+
 # `pool_id_to_kind_string`), so the DFS and `_build_path_steps` always deal in

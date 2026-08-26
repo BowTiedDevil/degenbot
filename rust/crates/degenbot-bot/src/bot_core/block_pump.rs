@@ -4736,7 +4736,14 @@ mod tests {
     const FUZZ_SEED_GROSS: u128 = 10_000_000_000_000_000;
 
     #[tokio::test]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        reason = "fuzz-bounded: FUZZ_POOL_COUNT=3 and seed<=48 so these casts cannot truncate/wrap"
+    )]
     async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
+        type ExpectedTicks = HashMap<i32, (u128, i128)>;
         for seed in 1u64..=48 {
             let mut rng = FuzzRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
             let block_n = 100_u64;
@@ -4798,7 +4805,6 @@ mod tests {
 
             // Generate the event stream: mints over the pre-seeded tick set +
             // tombstone swaps, distributed across pools/blocks by the seed.
-            type ExpectedTicks = HashMap<i32, (u128, i128)>;
             let mut oracle: Vec<ExpectedTicks> = Vec::new();
             let mut expected_events: Vec<(usize, Log)> = Vec::new();
             let mut log_index = 0u64;
@@ -4969,10 +4975,9 @@ mod tests {
     /// Uses the exact on-chain numbers from the trip: pool 0x88e6A0c2 tick
     /// 193370 liquidityGross `244_132_769_082_101_7` -> `256_007_624_942_870_5`.
     #[tokio::test]
-    #[expect(clippy::too_many_lines)]
     async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
         use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
-        const SEED_GROSS: u128 = 244_132_769_082_101_7;
+        const SEED_GROSS: u128 = 2_441_327_690_821_017;
         const MINT_DELTA: u128 = 118_748_558_607_688;
         let block_n = 10u64;
         let pool_addr = Address::from([0x34u8; 20]);

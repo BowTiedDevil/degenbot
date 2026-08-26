@@ -791,7 +791,7 @@ class BotRunner:
             with contextlib.suppress(asyncio.CancelledError):
                 await watchdog_task
 
-    async def _pump_finished_watchdog(self) -> None:
+    async def _pump_finished_watchdog(self) -> bool:
         """Poll the Rust pump task; when it finishes outside ``stop()``, shut down.
 
         The hotpath timed exit (``HOTPATH_SHUTDOWN_MS``) makes the pump return

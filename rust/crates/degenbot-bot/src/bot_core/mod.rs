@@ -1418,6 +1418,7 @@ mod tests {
     /// in `v3_buffer` keyed by address for the registration drain+pin seam.
     #[test]
     fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
+        use crate::bot_core::cl_route::{ApplyOutcome, BufferKind};
         let mut core = BotState::new();
         let addr = Address::from([0x66; 20]);
         let outcome = core.route_v3_event(
@@ -1431,7 +1432,6 @@ mod tests {
             }),
             &[],
         );
-        use crate::bot_core::cl_route::{ApplyOutcome, BufferKind};
         assert_eq!(outcome, ApplyOutcome::Buffered(BufferKind::Pump));
         assert_eq!(core.buffered_v3_event_count(&addr), 1);
         // 7HUYWM: a buffered event is engine-witnessed activity — the

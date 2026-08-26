@@ -808,7 +808,7 @@ fn finish_cl(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    #![expect(clippy::unwrap_used, clippy::panic)]
     #![allow(clippy::used_underscore_binding)]
 
     use super::*;

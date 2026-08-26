@@ -740,6 +740,12 @@ class PathRegistrationPipeline:
         # and propagates to shut the bot down loudly (same contract as
         # VerificationMismatchError below).
         zfo_list = self._resolve_path_directions(pools, directions)
+        if zfo_list is None:
+            # Operator-pinned directions whose per-hop count disagrees with the
+            # resolved path — the `zip(strict=True)` calls below would raise a
+            # cryptic TypeError (None is not iterable), so name it and skip.
+            self._record_skip("direction-mismatch")
+            return
 
         pool_sigs: list[str] = []
         for p in pools:
