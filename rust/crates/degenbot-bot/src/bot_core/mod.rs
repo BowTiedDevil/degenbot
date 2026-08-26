@@ -1434,6 +1434,34 @@ mod tests {
         use crate::bot_core::cl_route::{ApplyOutcome, BufferKind};
         assert_eq!(outcome, ApplyOutcome::Buffered(BufferKind::Pump));
         assert_eq!(core.buffered_v3_event_count(&addr), 1);
+        // 7HUYWM: a buffered event is engine-witnessed activity — the
+        // event horizon advances at ARRIVAL time (parity with V4) so the
+        // pin's stamp-provenance verdict sees the true witnessed span after
+        // the staged drain, not just ApplyDirect-routed events.
+        assert_eq!(core.v3_event_horizon(&addr), 10);
+    }
+
+    /// 7HUYWM: the event horizon tracks the MAX block across multiple buffered
+    /// events for the same (still-unregistered) pool. The pin's
+    /// `SeedTrustOnly{witnessed_horizon>0}` classification (the re-seed-after-
+    /// activity tripwire) depends on this being the true high-water mark.
+    #[test]
+    fn v3_event_horizon_tracks_max_block_across_buffered_events() {
+        let mut core = BotState::new();
+        let addr = Address::from([0x67; 20]);
+        let mk = |block, delta| {
+            BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+                tick_lower: -100,
+                tick_upper: 7,
+                liquidity_delta: delta,
+                block_number: block,
+            })
+        };
+        core.route_v3_event(crate::bot_core::cl_route::Phase::Live, addr, mk(10, 1), &[]);
+        core.route_v3_event(crate::bot_core::cl_route::Phase::Live, addr, mk(50, 2), &[]);
+        core.route_v3_event(crate::bot_core::cl_route::Phase::Live, addr, mk(30, 3), &[]);
+        assert_eq!(core.buffered_v3_event_count(&addr), 3);
+        assert_eq!(core.v3_event_horizon(&addr), 50);
     }
 
     fn make_token0() -> Address {

@@ -17,7 +17,8 @@ use std::collections::{HashMap, HashSet};
 use alloy::primitives::{Address, U256};
 
 use crate::bot_core::cl_route::{
-    route_action, ApplyOutcome, BufferKind, EventKind, Phase, PoolPresence, RouteAction,
+    pin_provenance_verdict, route_action, ApplyOutcome, BufferKind, EventKind, Phase,
+    PinProvenance, PoolPresence, RouteAction,
 };
 use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
 use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent};
@@ -311,6 +312,11 @@ impl BotState {
                     BufferKind::Backfill => self.v3_buffer.buffer_backfill(pool_address, event),
                     BufferKind::Pump => self.v3_buffer.buffer_pump(pool_address, event),
                 }
+                // FUWYUR provenance (7HUYWM): a buffered event is still
+                // engine-witnessed activity for this pool — advance the
+                // event horizon at arrival time so the pin's stamp-provenance
+                // verdict sees the true witnessed span (parity with V4).
+                self.note_v3_event_block(pool_address, event_block);
                 ApplyOutcome::Buffered(kind)
             }
             RouteAction::Drop(reason) => ApplyOutcome::NoOp(reason),
@@ -850,6 +856,10 @@ impl BotState {
         // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
         // `&self`) out of the inner scope, where `&mut state` is alive.
         let cutoff = self.pump_complete_cutoff();
+        // FUWYUR provenance (7HUYWM): hoist the engine-witnessed horizon for
+        // this pool — independent of the imported seed stamp — so the pin can
+        // classify the stamp's freshness claim (the load-time tripwire).
+        let witnessed = self.v3_event_horizon(&address);
         // Capture the pin scalars + an optional watch-tick snapshot in an
         // inner scope so the `&mut state` borrow of `self.pools` ends before
         // the diagnostic reads `self.v3_buffer` (a second `&self` borrow).
@@ -889,12 +899,19 @@ impl BotState {
                     liquidity_clock
                 };
                 state.post_drain_snapshot = Some((state.tick_data.clone(), pinned_block));
-                Some((pinned_block, state.tick_data.len(), watch))
+                let verdict = pin_provenance_verdict(liquidity_clock, cutoff, witnessed);
+                Some((
+                    pinned_block,
+                    liquidity_clock,
+                    state.tick_data.len(),
+                    watch,
+                    verdict,
+                ))
             } else {
                 None
             }
         };
-        if let Some((tick_data_block, tick_count, watch)) = diag {
+        if let Some((tick_data_block, seed_block, tick_count, watch, verdict)) = diag {
             let pool_match = drain_dbg_pool_match(address);
             if verify_dbg_enabled() {
                 tracing::info!(
@@ -925,6 +942,37 @@ impl BotState {
                         tick_data_block,
                         watch_tick = ?trace_watch_tick(),
                         "[trace] pin watch-tick absent"
+                    );
+                }
+            }
+            // FUWYUR stamp provenance (7HUYWM) — the load-time tripwire. The
+            // seed stamp (`seed_block`) is honest only if independent of it,
+            // something witnessed state at/beyond it: the tombstone-confirmed
+            // delivery horizon (`cutoff`) or engine-witnessed events for THIS
+            // pool (`witnessed_horizon`). A re-seed-after-activity (a fresher
+            // stamp arrived after the engine already processed events for
+            // this pool) is exactly the FUWYUR lie shape and warns loudly;
+            // the verify tripwire that follows covers content-correctness, but
+            // provenance covers freshness-claim honesty.
+            match verdict {
+                PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
+                    tracing::warn!(
+                        pool_addr = %format!("{address:x}"),
+                        seed_block,
+                        cutoff,
+                        witnessed_horizon,
+                        "[provenance] V3 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
+                    );
+                }
+                PinProvenance::CorroboratedByDelivery
+                | PinProvenance::WitnessedBeyondCutoff
+                | PinProvenance::SeedTrustOnly { .. } => {
+                    tracing::debug!(
+                        pool_addr = %format!("{address:x}"),
+                        seed_block,
+                        cutoff,
+                        verdict = ?verdict,
+                        "[provenance] V3 pin stamp classified"
                     );
                 }
             }
@@ -1825,6 +1873,9 @@ impl BotState {
         // Hoist the tombstone-confirmed cutoff (`pump_complete_cutoff` takes
         // `&self`) out of the inner scope, where `&mut state` is alive.
         let cutoff = self.pump_complete_cutoff();
+        // FUWYUR provenance (7HUYWM, V4 twin): hoist the engine-witnessed
+        // horizon so the pin can classify the seed stamp's freshness claim.
+        let witnessed = self.v4_event_horizon(&key);
         // Capture the pin scalar in an inner scope so the `&mut state` borrow
         // of `self.pools` ends before the diagnostic reads `self.v4_buffer`
         // (a second `&self` borrow) — Rust forbids both alive at once.
@@ -1852,12 +1903,13 @@ impl BotState {
                     liquidity_clock
                 };
                 state.post_drain_snapshot = Some((state.tick_data.clone(), pinned_block));
-                Some(pinned_block)
+                let verdict = pin_provenance_verdict(liquidity_clock, cutoff, witnessed);
+                Some((pinned_block, liquidity_clock, verdict))
             } else {
                 None
             }
         };
-        if let Some(tick_data_block) = diag {
+        if let Some((tick_data_block, seed_block, verdict)) = diag {
             if verify_dbg_enabled() {
                 tracing::info!(
                     pool_manager = %format!("{pool_manager:x}"),
@@ -1867,6 +1919,31 @@ impl BotState {
                     last_complete_block = self.pump_complete_cutoff(),
                     "[verify-dbg] V4 pin"
                 );
+            }
+            // FUWYUR stamp provenance (7HUYWM, V4 twin) — see the V3 pin.
+            match verdict {
+                PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
+                    tracing::warn!(
+                        pool_manager = %format!("{pool_manager:x}"),
+                        pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
+                        seed_block,
+                        cutoff,
+                        witnessed_horizon,
+                        "[provenance] V4 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
+                    );
+                }
+                PinProvenance::CorroboratedByDelivery
+                | PinProvenance::WitnessedBeyondCutoff
+                | PinProvenance::SeedTrustOnly { .. } => {
+                    tracing::debug!(
+                        pool_manager = %format!("{pool_manager:x}"),
+                        pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
+                        seed_block,
+                        cutoff,
+                        verdict = ?verdict,
+                        "[provenance] V4 pin stamp classified"
+                    );
+                }
             }
         }
     }
