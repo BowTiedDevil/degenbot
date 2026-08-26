@@ -30,11 +30,6 @@ use degenbot_math::cl::swap_math::compute_swap_step_v3;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
-/// Practical sqrt-price ceiling for bound derivation (`P² ` must leave wide
-/// I512 headroom downstream). Real pools sit far below this; above it we
-/// decline to derive (caller must not skip) rather than risk overflow.
-const P_ENTRY_LIMIT: U256 = U256::from_limbs([0, 0, 1, 0]); // 2^128
-
 /// One affine upper-bound line: `y = ceil((A + B·x) / C)` with `C > 0`, `B ≥ 0`.
 /// `A` may be negative (lines anchored past their own window's left edge).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,7 +291,10 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
                     continue;
                 }
                 let p_entry = er.sqrt_price_x96;
-                if p_entry.is_zero() || p_entry >= P_ENTRY_LIMIT {
+                if p_entry.is_zero() {
+                    // Zero entry price is nonsensical (the pool would be
+                    // irreversibly drained) — this is a genuine degenerate
+                    // case, not an arithmetic limitation.
                     return None;
                 }
                 // Entry marginal rate m (out/in token units):
@@ -315,15 +313,37 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
                 //   with D = fee_denom·m_den, N = γ_num·m_num.
                 let d512 = U512::from(er.fee_denom).saturating_mul(m_den);
                 let n512 = U512::from(er.gamma_numer).saturating_mul(m_num);
-                if d512 == U512::ZERO || n512 == U512::ZERO {
-                    return None;
+                // If this range's coefficient derivation overflows I512
+                // (e.g. P is at an extreme tick — a pool pushed far from fair
+                // value by a misrouted swap), skip this range's tangent line
+                // and continue. This is SOUND: every tangent line of a concave
+                // function is a global upper bound, so the envelope `min(lines)`
+                // stays valid (just looser) with fewer lines. The solver then
+                // decides whether to simulate; viability checks handle
+                // directional infeasibility. An extreme price is NOT evidence
+                // of infeasibility — for zero_for_one it is exactly the
+                // recovery direction (price moving down from the misrouted
+                // extreme). Rejecting the entire hop because one range's
+                // arithmetic overflowed would discard real arbitrage.
+                //
+                // Advance acc (crossing is computable in U256 regardless of
+                // the tangent-line overflow) so the next real range's line
+                // anchors at the correct cumulative offset.
+                if !d512.is_zero() && !n512.is_zero() {
+                    if let (Ok(d), Ok(n), Ok(oc), Ok(ic)) = (
+                        I512::try_from(d512),
+                        I512::try_from(n512),
+                        I512::try_from(U512::from(acc_out)),
+                        I512::try_from(U512::from(acc_in)),
+                    ) {
+                        if let Some(a) = oc
+                            .checked_mul(d)
+                            .and_then(|v| n.checked_mul(ic).and_then(|ni| v.checked_sub(ni)))
+                        {
+                            lines.push(Line { a, b: n, c: d });
+                        }
+                    }
                 }
-                let d = I512::try_from(d512).ok()?;
-                let n = I512::try_from(n512).ok()?;
-                let oc = I512::try_from(U512::from(acc_out)).ok()?;
-                let ic = I512::try_from(U512::from(acc_in)).ok()?;
-                let a = oc.checked_mul(d)?.checked_sub(n.checked_mul(ic)?)?;
-                lines.push(Line { a, b: n, c: d });
                 acc_in = cr.crossing_gross_input;
                 acc_out = cr.crossing_output;
             }
@@ -460,29 +480,13 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
         if p.is_zero() {
             return format!("reject=zero_price@k={k}");
         }
-        if p >= P_ENTRY_LIMIT {
-            return format!("reject=price_over_limit@k={k},p_entry_bits={}", p.bit_len());
-        }
-        // Check the coefficient overflow path (the marginal-rate U512
-        // products + I512 conversions).
-        let p_sq = U512::from(p).saturating_mul(U512::from(p));
-        let two192 = U512::from(1u8) << 192;
-        let (m_num, m_den) = if er.zero_for_one {
-            (p_sq, two192)
-        } else {
-            (two192, p_sq)
-        };
-        let d512 = U512::from(er.fee_denom).saturating_mul(m_den);
-        let n512 = U512::from(er.gamma_numer).saturating_mul(m_num);
-        if d512.is_zero() || n512.is_zero() {
-            return format!("reject=zero_coeff@k={k}");
-        }
-        if I512::try_from(d512).is_err() {
-            return format!("reject=d512_overflow@k={k},d_bits={}", d512.bit_len());
-        }
-        if I512::try_from(n512).is_err() {
-            return format!("reject=n512_overflow@k={k},n_bits={}", n512.bit_len());
-        }
+        // Coefficient overflow is now a per-range SKIP in production (the
+        // tangent line is omitted, the envelope stays sound with fewer lines).
+        // Mirror that here: ranges whose coefficients would overflow I512 are
+        // skipped, not rejection reasons. An extreme entry price is not
+        // evidence of infeasibility — for zero_for_one it is exactly the
+        // recovery direction (a pool pushed far from fair value by a
+        // misrouted swap).
     }
     if !any_real {
         // Every range was zero-liquidity — the envelope builder rejected
@@ -1041,33 +1045,24 @@ mod tests {
                  still_dead={still_dead} reasons={still_dead_reasons:?}"
             );
         }
-        // The production zero-liq skip must recover EVERY path that the old
-        // code rejected for zero_liq (crossing a zero-liq range is free in
-        // computeSwapStep L=0, so the envelope skips it and anchors the next
-        // real range). The only rejections that should remain are the separate
-        // price_over_limit gate (P_ENTRY_LIMIT, not addressed by this fix) /
-        // genuinely-all-zero pools (which do not occur in this post-refactor
-        // capture — the max_ranges removal lets the walk reach real
-        // liquidity for every swappable pool).
+        // Both guards that caused the captures are now removed:
+        //   1. zero-liq skip (crossing is free in computeSwapStep L=0)
+        //   2. extreme-price skip (overflow → omit tangent line; the
+        //      envelope stays sound because every tangent line of a concave
+        //      function is a global upper bound, so missing lines only
+        //      loosen the bound)
+        // An extreme price is NOT evidence of infeasibility — for
+        // zero_for_one it is the recovery direction (misrouted swap).
+        // Every captured path should now be recovered by production, unless
+        // it has a genuinely degenerate structure (zero_price, cap_tail
+        // overflow) which should be rare-to-absent in this capture.
         assert!(
             prod_recovered + still_dead == total,
             "every captured path must be classified"
         );
-        let zero_liq_remaining = still_dead_reasons
-            .get("reject=zero_liq")
-            .copied()
-            .unwrap_or(0)
-            + still_dead_reasons
-                .get("reject=all_zero_liq")
-                .copied()
-                .unwrap_or(0);
         assert!(
-            zero_liq_remaining == 0,
-            "zero-liq skip should recover all zero_liq paths, but {zero_liq_remaining} remain dead: {still_dead_reasons:?}"
-        );
-        assert!(
-            prod_recovered > 0,
-            "production should recover the zero_liq bucket, got 0/{total}"
+            prod_recovered >= total * 49 / 50,
+            "production should recover >=98% of captured paths (zero_liq + price_over_limit gates both removed), got {prod_recovered}/{total}"
         );
     }
 }

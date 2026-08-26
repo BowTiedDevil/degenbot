@@ -466,20 +466,18 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     std::env::remove_var("DEGENBOT_GATE_CAPTURE_CAP");
 }
 
-/// The capture harness must also fire for the high-price-cap rejection
-/// (the 60% bucket) and record the p_entry_bits so the offline experiment
-/// knows how far over P_ENTRY_LIMIT the entry price is.
+/// The envelope must NOT reject a CL hop with an extreme entry price.
+/// A pool pushed far from fair value by a misrouted swap IS a real arbitrage
+/// opportunity — the extreme price is not evidence of infeasibility, and for
+/// zero_for_one it is exactly the recovery direction (price moving DOWN from
+/// the misrouted extreme). The gate skips ranges whose I512 coefficients
+/// overflow, but keeps the lines that DO fit and lets the solver decide.
 #[test]
-fn m6776w_capture_harness_writes_jsonl_for_price_over_limit_rejection() {
-    let tmp = tempfile::NamedTempFile::new().expect("temp file");
-    let path = tmp.path().to_str().unwrap().to_string();
-    std::env::set_var("DEGENBOT_GATE_CAPTURE", "1");
-    std::env::set_var("DEGENBOT_GATE_CAPTURE_OUT", &path);
-    std::env::set_var("DEGENBOT_GATE_CAPTURE_CAP", "10");
-
+fn extreme_entry_price_is_not_rejected() {
     degenbot_solvers::profit_envelope::reset_gate_stats();
 
-    // P_ENTRY_LIMIT = 2^128. Use sqrt_price_x96 = 2^130 > 2^128.
+    // sqrt_price_x96 = 2^130 — far above the old P_ENTRY_LIMIT = 2^128.
+    // This represents a pool at an extreme tick (misrouted swap recovery).
     let extreme_price = U256::from(1u128) << 130;
     let range = mk_range(
         1_000_000,
@@ -490,28 +488,13 @@ fn m6776w_capture_harness_writes_jsonl_for_price_over_limit_rejection() {
     let seq = mk_seq(vec![range]);
     let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::Cl(&seq))];
 
-    assert!(path_profit_bound(&views).is_none());
-
-    let content = std::fs::read_to_string(&path).expect("capture file written");
-    let doc: serde_json::Value = serde_json::from_str(content.trim()).expect("valid JSONL");
-    let reason = doc["reject_reason"].as_str().expect("reject_reason str");
+    // The envelope must succeed (return Some bound), not reject the hop.
+    // A single range with real liquidity and an extreme price is a perfectly
+    // valid concave piece — the tangent line just has extreme coefficients,
+    // but P^2 = 2^260 fits in I512 (max 2^511).
+    let bound = path_profit_bound(&views);
     assert!(
-        reason.contains("price_over_limit"),
-        "reason should classify price_over_limit, got: {reason}"
+        bound.is_some(),
+        "extreme entry price should not be rejected (real arbitrage opportunity)"
     );
-    assert!(
-        reason.contains("p_entry_bits="),
-        "reason should include p_entry_bits, got: {reason}"
-    );
-    // The ranges must be serialized so the offline harness can reconstruct.
-    let ranges = doc["hops"][0]["ranges"].as_array().expect("ranges array");
-    assert_eq!(ranges.len(), 1);
-    assert!(
-        ranges[0]["sqrt_price_x96"].as_str().is_some(),
-        "entry sqrt_price must be serialized as decimal string"
-    );
-
-    std::env::remove_var("DEGENBOT_GATE_CAPTURE");
-    std::env::remove_var("DEGENBOT_GATE_CAPTURE_OUT");
-    std::env::remove_var("DEGENBOT_GATE_CAPTURE_CAP");
 }
