@@ -1310,6 +1310,14 @@ class HighFeePoolRejectedError(PoolRegistrationError):
     solve + ``encode-failed`` cycle.
     """
 
+class PossibleInaccurateResult(ValueError):
+    """A simulated swap crosses a hooked V4 pool (approximate CL math).
+
+    The computed amounts are the standard CL-math approximation; a V4
+    amount-modifying hook may have invalidated them. Raised by the
+    simulation seams when a result carries Caveats::HOOKED_POOL.
+    """
+
 # ------------------------------------------------------------------
 # Structural pool handle + read-only state views (feature = "bot").
 # Thin PyO3 handles over the Rust BotState pool entries; all state lives
@@ -1424,6 +1432,7 @@ __all__ = [
     "Pool",
     "PoolAlreadyRegisteredError",
     "PoolRegistrationError",
+    "PossibleInaccurateResult",
     "ReservePairView",
     "SpecViolationError",
     "VerificationMismatchError",

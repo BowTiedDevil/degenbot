@@ -283,17 +283,15 @@ class TestV4SeamAdmission:
             bot.register_v4_pool(**kw)
         assert "fee" in str(exc_info.value)
 
-    def test_hooked_pool_still_raises_hooked_pool_rejected_error(self) -> None:
-        """Pin that F2EVV6 didn't accidentally reparent HookedPoolRejectedError
-        out of its admission-floor nature — a hooked pool surfaces the same
-        typed V4 variant as before (now also a PoolRegistrationError). The
-        hooked check runs AFTER the spec validators, so the in-spec sqrt/fee/
-        tick/spacing must pass first for the hooked variant to fire."""
+    def test_hooked_pool_admitted_with_reserved_typed_error(self) -> None:
+        """X4EU3J: amount-modifying-hook V4 pools are admitted at registration
+        (simulations carry Caveats::HOOKED_POOL; hop projection excludes them
+        from solving). The F2EVV6 typed HookedPoolRejectedError stays exposed
+        for API compatibility, but register_v4_pool no longer raises it."""
         bot = Bot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e3" * 32)
         kw["hook_flags"] = 0x80  # BEFORE_SWAP — amount-modifying
-        with pytest.raises(HookedPoolRejectedError):
-            bot.register_v4_pool(**kw)
+        bot.register_v4_pool(**kw)  # admitted; no HookedPoolRejectedError raised
 
     def test_high_static_fee_raises_high_fee_pool_rejected_error(self) -> None:
         """DPODAZ: a static ``fee > 65535`` (u16::MAX) is protocol-valid but

@@ -664,8 +664,21 @@ impl BotState {
     // clippy::too_many_lines budget.
     #[expect(clippy::too_many_lines)]
     pub fn swap_simulation(&mut self, block: u64, pool_id: u64, request: SwapRequest) -> SwapRead {
-        if request.amount_specified.is_zero() || !self.pools.contains_key(&pool_id) {
-            return SwapRead::NotComputable;
+        if !self.pools.contains_key(&pool_id) {
+            // Unknown pool: return zero (legacy no-raise-on-miss contract).
+            return SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                consumed: I256::ZERO,
+                delivered: I256::ZERO,
+                caveats: Caveats::default(),
+            }));
+        }
+        if request.amount_specified.is_zero() {
+            // Zero input → zero output (on-chain getAmountOut(0) = 0).
+            return SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                consumed: I256::ZERO,
+                delivered: I256::ZERO,
+                caveats: Caveats::default(),
+            }));
         }
         let magnitude = request.amount_specified.into_sign_and_abs().1;
         let exact_output = request.amount_specified.is_positive();

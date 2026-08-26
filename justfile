@@ -43,6 +43,39 @@ test-standalone:
 # Default gate: standalone smoke + cargo workspace + full pytest.
 test: test-rust test-python
 
+# Run every pre-push gate manually, in hook order and fail-fast — the
+# commitlint push-range re-lint, then the Rust/Python code linters, then the
+# Rust and Python build + test tracks, exactly as the installed prek pre-push
+# hook runs them (prek.toml, stages = ["pre-push"]). The installed hook and
+# ci.yml stay authoritative on an actual push; this is for checking the gates
+# with `just pre-push` before `git push`.
+#
+# Manual pre-push gate check (mirrors prek.toml pre-push stage, fail-fast).
+pre-push:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    run_gate() {
+        local label="$1"
+        shift
+        echo
+        echo "===================================================================="
+        echo "▶ pre-push gate: ${label}"
+        echo "===================================================================="
+        "$@"
+    }
+
+    run_gate "commitlint (push range)" scripts/hooks/commitlint-push.sh
+    run_gate "Rust clippy"             just lint-rust-check
+    run_gate "Python lint"             just lint-python-check
+    run_gate "Rust build"              just build-rust-extension
+    run_gate "Rust tests"              just test-rust
+    run_gate "Python build (maturin)"  just dev
+    run_gate "Python tests"            just test-python
+
+    echo
+    echo "✓ all pre-push gates passed."
+
 # Run only the Rust track (standalone smoke + cargo workspace). CI's rust-test
 # job and the pre-push hook call this subunit directly; humans use `just test`.
 test-rust: test-standalone
