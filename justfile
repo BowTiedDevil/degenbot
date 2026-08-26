@@ -18,6 +18,15 @@ version:
     pkgs = json.loads(meta)["packages"]
     print(next(p["version"] for p in pkgs if p["name"] == "degenbot_rs"))
 
+# Bump every crate to a new SEMVER version in one atomic edit (ADR-009 lockstep).
+# cargo-edit updates the [workspace.package] literal, every inherited [package]
+# version, every internal [workspace.dependencies] requirement, and Cargo.lock —
+# the 1-vs-21 drift that felled the 0.6.0-alpha.6 crates.io publish is impossible
+# here. Pass the crates.io SEMVER form (0.6.0-alpha.7), not the PEP440 tag form
+# (0.6.0a7). Requires cargo-edit: cargo install cargo-edit
+bump-version version:
+    cargo set-version --workspace {{ version }} --manifest-path rust/Cargo.toml
+
 # ========== Rust Development ==========
 
 # Run the standalone-Rust-consumer smoke (ADR-005 standalone claim). Proves a
