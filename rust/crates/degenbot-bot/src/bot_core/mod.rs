@@ -3403,13 +3403,17 @@ mod tests {
     /// `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` / plain
     /// `PyValueError` respectively.
     #[test]
-    fn register_v4_pool_rejects_amount_modifying_hook_with_typed_error() {
-        use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
+    fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
+        // ADR-037/X4EU3J: hooked pools are ADMITTED (the hard rejection is
+        // gone) — their sims carry Caveats::HOOKED_POOL and paths through
+        // them are excluded from solving at projection time.
+        use crate::bot_core::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
         use crate::solvers::arb_engine::PoolTickCoverage;
         use std::collections::HashMap;
 
         let mut core = BotState::new();
-        let err = core
+        let pid = core
             .register_v4_pool(&RegisterV4PoolParams {
                 pool_manager: Address::from([0x44u8; 20]),
                 pool_id: [0xeeu8; 32],
@@ -3418,26 +3422,54 @@ mod tests {
                     currency1: Address::from([1u8; 20]),
                     fee: 500,
                     tick_spacing: 10,
-                    hooks: Address::ZERO,
+                    // BEFORE_SWAP (0x80) — amount-modifying. Note the flags
+                    // are derived from the hook address's low 16 bits by
+                    // pool_builder, not trusted from this field.
+                    hooks: Address::from([
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x80,
+                    ]),
                 },
-                // BEFORE_SWAP (0x80) — amount-modifying.
                 hook_flags: 0x80,
                 protocol_fee: 0,
                 sqrt_price_x96: U256::from(1u128) << 96,
                 liquidity: 1_000_000,
                 tick: 0,
-                tick_data: HashMap::new(),
+                // Seed tick 0 + Tracked so an in-tick swap computes without
+                // a fetch (isolates the caveat assertion from fetch policy).
+                tick_data: HashMap::from([(
+                    0_i32,
+                    TickInfo {
+                        liquidity_gross: alloy::primitives::U128::from(1_000_000u64),
+                        liquidity_net: I256::ZERO,
+                        block: 0,
+                    },
+                )]),
                 update_block: 0,
                 tick_data_block: None,
-                coverage: PoolTickCoverage::Sparse,
+                coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
             })
-            .expect_err("hooked pool must be rejected");
-        assert_eq!(
-            err,
-            RegisterV4PoolError::HookedPool { hook_flags: 0x80 },
-            "amount-modifying-hook refusal returns the typed HookedPool variant"
+            .expect("hooked pool must now be admitted");
+
+        // The sim computes but is caveated as potentially inaccurate.
+        let read = core.swap_simulation(
+            0,
+            pid,
+            SwapRequest {
+                zero_for_one: true,
+                amount_specified: -I256::try_from(1_000u64).unwrap(),
+                sqrt_price_limit: None,
+            },
         );
+        match read {
+            SwapRead::Computed(SwapOutcome::V4(payload)) => {
+                assert!(
+                    payload.caveats.contains(Caveats::HOOKED_POOL),
+                    "hooked-pool sims must carry the HOOKED_POOL caveat"
+                );
+            }
+            other => panic!("hooked V4 sim must compute with caveat, got {other:?}"),
+        }
     }
 
     #[test]

@@ -64,16 +64,16 @@ so future reviews do not re-suggest the twins.
    variants keep invalid states unrepresentable (V2 has no per-hop detail;
    CL payloads carry consumed/delivered/end-state/`fetched_words`).
 
-5. **Hooked pools: reserved caveat, admission unchanged (0.6.x).**
-   `RegisterV4PoolError::HookedPool` continues to reject amount-modifying
-   hooks (`hook_flags & 0xCC != 0`) and dynamic fees at construction — a
-   correctness floor, since the solver's CL math assumes no hook
-   intervention. A `HOOKED_POOL` caveat variant is therefore reserved but
-   unreachable in 0.6.x. Ergo task `X4EU3J` plans the flip: admit hooked
-   pools, derive the caveat from `hook_flags & 0xCC`, port the archived
-   Python pattern (archive/main-20260721 `v4_liquidity_pool.py` `Hooks`
-   enum; `PossibleInaccurateResult` carrying the approximate amounts).
-   `DynamicFee` and `FeeExceedsEncoderLimit` rejections stay regardless.
+5. **Hooked pools: caveat, not refusal.** `RegisterV4PoolError::DynamicFee`
+   and `FeeExceedsEncoderLimit` rejections stay (un-encodable fee / fee-flag
+   ambiguity). Amount-modifying hooks are ADMITTED since ergo task `X4EU3J`:
+   their simulations carry `Caveats::HOOKED_POOL` (derived from
+   `hook_flags & 0xCC`, the low 16 bits of the hook address per v4-core
+   `Hooks.sol`) and hop projection excludes them from solving, so the net
+   trading behavior is unchanged while the pools become queryable. The
+   archived Python pattern (`archive/main-20260721` `v4_liquidity_pool.py`
+   `Hooks` enum; `PossibleInaccurateResult` carrying the approximate
+   amounts) is the model for the Python-side surfacing in the tail task.
    ADR-012's spec-width admission contract is unaffected (storage widths,
    not hooks).
 

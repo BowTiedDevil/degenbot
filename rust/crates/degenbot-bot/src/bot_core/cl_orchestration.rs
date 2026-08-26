@@ -19,8 +19,7 @@ use alloy::primitives::{Address, U256};
 use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
 use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent};
 use degenbot_pools::v4_state::{
-    BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4StateSync, AMOUNT_MODIFYING_HOOK_MASK,
-    V4_DYNAMIC_FEE_FLAG,
+    BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4StateSync, V4_DYNAMIC_FEE_FLAG,
 };
 
 use super::{
@@ -1008,21 +1007,21 @@ impl BotState {
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
-    /// ADR-003 hook filter inline: pools with amount-modifying hooks, dynamic
-    /// fees, or static fees exceeding the `cmd_executor`'s 2-byte encoding
-    /// limit are rejected. Returns `Err(RegisterV4PoolError)` on rejection.
+    /// ADR-037/X4EU3J: pools with amount-modifying hooks are ADMITTED (their
+    /// simulations carry `Caveats::HOOKED_POOL` and hop projection excludes
+    /// them from solving). Dynamic fees and static fees exceeding the
+    /// `cmd_executor`'s 2-byte encoding limit are still rejected. Returns
+    /// `Err(RegisterV4PoolError)` on rejection.
     ///
     /// # Errors
     ///
     /// Returns [`RegisterV4PoolError::SpecViolation`] when `sqrt_price_x96`,
     /// `tick`, V4 `fee`, or `tick_spacing` violates its Solidity-bounded
     /// on-chain invariant (see [`spec_bounds`]). These checks fire *first* —
-    /// before the hooked / dynamic-fee / high-fee / already-registered
-    /// rejections — so an impossible-CL-config rejection surfaces the
-    /// primitive at fault.
+    /// before the dynamic-fee / high-fee / already-registered rejections — so
+    /// an impossible-CL-config rejection surfaces the primitive at fault.
     ///
-    /// Returns `Err` if the pool has amount-modifying hooks
-    /// (`hook_flags & 0xCC != 0`), uses a dynamic fee (`fee == 0x100000`),
+    /// Returns `Err` if the pool uses a dynamic fee (`fee == 0x100000`),
     /// has a static fee exceeding the executor's `u16` encoding field
     /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`, ergo
     /// DPODAZ), or a pool with the same `(pool_manager, pool_id)` is
@@ -1039,11 +1038,6 @@ impl BotState {
         sb::validate_tick_spacing(params.pool_key.tick_spacing)
             .map_err(RegisterV4PoolError::SpecViolation)?;
 
-        if (params.hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0 {
-            return Err(RegisterV4PoolError::HookedPool {
-                hook_flags: params.hook_flags,
-            });
-        }
         if params.pool_key.fee == V4_DYNAMIC_FEE_FLAG {
             return Err(RegisterV4PoolError::DynamicFee {
                 fee: params.pool_key.fee,

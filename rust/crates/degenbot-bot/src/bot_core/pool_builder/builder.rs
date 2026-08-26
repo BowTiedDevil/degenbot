@@ -1179,8 +1179,9 @@ async fn bootstrap_v4_tick_map(
 }
 
 /// Caller-supplied V4 pool identity (mirrors the `register_v4_pool` argument
-/// set — the core never reads these on-chain; hook filtering is already applied
-/// via `hook_flags`). Bundled so `build_v4` stays under `clippy::too_many_arguments`
+/// set — the core never reads these on-chain; hook flags are carried through
+/// for caveat tagging since X4EU3J, not for rejection). Bundled so `build_v4`
+/// stays under `clippy::too_many_arguments`
 /// (same convention as `RegisterV4PoolParams`).
 #[derive(Debug, Clone, Copy)]
 pub struct V4PoolBuildIdentity {

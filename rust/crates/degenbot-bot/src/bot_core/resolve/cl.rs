@@ -88,9 +88,20 @@ pub(crate) fn project_v4(
     {
         return Err(MissingHopReason::NotViable);
     }
+    // ADR-037/X4EU3J: hooked pools are ADMITTED at registration but are
+    // not solvable — the CL math assumes no hook intervention. Paths that
+    // would traverse one die here with a named reason so the existing
+    // invalidation telemetry counts them.
     let identity = core
         .get_v4_identity(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
+    // ADR-037/X4EU3J: hooked pools are ADMITTED at registration but are
+    // not solvable — the CL math assumes no hook intervention. Paths that
+    // would traverse one die here with a named reason so the existing
+    // invalidation telemetry counts them.
+    if ::degenbot_pools::v4_state::has_amount_modifying_hook(identity.pool_key.hooks) {
+        return Err(MissingHopReason::HookedPool);
+    }
     let int_seq = pool_state
         .build_int_v4_sequence(
             identity.pool_key.tick_spacing,
@@ -300,6 +311,19 @@ mod tests {
     }
 
     fn register_v4(core: &mut BotState, tick_data: HashMap<i32, TickInfo>) -> u64 {
+        register_v4_with_hooks(core, tick_data, 0)
+    }
+
+    fn register_v4_with_hooks(
+        core: &mut BotState,
+        tick_data: HashMap<i32, TickInfo>,
+        hook_flags: u16,
+    ) -> u64 {
+        // The hook ADDRESS's low 16 bits carry the permission bitmask — the
+        // builder derives hook_flags from it, so craft the address to match.
+        let mut hooks = [0u8; 20];
+        hooks[18] = (hook_flags >> 8) as u8;
+        hooks[19] = hook_flags as u8;
         core.register_v4_pool(&RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
             pool_id: [0xabu8; 32],
@@ -308,9 +332,9 @@ mod tests {
                 currency1: Address::from([0x31u8; 20]),
                 fee: 500,
                 tick_spacing: 10,
-                hooks: Address::ZERO,
+                hooks: Address::new(hooks.into()),
             },
-            hook_flags: 0,
+            hook_flags,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000_000,
@@ -336,6 +360,16 @@ mod tests {
             "initialized ticks -> non-empty walk"
         );
         assert_eq!(nonce, core.get_v4_pool(v4_id).expect("state").state_nonce);
+    }
+
+    #[test]
+    fn project_v4_hooked_pool_is_hooked_pool_reason() {
+        // ADR-037/X4EU3J: hooked pools are admitted but excluded from
+        // solving — projection fails with the named HookedPool reason.
+        let mut core = BotState::new();
+        let v4_id = register_v4_with_hooks(&mut core, two_ticks(), 0x80);
+        let reason = proj4(&core, &v4_ref(v4_id, true)).unwrap_err();
+        assert_eq!(reason, MissingHopReason::HookedPool);
     }
 
     #[test]

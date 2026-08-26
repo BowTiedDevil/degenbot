@@ -73,6 +73,9 @@ pub struct Caveats(u8);
 impl Caveats {
     /// Sparse tick coverage: the walk may have traversed unfetched regions.
     pub const SPARSE_COVERAGE: Self = Self(1 << 0);
+    /// The pool carries an amount-modifying V4 hook — standard CL math may
+    /// mis-price the swap. (Reachable since X4EU3J admitted hooked pools.)
+    pub const HOOKED_POOL: Self = Self(1 << 1);
 
     /// No caveats — the outcome is trustworthy.
     #[must_use]
@@ -651,6 +654,10 @@ impl BotState {
     ///
     /// `block` is the fetch context threaded into the tick-word fetcher on
     /// sparse-miss recovery; it does not affect pure computation.
+    // TODO(X4EU3J follow-up): extract the per-family arms once the hook
+    // caveat plumbing settles; the body is 101 lines against a 100-line
+    // clippy::too_many_lines budget.
+    #[expect(clippy::too_many_lines)]
     pub fn swap_simulation(&mut self, block: u64, pool_id: u64, request: SwapRequest) -> SwapRead {
         if request.amount_specified.is_zero() || !self.pools.contains_key(&pool_id) {
             return SwapRead::NotComputable;
@@ -722,11 +729,25 @@ impl BotState {
                     spec: engine_amount_specified(request.amount_specified, family),
                     limit,
                 };
-                finish_cl(&mut sim, block, SwapOutcomeFamily::V3, coverage, request)
+                finish_cl(
+                    &mut sim,
+                    block,
+                    SwapOutcomeFamily::V3,
+                    coverage,
+                    request,
+                    Caveats::default(),
+                )
             }
-            PoolEntry::V4(_, v4_state) => {
+            PoolEntry::V4(identity, v4_state) => {
                 let coverage = v4_state.coverage;
                 let family = EngineFamily::V4Engine;
+                let hooked =
+                    ::degenbot_pools::v4_state::has_amount_modifying_hook(identity.pool_key.hooks);
+                let extra_caveats = if hooked {
+                    Caveats::HOOKED_POOL
+                } else {
+                    Caveats::default()
+                };
                 let limit = request
                     .sqrt_price_limit
                     .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
@@ -737,7 +758,14 @@ impl BotState {
                     spec: engine_amount_specified(request.amount_specified, family),
                     limit,
                 };
-                finish_cl(&mut sim, block, SwapOutcomeFamily::V4, coverage, request)
+                finish_cl(
+                    &mut sim,
+                    block,
+                    SwapOutcomeFamily::V4,
+                    coverage,
+                    request,
+                    extra_caveats,
+                )
             }
         }
     }
@@ -756,10 +784,11 @@ fn finish_cl(
     family: SwapOutcomeFamily,
     coverage: PoolTickCoverage,
     request: SwapRequest,
+    extra_caveats: Caveats,
 ) -> SwapRead {
     match drive(sim, block) {
         PolicyAttempt::Computed(outcome, fetched_words) => {
-            let caveats = caveats_for_coverage(coverage);
+            let caveats = caveats_for_coverage(coverage).union(extra_caveats);
             let payload = cl_payload(&outcome, request.zero_for_one, caveats, fetched_words);
             SwapRead::Computed(match family {
                 SwapOutcomeFamily::V3 => SwapOutcome::V3(payload),

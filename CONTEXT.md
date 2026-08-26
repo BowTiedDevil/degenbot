@@ -841,11 +841,11 @@ twins, `calculate_tokens_in`, and the override path's ad-hoc shape.
   `FetchFailed` / `FetchExhausted`). No silent `U256::ZERO`: a former
   silent-zero failure mode is always an observable variant.
 - **Caveats** — additive, non-exhaustive flag set on the outcome whose
-  EMPTY value means "this number is exact". First variant `SparseCoverage`
-  (derived from registration-time `PoolTickCoverage`); a `HookedPool`
-  variant is reserved in 0.6.x — admission still rejects hooked/dynamic-fee
-  V4 pools (`RegisterV4PoolError::HookedPool`); admitting hooked pools and
-  wiring this variant is planned work (ergo task X4EU3J).
+  EMPTY value means "this number is exact". Variants: `SparseCoverage`
+  (derived from registration-time `PoolTickCoverage`) and `HOOKED_POOL`
+  (amount-modifying V4 hook; such pools are admitted since X4EU3J/ADR-037
+  and excluded from solving at hop projection). Dynamic-fee and high-static
+  -fee V4 pools are still refused at admission.
 _Avoid_: "quote", "oracle", "gate" (admission-control connotations),
 "miss-aware/with-fetch" twins (retired names).
 

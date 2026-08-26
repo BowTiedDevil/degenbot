@@ -37,14 +37,30 @@ use degenbot_math::cl::tick_math::{
 
 /// Bitmask of V4 hook flags that can modify swap amounts.
 ///
-/// Pools with any of these bits set are excluded from arbitrage because the
+/// Pools with any of these bits set are excluded from SOLVING because the
 /// solver assumes standard V3 math — hooked pools can produce arbitrary deltas
-/// that violate this assumption.
+/// that violate this assumption. Since ADR-037/X4EU3J they are admitted at
+/// registration (simulations carry `Caveats::HOOKED_POOL`) rather than
+/// refused outright; only the solve path excludes them.
 /// - `BEFORE_SWAP` (1<<7 = 0x80)
 /// - `AFTER_SWAP` (1<<6 = 0x40)
 /// - `BEFORE_SWAP_RETURNS_DELTA` (1<<3 = 0x08)
 /// - `AFTER_SWAP_RETURNS_DELTA` (1<<2 = 0x04)
 pub const AMOUNT_MODIFYING_HOOK_MASK: u16 = 0x80 | 0x40 | 0x08 | 0x04; // = 0xCC
+
+/// Whether a hook address carries any amount-modifying permission bit.
+///
+/// A hook address's LOW 16 BITS are its permission bitmask (Uniswap
+/// v4-core `Hooks.sol`; see the archived Python `Hooks` enum on the
+/// `archive/main-20260721` branch). The swap-relevant bits are
+/// `0x80 | 0x40 | 0x08 | 0x04` (`BEFORE`/`AFTER_SWAP` plus the two
+/// return-delta twins) — they can
+/// alter swap deltas, so standard CL math may mis-price such pools.
+#[must_use]
+pub fn has_amount_modifying_hook(hooks: Address) -> bool {
+    let flags = u16::from_be_bytes([hooks.as_slice()[18], hooks.as_slice()[19]]);
+    flags & AMOUNT_MODIFYING_HOOK_MASK != 0
+}
 
 /// V4 dynamic-fee flag. Pools with `fee == 0x0010_0000` have swap fees that
 /// change between blocks; the solver assumes a fixed fee, so these are
@@ -146,11 +162,11 @@ pub struct RegisterV4PoolParams {
     pub pool_manager: Address,
     pub pool_id: V4PoolId,
     pub pool_key: V4PoolKey,
-    /// Pre-decoded hook flags bitmask. Pools with amount-modifying hooks
-    /// (`hook_flags & 0xCC != 0`) or dynamic fees (`fee == 0x100000`) are
-    /// rejected at registration — enforced by the Rust core
-    /// (`BotState::register_v4_pool`) as a correctness floor, surfacing as
-    /// `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` at the seam.
+    /// Pre-decoded hook flags bitmask (low 16 bits of the hook address).
+    /// Amount-modifying hooks (`& 0xCC != 0`, ADR-037) no longer block
+    /// admission — such pools register with `Caveats::HOOKED_POOL` on every
+    /// simulation and are excluded from solving at hop projection.
+    /// Dynamic fees are still rejected (`RegisterV4PoolError::DynamicFee`).
     pub hook_flags: u16,
     /// The V4 pool's packed `slot0.protocolFee` (`uint24` — two 12-bit
     /// direction fees, `getZeroForOneFee | (getOneForZeroFee << 12)`).
@@ -190,6 +206,9 @@ pub struct RegisterV4PoolParams {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegisterV4PoolError {
     /// Pool carries an amount-modifying hook (`hook_flags & 0xCC != 0`).
+    /// RESERVED since ADR-037/X4EU3J: no raise site remains (hooked pools
+    /// are admitted with a simulation caveat); kept so the `PyO3` error
+    /// mapping stays stable.
     HookedPool { hook_flags: u16 },
     /// Pool uses a dynamic fee (`fee == 0x100000`).
     DynamicFee { fee: u32 },
