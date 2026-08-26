@@ -53,7 +53,7 @@ degenbot-uniswap.workspace = true
 [dev-dependencies]
 async-trait = "0.1"
 alloy = { version = "^2.4", features = ["full"] }
-revm = { version = "^42.0", default-features = false }
+revm = { version = "^43.0", default-features = false }
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }

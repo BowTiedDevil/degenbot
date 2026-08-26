@@ -26,7 +26,7 @@ default = ["envelope"]
 envelope = []
 
 [dependencies]
-alloy-primitives = { version = "^1.6", default-features = false, features = ["std"] }
+alloy-primitives = { version = "^1.7", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "^1.11"

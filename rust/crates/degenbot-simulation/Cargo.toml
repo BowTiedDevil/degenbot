@@ -20,7 +20,7 @@ workspace = true
 # owner-funding uses explicit `CacheDB::insert_account_info` (the owner is
 # genuinely credited), keeping the sim a faithful mainnet execution (no
 # balance-check bypass).
-revm = { version = "^42.0", default-features = true, features = ["alloydb", "asyncdb"] }
+revm = { version = "^43.0", default-features = true, features = ["alloydb", "asyncdb"] }
 # The alloy umbrella (single source, matches degenbot-rpc's convention). The
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.

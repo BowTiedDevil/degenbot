@@ -30,5 +30,5 @@ hex = "^0.4"
 # dev-dep only — does NOT pull revm into the core lib build (cargo tree on
 # default features excludes dev-deps), so the no-pyo3-in-cores invariant is
 # unaffected.
-revm = { version = "^42.0", default-features = true }
+revm = { version = "^43.0", default-features = true }
 
