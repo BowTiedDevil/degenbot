@@ -876,4 +876,228 @@ mod tests {
         let n = I512::try_from(10i64).expect("10 fits");
         assert_eq!(ceil_div(n, d), I512::try_from(4i64).expect("4 fits"));
     }
+
+    // -----------------------------------------------------------------
+    // M6776W degenerate-capture experiment harness: loads captured JSONL
+    // paths and tests whether the proposed fixes (zero-liq skip + P_ENTRY_LIMIT
+    // widen) recover them to a derivable bound.
+    // -----------------------------------------------------------------
+
+    /// An experimental version of the CL `hop_lines_and_cap` arm with
+    /// configurable `p_entry_limit` and `skip_zero_liq` — mirrors the
+    /// production logic exactly but allows the fix configurations to be
+    /// tested against the captured golden state.
+    fn cl_hop_lines_and_cap_experimental(
+        seq: &IntV3TickRangeSequence,
+        skip_zero_liq: bool,
+        p_limit: U256,
+    ) -> bool {
+        if seq.ranges.is_empty() {
+            return false;
+        }
+        let mut lines: Vec<Line> = Vec::with_capacity(seq.ranges.len());
+        let mut acc_in = U256::ZERO;
+        let mut acc_out = U256::ZERO;
+        for k in 0..seq.ranges.len() {
+            let Some(cr) = seq.compute_crossing(k) else {
+                return false;
+            };
+            let er = &cr.ending_range;
+            let p_entry = er.sqrt_price_x96;
+            if p_entry.is_zero() || p_entry >= p_limit {
+                return false;
+            }
+            let liq = er.liquidity;
+            if liq == 0 {
+                if skip_zero_liq {
+                    continue; // FIX 1: skip zero-liq ranges instead of poisoning
+                }
+                return false;
+            }
+            // Coefficient derivation (same as production).
+            let p_sq = U512::from(p_entry).saturating_mul(U512::from(p_entry));
+            let two192 = U512::from(1u8) << 192;
+            let (m_num, m_den) = if er.zero_for_one {
+                (p_sq, two192)
+            } else {
+                (two192, p_sq)
+            };
+            let d512 = U512::from(er.fee_denom).saturating_mul(m_den);
+            let n512 = U512::from(er.gamma_numer).saturating_mul(m_num);
+            if d512 == U512::ZERO || n512 == U512::ZERO {
+                return false;
+            }
+            let Ok(d) = I512::try_from(d512) else {
+                return false;
+            };
+            let Ok(n) = I512::try_from(n512) else {
+                return false;
+            };
+            let Ok(oc) = I512::try_from(U512::from(acc_out)) else {
+                return false;
+            };
+            let Ok(ic) = I512::try_from(U512::from(acc_in)) else {
+                return false;
+            };
+            let Some(a) = oc
+                .checked_mul(d)
+                .and_then(|v| v.checked_sub(n.checked_mul(ic)?))
+            else {
+                return false;
+            };
+            lines.push(Line { a, b: n, c: d });
+            acc_in = cr.crossing_gross_input;
+            acc_out = cr.crossing_output;
+        }
+        // Cap-tail (same as production).
+        let Some(cr_last) = seq.compute_crossing(seq.ranges.len() - 1) else {
+            return false;
+        };
+        let er = cr_last.ending_range;
+        let exit = if er.zero_for_one {
+            er.sqrt_price_lower_x96
+        } else {
+            er.sqrt_price_upper_x96
+        };
+        let Ok(liq) = i128::try_from(er.liquidity) else {
+            return false;
+        };
+        let Ok(step) = compute_swap_step_v3(
+            er.sqrt_price_x96,
+            exit,
+            liq,
+            I256::MAX,
+            U256::from(er.fee_denom.saturating_sub(er.gamma_numer)),
+        ) else {
+            return false;
+        };
+        acc_out.checked_add(step.amount_out).is_some() && !lines.is_empty()
+    }
+
+    /// Parse one captured JSONL line into a CL `IntV3TickRangeSequence`.
+    fn parse_cl_seq(ranges_json: &serde_json::Value) -> Option<IntV3TickRangeSequence> {
+        let ranges: Vec<degenbot_pools::int_v3_hop::IntV3TickRangeHop> = ranges_json
+            .as_array()?
+            .iter()
+            .map(|r| {
+                Some(degenbot_pools::int_v3_hop::IntV3TickRangeHop {
+                    liquidity: r.get("liquidity")?.as_str()?.parse().ok()?,
+                    sqrt_price_x96: r.get("sqrt_price_x96")?.as_str()?.parse().ok()?,
+                    sqrt_price_lower_x96: r.get("sqrt_price_lower_x96")?.as_str()?.parse().ok()?,
+                    sqrt_price_upper_x96: r.get("sqrt_price_upper_x96")?.as_str()?.parse().ok()?,
+                    gamma_numer: r.get("gamma_numer")?.as_u64()?,
+                    fee_denom: r.get("fee_denom")?.as_u64()?,
+                    zero_for_one: r.get("zero_for_one")?.as_bool()?,
+                    word_boundary_prices: r
+                        .get("word_boundary_prices")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|p| p.as_str()?.parse().ok()).collect())
+                        .unwrap_or_default(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(IntV3TickRangeSequence {
+            ranges,
+            truncated: false,
+        })
+    }
+
+    /// The experiment: load the captured JSONL, reproduce each rejection
+    /// with the current production code, then test the fixes.
+    #[test]
+    fn m6776w_experiment_fixes_recover_captured_degenerate_paths() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../investigation/captures/gate_degenerate_2026-08-26.jsonl");
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return; // capture file not present (CI / dev without captures)
+        };
+
+        let mut total = 0u32;
+        let mut reproduced_none = 0u32;
+        let mut recovered_zero_liq_skip = 0u32;
+        let mut recovered_widen_limit = 0u32;
+        let mut recovered_both = 0u32;
+        let mut still_dead = 0u32;
+
+        for line in content.lines().filter(|l| !l.trim().is_empty()) {
+            let doc: serde_json::Value = serde_json::from_str(line).expect("valid JSONL");
+            let reject_hop = doc
+                .get("reject_hop")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+                .try_into()
+                .unwrap_or(0);
+            let hops = doc
+                .get("hops")
+                .and_then(|v| v.as_array())
+                .expect("hops array");
+            let reject_hop_json = &hops[reject_hop];
+            let ranges_json = reject_hop_json.get("ranges").expect("ranges");
+            if ranges_json.is_null() {
+                continue; // V2 or non-CL reject (skip for this experiment)
+            }
+            let Some(seq) = parse_cl_seq(ranges_json) else {
+                continue; // parse failure (skip)
+            };
+            total += 1;
+
+            // 1. Reproduce the rejection with production code.
+            let prod = hop_lines_and_cap(HopMath::Cl(&seq));
+            assert!(
+                prod.is_none(),
+                "path should be degenerate under prod code (line: {line})"
+            );
+            reproduced_none += 1;
+
+            // 2. Fix 1: skip zero-liq ranges.
+            let fix1 = cl_hop_lines_and_cap_experimental(
+                &seq,
+                true,          // skip_zero_liq
+                P_ENTRY_LIMIT, // unchanged limit
+            );
+            if fix1 {
+                recovered_zero_liq_skip += 1;
+            }
+
+            // 3. Fix 2: widen P_ENTRY_LIMIT to 2^240.
+            let widened_limit = U256::from(1u128) << 240;
+            let fix2 = cl_hop_lines_and_cap_experimental(
+                &seq,
+                false,         // no zero-liq skip
+                widened_limit, // widened
+            );
+            if fix2 {
+                recovered_widen_limit += 1;
+            }
+
+            // 4. Fix 3: both fixes combined.
+            let fix3 = cl_hop_lines_and_cap_experimental(
+                &seq,
+                true,          // skip_zero_liq
+                widened_limit, // widened
+            );
+            if fix3 {
+                recovered_both += 1;
+            } else {
+                still_dead += 1;
+            }
+        }
+
+        #[expect(clippy::print_stderr)]
+        {
+            eprintln!(
+                "M6776W experiment: total={total} reproduced_none={reproduced_none} \
+                 fix1(zero_liq_skip)={recovered_zero_liq_skip} \
+                 fix2(widen_2^240)={recovered_widen_limit} \
+                 fix3(both)={recovered_both} \
+                 still_dead={still_dead}"
+            );
+        }
+        // Both fixes together must recover the vast majority (only the
+        // genuinely-dead all-zero-liq pools should remain).
+        assert!(
+            recovered_both >= total * 4 / 5,
+            "combined fix should recover >=80% of captured paths, got {recovered_both}/{total}"
+        );
+    }
 }
