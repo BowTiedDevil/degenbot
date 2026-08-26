@@ -15,6 +15,7 @@ workspace = true
 alloy = { version = "^2.4" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
+serde_json = { version = "^1.0" }
 num-bigint = { version = "^0.5" }
 num-integer = { version = "^0.1" }
 degenbot-math.workspace = true
@@ -25,6 +26,7 @@ degenbot-uniswap.workspace = true
 proptest = "^1.11"
 parking_lot = { version = "^0.12" }
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
+tempfile = { version = "^3.27" }
 # Network-gated V3 mainnet-fixture reproduction (ergo E7ALWT): the live trap
 # captured a +13 V3-hop over-prediction whose bias is INDEPENDENT of amount —
 # pointing at a topology-specific `compute_crossing` divergence the synthetic
@@ -32,8 +34,6 @@ criterion = { version = "^0.8", default-features = false, features = ["cargo_ben
 # the real pool state on demand; the test is env-gated so CI never hits the net.
 degenbot-rpc.workspace = true
 tokio = { version = "^1.53", features = ["rt-multi-thread", "macros"] }
-# Offline heavy-CL-path replay harness (examples/cl_solve_replay.rs).
-serde_json = { version = "^1.0" }
 
 
 [[bench]]

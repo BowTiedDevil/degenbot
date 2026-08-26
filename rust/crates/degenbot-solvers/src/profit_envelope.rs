@@ -409,6 +409,166 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
     }
 }
 
+/// Classify WHY a CL hop was rejected by `hop_lines_and_cap` (M6776W
+/// diagnostic). Mirrors the exact checks in the `HopMath::Cl` arm so the
+/// debug log identifies the precise rejection reason + range index.
+#[must_use]
+fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
+    if seq.ranges.is_empty() {
+        return "reject=empty_ranges".to_string();
+    }
+    for k in 0..seq.ranges.len() {
+        let Some(cr) = seq.compute_crossing(k) else {
+            return format!("reject=crossing_none@k={k}");
+        };
+        let er = &cr.ending_range;
+        let p = er.sqrt_price_x96;
+        if p.is_zero() {
+            return format!("reject=zero_price@k={k}");
+        }
+        if p >= P_ENTRY_LIMIT {
+            return format!("reject=price_over_limit@k={k},p_entry_bits={}", p.bit_len());
+        }
+        if er.liquidity == 0 {
+            return format!("reject=zero_liq@k={k}");
+        }
+        // Check the coefficient overflow path (the marginal-rate U512
+        // products + I512 conversions).
+        let p_sq = U512::from(p).saturating_mul(U512::from(p));
+        let two192 = U512::from(1u8) << 192;
+        let (m_num, m_den) = if er.zero_for_one {
+            (p_sq, two192)
+        } else {
+            (two192, p_sq)
+        };
+        let d512 = U512::from(er.fee_denom).saturating_mul(m_den);
+        let n512 = U512::from(er.gamma_numer).saturating_mul(m_num);
+        if d512.is_zero() || n512.is_zero() {
+            return format!("reject=zero_coeff@k={k}");
+        }
+        if I512::try_from(d512).is_err() {
+            return format!("reject=d512_overflow@k={k},d_bits={}", d512.bit_len());
+        }
+        if I512::try_from(n512).is_err() {
+            return format!("reject=n512_overflow@k={k},n_bits={}", n512.bit_len());
+        }
+    }
+    // Rejection fired in the cap-tail (compute_swap_step or checked_add).
+    "reject=cap_tail".to_string()
+}
+
+/// Serialize a CL hop's tick-range sequence to a JSON value for the
+/// degenerate-path capture harness (M6776W). Each range carries the 8
+/// primitive fields the offline replay harness needs to reconstruct an
+/// `IntV3TickRangeSequence` (decimal-string big-ints, matching the
+/// `HeavyClPathCapture` JSONL schema in `solver_dispatch.rs`).
+fn cl_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
+    serde_json::Value::Array(
+        seq.ranges
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "liquidity": r.liquidity.to_string(),
+                    "sqrt_price_x96": r.sqrt_price_x96.to_string(),
+                    "sqrt_price_lower_x96": r.sqrt_price_lower_x96.to_string(),
+                    "sqrt_price_upper_x96": r.sqrt_price_upper_x96.to_string(),
+                    "gamma_numer": r.gamma_numer,
+                    "fee_denom": r.fee_denom,
+                    "zero_for_one": r.zero_for_one,
+                    "word_boundary_prices": r.word_boundary_prices
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Env-gated degenerate-path capture: serialize the full per-hop CL range
+/// state + the precise rejection reason to a JSONL file so the pool states
+/// can be replayed offline for fix experimentation.
+///
+/// # Env vars
+///
+/// - `DEGENBOT_GATE_CAPTURE=1` — enable capture (default: off)
+/// - `DEGENBOT_GATE_CAPTURE_OUT=<path>` — output file (default:
+///   `/tmp/gate_degenerate.jsonl`)
+/// - `DEGENBOT_GATE_CAPTURE_CAP=<N>` — max captured paths (default: 50)
+///
+/// The JSONL schema matches `HeavyClPathCapture`'s format so the existing
+/// offline replay harness (
+/// `degenbot-solvers/tests/profit_envelope_tests.rs` golden-capture suite)
+/// can load these fixtures directly.
+pub(crate) fn capture_degenerate_path(
+    hops: &[Option<HopMath<'_>>],
+    reject_hop_index: usize,
+    reject_reason: &str,
+) {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CAPTURE_COUNT: AtomicU64 = AtomicU64::new(0);
+    let max: u64 = std::env::var("DEGENBOT_GATE_CAPTURE_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    if CAPTURE_COUNT.fetch_add(1, Ordering::Relaxed) >= max {
+        return;
+    }
+    let out_path = std::env::var("DEGENBOT_GATE_CAPTURE_OUT").map_or_else(
+        |_| std::path::PathBuf::from("/tmp/gate_degenerate.jsonl"),
+        std::path::PathBuf::from,
+    );
+    // Serialize every hop's CL ranges (V2/Solidly/Weighted/ReserveCap are
+    // captured as their family name + key scalars — the off-line harness
+    // reconstructs CL from ranges; V2 from (reserve_in, reserve_out); etc.).
+    let hops_json: Vec<serde_json::Value> = hops
+        .iter()
+        .enumerate()
+        .map(|(i, slot)| {
+            let family = match slot {
+                None => "unmapped".to_string(),
+                Some(HopMath::V2(h)) => {
+                    format!("v2(r_in={},r_out={})", h.reserve_in, h.reserve_out)
+                }
+                Some(HopMath::Cl(_)) => "cl".to_string(),
+                Some(HopMath::SolidlyVolatile { reserve_in, reserve_out }) => {
+                    format!("solidly_volatile(r_in={reserve_in},r_out={reserve_out})")
+                }
+                Some(HopMath::Weighted { balance_in, balance_out, weight_in, weight_out, .. }) => {
+                    format!("weighted(b_in={balance_in},b_out={balance_out},w_in={weight_in},w_out={weight_out})")
+                }
+                Some(HopMath::ReserveCap { reserve_out }) => {
+                    format!("reserve_cap(r_out={reserve_out})")
+                }
+            };
+            let ranges = match slot {
+                Some(HopMath::Cl(seq)) => cl_seq_to_json(seq),
+                _ => serde_json::Value::Null,
+            };
+            serde_json::json!({
+                "hop_index": i,
+                "family": family,
+                "ranges": ranges,
+            })
+        })
+        .collect();
+    let doc = serde_json::json!({
+        "reject_hop": reject_hop_index,
+        "reject_reason": reject_reason,
+        "n_hops": hops.len(),
+        "hops": hops_json,
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&out_path)
+    {
+        let _ = writeln!(f, "{doc}");
+    }
+}
+
 /// Drop dominated lines: `i` dies if some `j` is `≤ i` at BOTH domain
 /// endpoints (affine ⇒ everywhere), breaking ties toward the smaller index so
 /// identical lines collapse deterministically. Keeps the bound sound while
@@ -523,6 +683,7 @@ pub fn take_last_gate_stats() -> GateStats {
 /// Rigorous upper bound on `max_x [path_output(x) − x]`, or `None` when any
 /// hop is unsupported/degenerate (callers MUST NOT skip on `None`).
 #[must_use]
+#[expect(clippy::too_many_lines)]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     let mut lines = vec![Line::IDENTITY];
     let mut xmax = U256::ZERO;
@@ -546,8 +707,9 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
                 HopMath::Cl(seq) => {
                     let empty = seq.ranges.is_empty();
                     let zero_liq = seq.ranges.iter().any(|r| r.liquidity == 0);
+                    let reason = classify_cl_rejection(seq);
                     format!(
-                        "Cl(ranges={},empty={empty},zero_liq={zero_liq})",
+                        "Cl(ranges={},empty={empty},zero_liq={zero_liq},{reason})",
                         seq.ranges.len()
                     )
                 }
@@ -580,6 +742,16 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
                 family = %family,
                 "[gate] degenerate hop rejected (impossible to bound — solved unscreened)"
             );
+            // M6776W golden capture: serialize the full per-hop state when
+            // env-gated so the pool states can be replayed offline for fix
+            // experimentation (DEGENBOT_GATE_CAPTURE=1).
+            if std::env::var_os("DEGENBOT_GATE_CAPTURE").is_some() {
+                let reason = match hop {
+                    HopMath::Cl(seq) => classify_cl_rejection(seq),
+                    _ => family.clone(),
+                };
+                capture_degenerate_path(hops, hop_idx, &reason);
+            }
             return None;
         };
         let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());

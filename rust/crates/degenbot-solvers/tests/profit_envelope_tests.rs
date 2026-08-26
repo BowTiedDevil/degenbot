@@ -246,7 +246,7 @@ fn m6776w_overflow_paths_compose_without_poisoning() {
     // return Some WITHOUT under-cutting the true curve.
     use degenbot_solvers::profit_envelope::{path_output_bound_at, HopMath};
     // 4-hop V2 path with 1e24-scale reserves: coefficient product ~1e96.
-    let big = U256::from_limbs([0, 0, 0x0DE0B6B3A7640000u64, 0]); // ~1e24
+    let big = U256::from_limbs([0, 0, 0x0DE0_B6B3_A764_0000u64, 0]); // ~1e24
     let v2 = HopMath::V2(&IntHopState::new(big, big, 997_000, 1_000_000));
     let views = vec![Some(v2); 4];
     // Must return Some (not None = unsupported).
@@ -412,4 +412,109 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
         n_checked >= 2,
         "expected ≥2 full golden captures, checked {n_checked}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// M6776W degenerate-path golden capture harness tests
+// ---------------------------------------------------------------------------
+
+/// The capture harness must serialize a degenerate CL path's full range state
+/// to JSONL so it can be replayed offline for fix experimentation.
+#[test]
+fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
+    let tmp = tempfile::NamedTempFile::new().expect("temp file");
+    let path = tmp.path().to_str().unwrap().to_string();
+    std::env::set_var("DEGENBOT_GATE_CAPTURE", "1");
+    std::env::set_var("DEGENBOT_GATE_CAPTURE_OUT", &path);
+    std::env::set_var("DEGENBOT_GATE_CAPTURE_CAP", "10");
+
+    // The existing thread-local capture counter persists across tests; reset
+    // it so the cap doesn't prematurely fire.
+    degenbot_solvers::profit_envelope::reset_gate_stats();
+
+    // A CL path with a zero-liquidity crossing range (the 40% bucket).
+    let good_price = p_at_tick(0);
+    let range = mk_range(0, good_price, p_at_tick(-10), p_at_tick(10));
+    let seq = mk_seq(vec![range]);
+    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::Cl(&seq))];
+
+    // path_profit_bound returns None (degenerate) and triggers the capture.
+    assert!(path_profit_bound(&views).is_none());
+
+    // The JSONL file must exist and contain one line with the rejection reason.
+    let content = std::fs::read_to_string(&path).expect("capture file written");
+    assert!(!content.is_empty(), "capture file must not be empty");
+    let doc: serde_json::Value = serde_json::from_str(content.trim()).expect("valid JSONL line");
+    assert_eq!(doc["n_hops"], 1);
+    assert_eq!(doc["reject_hop"], 0);
+    let reason = doc["reject_reason"].as_str().expect("reject_reason str");
+    assert!(
+        reason.contains("zero_liq"),
+        "reason should classify zero_liq, got: {reason}"
+    );
+    // The hop's ranges must be serialized with the 8 primitive fields.
+    let ranges = doc["hops"][0]["ranges"].as_array().expect("ranges array");
+    assert_eq!(ranges.len(), 1);
+    assert!(
+        ranges[0]["liquidity"].as_str() == Some("0"),
+        "zero liquidity must be serialized"
+    );
+    assert!(
+        ranges[0]["gamma_numer"].as_u64() == Some(997_000),
+        "gamma_numer must be serialized"
+    );
+
+    std::env::remove_var("DEGENBOT_GATE_CAPTURE");
+    std::env::remove_var("DEGENBOT_GATE_CAPTURE_OUT");
+    std::env::remove_var("DEGENBOT_GATE_CAPTURE_CAP");
+}
+
+/// The capture harness must also fire for the high-price-cap rejection
+/// (the 60% bucket) and record the p_entry_bits so the offline experiment
+/// knows how far over P_ENTRY_LIMIT the entry price is.
+#[test]
+fn m6776w_capture_harness_writes_jsonl_for_price_over_limit_rejection() {
+    let tmp = tempfile::NamedTempFile::new().expect("temp file");
+    let path = tmp.path().to_str().unwrap().to_string();
+    std::env::set_var("DEGENBOT_GATE_CAPTURE", "1");
+    std::env::set_var("DEGENBOT_GATE_CAPTURE_OUT", &path);
+    std::env::set_var("DEGENBOT_GATE_CAPTURE_CAP", "10");
+
+    degenbot_solvers::profit_envelope::reset_gate_stats();
+
+    // P_ENTRY_LIMIT = 2^128. Use sqrt_price_x96 = 2^130 > 2^128.
+    let extreme_price = U256::from(1u128) << 130;
+    let range = mk_range(
+        1_000_000,
+        extreme_price,
+        extreme_price / U256::from(2u64),
+        extreme_price * U256::from(2u64),
+    );
+    let seq = mk_seq(vec![range]);
+    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::Cl(&seq))];
+
+    assert!(path_profit_bound(&views).is_none());
+
+    let content = std::fs::read_to_string(&path).expect("capture file written");
+    let doc: serde_json::Value = serde_json::from_str(content.trim()).expect("valid JSONL");
+    let reason = doc["reject_reason"].as_str().expect("reject_reason str");
+    assert!(
+        reason.contains("price_over_limit"),
+        "reason should classify price_over_limit, got: {reason}"
+    );
+    assert!(
+        reason.contains("p_entry_bits="),
+        "reason should include p_entry_bits, got: {reason}"
+    );
+    // The ranges must be serialized so the offline harness can reconstruct.
+    let ranges = doc["hops"][0]["ranges"].as_array().expect("ranges array");
+    assert_eq!(ranges.len(), 1);
+    assert!(
+        ranges[0]["sqrt_price_x96"].as_str().is_some(),
+        "entry sqrt_price must be serialized as decimal string"
+    );
+
+    std::env::remove_var("DEGENBOT_GATE_CAPTURE");
+    std::env::remove_var("DEGENBOT_GATE_CAPTURE_OUT");
+    std::env::remove_var("DEGENBOT_GATE_CAPTURE_CAP");
 }

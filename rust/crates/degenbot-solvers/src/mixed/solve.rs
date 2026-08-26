@@ -58,6 +58,12 @@ fn solve_path_gated(
     min_profit: U256,
     enabled: bool,
 ) -> Option<SolvePathResult> {
+    // The degenerate-path golden capture lives inside `path_profit_bound`
+    // (profit_envelope.rs) where the rejection occurs and the per-hop CL
+    // ranges are in scope. Env vars:
+    //     DEGENBOT_GATE_CAPTURE=1
+    //     DEGENBOT_GATE_CAPTURE_OUT=path  (default: /tmp/gate_degenerate.jsonl)
+    //     DEGENBOT_GATE_CAPTURE_CAP=N     (default: 50 paths)
     if !enabled {
         return solve_path_inner(resolved);
     }
