@@ -273,12 +273,30 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             for k in 0..seq.ranges.len() {
                 let cr: IntTickRangeCrossing = seq.compute_crossing(k)?;
                 let er = &cr.ending_range;
-                let p_entry = er.sqrt_price_x96;
-                if p_entry.is_zero() || p_entry >= P_ENTRY_LIMIT {
-                    return None;
-                }
                 let liq = er.liquidity;
                 if liq == 0 {
+                    // Zero-liquidity range: `computeSwapStep` with L=0
+                    // consumes 0 input and produces 0 output — the price
+                    // advances to the range boundary for FREE, so the swap
+                    // crosses this range without capital and lands in the
+                    // next range. The pool may sit with its entry price in
+                    // a zero-liq gap between two initialized ticks while
+                    // real liquidity lives a few ranges deeper; such a pool
+                    // is perfectly swappable — just skip the tangent line
+                    // (a zero-liq segment has zero width: you exit it the
+                    // instant you enter, at no cost, so it contributes no
+                    // output line) and advance acc so the next real range's
+                    // line anchors correctly. `compute_crossing(k)` gives
+                    // the cumulative cost to REACH range k regardless of k's
+                    // own liquidity; since crossing the zero-liq range k adds
+                    // 0 to both acc_in and acc_out, the next real range's
+                    // anchor is correct.
+                    acc_in = cr.crossing_gross_input;
+                    acc_out = cr.crossing_output;
+                    continue;
+                }
+                let p_entry = er.sqrt_price_x96;
+                if p_entry.is_zero() || p_entry >= P_ENTRY_LIMIT {
                     return None;
                 }
                 // Entry marginal rate m (out/in token units):
@@ -308,6 +326,13 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
                 lines.push(Line { a, b: n, c: d });
                 acc_in = cr.crossing_gross_input;
                 acc_out = cr.crossing_output;
+            }
+            // Every range was zero-liquidity → genuinely dead pool (no
+            // initialized tick reachable in the swap direction produces any
+            // output). Reject as degenerate so classify_cl_rejection can
+            // report `all_zero_liq`.
+            if lines.is_empty() {
+                return None;
             }
             let cr_last = seq.compute_crossing(seq.ranges.len() - 1)?;
             let er = cr_last.ending_range;
@@ -417,20 +442,26 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
     if seq.ranges.is_empty() {
         return "reject=empty_ranges".to_string();
     }
+    let mut any_real = false;
     for k in 0..seq.ranges.len() {
         let Some(cr) = seq.compute_crossing(k) else {
             return format!("reject=crossing_none@k={k}");
         };
         let er = &cr.ending_range;
+        // Zero-liquidity ranges are SKIPPED by the production envelope builder
+        // (crossing is free in computeSwapStep L=0), so they are not a
+        // rejection reason. Mirror that here: skip them and only classify
+        // failures on ranges that actually contribute a tangent line.
+        if er.liquidity == 0 {
+            continue;
+        }
+        any_real = true;
         let p = er.sqrt_price_x96;
         if p.is_zero() {
             return format!("reject=zero_price@k={k}");
         }
         if p >= P_ENTRY_LIMIT {
             return format!("reject=price_over_limit@k={k},p_entry_bits={}", p.bit_len());
-        }
-        if er.liquidity == 0 {
-            return format!("reject=zero_liq@k={k}");
         }
         // Check the coefficient overflow path (the marginal-rate U512
         // products + I512 conversions).
@@ -452,6 +483,13 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
         if I512::try_from(n512).is_err() {
             return format!("reject=n512_overflow@k={k},n_bits={}", n512.bit_len());
         }
+    }
+    if !any_real {
+        // Every range was zero-liquidity — the envelope builder rejected
+        // via the `lines.is_empty()` guard. No single range is at fault;
+        // the whole pool is dead (no reachable initialized tick produces
+        // output in this swap direction).
+        return "reject=all_zero_liq".to_string();
     }
     // Rejection fired in the cap-tail (compute_swap_step or checked_add).
     "reject=cap_tail".to_string()
@@ -911,103 +949,6 @@ mod tests {
         assert_eq!(ceil_div(n, d), I512::try_from(4i64).expect("4 fits"));
     }
 
-    // -----------------------------------------------------------------
-    // M6776W degenerate-capture experiment harness: loads captured JSONL
-    // paths and tests whether the proposed fixes (zero-liq skip + P_ENTRY_LIMIT
-    // widen) recover them to a derivable bound.
-    // -----------------------------------------------------------------
-
-    /// An experimental version of the CL `hop_lines_and_cap` arm with
-    /// configurable `p_entry_limit` and `skip_zero_liq` — mirrors the
-    /// production logic exactly but allows the fix configurations to be
-    /// tested against the captured golden state.
-    fn cl_hop_lines_and_cap_experimental(
-        seq: &IntV3TickRangeSequence,
-        skip_zero_liq: bool,
-        p_limit: U256,
-    ) -> bool {
-        if seq.ranges.is_empty() {
-            return false;
-        }
-        let mut lines: Vec<Line> = Vec::with_capacity(seq.ranges.len());
-        let mut acc_in = U256::ZERO;
-        let mut acc_out = U256::ZERO;
-        for k in 0..seq.ranges.len() {
-            let Some(cr) = seq.compute_crossing(k) else {
-                return false;
-            };
-            let er = &cr.ending_range;
-            let p_entry = er.sqrt_price_x96;
-            if p_entry.is_zero() || p_entry >= p_limit {
-                return false;
-            }
-            let liq = er.liquidity;
-            if liq == 0 {
-                if skip_zero_liq {
-                    continue; // FIX 1: skip zero-liq ranges instead of poisoning
-                }
-                return false;
-            }
-            // Coefficient derivation (same as production).
-            let p_sq = U512::from(p_entry).saturating_mul(U512::from(p_entry));
-            let two192 = U512::from(1u8) << 192;
-            let (m_num, m_den) = if er.zero_for_one {
-                (p_sq, two192)
-            } else {
-                (two192, p_sq)
-            };
-            let d512 = U512::from(er.fee_denom).saturating_mul(m_den);
-            let n512 = U512::from(er.gamma_numer).saturating_mul(m_num);
-            if d512 == U512::ZERO || n512 == U512::ZERO {
-                return false;
-            }
-            let Ok(d) = I512::try_from(d512) else {
-                return false;
-            };
-            let Ok(n) = I512::try_from(n512) else {
-                return false;
-            };
-            let Ok(oc) = I512::try_from(U512::from(acc_out)) else {
-                return false;
-            };
-            let Ok(ic) = I512::try_from(U512::from(acc_in)) else {
-                return false;
-            };
-            let Some(a) = oc
-                .checked_mul(d)
-                .and_then(|v| v.checked_sub(n.checked_mul(ic)?))
-            else {
-                return false;
-            };
-            lines.push(Line { a, b: n, c: d });
-            acc_in = cr.crossing_gross_input;
-            acc_out = cr.crossing_output;
-        }
-        // Cap-tail (same as production).
-        let Some(cr_last) = seq.compute_crossing(seq.ranges.len() - 1) else {
-            return false;
-        };
-        let er = cr_last.ending_range;
-        let exit = if er.zero_for_one {
-            er.sqrt_price_lower_x96
-        } else {
-            er.sqrt_price_upper_x96
-        };
-        let Ok(liq) = i128::try_from(er.liquidity) else {
-            return false;
-        };
-        let Ok(step) = compute_swap_step_v3(
-            er.sqrt_price_x96,
-            exit,
-            liq,
-            I256::MAX,
-            U256::from(er.fee_denom.saturating_sub(er.gamma_numer)),
-        ) else {
-            return false;
-        };
-        acc_out.checked_add(step.amount_out).is_some() && !lines.is_empty()
-    }
-
     /// Parse one captured JSONL line into a CL `IntV3TickRangeSequence`.
     fn parse_cl_seq(ranges_json: &serde_json::Value) -> Option<IntV3TickRangeSequence> {
         let ranges: Vec<degenbot_pools::int_v3_hop::IntV3TickRangeHop> = ranges_json
@@ -1037,18 +978,21 @@ mod tests {
     /// with the current production code, then test the fixes.
     #[test]
     fn m6776w_experiment_fixes_recover_captured_degenerate_paths() {
+        // Post-refactor capture (max_ranges/WALK_CEILING removed + zero-liq
+        // skip in production). The pre-refactor capture
+        // (gate_degenerate_2026-08-26.jsonl) had WALK_CEILING-truncated ranges
+        // and is no longer representative.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../investigation/captures/gate_degenerate_2026-08-26.jsonl");
+            .join("../../../investigation/captures/gate_degenerate_post_refactor_2026-08-26.jsonl");
         let Ok(content) = std::fs::read_to_string(&path) else {
             return; // capture file not present (CI / dev without captures)
         };
 
         let mut total = 0u32;
-        let mut reproduced_none = 0u32;
-        let mut recovered_zero_liq_skip = 0u32;
-        let mut recovered_widen_limit = 0u32;
-        let mut recovered_both = 0u32;
+        let mut prod_recovered = 0u32;
         let mut still_dead = 0u32;
+        let mut still_dead_reasons: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
 
         for line in content.lines().filter(|l| !l.trim().is_empty()) {
             let doc: serde_json::Value = serde_json::from_str(line).expect("valid JSONL");
@@ -1072,63 +1016,58 @@ mod tests {
             };
             total += 1;
 
-            // 1. Reproduce the rejection with production code.
-            let prod = hop_lines_and_cap(HopMath::Cl(&seq));
-            assert!(
-                prod.is_none(),
-                "path should be degenerate under prod code (line: {line})"
-            );
-            reproduced_none += 1;
-
-            // 2. Fix 1: skip zero-liq ranges.
-            let fix1 = cl_hop_lines_and_cap_experimental(
-                &seq,
-                true,          // skip_zero_liq
-                P_ENTRY_LIMIT, // unchanged limit
-            );
-            if fix1 {
-                recovered_zero_liq_skip += 1;
-            }
-
-            // 3. Fix 2: widen P_ENTRY_LIMIT to 2^240.
-            let widened_limit = U256::from(1u128) << 240;
-            let fix2 = cl_hop_lines_and_cap_experimental(
-                &seq,
-                false,         // no zero-liq skip
-                widened_limit, // widened
-            );
-            if fix2 {
-                recovered_widen_limit += 1;
-            }
-
-            // 4. Fix 3: both fixes combined.
-            let fix3 = cl_hop_lines_and_cap_experimental(
-                &seq,
-                true,          // skip_zero_liq
-                widened_limit, // widened
-            );
-            if fix3 {
-                recovered_both += 1;
+            // Production now SKIPS zero-liquidity ranges (crossing is free in
+            // computeSwapStep L=0) and only rejects on a real range's price /
+            // overflow failure, or `all_zero_liq` when every range is empty.
+            // The captured paths were all rejected under the OLD code (which
+            // aborted on the first zero-liq range); measure how many the
+            // production fix recovers vs how many remain genuinely dead.
+            if hop_lines_and_cap(HopMath::Cl(&seq)).is_some() {
+                prod_recovered += 1;
             } else {
                 still_dead += 1;
+                let reason = classify_cl_rejection(&seq);
+                // Bucket by the reject=... prefix (drop the @k=N suffix) so
+                // the map keys are the reason families.
+                let bucket: String = reason.split('@').next().unwrap_or(&reason).to_string();
+                *still_dead_reasons.entry(bucket).or_insert(0) += 1;
             }
         }
 
         #[expect(clippy::print_stderr)]
         {
             eprintln!(
-                "M6776W experiment: total={total} reproduced_none={reproduced_none} \
-                 fix1(zero_liq_skip)={recovered_zero_liq_skip} \
-                 fix2(widen_2^240)={recovered_widen_limit} \
-                 fix3(both)={recovered_both} \
-                 still_dead={still_dead}"
+                "M6776W post-fix: total={total} prod_recovered={prod_recovered} \
+                 still_dead={still_dead} reasons={still_dead_reasons:?}"
             );
         }
-        // Both fixes together must recover the vast majority (only the
-        // genuinely-dead all-zero-liq pools should remain).
+        // The production zero-liq skip must recover EVERY path that the old
+        // code rejected for zero_liq (crossing a zero-liq range is free in
+        // computeSwapStep L=0, so the envelope skips it and anchors the next
+        // real range). The only rejections that should remain are the separate
+        // price_over_limit gate (P_ENTRY_LIMIT, not addressed by this fix) /
+        // genuinely-all-zero pools (which do not occur in this post-refactor
+        // capture — the max_ranges removal lets the walk reach real
+        // liquidity for every swappable pool).
         assert!(
-            recovered_both >= total * 4 / 5,
-            "combined fix should recover >=80% of captured paths, got {recovered_both}/{total}"
+            prod_recovered + still_dead == total,
+            "every captured path must be classified"
+        );
+        let zero_liq_remaining = still_dead_reasons
+            .get("reject=zero_liq")
+            .copied()
+            .unwrap_or(0)
+            + still_dead_reasons
+                .get("reject=all_zero_liq")
+                .copied()
+                .unwrap_or(0);
+        assert!(
+            zero_liq_remaining == 0,
+            "zero-liq skip should recover all zero_liq paths, but {zero_liq_remaining} remain dead: {still_dead_reasons:?}"
+        );
+        assert!(
+            prod_recovered > 0,
+            "production should recover the zero_liq bucket, got 0/{total}"
         );
     }
 }
