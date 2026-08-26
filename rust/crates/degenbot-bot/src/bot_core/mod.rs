@@ -4,10 +4,9 @@
 //! live here. Python objects are thin `PyO3` handles carrying keys into
 //! `BotState`'s `HashMaps`.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, U256};
 
 use ::degenbot_pools::state_history::{JournalError, ReorgPoolState};
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
@@ -747,178 +746,6 @@ impl BotState {
         }
     }
 
-    /// Simulate an exact-input swap over a HYPOTHETICAL (override) pool state.
-    ///
-    /// Builds a transient `V3PoolState`/`V4PoolState` from the override
-    /// scalars (`sqrt_price_x96`, `liquidity`, `tick`) + override `tick_data`,
-    /// reusing the registered pool's immutable params (`fee`, `tick_spacing`,
-    /// `pool_key` / `factory`). The sim runs over the transient state with the
-    /// given `sqrt_price_limit` — NO fetch+retry loop, NO mutation of the
-    /// registered `BotState` (the override is a frozen hypothetical; a missing
-    /// tick word surfaces as `None`, mirroring the Python frozen-snapshot
-    /// override's `MissingLiquidityData`). This is the arbitrage-hypothetical
-    /// seam ("what if the pool were at state X?").
-    ///
-    /// Returns `None` if the pool is not V3/V4, the amount is zero, the sim
-    /// is not computable, or the override's tick data is missing a required
-    /// word.
-    /// Simulate a swap over a HYPOTHETICAL (override) pool state, with
-    /// fetch+retry for sparse misses.
-    ///
-    /// Builds a transient `V3PoolState`/`V4PoolState` from the override
-    /// scalars (`sqrt_price_x96`, `liquidity`, `tick`) + override `tick_data`,
-    /// reusing the registered pool's immutable params (`fee`, `tick_spacing`,
-    /// `pool_key` / `factory`). The sim runs over the transient state with the
-    /// given `sqrt_price_limit`. On a `MissingTickWord(word)` miss, the fetcher
-    /// is called + the word's ticks are merged into the TRANSIENT state's
-    /// `tick_data` + `known_bitmap_words` (NOT registered `BotState` — the
-    /// override is a hypothetical that cannot pollute real state), and the sim
-    /// retries. Mirrors the Python override path's fetch+retry loop (V3
-    /// `_calculate_swap` line 296-345).
-    ///
-    /// `exact_output = false` -> exact-input (caller passes the input amount);
-    /// `exact_output = true` -> exact-output (caller passes the desired output
-    /// amount). The V3/V4 sign convention is handled here.
-    ///
-    /// Returns `None` if the pool is not V3/V4, the amount is zero, the sim
-    /// is not computable, the fetcher fails, or the override's tick data is
-    /// missing a required word the fetcher cannot resolve.
-    #[must_use]
-    #[expect(clippy::too_many_arguments)]
-    #[expect(clippy::too_many_lines)]
-    pub fn simulate_swap_with_override(
-        &self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount: U256,
-        exact_output: bool,
-        sqrt_price_limit: U256,
-        override_sqrt_price_x96: U256,
-        override_liquidity: u128,
-        override_tick: i32,
-        override_tick_data: HashMap<i32, TickInfo>,
-        block: u64,
-    ) -> Option<V3SwapOutcome> {
-        if amount.is_zero() {
-            return None;
-        }
-        let entry = self.pools.get(&pool_id)?;
-        let spec = I256::try_from(amount).ok()?;
-        // Clone the stored fetcher off the registered state (the override
-        // state is a transient copy — the fetcher itself is shared via `Arc`).
-        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> = match entry {
-            PoolEntry::V3(_, state) => state.fetcher.clone(),
-            PoolEntry::V4(_, state) => state.fetcher.clone(),
-            _ => None,
-        };
-        match entry {
-            // V3: exact-input is `amountSpecified > 0`; exact-output is `< 0`.
-            PoolEntry::V3(identity, state) => {
-                let params = RegisterV3PoolParams {
-                    address: identity.address,
-                    token0: identity.token0,
-                    token1: identity.token1,
-                    fee: identity.fee,
-                    tick_spacing: identity.tick_spacing,
-                    factory: identity.factory,
-                    deployer: identity.deployer,
-                    init_hash: identity.init_hash,
-                    sqrt_price_x96: override_sqrt_price_x96,
-                    liquidity: override_liquidity,
-                    tick: override_tick,
-                    tick_data: override_tick_data,
-                    update_block: state.update_block,
-                    tick_data_block: None,
-                    coverage: PoolTickCoverage::Sparse,
-                    fetcher: None,
-                };
-                let (override_identity, mut override_state) =
-                    V3PoolState::from_params(params, self.journal_depth);
-                let signed = if exact_output { -spec } else { spec };
-                let mut attempted: HashSet<i32> = HashSet::new();
-                loop {
-                    match v3_simulate_swap(
-                        &override_state,
-                        override_identity.fee,
-                        override_identity.tick_spacing,
-                        zero_for_one,
-                        signed,
-                        sqrt_price_limit,
-                    ) {
-                        Ok(o) => return Some(o),
-                        Err(SimulateSwapError::NotComputable) => return None,
-                        Err(SimulateSwapError::MissingTickWord(word)) => {
-                            if !attempted.insert(word) {
-                                return None;
-                            }
-                            let fetcher = fetcher.as_ref()?;
-                            match fetcher.fetch_missing_tick_word(pool_id, word, block) {
-                                Ok(data) => {
-                                    override_state.merge_tick_word(&data);
-                                }
-                                Err(_) => return None,
-                            }
-                        }
-                    }
-                }
-            }
-            // V4: exact-input is `amountSpecified < 0`; exact-output is `> 0`.
-            PoolEntry::V4(identity, state) => {
-                let params = RegisterV4PoolParams {
-                    pool_manager: identity.pool_manager,
-                    pool_id: identity.pool_id,
-                    pool_key: identity.pool_key.clone(),
-                    // Registered pool already passed the hook/dynamic-fee gate;
-                    // the override only borrows `pool_key` (fee/tick_spacing).
-                    hook_flags: 0,
-                    protocol_fee: 0,
-                    sqrt_price_x96: override_sqrt_price_x96,
-                    liquidity: override_liquidity,
-                    tick: override_tick,
-                    tick_data: override_tick_data,
-                    update_block: state.update_block,
-                    tick_data_block: None,
-                    coverage: PoolTickCoverage::Sparse,
-                    fetcher: None,
-                };
-                let (override_identity, mut override_state) =
-                    V4PoolState::from_params(params, self.journal_depth);
-                let signed = if exact_output { spec } else { -spec };
-                let mut attempted: HashSet<i32> = HashSet::new();
-                loop {
-                    match v4_simulate_swap(
-                        &override_state,
-                        override_identity.pool_key.fee,
-                        override_identity.pool_key.tick_spacing,
-                        zero_for_one,
-                        signed,
-                        sqrt_price_limit,
-                    ) {
-                        Ok(o) => return Some(o),
-                        Err(SimulateSwapError::NotComputable) => return None,
-                        Err(SimulateSwapError::MissingTickWord(word)) => {
-                            if !attempted.insert(word) {
-                                return None;
-                            }
-                            let fetcher = fetcher.as_ref()?;
-                            match fetcher.fetch_missing_tick_word(pool_id, word, block) {
-                                Ok(data) => {
-                                    override_state.merge_tick_word(&data);
-                                }
-                                Err(_) => return None,
-                            }
-                        }
-                    }
-                }
-            }
-            PoolEntry::V2(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => None,
-        }
-    }
-
     /// Get the pool ID for a given contract address.
     #[must_use]
     pub fn pool_id_by_address(&self, address: &Address) -> Option<u64> {
@@ -1506,6 +1333,7 @@ mod tests {
     use crate::bot_core::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
     use alloy::primitives::aliases::U112;
     use alloy::primitives::uint;
+    use alloy::primitives::I256;
 
     /// Exact-input read through the swap-simulation gate (ADR-037) — the
     /// replacement for the deleted `calculate_tokens_out_miss_aware` seam.

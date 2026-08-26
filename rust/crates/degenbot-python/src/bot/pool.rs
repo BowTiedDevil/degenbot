@@ -17,7 +17,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
 use degenbot_bot::bot_core::state_lock::StateLock;
-use degenbot_bot::bot_core::swap_simulation::{SwapOutcome, SwapRead};
+use degenbot_bot::bot_core::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use degenbot_bot::bot_core::{
     BalancerStablePoolIdentity, BalancerWeightedPoolIdentity, BotState, CurvePoolIdentity,
     PoolTickCoverage, TickInfo,
@@ -535,8 +535,8 @@ impl PyLiquidityPool {
         }
     }
 
-    /// Shared override-sim inner: extracts Python args, builds the fetcher
-    /// adapter, locks the core, calls `simulate_swap_with_override`.
+    /// Shared override-sim inner: extracts Python args and calls the gate's
+    /// `simulate_override` (transient-state fetch+retry policy).
     #[expect(clippy::too_many_arguments)]
     fn sim_override_inner(
         &self,
@@ -567,23 +567,32 @@ impl PyLiquidityPool {
             })?;
         let rust_tick_data = extract_tick_data(override_tick_data)?;
         let sqrt_price_limit = match sqrt_price_limit_x96 {
-            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
-            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
+            Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
+            _ => None,
         };
-        let outcome = self.with_state(py, |core| {
-            core.simulate_swap_with_override(
-                self.pool_id,
+        let over = degenbot_bot::bot_core::swap_simulation::OverrideSwap {
+            pool_id: self.pool_id,
+            request: SwapRequest {
                 zero_for_one,
-                amount,
-                exact_output,
+                // User perspective: positive = exact-output (pool delivers),
+                // negative = exact-input. Engine conventions handled in-gate.
+                amount_specified: if exact_output {
+                    I256::try_from(amount).map_err(|_| {
+                        pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256")
+                    })?
+                } else {
+                    -I256::try_from(amount).map_err(|_| {
+                        pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256")
+                    })?
+                },
                 sqrt_price_limit,
-                override_sqrt,
-                override_liquidity,
-                override_tick,
-                rust_tick_data,
-                block,
-            )
-        });
+            },
+            sqrt_price_x96: override_sqrt,
+            liquidity: override_liquidity,
+            tick: override_tick,
+            tick_data: rust_tick_data,
+        };
+        let outcome = self.with_state(py, |core| core.simulate_override(&over, block));
         Ok(outcome)
     }
 

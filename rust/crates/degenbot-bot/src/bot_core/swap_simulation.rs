@@ -34,9 +34,10 @@ use ::degenbot_pools::registry::PoolEntry;
 use ::degenbot_pools::simulate_swap::simulate_swap;
 use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};
 use ::degenbot_pools::v3_state::{
-    v3_simulate_swap, PoolTickCoverage, SimulateSwapError, V3PoolState, V3SwapOutcome,
+    v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
+    V3SwapOutcome,
 };
-use ::degenbot_pools::v4_state::v4_simulate_swap;
+use ::degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolState};
 
 use super::BotState;
 
@@ -307,6 +308,103 @@ fn v2_required_input(
     Some(U256::from(1) + numerator / denominator)
 }
 
+/// Hypothetical (override) pool scalars: "what if the pool were at state X?"
+/// The transient copy borrows the registered pool's immutable params
+/// (`fee`, `tick_spacing`, `pool_key`) — only these four scalars differ.
+#[derive(Clone, Debug)]
+pub struct OverrideSwap {
+    /// Registered pool to derive identity/params/fetcher from.
+    pub pool_id: u64,
+    /// Directional swap request (same user-perspective sign convention).
+    pub request: SwapRequest,
+    /// Override scalars.
+    pub sqrt_price_x96: U256,
+    pub liquidity: u128,
+    pub tick: i32,
+    /// Replacement tick data for the hypothetical walk.
+    pub tick_data: std::collections::HashMap<i32, ::degenbot_pools::TickInfo>,
+}
+
+/// Which CL family the transient target is.
+#[derive(Clone, Copy, Debug)]
+enum TransientFamily {
+    V3(u32, i32), // fee, tick_spacing
+    V4(u32, i32),
+}
+
+/// One transient (hypothetical) CL target owned by an override sim.
+struct TransientCl {
+    family: TransientFamily,
+    inner: TransientInner,
+}
+
+enum TransientInner {
+    V3(Box<::degenbot_pools::v3_state::V3PoolState>),
+    V4(Box<::degenbot_pools::v4_state::V4PoolState>),
+}
+
+impl TransientCl {
+    fn simulate(
+        &self,
+        zero_for_one: bool,
+        spec: I256,
+        limit: U256,
+    ) -> Result<V3SwapOutcome, SimulateSwapError> {
+        match (&self.family, &self.inner) {
+            (TransientFamily::V3(fee, ts), TransientInner::V3(st)) => {
+                v3_simulate_swap(st, *fee, *ts, zero_for_one, spec, limit)
+            }
+            (TransientFamily::V4(fee, ts), TransientInner::V4(st)) => {
+                v4_simulate_swap(st, *fee, *ts, zero_for_one, spec, limit)
+            }
+            _ => unreachable!("family/inner mismatch is unconstructible"),
+        }
+    }
+
+    fn merge_word(&mut self, fetched: &FetchedTickWord) {
+        use ::degenbot_pools::registry::ConcentratedLiquidityPoolMut;
+        match &mut self.inner {
+            // Merges land on the TRANSIENT state only — the override is a
+            // hypothetical that cannot pollute registered `BotState`.
+            TransientInner::V3(st) => {
+                st.merge_tick_word(fetched);
+            }
+            TransientInner::V4(st) => {
+                st.merge_tick_word(fetched);
+            }
+        }
+    }
+}
+
+/// `ComputeMerge` adapter over a transient target: identical policy, different
+/// merge destination (this is WHY the policy is generic over its merge target).
+struct OverrideSim<'a> {
+    target: &'a mut TransientCl,
+    zero_for_one: bool,
+    spec: I256,
+    limit: U256,
+    fetcher: Option<Arc<dyn TickWordFetcher>>,
+    pool_id: u64,
+}
+
+impl ComputeMerge for OverrideSim<'_> {
+    fn compute(&self) -> Result<V3SwapOutcome, SimulateSwapError> {
+        self.target
+            .simulate(self.zero_for_one, self.spec, self.limit)
+    }
+    fn merge_word(&mut self, fetched: &FetchedTickWord) {
+        self.target.merge_word(fetched);
+    }
+    fn fetch_word(&self, word: i32, block: u64) -> Result<FetchedTickWord, FetchFailure> {
+        let Some(fetcher) = &self.fetcher else {
+            return Err(FetchFailure::NoFetcher);
+        };
+        fetcher
+            .fetch_missing_tick_word(self.pool_id, word, block)
+            .map_err(|_| FetchFailure::Errored)
+    }
+}
+
 /// The policy driver's contract: recompute against a (possibly mutated)
 /// target, merge fetched words into it, and surface its stored fetcher.
 /// Splitting compute/merge/fetch across `&self` / `&mut self` methods keeps
@@ -430,6 +528,119 @@ impl ComputeMerge for RegisteredClSim<'_> {
         fetcher
             .fetch_missing_tick_word(self.pool_id, word, block)
             .map_err(|_| FetchFailure::Errored)
+    }
+}
+
+impl BotState {
+    /// Simulate a swap over a HYPOTHETICAL (override) pool state with the
+    /// shared fetch+retry policy (ADR-037). Builds a transient V3/V4 state
+    /// from the override scalars + tick data, reusing the registered pool's
+    /// immutable params and stored fetcher.
+    ///
+    /// INVARIANT: fetched words merge into the TRANSIENT state only — the
+    /// override is a hypothetical that cannot pollute registered `BotState`.
+    ///
+    /// Legacy note: returns `Option<V3SwapOutcome>` (None on any failure)
+    /// to keep the `PyO3` seam byte-stable; the typed outcome arrives when the
+    /// driver layer adopts it.
+    #[must_use]
+    pub fn simulate_override(&self, over: &OverrideSwap, block: u64) -> Option<V3SwapOutcome> {
+        if over.request.amount_specified.is_zero() {
+            return None;
+        }
+        let entry = self.pools.get(&over.pool_id)?;
+        let spec = I256::try_from(over.request.amount_specified).ok()?;
+        // Clone the stored fetcher off the registered state (the override
+        // state is a transient copy — the fetcher itself is shared via Arc).
+        let fetcher: Option<Arc<dyn TickWordFetcher>> = match entry {
+            PoolEntry::V3(_, st) => st.fetcher.clone(),
+            PoolEntry::V4(_, st) => st.fetcher.clone(),
+            _ => None,
+        };
+        let limit = over
+            .request
+            .sqrt_price_limit
+            .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(over.request.zero_for_one));
+        let spec = engine_amount_specified(
+            spec,
+            match entry {
+                PoolEntry::V3(..) => EngineFamily::V3Engine,
+                PoolEntry::V4(..) => EngineFamily::V4Engine,
+                _ => return None,
+            },
+        );
+
+        // Build the transient target (registered params + override scalars).
+        // Registered pools passed the hook/dynamic-fee admission gate, so
+        // zeroing hook_flags on the transient copy is safe by construction.
+        let mut target = match entry {
+            PoolEntry::V3(identity, state) => {
+                let params = RegisterV3PoolParams {
+                    address: identity.address,
+                    token0: identity.token0,
+                    token1: identity.token1,
+                    fee: identity.fee,
+                    tick_spacing: identity.tick_spacing,
+                    factory: identity.factory,
+                    deployer: identity.deployer,
+                    init_hash: identity.init_hash,
+                    sqrt_price_x96: over.sqrt_price_x96,
+                    liquidity: over.liquidity,
+                    tick: over.tick,
+                    tick_data: over.tick_data.clone(),
+                    update_block: state.update_block,
+                    coverage: PoolTickCoverage::Sparse,
+                    fetcher: None,
+                    ..Default::default()
+                };
+                let (_id, st) = V3PoolState::from_params(params, self.journal_depth);
+                TransientCl {
+                    family: TransientFamily::V3(identity.fee, identity.tick_spacing),
+                    inner: TransientInner::V3(Box::new(st)),
+                }
+            }
+            PoolEntry::V4(identity, state) => {
+                let params = RegisterV4PoolParams {
+                    pool_manager: identity.pool_manager,
+                    pool_id: identity.pool_id,
+                    pool_key: identity.pool_key.clone(),
+                    hook_flags: 0,
+                    protocol_fee: 0,
+                    sqrt_price_x96: over.sqrt_price_x96,
+                    liquidity: over.liquidity,
+                    tick: over.tick,
+                    tick_data: over.tick_data.clone(),
+                    update_block: state.update_block,
+                    tick_data_block: None,
+                    coverage: PoolTickCoverage::Sparse,
+                    fetcher: None,
+                };
+                let (_id, st) = V4PoolState::from_params(params, self.journal_depth);
+                TransientCl {
+                    family: TransientFamily::V4(
+                        identity.pool_key.fee,
+                        identity.pool_key.tick_spacing,
+                    ),
+                    inner: TransientInner::V4(Box::new(st)),
+                }
+            }
+            _ => return None,
+        };
+
+        let mut sim = OverrideSim {
+            target: &mut target,
+            zero_for_one: over.request.zero_for_one,
+            spec,
+            limit,
+            fetcher,
+            pool_id: over.pool_id,
+        };
+        match drive(&mut sim, block) {
+            PolicyAttempt::Computed(outcome, _) => Some(outcome),
+            PolicyAttempt::NotComputable
+            | PolicyAttempt::FetchFailed(..)
+            | PolicyAttempt::FetchExhausted(..) => None,
+        }
     }
 }
 
