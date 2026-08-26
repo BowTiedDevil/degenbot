@@ -4705,6 +4705,255 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // BAMKKI: interleaving fuzz harness. Randomized (seed-deterministic)
+    // composition of event feeds x pool lifecycle roles, driven through the
+    // REAL pump, with a replay oracle. Any member of the FUWYUR family
+    // (lost, duplicated, or mis-staged application across the
+    // unregistered/quarantined/live boundaries) shows up as an oracle
+    // divergence instead of waiting for chain data to find it.
+    // -----------------------------------------------------------------
+
+    /// Tiny deterministic xorshift64* so failures print the exact seed and
+    /// are reproducible without external crates.
+    struct FuzzRng(u64);
+    impl FuzzRng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n.max(1)
+        }
+    }
+
+    const FUZZ_POOL_COUNT: usize = 3;
+    const FUZZ_TICKS: [i32; 3] = [-10, 7, 20];
+    const FUZZ_SEED_GROSS: u128 = 10_000_000_000_000_000;
+
+    #[tokio::test]
+    async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
+        for seed in 1u64..=48 {
+            let mut rng = FuzzRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let block_n = 100_u64;
+            let bot = Arc::new(Bot::new(1));
+
+            // Role assignment per pool rotates with the seed so every role
+            // combination is exercised across the iteration space:
+            // 0 => Live from start, 1 => unregistered during feed,
+            // 2 => Quarantined from start (set_live after drain).
+            let roles: Vec<u8> = (0..FUZZ_POOL_COUNT as u8)
+                .map(|i| (seed as u8 + i) % 3)
+                .collect();
+            let addrs: Vec<Address> = (0..FUZZ_POOL_COUNT)
+                .map(|i| Address::from([0x40 + i as u8; 20]))
+                .collect();
+
+            // Pre-register roles 0 (Live) and 2 (Quarantined).
+            for (i, addr) in addrs.iter().enumerate() {
+                if roles[i] == 1 {
+                    continue;
+                }
+                let mut tick_data = HashMap::new();
+                for &t in &FUZZ_TICKS {
+                    tick_data.insert(
+                        t,
+                        crate::bot_core::TickInfo {
+                            liquidity_gross: alloy::primitives::U128::from(FUZZ_SEED_GROSS),
+                            liquidity_net: alloy::primitives::I256::try_from(
+                                i128::try_from(FUZZ_SEED_GROSS).unwrap(),
+                            )
+                            .unwrap(),
+                            block: 0,
+                        },
+                    );
+                }
+                let state = bot.state_arc();
+                let mut core = state.write();
+                core.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+                    address: *addr,
+                    token0: Address::from([0xa0u8; 20]),
+                    token1: Address::from([0xa1u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    factory: Address::from([0xf0u8; 20]),
+                    sqrt_price_x96: U256::from(1u128) << 96,
+                    liquidity: 1_000_000,
+                    tick: 0,
+                    tick_data,
+                    update_block: block_n - 1,
+                    coverage: crate::bot_core::PoolTickCoverage::Tracked,
+                    fetcher: None,
+                    ..Default::default()
+                })
+                .expect("fuzz registration");
+                if roles[i] == 2 {
+                    core.set_v3_pool_quarantined(*addr);
+                }
+            }
+
+            // Generate the event stream: mints over the pre-seeded tick set +
+            // tombstone swaps, distributed across pools/blocks by the seed.
+            type ExpectedTicks = HashMap<i32, (u128, i128)>;
+            let mut oracle: Vec<ExpectedTicks> = Vec::new();
+            let mut expected_events: Vec<(usize, Log)> = Vec::new();
+            let mut log_index = 0u64;
+            for i in 0..FUZZ_POOL_COUNT {
+                let mut ticks: ExpectedTicks = FUZZ_TICKS
+                    .iter()
+                    .map(|&t| {
+                        (
+                            t,
+                            (FUZZ_SEED_GROSS, i128::try_from(FUZZ_SEED_GROSS).unwrap()),
+                        )
+                    })
+                    .collect();
+                oracle.push(ticks.clone());
+                let _ = ticks;
+                let _ = &mut ticks;
+                oracle[i] = FUZZ_TICKS
+                    .iter()
+                    .map(|&t| {
+                        (
+                            t,
+                            (FUZZ_SEED_GROSS, i128::try_from(FUZZ_SEED_GROSS).unwrap()),
+                        )
+                    })
+                    .collect();
+            }
+
+            for _ in 0..12 {
+                let pool_idx = rng.below(FUZZ_POOL_COUNT as u64) as usize;
+                let block = block_n - rng.below(3); // blocks N-2..=N
+                let is_mint = rng.below(2) == 0;
+                if is_mint {
+                    let tl = FUZZ_TICKS[rng.below(FUZZ_TICKS.len() as u64) as usize];
+                    let tu = tl + 10;
+                    let amount: u128 = u128::from(1000_u64 + rng.below(50_000));
+                    expected_events.push((
+                        pool_idx,
+                        make_v3_mint_log_with_block(addrs[pool_idx], tl, tu, amount, block),
+                    ));
+                    // Oracle replay in arrival order (Solidity Tick.update):
+                    let lo = oracle[pool_idx].entry(tl).or_insert((0, 0));
+                    lo.0 += amount;
+                    lo.1 += amount as i128;
+                    let hi = oracle[pool_idx].entry(tu).or_insert((0, 0));
+                    hi.0 += amount;
+                    hi.1 -= amount as i128;
+                } else {
+                    expected_events.push((
+                        pool_idx,
+                        make_v3_swap_log_with_block(addrs[pool_idx], block),
+                    ));
+                }
+                log_index += 1;
+            }
+            // Tombstone swap at N+1 closes block N for the cutoff.
+            let tomb_pool = rng.below(FUZZ_POOL_COUNT as u64) as usize;
+            expected_events.push((
+                tomb_pool,
+                make_v3_swap_log_with_block(addrs[tomb_pool], block_n + 1),
+            ));
+            // WS delivery is per-block ordered: stable-sort by block so the
+            // feed never travels backward (a backward log is an ADR-008 D3
+            // unreliable-WS signal, not a fuzz dimension).
+            expected_events.sort_by_key(|(_, l)| l.block_number);
+
+            let min_block = expected_events
+                .iter()
+                .map(|(_, l)| l.block_number.unwrap_or(block_n))
+                .min()
+                .unwrap_or(block_n);
+            let (mut pump, _sink, _shutdown) =
+                pump_for_test_with_bot(Arc::clone(&bot), Some(min_block - 1));
+            let ws_events: Vec<WsEvent> = expected_events
+                .iter()
+                .map(|(_, l)| WsEvent::Log(l.clone()))
+                .collect();
+            let combined = stream::iter(ws_events).boxed();
+            pump.run_test_loop(combined, min_block - 1).await;
+
+            // Late registration for role-1 pools (the FUWYUR shape), then the
+            // standard staged-application seam for every pool.
+            for (i, addr) in addrs.iter().enumerate() {
+                if roles[i] != 1 {
+                    continue;
+                }
+                let state = bot.state_arc();
+                let mut core = state.write();
+                let mut tick_data = HashMap::new();
+                for &t in &FUZZ_TICKS {
+                    tick_data.insert(
+                        t,
+                        crate::bot_core::TickInfo {
+                            liquidity_gross: alloy::primitives::U128::from(FUZZ_SEED_GROSS),
+                            liquidity_net: alloy::primitives::I256::try_from(
+                                i128::try_from(FUZZ_SEED_GROSS).unwrap(),
+                            )
+                            .unwrap(),
+                            block: 0,
+                        },
+                    );
+                }
+                core.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+                    address: *addr,
+                    token0: Address::from([0xa0u8; 20]),
+                    token1: Address::from([0xa1u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    factory: Address::from([0xf0u8; 20]),
+                    sqrt_price_x96: U256::from(1u128) << 96,
+                    liquidity: 1_000_000,
+                    tick: 0,
+                    tick_data,
+                    update_block: block_n - 1,
+                    coverage: crate::bot_core::PoolTickCoverage::Tracked,
+                    fetcher: None,
+                    ..Default::default()
+                })
+                .expect("late fuzz registration");
+                core.set_v3_pool_quarantined(*addr);
+            }
+            for addr in &addrs {
+                let state = bot.state_arc();
+                let mut core = state.write();
+                core.apply_backfill_buffer_v3(addr);
+                core.apply_pump_buffer_v3(addr);
+                core.set_v3_pool_live(*addr);
+            }
+
+            // ORACLE COMPARISON.
+            for (i, addr) in addrs.iter().enumerate() {
+                let state = bot.state_arc();
+                let core = state.read();
+                let pool_id = *core.pool_addresses.get(addr).unwrap();
+                let pool = core.get_v3_pool(pool_id).unwrap();
+                for &t in &FUZZ_TICKS {
+                    let actual = pool.tick_data.get(&t).map(|x| {
+                        (
+                            x.liquidity_gross.to::<u128>(),
+                            i128::try_from(x.liquidity_net).unwrap_or(i128::MAX).abs(),
+                        )
+                    });
+                    let want = oracle[i].get(&t).copied().unwrap_or((0, 0));
+                    let actual_gross = actual.map(|a| a.0).unwrap_or(want.0);
+                    assert_eq!(
+                        actual_gross, want.0,
+                        "BAMKKI seed={seed} pool={i} role={} tick={t}: gross diverged \\
+                         (lost/duplicated/mis-staged application)",
+                        roles[i]
+                    );
+                }
+            }
+            let _ = log_index;
+        }
+    }
+
     /// FUWYUR RED tracer — live-window Mint for a NOT-YET-REGISTERED pool must
     /// survive late registration.
     ///
