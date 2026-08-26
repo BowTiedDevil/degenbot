@@ -819,5 +819,35 @@ reaches the pool that needs it: `Erc20Transfer` (callback prefund) vs
 `V4TakeCompact` (in-unlock delta claim). Currently set only on v2v3v4's
 hop0 (`V4TakeCompact`).
 
+## Swap simulation (ADR-037)
+
+The one owner of "simulate a swap against current pool state" — every read
+that answers *what would this swap do?* goes through a single deep module,
+`bot_core/swap_simulation.rs`, replacing the `*_miss_aware` / `*_with_fetch`
+twins, `calculate_tokens_in`, and the override path's ad-hoc shape.
+
+- **Swap simulation** — the module and its entry point
+  (`BotState::swap_simulation(pool_id, SwapRequest) -> SwapRead`). It owns
+  the fetch→merge→retry miss policy that used to be copy-pasted per method;
+  pure family math stays in `degenbot-pools` (`simulate_swap`,
+  `v3_simulate_swap`, `v4_simulate_swap`).
+- **SwapRequest** — `{ zero_for_one, amount_specified: I256,
+  sqrt_price_limit }`. **User-perspective sign convention**: positive
+  amount = exact-output (the pool delivers that magnitude to the user);
+  negative = exact-input (the user sends it). Chosen deliberately over the
+  engines' internal conventions; the mapping lives only inside the module
+  (V3 engine negates both directions vs canonical; V4 engine is identity).
+- **SwapRead** — typed outcome (`Computed(SwapOutcome)` / `NotComputable` /
+  `FetchFailed` / `FetchExhausted`). No silent `U256::ZERO`: a former
+  silent-zero failure mode is always an observable variant.
+- **Caveats** — additive, non-exhaustive flag set on the outcome whose
+  EMPTY value means "this number is exact". First variant `SparseCoverage`
+  (derived from registration-time `PoolTickCoverage`); a `HookedPool`
+  variant is reserved in 0.6.x — admission still rejects hooked/dynamic-fee
+  V4 pools (`RegisterV4PoolError::HookedPool`); admitting hooked pools and
+  wiring this variant is planned work (ergo task X4EU3J).
+_Avoid_: "quote", "oracle", "gate" (admission-control connotations),
+"miss-aware/with-fetch" twins (retired names).
+
 
 

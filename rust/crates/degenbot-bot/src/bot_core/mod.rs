@@ -747,305 +747,6 @@ impl BotState {
         }
     }
 
-    /// Calculate the output token amount for a given input amount.
-    ///
-    /// Uses the constant-product / concentrated-liquidity invariant with
-    /// EVM-exact integer arithmetic. Returns `Ok(U256::ZERO)` for the
-    /// non-fetchable zeros (pool not found, zero amount, V2/Curve/Balancer
-    /// sentinels). A V3/V4 sparse tick-word miss is surfaced as
-    /// [`SimulateSwapError::MissingTickWord`] so the caller can fetch + retry;
-    /// a `uint256` arithmetic overflow (the on-chain `getAmountOut` `SafeMath`
-    /// revert, cdbc03bb) is surfaced as [`SimulateSwapError::NotComputable`].
-    ///
-    /// Callers MUST NOT swallow `NotComputable` to `U256::ZERO` — that
-    /// concealment was the cdbc03bb bug (an on-chain `getAmountOut` revert
-    /// surfaced as a silent `0`). Handle `MissingTickWord` by fetching +
-    /// retrying (see [`Self::calculate_tokens_out_with_fetch`]) or by mapping
-    /// ONLY that variant to zero with an explicit `match`; propagate
-    /// `NotComputable` as a panic/error so a real overflow is visible.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimulateSwapError::MissingTickWord(word)`] when a V3/V4 sparse
-    /// pool's walk enters an unfetched tick-bitmap word (the caller fetches +
-    /// retries), or [`SimulateSwapError::NotComputable`] on arithmetic
-    /// overflow / invariant violation / non-positive amount for a V3/V4 pool.
-    pub fn calculate_tokens_out_miss_aware(
-        &self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_in: U256,
-    ) -> Result<U256, SimulateSwapError> {
-        let Some(entry) = self.pools.get(&pool_id) else {
-            return Ok(U256::ZERO);
-        };
-        simulate_swap(entry, zero_for_one, amount_in)
-    }
-
-    /// Fetch+retry exact-input swap for sparse V3/V4 pools (ADR-005 slice 2).
-    ///
-    /// Loops: compute via [`Self::calculate_tokens_out_miss_aware`]; on
-    /// [`SimulateSwapError::MissingTickWord(word)`] call the **stored**
-    /// fetcher (registered at `register_v3/v4_pool`) for `word`,
-    /// [`merge_tick_word`] the result, and retry. Dedup prevents an infinite
-    /// refetch of the same word (a repeated miss returns `U256::ZERO`).
-    /// [`SimulateSwapError::NotComputable`] and a fetcher error (or no stored
-    /// fetcher) return `U256::ZERO`.
-    ///
-    /// The fetcher returns the word's data (it must NOT write back into
-    /// `BotState` itself — re-entrancy is safe because the calc holds no lock
-    /// across `fetch_missing_tick_word`; the caller merged result is applied
-    /// here). `block` is forwarded to the fetcher as the fetch context.
-    #[must_use]
-    pub fn calculate_tokens_out_with_fetch(
-        &mut self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_in: U256,
-        block: u64,
-    ) -> U256 {
-        // Clone the stored `Arc<dyn TickWordFetcher>` off the V3/V4 state
-        // before the loop (avoids a self-referential borrow: the loop both
-        // calls the fetcher and mutates `self.pools` via `merge_tick_word`).
-        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> =
-            match self.pools.get(&pool_id) {
-                Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
-                Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
-                _ => None,
-            };
-        let mut attempted: HashSet<i32> = HashSet::new();
-        loop {
-            match self.calculate_tokens_out_miss_aware(pool_id, zero_for_one, amount_in) {
-                Ok(out) => return out,
-                Err(SimulateSwapError::NotComputable) => return U256::ZERO,
-                Err(SimulateSwapError::MissingTickWord(word)) => {
-                    // Dedup: a repeated miss on an already-fetched word means
-                    // the merge didn't satisfy the simulator (defensive) —
-                    // give up rather than loop forever.
-                    if !attempted.insert(word) {
-                        return U256::ZERO;
-                    }
-                    let Some(ref fetcher) = fetcher else {
-                        return U256::ZERO;
-                    };
-                    match fetcher.fetch_missing_tick_word(pool_id, word, block) {
-                        Ok(data) => {
-                            self.merge_tick_word(pool_id, &data);
-                        }
-                        Err(_) => return U256::ZERO,
-                    }
-                }
-            }
-        }
-    }
-
-    /// Miss-aware exact-input swap returning the FULL V3/V4 outcome
-    /// (amounts + final `sqrt_price_x96`/`liquidity`/`tick`).
-    ///
-    /// Like [`Self::calculate_tokens_out_miss_aware`] but returns the
-    /// [`V3SwapOutcome`] so the caller (the companion's
-    /// `simulate_exact_input_swap`) can build `final_state`. Returns
-    /// [`SimulateSwapError::NotComputable`] for non-V3/V4 pools (the Rust core
-    /// path doesn't simulate Curve/Balancer) or a zero `amount_in`.
-    ///
-    /// # Errors
-    ///
-    /// [`SimulateSwapError::MissingTickWord(word)`] when a V3/V4 sparse pool's
-    /// walk enters an unfetched tick-bitmap word; [`SimulateSwapError::NotComputable`]
-    /// on overflow / invariant violation / non-V3V4 pool / zero amount.
-    pub fn simulate_exact_input_swap_miss_aware(
-        &self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_in: U256,
-        sqrt_price_limit: U256,
-    ) -> Result<V3SwapOutcome, SimulateSwapError> {
-        let Some(entry) = self.pools.get(&pool_id) else {
-            return Err(SimulateSwapError::NotComputable);
-        };
-        if amount_in.is_zero() {
-            return Err(SimulateSwapError::NotComputable);
-        }
-        let Some(spec) = I256::try_from(amount_in).ok() else {
-            return Err(SimulateSwapError::NotComputable);
-        };
-        match entry {
-            PoolEntry::V3(identity, state) => v3_simulate_swap(
-                state,
-                identity.fee,
-                identity.tick_spacing,
-                zero_for_one,
-                spec,
-                sqrt_price_limit,
-            ),
-            // V4 sign convention: exact-input is `amountSpecified < 0`.
-            PoolEntry::V4(identity, state) => v4_simulate_swap(
-                state,
-                identity.pool_key.fee,
-                identity.pool_key.tick_spacing,
-                zero_for_one,
-                -spec,
-                sqrt_price_limit,
-            ),
-            PoolEntry::V2(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
-        }
-    }
-
-    /// Fetch+retry full-outcome exact-input swap for sparse V3/V4 pools
-    /// (ADR-005 slice 3b). Returns the [`V3SwapOutcome`] (amounts + final
-    /// state) or `None` if the pool is not V3/V4, the amount is zero, the fetch
-    /// failed, or the swap is not computable. Mirrors
-    /// [`Self::calculate_tokens_out_with_fetch`] but returns the full outcome.
-    ///
-    /// Returns `None` (not `Result`) for every failure mode by design —
-    /// callers cannot distinguish a fetch miss from `NotComputable` here; use
-    /// [`Self::simulate_exact_input_swap_miss_aware`] for miss-aware control.
-    pub fn simulate_exact_input_swap_with_fetch(
-        &mut self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_in: U256,
-        sqrt_price_limit: U256,
-        block: u64,
-    ) -> Option<V3SwapOutcome> {
-        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> =
-            match self.pools.get(&pool_id) {
-                Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
-                Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
-                _ => None,
-            };
-        let mut attempted: HashSet<i32> = HashSet::new();
-        loop {
-            match self.simulate_exact_input_swap_miss_aware(
-                pool_id,
-                zero_for_one,
-                amount_in,
-                sqrt_price_limit,
-            ) {
-                Ok(outcome) => return Some(outcome),
-                Err(SimulateSwapError::NotComputable) => return None,
-                Err(SimulateSwapError::MissingTickWord(word)) => {
-                    if !attempted.insert(word) {
-                        return None;
-                    }
-                    let fetcher = fetcher.as_ref()?;
-                    match fetcher.fetch_missing_tick_word(pool_id, word, block) {
-                        Ok(data) => {
-                            self.merge_tick_word(pool_id, &data);
-                        }
-                        Err(_) => return None,
-                    }
-                }
-            }
-        }
-    }
-
-    /// Miss-aware exact-OUTPUT swap (full outcome). Mirror of
-    /// [`Self::simulate_exact_input_swap_miss_aware`] but the caller passes the
-    /// desired `amount_out` + the sim derives the required input. V3 sign:
-    /// exact-output is `amountSpecified < 0` (V3 negates). V4 sign:
-    /// exact-output is `amountSpecified > 0` (V4 doesn't negate). Both are
-    /// already handled by `v3_simulate_swap` / `v4_simulate_swap`'s `exact_in`
-    /// flag.
-    ///
-    /// # Errors
-    ///
-    /// [`SimulateSwapError::MissingTickWord(word)`] when a sparse V3/V4 pool's
-    /// walk enters an unfetched tick-bitmap word;
-    /// [`SimulateSwapError::NotComputable`] on overflow / invariant violation /
-    /// non-V3V4 pool / zero amount.
-    pub fn simulate_exact_output_swap_miss_aware(
-        &self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_out: U256,
-        sqrt_price_limit: U256,
-    ) -> Result<V3SwapOutcome, SimulateSwapError> {
-        let Some(entry) = self.pools.get(&pool_id) else {
-            return Err(SimulateSwapError::NotComputable);
-        };
-        if amount_out.is_zero() {
-            return Err(SimulateSwapError::NotComputable);
-        }
-        let Some(spec) = I256::try_from(amount_out).ok() else {
-            return Err(SimulateSwapError::NotComputable);
-        };
-        match entry {
-            // V3 sign convention: exact-output is `amountSpecified < 0`.
-            PoolEntry::V3(identity, state) => v3_simulate_swap(
-                state,
-                identity.fee,
-                identity.tick_spacing,
-                zero_for_one,
-                -spec,
-                sqrt_price_limit,
-            ),
-            // V4 sign convention: exact-output is `amountSpecified > 0`.
-            PoolEntry::V4(identity, state) => v4_simulate_swap(
-                state,
-                identity.pool_key.fee,
-                identity.pool_key.tick_spacing,
-                zero_for_one,
-                spec,
-                sqrt_price_limit,
-            ),
-            PoolEntry::V2(..)
-            | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..)
-            | PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
-        }
-    }
-
-    /// Fetch+retry full-outcome exact-OUTPUT swap for sparse V3/V4 pools.
-    /// Mirror of [`Self::simulate_exact_input_swap_with_fetch`] but the caller
-    /// passes the desired `amount_out` + the sim derives the required input.
-    /// Returns `None` on any non-computable / fetch-failure mode (same
-    /// discipline as the exact-input variant).
-    pub fn simulate_exact_output_swap_with_fetch(
-        &mut self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_out: U256,
-        sqrt_price_limit: U256,
-        block: u64,
-    ) -> Option<V3SwapOutcome> {
-        let fetcher: Option<Arc<dyn ::degenbot_pools::tick_fetch::TickWordFetcher>> =
-            match self.pools.get(&pool_id) {
-                Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
-                Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
-                _ => None,
-            };
-        let mut attempted: HashSet<i32> = HashSet::new();
-        loop {
-            match self.simulate_exact_output_swap_miss_aware(
-                pool_id,
-                zero_for_one,
-                amount_out,
-                sqrt_price_limit,
-            ) {
-                Ok(outcome) => return Some(outcome),
-                Err(SimulateSwapError::NotComputable) => return None,
-                Err(SimulateSwapError::MissingTickWord(word)) => {
-                    if !attempted.insert(word) {
-                        return None;
-                    }
-                    let fetcher = fetcher.as_ref()?;
-                    match fetcher.fetch_missing_tick_word(pool_id, word, block) {
-                        Ok(data) => {
-                            self.merge_tick_word(pool_id, &data);
-                        }
-                        Err(_) => return None,
-                    }
-                }
-            }
-        }
-    }
-
     /// Simulate an exact-input swap over a HYPOTHETICAL (override) pool state.
     ///
     /// Builds a transient `V3PoolState`/`V4PoolState` from the override
@@ -1919,8 +1620,26 @@ pub struct BlockMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bot_core::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
     use alloy::primitives::aliases::U112;
     use alloy::primitives::uint;
+
+    /// Exact-input read through the swap-simulation gate (ADR-037) — the
+    /// replacement for the deleted `calculate_tokens_out_miss_aware` seam.
+    fn tokens_out(core: &mut BotState, pool_id: u64, zero_for_one: bool, amount_in: U256) -> U256 {
+        match core.swap_simulation(
+            0,
+            pool_id,
+            SwapRequest {
+                zero_for_one,
+                amount_specified: -I256::try_from(amount_in).unwrap(),
+                sqrt_price_limit: None,
+            },
+        ) {
+            SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+            f => panic!("small non-overflowing V2 amount; calc must not miss or overflow: {f:?}"),
+        }
+    }
 
     const FEE_03: (u64, u64) = (997, 1000);
 
@@ -2223,9 +1942,7 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
-        let amount_out = core
-            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(100))
-            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
+        let amount_out = tokens_out(&mut core, pool_id, true, U256::from(100));
         assert_eq!(amount_out, U256::from(181));
     }
 
@@ -2558,9 +2275,7 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
-        let amount_out = core
-            .calculate_tokens_out_miss_aware(pool_id, false, U256::from(100))
-            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
+        let amount_out = tokens_out(&mut core, pool_id, false, U256::from(100));
         assert_eq!(amount_out, U256::from(181));
     }
 
@@ -2572,18 +2287,14 @@ mod tests {
             .expect("test setup: V2 registration");
 
         // Before update: swap 100 token0 → 181 token1
-        let before = core
-            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(100))
-            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
+        let before = tokens_out(&mut core, pool_id, true, U256::from(100));
         assert_eq!(before, U256::from(181));
 
         // Update reserves: now reserve0=2000, reserve1=1000
         core.update_v2_pool(make_pool_addr(), U112::from(2000), U112::from(1000), 42);
 
         // After update: Python: constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
-        let after = core
-            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(100))
-            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
+        let after = tokens_out(&mut core, pool_id, true, U256::from(100));
         assert_eq!(after, U256::from(47));
     }
 
@@ -2633,9 +2344,7 @@ mod tests {
         // Swap 1000 USDC for WETH
         // Python reference: 531380142665175213
         let amount_in = U256::from(1_000_000_000u64); // 1000 USDC (6dp)
-        let amount_out = core
-            .calculate_tokens_out_miss_aware(pool_id, true, amount_in)
-            .expect("small non-overflowing V2 amount; calc must not miss or overflow");
+        let amount_out = tokens_out(&mut core, pool_id, true, amount_in);
         assert_eq!(amount_out, U256::from(531_380_142_665_175_213_u64));
     }
 
@@ -5836,12 +5545,11 @@ mod tests {
     // --- ADR-005 sparse-map parity, slice 2: fetch-callback seam ---
 
     #[test]
-    fn calculate_tokens_out_with_fetch_fills_missing_word_and_retries() {
+    fn swap_simulation_fills_missing_word_and_retries() {
         // A sparse V3 pool (empty tick_data, start tick 0, word 0 unknown)
-        // misses on the starting word. The fetch seam fills the missing word
-        // (via a fake fetcher) and retries; the result must match the direct
-        // no-miss path (word 0 now known after the fetch merge) and must be
-        // non-zero (not the miss sentinel).
+        // misses on the starting word. The gate's fetch seam fills the missing
+        // word (via a fake fetcher), merges, and retries; the result must be
+        // non-zero, record the fetch, and carry the sparse caveat.
         use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
         #[derive(Debug)]
@@ -5882,48 +5590,38 @@ mod tests {
             })
             .expect("test setup: V3 registration");
 
-        // Without the fetch+retry loop: the starting word (0) is unknown →
-        // miss → ZERO. Only `MissingTickWord` maps to ZERO here; a
-        // `NotComputable` (overflow) must panic rather than be swallowed to
-        // ZERO (that swallow was the cdbc03bb bug).
-        assert_eq!(
-            match core.calculate_tokens_out_miss_aware(pool_id, true, U256::from(1000u64)) {
-                Ok(v) => v,
-                Err(SimulateSwapError::MissingTickWord(_)) => U256::ZERO,
-                Err(SimulateSwapError::NotComputable) => panic!(
-                    "sparse V3 swap must miss (MissingTickWord), not overflow (NotComputable)"
-                ),
+        // Through the gate: the miss is recovered automatically — computed,
+        // non-zero, the fetched word recorded, sparse coverage caveated.
+        let read = core.swap_simulation(
+            0,
+            pool_id,
+            SwapRequest {
+                zero_for_one: true,
+                amount_specified: -I256::try_from(U256::from(1000u64)).unwrap(),
+                sqrt_price_limit: None,
             },
-            U256::ZERO,
-            "sparse pool with unknown starting word must miss → ZERO without the fetch+retry loop"
         );
-        // Miss-aware surfaces the fetchable miss.
-        assert_eq!(
-            core.calculate_tokens_out_miss_aware(pool_id, true, U256::from(1000u64)),
-            Err(SimulateSwapError::MissingTickWord(0)),
-            "miss-aware calc must surface MissingTickWord(0), not map it to ZERO"
-        );
-
-        // With fetch+retry (stored fetcher): fills word 0 (empty/known) +
-        // retries → computes.
-        let fetched = core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0);
-
-        // The fetch+retry result must match the direct no-miss path (word 0
-        // now known after the fetch merge — no further miss).
-        let direct = core
-            .calculate_tokens_out_miss_aware(pool_id, true, U256::from(1000u64))
-            .expect(
-                "word 0 is known after the fetch merge; the direct path must not miss or overflow",
-            );
-        assert_eq!(
-            fetched, direct,
-            "with_fetch result must match the no-miss direct path after the word is filled"
-        );
-        assert_ne!(
-            fetched,
-            U256::ZERO,
-            "the fetched sparse swap must produce a non-zero amount, not stay at the miss sentinel"
-        );
+        match read {
+            SwapRead::Computed(SwapOutcome::V3(payload)) => {
+                assert_ne!(
+                    payload.delivered,
+                    I256::ZERO,
+                    "the fetched sparse swap must produce a non-zero amount"
+                );
+                // The walk may legitimately miss both word 0 and the adjacent
+                // word (-1) before finding liquidity; both fetches are recorded.
+                assert!(
+                    payload.fetched_words.contains(&0),
+                    "fetch of word 0 recorded, got {:?}",
+                    payload.fetched_words
+                );
+                assert!(
+                    payload.caveats.contains(Caveats::SPARSE_COVERAGE),
+                    "sparse coverage must be caveated"
+                );
+            }
+            other => panic!("gate must recover via fetch+retry, got {other:?}"),
+        }
         // The fetch merged word 0 into known_bitmap_words (no further miss).
         let state = core.get_v3_pool(pool_id).expect("pool registered");
         assert!(
@@ -5933,7 +5631,7 @@ mod tests {
     }
 
     #[test]
-    fn calculate_tokens_out_with_fetch_fetcher_error_returns_zero() {
+    fn swap_simulation_fetcher_error_surfaces_fetch_failed() {
         // If the fetcher cannot satisfy the missing word (RPC error / out of
         // range), the calc must give up with `U256::ZERO` rather than panic or
         // spin. Covers the `Err(_)` arm of the fetch+retry loop.
@@ -5973,15 +5671,26 @@ mod tests {
             })
             .expect("test setup: V3 registration");
 
+        // Through the gate: a failing fetcher is OBSERVABLE as FetchFailed
+        // (word 0) — the legacy seam collapsed this into silent ZERO.
+        let read = core.swap_simulation(
+            0,
+            pool_id,
+            SwapRequest {
+                zero_for_one: true,
+                amount_specified: -I256::try_from(U256::from(1000u64)).unwrap(),
+                sqrt_price_limit: None,
+            },
+        );
         assert_eq!(
-            core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0,),
-            U256::ZERO,
-            "a failing fetcher must give up with ZERO, not panic or spin"
+            read,
+            SwapRead::FetchFailed { word: 0 },
+            "a failing fetcher must surface FetchFailed, not panic, spin, or silently zero"
         );
     }
 
     #[test]
-    fn calculate_tokens_out_with_fetch_empty_word_not_refetched() {
+    fn swap_simulation_empty_word_not_refetched() {
         // A fetcher that returns an empty word (checked-but-empty) marks the
         // word known in `known_bitmap_words`. A second solve must NOT re-invoke
         // the fetcher — the empty word survived in the bitmap (ADR-006/005
@@ -6035,18 +5744,61 @@ mod tests {
             .expect("test setup: V3 registration");
 
         // First solve: misses word 0, fetches (empty), retries → computes.
-        let first = core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0);
+        // The fetched word rides on the outcome; the empty (checked) word
+        // survives in known_bitmap_words.
+        let read = core.swap_simulation(
+            0,
+            pool_id,
+            SwapRequest {
+                zero_for_one: true,
+                amount_specified: -I256::try_from(U256::from(1000u64)).unwrap(),
+                sqrt_price_limit: None,
+            },
+        );
+        let first = match &read {
+            SwapRead::Computed(SwapOutcome::V3(p)) => p.delivered.into_raw(),
+            other => panic!("first solve must compute via fetch+retry, got {other:?}"),
+        };
         let calls_after_first = counter.calls.load(Ordering::SeqCst);
         assert!(calls_after_first >= 1, "first solve must fetch word 0");
-        assert_eq!(
-            first,
-            core.calculate_tokens_out_miss_aware(pool_id, true, U256::from(1000u64))
-                .expect("word 0 is known after the fetch+retry; the direct path must not miss or overflow"),
-            "first fetched result must match the no-miss direct path"
-        );
+        match read {
+            SwapRead::Computed(SwapOutcome::V3(p)) => {
+                assert!(
+                    p.fetched_words.contains(&0),
+                    "word 0 fetched once, got {:?}",
+                    p.fetched_words
+                );
+            }
+            _ => unreachable!(),
+        }
 
-        // Second solve: word 0 is now known → NO fetch should happen.
-        let _second = core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0);
+        // Second solve: word 0 is now known → NO fetch should happen and the
+        // outcome records no fetched words.
+        let second = core.swap_simulation(
+            0,
+            pool_id,
+            SwapRequest {
+                zero_for_one: true,
+                amount_specified: -I256::try_from(U256::from(1000u64)).unwrap(),
+                sqrt_price_limit: None,
+            },
+        );
+        assert_eq!(
+            counter.calls.load(Ordering::SeqCst),
+            calls_after_first,
+            "second solve must NOT re-invoke the fetcher — the empty word survived in known_bitmap_words"
+        );
+        match second {
+            SwapRead::Computed(SwapOutcome::V3(p)) => {
+                assert_eq!(
+                    p.delivered.into_raw(),
+                    first,
+                    "second solve must match the first"
+                );
+                assert!(p.fetched_words.is_empty());
+            }
+            other => panic!("second solve must compute without fetching, got {other:?}"),
+        }
         assert_eq!(
             counter.calls.load(Ordering::SeqCst),
             calls_after_first,

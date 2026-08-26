@@ -36,7 +36,8 @@
 
 #![expect(clippy::doc_markdown)]
 
-use alloy::primitives::{address, aliases::U112, U256};
+use alloy::primitives::{address, aliases::U112, I256, U256};
+use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::{BotState, RegisterV2PoolParams};
 
@@ -129,11 +130,20 @@ fn standalone_rust_consumer_matches_closed_form() {
         .expect("register canonical V2 pool");
     assert_eq!(pid, 1, "first registered pool gets id 1");
 
-    let amount_out = bot
-        .calculate_tokens_out_miss_aware(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN))
-        .expect(
-            "small in-tick amount with pre-populated tick data; V2 calc must not miss or overflow",
-        );
+    let amount_out = match bot.swap_simulation(
+        0,
+        pid,
+        SwapRequest {
+            zero_for_one: ZERO_FOR_ONE,
+            amount_specified: -I256::try_from(U256::from(AMOUNT_IN)).unwrap(),
+            sqrt_price_limit: None,
+        },
+    ) {
+        SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+        f => panic!(
+            "small in-tick amount with pre-populated tick data; V2 calc must not miss or overflow: {f:?}"
+        ),
+    };
     assert_eq!(
         amount_out,
         U256::from(EXPECTED_AMOUNT_OUT),

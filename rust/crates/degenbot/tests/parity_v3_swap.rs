@@ -40,11 +40,29 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{I256, U256};
+use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::bot_core::BotState;
 use degenbot::RegisterV3PoolParams;
 use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;
 use std::collections::HashMap;
+
+/// Exact-input read through the swap-simulation gate (ADR-037), replacing
+/// the former `calculate_tokens_out_miss_aware` seam for this suite.
+fn tokens_out(bot: &mut BotState, pool_id: u64, zero_for_one: bool, amount_in: U256) -> U256 {
+    match bot.swap_simulation(
+        0,
+        pool_id,
+        SwapRequest {
+            zero_for_one,
+            amount_specified: -I256::try_from(amount_in).unwrap(),
+            sqrt_price_limit: None,
+        },
+    ) {
+        SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+        f => panic!("in-tick fixture calc must not miss or overflow: {f:?}"),
+    }
+}
 
 /// Path to the shared V3 fixture (loaded by both this Rust test and the
 /// Python dual-driver test — HRT356, the single source of truth).
@@ -154,11 +172,7 @@ fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
         .expect("register canonical V3 pool");
     assert_eq!(pid, 1, "first registered pool gets id 1 (parity contract)");
 
-    let amount_out = bot
-        .calculate_tokens_out_miss_aware(pid, zero_for_one, U256::from(amount_in))
-        .expect(
-            "small in-tick amount with pre-populated tick data; V3 calc must not miss or overflow",
-        );
+    let amount_out = tokens_out(&mut bot, pid, zero_for_one, U256::from(amount_in));
     assert_eq!(
         amount_out,
         U256::from(expected_amount_out),
@@ -170,11 +184,7 @@ fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
     // output (catches a degenerate zero-return / overflow-clamp regression
     // that a single-point constant alone would miss).
     let bigger_in = U256::from(amount_in) * U256::from(10_u64);
-    let bigger_out = bot
-        .calculate_tokens_out_miss_aware(pid, zero_for_one, bigger_in)
-        .expect(
-            "in-tick 10x amount with pre-populated tick data; V3 calc must not miss or overflow",
-        );
+    let bigger_out = tokens_out(&mut bot, pid, zero_for_one, bigger_in);
     assert!(
         bigger_out > amount_out,
         "V3 in-tick swap must be monotonic: {bigger_out} !> {amount_out}"
@@ -183,9 +193,7 @@ fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
     // Symmetry sanity: at the 1:1 price the zfo and ofz outputs are equal
     // (no directional asymmetry at balance). Catches a direction-flag
     // inversion in the FFI seam.
-    let ofz_out = bot
-        .calculate_tokens_out_miss_aware(pid, false, U256::from(amount_in))
-        .expect("in-tick amount with pre-populated tick data; V3 calc must not miss or overflow");
+    let ofz_out = tokens_out(&mut bot, pid, false, U256::from(amount_in));
     assert_eq!(
         ofz_out, amount_out,
         "1:1-price V3 swap must be direction-symmetric (zfo == ofz)"

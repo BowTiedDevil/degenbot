@@ -9,7 +9,7 @@
 
 use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,9 +17,10 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
 use degenbot_bot::bot_core::state_lock::StateLock;
+use degenbot_bot::bot_core::swap_simulation::{SwapOutcome, SwapRead};
 use degenbot_bot::bot_core::{
     BalancerStablePoolIdentity, BalancerWeightedPoolIdentity, BotState, CurvePoolIdentity,
-    PoolTickCoverage, SimulateSwapError, TickInfo,
+    PoolTickCoverage, TickInfo,
 };
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
@@ -621,22 +622,33 @@ impl PyLiquidityPool {
         amount_in: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let result = self.with_state(py, |core| {
-            core.calculate_tokens_out_miss_aware(self.pool_id, zero_for_one, amount)
+        let amount_specified = -I256::try_from(amount).map_err(|_| {
+            pyo3::exceptions::PyOverflowError::new_err("amount_in does not fit I256")
+        })?;
+        let result = self.with_state_mut(py, |core| {
+            core.swap_simulation(
+                0,
+                self.pool_id,
+                degenbot_bot::bot_core::swap_simulation::SwapRequest {
+                    zero_for_one,
+                    amount_specified,
+                    sqrt_price_limit: None,
+                },
+            )
         });
         // cdbc03bb: V2/V3/V4 swap math reverts on `uint256` overflow (mirrors
         // on-chain `getAmountOut` SafeMath revert). The plain
         // `calculate_tokens_out` surfaces that revert as a Python `ValueError`
         // (the V2 companion translates it to a domain `LiquidityPoolError`,
         // mirroring `calculate_tokens_in_from_tokens_out`'s overdraw-sentinel
-        // translation). A V3/V4 sparse-map miss stays mapped to 0 so callers
-        // that don't opt into `calculate_tokens_out_with_fetch` keep the
-        // legacy no-raise-on-miss contract documented on the underlying
-        // `BotState::calculate_tokens_out`.
+        // translation). An unrecovered V3/V4 sparse-map miss stays mapped to 0
+        // so callers that don't opt into `calculate_tokens_out_with_fetch`
+        // keep the legacy no-raise-on-miss contract documented on ADR-037's
+        // typed failure modes.
         let out = match result {
-            Ok(v) => v,
-            Err(SimulateSwapError::MissingTickWord(_)) => U256::ZERO,
-            Err(SimulateSwapError::NotComputable) => {
+            SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+            SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => U256::ZERO,
+            SwapRead::NotComputable => {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
                 ));
@@ -689,8 +701,20 @@ impl PyLiquidityPool {
         block: u64,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+            zero_for_one,
+            amount_specified: -I256::try_from(amount).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err("amount_in does not fit I256")
+            })?,
+            sqrt_price_limit: None,
+        };
+        // ADR-037: the fetch-retry policy lives behind the gate; unrecovered
+        // misses keep this seam's legacy silent-`0` contract.
         let result = self.with_state_mut(py, |core| {
-            core.calculate_tokens_out_with_fetch(self.pool_id, zero_for_one, amount, block)
+            match core.swap_simulation(block, self.pool_id, request) {
+                SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+                _ => U256::ZERO,
+            }
         });
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
@@ -713,30 +737,32 @@ impl PyLiquidityPool {
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        let amount_specified = -I256::try_from(amount)
+            .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256"))?;
         let sqrt_price_limit = match sqrt_price_limit_x96 {
-            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
-            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
+            Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
+            _ => None,
         };
-        let outcome = self.with_state_mut(py, |core| {
-            core.simulate_exact_input_swap_with_fetch(
-                self.pool_id,
-                zero_for_one,
-                amount,
-                sqrt_price_limit,
-                block,
-            )
+        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+            zero_for_one,
+            amount_specified,
+            sqrt_price_limit,
+        };
+        let read = self.with_state_mut(py, |core| {
+            core.swap_simulation(block, self.pool_id, request)
         });
-        let Some(outcome) = outcome else {
+        let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);
         };
+        let (amount0, amount1) = payload.raw_token_amounts(zero_for_one);
         let tuple = pyo3::types::PyTuple::new(
             py,
             [
-                crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
-                outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
-                outcome.tick.into_pyobject(py)?.into_any().unbind(),
+                crate::conversion::alloy::u256_to_py(py, &amount0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &amount1)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &payload.end_sqrt_price_x96)?.unbind(),
+                payload.end_liquidity.into_pyobject(py)?.into_any().unbind(),
+                payload.end_tick.into_pyobject(py)?.into_any().unbind(),
             ],
         )?;
         Ok(Some(tuple.into_any().unbind()))
@@ -758,30 +784,34 @@ impl PyLiquidityPool {
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
+        let amount_specified = I256::try_from(amount)
+            .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("amount does not fit I256"))?;
         let sqrt_price_limit = match sqrt_price_limit_x96 {
-            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
-            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
+            Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
+            _ => None,
         };
-        let outcome = self.with_state_mut(py, |core| {
-            core.simulate_exact_output_swap_with_fetch(
-                self.pool_id,
-                zero_for_one,
-                amount,
-                sqrt_price_limit,
-                block,
-            )
+        let request = degenbot_bot::bot_core::swap_simulation::SwapRequest {
+            zero_for_one,
+            // Exact-output request: POSITIVE user-perspective (pool delivers).
+            // The V3/V4 engine sign conventions are handled inside the gate.
+            amount_specified,
+            sqrt_price_limit,
+        };
+        let read = self.with_state_mut(py, |core| {
+            core.swap_simulation(block, self.pool_id, request)
         });
-        let Some(outcome) = outcome else {
+        let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);
         };
+        let (amount0, amount1) = payload.raw_token_amounts(zero_for_one);
         let tuple = pyo3::types::PyTuple::new(
             py,
             [
-                crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
-                outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
-                outcome.tick.into_pyobject(py)?.into_any().unbind(),
+                crate::conversion::alloy::u256_to_py(py, &amount0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &amount1)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &payload.end_sqrt_price_x96)?.unbind(),
+                payload.end_liquidity.into_pyobject(py)?.into_any().unbind(),
+                payload.end_tick.into_pyobject(py)?.into_any().unbind(),
             ],
         )?;
         Ok(Some(tuple.into_any().unbind()))

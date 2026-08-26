@@ -104,6 +104,21 @@ pub struct V2SwapOutcome {
     pub caveats: Caveats,
 }
 
+impl ClSwapOutcome {
+    /// Raw per-token magnitudes for legacy tuple seams (`(token0, token1)`
+    /// absolute amounts moved), given the swap direction.
+    #[must_use]
+    pub fn raw_token_amounts(&self, zero_for_one: bool) -> (U256, U256) {
+        let input = (-self.consumed).into_raw();
+        let output = self.delivered.into_raw();
+        if zero_for_one {
+            (input, output)
+        } else {
+            (output, input)
+        }
+    }
+}
+
 /// Rich payload for concentrated-liquidity swaps (V3/V4).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClSwapOutcome {
@@ -136,6 +151,40 @@ pub enum SwapOutcome {
     V3(ClSwapOutcome),
     /// V4 concentrated-liquidity result.
     V4(ClSwapOutcome),
+}
+
+impl SwapOutcome {
+    /// Unsigned magnitude of the output delivered to the user (exact-input
+    /// reads). Delivered deltas are non-negative by construction.
+    #[must_use]
+    pub fn delivered_unsigned(&self) -> U256 {
+        let delivered = match self {
+            Self::V2(o) => o.delivered,
+            Self::V3(o) | Self::V4(o) => o.delivered,
+        };
+        debug_assert!(
+            delivered >= I256::ZERO,
+            "delivered delta is user-perspective positive by construction"
+        );
+        delivered.into_raw()
+    }
+
+    /// Raw per-token magnitudes for legacy tuple seams (`(token0, token1)`
+    /// absolute amounts moved), given the swap direction.
+    #[must_use]
+    pub fn legacy_token_amounts(&self, zero_for_one: bool) -> Option<(U256, U256)> {
+        let (consumed, delivered) = match self {
+            Self::V2(o) => (-o.consumed, o.delivered),
+            Self::V3(o) | Self::V4(o) => (-o.consumed, o.delivered),
+        };
+        let input = consumed.into_raw();
+        let output = delivered.into_raw();
+        Some(if zero_for_one {
+            (input, output)
+        } else {
+            (output, input)
+        })
+    }
 }
 
 /// The typed result of [`BotState::swap_simulation`].

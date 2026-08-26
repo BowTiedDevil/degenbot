@@ -6,7 +6,7 @@
 //! Proves the BPT-index-skipping path in
 //! `simulate_balancer_stable_swap` (`skip_bpt`) correctly **drops the BPT
 //! token from the invariant balance list** before computing the stableswap
-//! outGivenIn, end-to-end through `BotState::calculate_tokens_out_miss_aware`
+//! outGivenIn, end-to-end through `BotState::swap_simulation` (ADR-037)
 //! → `simulate_swap` → `simulate_balancer_stable_swap` → `skip_bpt` — the
 //! same path a `cargo add degenbot` standalone consumer reaches.
 //!
@@ -51,7 +51,8 @@
 
 #![expect(clippy::doc_markdown)]
 
-use alloy::primitives::{address, U256};
+use alloy::primitives::{address, I256, U256};
+use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::pools::balancer_stable_state::RegisterBalancerStablePoolParams;
 use degenbot::BotState;
 
@@ -116,12 +117,27 @@ fn register_composable_stable_fixture() -> (BotState, u64) {
     (bot, pool_id)
 }
 
+/// Exact-input read through the swap-simulation gate (ADR-037), replacing
+/// the former `calculate_tokens_out_miss_aware` seam for this suite.
+fn tokens_out(bot: &mut BotState, pool_id: u64, zero_for_one: bool, amount_in: U256) -> U256 {
+    match bot.swap_simulation(
+        0,
+        pool_id,
+        SwapRequest {
+            zero_for_one,
+            amount_specified: -I256::try_from(U256::from(amount_in)).unwrap(),
+            sqrt_price_limit: None,
+        },
+    ) {
+        SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+        f => panic!("ComposableStable swap should compute: {f:?}"),
+    }
+}
+
 #[test]
 fn composable_stable_bpt_drop_matches_metastable_oracle() {
-    let (bot, pool_id) = register_composable_stable_fixture();
-    let amount_out = bot
-        .calculate_tokens_out_miss_aware(pool_id, ZERO_FOR_ONE, U256::from(AMOUNT_IN))
-        .expect("ComposableStable swap should compute");
+    let (mut bot, pool_id) = register_composable_stable_fixture();
+    let amount_out = tokens_out(&mut bot, pool_id, ZERO_FOR_ONE, U256::from(AMOUNT_IN));
     assert_eq!(
         amount_out,
         U256::from(EXPECTED_AMOUNT_OUT),
@@ -136,13 +152,9 @@ fn composable_stable_bpt_drop_is_symmetric_on_equal_reserves() {
     // amount_in MUST yield identical output (stableswap symmetry under
     // equal balances). A BPT-drop bug that asymmetrically perturbed the
     // invariant would break this.
-    let (bot, pool_id) = register_composable_stable_fixture();
-    let forward = bot
-        .calculate_tokens_out_miss_aware(pool_id, true, U256::from(AMOUNT_IN))
-        .unwrap();
-    let reverse = bot
-        .calculate_tokens_out_miss_aware(pool_id, false, U256::from(AMOUNT_IN))
-        .unwrap();
+    let (mut bot, pool_id) = register_composable_stable_fixture();
+    let forward = tokens_out(&mut bot, pool_id, true, U256::from(AMOUNT_IN));
+    let reverse = tokens_out(&mut bot, pool_id, false, U256::from(AMOUNT_IN));
     assert_eq!(
         forward, reverse,
         "ComposableStable swap must be symmetric on equal reserves (fwd={forward}, rev={reverse})"
@@ -163,13 +175,9 @@ fn composable_stable_bpt_drop_is_monotonic_and_bounded() {
     // at large `amount_in`, so the observed ratio is dominated by rounding,
     // not slippage. Monotonicity + the conservation bound are the robust
     // sanity checks the fixture can pin.)
-    let (bot, pool_id) = register_composable_stable_fixture();
-    let small = bot
-        .calculate_tokens_out_miss_aware(pool_id, ZERO_FOR_ONE, U256::from(AMOUNT_IN))
-        .unwrap();
-    let large = bot
-        .calculate_tokens_out_miss_aware(pool_id, ZERO_FOR_ONE, U256::from(10 * AMOUNT_IN))
-        .unwrap();
+    let (mut bot, pool_id) = register_composable_stable_fixture();
+    let small = tokens_out(&mut bot, pool_id, ZERO_FOR_ONE, U256::from(AMOUNT_IN));
+    let large = tokens_out(&mut bot, pool_id, ZERO_FOR_ONE, U256::from(10 * AMOUNT_IN));
     assert!(
         large > small,
         "monotonicity violated: 10× amount_in gave {large} <= {small}"
@@ -211,9 +219,7 @@ fn bpt_balance_does_not_affect_output_proving_drop() {
         rate_provider: None,
     };
     let pid = bot.register_balancer_stable_pool(&params);
-    let out = bot
-        .calculate_tokens_out_miss_aware(pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN))
-        .unwrap();
+    let out = tokens_out(&mut bot, pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN));
     assert_eq!(
         out,
         U256::from(EXPECTED_AMOUNT_OUT),

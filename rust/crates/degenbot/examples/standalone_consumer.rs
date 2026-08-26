@@ -30,6 +30,7 @@ use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
     simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
 };
+use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot::cmd_executor::compute_simulation_warmup_slots;
 use degenbot::db::snapshot_db::SnapshotDb;
@@ -242,9 +243,21 @@ fn main() {
     //    `IntHopState` constant-product path). The same code path the PyO3 binding ships to
     //    Python — but here reached without a single `pyo3` import.
     let amount_in = U256::from(1_000_000_000_u64); // 1000 USDC in
-    let amount_out = bot
-        .calculate_tokens_out_miss_aware(pool_id, true, amount_in)
-        .expect("small non-overflowing V2 amount; standalone calc must not miss or overflow");
+    let amount_out = match bot.swap_simulation(
+        0,
+        pool_id,
+        SwapRequest {
+            zero_for_one: true,
+            // User perspective: negative = exact-input (we send amount_in).
+            amount_specified: -I256::try_from(amount_in).expect("amount fits I256"),
+            sqrt_price_limit: None,
+        },
+    ) {
+        SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+        f => panic!(
+            "small non-overflowing V2 amount; standalone calc must not miss or overflow: {f:?}"
+        ),
+    };
     assert!(
         amount_out > U256::ZERO,
         "expected a non-zero swap output, got {amount_out}"
@@ -253,9 +266,20 @@ fn main() {
     // Round-trip sanity: a larger input must produce a strictly-larger output
     // (constant-product is monotonic, ignoring fee edge cases at the extremes).
     let bigger_in = amount_in * U256::from(2_u64);
-    let bigger_out = bot
-        .calculate_tokens_out_miss_aware(pool_id, true, bigger_in)
-        .expect("small non-overflowing V2 amount; standalone calc must not miss or overflow");
+    let bigger_out = match bot.swap_simulation(
+        0,
+        pool_id,
+        SwapRequest {
+            zero_for_one: true,
+            amount_specified: -I256::try_from(bigger_in).expect("amount fits I256"),
+            sqrt_price_limit: None,
+        },
+    ) {
+        SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+        f => panic!(
+            "small non-overflowing V2 amount; standalone calc must not miss or overflow: {f:?}"
+        ),
+    };
     assert!(
         bigger_out > amount_out,
         "constant-product calc must be monotonic: {bigger_out} !> {amount_out}"

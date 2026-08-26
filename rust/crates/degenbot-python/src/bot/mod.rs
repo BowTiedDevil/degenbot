@@ -27,7 +27,7 @@ pub mod token;
 use crate::prelude::*;
 use std::sync::Arc;
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, I256};
 
 use crate::bot::engine::{
     hex_string_to_pool_id, map_builder_err, map_register_v2_err, map_register_v3_err,
@@ -48,11 +48,12 @@ use crate::bot::token::PyErc20Token;
 use crate::diagnostics::thread_registry::{
     note_state_intent, StateIntentGuard, StateLockMode, StateLockPhase,
 };
+use degenbot_bot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
     Bot, BotState, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
-    RegisterV3PoolParams, RegisterV4PoolParams, SimulateSwapError, V4PoolKey,
+    RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
 use degenbot_pools::state_history::JournalError;
 use degenbot_uniswap::dex_identity::DexVariant;
@@ -1262,18 +1263,25 @@ impl PyBot {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        let result = self.with_state(py, |s| {
-            s.calculate_tokens_out_miss_aware(pool_id, zero_for_one, amount)
-        });
+        let request = SwapRequest {
+            zero_for_one,
+            amount_specified: -I256::try_from(amount).map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err("amount_in does not fit I256")
+            })?,
+            sqrt_price_limit: None,
+        };
+        let result = self.with_state_mut(py, |s| s.swap_simulation(0, pool_id, request));
         // cdbc03bb: surface `NotComputable` (uint256 overflow = on-chain revert)
         // as a Python `ValueError` so the companion can translate it to a
-        // domain `LiquidityPoolError`; keep `MissingTickWord` mapped to 0 so
-        // callers that haven't opted into the fetch-retry path keep the legacy
-        // no-raise-on-miss contract.
+        // domain `LiquidityPoolError`; keep unrecovered sparse-map misses
+        // mapped to 0 so callers that haven't opted into the fetch-retry path
+        // keep the legacy no-raise-on-miss contract.
         let out = match result {
-            Ok(v) => v,
-            Err(SimulateSwapError::MissingTickWord(_)) => alloy::primitives::U256::ZERO,
-            Err(SimulateSwapError::NotComputable) => {
+            SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+            SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => {
+                alloy::primitives::U256::ZERO
+            }
+            SwapRead::NotComputable => {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
                 ));
