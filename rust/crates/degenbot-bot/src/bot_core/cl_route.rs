@@ -96,6 +96,20 @@ pub enum NoOpReason {
     ScalarReseedAtRegistration,
 }
 
+/// Execution result after a caller routed one event through [`route_action`]
+/// and applied the returned [`RouteAction`]. `Applied` carries the affected
+/// `pool_id` so callers can run subscriber notify; buffered/no-op outcomes
+/// carry no id (nothing was mutated).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyOutcome {
+    /// Applied directly to registered pool state.
+    Applied(u64),
+    /// Staged into the named buffer.
+    Buffered(BufferKind),
+    /// Deliberately dropped (reason names the trust assumption).
+    NoOp(NoOpReason),
+}
+
 /// The verdict for one decoded event. Total: no implicit drop path exists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouteAction {

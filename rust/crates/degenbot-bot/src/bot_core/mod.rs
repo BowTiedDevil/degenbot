@@ -1157,6 +1157,7 @@ impl BotState {
     /// event_routing.rs`); the engine method is now a thin delegator +
     /// `last_processed_block` stamp. `BotState` owns the state (ADR-003);
     /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
+    #[expect(clippy::too_many_lines)]
     pub fn process_backfill_logs(&mut self, logs: &[alloy::rpc::types::Log], chunk_end: u64) {
         use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
         use degenbot_decoders::v3_pancakeswap_swap_decoder::decode_v3_pancakeswap_swap_log;
@@ -1171,14 +1172,21 @@ impl BotState {
             // malformed log so apply never sees block 0.
             let log_block = log.block_number.unwrap_or(chunk_end);
             let Some(topic0) = log.topic0() else { continue };
+            // V3 events route through the SINGLE routing table (cl_route)
+            // at Phase::Backfill — no per-site policy copies. The table's rows
+            // reproduce the historical behavior exactly (unregistered scalar
+            // refresh drops rely on the row re-seed; liquidity always stages).
             if *topic0 == degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC {
                 if let Some(event) = decode_v3_swap_log(log) {
-                    self.apply_v3_swap(
+                    self.route_v3_event(
+                        crate::bot_core::cl_route::Phase::Backfill,
                         event.pool_address,
-                        event.sqrt_price_x96,
-                        event.liquidity.to::<u128>(),
-                        event.tick,
-                        log_block,
+                        BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
+                            sqrt_price_x96: event.sqrt_price_x96,
+                            liquidity: event.liquidity.to::<u128>(),
+                            tick: event.tick,
+                            block_number: log_block,
+                        }),
                         &[],
                     );
                     v3_touched = true;
@@ -1191,35 +1199,46 @@ impl BotState {
                 // them via the dedicated decoder so these pools stay live. See
                 // docs/exploration-no-profit-crash.md (stale-state root cause).
                 if let Some(event) = decode_v3_pancakeswap_swap_log(log) {
-                    self.apply_v3_swap(
+                    self.route_v3_event(
+                        crate::bot_core::cl_route::Phase::Backfill,
                         event.pool_address,
-                        event.sqrt_price_x96,
-                        event.liquidity.to::<u128>(),
-                        event.tick,
-                        log_block,
+                        BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
+                            sqrt_price_x96: event.sqrt_price_x96,
+                            liquidity: event.liquidity.to::<u128>(),
+                            tick: event.tick,
+                            block_number: log_block,
+                        }),
                         &[],
                     );
                     v3_touched = true;
                 }
             } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC {
                 if let Some(event) = decode_v3_mint_log(log) {
-                    self.buffer_backfill_v3_liquidity_update(
+                    self.route_v3_event(
+                        crate::bot_core::cl_route::Phase::Backfill,
                         event.pool_address,
-                        event.tick_lower,
-                        event.tick_upper,
-                        event.amount.cast_signed(),
-                        log_block,
+                        BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+                            tick_lower: event.tick_lower,
+                            tick_upper: event.tick_upper,
+                            liquidity_delta: event.amount.cast_signed(),
+                            block_number: log_block,
+                        }),
+                        &[],
                     );
                     v3_touched = true;
                 }
             } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC {
                 if let Some(event) = decode_v3_burn_log(log) {
-                    self.buffer_backfill_v3_liquidity_update(
+                    self.route_v3_event(
+                        crate::bot_core::cl_route::Phase::Backfill,
                         event.pool_address,
-                        event.tick_lower,
-                        event.tick_upper,
-                        -(event.amount.cast_signed()),
-                        log_block,
+                        BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+                            tick_lower: event.tick_lower,
+                            tick_upper: event.tick_upper,
+                            liquidity_delta: -(event.amount.cast_signed()),
+                            block_number: log_block,
+                        }),
+                        &[],
                     );
                     v3_touched = true;
                 }
@@ -1377,6 +1396,31 @@ mod tests {
     fn make_pool_addr() -> Address {
         Address::from([0xaa; 20])
     }
+
+    /// FUWYUR router contract (cl_route): route_v3_event is THE decision
+    /// point — a live-phase tick mutation for an unregistered pool must
+    /// stage into the pump buffer (not drop), and the buffered event lands
+    /// in `v3_buffer` keyed by address for the registration drain+pin seam.
+    #[test]
+    fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
+        let mut core = BotState::new();
+        let addr = Address::from([0x66; 20]);
+        let outcome = core.route_v3_event(
+            crate::bot_core::cl_route::Phase::Live,
+            addr,
+            BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+                tick_lower: -100,
+                tick_upper: 7,
+                liquidity_delta: 118_748_558_607_688,
+                block_number: 10,
+            }),
+            &[],
+        );
+        use crate::bot_core::cl_route::{ApplyOutcome, BufferKind};
+        assert_eq!(outcome, ApplyOutcome::Buffered(BufferKind::Pump));
+        assert_eq!(core.buffered_v3_event_count(&addr), 1);
+    }
+
     fn make_token0() -> Address {
         Address::from([0xbb; 20])
     }

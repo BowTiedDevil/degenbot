@@ -16,6 +16,9 @@ use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U256};
 
+use crate::bot_core::cl_route::{
+    route_action, ApplyOutcome, BufferKind, EventKind, Phase, PoolPresence, RouteAction,
+};
 use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
 use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent};
 use degenbot_pools::v4_state::{
@@ -150,15 +153,138 @@ impl BotState {
         state.invalidate_tick_range_cache();
     }
 
-    /// Apply a V3 `Swap` event to a registered pool's state (ADR-003 live path).
+    /// Resolve a V3 pool's routing presence (`cl_route` axis).
+    fn v3_presence(&self, pool_address: &Address) -> PoolPresence {
+        let lifecycle =
+            self.pool_addresses
+                .get(pool_address)
+                .and_then(|&id| match self.pools.get(&id) {
+                    Some(PoolEntry::V3(_, s)) => Some(s.registration_lifecycle),
+                    _ => None,
+                });
+        PoolPresence::from_lifecycle(lifecycle)
+    }
+
+    /// THE single decision point for a decoded V3 event (`cl_route` table).
     ///
-    /// Mirrors the dissolved `V3BlockEngine::apply_swap`: overlays `tick_priors`
-    /// into `tick_data` (the live pump path passes `&[]` — swaps don't modify
-    /// `tick_data`), sets the scalar fields, invalidates the tick-range cache,
-    /// journals the prior scalars (and any provided per-tick priors) for reorg
-    /// rollback, and returns the affected `pool_id`. Returns `None` if the pool
-    /// is not registered (a no-op). I/O-free; the engine calls this under the
-    /// core lock inside the engine lock (engine-then-core ordering).
+    /// Every production entry point — live dispatch, snapshot-gap backfill,
+    /// pyo3 staged appliers — must ask this function instead of embedding its
+    /// own copy of the policy (FUWYUR: three divergent routers each knew a
+    /// subset; the funnel's "unregistered implies drop" inference silently lost
+    /// live Mints). Callers execute the returned outcome; they do not pre-judge.
+    ///
+    /// `swap_priors` overlays tick priors onto DIRECT swap application only
+    /// (pump/backfill paths pass an empty slice; buffered events never carry
+    /// priors).
+    pub fn route_v3_event(
+        &mut self,
+        phase: Phase,
+        pool_address: Address,
+        event: BufferedV3PoolEvent,
+        swap_priors: &[(i32, TickInfo)],
+    ) -> ApplyOutcome {
+        let kind = match &event {
+            BufferedV3PoolEvent::Swap(_) => EventKind::ScalarRefresh,
+            BufferedV3PoolEvent::Liquidity(_) => EventKind::TickMutation,
+        };
+        let presence = self.v3_presence(&pool_address);
+        let action = route_action(phase, presence, kind);
+        match action {
+            RouteAction::ApplyDirect => {
+                // Table invariant: ApplyDirect implies registered. Defensive
+                // fallback (never expected) degrades to a named no-op rather
+                // than panicking inside the hot dispatch path.
+                let Some(pool_id) = self.pool_addresses.get(&pool_address).copied() else {
+                    debug_assert!(
+                        false,
+                        "ApplyDirect for an unregistered pool — routing table invariant violated"
+                    );
+                    return ApplyOutcome::Buffered(BufferKind::Pump);
+                };
+                match event {
+                    BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
+                        sqrt_price_x96,
+                        liquidity,
+                        tick,
+                        block_number,
+                    }) => {
+                        self.apply_v3_swap_by_pool_id(
+                            pool_id,
+                            sqrt_price_x96,
+                            liquidity,
+                            tick,
+                            block_number,
+                            swap_priors,
+                        );
+                    }
+                    BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+                        tick_lower,
+                        tick_upper,
+                        liquidity_delta,
+                        block_number,
+                    }) => {
+                        self.apply_v3_liquidity_update_by_pool_id(
+                            pool_id,
+                            tick_lower,
+                            tick_upper,
+                            liquidity_delta,
+                            block_number,
+                        );
+                    }
+                }
+                ApplyOutcome::Applied(pool_id)
+            }
+            RouteAction::Buffer(kind) => {
+                // Preserve historical live-path route traces (grep compat).
+                if phase == Phase::Live && presence != PoolPresence::Live {
+                    if let BufferedV3PoolEvent::Liquidity(u) = &event {
+                        let label = match presence {
+                            PoolPresence::Unregistered => "none",
+                            _ => "Quarantined",
+                        };
+                        let route = match presence {
+                            PoolPresence::Unregistered => "buffer-pump",
+                            _ => "buffer-pump-quarantined",
+                        };
+                        trace_apply_route_v3(
+                            pool_address,
+                            u.tick_lower,
+                            u.tick_upper,
+                            u.liquidity_delta,
+                            u.block_number,
+                            label,
+                            route,
+                        );
+                        drain_dbg_log_buf(
+                            pool_address,
+                            if presence == PoolPresence::Unregistered {
+                                'L'
+                            } else {
+                                'Q'
+                            },
+                            u.tick_lower,
+                            u.tick_upper,
+                            u.liquidity_delta,
+                            u.block_number,
+                        );
+                    }
+                }
+                match kind {
+                    BufferKind::Backfill => self.v3_buffer.buffer_backfill(pool_address, event),
+                    BufferKind::Pump => self.v3_buffer.buffer_pump(pool_address, event),
+                }
+                ApplyOutcome::Buffered(kind)
+            }
+            RouteAction::Drop(reason) => ApplyOutcome::NoOp(reason),
+        }
+    }
+
+    /// Apply a V3 `Swap` event (ADR-003 live path).
+    ///
+    /// Thin adapter over [`Self::route_v3_event`] at `Phase::Live`: the routing
+    /// table decides apply-vs-buffer-vs-drop; this entry flattens the outcome
+    /// to the historical `Option<pool_id>` shape (`None` = buffered or
+    /// dropped). `tick_priors` overlay only on direct application.
     pub fn apply_v3_swap(
         &mut self,
         pool_address: Address,
@@ -168,38 +294,21 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let &pool_id = self.pool_addresses.get(&pool_address)?;
         trace_apply_swap_v3(pool_address, sqrt_price_x96, liquidity, tick, block_number);
-        // 6N7XVR: a `Quarantined` pool defers the live `Swap` to the pump
-        // buffer. A `Swap` does NOT touch `tick_data` (the pump path passes
-        // `tick_priors: &[]`), but it DOES set `update_block = block_number` —
-        // so without deferral a live `Swap` at an in-progress block N+1 would
-        // advance the pin's `update_block` to N+1 while a buffered same-block
-        // `Mint`/`Burn` stays retained → the same mismatch the liquidity-only
-        // deferral was meant to prevent (the 25647112 reproduction). `Live`
-        // applies directly (the steady-state contract).
-        if let Some(PoolEntry::V3(_, state)) = self.pools.get(&pool_id) {
-            if state.registration_lifecycle == RegistrationLifecycle::Quarantined {
-                self.v3_buffer.buffer_pump(
-                    pool_address,
-                    BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
-                        sqrt_price_x96,
-                        liquidity,
-                        tick,
-                        block_number,
-                    }),
-                );
-                return None;
-            }
-        }
-        self.apply_v3_swap_by_pool_id(
-            pool_id,
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            block_number,
+        match self.route_v3_event(
+            Phase::Live,
+            pool_address,
+            BufferedV3PoolEvent::Swap(BufferedV3SwapEvent {
+                sqrt_price_x96,
+                liquidity,
+                tick,
+                block_number,
+            }),
             tick_priors,
-        )
+        ) {
+            ApplyOutcome::Applied(pool_id) => Some(pool_id),
+            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
+        }
     }
 
     /// Apply a V3 Swap event keyed by the handle's `pool_id` (plan-101 slice 8a).
@@ -223,16 +332,10 @@ impl BotState {
         Some(pool_id)
     }
 
-    /// Apply a V3 liquidity update (Mint/Burn) to a registered pool's
-    /// `tick_data`, or buffer it for an unregistered pool (ADR-003 live path).
-    ///
-    /// Registered pool: applies via `apply_liquidity_to_tick_range` (matching
-    /// Solidity `Tick.update` — both lower and upper get `liquidity_gross +=
-    /// delta`; `liquidity_net` `+=` at lower, `-=` at upper), invalidates the
-    /// tick-range cache, returns the affected `pool_id`.
-    ///
-    /// Unregistered pool: buffers into the pump buffer for staged application
-    /// at registration; returns `None`.
+    /// Apply a V3 liquidity update (Mint/Burn) — thin adapter over
+    /// [`Self::route_v3_event`] at `Phase::Live`. FUWYUR: unregistered pools
+    /// stage into the PUMP buffer here so late registration captures them;
+    /// under the old funnel this row was a silent drop.
     pub fn apply_v3_liquidity_update(
         &mut self,
         pool_address: Address,
@@ -241,87 +344,20 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(&pool_id) = self.pool_addresses.get(&pool_address) else {
-            trace_apply_route_v3(
-                pool_address,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-                "none",
-                "buffer-pump",
-            );
-            drain_dbg_log_buf(
-                pool_address,
-                'L',
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            );
-            self.v3_buffer.buffer_pump(
-                pool_address,
-                BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
-                    tick_lower,
-                    tick_upper,
-                    liquidity_delta,
-                    block_number,
-                }),
-            );
-            return None;
-        };
-        // 6N7XVR: a `Quarantined` registered pool defers the live event to the
-        // pump buffer (via the same unregistered-buffering path) so the pin's
-        // `update_block` cannot outrun `last_complete_block`. `Live` applies
-        // directly. The deferral preserves cross-type arrival order within a
-        // block (a same-block `Swap` and `Mint` both land in the one buffer).
-        if let Some(PoolEntry::V3(_, state)) = self.pools.get(&pool_id) {
-            if state.registration_lifecycle == RegistrationLifecycle::Quarantined {
-                trace_apply_route_v3(
-                    pool_address,
-                    tick_lower,
-                    tick_upper,
-                    liquidity_delta,
-                    block_number,
-                    "Quarantined",
-                    "buffer-pump-quarantined",
-                );
-                drain_dbg_log_buf(
-                    pool_address,
-                    'Q',
-                    tick_lower,
-                    tick_upper,
-                    liquidity_delta,
-                    block_number,
-                );
-                self.v3_buffer.buffer_pump(
-                    pool_address,
-                    BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
-                        tick_lower,
-                        tick_upper,
-                        liquidity_delta,
-                        block_number,
-                    }),
-                );
-                return None;
-            }
-        }
-        trace_apply_route_v3(
+        match self.route_v3_event(
+            Phase::Live,
             pool_address,
-            tick_lower,
-            tick_upper,
-            liquidity_delta,
-            block_number,
-            "Live",
-            "direct-live",
-        );
-        self.apply_v3_liquidity_update_by_pool_id(
-            pool_id,
-            tick_lower,
-            tick_upper,
-            liquidity_delta,
-            block_number,
-        )
+            BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+            }),
+            &[],
+        ) {
+            ApplyOutcome::Applied(pool_id) => Some(pool_id),
+            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
+        }
     }
 
     /// V3 liquidity update keyed by the handle's `pool_id` (plan-101 slice 8a).
