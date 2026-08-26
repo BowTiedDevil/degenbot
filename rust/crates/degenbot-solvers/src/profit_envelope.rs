@@ -496,6 +496,14 @@ fn cl_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
 ///   `/tmp/gate_degenerate.jsonl`)
 /// - `DEGENBOT_GATE_CAPTURE_CAP=<N>` — max captured paths (default: 50)
 ///
+/// Thread-safety: a static `Mutex<()>` serializes the open + `write_all` +
+/// trailing newline so concurrent path-registration threads cannot
+/// interleave their (100KB+) records mid-write. `O_APPEND` keeps the file-
+/// offset update atomic at the kernel level; the userspace lock keeps the
+/// data write non-interleaved across the (possibly multi-syscall) write_all.
+/// Serialize-to-string happens BEFORE the lock so the critical section is
+/// just the open + write.
+///
 /// The JSONL schema matches `HeavyClPathCapture`'s format so the existing
 /// offline replay harness (
 /// `degenbot-solvers/tests/profit_envelope_tests.rs` golden-capture suite)
@@ -507,8 +515,10 @@ pub(crate) fn capture_degenerate_path(
 ) {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
 
     static CAPTURE_COUNT: AtomicU64 = AtomicU64::new(0);
+    static WRITE_LOCK: Mutex<()> = Mutex::new(());
     let max: u64 = std::env::var("DEGENBOT_GATE_CAPTURE_CAP")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -560,13 +570,37 @@ pub(crate) fn capture_degenerate_path(
         "n_hops": hops.len(),
         "hops": hops_json,
     });
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+
+    // Serialize before taking the lock so the critical section is just
+    // open + write_all. Records can be 100KB+; serializing under the lock
+    // would extend contention for no benefit (the Value is local to this
+    // call, so the to_string is race-free without the lock).
+    let serialized = doc.to_string();
+
+    // Locked append: path-registration runs on N worker threads and the gate
+    // fires concurrently for each rejected path. Without a held lock the
+    // per-call OpenOptions::open + writeln! across threads interleave writes
+    // and corrupt the JSONL — observed post-refactor: ~19% of records were
+    // unparseable because two threads' 100KB+ writes bracketed each other
+    // mid-record. The static Mutex serializes open + write_all + the trailing
+    // newline so each record lands as one contiguous line. O_APPEND at the
+    // kernel level keeps the file-offset update atomic; the userspace lock
+    // keeps the data write non-interleaved across the (possibly multi-
+    // syscall) write_all. `unwrap_or_else(into_inner)` recovers from a
+    // poisoned guard (a prior panicking caller) rather than propagating —
+    // capture is best-effort diagnostic, not a tripwire.
+    let _guard = WRITE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&out_path)
-    {
-        let _ = writeln!(f, "{doc}");
-    }
+    else {
+        return;
+    };
+    let _ = f.write_all(serialized.as_bytes());
+    let _ = f.write_all(b"\n");
 }
 
 /// Drop dominated lines: `i` dies if some `j` is `≤ i` at BOTH domain
