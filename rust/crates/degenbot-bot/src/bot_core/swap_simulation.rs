@@ -808,8 +808,7 @@ fn finish_cl(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::panic)]
-    #![allow(clippy::used_underscore_binding)]
+    #![expect(clippy::panic, clippy::unwrap_used, clippy::used_underscore_binding)]
 
     use super::*;
     use std::collections::HashMap;

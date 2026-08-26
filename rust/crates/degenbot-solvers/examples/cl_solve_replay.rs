@@ -1,6 +1,6 @@
 // Dev/example-only harness: an offline replay harness for captured solver fixtures.
 // Pedantic + restriction lints that production code denies are relaxed here.
-#![allow(
+#![expect(
     clippy::collapsible_else_if,
     clippy::manual_let_else,
     clippy::print_stderr,

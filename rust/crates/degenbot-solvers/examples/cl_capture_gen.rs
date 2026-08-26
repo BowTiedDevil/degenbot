@@ -1,6 +1,6 @@
 // Dev/example-only harness: an offline capture generator run by hand against live RPC.
 // Pedantic + restriction lints that production code denies are relaxed here.
-#![allow(
+#![expect(
     clippy::doc_lazy_continuation,
     clippy::expect_used,
     clippy::if_same_then_else,

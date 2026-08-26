@@ -9,8 +9,7 @@
 //! regression tripwire for that failure mode - it exercises the exact
 //! provider path the bot uses.
 #![cfg(feature = "otel")]
-#![expect(clippy::expect_used, clippy::panic)] // live probe: panic with context is the point
-#![allow(clippy::print_stderr)] // eprintln is the report channel for an ignored probe
+#![expect(clippy::expect_used, clippy::panic, clippy::print_stderr)] // live probe: panic with context is the point; eprintln is the report channel
 
 use tracing_subscriber::layer::SubscriberExt;
 

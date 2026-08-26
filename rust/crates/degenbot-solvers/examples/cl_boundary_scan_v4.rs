@@ -1,6 +1,6 @@
 // Dev/example-only harness: a throwaway V4 boundary-scanning tool for offline analysis.
 // Pedantic + restriction lints that production code denies are relaxed here.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     clippy::expect_used,
     clippy::format_push_string,
