@@ -67,8 +67,18 @@ jobs:
         # v0.6.0 tag against an alpha workspace fails fast, before upload.
         run: |
           tag="${GITHUB_REF_NAME#v}"
+          # Release tags use PEP440 (v0.6.0a5); crates.io uses SemVer
+          # (0.6.0-alpha.5), which is what the workspace literal holds. Normalize
+          # the PEP440 pre-release suffixes before comparing, so v0.6.0a5 and
+          # v0.6.0-alpha.5 both pass, but v0.6.0 against an alpha workspace still
+          # fails fast. POST releases (v0.6.0a1.post1) are PyPI-only: no SemVer
+          # form exists, so they fall through and fail closed here.
+          cargo_ver=$(printf '%s' "$tag" | sed -E \
+            -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)a([0-9]+)$/\1.\2.\3-alpha.\4/' \
+            -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)b([0-9]+)$/\1.\2.\3-beta.\4/' \
+            -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)rc([0-9]+)$/\1.\2.\3-rc.\4/')
           ws_ver=$(sed -n 's/^version = //p' rust/Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
-          if [ "$tag" != "$ws_ver" ]; then
+          if [ "$cargo_ver" != "$ws_ver" ]; then
             echo "Tag $GITHUB_REF_NAME does not match [workspace.package] version '$ws_ver'" >&2
             exit 1
           fi
