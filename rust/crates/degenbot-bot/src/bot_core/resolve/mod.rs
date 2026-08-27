@@ -71,6 +71,17 @@ impl CachedProjection {
 ///
 /// Growth is bounded by the number of distinct (pool, direction) pairs ever
 /// touched by resolution — the registered pool universe, not per-path work.
+///
+/// EXPIRY GRANULARITY (crossing-table cache review): CL crossing tables ride
+/// inside the cached `ResolvedHop` and therefore share this whole-pool nonce
+/// invalidation. A crossing table is prefix-cumulative
+/// (`crossing_gross_input[k]` sums the gross inputs of ranges `0..k-1`), so a
+/// single liquidity event can stale a SUFFIX of the table — not one isolated
+/// tick entry. Whole-pool invalidation is the correct-safe granularity and also
+/// the one every Mint/Burn/ModifyLiquidity already implements by bumping
+/// `state_nonce`. A tick-keyed expiry map is deliberately NOT used: it would
+/// need a nontrivial tick→affected-suffix index for a cache rebuilt in
+/// microseconds, adding risk without a measured win.
 pub(crate) type HopProjectionCache = HashMap<(HopType, u64, bool), (CachedProjection, u64)>;
 
 /// Why a `project_<family>` hop could not be projected. Granular-but-grouped:
