@@ -28,7 +28,9 @@
 //! Gamma = 1 - fee = (1_000_000 - fee) / 1_000_000.
 //! We store `gamma_numer = 1_000_000 - fee`, `fee_denom = 1_000_000`.
 
-#![expect(clippy::too_many_lines)]
+// The `expect` must disappear under `hotpath`: instrumented builds move hot
+// fn bodies into macro code, so too_many_lines no longer fires there.
+#![cfg_attr(not(feature = "hotpath"), expect(clippy::too_many_lines))]
 
 use std::sync::Arc;
 
@@ -1236,7 +1238,7 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
 /// `profiles[k]` are parallel to `sequences[k]`. `crossings = None` builds the
 /// crossing tables per call (offline mirror of [`int_solve_cl_path`]).
 #[must_use]
-#[hotpath::measure(label = "cl_solve.int_solve_cl_path_with_profiles")]
+#[hotpath::measure(label = "cl_solve.int_solve_cl_path_cached")]
 pub fn int_solve_cl_path_cached(
     sequences: &[&IntV3TickRangeSequence],
     crossings: Option<&[&Arc<ClCrossingTable>]>,
@@ -2618,6 +2620,47 @@ mod tests {
     }
 
     #[test]
+    fn mixed_path_cached_crossings_match_offline_solve_3hop() {
+        // 3-hop V2 -> CL -> V2 twin of the offline parity shape: cached
+        // tables for the CL middle hop must be byte-identical to the rebuild.
+        let v2_hop1 = IntHopState::new(
+            U256::from(2_000_000_000_000u64),
+            U256::from(1_000_000_000_000_000_000_000u128),
+            997,
+            1000,
+        );
+        let v2_hop2 = IntHopState::new(
+            U256::from(1_000_000_000_000_000_000_000u128),
+            U256::from(2_100_000_000_000u64),
+            997,
+            1000,
+        );
+        let v3_seq =
+            IntV3TickRangeSequence::new(vec![make_v3_hop_at_1to1(10_000_000_000_000u128, false)])
+                .unwrap();
+
+        let v2_hops = [Some(v2_hop1), None, Some(v2_hop2)];
+        let cl_sequences = [None, Some(v3_seq), None];
+        let crossing = Arc::new(build_cl_crossing_table(
+            cl_sequences[1].as_ref().expect("CL hop present"),
+        ));
+        let profile = Arc::new(build_cl_word_profiles_from_crossings(&crossing));
+        let cl_crossings = [None, Some(crossing), None];
+        let cl_profiles = [None, Some(profile), None];
+
+        let cached = exact_solve_mixed_path_n_cached(
+            &v2_hops,
+            &cl_sequences,
+            Some(&cl_crossings),
+            Some(&cl_profiles),
+            &[true, false, true],
+        );
+        let offline = exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false, true]);
+        assert_eq!(cached, offline);
+        assert!(cached.is_some(), "3-hop mixed fixture is profitable");
+    }
+
+    #[test]
     fn test_int_simulate_mixed_path_n_3hop() {
         // 3-hop mixed simulation: V2 → CL → V2
         let v2_hop1 = IntHopState::new(
@@ -3354,6 +3397,7 @@ mod tests {
 
     /// The legacy mixed V2+CL enumeration with NO `max_candidates` cap
     /// (uncapped twin of the pre-7J22EQ `exact_solve_mixed_path_n`).
+    #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
     fn reference_uncapped_mixed_solve(
         v2_hops: &[Option<IntHopState>],
         cl_sequences: &[Option<IntV3TickRangeSequence>],
@@ -3973,6 +4017,7 @@ mod tests {
     /// model's residual step-rounding slack (observed 7 wei; byte-exact
     /// tightening was left open when the originating effort closed).
     #[test]
+    #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
     fn block_25641093_pool_feed_hop2_predicts_revm_output() {
         use alloy::primitives::{Address, B256, I256, U128, U512};
         use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};

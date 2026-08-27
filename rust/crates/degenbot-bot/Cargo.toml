@@ -82,7 +82,10 @@ otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", 
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
 # `DEGENBOT_HOTPATH=1` env var so default runs never construct the guard.
-hotpath = ["hotpath/hotpath", "hotpath/threads"]
+# Forwards degenbot-solvers/hotpath so the solver-internal probes (cl_solve.*,
+# mixed.solve_path_inner) instrument too — the crate-level hotpath dep unifies
+# at package level, but the explicit forward keeps the intent durable.
+hotpath = ["hotpath/hotpath", "hotpath/threads", "degenbot-solvers/hotpath"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 opentelemetry-prometheus = ["dep:opentelemetry-prometheus"]

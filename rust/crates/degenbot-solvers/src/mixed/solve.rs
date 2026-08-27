@@ -150,7 +150,10 @@ fn solve_path_gated(
 }
 
 #[must_use]
-#[expect(clippy::too_many_lines)]
+// The `expect` must disappear under `hotpath`: instrumented builds move the
+// fn body into macro code, so too_many_lines no longer fires there and a
+// retained `expect` would trip as unfulfilled.
+#[cfg_attr(not(feature = "hotpath"), expect(clippy::too_many_lines))]
 #[hotpath::measure(label = "mixed.solve_path_inner")]
 pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     // An invalid (partially-resolved) path has hops missing — don't solve.

@@ -103,13 +103,11 @@ pub(crate) enum MissingHopReason {
     UnknownVariant,
     /// A pairwise index fell outside the token list.
     OutOfRange,
-    /// `build_int_v*_sequence` returned `None` (no integer tick-range sequence
-    /// for the direction, e.g. tick-range cache miss).
     /// The pool carries an amount-modifying V4 hook: sims are caveated and
     /// paths through it are excluded from solving (ADR-037/X4EU3J).
     HookedPool,
-    /// The pool carries an amount-modifying V4 hook: its sims are caveated
-    /// (ADR-037/X4EU3J) and paths through it are excluded from solving.
+    /// `build_int_v*_sequence` returned `None` (no integer tick-range sequence
+    /// for the direction, e.g. tick-range cache miss).
     SequenceUnavailable,
     /// The balancer-stable invariant calculation errored.
     InvariantError,
