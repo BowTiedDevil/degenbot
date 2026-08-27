@@ -1545,6 +1545,48 @@ mod apply_inherent_tests {
     }
 
     #[test]
+    fn build_int_v3_sequence_is_not_truncated_at_twentyfour_ranges() {
+        // Pin 4b05cb17e (max_ranges / WALK_CEILING removal): a pool with 30
+        // initialized ticks in one swap direction must yield MORE than 24
+        // ranges. Pre-removal the feed was truncated at 24, which is exactly
+        // the shape the pre-removal golden captures (369 corpus) froze in.
+        let sp_0 = U256::from(1u128) << 96;
+        let mut tick_data = HashMap::new();
+        for i in 1..=30 {
+            let net: i128 = if i % 2 == 0 {
+                -100_000_000_000
+            } else {
+                100_000_000_000
+            };
+            tick_data.insert(
+                60 * i,
+                TickInfo {
+                    liquidity_gross: U128::from(200_000_000_000u128),
+                    liquidity_net: I256::try_from(net).unwrap(),
+                    block: 0,
+                },
+            );
+        }
+        let state = V3PoolState {
+            sqrt_price_x96: sp_0,
+            liquidity: 1_000_000_000_000u128,
+            tick: 0,
+            tick_data,
+            ..state_with_position(1_000_000_000_000u128)
+        };
+
+        // ofz walks UP from tick 0 through every initialized tick above it.
+        let seq = state
+            .build_int_v3_sequence(60, 3_000, false)
+            .expect("30 initialized ticks above the current tick build a sequence");
+        assert!(
+            seq.ranges.len() > 24,
+            "sequence must not be truncated at 24 ranges; got {}",
+            seq.ranges.len()
+        );
+    }
+
+    #[test]
     fn apply_swap_updates_scalars_advances_block_invalidates_cache_and_journals_priors() {
         // What: apply_swap must (1) overwrite the slot0 scalars with the
         // event values, (2) advance update_block, (3) seed tick_priors into
