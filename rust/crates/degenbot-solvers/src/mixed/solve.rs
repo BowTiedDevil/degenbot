@@ -10,6 +10,8 @@
 //! The CL hop uses `crate::mobius_v3_int::*` (same crate); the V2 + CL
 //! Möbius arms call `crate::mobius_int::*` / `crate::mobius_int_exact::*`.
 
+use std::sync::Arc;
+
 use alloy::primitives::{U256, U512};
 
 use crate::profit_envelope::{path_profit_bound, HopMath};
@@ -247,33 +249,41 @@ pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
             .iter()
             .filter_map(ResolvedHop::as_word_profiles)
             .collect();
+        let cl_crossings: Vec<_> = resolved
+            .hops
+            .iter()
+            .filter_map(ResolvedHop::as_crossing_table)
+            .collect();
         if int_sequences.len() >= 2 {
-            crate::mobius_v3_int::int_solve_cl_path_with_profiles(&int_sequences, &cl_profiles).map(
-                |(optimal_input, _profit, hop_outputs)| {
-                    // consumed_inputs[0] = optimal_input (first hop always consumes
-                    // its full input for single-range paths; no partial fill).
-                    // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
-                    // output becomes this hop's input — matching the pipeline:
-                    // V3 output flows into V4 as amountSpecified).
-                    let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-                    consumed_inputs.push(optimal_input);
-                    for i in 1..hop_outputs.len() {
-                        consumed_inputs.push(hop_outputs[i - 1]);
-                    }
-                    let profit = hop_outputs
-                        .last()
-                        .copied()
-                        .unwrap_or(U256::ZERO)
-                        .saturating_sub(consumed_inputs[0]);
-                    SolvePathResult {
-                        optimal_input,
-                        profit,
-                        hop_outputs,
-                        consumed_inputs,
-                        ..Default::default()
-                    }
-                },
+            crate::mobius_v3_int::int_solve_cl_path_cached(
+                &int_sequences,
+                Some(&cl_crossings),
+                &cl_profiles,
             )
+            .map(|(optimal_input, _profit, hop_outputs)| {
+                // consumed_inputs[0] = optimal_input (first hop always consumes
+                // its full input for single-range paths; no partial fill).
+                // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
+                // output becomes this hop's input — matching the pipeline:
+                // V3 output flows into V4 as amountSpecified).
+                let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+                consumed_inputs.push(optimal_input);
+                for i in 1..hop_outputs.len() {
+                    consumed_inputs.push(hop_outputs[i - 1]);
+                }
+                let profit = hop_outputs
+                    .last()
+                    .copied()
+                    .unwrap_or(U256::ZERO)
+                    .saturating_sub(consumed_inputs[0]);
+                SolvePathResult {
+                    optimal_input,
+                    profit,
+                    hop_outputs,
+                    consumed_inputs,
+                    ..Default::default()
+                }
+            })
         } else {
             None
         }
@@ -412,26 +422,41 @@ fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
         .iter()
         .map(|h| h.as_int_sequence().cloned())
         .collect();
+    let cl_crossings: Vec<Option<Arc<crate::mobius_v3_int::ClCrossingTable>>> = resolved
+        .hops
+        .iter()
+        .map(|h| h.as_crossing_table().cloned())
+        .collect();
+    let cl_profiles: Vec<Option<Arc<crate::mobius_v3_int::ClProfileTable>>> = resolved
+        .hops
+        .iter()
+        .map(|h| h.as_word_profiles().cloned())
+        .collect();
 
-    crate::mobius_v3_int::exact_solve_mixed_path_n(&v2_hops, &int_v3_sequences, &hop_order).map(
-        |(optimal_input, profit, hop_outputs)| {
-            // consumed_inputs[0] = optimal_input (first hop consumes full input).
-            // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
-            // becomes this hop's input).
-            let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-            consumed_inputs.push(optimal_input);
-            for i in 1..hop_outputs.len() {
-                consumed_inputs.push(hop_outputs[i - 1]);
-            }
-            SolvePathResult {
-                optimal_input,
-                profit,
-                hop_outputs,
-                consumed_inputs,
-                ..Default::default()
-            }
-        },
+    crate::mobius_v3_int::exact_solve_mixed_path_n_cached(
+        &v2_hops,
+        &int_v3_sequences,
+        Some(&cl_crossings),
+        Some(&cl_profiles),
+        &hop_order,
     )
+    .map(|(optimal_input, profit, hop_outputs)| {
+        // consumed_inputs[0] = optimal_input (first hop consumes full input).
+        // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
+        // becomes this hop's input).
+        let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+        consumed_inputs.push(optimal_input);
+        for i in 1..hop_outputs.len() {
+            consumed_inputs.push(hop_outputs[i - 1]);
+        }
+        SolvePathResult {
+            optimal_input,
+            profit,
+            hop_outputs,
+            consumed_inputs,
+            ..Default::default()
+        }
+    })
 }
 
 /// Solve an all-V2-or-Solidly (no CL hops, ≥1 Solidly) path using the

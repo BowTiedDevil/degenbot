@@ -50,6 +50,11 @@ pub use ::degenbot_pools::int_v3_hop::{
     IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence,
 };
 
+/// Cached per-ending-range crossing table, parallel to `IntV3TickRangeSequence`.
+pub type ClCrossingTable = Vec<IntTickRangeCrossing>;
+/// Cached dense-range word-boundary profile table, parallel to crossings.
+pub type ClProfileTable = Vec<Option<Arc<V3WordProfile>>>;
+
 // ---------------------------------------------------------------------------
 // N-hop CL Path Simulation
 // ---------------------------------------------------------------------------
@@ -249,13 +254,15 @@ enum WalkHop<'a> {
     /// is [`IntV3TickRangeSequence::compute_crossing`]`(k)`).
     Cl {
         /// Crossing data for every ending-range index `k` in `0..ranges.len()`.
-        crossings: Vec<IntTickRangeCrossing>,
+        /// `Arc`-backed so the projection's precomputed table is shared - not
+        /// re-cloned - across every path reusing the hop.
+        crossings: Arc<ClCrossingTable>,
         /// Optional precomputed forward word-boundary profile per `crossings[k]`
         /// (dense ranges only; `None` keeps those on the linear walk). Parallel to
         /// `crossings`. `Arc`-backed so the projection's precomputed profile (on
         /// the [`crate::mixed::ResolvedHop`]) is shared - not re-cloned - across
         /// every path reusing the hop (the hop-projection memoization).
-        profiles: Arc<Vec<Option<Arc<V3WordProfile>>>>,
+        profiles: Arc<ClProfileTable>,
     },
 }
 
@@ -1168,15 +1175,19 @@ pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> Vec<Option<Arc<V3
 }
 
 /// Build a `WalkHop::Cl` (crossing table + word-boundary profiles) for one CL
-/// sequence - the single place a CL walk hop is assembled. `profiles` is a
-/// precomputed profile table from the projection (Arc-shared through the hop
-/// memoization), cloned in O(1); `None` builds one for dense ranges here.
+/// sequence - the single place a CL walk hop is assembled. `crossings`/`profiles`
+/// are precomputed projection tables (Arc-shared through the hop memoization),
+/// cloned in O(1); `None` builds that table here.
 #[hotpath::measure(label = "cl_solve.cl_walk_hop")]
-fn cl_walk_hop<'a>(
+fn cl_walk_hop_cached<'a>(
     seq: &'a IntV3TickRangeSequence,
-    profiles: Option<&Arc<Vec<Option<Arc<V3WordProfile>>>>>,
+    crossings: Option<&Arc<ClCrossingTable>>,
+    profiles: Option<&Arc<ClProfileTable>>,
 ) -> WalkHop<'a> {
-    let crossings = build_crossing_table(seq);
+    let crossings = match crossings {
+        Some(c) => Arc::clone(c),
+        None => Arc::new(build_crossing_table(seq)),
+    };
     let profiles = match profiles {
         Some(p) => Arc::clone(p),
         None => Arc::new(build_word_profiles(&crossings)),
@@ -1185,6 +1196,15 @@ fn cl_walk_hop<'a>(
         crossings,
         profiles,
     }
+}
+
+/// Cache-less variant of [`cl_walk_hop_cached`] for offline callers that only
+/// have a sequence (builds both tables per call).
+fn cl_walk_hop<'a>(
+    seq: &'a IntV3TickRangeSequence,
+    profiles: Option<&Arc<ClProfileTable>>,
+) -> WalkHop<'a> {
+    cl_walk_hop_cached(seq, None, profiles)
 }
 
 /// Solve an N-hop concentrated-liquidity arbitrage path with the active-set
@@ -1202,26 +1222,41 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
     solve_active_set_path(&hops)
 }
 
-/// Stage-1 all-CL solve consuming the projection's precomputed word-boundary
-/// profiles (built once per `(pool, direction)` in `HopProjectionCache`, shared
-/// via `Arc` across paths). `profiles[k]` is parallel to `sequences[k]` (its
-/// `Arc<Vec<Option<V3WordProfile>>>`). Mirrors [`int_solve_cl_path`], which
-/// rebuilds profiles per call.
+/// Stage-1 all-CL solve consuming the projection's precomputed crossing
+/// tables + word-boundary profiles (built once per `(pool, direction)` in
+/// `HopProjectionCache`, shared via `Arc` across paths). `crossings[k]` and
+/// `profiles[k]` are parallel to `sequences[k]`. `crossings = None` builds the
+/// crossing tables per call (offline mirror of [`int_solve_cl_path`]).
 #[must_use]
 #[hotpath::measure(label = "cl_solve.int_solve_cl_path_with_profiles")]
-pub fn int_solve_cl_path_with_profiles(
+pub fn int_solve_cl_path_cached(
     sequences: &[&IntV3TickRangeSequence],
-    profiles: &[&Arc<Vec<Option<Arc<V3WordProfile>>>>],
+    crossings: Option<&[&Arc<ClCrossingTable>]>,
+    profiles: &[&Arc<ClProfileTable>],
 ) -> Option<(U256, U256, Vec<U256>)> {
     if sequences.is_empty() || sequences.len() != profiles.len() {
         return None;
     }
+    if crossings.is_some_and(|c| c.len() != sequences.len()) {
+        return None;
+    }
     let hops: Vec<WalkHop> = sequences
         .iter()
-        .zip(profiles)
-        .map(|(seq, p)| cl_walk_hop(seq, Some(p)))
+        .enumerate()
+        .map(|(i, seq)| cl_walk_hop_cached(seq, crossings.map(|c| c[i]), Some(profiles[i])))
         .collect();
     solve_active_set_path(&hops)
+}
+
+/// Profile-only Stage-1 all-CL solve (crossing tables rebuilt per call).
+/// Retained as the offline/API wrapper; projection-backed paths use
+/// [`int_solve_cl_path_cached`].
+#[must_use]
+pub fn int_solve_cl_path_with_profiles(
+    sequences: &[&IntV3TickRangeSequence],
+    profiles: &[&Arc<ClProfileTable>],
+) -> Option<(U256, U256, Vec<U256>)> {
+    int_solve_cl_path_cached(sequences, None, profiles)
 }
 
 // ---------------------------------------------------------------------------
@@ -1649,18 +1684,27 @@ fn int_simulate_mixed_path_n(
 ///
 /// - `v2_hops[i]`: V2 hop state at position `i` (`None` for CL positions)
 /// - `cl_sequences[i]`: CL tick-range sequence at position `i` (`None` for V2 positions)
+/// - `cl_crossings[i]`/`cl_profiles[i]`: cached projection tables (`None` for V2
+///   positions; `cl_crossings = None` builds tables per call for offline callers)
 /// - `hop_order`: true = V2 hop, false = CL hop
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 #[must_use]
 #[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
-pub fn exact_solve_mixed_path_n(
+pub fn exact_solve_mixed_path_n_cached(
     v2_hops: &[Option<IntHopState>],
     cl_sequences: &[Option<IntV3TickRangeSequence>],
+    cl_crossings: Option<&[Option<Arc<ClCrossingTable>>]>,
+    cl_profiles: Option<&[Option<Arc<ClProfileTable>>]>,
     hop_order: &[bool], // true = V2, false = CL
 ) -> Option<(U256, U256, Vec<U256>)> {
     let n_hops = hop_order.len();
     if n_hops < 2 || v2_hops.len() != n_hops || cl_sequences.len() != n_hops {
+        return None;
+    }
+    if cl_crossings.is_some_and(|c| c.len() != n_hops)
+        || cl_profiles.is_some_and(|p| p.len() != n_hops)
+    {
         return None;
     }
     let mut hops: Vec<WalkHop> = Vec::with_capacity(n_hops);
@@ -1668,10 +1712,24 @@ pub fn exact_solve_mixed_path_n(
         if is_v2 {
             hops.push(WalkHop::ConstantProduct(v2_hops[i].as_ref()?));
         } else {
-            hops.push(cl_walk_hop(cl_sequences[i].as_ref()?, None));
+            let seq = cl_sequences[i].as_ref()?;
+            let crossings = cl_crossings.and_then(|c| c.get(i)).and_then(|c| c.as_ref());
+            let profiles = cl_profiles.and_then(|p| p.get(i)).and_then(|p| p.as_ref());
+            hops.push(cl_walk_hop_cached(seq, crossings, profiles));
         }
     }
     solve_active_set_path(&hops)
+}
+
+/// Offline/API wrapper for [`exact_solve_mixed_path_n_cached`] (no cached
+/// crossing/profile tables). Projection-backed paths use the cached form.
+#[must_use]
+pub fn exact_solve_mixed_path_n(
+    v2_hops: &[Option<IntHopState>],
+    cl_sequences: &[Option<IntV3TickRangeSequence>],
+    hop_order: &[bool], // true = V2, false = CL
+) -> Option<(U256, U256, Vec<U256>)> {
+    exact_solve_mixed_path_n_cached(v2_hops, cl_sequences, None, None, hop_order)
 }
 
 // ---------------------------------------------------------------------------
@@ -2453,6 +2511,62 @@ mod tests {
 
         // Just verify no panic; profit depends on specific reserves
         let _ = result;
+    }
+
+    #[test]
+    fn cl_path_cached_crossings_match_profile_only_solve() {
+        let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+        let mut liquidities = vec![1_000_000_000u128; 10];
+        liquidities.push(10_000_000_000_000u128);
+        liquidities.push(1_000_000_000u128);
+        let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+
+        let c1 = Arc::new(build_cl_crossing_table(&seq1));
+        let c2 = Arc::new(build_cl_crossing_table(&seq2));
+        let p1 = Arc::new(build_cl_word_profiles(&seq1));
+        let p2 = Arc::new(build_cl_word_profiles(&seq2));
+
+        // Cached crossing tables must equal the profile-only solver that
+        // rebuilds them per call (byte-identical CL math).
+        let cached = int_solve_cl_path_cached(&[&seq1, &seq2], Some(&[&c1, &c2]), &[&p1, &p2]);
+        let offline = int_solve_cl_path_with_profiles(&[&seq1, &seq2], &[&p1, &p2]);
+        assert_eq!(cached, offline);
+        assert!(cached.is_some(), "late-liquidity fixture is profitable");
+    }
+
+    #[test]
+    fn mixed_path_cached_crossings_match_offline_solve() {
+        let r0 = U256::from(1_000_000_000_000_000u128);
+        let r1 = U256::from(1_071_633_064_014_504u128);
+        let v2_entry = IntHopState::new(r0, r1, 997, 1000);
+        let mut liquidities = vec![1_000_000_000u128; 10];
+        liquidities.push(10_000_000_000_000u128);
+        liquidities.push(1_000_000_000u128);
+        let cl_seq = multi_range_sequence(0, 60, false, &liquidities);
+
+        let v2_hops = [Some(v2_entry), None];
+        let cl_sequences = [None, Some(cl_seq)];
+        let crossing = Arc::new(build_cl_crossing_table(
+            cl_sequences[1].as_ref().expect("CL hop present"),
+        ));
+        let profile = Arc::new(build_cl_word_profiles(
+            cl_sequences[1].as_ref().expect("CL hop present"),
+        ));
+        let cl_crossings = [None, Some(crossing)];
+        let cl_profiles = [None, Some(profile)];
+
+        // Projection-backed cached tables must equal the offline build
+        // (byte-identical mixed-path math).
+        let cached = exact_solve_mixed_path_n_cached(
+            &v2_hops,
+            &cl_sequences,
+            Some(&cl_crossings),
+            Some(&cl_profiles),
+            &[true, false],
+        );
+        let offline = exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false]);
+        assert_eq!(cached, offline);
+        assert!(cached.is_some(), "mixed fixture has profit past the prefix");
     }
 
     #[test]
@@ -3997,7 +4111,7 @@ mod tests {
             (net_in * U256::from(1_000_000u64)) / U256::from(999_900u64) + U256::from(1u64);
         let last_leg_out = (liq * (pb - pf)) / (U256::from(1u64) << 96usize);
 
-        let crossings = build_crossing_table(&seq);
+        let crossings = Arc::new(build_crossing_table(&seq));
         // Leading segment [current, sqrt(-74028)] crossing at STORED liquidity
         // (k=1: cross range 0; the zero-liquidity free-fall ranges 1..3 consume
         // /produce nothing, so k=4 has the same values). This is the segment the
