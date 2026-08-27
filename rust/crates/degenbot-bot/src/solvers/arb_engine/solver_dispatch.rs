@@ -840,46 +840,35 @@ impl ArbitrageEngine {
                 };
 
                 if lpt_partition_enabled() {
+                    // RAYPAR T3: LPT-pre-balanced partition on rayon's persistent global
+                    // pool. Each LPT bin is one s.spawn task — exactly n_threads
+                    // tasks on n_threads persistent workers means no splitting
+                    // and no stealing: pure static partition with warm L1/L2 +
+                    // allocator arenas across drains (the pool was built once
+                    // at import by configure_rayon_solver_pool).
                     let n_threads = rayon::current_num_threads().max(1);
                     let costs: Vec<usize> =
                         to_solve.iter().map(|(_, r)| path_cost_proxy(r)).collect();
                     let bins = lpt_partition(to_solve.len(), n_threads, |i| costs[i]);
                     let to_solve_ref = &to_solve;
                     let solve_ref = &solve_fn;
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    rayon::scope(|s| {
+                        for bin in &bins {
+                            let tx = tx.clone();
+                            s.spawn(move |_| {
+                                let mut out = Vec::with_capacity(bin.len());
+                                for &i in bin {
+                                    let (pid, resolved) = &to_solve_ref[i];
+                                    out.push(solve_ref(*pid, resolved));
+                                }
+                                let _ = tx.send(out);
+                            });
+                        }
+                    });
+                    drop(tx);
                     let per_bin: Vec<Vec<Option<(u64, SolvePathResult)>>> =
-                        std::thread::scope(|s| {
-                            let handles: Vec<_> = bins
-                                .iter()
-                                .enumerate()
-                                .map(|(bi, bin)| {
-                                    std::thread::Builder::new()
-                                        .name(format!("degenbot-solve-lpt-{bi}"))
-                                        .spawn_scoped(s, move || {
-                                            let mut out = Vec::with_capacity(bin.len());
-                                            for &i in bin {
-                                                let (pid, resolved) = &to_solve_ref[i];
-                                                out.push(solve_ref(*pid, resolved));
-                                            }
-                                            out
-                                        })
-                                        .unwrap_or_else(|e| {
-                                            tracing::error!(
-                                                "[raypar] spawn scoped solve thread failed: {e}"
-                                            );
-                                            std::process::abort();
-                                        })
-                                })
-                                .collect();
-                            handles
-                                .into_iter()
-                                .map(|h| {
-                                    h.join().unwrap_or_else(|_| {
-                                        tracing::error!("[raypar] scoped solve thread panicked");
-                                        std::process::abort();
-                                    })
-                                })
-                                .collect()
-                        });
+                        rx.into_iter().collect();
                     per_bin
                         .into_iter()
                         .flatten()
