@@ -24,6 +24,7 @@
 //! PyO3 driver shell.
 pub mod affected_keys;
 pub mod basket;
+pub mod cl_cache;
 pub mod mixed;
 #[expect(clippy::doc_markdown)]
 pub mod mobius_int;
