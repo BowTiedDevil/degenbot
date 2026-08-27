@@ -18,7 +18,7 @@
 # (`crates/degenbot-python/`) inherits it, and maturin reads that crate's
 # version to set the published wheel's — so one edit moves both halves.
 [workspace.package]
-version = "0.6.0-alpha.6"
+version = "0.6.0-alpha.7"
 edition = "2021"
 license = "MIT"
 rust-version = "1.97"
@@ -69,28 +69,28 @@ exit = "deny"
 # Internal path deps carry explicit version requirements here so the 26
 # publishable crates pass cargo publish manifest validation. Keep these
 # version literals in sync with [workspace.package].version (lockstep, ADR-009).
-degenbot-aave = { version = "0.6.0-alpha.6", path = "crates/degenbot-aave" }
-degenbot-abi = { version = "0.6.0-alpha.6", path = "crates/degenbot-abi" }
-degenbot-arbitrage = { version = "0.6.0-alpha.6", path = "crates/degenbot-arbitrage" }
-degenbot-bot = { version = "0.6.0-alpha.6", path = "crates/degenbot-bot" }
-degenbot-core = { version = "0.6.0-alpha.6", path = "crates/degenbot-core" }
-degenbot-db = { version = "0.6.0-alpha.6", path = "crates/degenbot-db" }
-degenbot-decoders = { version = "0.6.0-alpha.6", path = "crates/degenbot-decoders" }
-degenbot-execution = { version = "0.6.0-alpha.6", path = "crates/degenbot-execution" }
-degenbot-executor = { version = "0.6.0-alpha.6", path = "crates/degenbot-executor" }
-degenbot-fork = { version = "0.6.0-alpha.6", path = "crates/degenbot-fork" }
+degenbot-aave = { version = "0.6.0-alpha.7", path = "crates/degenbot-aave" }
+degenbot-abi = { version = "0.6.0-alpha.7", path = "crates/degenbot-abi" }
+degenbot-arbitrage = { version = "0.6.0-alpha.7", path = "crates/degenbot-arbitrage" }
+degenbot-bot = { version = "0.6.0-alpha.7", path = "crates/degenbot-bot" }
+degenbot-core = { version = "0.6.0-alpha.7", path = "crates/degenbot-core" }
+degenbot-db = { version = "0.6.0-alpha.7", path = "crates/degenbot-db" }
+degenbot-decoders = { version = "0.6.0-alpha.7", path = "crates/degenbot-decoders" }
+degenbot-execution = { version = "0.6.0-alpha.7", path = "crates/degenbot-execution" }
+degenbot-executor = { version = "0.6.0-alpha.7", path = "crates/degenbot-executor" }
+degenbot-fork = { version = "0.6.0-alpha.7", path = "crates/degenbot-fork" }
 # degenbot-math: consolidated AMM math family (ADR-035: v2, cl, curve, balancer, solidly).
-degenbot-math = { version = "0.6.0-alpha.6", path = "crates/degenbot-math" }
-degenbot-order-index = { version = "0.6.0-alpha.6", path = "crates/degenbot-order-index" }
-degenbot-pathfinding = { version = "0.6.0-alpha.6", path = "crates/degenbot-pathfinding" }
-degenbot-pool-updater = { version = "0.6.0-alpha.6", path = "crates/degenbot-pool-updater" }
-degenbot-pools = { version = "0.6.0-alpha.6", path = "crates/degenbot-pools" }
-degenbot-price = { version = "0.6.0-alpha.6", path = "crates/degenbot-price" }
-degenbot-rpc = { version = "0.6.0-alpha.6", path = "crates/degenbot-rpc" }
-degenbot-simulation = { version = "0.6.0-alpha.6", path = "crates/degenbot-simulation" }
-degenbot-solvers = { version = "0.6.0-alpha.6", path = "crates/degenbot-solvers" }
-degenbot-submission = { version = "0.6.0-alpha.6", path = "crates/degenbot-submission" }
-degenbot-uniswap = { version = "0.6.0-alpha.6", path = "crates/degenbot-uniswap" }
+degenbot-math = { version = "0.6.0-alpha.7", path = "crates/degenbot-math" }
+degenbot-order-index = { version = "0.6.0-alpha.7", path = "crates/degenbot-order-index" }
+degenbot-pathfinding = { version = "0.6.0-alpha.7", path = "crates/degenbot-pathfinding" }
+degenbot-pool-updater = { version = "0.6.0-alpha.7", path = "crates/degenbot-pool-updater" }
+degenbot-pools = { version = "0.6.0-alpha.7", path = "crates/degenbot-pools" }
+degenbot-price = { version = "0.6.0-alpha.7", path = "crates/degenbot-price" }
+degenbot-rpc = { version = "0.6.0-alpha.7", path = "crates/degenbot-rpc" }
+degenbot-simulation = { version = "0.6.0-alpha.7", path = "crates/degenbot-simulation" }
+degenbot-solvers = { version = "0.6.0-alpha.7", path = "crates/degenbot-solvers" }
+degenbot-submission = { version = "0.6.0-alpha.7", path = "crates/degenbot-submission" }
+degenbot-uniswap = { version = "0.6.0-alpha.7", path = "crates/degenbot-uniswap" }
 
 [workspace]
 resolver = "3"
