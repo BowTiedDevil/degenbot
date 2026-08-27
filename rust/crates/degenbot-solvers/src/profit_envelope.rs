@@ -119,9 +119,15 @@ impl Line {
             self.c = I512::ONE;
             return;
         }
-        self.a = ceil_shr_i512(self.a, k);
-        self.b = ceil_shr_i512(self.b, k);
-        self.c = (self.c >> k).max(I512::ONE);
+        let c_u512 = U512::try_from(self.c).unwrap_or(U512::MAX);
+        let (na, nb, nc) = (
+            ceil_shr_i512(self.a, k),
+            ceil_shr_i512(self.b, k),
+            I512::from_raw((c_u512 / (U512::ONE << k)).max(U512::ONE)),
+        );
+        self.a = na;
+        self.b = nb;
+        self.c = nc;
     }
 
     /// Point-wise value, CEIL-rounded so a line never under-reads its exact
@@ -146,24 +152,29 @@ const COMPOSE_TARGET_BITS: u32 = 240;
 /// Right-shift an `I512` by `k` with **ceiling** rounding (toward +infinity).
 /// For any sign: `ceil(v / 2^k)` -- the smallest integer `>= v / 2^k`.
 /// Used by `Line::reduce` to keep A/B from under-cutting the bound.
+///
+/// Implemented with `U512` division rather than the `I512` shift operators:
+/// `alloy::I512`'s `wrapping_shr` returns ZERO for any shift >= 256 (it
+/// forwards to a 256-bit path), which previously crushed reduced lines into
+/// `(1,1,1)` identity shells.
 fn ceil_shr_i512(v: I512, k: u32) -> I512 {
     if k == 0 {
         return v;
     }
-    if k >= 512 {
-        return if v > I512::ZERO {
-            I512::ONE
-        } else {
-            I512::ZERO
-        };
-    }
-    let shifted = v >> k;
-    let mask = (I512::ONE << k).wrapping_sub(I512::ONE);
-    let has_remainder = (v & mask) != I512::ZERO;
-    if has_remainder {
-        shifted + I512::ONE
+    let s = U512::ONE << k;
+    if v >= I512::ZERO {
+        let u = U512::try_from(v).unwrap_or(U512::MAX);
+        let q = u / s;
+        let has_remainder = (u % s) != U512::ZERO;
+        I512::from_raw(if has_remainder { q + U512::ONE } else { q })
     } else {
-        shifted
+        // v < 0: ceil(v / 2^k) = -floor(|v| / 2^k).
+        // `twos_complement()` over Signed is only valid for negatives (it
+        // yields |v| as a U512 magnitude).
+        let abs = v.twos_complement();
+        let q = abs / s;
+        // With or without a remainder: ceil(-q.frac) = -q.
+        -I512::from_raw(q)
     }
 }
 
@@ -262,10 +273,18 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
                 return None;
             }
             let mut lines: Vec<Line> = Vec::with_capacity(seq.ranges.len());
-            let mut acc_in = U256::ZERO;
-            let mut acc_out = U256::ZERO;
+            let mut acc_in: U256;
+            let mut acc_out: U256;
             for k in 0..seq.ranges.len() {
                 let cr: IntTickRangeCrossing = seq.compute_crossing(k)?;
+                // Anchor cumulative (gross_input, output) at the boundary
+                // ENTERING range k: `compute_crossing(k)` already sums
+                // ranges [0, k), so it is the anchor this tangent line
+                // needs. The trailing `acc_*` updates after line emission
+                // Every `compute_crossing(k)` result provides the
+                // cumulative anchor at the boundary ENTERING range k.
+                acc_in = cr.crossing_gross_input;
+                acc_out = cr.crossing_output;
                 let er = &cr.ending_range;
                 let liq = er.liquidity;
                 if liq == 0 {
@@ -285,8 +304,6 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
                     // own liquidity; since crossing the zero-liq range k adds
                     // 0 to both acc_in and acc_out, the next real range's
                     // anchor is correct.
-                    acc_in = cr.crossing_gross_input;
-                    acc_out = cr.crossing_output;
                     continue;
                 }
                 let p_entry = er.sqrt_price_x96;
@@ -343,8 +360,6 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
                         }
                     }
                 }
-                acc_in = cr.crossing_gross_input;
-                acc_out = cr.crossing_output;
             }
             // Every range was zero-liquidity → genuinely dead pool (no
             // initialized tick reachable in the swap direction produces any
@@ -410,7 +425,7 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             } else {
                 last_range_out_u512.to::<U256>()
             };
-            let cap = acc_out.saturating_add(last_range_out);
+            let cap = cr_last.crossing_output.saturating_add(last_range_out);
             Some((lines, cap))
         }
         HopMath::SolidlyVolatile {
@@ -684,14 +699,16 @@ pub(crate) fn capture_degenerate_path(
 /// Drop dominated lines: `i` dies if some `j` is `≤ i` at BOTH domain
 /// endpoints (affine ⇒ everywhere), breaking ties toward the smaller index so
 /// identical lines collapse deterministically. Keeps the bound sound while
-/// bounding the line count across chained hops.
-fn prune(lines: &mut Vec<Line>) {
+/// bounding the line count across chained hops. `upper` is the envelope
+/// domain endpoint: a candidate dominated at both 0 and `upper` never
+/// matters for any input in [0, upper] (two affine lines cross once).
+fn prune(lines: &mut Vec<Line>, upper: U256) {
     if lines.len() < 2 {
         return;
     }
     let keys: Vec<(I512, I512)> = lines
         .iter()
-        .map(|l| (l.eval(&U256::ZERO), l.eval(&U256::ONE)))
+        .map(|l| (l.eval(&U256::ZERO), l.eval(&upper)))
         .collect();
     let dominated = |i: usize| -> bool {
         (0..lines.len()).any(|j| {
@@ -797,7 +814,7 @@ pub fn take_last_gate_stats() -> GateStats {
 #[must_use]
 #[expect(clippy::too_many_lines)]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
-    let mut lines = vec![Line::IDENTITY];
+    let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
     for (hop_idx, slot) in hops.iter().enumerate() {
         let Some(hop) = slot.as_ref() else {
@@ -865,11 +882,23 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
             }
             return None;
         };
-        let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
-        for outer in &hop_ls {
-            for inner in &lines {
-                // outer(inner(x)): the new line maps path-input x through the
-                // chained-so-far line, then through this hop's line.
+        if let Some(v) = xmax.checked_add(cap) {
+            xmax = v;
+        } else {
+            GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+            return None;
+        }
+        all_hops.push((hop_ls, cap));
+    }
+    // Second pass against the FULL known input domain. Every line that
+    // cannot be beaten below within [0,domain] can never best at any path
+    // input, so the pruning endpoint assumption holds at discard time.
+    let mut lines2 = vec![Line::IDENTITY];
+    let domain = xmax;
+    for (_hop_idx, (hop_ls, _)) in all_hops.iter().enumerate() {
+        let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
+        for outer in hop_ls {
+            for inner in &lines2 {
                 let Some(composed) = outer.compose(inner) else {
                     GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
                     return None;
@@ -877,15 +906,10 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
                 next.push(composed);
             }
         }
-        prune(&mut next);
-        lines = next;
-        if let Some(v) = xmax.checked_add(cap) {
-            xmax = v;
-        } else {
-            GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
-            return None;
-        }
+        prune(&mut next, domain);
+        lines2 = next;
     }
+    let lines = lines2;
     // Discrete concave max of f(x) = min_lines(x) − x over [0, xmax].
     if xmax.is_zero() {
         return Some(U256::ZERO);
@@ -951,7 +975,7 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
                 next.push(composed);
             }
         }
-        prune(&mut next);
+        prune(&mut next, *x);
         lines = next;
     }
     let mut best = I512::MAX;
@@ -975,6 +999,31 @@ mod tests {
     /// Regression (SU7MAE 7SI5G2): eval() saturates to I512::MAX on overflow,
     /// and ceil_div previously did a bare `n + d - 1` that overflowed on that
     /// saturated input, panicking inside register_and_solve_path at startup.
+    /// Regression: composition reduction on a dense 500-bit line must
+    /// preserve the affine shape (alloy's `I512` shift ops return ZERO for
+    /// shifts >= 256, which previously crushed reduced lines to the
+    /// `(1,1,1)` identity shell and under-cut the envelope).
+    #[test]
+    fn reduce_keeps_affine_shape_when_shift_exceeds_256_bits() {
+        let a: I512 = "3158654831486940228423188516740367875190149316773723738492435029181034827774867279178547852892671721135467331000424527445478822465180324397056000000000".parse().expect("a");
+        let b: I512 = "9840653510174908457921641032450873806794527700282449709410503024478706777789039068776376210549148611598682890993376690176000000".parse().expect("b");
+        let c: I512 = "10745832692113627328695180982407976136369497445284625467693498323936026077219283601227320522382063447060113625419776000000000000".parse().expect("c");
+        let (b0, c0) = (U512::from(b), U512::from(c));
+        let mut l = Line { a, b, c };
+        l.reduce(COMPOSE_TARGET_BITS);
+        // Shape must survive reduction.
+        assert!(
+            l.b > I512::ONE && l.c > I512::ONE && l.b < l.c,
+            "reduced line collapsed to identity: a={} b={} c={}",
+            l.a,
+            l.b,
+            l.c
+        );
+        // And sound reduction must not make the slope smaller than before.
+        let (b1, c1) = (U512::from(l.b), U512::from(l.c));
+        assert!(b1 * c0 >= b0 * c1, "reduced slope under-cuts original");
+    }
+
     #[test]
     fn ceil_div_saturates_on_max_numerator() {
         let d = I512::try_from(3u8).expect("3 fits");
