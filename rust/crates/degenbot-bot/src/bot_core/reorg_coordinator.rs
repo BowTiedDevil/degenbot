@@ -144,7 +144,7 @@ mod tests {
     use ::degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
     use alloy::primitives::{aliases::U112, Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
     use std::sync::{Arc, Mutex};
 
     // Journal-level invariants the coordinator relies on. These are

@@ -621,7 +621,7 @@ mod tests {
     use alloy::primitives::hex_literal::hex;
     use alloy::primitives::{I256, U128, U256};
     use degenbot_db::ApplyBitmapAtWord as BitmapAtWord;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     // ── compare: the divergence surface ──
 

@@ -27,6 +27,7 @@ serde_json = { version = "^1.0" }
 degenbot-aave.workspace = true
 degenbot-abi.workspace = true
 degenbot-math.workspace = true
+hashbrown.workspace = true
 degenbot-bot.workspace = true
 degenbot-core.workspace = true
 degenbot-db.workspace = true

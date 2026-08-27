@@ -45,7 +45,7 @@
 
 #![expect(clippy::doc_markdown)]
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 

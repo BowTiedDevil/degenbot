@@ -246,11 +246,11 @@ pub fn build_path_graph<'py>(
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 type GraphBuildResult = (
     Vec<(u64, u64, u64, u8)>,
-    std::collections::HashMap<u64, String>,
-    std::collections::HashMap<u64, (String, String)>,
-    std::collections::HashMap<u64, PoolKind>,
-    std::collections::HashMap<u64, String>,
-    HashSet<u64>,
+    hashbrown::HashMap<u64, String>,
+    hashbrown::HashMap<u64, (String, String)>,
+    hashbrown::HashMap<u64, PoolKind>,
+    hashbrown::HashMap<u64, String>,
+    hashbrown::HashSet<u64>,
 );
 
 /// Run the candidate-token fetch + bulk edge read + candidate-token edge
@@ -291,12 +291,12 @@ fn fetch_graph_data(
     // `build_graph_dict`'s dict-build loop GIL-light (only `set_item` calls).
     // Previously `build_graph_dict` called `to_checksum` PER pool while
     // holding the GIL, a ~24 s keccak loop that starved tokio workers.
-    let v2v3_checksums: std::collections::HashMap<u64, String> = data
+    let v2v3_checksums: hashbrown::HashMap<u64, String> = data
         .v2v3_addresses
         .iter()
         .map(|(pid, addr)| (*pid, addr.to_checksum(None)))
         .collect();
-    let v4_checksums: std::collections::HashMap<u64, (String, String)> = data
+    let v4_checksums: hashbrown::HashMap<u64, (String, String)> = data
         .v4_lookups
         .iter()
         .map(|(pid, (mgr, hash))| (*pid, (mgr.to_checksum(None), hash.clone())))
@@ -318,11 +318,11 @@ fn fetch_graph_data(
 fn build_graph_dict<'py>(
     py: Python<'py>,
     edges: &[(u64, u64, u64, u8)],
-    v2v3_addresses: &std::collections::HashMap<u64, String>,
-    v4_lookups: &std::collections::HashMap<u64, (String, String)>,
-    pool_id_to_kind: &std::collections::HashMap<u64, PoolKind>,
-    pool_id_to_kind_string: &std::collections::HashMap<u64, String>,
-    candidate_tokens: &HashSet<u64>,
+    v2v3_addresses: &hashbrown::HashMap<u64, String>,
+    v4_lookups: &hashbrown::HashMap<u64, (String, String)>,
+    pool_id_to_kind: &hashbrown::HashMap<u64, PoolKind>,
+    pool_id_to_kind_string: &hashbrown::HashMap<u64, String>,
+    candidate_tokens: &hashbrown::HashSet<u64>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
     let edges_vec: Vec<(u64, u64, u64, u8)> = edges.to_vec();

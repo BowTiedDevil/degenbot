@@ -42,7 +42,7 @@
 //! Scanning blocks 25635459..25635463 confirms the scalars are byte-identical
 //! across the failure window — NOT stale state.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 

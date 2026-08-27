@@ -28,10 +28,10 @@
 //! handling at the upper tick, large deltas, and the
 //! `update_block == initial_state_block` no-op path.
 
-use std::collections::HashMap;
+use hashbrown::hash_map::Entry;
+use hashbrown::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
-use std::collections::hash_map::Entry;
 
 use crate::cl::functions::tick_position;
 
@@ -105,7 +105,6 @@ pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8)
 ///
 /// Panics if `tick` is not a multiple of `tick_spacing`, matching the Python
 /// `ValueError("Invalid tick or spacing")`.
-#[expect(clippy::implicit_hasher)]
 pub fn flip_tick(
     tick_bitmap: &mut HashMap<i32, BitmapAtWord>,
     tick: i32,
@@ -185,7 +184,7 @@ fn narrow_to_u128(v: I256) -> U128 {
 /// Python `assert`s, which are stripped under `python -O`. Release builds do
 /// not check.
 #[must_use = "the updated state must be used"]
-#[expect(clippy::too_many_arguments, clippy::implicit_hasher)]
+#[expect(clippy::too_many_arguments)]
 pub fn apply_liquidity_mapping_update(
     mut tick_bitmap: HashMap<i32, BitmapAtWord>,
     mut tick_data: HashMap<i32, LiquidityAtTick>,

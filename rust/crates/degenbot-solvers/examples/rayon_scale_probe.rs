@@ -1,12 +1,19 @@
 // Dev/example-only harness: offline rayon scaling probe for the solver fan-out.
 #![expect(
-    clippy::collapsible_else_if,
-    clippy::manual_let_else,
+    clippy::borrow_deref_ref,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::expect_used,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
     clippy::print_stderr,
     clippy::print_stdout,
     clippy::too_many_lines,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_truncation
+    clippy::uninlined_format_args,
+    clippy::unnecessary_sort_by,
+    clippy::unwrap_used
 )]
 
 //! Offline solver-parallelism scaling probe (ergo RAYPAR T1).

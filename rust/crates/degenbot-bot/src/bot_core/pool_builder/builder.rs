@@ -13,7 +13,7 @@
 //! `cargo add degenbot` consumer reaches [`build_v2`] via the `degenbot`
 //! umbrella (Tier-0 slice in `examples/standalone_consumer.rs`).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, U256};

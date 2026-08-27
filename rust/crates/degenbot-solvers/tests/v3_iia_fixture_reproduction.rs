@@ -40,7 +40,7 @@
 
 #![expect(clippy::too_many_lines, clippy::doc_markdown)]
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};

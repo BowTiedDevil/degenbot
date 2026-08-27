@@ -55,7 +55,7 @@
 // grid-snapping helpers from the V3/Pancake-V3 oracle's common module.
 mod tier3_v3_common;
 
-use std::collections::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, keccak256, Address, Bytes, U256};
@@ -136,7 +136,7 @@ fn harness_constructor_args(fee: u32, tick_spacing: i32) -> Vec<u8> {
 /// Compute the V4 bitmap word value for one word from `tick_data`. Delegate to
 /// the V3 helper — the bitmask packing is identical between V3 and V4.
 fn compute_v4_word_from_raw(
-    tick_data: &HashMap<i32, TickInfo, std::hash::RandomState>,
+    tick_data: &HashMap<i32, TickInfo>,
     tick_spacing: i32,
     word_pos: i16,
 ) -> U256 {

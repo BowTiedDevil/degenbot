@@ -16,7 +16,7 @@
 //! `V3PoolState` via RPC bootstrap, backfill tick words, build the 24-range
 //! integer sequence, report max word-boundary count per range + whether any
 //! range is "dense" (>= the 128 profile threshold).
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Instant;

@@ -9,8 +9,7 @@
 //! by `build_int_v3_sequence`), and the per-pool reorg journal
 //! ([`ReorgJournal`] of [`V3BlockDelta`]).
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U160, U256};
@@ -19,7 +18,7 @@ use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use crate::state_history::{
     JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, V3BlockDelta,
 };
-use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
+use crate::tick_bitmap::{compute_tick_ranges, gen_ticks_iter, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::TickInfo;
 use degenbot_math::cl::functions::tick_position;
@@ -1237,7 +1236,7 @@ pub fn v3_simulate_swap(
     // yields ticks in swap order (descending for zfo, ascending for ofz).
     // Cap iterations to bound pathological loops; the V3 contract's loop also
     // terminates at MIN/MAX_TICK.
-    let ticks = gen_ticks(
+    let ticks = gen_ticks_iter(
         &state.tick_data,
         tick,
         tick_spacing,
@@ -1437,7 +1436,7 @@ mod apply_inherent_tests {
     use crate::registry::ConcentratedLiquidityPoolMut;
     use crate::state_history::{ReorgJournal, ScalarPriors, TickBefore, V3BlockDelta};
     use alloy::primitives::{I256, U128, U256};
-    use std::collections::{HashMap, HashSet};
+    use hashbrown::{HashMap, HashSet};
 
     /// Minimal V3 state at tick 0, 1:1 price, liquidity `liq`, with a
     /// [-60, +60] position (so `tick_data` has ticks -60 and +60 initialized).
@@ -1688,7 +1687,7 @@ mod apply_inherent_tests {
         // backward stamp → panic loudly.
         let mut state = state_with_position(1_000_000u128);
         state.tick_data_block = 10;
-        let empty: std::collections::HashMap<i32, TickInfo> = std::collections::HashMap::new();
+        let empty: HashMap<i32, TickInfo> = HashMap::new();
         state.replace_tick_data(empty, 5, 60);
     }
 
@@ -1892,7 +1891,7 @@ mod apply_inherent_tests {
         assert_eq!(state.update_block, 0);
 
         // New tick_data: a single tick at 120 (word 2 at tick_spacing 60).
-        let mut new_data = std::collections::HashMap::new();
+        let mut new_data = HashMap::new();
         new_data.insert(
             120,
             TickInfo {
@@ -1941,7 +1940,7 @@ mod apply_inherent_tests {
         let mut state = state_with_position(liq);
         state.update_block = 10;
         assert_eq!(state.tick_data_block, 0);
-        let empty: std::collections::HashMap<i32, TickInfo> = std::collections::HashMap::new();
+        let empty: HashMap<i32, TickInfo> = HashMap::new();
         state.replace_tick_data(empty, 3, 60);
         assert_eq!(
             state.update_block, 10,

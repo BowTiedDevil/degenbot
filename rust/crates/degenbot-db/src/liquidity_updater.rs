@@ -35,7 +35,7 @@
 //! The substrate write fns ([`upsert_liquidity_positions`] etc.) are split into
 //! `v3_`/`v4_` variants so each mirrors its Python callsite's exact key + table.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::str::FromStr;
 
 use alloy::primitives::{I256, U128, U256};

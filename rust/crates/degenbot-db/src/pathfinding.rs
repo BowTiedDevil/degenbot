@@ -30,7 +30,7 @@
 //! path; construction-time graph build per arbitrage-session startup, not
 //! per-tx).
 
-use std::collections::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;

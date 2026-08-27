@@ -326,7 +326,7 @@ pub fn compute_v3_tick_bitmap_word(compressed_ticks_in_word: &[i32]) -> U256 {
 /// at slot [`v3_tick_bitmap_word_slot(word_pos)`].
 #[must_use]
 pub fn compute_v3_tick_bitmap_word_from_raw<S: std::hash::BuildHasher>(
-    tick_data: &std::collections::HashMap<i32, TickInfo, S>,
+    tick_data: &hashbrown::HashMap<i32, TickInfo, S>,
     tick_spacing: i32,
     word_pos: i16,
 ) -> U256 {
@@ -553,7 +553,7 @@ mod tests {
     /// (word 0, bit 1); raw tick 15360 → compressed 256 (word 1, bit 0).
     #[test]
     fn v3_tick_bitmap_word_from_raw_splits_across_words() {
-        let mut tick_data = std::collections::HashMap::new();
+        let mut tick_data = hashbrown::HashMap::new();
         tick_data.insert(0, make_tick_info(100, 50));
         tick_data.insert(60, make_tick_info(100, 50));
         tick_data.insert(15_360, make_tick_info(100, 50)); // word_pos 1

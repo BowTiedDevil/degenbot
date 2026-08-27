@@ -9,7 +9,7 @@
 //! together with the Python-provider seam).
 
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes, I256, U256};
@@ -865,7 +865,7 @@ impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
 async fn build_v3_db_hit_yields_tracked_without_chain() {
     use crate::bot_core::PoolTickCoverage;
     use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     let factory: Address =
         alloy::primitives::address!("0x1111111111111111111111111111111111111111");
@@ -939,7 +939,7 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
 async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     use crate::bot_core::PoolTickCoverage;
     use degenbot_db::snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap};
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     let factory: Address =
         alloy::primitives::address!("0x1111111111111111111111111111111111111111");

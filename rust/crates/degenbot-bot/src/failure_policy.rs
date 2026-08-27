@@ -14,7 +14,7 @@
 //! distinct bug per window, not one per occurrence. Trace SPANS still carry
 //! every occurrence's context — only the alerting surface is deduped.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 

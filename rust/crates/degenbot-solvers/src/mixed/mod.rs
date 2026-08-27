@@ -12,7 +12,7 @@
 //! Relocated from `degenbot-bot/src/solvers/arb_engine/mod.rs`; re-exported
 //! at the old path so callers compile unchanged during the staged relocation.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};

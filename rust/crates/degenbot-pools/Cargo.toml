@@ -15,6 +15,8 @@ workspace = true
 alloy = { version = "^2.4" }
 thiserror = { version = "^2.0" }
 parking_lot = { version = "^0.12" }
+# Hot map type for tick liquidity (foldhash; see workspace.dependencies note).
+hashbrown.workspace = true
 degenbot-decoders.workspace = true
 degenbot-uniswap.workspace = true
 degenbot-math.workspace = true

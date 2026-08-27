@@ -12,7 +12,7 @@
     clippy::type_complexity
 )]
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::U256;

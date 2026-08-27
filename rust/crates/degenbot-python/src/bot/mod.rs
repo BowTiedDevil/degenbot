@@ -1725,7 +1725,7 @@ impl PyBot {
 
         // Convert `{tick: (gross, net, block)}` → `HashMap<i32, TickInfo>`
         // (mirrors `PyLiquidityPool.update_tick_data`'s boundary conversion).
-        let rust_tick_data: std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
+        let rust_tick_data: hashbrown::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
             match tick_data {
                 Some(dict) => {
                     let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
@@ -1749,7 +1749,7 @@ impl PyBot {
                         })
                         .collect()
                 }
-                None => std::collections::HashMap::new(),
+                None => hashbrown::HashMap::new(),
             };
         let cov = match coverage {
             "tracked" => PoolTickCoverage::Tracked,
@@ -1869,7 +1869,7 @@ impl PyBot {
         // mirrors `register_v3_pool` (ADR-006 rolling-start race closure for
         // V4: seed inline so the pool is never visible to the live pump
         // unseeded).
-        let rust_tick_data: std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
+        let rust_tick_data: hashbrown::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
             match tick_data {
                 Some(dict) => {
                     let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
@@ -1893,7 +1893,7 @@ impl PyBot {
                         })
                         .collect()
                 }
-                None => std::collections::HashMap::new(),
+                None => hashbrown::HashMap::new(),
             };
         let cov = match coverage {
             "tracked" => PoolTickCoverage::Tracked,
@@ -2745,7 +2745,7 @@ fn parse_address(s: &str) -> PyResult<Address> {
 /// passes through `i256_to_py`; `block` is `u64` (pyo3 maps to a Python int).
 fn build_tick_rows_py<'py>(
     py: Python<'py>,
-    ticks: &std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo>,
+    ticks: &hashbrown::HashMap<i32, degenbot_bot::bot_core::TickInfo>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     for (&tick, info) in ticks {
@@ -3019,7 +3019,7 @@ mod tests {
         use alloy::primitives::{address, aliases::U128, Address, I256, U256};
         use degenbot_db::discovery::V3PoolRowInput;
         use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
-        use std::collections::HashMap;
+        use hashbrown::HashMap;
 
         // Create a temp-file path for the test DB (unique via PID + counter).
         let temp_path = std::env::temp_dir().join(format!(
@@ -3132,7 +3132,7 @@ mod tests {
         use alloy::primitives::{address, aliases::U128, Address, I256, U256};
         use degenbot_db::discovery::V3PoolRowInput;
         use degenbot_db::{ApplyBitmapAtWord, ApplyLiquidityAtTick};
-        use std::collections::HashMap;
+        use hashbrown::HashMap;
 
         let temp_path = std::env::temp_dir().join(format!(
             "degenbot_assemble_inconsistent_{}_{:x}.db",

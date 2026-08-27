@@ -25,7 +25,7 @@
 //! each family in exactly one place (V3 negates both directions vs canonical;
 //! V4 is identity).
 
-use std::collections::HashSet;
+use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 
 use alloy::primitives::{I256, U256};
@@ -330,7 +330,7 @@ pub struct OverrideSwap {
     pub liquidity: u128,
     pub tick: i32,
     /// Replacement tick data for the hypothetical walk.
-    pub tick_data: std::collections::HashMap<i32, ::degenbot_pools::TickInfo>,
+    pub tick_data: HashMap<i32, ::degenbot_pools::TickInfo>,
 }
 
 /// Which CL family the transient target is.
@@ -824,7 +824,7 @@ mod tests {
     #![expect(clippy::panic, clippy::unwrap_used, clippy::used_underscore_binding)]
 
     use super::*;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // ---------------------------------------------------------------------

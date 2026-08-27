@@ -350,8 +350,10 @@ mod tests {
     }
 
     /// MHE62T: the dump carries the likely-GIL futex (the probe's own wait
-    /// address) and, under the `bot` feature, the `StateLock` tracker's active
-    /// holds — phantom-reader forensics without gdb.
+    /// address) and, under the `bot` feature, the `StateLock` tracker status —
+    /// phantom-reader forensics without gdb. Hold tracking is gated behind
+    /// `DEGENBOT_STATE_LOCK_DIAG=1` (default OFF), so the dump carries the
+    /// disabled sentinel unless the gate is set.
     #[test]
     #[expect(clippy::expect_used, clippy::unwrap_used)]
     fn dump_names_gil_futex_and_state_lock_holds() {
@@ -367,9 +369,16 @@ mod tests {
             "dump must name the likely GIL futex; got: {doc}"
         );
         #[cfg(feature = "bot")]
-        assert!(
-            doc.contains("state-lock active read holds"),
-            "dump must embed the StateLock hold table; got: {doc}"
-        );
+        if std::env::var("DEGENBOT_STATE_LOCK_DIAG").is_ok_and(|v| v == "1") {
+            assert!(
+                doc.contains("state-lock active read holds"),
+                "dump must embed the StateLock hold table; got: {doc}"
+            );
+        } else {
+            assert!(
+                doc.contains("state-lock diagnostics disabled"),
+                "dump must carry the disabled sentinel when the diag gate is off; got: {doc}"
+            );
+        }
     }
 }

@@ -10,7 +10,7 @@
 use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
 use alloy::primitives::{I256, U256};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use pyo3::types::{PyDict, PyList};
@@ -104,7 +104,7 @@ impl degenbot_pools::tick_fetch::TickWordFetcher for PyTickWordFetcher {
                 });
             }
             // Extract `{tick: (gross, net, block)}` directly into a HashMap.
-            let parsed: HashMap<i32, (u128, i128, u64)> = bound
+            let parsed: std::collections::HashMap<i32, (u128, i128, u64)> = bound
                 .extract()
                 .map_err(|_| FetchTickWordError::FetchFailed)?;
             let ticks = parsed
@@ -3451,7 +3451,7 @@ fn build_swap_outcome_tuple(
 /// `tick_data`, mirroring `PyLiquidityPool.update_tick_data`).
 fn extract_tick_data(
     dict: &Bound<'_, PyAny>,
-) -> PyResult<std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo>> {
+) -> PyResult<HashMap<i32, degenbot_bot::bot_core::TickInfo>> {
     let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
         dict.extract().map_err(|_| {
             pyo3::exceptions::PyTypeError::new_err(

@@ -72,7 +72,7 @@ impl PyArbitrageEngine {
         // owned pool data comes out, the PyErr (if any) is built under the GIL.
         let v3_pools = self.with_engine_core(py, |core| {
             let key = core.pool_id_by_address(&pool_addr)?;
-            let mut map = std::collections::HashMap::new();
+            let mut map = hashbrown::HashMap::new();
             if let (Some(identity), Some(pool)) = (core.get_v3_identity(key), core.get_v3_pool(key))
             {
                 map.insert(key, (*identity, pool.clone()));
@@ -153,7 +153,7 @@ impl PyArbitrageEngine {
             });
 
             let fwd_key = v4_key?;
-            let mut map = std::collections::HashMap::new();
+            let mut map = hashbrown::HashMap::new();
             if let (Some(identity), Some(pool)) =
                 (core.get_v4_identity(fwd_key), core.get_v4_pool(fwd_key))
             {

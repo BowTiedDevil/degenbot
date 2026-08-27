@@ -44,8 +44,7 @@ pub mod hop_oracle;
 #[expect(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
-    clippy::must_use_candidate,
-    clippy::implicit_hasher
+    clippy::must_use_candidate
 )]
 pub mod reconstruct;
 

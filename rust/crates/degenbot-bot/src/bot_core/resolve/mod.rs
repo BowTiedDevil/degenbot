@@ -29,7 +29,7 @@ pub(crate) mod curve;
 pub(crate) mod solidly;
 pub(crate) mod v2;
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
@@ -331,7 +331,7 @@ pub(crate) fn resolve_hops(
 mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
     use std::sync::Arc;
 
     use super::*;

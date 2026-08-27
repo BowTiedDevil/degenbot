@@ -130,7 +130,7 @@ pub(crate) fn project_v4(
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used)]
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use super::super::MissingHopReason;
     use super::{project_v3, project_v4};

@@ -6,7 +6,7 @@
 
 #![expect(clippy::unwrap_used, clippy::expect_used)] // run-once investigation tooling
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{aliases::U112, Address, B256, I256, U256};
 

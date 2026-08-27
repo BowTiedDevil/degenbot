@@ -27,7 +27,7 @@
 //! construction — they never enter this machine as a state that could
 //! silently evade detection.
 
-use std::collections::HashSet;
+use hashbrown::HashSet;
 
 use degenbot_solvers::mixed::HopType;
 

@@ -591,8 +591,7 @@ impl ArbitrageEngine {
         // Invalidation reason histogram — names WHY the invalid slice of the
         // affected set dies before solving (SequenceUnavailable vs MissingState
         // vs ...). Emitted on the resolve phase event.
-        let mut invalid_reasons: std::collections::HashMap<String, u64> =
-            std::collections::HashMap::new();
+        let mut invalid_reasons: HashMap<String, u64> = HashMap::new();
         hotpath::measure_block!("arb_solve.resolve", {
             let core = self.core.read();
             for &path_id in &affected_path_ids {
@@ -669,7 +668,7 @@ impl ArbitrageEngine {
         // Solve only the non-deferred affected set.
         let solve_path_ids: HashSet<u64> = affected_path_ids
             .iter()
-            .filter(|p| !deferred_paths.contains(p))
+            .filter(|&&p| !deferred_paths.contains(&p))
             .copied()
             .collect();
 
@@ -721,8 +720,8 @@ impl ArbitrageEngine {
         // (time_us, pieces_visited, path_sims, pid) for the K-slowest
         // attribution — lets the completion event name the walk-combinatorial
         // cost driver of the slowest routes, not just their wall time.
-        let path_times: std::sync::Mutex<PathTimesHeap> =
-            std::sync::Mutex::new(std::collections::BinaryHeap::new());
+        let path_times: parking_lot::Mutex<PathTimesHeap> =
+            parking_lot::Mutex::new(std::collections::BinaryHeap::new());
         // Total CPU µs across all solved paths — dividing by the rayon wall
         // time yields achieved parallelism (8 workers ⇒ target ≈ 8.0).
         let solve_cpu_us: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -807,7 +806,8 @@ impl ArbitrageEngine {
                         u64::try_from(refine_sims).unwrap_or(0),
                         std::sync::atomic::Ordering::Relaxed,
                     );
-                    if let Ok(mut heap) = path_times.lock() {
+                    let mut heap = path_times.lock();
+                    {
                         let worst = heap
                             .peek()
                             .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _))| *w);
@@ -909,10 +909,7 @@ impl ArbitrageEngine {
         }
 
         // Telemetry: pure solver phase done — name the K slowest paths.
-        let slowest: Vec<String> = path_times
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
+        let slowest: Vec<String> = path_times.lock().iter()
             .map(|std::cmp::Reverse((us, pieces, sims, word_steps, refine_sims, pid))| {
                 format!(
                     "{pid}:{us}us:sims={sims}:pieces={pieces}:steps={word_steps}:refine={refine_sims}"
@@ -1321,7 +1318,7 @@ mod lpt_partition_tests {
             );
         }
         // Total items preserved.
-        let total: usize = bins.iter().map(|b| b.len()).sum();
+        let total: usize = bins.iter().map(Vec::len).sum();
         assert_eq!(total, costs.len());
     }
 
@@ -1329,7 +1326,7 @@ mod lpt_partition_tests {
     fn lpt_empty_items_produces_empty_bins() {
         let bins = lpt_partition(0, 4, |_| 0);
         assert_eq!(bins.len(), 4);
-        assert!(bins.iter().all(|b| b.is_empty()));
+        assert!(bins.iter().all(Vec::is_empty));
     }
 
     #[test]
@@ -1343,6 +1340,7 @@ mod lpt_partition_tests {
     }
 
     #[test]
+    #[expect(clippy::unwrap_used)]
     fn lpt_balances_load() {
         // Costs: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1] on 3 bins.
         // LPT assignment: 10→bin0(10), 9→bin1(9), 8→bin2(8), 7→bin1(16),

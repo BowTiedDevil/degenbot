@@ -38,7 +38,7 @@
 //! A future pure-async standalone `Bot` API can introduce a sibling `async`
 //! trait that shares the same value types.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use crate::TickInfo;
 

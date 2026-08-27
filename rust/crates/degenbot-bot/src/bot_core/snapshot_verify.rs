@@ -24,7 +24,7 @@
 //!   cannot race between registration and verification). Pure: generic over
 //!   `E`, takes closures for the engine-specific bits + an `Arc<Mutex<E>>`.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::Address;

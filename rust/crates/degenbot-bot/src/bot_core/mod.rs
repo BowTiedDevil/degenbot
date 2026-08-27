@@ -4,7 +4,7 @@
 //! live here. Python objects are thin `PyO3` handles carrying keys into
 //! `BotState`'s `HashMaps`.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{Address, U256};
 
@@ -242,6 +242,18 @@ pub(crate) fn trace_liquidity_global() -> bool {
         .is_ok_and(|v| v.trim() == "1" || v.trim().eq_ignore_ascii_case("true"))
 }
 
+/// Whether the global WS-log pipeline trace is on (env
+/// `DEGENBOT_WS_TRACE=1`). When set, `[trace] ws-log` fires for EVERY
+/// relevant-topic log the live pump dispatches — the catch-all companion to
+/// the per-pool `DEGENBOT_DRAIN_DBG` and the liquidity-only
+/// `DEGENBOT_TRACE_LIQUIDITY` gates. High volume by design (one line per
+/// relevant WS log); opt-in for desync investigations that cannot be
+/// pinned to a single pool in advance.
+pub(crate) fn trace_ws_global() -> bool {
+    std::env::var("DEGENBOT_WS_TRACE")
+        .is_ok_and(|v| v.trim() == "1" || v.trim().eq_ignore_ascii_case("true"))
+}
+
 /// Optional watch tick for the per-pool trace (env `DEGENBOT_TRACE_TICK`, a
 /// signed decimal). When set, the pin summary + drain-apply probes log the
 /// value of THAT tick after each mutation, so a single known-divergent tick
@@ -349,7 +361,8 @@ fn drain_dbg_log_buf(
 /// (a Burn arriving after the registration drain+pin is the rolling-start
 /// race this probe exists to catch). Fires when the pool matches
 /// `DEGENBOT_DRAIN_DBG` OR the global liquidity trace is on AND the topic is
-/// a liquidity-mutating one (V3 Mint/Burn, V4 `ModifyLiquidity`)..
+/// a liquidity-mutating one (V3 Mint/Burn, V4 `ModifyLiquidity`), or the
+/// global `DEGENBOT_WS_TRACE` catch-all is on (every relevant-topic log).
 pub(crate) fn trace_ws_log_dispatch(
     address: Address,
     topics: &[alloy::primitives::B256],
@@ -372,7 +385,8 @@ pub(crate) fn trace_ws_log_dispatch(
     // PoolManager, so attribution requires the indexed PoolId in topics[1].
     let pool_match = drain_dbg_match_v4(address, topics);
     let global_liquidity_hit = trace_liquidity_global() && is_liquidity;
-    if !pool_match && !global_liquidity_hit {
+    let global_ws_hit = trace_ws_global();
+    if !pool_match && !global_liquidity_hit && !global_ws_hit {
         return;
     }
     tracing::info!(
@@ -3498,7 +3512,7 @@ mod tests {
         use crate::bot_core::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use std::collections::HashMap;
+        use hashbrown::HashMap;
 
         let mut core = BotState::new();
         let pid = core
@@ -3564,7 +3578,7 @@ mod tests {
     fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use std::collections::HashMap;
+        use hashbrown::HashMap;
 
         let mut core = BotState::new();
         let err = core
@@ -3603,7 +3617,7 @@ mod tests {
     fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use std::collections::HashMap;
+        use hashbrown::HashMap;
 
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xeeu8; 32];
@@ -3664,7 +3678,7 @@ mod tests {
     fn make_v4_params_in_spec() -> crate::bot_core::RegisterV4PoolParams {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use std::collections::HashMap;
+        use hashbrown::HashMap;
         RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
             pool_id: [0xeeu8; 32],
@@ -4402,7 +4416,7 @@ mod tests {
             sqrt_price_x96: U256::from(1u64) << 96,
             liquidity: 1_000_000,
             tick: 0,
-            tick_data: std::collections::HashMap::new(),
+            tick_data: HashMap::new(),
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,

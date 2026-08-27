@@ -40,7 +40,7 @@
 //! | [`tests`] | Unit tests |
 
 use dashmap::DashMap;
-use std::collections::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 
 use ::degenbot_solvers::mixed::{HopType, MixedPath, ResolvedMixedPath, SolvePathResult};

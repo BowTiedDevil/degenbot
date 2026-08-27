@@ -243,7 +243,7 @@ fn v2_fee_bips(gamma: u64, denom: u64) -> u16 {
 #[expect(clippy::expect_used, clippy::panic, clippy::similar_names)]
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_executor::composers::HopInfo;

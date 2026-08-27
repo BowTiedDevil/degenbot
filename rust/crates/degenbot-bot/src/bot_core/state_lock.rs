@@ -25,9 +25,12 @@
 //! - `dump_active_holds()` renders the live table for forensics (later wired
 //!   into the gil-probe registry dump).
 //!
-//! Overhead in the uncontended steady state: one mutex-guarded `HashMap`
-//! insert + remove per read acquisition. If that ever shows up in pump-loop
-//! profiles, gate the tracking behind a runtime flag and keep the wrapper.
+//! Overhead in the uncontended steady state: the tracking costs a
+//! mutex-guarded `HashMap` insert + remove per read acquisition (historically
+//! plus a per-acquire string leak), so tracking is OFF by default —
+//! `DEGENBOT_STATE_LOCK_DIAG=1` enables it for soak/incident forensics. The
+//! default read path is the bare `parking_lot` read plus the cheap blocked-wait
+//! warning (no registry traffic, no allocation).
 
 use std::backtrace::Backtrace;
 use std::collections::HashMap;
@@ -59,6 +62,31 @@ static THRESHOLD_INIT: LazyLock<()> = LazyLock::new(|| {
 static TRACE_BACKTRACES: LazyLock<bool> =
     LazyLock::new(|| std::env::var("DEGENBOT_LOCK_TRACE").is_ok_and(|v| v == "1"));
 
+/// 1 when hold-tracking diagnostics are enabled (`DEGENBOT_STATE_LOCK_DIAG=1`),
+/// resolved once at first consultation. Default 0: the pump-path read
+/// acquisition stays a bare `parking_lot` read (the rare blocked-wait warning
+/// needs no per-hold bookkeeping). Set to 1 for soak/incident forensics.
+/// Follows the `WARN_THRESHOLD_MS` resolution pattern so tests can force a mode.
+static DIAG: AtomicU64 = AtomicU64::new(0);
+static DIAG_INIT: LazyLock<()> = LazyLock::new(|| {
+    let enabled = std::env::var("DEGENBOT_STATE_LOCK_DIAG").is_ok_and(|v| v == "1");
+    DIAG.store(u64::from(enabled), Ordering::Relaxed);
+});
+
+/// True when read-hold tracking is enabled (env `DEGENBOT_STATE_LOCK_DIAG=1`).
+fn diag_enabled() -> bool {
+    LazyLock::force(&DIAG_INIT);
+    DIAG.load(Ordering::Relaxed) == 1
+}
+
+/// Test-only override of the diag mode (stateful registry tests force a
+/// deterministic mode per test).
+#[cfg(test)]
+fn set_diag_enabled_for_tests(enabled: bool) {
+    LazyLock::force(&DIAG_INIT);
+    DIAG.store(u64::from(enabled), Ordering::Relaxed);
+}
+
 /// Unique id per registered hold — unambiguous removal on Drop.
 static HOLD_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -66,8 +94,9 @@ static HOLD_SEQ: AtomicU64 = AtomicU64::new(1);
 struct HoldRecord {
     seq: u64,
     thread: String,
-    /// `#[track_caller]` acquire site, pre-formatted.
-    location: &'static str,
+    /// `#[track_caller]` acquire site — stored unallocated; formatted only
+    /// when a slow-hold warning fires.
+    location: &'static Location<'static>,
     /// Monotonic ms since process start at acquisition.
     acquired_ms: u64,
     /// Slow-hold warning already emitted for this hold (warn once).
@@ -122,10 +151,6 @@ fn now_ms() -> u64 {
     base
 }
 
-fn format_location(loc: &'static Location<'_>) -> &'static str {
-    Box::leak(Box::<str>::from(format!("{loc}")))
-}
-
 /// Pure verdict: which of `records` exceed `threshold_ms` of hold time at
 /// `now_ms`, excluding ones already warned. Marks them warned.
 fn flag_aged_records(records: &mut [HoldRecord], now_ms: u64, threshold_ms: u64) -> Vec<SlowHold> {
@@ -137,7 +162,7 @@ fn flag_aged_records(records: &mut [HoldRecord], now_ms: u64, threshold_ms: u64)
             out.push(SlowHold {
                 seq: rec.seq,
                 thread: rec.thread.clone(),
-                location: rec.location.to_owned(),
+                location: rec.location.to_string(),
                 held_ms: held,
                 backtrace: rec.backtrace.clone(),
             });
@@ -159,7 +184,7 @@ fn log_slow_holds(key: usize, holds: &[SlowHold]) {
     }
 }
 
-fn register_read(key: usize, location: &'static str) -> u64 {
+fn register_read(key: usize, location: &'static Location<'static>) -> u64 {
     let seq = HOLD_SEQ.fetch_add(1, Ordering::Relaxed);
     let trace = *TRACE_BACKTRACES;
     let mut map = ACTIVE_READS.lock();
@@ -197,7 +222,7 @@ fn snapshot_holds(key: usize) -> Vec<(String, String, u64)> {
                 .map(|rec| {
                     (
                         rec.thread.clone(),
-                        rec.location.to_owned(),
+                        rec.location.to_string(),
                         now.saturating_sub(rec.acquired_ms),
                     )
                 })
@@ -209,6 +234,9 @@ fn snapshot_holds(key: usize) -> Vec<(String, String, u64)> {
 /// Render every active read hold in the process (forensic dump).
 #[must_use]
 pub fn dump_active_holds() -> String {
+    if !diag_enabled() {
+        return "(state-lock diagnostics disabled; set DEGENBOT_STATE_LOCK_DIAG=1 to track read holds)".to_owned();
+    }
     let now = now_ms();
     let map = ACTIVE_READS.lock();
     let mut out = String::new();
@@ -270,12 +298,35 @@ impl<T> StateLock<T> {
         }
     }
 
-    /// Acquire a read guard, registering the hold.
+    /// Acquire a read guard.
+    ///
+    /// With diagnostics gated OFF (default) this registers nothing: just the
+    /// `parking_lot` read + the cheap blocked-wait warning. With diagnostics ON
+    /// (`DEGENBOT_STATE_LOCK_DIAG=1`) the hold is registered for slow-hold
+    /// forensics.
     #[track_caller]
     pub fn read(&self) -> StateReadGuard<'_, T> {
-        let location = format_location(Location::caller());
         let t0 = Instant::now();
         let guard = self.inner.read();
+        if !diag_enabled() {
+            // Gated-off steady state: no registry traffic, no allocation.
+            // Keep the blocked-wait warning (rare; no per-hold bookkeeping
+            // required for it).
+            let waited = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if waited >= warn_threshold_ms() {
+                tracing::warn!(
+                    "[state-lock] read acquisition blocked {waited}ms at {} \
+                     (hold tracking disabled - set DEGENBOT_STATE_LOCK_DIAG=1 to name holders)",
+                    Location::caller()
+                );
+            }
+            return StateReadGuard {
+                inner: guard,
+                key: 0, // sentinel: Drop skips removal when seq == 0
+                seq: 0,
+            };
+        }
+        let location = Location::caller();
         let key = self.key_of();
         let seq = register_read(key, location);
         let waited = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -307,7 +358,7 @@ impl<T> StateLock<T> {
     /// immediately after acquisition (the readers we were waiting for).
     #[track_caller]
     pub fn write(&self) -> StateWriteGuard<'_, T> {
-        let location = format_location(Location::caller());
+        let location = Location::caller();
         let t0 = Instant::now();
         let guard = self.inner.write();
         let waited = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -372,7 +423,10 @@ impl<T> Deref for StateReadGuard<'_, T> {
 
 impl<T> Drop for StateReadGuard<'_, T> {
     fn drop(&mut self) {
-        remove_read(self.key, self.seq);
+        // seq == 0 is the gated-off sentinel (never registered; no removal).
+        if self.seq != 0 {
+            remove_read(self.key, self.seq);
+        }
     }
 }
 
@@ -399,15 +453,27 @@ impl<T> DerefMut for StateWriteGuard<'_, T> {
 mod tests {
     use super::*;
 
+    /// Serializes tests that flip the process-wide diag flag / assert the
+    /// `ACTIVE_READS` table (parallel test threads would otherwise race it).
+    static DIAG_TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn test_serial() -> std::sync::MutexGuard<'static, ()> {
+        DIAG_TEST_SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     // ---- pure verdict logic -------------------------------------------------
 
     #[test]
     fn aged_records_flagged_once_with_holder_info() {
+        let loc1 = Location::caller();
+        let loc2 = Location::caller();
         let mut records = vec![
             HoldRecord {
                 seq: 1,
                 thread: "t-old".into(),
-                location: "src/x.rs:10",
+                location: loc1,
                 acquired_ms: 1_000,
                 warned: false,
                 backtrace: None,
@@ -415,7 +481,7 @@ mod tests {
             HoldRecord {
                 seq: 2,
                 thread: "t-young".into(),
-                location: "src/y.rs:20",
+                location: loc2,
                 acquired_ms: 5_900, // held 100ms at now=6_000: below threshold
                 warned: false,
                 backtrace: None,
@@ -423,7 +489,7 @@ mod tests {
             HoldRecord {
                 seq: 3,
                 thread: "t-already-warned".into(),
-                location: "src/z.rs:30",
+                location: loc2, // any site: value irrelevant to the verdict
                 acquired_ms: 100,
                 warned: true,
                 backtrace: None,
@@ -433,7 +499,7 @@ mod tests {
         assert_eq!(flagged.len(), 1, "only the aged, never-warned hold fires");
         assert_eq!(flagged[0].seq, 1);
         assert_eq!(flagged[0].held_ms, 5_000);
-        assert_eq!(flagged[0].location, "src/x.rs:10");
+        assert_eq!(flagged[0].location, loc1.to_string());
         // Second pass must be silent (warn-once).
         assert!(flag_aged_records(&mut records, 6_000, 500).is_empty());
     }
@@ -443,7 +509,7 @@ mod tests {
         let mut records = vec![HoldRecord {
             seq: 7,
             thread: "t".into(),
-            location: "l",
+            location: Location::caller(),
             acquired_ms: 3_999,
             warned: false,
             backtrace: None,
@@ -456,6 +522,8 @@ mod tests {
     #[test]
     #[expect(clippy::expect_used)]
     fn read_guard_registers_and_deregisters() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
         {
@@ -465,17 +533,20 @@ mod tests {
             let records = map.get(&key).expect("hold registered");
             assert_eq!(records.len(), 1);
             assert!(
-                records[0].location.contains("state_lock.rs"),
+                records[0].location.to_string().contains("state_lock.rs"),
                 "track_caller site recorded, got {}",
                 records[0].location
             );
         }
         let map = ACTIVE_READS.lock();
         assert!(map.get(&key).is_none(), "drop removed the hold");
+        set_diag_enabled_for_tests(false);
     }
 
     #[test]
     fn multiple_concurrent_reads_all_tracked_and_removed() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
         let g1 = lock.read();
@@ -492,6 +563,7 @@ mod tests {
         drop(g2);
         let map = ACTIVE_READS.lock();
         assert!(map.get(&key).is_none());
+        set_diag_enabled_for_tests(false);
     }
 
     #[test]
@@ -506,6 +578,8 @@ mod tests {
 
     #[test]
     fn dump_lists_active_holds_and_clears() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
         let lock: StateLock<u8> = StateLock::new(0);
         let guard = lock.read();
         let dump = dump_active_holds();
@@ -513,11 +587,14 @@ mod tests {
         assert!(dump.contains("state_lock.rs"), "dump names the site");
         drop(guard);
         assert!(dump_active_holds().contains("(none)"));
+        set_diag_enabled_for_tests(false);
     }
 
     #[test]
     #[expect(clippy::expect_used)]
     fn slow_reader_is_flagged_on_next_acquisition() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
         set_warn_threshold_ms(1);
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
@@ -541,6 +618,26 @@ mod tests {
         drop(second);
         drop(holder);
         set_warn_threshold_ms(500);
+        set_diag_enabled_for_tests(false);
+    }
+
+    #[test]
+    fn read_guard_with_diag_disabled_registers_nothing() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(false);
+        let lock: StateLock<u8> = StateLock::new(0);
+        let key = lock.key_of();
+        let guard = lock.read();
+        assert_eq!(*guard, 0);
+        {
+            let map = ACTIVE_READS.lock();
+            assert!(
+                map.get(&key).is_none(),
+                "default (gated-off) mode must not register holds"
+            );
+        }
+        drop(guard);
+        set_diag_enabled_for_tests(true);
     }
 
     #[test]

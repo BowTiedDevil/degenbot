@@ -32,7 +32,7 @@
 //! + regen command so the offline fixture is reproducible. Raise
 //! `DEGENBOT_CLCAP_MAX_FETCHES` (default 320) to backfill a denser active set.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::io::Write;
 use std::process::ExitCode;
 use std::sync::Arc;

@@ -33,7 +33,7 @@ pub use result_channel::BlockStream;
 use crate::prelude::*;
 use degenbot_bot::bot_core::state_lock::StateLock;
 use degenbot_bot::bot_core::BotState;
-pub(crate) use std::collections::HashMap;
+pub(crate) use hashbrown::HashMap;
 pub(crate) use std::sync::Arc;
 
 pub(crate) use alloy::primitives::{Address, U256};

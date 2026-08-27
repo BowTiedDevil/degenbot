@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 alloy = { version = "^2.4" }
 thiserror = { version = "^2.0" }
+hashbrown.workspace = true
 degenbot-core.workspace = true
 
 [dev-dependencies]

@@ -54,7 +54,7 @@
 //!    backup so the `.bak` is a complete recoverable snapshot. On any failure
 //!    the live DB is untouched and the partial temp file is cleaned up.
 
-use std::collections::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 

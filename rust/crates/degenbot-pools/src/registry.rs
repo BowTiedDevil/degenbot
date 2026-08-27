@@ -14,7 +14,7 @@ use crate::v3_state::{PoolTickCoverage, V3PoolIdentity, V3PoolState};
 use crate::v4_state::{V4PoolIdentity, V4PoolState};
 use crate::TickInfo;
 use alloy::primitives::{Address, I256, U256};
-use std::collections::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 
 /// A single pool's state. Pool-type-specific fields are in the enum variants.
 #[derive(Clone, Debug)]
@@ -1032,7 +1032,7 @@ mod projection_tests {
 
 #[cfg(test)]
 mod known_word_tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use alloy::primitives::{Address, U256};
 

@@ -11,7 +11,7 @@
 //! ascending for `one_for_zero`), interleaving boundary ticks (at word edges)
 //! with initialized ticks from the liquidity mapping.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 
@@ -41,8 +41,9 @@ pub enum GenTicksError {
 /// Ticks are yielded in descending order when `less_than_or_equal` is `true`
 /// (`zero_for_one` direction), else ascending order.
 ///
-/// This is a direct port of the Python `gen_ticks()` generator, implemented
-/// as a function that collects ticks into a `Vec` with a maximum count.
+/// Collecting form of [`gen_ticks_iter`]: same sequence, materialized. Port
+/// of the Python `gen_ticks()` generator, which yields lazily — consumers
+/// that can stop early should use [`gen_ticks_iter`] instead.
 ///
 /// # Arguments
 ///
@@ -62,6 +63,180 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
     less_than_or_equal: bool,
     max_ticks: usize,
 ) -> Result<Vec<TickAlongPath>, GenTicksError> {
+    Ok(gen_ticks_iter(
+        tick_data,
+        starting_tick,
+        tick_spacing,
+        less_than_or_equal,
+        max_ticks,
+    )?
+    .collect())
+}
+
+/// Keeper of a lazy walk over initialized + boundary ticks.
+///
+/// Mirrors [`gen_ticks`] step-for-step: the merged walk's ordering, tie rule
+/// (equal ticks yield ONCE as initialized, advancing both cursors), cap
+/// counting, and the strand-prevention clamp at `MIN_TICK`/`MAX_TICK` are all
+/// byte-identical to the eager implementation this replaced. Only the
+/// materialization differs: each `next()` performs one merge step, so
+/// consumers that break early never pay for ticks they did not reach.
+#[derive(Debug)]
+struct GenTicksIter {
+    /// Initialized ticks in walk order (descending for `zero_for_one`).
+    init: std::vec::IntoIter<i32>,
+    /// Lookahead slot holding a peeked-but-unconsumed initialized tick
+    /// (populated when a boundary tick wins a merge step).
+    next_init: Option<i32>,
+    /// Current boundary-tick cursor along the word grid (i64 like the eager
+    /// implementation, which stepped in i64 before casting down).
+    boundary: i64,
+    /// Boundary step: -`tick_spacing`*256 descending, +`tick_spacing`*256 ascending.
+    step: i64,
+    /// True for the `less_than_or_equal` (`zero_for_one`) walk.
+    descending: bool,
+    /// Yield budget remaining (= `max_ticks` - produced).
+    remaining: usize,
+    /// True once initialized ticks are exhausted: only the boundary tail
+    /// (with its clamp-once terminal) remains.
+    init_done: bool,
+    /// True after the clamped MIN/MAX terminal has been emitted.
+    done: bool,
+}
+
+impl GenTicksIter {
+    /// One merge step of the main phase (initialized ticks remaining).
+    fn step_main(&mut self) -> Option<TickAlongPath> {
+        let Some(init) = self.next_init.take().or_else(|| self.init.next()) else {
+            self.init_done = true;
+            return None; // transition to the boundary tail
+        };
+        let init_tick = i64::from(init);
+
+        // Eager selection arms, preserving their exact cursor discipline:
+        // - tick chosen from the init side: boundary cursor untouched here;
+        // - boundary wins: init is stored back into the lookahead;
+        // - tie: yield boundary value AS initialized, boundary cursor
+        //   advances immediately (mirrors the eager Equal arm).
+        let (value, is_init) = match (self.descending, init_tick.cmp(&self.boundary)) {
+            (true, std::cmp::Ordering::Greater) | (false, std::cmp::Ordering::Less) => {
+                (init_tick, true)
+            }
+            (true, std::cmp::Ordering::Less) | (false, std::cmp::Ordering::Greater) => {
+                (self.boundary, false)
+            }
+            (_, std::cmp::Ordering::Equal) => {
+                let tick = self.boundary;
+                self.boundary += self.step;
+                (tick, true)
+            }
+        };
+
+        // Range clamp: eager breaks out of the main phase WITHOUT yielding
+        // the out-of-range candidate and continues to the tail phase. The
+        // tail never reads the init side again, so no cursor restore is
+        // needed — exactly like the eager break (ii also stays unconsumed
+        // there, and phase 2 ignores it).
+        let out_of_range = if self.descending {
+            value < i64::from(MIN_TICK)
+        } else {
+            value > i64::from(MAX_TICK)
+        };
+        if out_of_range {
+            self.init_done = true;
+            return None;
+        }
+
+        self.remaining -= 1;
+        if !is_init {
+            // Boundary won: eager advances the boundary cursor post-push and
+            // leaves ii alone — preserve the unconsumed init tick.
+            self.next_init = Some(init);
+            self.boundary += self.step;
+        }
+        #[expect(clippy::cast_possible_truncation)]
+        Some(TickAlongPath {
+            tick: value as i32,
+            is_initialized: is_init,
+        })
+    }
+
+    /// One step of the boundary tail (mirrors eager phase 2): walk the grid
+    /// until crossing the range bound, then emit the clamped MIN/MAX exactly
+    /// once and terminate.
+    fn step_tail(&mut self) -> TickAlongPath {
+        let clamped;
+        if self.descending {
+            if self.boundary < i64::from(MIN_TICK) {
+                clamped = Some(i64::from(MIN_TICK));
+            } else {
+                clamped = None;
+            }
+        } else if self.boundary > i64::from(MAX_TICK) {
+            clamped = Some(i64::from(MAX_TICK));
+        } else {
+            clamped = None;
+        }
+
+        let push_tick = clamped.unwrap_or(self.boundary);
+
+        self.remaining -= 1;
+        if clamped.is_some() {
+            // The clamped terminal tick is the walk's last item.
+            self.done = true;
+        } else {
+            self.boundary += self.step;
+        }
+        #[expect(clippy::cast_possible_truncation)]
+        TickAlongPath {
+            tick: push_tick as i32,
+            is_initialized: false,
+        }
+    }
+}
+
+impl Iterator for GenTicksIter {
+    type Item = TickAlongPath;
+
+    fn next(&mut self) -> Option<TickAlongPath> {
+        loop {
+            if self.done || self.remaining == 0 {
+                return None;
+            }
+            if self.init_done {
+                return Some(self.step_tail());
+            }
+            if let Some(item) = self.step_main() {
+                return Some(item);
+            }
+        }
+    }
+}
+
+/// Lazy form of [`gen_ticks`]: yields the same tick sequence without
+/// materializing the full merged walk.
+///
+/// Identical inputs produce identical output when collected — the differential
+/// test suite (`tick_bitmap` tests) pins that against the eager oracle. The
+/// initialized-tick collection + sort still happens at construction (keys are
+/// stored unsorted on the tick map); per-call sorting may move to per-pool
+/// sorted storage later if profiling warrants it.
+///
+/// Consumers that stop early (`v3_simulate_swap` / `v4_simulate_swap` against
+/// a satisfied amount) now pay only for the ticks they reach instead of the
+/// entire direction walk + the old max_ticks-sized preallocation. The
+/// concrete implementer type is private: callers see an opaque iterator.
+///
+/// # Errors
+///
+/// Returns [`GenTicksError::ZeroTickSpacing`] if `tick_spacing` is zero.
+pub fn gen_ticks_iter<S: std::hash::BuildHasher>(
+    tick_data: &HashMap<i32, TickInfo, S>,
+    starting_tick: i32,
+    tick_spacing: i32,
+    less_than_or_equal: bool,
+    max_ticks: usize,
+) -> Result<impl Iterator<Item = TickAlongPath>, GenTicksError> {
     if tick_spacing == 0 {
         return Err(GenTicksError::ZeroTickSpacing);
     }
@@ -70,9 +245,7 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
     let compressed = starting_tick.div_euclid(tick_spacing);
     let (word_pos, _) = tick_position(compressed);
 
-    // Pre-generate boundary ticks on demand
-    // For descending: start at 0th bit of current word, step = -256 * tick_spacing
-    // For ascending: start at 255th bit of current word, step = +256 * tick_spacing
+    // Boundary grid start + step for the swap direction.
     let (first_boundary, step): (i64, i64) = if less_than_or_equal {
         let first = i64::from(tick_spacing) * 256 * i64::from(word_pos);
         (first, -i64::from(tick_spacing) * 256)
@@ -84,7 +257,7 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
         (first, i64::from(tick_spacing) * 256)
     };
 
-    // Collect initialized ticks in the relevant direction
+    // Initialized ticks in the walk direction (eager order preserved).
     let mut initialized_ticks: Vec<i32> = if less_than_or_equal {
         tick_data
             .keys()
@@ -98,127 +271,22 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
             .copied()
             .collect()
     };
-
-    // Sort for merge: descending for less_than_or_equal, ascending otherwise
     if less_than_or_equal {
         initialized_ticks.sort_by(|a, b| b.cmp(a));
     } else {
         initialized_ticks.sort_unstable();
     }
 
-    // Merge boundary ticks and initialized ticks.
-    //
-    // Capacity hint: when max_ticks is `usize::MAX` (an unbounded walk — used by
-    // `compute_tick_ranges` which has no work cap), without a hint hint the
-    // vector grows naturally. The simulate_swap callers pass a real cap
-    // (30_000 — naturally bounded by MIN_TICK / MAX_TICK at ~7k entries for
-    // tick_spacing=1); use it as a hint there.
-    let cap_hint = if max_ticks == usize::MAX {
-        initialized_ticks.len() + 256
-    } else {
-        max_ticks
-    };
-    let mut result = Vec::with_capacity(cap_hint);
-    let mut boundary_tick = first_boundary;
-    let mut ii: usize = 0; // initialized tick index
-
-    // First phase: interleave while initialized ticks remain
-    while ii < initialized_ticks.len() && result.len() < max_ticks {
-        let init_tick = i64::from(initialized_ticks[ii]);
-
-        let (next_tick, is_init) = match (less_than_or_equal, init_tick.cmp(&boundary_tick)) {
-            // The initialized tick is closer in the swap direction
-            (true, std::cmp::Ordering::Greater) | (false, std::cmp::Ordering::Less) => {
-                (init_tick, true)
-            }
-            // The boundary tick is closer in the swap direction
-            (true, std::cmp::Ordering::Less) | (false, std::cmp::Ordering::Greater) => {
-                (boundary_tick, false)
-            }
-            // Both on the boundary — advance both iterators.
-            // Python yields the current boundary first, then advances.
-            // We advance boundary_tick here (post-push won't do it since
-            // is_init=true), and let the post-push `if is_init { ii += 1 }`
-            // handle the initialized tick advancement.
-            (_, std::cmp::Ordering::Equal) => {
-                let tick = boundary_tick;
-                boundary_tick += step;
-                (tick, true)
-            }
-        };
-
-        // Clamp to valid tick range
-        if less_than_or_equal {
-            if next_tick < i64::from(MIN_TICK) {
-                break;
-            }
-        } else if next_tick > i64::from(MAX_TICK) {
-            break;
-        }
-
-        // SAFETY: next_tick is within i32 range because it was clamped
-        // to [MIN_TICK, MAX_TICK] which are both i32 values.
-        #[expect(clippy::cast_possible_truncation)]
-        let tick_i32 = next_tick as i32;
-
-        result.push(TickAlongPath {
-            tick: tick_i32,
-            is_initialized: is_init,
-        });
-
-        if is_init {
-            ii += 1;
-        } else {
-            boundary_tick += step;
-        }
-    }
-
-    // Second phase: yield remaining boundary ticks.
-    //
-    // When ``boundary_tick`` crosses past MIN_TICK / MAX_TICK, CLAMP it to
-    // the bound + push the clamped tick (then stop) rather than just
-    // breaking. A bare ``break`` leaves the swap loop (in `v3_simulate_swap` /
-    // `v4_simulate_swap`) with an exhausted tick list while
-    // ``amount_specified_remaining`` is still positive + the price-limit
-    // unreached — the walk strands in the last fully-fitting word + never
-    // enters the final word (the one containing MIN/MAX_TICK) whose
-    // boundary tick drives the price to the limit. Python's `gen_ticks`
-    // yields boundary ticks *forever* (`while True: yield`), so clamping to
-    // the bound matches that behaviour at the extremity. Mirrors the V3/V4
-    // Solity swap's MIN/MAX_TICK termination.
-    while result.len() < max_ticks {
-        let clamped;
-        if less_than_or_equal {
-            if boundary_tick < i64::from(MIN_TICK) {
-                clamped = Some(i64::from(MIN_TICK));
-            } else {
-                clamped = None;
-            }
-        } else if boundary_tick > i64::from(MAX_TICK) {
-            clamped = Some(i64::from(MAX_TICK));
-        } else {
-            clamped = None;
-        }
-
-        let push_tick = clamped.unwrap_or(boundary_tick);
-
-        // SAFETY: push_tick is within i32 range because it is clamped to
-        // [MIN_TICK, MAX_TICK] which are both i32 values, or an unclamped
-        // boundary still inside them.
-        #[expect(clippy::cast_possible_truncation)]
-        result.push(TickAlongPath {
-            tick: push_tick as i32,
-            is_initialized: false,
-        });
-
-        if clamped.is_some() {
-            // The last boundary tick was at the MIN/MAX bound — stop.
-            break;
-        }
-        boundary_tick += step;
-    }
-
-    Ok(result)
+    Ok(GenTicksIter {
+        init: initialized_ticks.into_iter(),
+        next_init: None,
+        boundary: first_boundary,
+        step,
+        descending: less_than_or_equal,
+        remaining: max_ticks,
+        init_done: false,
+        done: false,
+    })
 }
 
 /// Compute V3 tick ranges for the solver.
@@ -665,6 +733,205 @@ mod tests {
             liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
             block: 0,
         }
+    }
+
+    use proptest::prelude::*;
+
+    /// Verbatim copy of the EAGER `gen_ticks` implementation that predated the
+    /// lazy iterator. Kept as a test-only differential oracle: the lazy
+    /// `GenTicksIter` must reproduce its output for every input, and this
+    /// independent source of truth protects the walk semantics (merge tie
+    /// rule, cap counting, strand-prevention clamp) through future refactors.
+    fn gen_ticks_eager_reference(
+        tick_data: &HashMap<i32, TickInfo>,
+        starting_tick: i32,
+        tick_spacing: i32,
+        less_than_or_equal: bool,
+        max_ticks: usize,
+    ) -> Result<Vec<TickAlongPath>, GenTicksError> {
+        if tick_spacing == 0 {
+            return Err(GenTicksError::ZeroTickSpacing);
+        }
+
+        let compressed = starting_tick.div_euclid(tick_spacing);
+        let (word_pos, _) = tick_position(compressed);
+
+        let (first_boundary, step): (i64, i64) = if less_than_or_equal {
+            let first = i64::from(tick_spacing) * 256 * i64::from(word_pos);
+            (first, -i64::from(tick_spacing) * 256)
+        } else {
+            let mut first = i64::from(tick_spacing) * (256 * i64::from(word_pos) + 255);
+            if i64::from(starting_tick) >= first {
+                first += i64::from(tick_spacing) * 256;
+            }
+            (first, i64::from(tick_spacing) * 256)
+        };
+
+        let mut initialized_ticks: Vec<i32> = if less_than_or_equal {
+            tick_data
+                .keys()
+                .filter(|&&tick| tick <= starting_tick)
+                .copied()
+                .collect()
+        } else {
+            tick_data
+                .keys()
+                .filter(|&&tick| tick > starting_tick)
+                .copied()
+                .collect()
+        };
+
+        if less_than_or_equal {
+            initialized_ticks.sort_by(|a, b| b.cmp(a));
+        } else {
+            initialized_ticks.sort_unstable();
+        }
+
+        let cap_hint = if max_ticks == usize::MAX {
+            initialized_ticks.len() + 256
+        } else {
+            max_ticks
+        };
+        let mut result = Vec::with_capacity(cap_hint);
+        let mut boundary_tick = first_boundary;
+        let mut ii: usize = 0;
+
+        while ii < initialized_ticks.len() && result.len() < max_ticks {
+            let init_tick = i64::from(initialized_ticks[ii]);
+
+            let (next_tick, is_init) = match (less_than_or_equal, init_tick.cmp(&boundary_tick)) {
+                (true, std::cmp::Ordering::Greater) | (false, std::cmp::Ordering::Less) => {
+                    (init_tick, true)
+                }
+                (true, std::cmp::Ordering::Less) | (false, std::cmp::Ordering::Greater) => {
+                    (boundary_tick, false)
+                }
+                (_, std::cmp::Ordering::Equal) => {
+                    let tick = boundary_tick;
+                    boundary_tick += step;
+                    (tick, true)
+                }
+            };
+
+            if less_than_or_equal {
+                if next_tick < i64::from(MIN_TICK) {
+                    break;
+                }
+            } else if next_tick > i64::from(MAX_TICK) {
+                break;
+            }
+
+            #[expect(clippy::cast_possible_truncation)]
+            let tick_i32 = next_tick as i32;
+
+            result.push(TickAlongPath {
+                tick: tick_i32,
+                is_initialized: is_init,
+            });
+
+            if is_init {
+                ii += 1;
+            } else {
+                boundary_tick += step;
+            }
+        }
+
+        while result.len() < max_ticks {
+            let clamped;
+            if less_than_or_equal {
+                if boundary_tick < i64::from(MIN_TICK) {
+                    clamped = Some(i64::from(MIN_TICK));
+                } else {
+                    clamped = None;
+                }
+            } else if boundary_tick > i64::from(MAX_TICK) {
+                clamped = Some(i64::from(MAX_TICK));
+            } else {
+                clamped = None;
+            }
+
+            let push_tick = clamped.unwrap_or(boundary_tick);
+
+            #[expect(clippy::cast_possible_truncation)]
+            result.push(TickAlongPath {
+                tick: push_tick as i32,
+                is_initialized: false,
+            });
+
+            if clamped.is_some() {
+                break;
+            }
+            boundary_tick += step;
+        }
+
+        Ok(result)
+    }
+
+    // Differential gate: the lazy GenTicksIter must reproduce the eager
+    // reference byte-for-byte across randomized maps + caps, including
+    // grid-aligned keys (merge tie collapse) and MIN/MAX-adjacent keys
+    // (strand-prevention clamp).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn gen_ticks_iter_matches_eager_reference(
+            keys in proptest::collection::hash_set(-887_272i32..887_272, 0..48),
+            starting_tick in -887_272i32..887_272,
+            spacing in prop_oneof![Just(1i32), Just(10i32), Just(60i32), Just(200i32)],
+            descending in proptest::bool::ANY,
+            cap in prop_oneof![
+                Just(0usize),
+                Just(1usize),
+                Just(3usize),
+                Just(17usize),
+                Just(30_000usize),
+                Just(usize::MAX)
+            ],
+        ) {
+            let mut map: HashMap<i32, TickInfo> = keys
+                .into_iter()
+                .map(|k| (k, make_tick_info(1, 1)))
+                .collect();
+
+            // Word-grid-aligned + extremity keys exercise the tie collapse and
+            // the final-clamp terminal exactly.
+            let max_word = MAX_TICK / (256 * spacing);
+            map.insert(spacing * 256 * max_word, make_tick_info(2, 2));
+            map.insert(-spacing * 256 * max_word, make_tick_info(3, 3));
+            map.insert(MIN_TICK, make_tick_info(4, 4));
+            map.insert(MAX_TICK, make_tick_info(5, 5));
+            map.insert(starting_tick, make_tick_info(6, 6));
+            map.insert(starting_tick.saturating_add(1), make_tick_info(7, 7));
+            map.insert(starting_tick.saturating_sub(1), make_tick_info(8, 8));
+
+            let expected =
+                gen_ticks_eager_reference(&map, starting_tick, spacing, descending, cap).unwrap();
+            let actual: Vec<TickAlongPath> = gen_ticks_iter(&map, starting_tick, spacing, descending, cap)
+                .unwrap()
+                .collect();
+            prop_assert_eq!(
+                expected,
+                actual,
+                "lazy walk diverges from eager oracle (start={}, spacing={}, descending={}, cap={})",
+                starting_tick,
+                spacing,
+                descending,
+                cap
+            );
+        }
+    }
+
+    #[test]
+    fn gen_ticks_iter_rejects_zero_tick_spacing() {
+        let map: HashMap<i32, TickInfo> = HashMap::new();
+        assert!(
+            matches!(
+                gen_ticks_iter(&map, 0, 0, false, 10),
+                Err(GenTicksError::ZeroTickSpacing)
+            ),
+            "gen_ticks_iter must reject zero tick_spacing"
+        );
     }
 
     #[test]

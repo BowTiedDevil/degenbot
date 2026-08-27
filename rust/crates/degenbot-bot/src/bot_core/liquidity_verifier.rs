@@ -22,7 +22,7 @@
 //!
 //! On ANY mismatch, returns `Err` — the bot must not operate with stale tick data.
 
-use std::collections::HashMap;
+use hashbrown::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use alloy::primitives::{Address, Bytes, U256};
@@ -444,7 +444,7 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
 
     // 1. Discover on-chain tick bitmap words
     // Scan words from our tick_data plus ±2 around the current tick.
-    let mut words_to_check: std::collections::HashSet<i16> = std::collections::HashSet::new();
+    let mut words_to_check: HashSet<i16> = HashSet::new();
     for &tick_idx in tick_data.keys() {
         let compressed = compress_tick(tick_idx, tick_spacing);
         let (word, _) = tick_bitmap_position(compressed);
@@ -476,8 +476,7 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
         })?;
 
     // Collect all on-chain tick indices from bitmap scanning.
-    let mut on_chain_tick_indices: std::collections::HashSet<i32> =
-        std::collections::HashSet::new();
+    let mut on_chain_tick_indices: HashSet<i32> = HashSet::new();
     for (word, result) in words.iter().zip(&bitmap_results) {
         let bitmap_val = decode_v3_bitmap_result(result, pool_addr, *word, &block_tag)?;
         if bitmap_val.is_zero() {
@@ -501,7 +500,7 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
     // on-chain-discovered ticks in ONE Multicall3 `aggregate3` eth_call, then
     // compare. This folds the old phase-3 "re-fetch the first missing on-chain
     // tick" into the same batch (its lg/ln is already in the result set).
-    let mut ticks_to_fetch: std::collections::HashSet<i32> = on_chain_tick_indices.clone();
+    let mut ticks_to_fetch: HashSet<i32> = on_chain_tick_indices.clone();
     for &tick_idx in tick_data.keys() {
         ticks_to_fetch.insert(tick_idx);
     }
@@ -791,7 +790,7 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     let pool_id_hex = degenbot_core::hex_utils::encode_hex(&pool_id_bytes);
 
     // 1. Discover on-chain populated bitmap words
-    let mut words_to_check: std::collections::HashSet<i16> = std::collections::HashSet::new();
+    let mut words_to_check: HashSet<i16> = HashSet::new();
     collect_bitmap_words(tick_data, active_tick, tick_spacing, &mut words_to_check);
     // Deterministic ordering (sorted ascending) so the Multicall3 sub-call
     // order — and thus the result-to-word mapping — is reproducible.
@@ -824,8 +823,7 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     // which is the biggest single fan-out: a dense word yields up to 256 serial
     // calls. Here we only discover tick indices; phase 2 batches every
     // getTickLiquidity across all words at once.)
-    let mut on_chain_tick_indices: std::collections::HashSet<i32> =
-        std::collections::HashSet::new();
+    let mut on_chain_tick_indices: HashSet<i32> = HashSet::new();
     for (word, result) in words.iter().zip(&bitmap_results) {
         let bitmap_val = decode_v4_bitmap_result(result, &pool_id_hex, &block_tag, *word)?;
         if bitmap_val.is_zero() {
@@ -847,7 +845,7 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
     // `aggregate3` eth_call, then compare. Folds today's phase-3 "detect
     // missing on-chain tick" into the same batch (its (lg,ln) is already
     // fetched — today it re-calls getTickLiquidity lazily via the map).
-    let mut ticks_to_fetch: std::collections::HashSet<i32> = on_chain_tick_indices.clone();
+    let mut ticks_to_fetch: HashSet<i32> = on_chain_tick_indices.clone();
     for &tick_idx in tick_data.keys() {
         ticks_to_fetch.insert(tick_idx);
     }
@@ -944,7 +942,7 @@ fn collect_bitmap_words<S: std::hash::BuildHasher>(
     tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
     current_tick: i32,
     tick_spacing: i32,
-    words: &mut std::collections::HashSet<i16>,
+    words: &mut HashSet<i16>,
 ) {
     for &tick_idx in tick_data.keys() {
         let compressed = compress_tick(tick_idx, tick_spacing);

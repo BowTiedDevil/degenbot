@@ -11,7 +11,7 @@
 //! sibling routing task (slice 14c) converts `LiquidityMap → V3PoolState`'s
 //! `tick_data` at the `PyBot`-registration seam (a 1:1 field copy).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{Address, B256, U256};
 use rusqlite::Connection;

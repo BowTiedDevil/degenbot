@@ -14,7 +14,7 @@
 //! The Python `src/degenbot/uniswap/{v3,v4}_snapshot.py::DatabaseSnapshot`
 //! classes are converted to delegating shells over this seam.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::path::Path;
 
 use alloy::primitives::{Address, B256, U256};

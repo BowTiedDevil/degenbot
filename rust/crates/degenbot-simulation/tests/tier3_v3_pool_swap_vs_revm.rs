@@ -35,7 +35,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tier3_v3_common;
 
-use std::collections::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::{aliases::I256, Address, U256};
 use proptest::prelude::*;
@@ -98,7 +98,7 @@ fn seed_v3_pool_storage(
         )
         .expect("seed tick info");
     }
-    let mut word_positions: std::collections::HashSet<i16> = std::collections::HashSet::new();
+    let mut word_positions: HashSet<i16> = HashSet::new();
     for &tick in state.tick_data.keys() {
         let compressed = tick.div_euclid(tick_spacing);
         let word_pos = i16::try_from(compressed >> 8).unwrap_or(0);
@@ -452,7 +452,7 @@ fn state_at_tick_zero(liq: u128, tick_spacing: i32) -> V3PoolState {
         snapshot_seed: None,
         post_drain_snapshot: None,
         coverage: PoolTickCoverage::Tracked,
-        known_bitmap_words: std::collections::HashSet::new(),
+        known_bitmap_words: HashSet::new(),
         fetcher: None,
         journal: ReorgJournal::<V3BlockDelta>::new(8),
         state_nonce: 0,

@@ -455,7 +455,7 @@ fn main() {
 /// (trivial passing stubs here), drains + pins, and lands the pool `Live`.
 /// This is the D4/D-C choreography the Python registry now delegates to.
 fn registration_lifecycle_standalone_slice() {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use degenbot::bot_core::state_lock::StateLock;
     use degenbot::bot_core::{PoolTickCoverage, RegistrationLifecycle, TickInfo};

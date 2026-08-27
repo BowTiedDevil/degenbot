@@ -45,7 +45,7 @@ use degenbot::bot_core::BotState;
 use degenbot::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 /// Path to the shared V4 fixture (loaded by both this Rust test and the
 /// Python dual-driver test — HRT356, the single source of truth).

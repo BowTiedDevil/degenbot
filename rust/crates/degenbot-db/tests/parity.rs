@@ -20,7 +20,7 @@
 //!   `uv run python rust/crates/degenbot-db/tests/fixtures/generate_parity.py`
 
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // parity/integration test harness
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::path::PathBuf;
 
 use alloy::primitives::{Address, B256, U256};
@@ -30,7 +30,7 @@ use degenbot_db::{DegenbotDb, ExchangeFamily, SchemaState};
 
 /// Local alias for the streamed result accumulator (mirrors the private
 /// `TickMap`). Keeps clippy's `type_complexity` lint quiet in the parity tests.
-type StreamedMap = std::collections::HashMap<i32, (U256, alloy::primitives::I256)>;
+type StreamedMap = HashMap<i32, (U256, alloy::primitives::I256)>;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 

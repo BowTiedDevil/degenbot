@@ -19,7 +19,7 @@
 //! eventually pulled into its own crate (ADR-018 trigger: a second engine
 //! family), `DeliveryPolicy` and its channels can travel intact.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::U256;
 use tokio::sync::mpsc;
@@ -164,7 +164,7 @@ impl DeliveryPolicy {
             results
                 .iter()
                 .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
-                .filter(|(id, _)| !self.delivered.contains_key(id))
+                .filter(|(&id, _)| !self.delivered.contains_key(&id))
                 .map(|(&id, r)| (id, r.clone()))
                 .collect()
         } else {
@@ -176,7 +176,7 @@ impl DeliveryPolicy {
             results
                 .iter()
                 .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
-                .filter(|(id, new)| matches!(self.delivered.get(id), Some(old) if old != *new))
+                .filter(|(&id, new)| matches!(self.delivered.get(&id), Some(old) if old != *new))
                 .map(|(&id, r)| (id, r.clone()))
                 .collect()
         } else {
@@ -187,9 +187,9 @@ impl DeliveryPolicy {
         let expired: Vec<u64> = self
             .delivered
             .keys()
-            .filter(|id| {
+            .filter(|&&id| {
                 !results
-                    .get(id)
+                    .get(&id)
                     .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
             })
             .copied()
@@ -207,9 +207,9 @@ impl DeliveryPolicy {
         //   2. insert/overwrite current values so `updated` paths stop
         //      re-firing every batch once their new value is delivered.
         if anchored {
-            self.delivered.retain(|id, _| {
+            self.delivered.retain(|&id, _| {
                 results
-                    .get(id)
+                    .get(&id)
                     .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
             });
             for (&id, r) in results {

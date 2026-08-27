@@ -19,6 +19,8 @@ alloy = { version = "^2.4", features = ["full", "transport-throttle"] }
 # pattern alloy itself uses for `dyn Provider`.
 async-trait = { version = "^0.1" }
 dashmap = { version = "^6.2" }
+# Hot map type shared with degenbot-pools tick maps (foldhash; workspace note).
+hashbrown.workspace = true
 degenbot-abi.workspace = true
 degenbot-math.workspace = true
 degenbot-core.workspace = true

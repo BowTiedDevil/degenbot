@@ -7,7 +7,7 @@
 #[cfg(test)]
 #[expect(clippy::module_inception)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use hashbrown::{HashMap, HashSet};
 
     use alloy::primitives::{aliases::U112, Address, U256};
 
@@ -2033,7 +2033,7 @@ mod tests {
             sqrt_price_x96: sp_0,
             liquidity: 10_000_000_000_000u128,
             tick: 0,
-            tick_data: std::collections::HashMap::new(),
+            tick_data: HashMap::new(),
             update_block: 0,
             tick_data_block: None,
             coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
@@ -2065,7 +2065,7 @@ mod tests {
                 sqrt_price_x96: U256::from(sp_extreme),
                 liquidity: extreme_liquidity,
                 tick: -886_983,
-                tick_data: std::collections::HashMap::new(),
+                tick_data: HashMap::new(),
                 update_block: 0,
                 tick_data_block: None,
                 coverage: crate::solvers::arb_engine::PoolTickCoverage::Tracked,
@@ -3159,8 +3159,10 @@ mod tests {
         for &(hop_type, pool_key) in engine.pool_to_paths.keys() {
             engine.dirty_sets.insert(pool_key, hop_type);
             match hop_type {
-                HopType::V2 | HopType::V3 | HopType::V4 => {}
-                HopType::SolidlyStable
+                HopType::V2
+                | HopType::V3
+                | HopType::V4
+                | HopType::SolidlyStable
                 | HopType::BalancerWeighted
                 | HopType::BalancerStable
                 | HopType::CurveStableswap => {

@@ -266,6 +266,7 @@ mod tests {
     use degenbot_bot::bot_core::{
         divergence_probe::TrackedSlotProbe, BotState, RegisterV3PoolParams, TrackedSlotKind,
     };
+    use hashbrown::HashMap;
     use revm::database_interface::DatabaseRef;
     use revm::primitives::{StorageKey, StorageValue, B256 as RevmB256};
     use revm::state::AccountInfo;
@@ -319,7 +320,7 @@ mod tests {
             sqrt_price_x96: sqrt,
             liquidity,
             tick,
-            tick_data: std::collections::HashMap::new(),
+            tick_data: HashMap::new(),
             update_block,
             coverage: degenbot_bot::solvers::arb_engine::PoolTickCoverage::Sparse,
             fetcher: None,

@@ -12,7 +12,7 @@
 //! these are inherent methods on `BotState`, and `bot_core/mod.rs` remains the
 //! assembly + re-export hub.
 
-use std::collections::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U256};
 
@@ -2028,7 +2028,7 @@ impl BotState {
 
 #[cfg(test)]
 mod known_word_dispatcher_tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use alloy::primitives::{Address, U256};
 

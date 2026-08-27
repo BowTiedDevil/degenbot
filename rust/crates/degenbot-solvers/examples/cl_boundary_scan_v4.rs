@@ -18,7 +18,7 @@
 //! build the 24-range integer sequence, report max word-boundary count per
 //! range + whether any range is "dense" (>= 128). Shares the exact mechanism
 //! with V3 (`IntV3TickRangeSequence` / `compute_tick_ranges` / 128 threshold).
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Instant;

@@ -72,7 +72,7 @@
     reason = "tick·spacing products fit i32 in this fixture"
 )]
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{B256, I256, U128, U256};
 

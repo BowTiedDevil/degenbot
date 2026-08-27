@@ -29,6 +29,8 @@
 
 use std::path::PathBuf;
 
+use hashbrown::{HashMap, HashSet};
+
 use alloy::primitives::{aliases::I256, Address, Bytes, U160, U256};
 use degenbot_pools::v4_state::{V4PoolKey, V4PoolState};
 use degenbot_pools::v4_storage_slots::{
@@ -77,7 +79,7 @@ pub fn harness_constructor_args(fee: u32, tick_spacing: i32) -> Vec<u8> {
 /// Bitmap word value for one word from `tick_data` — the V4 bitmask packing is
 /// identical to V3, so delegate to the shared V3 helper.
 fn compute_v4_word_from_raw(
-    tick_data: &std::collections::HashMap<i32, degenbot_pools::TickInfo>,
+    tick_data: &HashMap<i32, degenbot_pools::TickInfo>,
     tick_spacing: i32,
     word_pos: i16,
 ) -> U256 {
@@ -122,7 +124,7 @@ pub fn seed_v4_pool_storage(
             encode_v4_tick_info_slot(info),
         ));
     }
-    let mut word_positions: std::collections::HashSet<i16> = std::collections::HashSet::new();
+    let mut word_positions: HashSet<i16> = HashSet::new();
     for &tick in state.tick_data.keys() {
         let compressed = tick.div_euclid(pool_key.tick_spacing);
         let word_pos = i16::try_from(compressed >> 8).unwrap_or(0);

@@ -25,6 +25,8 @@ revm = { version = "^43.0", default-features = true, features = ["alloydb", "asy
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
 alloy = { version = "^2.4", features = ["full"] }
+# Tick-map fixtures mirror the pools hashbrown maps.
+hashbrown.workspace = true
 degenbot-core.workspace = true
 # `WarmupSlots` + `compute_simulation_warmup_slots` + `mapping_slot` + the
 # `encode_cmd_stream`/`PathInfo`/`HopInfo`/`EncodeOptions` types the sim

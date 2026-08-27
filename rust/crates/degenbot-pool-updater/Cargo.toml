@@ -14,6 +14,8 @@ workspace = true
 [dependencies]
 alloy = { version = "^2.4" }
 degenbot-db.workspace = true
+# Tick-map types from degenbot-db are hashbrown maps.
+hashbrown.workspace = true
 degenbot-decoders.workspace = true
 degenbot-core.workspace = true
 degenbot-rpc.workspace = true

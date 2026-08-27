@@ -21,6 +21,8 @@ num-integer = { version = "^0.1" }
 degenbot-math.workspace = true
 degenbot-pools.workspace = true
 degenbot-uniswap.workspace = true
+# Hot solver maps: foldhash cl-cache tables + visited walk guard.
+hashbrown.workspace = true
 # hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation.

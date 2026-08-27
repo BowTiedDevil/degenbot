@@ -21,7 +21,7 @@
 //!
 //! See ADR-004 (`docs/adr/ADR-004-cl-tickmap-typed-boundary.md`).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::Address;
 

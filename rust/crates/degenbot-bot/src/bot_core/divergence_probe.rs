@@ -433,6 +433,7 @@ mod tests {
     use crate::solvers::arb_engine::PoolTickCoverage;
     use alloy::primitives::{address, aliases::U112, keccak256, Address, B256, U256};
     use degenbot_pools::TickInfo;
+    use hashbrown::HashMap;
 
     const V3_ADDR: Address = address!("777777775ce34e0b60a4a79bb5bc5d34b7e5fab4");
     const V4_PM: Address = address!("000000000004444c5dc75cb358380d2e3de08a90");
@@ -450,7 +451,7 @@ mod tests {
                 & be_uint160_mask(),
             liquidity: 0x0000_0000_006b_5d49_e99f_8835,
             tick: -5010,
-            tick_data: std::collections::HashMap::new(),
+            tick_data: HashMap::new(),
             update_block: 18_012_345,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
@@ -494,7 +495,7 @@ mod tests {
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000_000,
             tick: 0,
-            tick_data: std::collections::HashMap::new(),
+            tick_data: HashMap::new(),
             update_block: 17_999_999,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,

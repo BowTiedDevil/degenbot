@@ -4465,7 +4465,7 @@ mod tests {
         use alloy::primitives::{I256, U128};
         let pool_addr = Address::from([0x34u8; 20]);
         let bot = Arc::new(Bot::new(1));
-        let mut tick_data = HashMap::new();
+        let mut tick_data = hashbrown::HashMap::new();
         tick_data.insert(
             7,
             TickInfo {
@@ -4765,7 +4765,7 @@ mod tests {
                 if roles[i] == 1 {
                     continue;
                 }
-                let mut tick_data = HashMap::new();
+                let mut tick_data = hashbrown::HashMap::new();
                 for &t in &FUZZ_TICKS {
                     tick_data.insert(
                         t,
@@ -4892,7 +4892,7 @@ mod tests {
                 }
                 let state = bot.state_arc();
                 let mut core = state.write();
-                let mut tick_data = HashMap::new();
+                let mut tick_data = hashbrown::HashMap::new();
                 for &t in &FUZZ_TICKS {
                     tick_data.insert(
                         t,
@@ -4998,7 +4998,7 @@ mod tests {
         {
             let state = bot.state_arc();
             let mut core = state.write();
-            let mut tick_data = HashMap::new();
+            let mut tick_data = hashbrown::HashMap::new();
             tick_data.insert(
                 7,
                 TickInfo {

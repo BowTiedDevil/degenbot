@@ -6,7 +6,7 @@ use degenbot_pools::registry::PoolEntry;
 use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
 use degenbot_pools::TickInfo;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, Pool, Structure};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 fn make_v3_pool(factory: Address, liquidity: u128) -> PoolEntry {
     let liq_u128 = U128::from(liquidity);

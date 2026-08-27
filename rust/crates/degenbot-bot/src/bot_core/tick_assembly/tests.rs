@@ -17,7 +17,7 @@
     clippy::panic,
     clippy::cast_possible_truncation
 )]
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{aliases::U128, Address, I256, U256};
 use degenbot_db::connection::DegenbotDb;

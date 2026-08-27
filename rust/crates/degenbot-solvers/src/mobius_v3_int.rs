@@ -34,6 +34,8 @@
 
 use std::sync::Arc;
 
+use hashbrown::HashSet;
+
 use alloy::primitives::U256;
 #[cfg(test)]
 use alloy::primitives::U512;
@@ -896,7 +898,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         + 2;
 
     let mut ks = vec![0usize; hops.len()];
-    let mut visited: std::collections::HashSet<Vec<usize>> = std::collections::HashSet::new();
+    let mut visited: HashSet<Vec<usize>> = HashSet::new();
     let mut rec = WalkRecorder::new();
     // Right edge of the previously visited piece: consecutive pieces share
     // window boundaries, so it doubles as the next piece's left-edge scan
@@ -2775,7 +2777,7 @@ mod tests {
     use alloy::primitives::U128;
     use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState};
     use degenbot_pools::{state_history::ReorgJournal, state_history::V3BlockDelta, TickInfo};
-    use std::collections::{HashMap, HashSet};
+    use hashbrown::{HashMap, HashSet};
 
     /// Full V3PoolState at tick 0, 1:1 price. `active_liquidity` is slot0
     /// liquidity; `ticks` are (tick, liquidity_net) pairs.
@@ -4022,7 +4024,7 @@ mod tests {
         use alloy::primitives::{Address, B256, I256, U128, U512};
         use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
         use degenbot_pools::TickInfo;
-        use std::collections::HashMap;
+        use hashbrown::HashMap;
         use std::str::FromStr;
 
         // Canonical fixture (logs/fixtures/v2_v3_v3_solver_divergence_25641093.md):

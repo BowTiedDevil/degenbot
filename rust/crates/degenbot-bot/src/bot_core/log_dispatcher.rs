@@ -1024,7 +1024,7 @@ mod tests {
             .unwrap();
         let block = 25_390_812_u64;
 
-        let mut tick_data = HashMap::new();
+        let mut tick_data = hashbrown::HashMap::new();
         tick_data.insert(
             201_020,
             TickInfo {

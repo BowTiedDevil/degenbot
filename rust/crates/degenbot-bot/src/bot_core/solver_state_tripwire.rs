@@ -37,7 +37,7 @@
 //! reported as a stale/desynced hop (the PancakeSwap-V3 non-canonical-Swap-
 //! topic0 root cause — see `docs/exploration-no-profit-crash.md`).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{Address, I256, U256};
 use degenbot_rpc::abi::{fetch_v2_reserves, fetch_v3_slot0_liquidity, fetch_v4_slot0_liquidity};
@@ -601,7 +601,7 @@ pub struct ClTickMapSnapshot {
     /// The solver's current active tick — seeds the ±2-word bitmap scan.
     pub active_tick: i32,
     /// The tick bookkeeping map: tick index → `(liquidity_gross, liquidity_net)`.
-    pub tick_data: std::collections::HashMap<i32, degenbot_pools::TickInfo>,
+    pub tick_data: HashMap<i32, degenbot_pools::TickInfo>,
 }
 
 /// Extract the solver's stored per-hop scalar state from `BotState` (the
@@ -1734,7 +1734,7 @@ struct SolverTickMapCarrier<'a> {
     address: Address,
     tick_spacing: i32,
     active_tick: i32,
-    tick_data: &'a std::collections::HashMap<i32, degenbot_pools::TickInfo>,
+    tick_data: &'a HashMap<i32, degenbot_pools::TickInfo>,
 }
 
 impl degenbot_pools::tick_map::TickMap for SolverTickMapCarrier<'_> {
@@ -1750,7 +1750,7 @@ impl degenbot_pools::tick_map::TickMap for SolverTickMapCarrier<'_> {
         self.active_tick
     }
 
-    fn tick_data(&self) -> &std::collections::HashMap<i32, degenbot_pools::TickInfo> {
+    fn tick_data(&self) -> &HashMap<i32, degenbot_pools::TickInfo> {
         self.tick_data
     }
 }
@@ -2643,7 +2643,7 @@ mod tests {
         let sqrt: U256 = U256::from(1u128) << 96;
         let liq = 1_000_000u128;
         let tick = 0i32;
-        let mut tick_data = std::collections::HashMap::new();
+        let mut tick_data = HashMap::new();
         tick_data.insert(0, tick_info(100, 50)); // engine holds ONLY tick 0
 
         // Scalar + probe responses (FIFO):
@@ -2722,7 +2722,7 @@ mod tests {
         let sqrt: U256 = U256::from(1u128) << 96;
         let liq = 1_000_000u128;
         let tick = 0i32;
-        let mut tick_data = std::collections::HashMap::new();
+        let mut tick_data = HashMap::new();
         tick_data.insert(0, tick_info(100, 50)); // engine holds ONLY tick 0
 
         let pool_manager = Address::from([0xbbu8; 20]);

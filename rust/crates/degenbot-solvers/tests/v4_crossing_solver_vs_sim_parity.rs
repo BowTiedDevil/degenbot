@@ -49,7 +49,7 @@
     reason = "machine-generated 134-tick UNI fixture payload; separators would be noise"
 )]
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 

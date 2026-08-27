@@ -29,7 +29,7 @@
 //! every call site.
 #![expect(dead_code)]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use std::collections::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, keccak256, Address, Bytes, U128, U256};

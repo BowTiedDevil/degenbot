@@ -543,7 +543,7 @@ fn build_engine_pool_state(
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use alloy::primitives::{aliases::U112, Address, U256};
 

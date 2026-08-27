@@ -10,7 +10,7 @@
 //! `Amount` accepts a JSON number or a decimal string so all historical files
 //! load unchanged.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Deserializer};

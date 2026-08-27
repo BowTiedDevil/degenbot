@@ -59,7 +59,7 @@
 //! empty state. If a retry-only-on-RPC-errors policy is later needed, match on
 //! the variant at the `PyO3` boundary.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::Address;
 

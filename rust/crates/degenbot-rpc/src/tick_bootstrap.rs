@@ -39,7 +39,7 @@
 //! trait sharing the same value types — out of scope for the
 //! `5NT2OC` epic (see `docs/migration-guides/chain-bootstrap-tick-map.md` §1).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::Address;

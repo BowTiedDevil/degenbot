@@ -38,7 +38,7 @@
 //! `docs/migration-guides/chain-bootstrap-tick-map.md` §3 for the
 //! consolidation rationale (keep two traits for now; consolidate post-`XEANMB`).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use crate::TickInfo;
 

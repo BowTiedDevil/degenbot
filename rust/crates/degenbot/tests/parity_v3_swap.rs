@@ -45,7 +45,7 @@ use degenbot::bot_core::BotState;
 use degenbot::RegisterV3PoolParams;
 use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 /// Exact-input read through the swap-simulation gate (ADR-037), replacing
 /// the former `calculate_tokens_out_miss_aware` seam for this suite.

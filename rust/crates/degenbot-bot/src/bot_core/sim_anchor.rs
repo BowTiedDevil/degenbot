@@ -24,7 +24,7 @@
 //!    premise was refuted (see `bot_state_db` module docs); scalar coverage
 //!    preserves their re-probe value at O(pools) snapshot cost.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::{Address, U256};
 

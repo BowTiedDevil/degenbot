@@ -26,7 +26,7 @@ use degenbot::bot_core::BotState;
 use degenbot::PoolEntry;
 use degenbot::RegisterV3PoolParams;
 use degenbot_pools::{v3_state::PoolTickCoverage, TickInfo};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 /// Path to the shared builder fixture (loaded by both this Rust test and the
 /// Python dual-driver test — the single source of truth).

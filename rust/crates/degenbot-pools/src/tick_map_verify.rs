@@ -13,7 +13,7 @@
 //! and read-free).
 
 use alloy::primitives::U256;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 /// One divergent tick between a stored tick map and the observed
 /// on-chain tick set. A side is `None` when that side holds no entry

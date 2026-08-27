@@ -23,6 +23,7 @@ alloy = { version = "^2.4" }
 # Pyo3-free core; verified by `just check-no-pyo3-in-cores`.
 degenbot-math.workspace = true
 degenbot-pathfinding.workspace = true
+hashbrown.workspace = true
 parking_lot = { version = "^0.12" }
 # Float upward across rusqlite's 0.x point releases (each minor is semver-
 # breaking) but cap below a future 1.0 cutover. The `bundled` feature lives

@@ -26,7 +26,7 @@
 //! step-2 verifies the pin's own captured block (never a constant backfill
 //! block — the 2026-06-29 crash class).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::future::Future;
 
 use alloy::primitives::Address;
@@ -393,7 +393,7 @@ pub async fn run_v4_registration_lifecycle(
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
     use std::sync::Arc;
 
     use crate::bot_core::state_lock::StateLock;

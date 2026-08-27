@@ -79,7 +79,6 @@ degenbot-decoders = { version = "0.6.0-alpha.7", path = "crates/degenbot-decoder
 degenbot-execution = { version = "0.6.0-alpha.7", path = "crates/degenbot-execution" }
 degenbot-executor = { version = "0.6.0-alpha.7", path = "crates/degenbot-executor" }
 degenbot-fork = { version = "0.6.0-alpha.7", path = "crates/degenbot-fork" }
-# degenbot-math: consolidated AMM math family (ADR-035: v2, cl, curve, balancer, solidly).
 degenbot-math = { version = "0.6.0-alpha.7", path = "crates/degenbot-math" }
 degenbot-order-index = { version = "0.6.0-alpha.7", path = "crates/degenbot-order-index" }
 degenbot-pathfinding = { version = "0.6.0-alpha.7", path = "crates/degenbot-pathfinding" }
@@ -91,6 +90,11 @@ degenbot-simulation = { version = "0.6.0-alpha.7", path = "crates/degenbot-simul
 degenbot-solvers = { version = "0.6.0-alpha.7", path = "crates/degenbot-solvers" }
 degenbot-submission = { version = "0.6.0-alpha.7", path = "crates/degenbot-submission" }
 degenbot-uniswap = { version = "0.6.0-alpha.7", path = "crates/degenbot-uniswap" }
+# hashbrown: foldhash-based HashMap/HashSet for the hot maps (small int/string
+# keys generated in-process — no DoS surface). 0.17.1 + foldhash 0.2.0 already
+# resolve transitively (indexmap 2.14 / lru 0.18), so this direct dependency
+# unifies the graph instead of growing it. default-hasher = foldhash.
+hashbrown = { version = "0.17", features = ["default-hasher"] }
 
 [workspace]
 resolver = "3"

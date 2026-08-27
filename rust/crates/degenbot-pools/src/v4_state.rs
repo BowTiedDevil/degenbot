@@ -8,8 +8,7 @@
 //! `sqrtPriceX96`, same liquidity tracking). The `build_int_v4_sequence`
 //! produces the same `IntV3TickRangeSequence` the V3 path solver consumes.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U160, U256};
@@ -19,7 +18,7 @@ use crate::liquidity_event::LiquidityEvent;
 use crate::state_history::{
     JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, V3BlockDelta,
 };
-use crate::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
+use crate::tick_bitmap::{compute_tick_ranges, gen_ticks_iter, V3TickRangeForSolver};
 use crate::tick_fetch::TickWordFetcher;
 use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, V3SwapOutcome};
 use crate::TickInfo;
@@ -905,7 +904,7 @@ pub fn v4_simulate_swap(
         )));
     }
 
-    let ticks = gen_ticks(&state.tick_data, tick, tick_spacing, zero_for_one, 30_000)
+    let ticks = gen_ticks_iter(&state.tick_data, tick, tick_spacing, zero_for_one, 30_000)
         .map_err(|_| SimulateSwapError::NotComputable)?;
 
     for tick_along_path in ticks {
@@ -1085,7 +1084,7 @@ mod apply_inherent_tests {
     use crate::v3_state::PoolTickCoverage;
     use crate::TickInfo;
     use alloy::primitives::{Address, I256, U128, U256};
-    use std::collections::{HashMap, HashSet};
+    use hashbrown::{HashMap, HashSet};
 
     /// Minimal V4 state at tick 0, 1:1 price, liquidity `liq`, with a
     /// [-60, +60] position. The journal is fresh (depth 8); snapshot fields
@@ -1437,7 +1436,7 @@ mod apply_inherent_tests {
         let mut state = state_with_position(liq);
         assert_eq!(state.update_block, 0);
 
-        let mut new_data = std::collections::HashMap::new();
+        let mut new_data = HashMap::new();
         new_data.insert(
             120,
             TickInfo {

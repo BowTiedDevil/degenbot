@@ -21,7 +21,7 @@
 //! Callers that are themselves on a multi-threaded runtime need no special
 //! handling.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 

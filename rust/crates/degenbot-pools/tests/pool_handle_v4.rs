@@ -8,7 +8,7 @@ use degenbot_pools::v3_state::PoolTickCoverage;
 use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, Pool, Structure};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 fn make_v4_pool(liquidity: u128) -> PoolEntry {
     let liq_u128 = alloy::primitives::U128::from(liquidity);
