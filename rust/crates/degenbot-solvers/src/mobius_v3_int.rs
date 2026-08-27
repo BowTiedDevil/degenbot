@@ -1170,8 +1170,16 @@ pub fn build_cl_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRange
 /// direct `int_solve_cl_path` path, which build per call). Result is parallel to
 /// `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`).
 #[must_use]
-pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> Vec<Option<Arc<V3WordProfile>>> {
+pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> ClProfileTable {
     build_word_profiles(&build_crossing_table(seq))
+}
+
+/// Dense-range profiles derived from an already-built crossing table. The
+/// projection builds crossings once and feeds them here so the O(n²) crossing
+/// table is not rebuilt a second time just to derive word profiles.
+#[must_use]
+pub fn build_cl_word_profiles_from_crossings(crossings: &[IntTickRangeCrossing]) -> ClProfileTable {
+    build_word_profiles(crossings)
 }
 
 /// Build a `WalkHop::Cl` (crossing table + word-boundary profiles) for one CL
