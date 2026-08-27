@@ -175,8 +175,9 @@ fn main() {
                     }
                 }
                 2 => {
-                    liquidity_jitter(&mut seqs, hop, next() % 2 == 0);
-                    CacheEvent::Liquidity { hop }
+                    let up = next() % 2 == 0;
+                    let range = liquidity_jitter(&mut seqs, hop, up);
+                    CacheEvent::Liquidity { hop, range }
                 }
                 3 => {
                     if seqs[hop].ranges.len() > 2 {
@@ -228,11 +229,12 @@ fn main() {
     for s in &catalog {
         let c = s.counters();
         println!(
-            "{} crossing={} profiles={} seq_rebuilds={} solves={}",
+            "{} crossing={} profiles={} seq_rebuilds={} partial={} solves={}",
             s.name(),
             c.crossing_tables,
             c.profile_tables,
             c.sequence_rebuilds,
+            c.partial_rebuilds,
             c.solves
         );
     }
@@ -263,7 +265,7 @@ fn price_move(seqs: &mut [IntV3TickRangeSequence], i: usize) {
 }
 
 /// Bump liquidity of one range (a synthetic position change on the walk).
-fn liquidity_jitter(seqs: &mut [IntV3TickRangeSequence], i: usize, up: bool) {
+fn liquidity_jitter(seqs: &mut [IntV3TickRangeSequence], i: usize, up: bool) -> usize {
     let seq = &mut seqs[i];
     let ri = seq.ranges.len() / 2;
     let liq = seq.ranges[ri].liquidity;
@@ -272,6 +274,7 @@ fn liquidity_jitter(seqs: &mut [IntV3TickRangeSequence], i: usize, up: bool) {
     } else {
         liq.saturating_sub(liq / 10)
     };
+    ri
 }
 
 /// Slide the walked window past one crossed boundary: old range 0 is consumed,
