@@ -3,6 +3,59 @@
 Task: Z5NOPD (epic KIMRKS) — 369-line corpus sweep of the instrumented CL-table
 cache strategies, every solve byte-compared against the full-rebuild reference.
 
+## How the cache layer works (high level)
+
+Reference for reading the matrix. The cache-less reference solve
+(`int_solve_cl_path`) rebuilds two derived tables per hop on every solve:
+
+1. **Crossing table** — one entry per range; each entry carries the
+   accumulated integer `(gross_input, output)` crossing amounts as the walk
+   moves through successive ranges. The active-set Möbius walk consumes it to
+   jump across already-crossed ranges. The entries are cumulative, so they can
+   be stored as per-range *segments* (diffs) and re-summed cheaply.
+2. **Word profiles** (`ClProfileTable`) — one optional profile per range,
+   built only for "dense" ranges spanning ≥ `WORD_PROFILE_THRESHOLD`
+   256-tick word boundaries. It is a piecewise bucket curve that lets the
+   solver and profit envelope skip straight to the next meaningful boundary.
+
+Deriving both from a live sequence is the dominant per-solve cost when
+uncached (see `docs/hotpath-crossing-cache-verification.md`).
+
+The seam: every call passes the hop sequences plus a
+`CacheEvent` (`Fresh` | `PriceMove` | `Liquidity` | `TickCross` |
+`Restore`) to `strategy.refill(seqs, event)`, which returns one
+prepared `(crossing, profile)` pair per hop, consumed by
+`int_solve_cl_path_cached`. Each strategy answers one question per hop:
+*can I serve the solver a correct table cheaper than rebuilding?* Correctness
+is exact — every epoch's solution must be byte-identical to the S0
+full-rebuild reference; any divergence is a failure, not a tolerance band.
+
+- **Memo** (S1 fused epoch, S5 probe): key = (hop index, full state key). Hit
+  → clone two `Arc`s in O(1); miss → rebuild both tables and store. "Fused"
+  = crossing table and profile table are invalidated as one unit. S5 adds
+  first-sight bookkeeping (`sequence_rebuilds`) on top of the same memo.
+- **Patch** (S2 price overlay): on a price-only move with structure unchanged,
+  recompute only the new price's effect at range 1 and propagate that delta
+  across all subsequent prefix entries; rebuild just range 0's profile.
+- **Segment** (S3 prefix, S4 dirty-suffix): store per-range crossing segments
+  instead of prefix sums; on `PriceMove` recompute only segment 0 and
+  re-sum the table O(n) (S4 extends this to `Liquidity` by resegmenting
+  just the jittered range).
+- **Split** (S6 profile, S7 composite): cache crossings and profiles at
+  different granularities — crossings keyed by full state, profiles keyed
+  per-range by ending-range identity — so a price-only move reuses most
+  profile tables. S7 combines S4-style segment crossings with S6-style split
+  profiles.
+
+**Why S1 wins.** The patch/segment family looks cheaper in theory and leads
+the small CI pin (6 price-only rebuilds vs S1's 26), but under the deep
+corpus its validity guards trip often — caches carry segments across
+different pool states and any shape mismatch forces a full rebuild anyway
+(198 price-only rebuilds vs S1's 89; 817 vs 214 total crossing builds). S6
+touched profiles 173,019 times vs S1's 214. The fused-epoch memo is the
+smallest cache that stays exact on the real stream: deterministic O(1) hit
+or clean full rebuild, no partial-state corruption risk.
+
 ## Method
 
 - Harness: `rust/crates/degenbot-solvers/examples/cl_cache_lab.rs`, replaying
