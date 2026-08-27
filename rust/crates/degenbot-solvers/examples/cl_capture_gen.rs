@@ -55,7 +55,7 @@ use serde_json::{json, Value};
 const MAX_FETCHES: usize = 320; // per-pool tick-word fetch cap, overridable
                                 // via DEGENBOT_CLCAP_MAX_FETCHES so a deep backfill can reach dense active
                                 // sets (a liquid pool's busy region can span thousands of tick words).
-const PATH_CAP: usize = 12;
+const PATH_CAP: usize = 12; // per-block cap, overridable via DEGENBOT_CLCAP_PATH_CAP
 
 // (address, tick_spacing, fee_classic, token0, token1) — liquid UNI V3 pools
 // from the static degenbot DB (block ~25826800). Shared USDC/USDT/DAI/WETH.
@@ -172,6 +172,10 @@ fn main() -> ExitCode {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(MAX_FETCHES);
+    let path_cap: usize = std::env::var("DEGENBOT_CLCAP_PATH_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(PATH_CAP);
     let rpc = if let Ok(v) = std::env::var("DEGENBOT_CLCAP_RPC") {
         v
     } else {
@@ -352,7 +356,7 @@ fn main() -> ExitCode {
             writeln!(file, "{}", line).expect("write line");
             eprintln!("path {} [{}x{}] ranges=({},{}) t={micros}us sims={sims} pieces={pieces} profitable={profitable}",
                 ia * 100 + ib, POOLS[*ia].0, POOLS[*ib].0, na, nb);
-            if n_paths >= PATH_CAP {
+            if n_paths >= path_cap {
                 break 'outer;
             }
         }

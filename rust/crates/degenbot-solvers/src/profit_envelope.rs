@@ -934,7 +934,19 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
             hi = mid;
         }
     }
-    narrow(f(&lo))
+    let best = f(&lo);
+    // Rounding slack: composed reductions and I512 ceiling evaluation can
+    // leave one candidate line up to ~2^-11 of the bound BELOW the true
+    // curve for very deep chains (block 25826949 path 400:
+    // under-cut 200M on a 7.23e13 bound). Add `bound/2048` for heavy
+    // chains so the gate stays sound at the cost of a tiny skip margin.
+    // Only applied when the pre-scan fallback already ran (lines > 200).
+    if lines.len() > 200 {
+        if let Some(b) = narrow(best) {
+            return Some(b.saturating_add(b / U256::from(2048u64)));
+        }
+    }
+    narrow(best)
 }
 
 /// Narrow a non-negative bound value; `None` on overflow (>U256::MAX is

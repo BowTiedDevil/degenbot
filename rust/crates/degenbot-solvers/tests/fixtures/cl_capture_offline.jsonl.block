@@ -1,2 +1,2 @@
-block=25844000
-regen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK=25844000 DEGENBOT_CLCAP_MAX_FETCHES=500 cargo run -q -p degenbot-solvers --example cl_capture_gen -- <out.jsonl>
+blocks=25826949..25826963 (15 blocks)
+regen: DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545 DEGENBOT_CLCAP_MAX_FETCHES=500 DEGENBOT_CLCAP_PATH_CAP=60; for b in 25826949..25826963; do DEGENBOT_CLCAP_BLOCK=$b cargo run -q -p degenbot-solvers --example cl_capture_gen -- /tmp/cap_$b.jsonl; done (merged in block order)
