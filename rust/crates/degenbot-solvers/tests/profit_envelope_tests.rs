@@ -6,7 +6,12 @@
 //! (NOT the solver's own `int_simulate_v3_swap`, so implementation bugs
 //! cannot cancel between the two).
 
-#![expect(clippy::doc_markdown, clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::doc_markdown,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stderr
+)]
 
 use std::sync::LazyLock;
 

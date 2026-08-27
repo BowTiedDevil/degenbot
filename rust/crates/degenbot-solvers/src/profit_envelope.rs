@@ -157,24 +157,28 @@ const COMPOSE_TARGET_BITS: u32 = 240;
 /// `alloy::I512`'s `wrapping_shr` returns ZERO for any shift >= 256 (it
 /// forwards to a 256-bit path), which previously crushed reduced lines into
 /// `(1,1,1)` identity shells.
-fn ceil_shr_i512(v: I512, k: u32) -> I512 {
-    if k == 0 {
-        return v;
+fn ceil_shr_i512(value: I512, shift: u32) -> I512 {
+    if shift == 0 {
+        return value;
     }
-    let s = U512::ONE << k;
-    if v >= I512::ZERO {
-        let u = U512::try_from(v).unwrap_or(U512::MAX);
-        let q = u / s;
-        let has_remainder = (u % s) != U512::ZERO;
-        I512::from_raw(if has_remainder { q + U512::ONE } else { q })
+    let divisor = U512::ONE << shift;
+    if value >= I512::ZERO {
+        let magnitude = U512::try_from(value).unwrap_or(U512::MAX);
+        let quotient = magnitude / divisor;
+        let has_remainder = (magnitude % divisor) != U512::ZERO;
+        I512::from_raw(if has_remainder {
+            quotient + U512::ONE
+        } else {
+            quotient
+        })
     } else {
-        // v < 0: ceil(v / 2^k) = -floor(|v| / 2^k).
+        // value < 0: ceil(value / 2^shift) = -floor(|value| / 2^shift).
         // `twos_complement()` over Signed is only valid for negatives (it
-        // yields |v| as a U512 magnitude).
-        let abs = v.twos_complement();
-        let q = abs / s;
-        // With or without a remainder: ceil(-q.frac) = -q.
-        -I512::from_raw(q)
+        // yields |value| as a U512 magnitude).
+        let magnitude = value.twos_complement();
+        let quotient = magnitude / divisor;
+        // With or without a remainder: ceil(-quotient.frac) = -quotient.
+        -I512::from_raw(quotient)
     }
 }
 
@@ -895,7 +899,7 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     // input, so the pruning endpoint assumption holds at discard time.
     let mut lines2 = vec![Line::IDENTITY];
     let domain = xmax;
-    for (_hop_idx, (hop_ls, _)) in all_hops.iter().enumerate() {
+    for (hop_ls, _) in &all_hops {
         let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
         for outer in hop_ls {
             for inner in &lines2 {
