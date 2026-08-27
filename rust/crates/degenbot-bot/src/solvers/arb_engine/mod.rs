@@ -315,6 +315,13 @@ pub struct ArbitrageEngine {
     /// Monotonic count of actual family projections (cache misses). Test-
     /// observable; emitted on the solve-phase resolve event.
     hop_projection_count: u64,
+    /// Fused hop-projection memo switch (KGXFT7 winner promotion): resolved
+    /// ONCE at construction from the process env
+    /// (`DEGENBOT_CL_PROJECTION_CACHE`, default-on — see
+    /// `bot_core::resolve::projection_memo_enabled`). Toggling requires a
+    /// process restart. When off, resolve paths re-project every hop fresh —
+    /// build cost changes, solver intake stays byte-exact (parity tests).
+    cl_projection_memo: bool,
     /// Reverse index: (`hop_type`, `pool_key`) maps to list of `path_ids` that use this pool.
     /// Vec instead of `HashSet` — sets are typically 1-4 entries, dedup at collection time.
     pool_to_paths: HashMap<(HopType, u64), Vec<u64>>,
@@ -418,6 +425,7 @@ impl ArbitrageEngine {
             path_status: HashMap::new(),
             hop_projection_cache: HashMap::new(),
             hop_projection_count: 0,
+            cl_projection_memo: crate::bot_core::resolve::projection_memo_enabled(),
             pool_to_paths: HashMap::new(),
             results: HashMap::new(),
             results_block: 0,

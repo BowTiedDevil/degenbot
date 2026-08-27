@@ -560,6 +560,7 @@ impl ArbitrageEngine {
                     &mut resolved,
                     &mut self.hop_projection_cache,
                     Some(&mut self.hop_projection_count),
+                    self.cl_projection_memo,
                 );
                 for d in &deficits {
                     *invalid_reasons.entry(d.reason.to_string()).or_insert(0u64) += 1;

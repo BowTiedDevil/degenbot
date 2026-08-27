@@ -84,6 +84,37 @@ impl CachedProjection {
 /// microseconds, adding risk without a measured win.
 pub(crate) type HopProjectionCache = HashMap<(HopType, u64, bool), (CachedProjection, u64)>;
 
+/// Runtime gate for the fused hop-projection memo (KGXFT7 winner promotion:
+/// the lab's S1 fused-epoch strategy, production-framed as whole-pool nonce
+/// invalidation + Arc-shared fused tables). Default-ON: env unset → enabled.
+/// `DEGENBOT_CL_PROJECTION_CACHE=0` (or off/false/disabled) disables the
+/// memo so every path re-projects its hops fresh — the A/B cutover switch for
+/// the promotion; solver intake is byte-exact either way (parity tests).
+///
+/// Read once from the process env (mirrors `FailureMode::from_env`); the
+/// engine resolves it at construction, so toggling means a process restart.
+#[must_use]
+pub(crate) fn projection_memo_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("DEGENBOT_CL_PROJECTION_CACHE") {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "1" | "on" | "true" | "enabled" => true,
+            "0" | "off" | "false" | "disabled" => false,
+            other => {
+                if WARNED.set(()).is_ok() {
+                    tracing::warn!(
+                        raw = %other,
+                        "DEGENBOT_CL_PROJECTION_CACHE not understood (0|off|false to disable, 1|on|true to enable) — using enabled"
+                    );
+                }
+                true
+            }
+        },
+        Err(_) => true,
+    })
+}
+
 /// Why a `project_<family>` hop could not be projected. Granular-but-grouped:
 /// each variant maps 1:1 to a failure mode the flat match today encodes as a
 /// bare `return`.
@@ -198,6 +229,12 @@ pub(crate) fn resolve_hops(
     resolved: &mut ResolvedMixedPath,
     cache: &mut HopProjectionCache,
     mut projection_count: Option<&mut u64>,
+    // Fused memo switch (KGXFT7): 'false' makes this behave as if
+    // 'cache' were empty — never read a hit, never store an entry —
+    // so the promoted S1 cache differs in build cost ONLY. The engine
+    // resolves the default once at construction
+    // ('projection_memo_enabled').
+    memo: bool,
 ) -> Vec<HopDeficit> {
     resolved.hops.clear();
     resolved.valid = false;
@@ -224,13 +261,19 @@ pub(crate) fn resolve_hops(
         let cache_key = (pool_ref.hop_type, pool_ref.pool_key, pool_ref.zero_for_one);
         let current_nonce = core.pool_state_nonce(pool_ref.pool_key);
 
-        let cached_hit = match cache.get(&cache_key) {
-            // Nonce unchanged since the entry was built → reuse it.
-            Some((cached, built_nonce)) if *built_nonce == current_nonce => {
-                Some(cached.materialize())
+        let cached_hit = if memo {
+            match cache.get(&cache_key) {
+                // Nonce unchanged since the entry was built → reuse it.
+                Some((cached, built_nonce)) if *built_nonce == current_nonce => {
+                    Some(cached.materialize())
+                }
+                // Stale or absent — project fresh below.
+                _ => None,
             }
-            // Stale or absent — project fresh below.
-            _ => None,
+        } else {
+            // Gate OFF: skip the memo entirely (never read above, never
+            // written below) — every hop re-projects, byte-exact either way.
+            None
         };
 
         let projection = if let Some(replay) = cached_hit {
@@ -254,7 +297,9 @@ pub(crate) fn resolve_hops(
                 Ok((hop, _nonce)) => CachedProjection::Hop(Arc::new(hop.clone())),
                 Err(reason) => CachedProjection::Invalid(*reason),
             };
-            cache.insert(cache_key, (entry, current_nonce));
+            if memo {
+                cache.insert(cache_key, (entry, current_nonce));
+            }
             projected
         };
 
@@ -290,7 +335,11 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::bot_core::{BotState, PoolTickCoverage, RegisterV3PoolParams, TickInfo};
+    use crate::bot_core::{
+        BotState, PoolTickCoverage, RegisterV2PoolParams, RegisterV3PoolParams,
+        RegisterV4PoolParams, TickInfo, V4PoolKey,
+    };
+    use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, I256, U128, U256};
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
     use degenbot_solvers::mobius_v3_int::{IntTickRangeCrossing, V3WordProfile};
@@ -387,7 +436,7 @@ mod tests {
         let mut r1 = ResolvedMixedPath::default();
         let mut pc = 0u64;
         assert!(
-            resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc)).is_empty(),
+            resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc), true).is_empty(),
             "both pools project"
         );
         assert_eq!(pc, 2, "first resolve projects both pools");
@@ -400,7 +449,7 @@ mod tests {
         // both profile Arcs are the same allocations (reused, not rebuilt).
         let mut r2 = ResolvedMixedPath::default();
         let mut pc2 = 0u64;
-        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2)).is_empty());
+        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2), true).is_empty());
         assert_eq!(pc2, 0, "unchanged pools are cache hits (no re-projection)");
         assert_eq!(
             profile_ptr(&cache, &(HopType::V3, p, true)),
@@ -444,7 +493,7 @@ mod tests {
         // P's profile Arc is a fresh allocation; Q's is the SAME allocation.
         let mut r3 = ResolvedMixedPath::default();
         let mut pc3 = 0u64;
-        assert!(resolve_hops(&core, &refs, &mut r3, &mut cache, Some(&mut pc3)).is_empty());
+        assert!(resolve_hops(&core, &refs, &mut r3, &mut cache, Some(&mut pc3), true).is_empty());
         assert_eq!(pc3, 1, "only the minted pool re-projects; Q is a cache hit");
         assert_ne!(
             profile_ptr(&cache, &(HopType::V3, p, true)),
@@ -465,6 +514,308 @@ mod tests {
             crossing_ptr(&cache, &(HopType::V3, q, true)),
             q_cross0,
             "Q's cached crossing-table Arc is untouched"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Winner-promotion parity gates (KGXFT7): the fused-epoch memo
+    // must change build COST only — solver intake is byte-exact for
+    // all-CL (V3+V4) and mixed (V2+CL) paths with memo on or off.
+    // ---------------------------------------------------------------
+
+    /// Register a V3 pool whose sqrt price is 0.9 (2^96 scaled): token1 is
+    /// cheap here, so a zfo=true swap into the 1.0-priced V4 hop profits.
+    fn register_v3_at(core: &mut BotState, addr: [u8; 20], sqrt_price_x96: U256) -> u64 {
+        let mut t = HashMap::new();
+        t.insert(
+            6_000,
+            TickInfo {
+                liquidity_gross: U128::from(20_000_u128),
+                liquidity_net: I256::try_from(10_000_i128).unwrap(),
+                block: 0,
+            },
+        );
+        t.insert(
+            -6_000,
+            TickInfo {
+                liquidity_gross: U128::from(16_000_u128),
+                liquidity_net: I256::try_from(-8_000_i128).unwrap(),
+                block: 0,
+            },
+        );
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: Address::from(addr),
+            token0: Address::from([0x30u8; 20]),
+            token1: Address::from([0x31u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96,
+            liquidity: 10_000_000_000_000_000,
+            tick: 0,
+            tick_data: t,
+            update_block: 42,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("v3 registration")
+    }
+
+    /// Register a hookless V4 pool at 1.0 (2^96 scaled) with the same wide
+    /// tick spread as the V3 fixture.
+    fn register_v4_at(core: &mut BotState, sqrt_price_x96: U256) -> u64 {
+        let mut t = HashMap::new();
+        t.insert(
+            6_000,
+            TickInfo {
+                liquidity_gross: U128::from(20_000_u128),
+                liquidity_net: I256::try_from(10_000_i128).unwrap(),
+                block: 0,
+            },
+        );
+        t.insert(
+            -6_000,
+            TickInfo {
+                liquidity_gross: U128::from(16_000_u128),
+                liquidity_net: I256::try_from(-8_000_i128).unwrap(),
+                block: 0,
+            },
+        );
+        core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager: Address::from([0x44u8; 20]),
+            pool_id: [0xc4u8; 32],
+            pool_key: V4PoolKey {
+                currency0: Address::from([0x30u8; 20]),
+                currency1: Address::from([0x31u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            protocol_fee: 0,
+            sqrt_price_x96,
+            liquidity: 10_000_000_000_000_000,
+            tick: 0,
+            tick_data: t,
+            update_block: 42,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+        })
+        .expect("v4 registration")
+    }
+
+    /// Register a V2 pool whose price is skewed vs the CL fixtures:
+    /// 1200 token0 : 1000 token1 makes token1 expensive on V2, so
+    /// V4(zfo=true, t0->t1) -> V2 sells the bought token1 at a premium.
+    fn register_v2_skew(core: &mut BotState) -> u64 {
+        core.register_v2_pool(&RegisterV2PoolParams {
+            address: Address::from([0x11u8; 20]),
+            token0: Address::from([0x30u8; 20]),
+            token1: Address::from([0x31u8; 20]),
+            reserve0: U112::from(1_200_u64),
+            reserve1: U112::from(1_000_u64),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0x33u8; 20]),
+            update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
+            ..Default::default()
+        })
+        .expect("v2 registration")
+    }
+
+    fn v3_ref(pool_key: u64, zero_for_one: bool) -> MixedPoolRef {
+        MixedPoolRef {
+            hop_type: HopType::V3,
+            pool_key,
+            zero_for_one,
+        }
+    }
+
+    fn v4_ref(pool_key: u64, zero_for_one: bool) -> MixedPoolRef {
+        MixedPoolRef {
+            hop_type: HopType::V4,
+            pool_key,
+            zero_for_one,
+        }
+    }
+
+    fn v2_ref(pool_key: u64) -> MixedPoolRef {
+        MixedPoolRef {
+            hop_type: HopType::V2,
+            pool_key,
+            zero_for_one: false,
+        }
+    }
+
+    /// (`gross_input`, output) of every crossing entry — the load-bearing
+    /// data of the candidate tables; byte-equal iff identically derived.
+    fn crossing_pairs(r: &ResolvedMixedPath) -> Vec<(U256, U256)> {
+        r.hops
+            .iter()
+            .filter_map(ResolvedHop::as_crossing_table)
+            .flat_map(|t| t.iter())
+            .map(|c| (c.crossing_gross_input, c.crossing_output))
+            .collect()
+    }
+
+    /// The all-CL intake: resolve -> cached tables -> `int_solve_cl_path_cached`.
+    fn all_cl_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
+        let seqs: Vec<_> = r
+            .hops
+            .iter()
+            .filter_map(ResolvedHop::as_int_sequence)
+            .collect();
+        let profiles: Vec<_> = r
+            .hops
+            .iter()
+            .filter_map(ResolvedHop::as_word_profiles)
+            .collect();
+        let crossings: Vec<_> = r
+            .hops
+            .iter()
+            .filter_map(ResolvedHop::as_crossing_table)
+            .collect();
+        degenbot_solvers::mobius_v3_int::int_solve_cl_path_cached(
+            &seqs,
+            Some(&crossings),
+            &profiles,
+        )
+    }
+
+    /// The mixed intake: resolve -> cached tables -> `exact_solve_mixed_path_n_cached`.
+    // `Option::cloned` is ambiguous as a bare fn item (two impls); the
+    // equivalent forwarding closures are what the code needs.
+    #[expect(clippy::redundant_closure_for_method_calls)]
+    fn mixed_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
+        let hop_order: Vec<bool> = r
+            .hops
+            .iter()
+            .map(|h| matches!(h, ResolvedHop::V2 { .. }))
+            .collect();
+        let v2_hops: Vec<Option<degenbot_math::v2::IntHopState>> = r
+            .hops
+            .iter()
+            .map(ResolvedHop::as_v2_state)
+            .map(|opt| opt.cloned())
+            .collect();
+        let seqs: Vec<Option<degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence>> = r
+            .hops
+            .iter()
+            .map(ResolvedHop::as_int_sequence)
+            .map(|opt| opt.cloned())
+            .collect();
+        let crossings: Vec<
+            Option<std::sync::Arc<degenbot_solvers::mobius_v3_int::ClCrossingTable>>,
+        > = r
+            .hops
+            .iter()
+            .map(ResolvedHop::as_crossing_table)
+            .map(|opt| opt.cloned())
+            .collect();
+        let profiles: Vec<Option<std::sync::Arc<degenbot_solvers::mobius_v3_int::ClProfileTable>>> =
+            r.hops
+                .iter()
+                .map(ResolvedHop::as_word_profiles)
+                .map(|opt| opt.cloned())
+                .collect();
+        degenbot_solvers::mobius_v3_int::exact_solve_mixed_path_n_cached(
+            &v2_hops,
+            &seqs,
+            Some(&crossings),
+            Some(&profiles),
+            &hop_order,
+        )
+    }
+
+    /// Memo ON vs OFF parity on an all-CL (V3 -> V4) two-hop path: solving
+    /// through cache hits or freshly built tables differs in build cost only —
+    /// the crossing tables and the solved result are byte-identical.
+    #[test]
+    fn memo_off_all_cl_solve_is_byte_exact_v3_v4() {
+        let mut core = BotState::new();
+        // V3 at 0.9 vs V4 at 1.0: buy token1 cheap (0.9) and sell at 1.0.
+        let a = register_v3_at(
+            &mut core,
+            [0xa1u8; 20],
+            U256::from(71_305_346_262_837_903_834_189_555_302u128),
+        );
+        let b = register_v4_at(&mut core, U256::from(1u128) << 96);
+        let refs = [v3_ref(a, true), v4_ref(b, false)];
+
+        // Memo ON: prime, then re-resolve from the memo.
+        let mut cache = HopProjectionCache::new();
+        let mut r1 = ResolvedMixedPath::default();
+        let mut pc = 0u64;
+        assert!(resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc), true).is_empty());
+        assert_eq!(pc, 2, "first resolve projects both hops");
+        let mut r2 = ResolvedMixedPath::default();
+        let mut pc2 = 0u64;
+        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2), true).is_empty());
+        assert_eq!(pc2, 0, "second resolve is served from the memo");
+
+        // Memo OFF: projections run again; entries must be byte-equal.
+        let mut cache_off = HopProjectionCache::new();
+        let mut r3 = ResolvedMixedPath::default();
+        let mut pc3 = 0u64;
+        assert!(
+            resolve_hops(&core, &refs, &mut r3, &mut cache_off, Some(&mut pc3), false).is_empty()
+        );
+        assert_eq!(pc3, 2, "memo-off projects both hops");
+        assert_eq!(
+            crossing_pairs(&r2),
+            crossing_pairs(&r3),
+            "memo ON vs OFF derive identical crossing tables"
+        );
+
+        let on = all_cl_solve(&r2);
+        let off = all_cl_solve(&r3);
+        assert!(on.is_some(), "fixture must be profitable for all-CL solve");
+        assert_eq!(
+            on, off,
+            "memo ON/OFF solves are byte-equal on the all-CL intake"
+        );
+    }
+
+    /// Memo ON vs OFF parity on a mixed V2 + V4 path (V4 zfo=true buys
+    /// token1 at 1.0; V2 sells it at its 1.2 token0 premium).
+    #[test]
+    fn memo_off_mixed_v2_cl_solve_is_byte_exact() {
+        let mut core = BotState::new();
+        let b = register_v4_at(&mut core, U256::from(1u128) << 96);
+        let w = register_v2_skew(&mut core);
+        let refs = [v4_ref(b, true), v2_ref(w)];
+
+        let mut cache = HopProjectionCache::new();
+        let mut r1 = ResolvedMixedPath::default();
+        let mut pc = 0u64;
+        assert!(resolve_hops(&core, &refs, &mut r1, &mut cache, Some(&mut pc), true).is_empty());
+        assert_eq!(pc, 2, "first resolve projects both hops");
+        let mut r2 = ResolvedMixedPath::default();
+        let mut pc2 = 0u64;
+        assert!(resolve_hops(&core, &refs, &mut r2, &mut cache, Some(&mut pc2), true).is_empty());
+        assert_eq!(pc2, 0, "second resolve is served from the memo");
+
+        let mut cache_off = HopProjectionCache::new();
+        let mut r3 = ResolvedMixedPath::default();
+        let mut pc3 = 0u64;
+        assert!(
+            resolve_hops(&core, &refs, &mut r3, &mut cache_off, Some(&mut pc3), false).is_empty()
+        );
+        assert_eq!(pc3, 2, "memo-off projects both hops");
+        assert_eq!(crossing_pairs(&r2), crossing_pairs(&r3));
+
+        let on = mixed_solve(&r2);
+        let off = mixed_solve(&r3);
+        assert!(on.is_some(), "fixture must be profitable for mixed solve");
+        assert_eq!(
+            on, off,
+            "memo ON/OFF solves are byte-equal on the mixed intake"
         );
     }
 }

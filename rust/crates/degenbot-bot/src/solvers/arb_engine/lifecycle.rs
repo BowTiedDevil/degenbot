@@ -135,6 +135,7 @@ impl ArbitrageEngine {
                 &mut resolved,
                 &mut self.hop_projection_cache,
                 Some(&mut self.hop_projection_count),
+                self.cl_projection_memo,
             )
         };
         if let Some(unroutable) = deficits
@@ -333,6 +334,7 @@ impl ArbitrageEngine {
                     &mut resolved,
                     &mut self.hop_projection_cache,
                     Some(&mut self.hop_projection_count),
+                    self.cl_projection_memo,
                 );
                 self.path_resolved.insert(path_id, resolved);
                 // R522XA: cold-start full sweep also refreshes the state machine.

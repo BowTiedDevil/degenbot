@@ -2097,6 +2097,7 @@ mod tests {
                     &mut resolved,
                     &mut engine.hop_projection_cache,
                     None,
+                    engine.cl_projection_memo,
                 );
                 engine.path_resolved.insert(path_id, resolved);
             }

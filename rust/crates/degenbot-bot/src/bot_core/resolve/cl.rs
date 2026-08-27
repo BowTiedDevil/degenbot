@@ -18,6 +18,30 @@ use super::super::BotState;
 use super::MissingHopReason;
 use crate::solvers::arb_engine::PoolTickCoverage;
 
+/// The promoted fused-epoch table pair (cache-lab winner S1, KGXFT7): ONE
+/// crossing build derives BOTH artifacts as a unit — the crossing table
+/// directly, the word profiles from that same table — and hands them back
+/// `Arc`'d, ready for the hop-projection memo's O(1) clone. This is the
+/// shared derivation the memo holds per (pool, direction, nonce).
+///
+/// GUARDRAIL (CONTEXT.md "CL-projection guardrail", still load-bearing):
+/// this helper sits DOWNSTREAM of the self-contained `build_int_v*_sequence`
+/// calls and reinterprets nothing about fee convention, current-tick drain
+/// framing, or net-sign direction — sequence construction stays per-projector
+/// above; only the table derivation (identical math for both families) is
+/// shared.
+#[must_use]
+fn fused_cl_tables(
+    seq: &degenbot_solvers::mobius_v3_int::IntV3TickRangeSequence,
+) -> (
+    Arc<degenbot_solvers::mobius_v3_int::ClCrossingTable>,
+    Arc<degenbot_solvers::mobius_v3_int::ClProfileTable>,
+) {
+    let crossings = Arc::new(build_cl_crossing_table(seq));
+    let profiles = Arc::new(build_cl_word_profiles_from_crossings(&crossings));
+    (crossings, profiles)
+}
+
 /// V3 projection: read pool state + identity off `core` (ADR-003) and build
 /// the integer tick-range sequence the CL solver consumes lock-free.
 pub(crate) fn project_v3(
@@ -43,8 +67,7 @@ pub(crate) fn project_v3(
         .build_int_v3_sequence(identity.tick_spacing, identity.fee, pool_ref.zero_for_one)
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    let crossing_table = Arc::new(build_cl_crossing_table(&int_seq));
-    let word_profiles = Arc::new(build_cl_word_profiles_from_crossings(&crossing_table));
+    let (crossing_table, word_profiles) = fused_cl_tables(&int_seq);
     Ok((
         ResolvedHop::V3 {
             int_seq,
@@ -93,8 +116,7 @@ pub(crate) fn project_v4(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    let crossing_table = Arc::new(build_cl_crossing_table(&int_seq));
-    let word_profiles = Arc::new(build_cl_word_profiles_from_crossings(&crossing_table));
+    let (crossing_table, word_profiles) = fused_cl_tables(&int_seq);
     Ok((
         ResolvedHop::V4 {
             int_seq,
