@@ -815,6 +815,7 @@ pub fn last_max_dense_words() -> usize {
 const SOLVE_TELEMETRY_PIECES_WARN: usize = 500;
 const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 
+#[hotpath::measure(label = "cl_solve.active_set")]
 fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
@@ -1083,6 +1084,7 @@ pub fn int_solve_v3_v3(
 
 /// Pre-compute the crossing data for every ending-range index of a CL
 /// sequence.
+#[hotpath::measure(label = "cl_solve.build_crossing_table")]
 fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossing> {
     // `compute_crossing(k)` is O(k); the full table is O(len²) with len
     // typically ≤ 15 — negligible against a single simulation.
@@ -1110,6 +1112,7 @@ const DENSE_OBSERVE_THRESHOLD: usize = WORD_PROFILE_THRESHOLD / 2;
 /// stays `None` (linear walk, zero build overhead). Each dense range's profile is
 /// `Arc`-backed so it is shared - not re-cloned - across every path that reuses
 /// it (the hop-projection memoization).
+#[hotpath::measure(label = "cl_solve.build_word_profiles")]
 fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3WordProfile>>> {
     for c in crossings {
         let n = c.ending_range.word_boundary_prices.len();
@@ -1148,6 +1151,14 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3W
         .collect()
 }
 
+/// Cache-less crossing data for a CL sequence (every ending-range index).
+/// The projection wraps this in an `Arc` and stores it on the resolved hop so
+/// the same table is shared across every path reusing the pool.
+#[must_use]
+pub fn build_cl_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossing> {
+    build_crossing_table(seq)
+}
+
 /// Cache-less dense-range profiles for a CL sequence (offline replays and the
 /// direct `int_solve_cl_path` path, which build per call). Result is parallel to
 /// `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`).
@@ -1160,6 +1171,7 @@ pub fn build_cl_word_profiles(seq: &IntV3TickRangeSequence) -> Vec<Option<Arc<V3
 /// sequence - the single place a CL walk hop is assembled. `profiles` is a
 /// precomputed profile table from the projection (Arc-shared through the hop
 /// memoization), cloned in O(1); `None` builds one for dense ranges here.
+#[hotpath::measure(label = "cl_solve.cl_walk_hop")]
 fn cl_walk_hop<'a>(
     seq: &'a IntV3TickRangeSequence,
     profiles: Option<&Arc<Vec<Option<Arc<V3WordProfile>>>>>,
@@ -1196,6 +1208,7 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
 /// `Arc<Vec<Option<V3WordProfile>>>`). Mirrors [`int_solve_cl_path`], which
 /// rebuilds profiles per call.
 #[must_use]
+#[hotpath::measure(label = "cl_solve.int_solve_cl_path_with_profiles")]
 pub fn int_solve_cl_path_with_profiles(
     sequences: &[&IntV3TickRangeSequence],
     profiles: &[&Arc<Vec<Option<Arc<V3WordProfile>>>>],
@@ -1258,6 +1271,7 @@ pub struct V3SwapResult {
 /// as the output. If the price target is reached, only the portion needed to
 /// reach the target is consumed.
 #[must_use = "the V3 swap result should be used"]
+#[hotpath::measure(label = "cl_solve.int_simulate_v3_swap")]
 pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3SwapResult {
     // PXSY47 + E7ALWT: per-step rounding is delegated to the canonical V3
     // step function `compute_swap_step_v3` — the single source of ON5QMD
@@ -1639,6 +1653,7 @@ fn int_simulate_mixed_path_n(
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 #[must_use]
+#[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
 pub fn exact_solve_mixed_path_n(
     v2_hops: &[Option<IntHopState>],
     cl_sequences: &[Option<IntV3TickRangeSequence>],

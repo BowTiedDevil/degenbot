@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use degenbot_solvers::mixed::{MixedPoolRef, ResolvedHop};
-use degenbot_solvers::mobius_v3_int::build_cl_word_profiles;
+use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -41,11 +41,13 @@ pub(crate) fn project_v3(
         .build_int_v3_sequence(identity.tick_spacing, identity.fee, pool_ref.zero_for_one)
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    let word_profiles = build_cl_word_profiles(&int_seq);
+    let word_profiles = Arc::new(build_cl_word_profiles(&int_seq));
+    let crossing_table = Arc::new(build_cl_crossing_table(&int_seq));
     Ok((
         ResolvedHop::V3 {
             int_seq,
-            word_profiles: Arc::new(word_profiles),
+            word_profiles,
+            crossing_table,
         },
         pool_state.state_nonce,
     ))
@@ -89,11 +91,13 @@ pub(crate) fn project_v4(
         )
         .ok_or(MissingHopReason::SequenceUnavailable)?;
 
-    let word_profiles = build_cl_word_profiles(&int_seq);
+    let word_profiles = Arc::new(build_cl_word_profiles(&int_seq));
+    let crossing_table = Arc::new(build_cl_crossing_table(&int_seq));
     Ok((
         ResolvedHop::V4 {
             int_seq,
-            word_profiles: Arc::new(word_profiles),
+            word_profiles,
+            crossing_table,
         },
         pool_state.state_nonce,
     ))

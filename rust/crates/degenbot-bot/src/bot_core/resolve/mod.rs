@@ -284,7 +284,7 @@ mod tests {
     use crate::bot_core::{BotState, PoolTickCoverage, RegisterV3PoolParams, TickInfo};
     use alloy::primitives::{Address, I256, U128, U256};
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
-    use degenbot_solvers::mobius_v3_int::V3WordProfile;
+    use degenbot_solvers::mobius_v3_int::{IntTickRangeCrossing, V3WordProfile};
 
     fn ref_v3(pool_key: u64) -> MixedPoolRef {
         MixedPoolRef {
@@ -347,6 +347,21 @@ mod tests {
         }
     }
 
+    /// The allocation pointer of the cached hop's crossing-table `Arc` -
+    /// stable while the cache entry is unchanged, new after re-projection.
+    fn crossing_ptr(
+        cache: &HopProjectionCache,
+        key: &(HopType, u64, bool),
+    ) -> *const Vec<IntTickRangeCrossing> {
+        match &cache[key] {
+            (CachedProjection::Hop(arc), _) => match arc.as_ref() {
+                ResolvedHop::V3 { crossing_table, .. } => Arc::as_ptr(crossing_table),
+                _ => panic!("expected a cached V3 hop"),
+            },
+            (CachedProjection::Invalid(_), _) => panic!("expected a cached hop, got invalid"),
+        }
+    }
+
     /// Hop-projection memoization invariant: a liquidity event on one pool
     /// re-projects (rebuilds the profile for) ONLY that pool; every sibling
     /// pool's cached profile `Arc` is reused untouched. The nonce comparison is
@@ -369,6 +384,8 @@ mod tests {
         assert_eq!(pc, 2, "first resolve projects both pools");
         let p0 = profile_ptr(&cache, &(HopType::V3, p, true));
         let q0 = profile_ptr(&cache, &(HopType::V3, q, true));
+        let p_cross0 = crossing_ptr(&cache, &(HopType::V3, p, true));
+        let q_cross0 = crossing_ptr(&cache, &(HopType::V3, q, true));
 
         // 2) Re-resolve with no state change: both are cache hits - no re-projection,
         // both profile Arcs are the same allocations (reused, not rebuilt).
@@ -385,6 +402,16 @@ mod tests {
             profile_ptr(&cache, &(HopType::V3, q, true)),
             q0,
             "Q profile Arc reused"
+        );
+        assert_eq!(
+            crossing_ptr(&cache, &(HopType::V3, p, true)),
+            p_cross0,
+            "P crossing-table Arc reused"
+        );
+        assert_eq!(
+            crossing_ptr(&cache, &(HopType::V3, q, true)),
+            q_cross0,
+            "Q crossing-table Arc reused"
         );
 
         // 3) A real Mint/Burn on P ([low, high] straddling the current tick) changes
@@ -415,10 +442,20 @@ mod tests {
             p0,
             "P's profile was rebuilt (new Arc allocation)"
         );
+        assert_ne!(
+            crossing_ptr(&cache, &(HopType::V3, p, true)),
+            p_cross0,
+            "P's crossing table was rebuilt (new Arc allocation)"
+        );
         assert_eq!(
             profile_ptr(&cache, &(HopType::V3, q, true)),
             q0,
             "Q's cached profile Arc is untouched (nothing outside the modified range invalidates)"
+        );
+        assert_eq!(
+            crossing_ptr(&cache, &(HopType::V3, q, true)),
+            q_cross0,
+            "Q's cached crossing-table Arc is untouched"
         );
     }
 }
