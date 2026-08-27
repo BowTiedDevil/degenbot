@@ -39,6 +39,7 @@
 //! | [`py_binding`] | PyO3 wrapper (`PyArbitrageEngine`) |
 //! | [`tests`] | Unit tests |
 
+use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -326,7 +327,12 @@ pub struct ArbitrageEngine {
     /// Vec instead of `HashSet` — sets are typically 1-4 entries, dedup at collection time.
     pool_to_paths: HashMap<(HopType, u64), Vec<u64>>,
     /// Last solved results, keyed by path ID for O(1) updates.
-    results: HashMap<u64, SolvePathResult>,
+    ///
+    /// RAYPAR engine-shard T1 (C42WKO): sharded into a `DashMap` so Python
+    /// `latest_results` reads never park behind the drain-lock held engine
+    /// `Mutex`. Writes happen during the sequential `clamp_merge` phase;
+    /// reads snapshot the shards into a `HashMap` for the delivery policy.
+    results: DashMap<u64, SolvePathResult>,
     /// Block number for the last solved results
     results_block: u64,
     /// Last block number processed by `process_block`.
@@ -427,7 +433,7 @@ impl ArbitrageEngine {
             hop_projection_count: 0,
             cl_projection_memo: crate::bot_core::resolve::projection_memo_enabled(),
             pool_to_paths: HashMap::new(),
-            results: HashMap::new(),
+            results: DashMap::new(),
             results_block: 0,
             last_processed_block: None,
             last_solved_block: 0,

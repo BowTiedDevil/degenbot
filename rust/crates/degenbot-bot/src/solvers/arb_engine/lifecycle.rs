@@ -228,9 +228,20 @@ impl ArbitrageEngine {
     }
 
     /// Read the last solved results and block number.
+    ///
+    /// RAYPAR engine-shard T1 (C42WKO): snaps a snapshot of the `DashMap`
+    /// shards into an owned `HashMap` so the caller never holds a lock
+    /// into the engine. `O(n_results)` — typically <50 entries (profitable
+    /// solves only) per drain.
     #[must_use]
-    pub const fn latest_results(&self) -> (&HashMap<u64, SolvePathResult>, u64) {
-        (&self.results, self.results_block)
+    pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
+        (
+            self.results
+                .iter()
+                .map(|r| (*r.key(), r.value().clone()))
+                .collect(),
+            self.results_block,
+        )
     }
 
     /// Return the last block number processed by `process_block`.
@@ -307,7 +318,7 @@ impl ArbitrageEngine {
 
     /// Resolve and solve all registered paths. **Solve-only — does NOT dispatch
     /// a batch** (matches `solve_dirty`'s contract; dispatch is the pump's job
-    /// via `send_result_batch`, driven by the 50ms debounce timer).
+    /// via `send_result_batch`, driven by the debounce timer).
     ///
     /// Cold-start / test synchronization entry point (replaces the removed
     /// `initial_solve`). Populates `self.results` and advances `results_block`;
@@ -346,7 +357,11 @@ impl ArbitrageEngine {
         }
 
         // Solve all paths
-        self.results = self.solve_all();
+        let results = self.solve_all();
+        self.results.clear();
+        for (pid, r) in results {
+            self.results.insert(pid, r);
+        }
         self.results_block = block_number;
 
         // Intentionally no compute_diff_and_send here: dispatching would

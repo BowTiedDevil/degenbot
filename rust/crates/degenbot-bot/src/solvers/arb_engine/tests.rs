@@ -2102,7 +2102,11 @@ mod tests {
                 engine.path_resolved.insert(path_id, resolved);
             }
         }
-        engine.results = engine.solve_all();
+        let results_map = engine.solve_all();
+        engine.results.clear();
+        for (pid, r) in results_map {
+            engine.results.insert(pid, r);
+        }
 
         let (results, _block) = engine.latest_results();
 

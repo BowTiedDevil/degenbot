@@ -262,8 +262,13 @@ impl ArbitrageEngine {
     /// net) if no anchor has been seeded yet.
     pub fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
         let results_block = self.results_block;
+        let results_snapshot: HashMap<u64, SolvePathResult> = self
+            .results
+            .iter()
+            .map(|r| (*r.key(), r.value().clone()))
+            .collect();
         self.delivery
-            .diff_and_send(&self.results, results_block, metadata);
+            .diff_and_send(&results_snapshot, results_block, metadata);
     }
 
     /// De-register a path from the engine.
