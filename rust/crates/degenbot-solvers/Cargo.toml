@@ -30,6 +30,7 @@ hotpath = { version = "^0.24", default-features = false }
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
 
 [dev-dependencies]
+rayon = { version = "^1.12" }
 proptest = "^1.11"
 parking_lot = { version = "^0.12" }
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }

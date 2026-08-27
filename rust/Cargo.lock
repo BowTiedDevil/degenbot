@@ -2396,6 +2396,7 @@ dependencies = [
  "num-integer",
  "parking_lot",
  "proptest",
+ "rayon",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
