@@ -105,6 +105,8 @@ pub mod instruments {
         pub fn count_clamp(&self) {}
         /// no-op
         pub fn count_error(&self, _kind: &'static str) {}
+        /// no-op
+        pub fn count_solver_state_check(&self) {}
     }
 
     /// Always `None` — metrics are compiled out of this build.

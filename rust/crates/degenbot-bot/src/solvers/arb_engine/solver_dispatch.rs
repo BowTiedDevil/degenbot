@@ -527,7 +527,7 @@ impl ArbitrageEngine {
         // vs ...). Emitted on the resolve phase event.
         let mut invalid_reasons: std::collections::HashMap<String, u64> =
             std::collections::HashMap::new();
-        {
+        hotpath::measure_block!("arb_solve.resolve", {
             let core = self.core.read();
             for &path_id in &affected_path_ids {
                 let Some(path) = self.path_pools.get(&path_id) else {
@@ -578,7 +578,7 @@ impl ArbitrageEngine {
                     .or_default()
                     .set_resolved(&deficits);
             }
-        }
+        });
 
         // Telemetry: resolve phase complete (core-lock window + hop re-derive).
         tracing::info!(
@@ -689,100 +689,105 @@ impl ArbitrageEngine {
         // the CL solver can be optimized offline. None (no-op) unless gated.
         let capture = HeavyClPathCapture::from_env();
         let capture_ref: Option<&HeavyClPathCapture> = capture.as_ref();
-        let solved: Vec<(u64, SolvePathResult)> = to_solve
-            .par_iter()
-            .filter_map(|(pid, resolved)| {
-                let _solve_ctx = solve_span.enter();
-                // Scope the walk counters to THIS path (same rayon worker
-                // thread runs solve_path synchronously; the walk spawns no
-                // sub-tasks, so the per-thread Cell is consistent).
-                ::degenbot_solvers::mobius_v3_int::reset_walk_stats();
-                ::degenbot_solvers::profit_envelope::reset_gate_stats();
-                let t0 = std::time::Instant::now();
-                let result = ::degenbot_solvers::mixed::solve_path_with_min_profit(
-                    resolved,
-                    min_profit_floor(),
-                );
-                let micros = t0.elapsed().as_micros();
-                solve_cpu_us.fetch_add(
-                    u64::try_from(micros).unwrap_or(u64::MAX),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
-                gate_evaluated_total.fetch_add(gs.evaluated, std::sync::atomic::Ordering::Relaxed);
-                gate_skipped_total.fetch_add(gs.skipped, std::sync::atomic::Ordering::Relaxed);
-                gate_unsupported_total
-                    .fetch_add(gs.unsupported, std::sync::atomic::Ordering::Relaxed);
-                gate_none_hop_unmapped_total
-                    .fetch_add(gs.none_hop_unmapped, std::sync::atomic::Ordering::Relaxed);
-                gate_none_degenerate_total
-                    .fetch_add(gs.none_degenerate, std::sync::atomic::Ordering::Relaxed);
-                gate_none_overflow_total
-                    .fetch_add(gs.none_overflow, std::sync::atomic::Ordering::Relaxed);
-                let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
-                let (pieces, sims, word_steps, refine_sims) =
-                    (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
-                walk_pieces_total.fetch_add(
-                    u64::try_from(pieces).unwrap_or(0),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                walk_sims_total.fetch_add(
-                    u64::try_from(sims).unwrap_or(0),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                walk_word_steps_total.fetch_add(
-                    u64::try_from(word_steps).unwrap_or(0),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                walk_refine_sims_total.fetch_add(
-                    u64::try_from(refine_sims).unwrap_or(0),
-                    std::sync::atomic::Ordering::Relaxed,
-                );
-                if let Ok(mut heap) = path_times.lock() {
-                    let worst = heap
-                        .peek()
-                        .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _))| *w);
-                    if heap.len() < SLOWEST_PATHS_K || micros > worst {
-                        heap.push(std::cmp::Reverse((
-                            micros,
+        let solved: Vec<(u64, SolvePathResult)> =
+            hotpath::measure_block!("arb_solve.rayon_solve", {
+                to_solve
+                    .par_iter()
+                    .filter_map(|(pid, resolved)| {
+                        let _solve_ctx = solve_span.enter();
+                        // Scope the walk counters to THIS path (same rayon worker
+                        // thread runs solve_path synchronously; the walk spawns no
+                        // sub-tasks, so the per-thread Cell is consistent).
+                        ::degenbot_solvers::mobius_v3_int::reset_walk_stats();
+                        ::degenbot_solvers::profit_envelope::reset_gate_stats();
+                        let t0 = std::time::Instant::now();
+                        let result = ::degenbot_solvers::mixed::solve_path_with_min_profit(
+                            resolved,
+                            min_profit_floor(),
+                        );
+                        let micros = t0.elapsed().as_micros();
+                        solve_cpu_us.fetch_add(
+                            u64::try_from(micros).unwrap_or(u64::MAX),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
+                        gate_evaluated_total
+                            .fetch_add(gs.evaluated, std::sync::atomic::Ordering::Relaxed);
+                        gate_skipped_total
+                            .fetch_add(gs.skipped, std::sync::atomic::Ordering::Relaxed);
+                        gate_unsupported_total
+                            .fetch_add(gs.unsupported, std::sync::atomic::Ordering::Relaxed);
+                        gate_none_hop_unmapped_total
+                            .fetch_add(gs.none_hop_unmapped, std::sync::atomic::Ordering::Relaxed);
+                        gate_none_degenerate_total
+                            .fetch_add(gs.none_degenerate, std::sync::atomic::Ordering::Relaxed);
+                        gate_none_overflow_total
+                            .fetch_add(gs.none_overflow, std::sync::atomic::Ordering::Relaxed);
+                        let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
+                        let (pieces, sims, word_steps, refine_sims) =
+                            (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
+                        walk_pieces_total.fetch_add(
                             u64::try_from(pieces).unwrap_or(0),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        walk_sims_total.fetch_add(
                             u64::try_from(sims).unwrap_or(0),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        walk_word_steps_total.fetch_add(
                             u64::try_from(word_steps).unwrap_or(0),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        walk_refine_sims_total.fetch_add(
                             u64::try_from(refine_sims).unwrap_or(0),
-                            *pid,
-                        )));
-                        if heap.len() > SLOWEST_PATHS_K {
-                            heap.pop();
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        if let Ok(mut heap) = path_times.lock() {
+                            let worst = heap
+                                .peek()
+                                .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _))| *w);
+                            if heap.len() < SLOWEST_PATHS_K || micros > worst {
+                                heap.push(std::cmp::Reverse((
+                                    micros,
+                                    u64::try_from(pieces).unwrap_or(0),
+                                    u64::try_from(sims).unwrap_or(0),
+                                    u64::try_from(word_steps).unwrap_or(0),
+                                    u64::try_from(refine_sims).unwrap_or(0),
+                                    *pid,
+                                )));
+                                if heap.len() > SLOWEST_PATHS_K {
+                                    heap.pop();
+                                }
+                            }
                         }
-                    }
-                }
-                // Offline CL-solver capture gate (no-op unless the env gate is set).
-                if let Some(cap) = capture_ref {
-                    cap.maybe_capture(
-                        *pid,
-                        solve_block,
-                        u64::try_from(micros).unwrap_or(u64::MAX),
-                        u64::try_from(sims).unwrap_or(0),
-                        u64::try_from(pieces).unwrap_or(0),
-                        result.as_ref(),
-                        resolved,
-                    );
-                }
-                result.map(|r| (*pid, r))
-            })
-            // Log solver pool state for every solved path (including
-            // unprofitable) — diagnostic cross-referencing against sim
-            // captured swaps.
-            .inspect(|(pid, r)| {
-                if !r.solver_pool_states.is_empty() {
-                    tracing::debug!(
-                        "[solver-st] path_id={pid} hops=[{}]",
-                        r.solver_pool_states.join(";")
-                    );
-                }
-            })
-            .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
-            .collect();
+                        // Offline CL-solver capture gate (no-op unless the env gate is set).
+                        if let Some(cap) = capture_ref {
+                            cap.maybe_capture(
+                                *pid,
+                                solve_block,
+                                u64::try_from(micros).unwrap_or(u64::MAX),
+                                u64::try_from(sims).unwrap_or(0),
+                                u64::try_from(pieces).unwrap_or(0),
+                                result.as_ref(),
+                                resolved,
+                            );
+                        }
+                        result.map(|r| (*pid, r))
+                    })
+                    // Log solver pool state for every solved path (including
+                    // unprofitable) — diagnostic cross-referencing against sim
+                    // captured swaps.
+                    .inspect(|(pid, r)| {
+                        if !r.solver_pool_states.is_empty() {
+                            tracing::debug!(
+                                "[solver-st] path_id={pid} hops=[{}]",
+                                r.solver_pool_states.join(";")
+                            );
+                        }
+                    })
+                    .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
+                    .collect()
+            });
         if let Some(c) = capture.as_ref() {
             tracing::info!(
                 target: "degenbot::solver",
@@ -835,21 +840,23 @@ impl ArbitrageEngine {
         let clamp_twins_start = std::time::Instant::now();
         let mut clamp_twin_count: u64 = 0;
         let solved_count = solved.len();
-        for (pid, mut solve_result) in solved {
-            clamp_twin_count += self.clamp_cl_hop_capacity(pid, &mut solve_result);
-            // Telemetry: profitable solves are the signal in the noise — emit
-            // the economics + the concrete hop list on the solve span.
-            tracing::info!(
-                target: "degenbot::solver",
-                block_number = solve_block,
-                path.id = pid,
-                input = %solve_result.optimal_input,
-                profit = %solve_result.profit,
-                path.hops = %self.describe_path(pid),
-                "[path] profitable solve"
-            );
-            self.results.insert(pid, solve_result);
-        }
+        hotpath::measure_block!("arb_solve.clamp_merge", {
+            for (pid, mut solve_result) in solved {
+                clamp_twin_count += self.clamp_cl_hop_capacity(pid, &mut solve_result);
+                // Telemetry: profitable solves are the signal in the noise — emit
+                // the economics + the concrete hop list on the solve span.
+                tracing::info!(
+                    target: "degenbot::solver",
+                    block_number = solve_block,
+                    path.id = pid,
+                    input = %solve_result.optimal_input,
+                    profit = %solve_result.profit,
+                    path.hops = %self.describe_path(pid),
+                    "[path] profitable solve"
+                );
+                self.results.insert(pid, solve_result);
+            }
+        });
 
         // Telemetry: clamp phase done — the twin simulations are a known
         // multi-second contributor on CL-heavy batches, so they get their own

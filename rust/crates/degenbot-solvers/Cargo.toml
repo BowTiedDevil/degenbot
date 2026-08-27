@@ -21,6 +21,13 @@ num-integer = { version = "^0.1" }
 degenbot-math.workspace = true
 degenbot-pools.workspace = true
 degenbot-uniswap.workspace = true
+# hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
+# default-features = false -> no-op stubs in default builds; the
+# `hotpath` feature enables real instrumentation.
+hotpath = { version = "^0.24", default-features = false }
+
+[features]
+hotpath = ["hotpath/hotpath", "hotpath/threads"]
 
 [dev-dependencies]
 proptest = "^1.11"

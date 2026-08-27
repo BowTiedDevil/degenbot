@@ -2391,6 +2391,7 @@ dependencies = [
  "degenbot-pools",
  "degenbot-rpc",
  "degenbot-uniswap",
+ "hotpath",
  "num-bigint 0.5.1",
  "num-integer",
  "parking_lot",

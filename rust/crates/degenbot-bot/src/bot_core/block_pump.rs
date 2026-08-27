@@ -951,7 +951,7 @@ impl BlockPump {
         // The verifier abort()s the whole process on desync (unchanged ADR-021
         // fail-stop); only the most recent published block is ever verified.
         let verify_tx: Option<tokio::sync::watch::Sender<Option<SolverVerifyRequest>>> =
-            if tripwire_config.enabled {
+            if tripwire_config.enabled || tripwire_config.divergence_scan {
                 let (tx, rx) = tokio::sync::watch::channel(None);
                 tokio::spawn(Self::solver_state_verify_loop(
                     rx,

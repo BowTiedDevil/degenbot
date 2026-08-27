@@ -301,6 +301,9 @@ async fn divergence_scan_stage(
     let mut n_divergent = 0usize;
     for r in scan_lagging_hops_for_divergence(provider, &uniq, block).await {
         n_scanned += 1;
+        if let Some(p) = crate::instruments::pipeline() {
+            p.count_solver_state_check();
+        }
         match r.verdict {
             DivergenceVerdict::Honest => {
                 n_honest += 1;
@@ -315,6 +318,9 @@ async fn divergence_scan_stage(
             }
             DivergenceVerdict::Divergent => {
                 n_divergent += 1;
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_error(crate::telemetry::error_kind::SOLVER_STATE_DESYNC);
+                }
                 tracing::error!(
                     hop_idx = r.hop_index,
                     %r.pool,

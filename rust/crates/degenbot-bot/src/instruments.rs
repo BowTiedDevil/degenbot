@@ -95,6 +95,9 @@ pub struct PipelineInstruments {
     profit_missed: Counter<f64>,
     /// Monitor outcomes, labeled (`confirmed`, `expired`).
     monitor_outcomes: Counter<u64>,
+    /// Solver-state divergence-scan checks performed (one per unique pool
+    /// scanned per publish; see `solver_state_tripwire::divergence_scan_stage`).
+    solver_state_checks_total: Counter<u64>,
 }
 
 impl PipelineInstruments {
@@ -243,6 +246,12 @@ impl PipelineInstruments {
             monitor_outcomes: meter
                 .u64_counter("degenbot.monitor.outcomes")
                 .with_description("Monitor outcomes (confirmed/expired)")
+                .build(),
+            solver_state_checks_total: meter
+                .u64_counter("degenbot.solver_state.checks")
+                .with_description(
+                    "Solver-state divergence-scan checks performed (unique pools per publish)",
+                )
                 .build(),
         }
     }
@@ -399,6 +408,11 @@ impl PipelineInstruments {
     pub fn count_monitor_outcome(&self, outcome: &str) {
         self.monitor_outcomes
             .add(1, &[KeyValue::new("outcome", outcome.to_owned())]);
+    }
+
+    /// One solver-state divergence-scan check (unique pool per publish).
+    pub fn count_solver_state_check(&self) {
+        self.solver_state_checks_total.add(1, &[]);
     }
 }
 

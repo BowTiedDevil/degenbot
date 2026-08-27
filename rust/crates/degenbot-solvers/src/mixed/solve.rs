@@ -149,6 +149,7 @@ fn solve_path_gated(
 
 #[must_use]
 #[expect(clippy::too_many_lines)]
+#[hotpath::measure(label = "mixed.solve_path_inner")]
 pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
