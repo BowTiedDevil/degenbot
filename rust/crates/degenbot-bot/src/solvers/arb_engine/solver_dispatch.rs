@@ -1006,36 +1006,58 @@ impl ArbitrageEngine {
     pub fn solve_all(&self) -> HashMap<u64, SolvePathResult> {
         // MQUKB6-T0: same rayon context re-entry as rebuild_and_solve_affected.
         let solve_span = tracing::Span::current();
-        self.path_resolved
-            .par_iter()
-            .filter_map(|(&path_id, resolved)| {
-                let _solve_ctx = solve_span.enter();
-                if !resolved.valid {
-                    return None;
-                }
-                ::degenbot_solvers::mixed::solve_path_with_min_profit(resolved, min_profit_floor())
-                    // Log solver pool state for diagnostic cross-referencing
-                    // (path_id -> pool state at solve time).
-                    .inspect(|r| {
-                        if !r.solver_pool_states.is_empty() {
-                            tracing::debug!(
-                                "[solver-st] path_id={path_id} hops=[{}]",
-                                r.solver_pool_states.join(";")
-                            );
+
+        // Pre-collect work items (path_id + cloned resolved). The clone
+        // drops the immutable borrow on self.path_resolved so the LPT
+        // scoped threads don't borrow &self during the parallel solve.
+        let to_solve: Vec<(u64, ResolvedMixedPath)> = self
+            .path_resolved
+            .iter()
+            .filter(|(_, r)| r.valid)
+            .map(|(&pid, r)| (pid, r.clone()))
+            .collect();
+
+        // RAYPAR T3: LPT-pre-balanced partition on rayons persistent pool.
+        // The cold-start path has the same cost skew as the hot path.
+        let n_threads = rayon::current_num_threads().max(1);
+        let costs: Vec<usize> = to_solve.iter().map(|(_, r)| path_cost_proxy(r)).collect();
+        let bins = lpt_partition(to_solve.len(), n_threads, |i| costs[i]);
+        let to_solve_ref = &to_solve;
+        let solve_span_ref = &solve_span;
+        let self_ref = &self;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        rayon::scope(|s| {
+            for bin in &bins {
+                let tx = tx.clone();
+                s.spawn(move |_| {
+                    let mut out = Vec::with_capacity(bin.len());
+                    for &i in bin {
+                        let (path_id, resolved) = &to_solve_ref[i];
+                        let _solve_ctx = solve_span_ref.enter();
+                        if let Some(mut r) = ::degenbot_solvers::mixed::solve_path_with_min_profit(
+                            resolved,
+                            min_profit_floor(),
+                        )
+                        .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
+                        .inspect(|r| {
+                            if !r.solver_pool_states.is_empty() {
+                                tracing::debug!(
+                                    "[solver-st] path_id={path_id} hops=[{}]",
+                                    r.solver_pool_states.join(";")
+                                );
+                            }
+                        }) {
+                            self_ref.clamp_cl_hop_capacity(*path_id, &mut r);
+                            out.push((*path_id, r));
                         }
-                    })
-                    .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
-                    .map(|r| (path_id, r))
-            })
-            .map(|(path_id, mut r)| {
-                // Pool-state-aware CL-hop capacity clamp (UO3JM4) — reconcile
-                // each CL hop's committed input against the pools twin before
-                // the result escapes to the caller (cold-start / test path;
-                // `rebuild_and_solve_affected` applies the same clamp).
-                self.clamp_cl_hop_capacity(path_id, &mut r);
-                (path_id, r)
-            })
-            .collect()
+                    }
+                    let _ = tx.send(out);
+                });
+            }
+        });
+        drop(tx);
+        rx.into_iter().flatten().collect()
     }
 }
 
