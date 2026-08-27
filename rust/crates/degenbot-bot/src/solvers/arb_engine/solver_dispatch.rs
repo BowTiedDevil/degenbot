@@ -32,6 +32,72 @@ use ::degenbot_solvers::mixed::{HopType, ResolvedMixedPath, SolvePathResult};
 /// (D63GSE intra-solve visibility).
 const SLOWEST_PATHS_K: usize = 5;
 
+// ---------------------------------------------------------------------------
+// RAYPAR T3: LPT-pre-balanced scoped-thread partition
+// ---------------------------------------------------------------------------
+
+#[expect(clippy::doc_markdown)]
+/// RAYPAR T3: LPT (longest-processing-time) bin-packing. Sorts items by
+/// descending cost and greedily assigns each to the least-loaded bin. Returns
+/// indices into the original items slice, one Vec per bin.
+///
+/// The RAYPAR lab (docs/rayon-parallelism-lab.md) showed rayon work-stealing
+/// par_iter achieves only 4.91/8 efficiency on the heavy-CL capture corpus
+/// because the workload has extreme cost skew (top 8 of 80 paths = 60% of CPU).
+/// LPT pre-balances so no thread gets stuck with an unsplittable giant while
+/// others idle — achieving 7.80/8 (35% wall reduction). Same solver, same
+/// threads, same memory bandwidth.
+fn lpt_partition(n_items: usize, n_bins: usize, cost: impl Fn(usize) -> usize) -> Vec<Vec<usize>> {
+    if n_bins == 0 {
+        return Vec::new();
+    }
+    if n_items == 0 {
+        return vec![Vec::new(); n_bins];
+    }
+    let mut idx: Vec<usize> = (0..n_items).collect();
+    idx.sort_unstable_by_key(|&i| std::cmp::Reverse(cost(i)));
+    let mut loads = vec![0usize; n_bins];
+    let mut bins: Vec<Vec<usize>> = vec![Vec::new(); n_bins];
+    for i in idx {
+        let mi = loads
+            .iter()
+            .enumerate()
+            .min_by_key(|&(_, l)| l)
+            .map_or(0, |(i, _)| i);
+        bins[mi].push(i);
+        loads[mi] += cost(i);
+    }
+    bins
+}
+
+#[expect(clippy::doc_markdown)]
+/// Resolve-time cost proxy for LPT binning: the total number of word-boundary
+/// prices across all CL hops. Correlates with walk combinatorics without
+/// requiring a solve, so it is available at to_solve collection time.
+fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
+    resolved
+        .hops
+        .iter()
+        .filter_map(|h| h.as_int_sequence())
+        .flat_map(|seq| seq.ranges.iter())
+        .map(|r| r.word_boundary_prices.len())
+        .sum()
+}
+
+#[expect(clippy::doc_markdown)]
+/// RAYPAR T3: LPT-pre-balanced scoped-thread partition replaces rayon
+/// par_iter work-stealing fan-out for the solve phase. Default ON; set
+/// DEGENBOT_LPT_PARTITION=0 to fall back to rayon par_iter for A/B comparison.
+/// The lab report shows LPT achieves 7.80/8 vs rayon 4.91/8.
+fn lpt_partition_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("DEGENBOT_LPT_PARTITION").map_or(true, |s| {
+            s != "0" && !s.eq_ignore_ascii_case("false") && !s.eq_ignore_ascii_case("off")
+        })
+    })
+}
+
 /// Pre-solve profitability floor for the profit-envelope gate (SU7MAE).
 /// Precedence: `DEGENBOT_MIN_PROFIT_WEI` (decimal wei) > default 0. Default 0
 /// skips only paths whose rigorous upper bound proves zero-or-negative profit.
@@ -692,102 +758,157 @@ impl ArbitrageEngine {
         let capture_ref: Option<&HeavyClPathCapture> = capture.as_ref();
         let solved: Vec<(u64, SolvePathResult)> =
             hotpath::measure_block!("arb_solve.rayon_solve", {
-                to_solve
-                    .par_iter()
-                    .filter_map(|(pid, resolved)| {
-                        let _solve_ctx = solve_span.enter();
-                        // Scope the walk counters to THIS path (same rayon worker
-                        // thread runs solve_path synchronously; the walk spawns no
-                        // sub-tasks, so the per-thread Cell is consistent).
-                        ::degenbot_solvers::mobius_v3_int::reset_walk_stats();
-                        ::degenbot_solvers::profit_envelope::reset_gate_stats();
-                        let t0 = std::time::Instant::now();
-                        let result = ::degenbot_solvers::mixed::solve_path_with_min_profit(
-                            resolved,
-                            min_profit_floor(),
-                        );
-                        let micros = t0.elapsed().as_micros();
-                        solve_cpu_us.fetch_add(
-                            u64::try_from(micros).unwrap_or(u64::MAX),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
-                        gate_evaluated_total
-                            .fetch_add(gs.evaluated, std::sync::atomic::Ordering::Relaxed);
-                        gate_skipped_total
-                            .fetch_add(gs.skipped, std::sync::atomic::Ordering::Relaxed);
-                        gate_unsupported_total
-                            .fetch_add(gs.unsupported, std::sync::atomic::Ordering::Relaxed);
-                        gate_none_hop_unmapped_total
-                            .fetch_add(gs.none_hop_unmapped, std::sync::atomic::Ordering::Relaxed);
-                        gate_none_degenerate_total
-                            .fetch_add(gs.none_degenerate, std::sync::atomic::Ordering::Relaxed);
-                        gate_none_overflow_total
-                            .fetch_add(gs.none_overflow, std::sync::atomic::Ordering::Relaxed);
-                        let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
-                        let (pieces, sims, word_steps, refine_sims) =
-                            (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
-                        walk_pieces_total.fetch_add(
-                            u64::try_from(pieces).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_sims_total.fetch_add(
-                            u64::try_from(sims).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_word_steps_total.fetch_add(
-                            u64::try_from(word_steps).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_refine_sims_total.fetch_add(
-                            u64::try_from(refine_sims).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        if let Ok(mut heap) = path_times.lock() {
-                            let worst = heap
-                                .peek()
-                                .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _))| *w);
-                            if heap.len() < SLOWEST_PATHS_K || micros > worst {
-                                heap.push(std::cmp::Reverse((
-                                    micros,
-                                    u64::try_from(pieces).unwrap_or(0),
-                                    u64::try_from(sims).unwrap_or(0),
-                                    u64::try_from(word_steps).unwrap_or(0),
-                                    u64::try_from(refine_sims).unwrap_or(0),
-                                    *pid,
-                                )));
-                                if heap.len() > SLOWEST_PATHS_K {
-                                    heap.pop();
-                                }
+                // Per-path solve + diagnostics closure (shared by the LPT
+                // scoped-thread path and the rayon par_iter fallback).
+                let solve_fn = |pid: u64,
+                                resolved: &ResolvedMixedPath|
+                 -> Option<(u64, SolvePathResult)> {
+                    let _solve_ctx = solve_span.enter();
+                    ::degenbot_solvers::mobius_v3_int::reset_walk_stats();
+                    ::degenbot_solvers::profit_envelope::reset_gate_stats();
+                    let t0 = std::time::Instant::now();
+                    let result = ::degenbot_solvers::mixed::solve_path_with_min_profit(
+                        resolved,
+                        min_profit_floor(),
+                    );
+                    let micros = t0.elapsed().as_micros();
+                    solve_cpu_us.fetch_add(
+                        u64::try_from(micros).unwrap_or(u64::MAX),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
+                    gate_evaluated_total
+                        .fetch_add(gs.evaluated, std::sync::atomic::Ordering::Relaxed);
+                    gate_skipped_total.fetch_add(gs.skipped, std::sync::atomic::Ordering::Relaxed);
+                    gate_unsupported_total
+                        .fetch_add(gs.unsupported, std::sync::atomic::Ordering::Relaxed);
+                    gate_none_hop_unmapped_total
+                        .fetch_add(gs.none_hop_unmapped, std::sync::atomic::Ordering::Relaxed);
+                    gate_none_degenerate_total
+                        .fetch_add(gs.none_degenerate, std::sync::atomic::Ordering::Relaxed);
+                    gate_none_overflow_total
+                        .fetch_add(gs.none_overflow, std::sync::atomic::Ordering::Relaxed);
+                    let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
+                    let (pieces, sims, word_steps, refine_sims) =
+                        (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
+                    walk_pieces_total.fetch_add(
+                        u64::try_from(pieces).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_sims_total.fetch_add(
+                        u64::try_from(sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_word_steps_total.fetch_add(
+                        u64::try_from(word_steps).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_refine_sims_total.fetch_add(
+                        u64::try_from(refine_sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    if let Ok(mut heap) = path_times.lock() {
+                        let worst = heap
+                            .peek()
+                            .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _))| *w);
+                        if heap.len() < SLOWEST_PATHS_K || micros > worst {
+                            heap.push(std::cmp::Reverse((
+                                micros,
+                                u64::try_from(pieces).unwrap_or(0),
+                                u64::try_from(sims).unwrap_or(0),
+                                u64::try_from(word_steps).unwrap_or(0),
+                                u64::try_from(refine_sims).unwrap_or(0),
+                                pid,
+                            )));
+                            if heap.len() > SLOWEST_PATHS_K {
+                                heap.pop();
                             }
                         }
-                        // Offline CL-solver capture gate (no-op unless the env gate is set).
-                        if let Some(cap) = capture_ref {
-                            cap.maybe_capture(
-                                *pid,
-                                solve_block,
-                                u64::try_from(micros).unwrap_or(u64::MAX),
-                                u64::try_from(sims).unwrap_or(0),
-                                u64::try_from(pieces).unwrap_or(0),
-                                result.as_ref(),
-                                resolved,
-                            );
-                        }
-                        result.map(|r| (*pid, r))
-                    })
-                    // Log solver pool state for every solved path (including
-                    // unprofitable) — diagnostic cross-referencing against sim
-                    // captured swaps.
-                    .inspect(|(pid, r)| {
-                        if !r.solver_pool_states.is_empty() {
-                            tracing::debug!(
-                                "[solver-st] path_id={pid} hops=[{}]",
-                                r.solver_pool_states.join(";")
-                            );
-                        }
-                    })
-                    .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
-                    .collect()
+                    }
+                    if let Some(cap) = capture_ref {
+                        cap.maybe_capture(
+                            pid,
+                            solve_block,
+                            u64::try_from(micros).unwrap_or(u64::MAX),
+                            u64::try_from(sims).unwrap_or(0),
+                            u64::try_from(pieces).unwrap_or(0),
+                            result.as_ref(),
+                            resolved,
+                        );
+                    }
+                    result.map(|r| (pid, r))
+                };
+
+                if lpt_partition_enabled() {
+                    let n_threads = rayon::current_num_threads().max(1);
+                    let costs: Vec<usize> =
+                        to_solve.iter().map(|(_, r)| path_cost_proxy(r)).collect();
+                    let bins = lpt_partition(to_solve.len(), n_threads, |i| costs[i]);
+                    let to_solve_ref = &to_solve;
+                    let solve_ref = &solve_fn;
+                    let per_bin: Vec<Vec<Option<(u64, SolvePathResult)>>> =
+                        std::thread::scope(|s| {
+                            let handles: Vec<_> = bins
+                                .iter()
+                                .enumerate()
+                                .map(|(bi, bin)| {
+                                    std::thread::Builder::new()
+                                        .name(format!("degenbot-solve-lpt-{bi}"))
+                                        .spawn_scoped(s, move || {
+                                            let mut out = Vec::with_capacity(bin.len());
+                                            for &i in bin {
+                                                let (pid, resolved) = &to_solve_ref[i];
+                                                out.push(solve_ref(*pid, resolved));
+                                            }
+                                            out
+                                        })
+                                        .unwrap_or_else(|e| {
+                                            tracing::error!(
+                                                "[raypar] spawn scoped solve thread failed: {e}"
+                                            );
+                                            std::process::abort();
+                                        })
+                                })
+                                .collect();
+                            handles
+                                .into_iter()
+                                .map(|h| {
+                                    h.join().unwrap_or_else(|_| {
+                                        tracing::error!("[raypar] scoped solve thread panicked");
+                                        std::process::abort();
+                                    })
+                                })
+                                .collect()
+                        });
+                    per_bin
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .inspect(|(pid, r)| {
+                            if !r.solver_pool_states.is_empty() {
+                                tracing::debug!(
+                                    "[solver-st] path_id={pid} hops=[{}]",
+                                    r.solver_pool_states.join(";")
+                                );
+                            }
+                        })
+                        .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
+                        .collect()
+                } else {
+                    to_solve
+                        .par_iter()
+                        .filter_map(|(pid, resolved)| solve_fn(*pid, resolved))
+                        .inspect(|(pid, r)| {
+                            if !r.solver_pool_states.is_empty() {
+                                tracing::debug!(
+                                    "[solver-st] path_id={pid} hops=[{}]",
+                                    r.solver_pool_states.join(";")
+                                );
+                            }
+                        })
+                        .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
+                        .collect()
+                }
             });
         if let Some(c) = capture.as_ref() {
             tracing::info!(
@@ -1166,5 +1287,81 @@ mod profit_clamp_recompute_tests {
     fn degenerate_path_returns_none() {
         let r = SolvePathResult::default();
         assert!(ArbitrageEngine::recompute_clamped_profit(&r).is_none());
+    }
+}
+
+#[cfg(test)]
+mod lpt_partition_tests {
+    use super::*;
+
+    #[test]
+    fn lpt_distributes_heavy_items_across_bins() {
+        // Costs: [100, 100, 100, 1, 1, 1, 1, 1, 1, 1] — three heavy items
+        // must go to three different bins (not clustered on one).
+        let costs = [100, 100, 100, 1, 1, 1, 1, 1, 1, 1];
+        let bins = lpt_partition(costs.len(), 3, |i| costs[i]);
+        assert_eq!(bins.len(), 3);
+        // Each bin should have exactly one heavy item.
+        for bin in &bins {
+            let heavy_count = bin.iter().filter(|&&i| costs[i] == 100).count();
+            assert!(
+                heavy_count <= 1,
+                "bin has {heavy_count} heavy items, expected <= 1"
+            );
+        }
+        // Total items preserved.
+        let total: usize = bins.iter().map(|b| b.len()).sum();
+        assert_eq!(total, costs.len());
+    }
+
+    #[test]
+    fn lpt_empty_items_produces_empty_bins() {
+        let bins = lpt_partition(0, 4, |_| 0);
+        assert_eq!(bins.len(), 4);
+        assert!(bins.iter().all(|b| b.is_empty()));
+    }
+
+    #[test]
+    fn lpt_fewer_items_than_bins() {
+        // 2 items, 8 bins — each item gets its own bin.
+        let costs = [50, 30];
+        let bins = lpt_partition(costs.len(), 8, |i| costs[i]);
+        assert_eq!(bins.len(), 8);
+        let non_empty: usize = bins.iter().filter(|b| !b.is_empty()).count();
+        assert_eq!(non_empty, 2);
+    }
+
+    #[test]
+    fn lpt_balances_load() {
+        // Costs: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1] on 3 bins.
+        // LPT assignment: 10→bin0(10), 9→bin1(9), 8→bin2(8), 7→bin1(16),
+        // 6→bin2(14), 5→bin0(15), 4→bin2(18), 3→bin1(19), 2→bin0(17),
+        // 1→bin0(18). Max load = 19, min load = 18. Well-balanced.
+        let costs = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+        let bins = lpt_partition(costs.len(), 3, |i| costs[i]);
+        let loads: Vec<usize> = bins
+            .iter()
+            .map(|b| b.iter().map(|&i| costs[i]).sum())
+            .collect();
+        let max_load = *loads.iter().max().unwrap();
+        let min_load = *loads.iter().min().unwrap();
+        // LPT guarantees max_load - min_load <= max_item_cost.
+        assert!(
+            max_load - min_load <= 10,
+            "load spread {max_load}-{min_load}={spread} exceeds max_item",
+            spread = max_load - min_load
+        );
+    }
+
+    #[test]
+    fn lpt_partition_enabled_default_on() {
+        // Default is ON (the env var is unset in test environments).
+        assert!(lpt_partition_enabled());
+    }
+
+    #[test]
+    fn lpt_zero_bins_returns_empty_vec() {
+        let bins = lpt_partition(5, 0, |_| 1);
+        assert!(bins.is_empty());
     }
 }
