@@ -10,7 +10,7 @@ use degenbot_solvers::mixed::MixedPoolRef;
 #[cfg(test)]
 use super::HashSet;
 
-use super::{ArbitrageEngine, BlockMetadata};
+use super::{ArbitrageEngine, BlockMetadata, HopType};
 
 impl ArbitrageEngine {
     /// Mark `pool_id` dirty, classifying it into the V2/V3/V4 dirty set by
@@ -21,17 +21,17 @@ impl ArbitrageEngine {
     /// write guard is released), taking only the engine `Mutex`. If `pool_id`
     /// isn't registered in `core`, the call is a no-op (the event was for a
     /// pool no path references).
-    pub fn insert_dirty(&mut self, pool_id: u64) {
+    pub fn insert_dirty(&self, pool_id: u64) {
         let core = self.core.read();
         if core.get_v2_pool_state(pool_id).is_some() {
             drop(core);
-            self.dirty_v2.insert(pool_id);
+            self.dirty_sets.insert(pool_id, HopType::V2);
         } else if core.get_v3_pool(pool_id).is_some() {
             drop(core);
-            self.dirty_v3.insert(pool_id);
+            self.dirty_sets.insert(pool_id, HopType::V3);
         } else if core.get_v4_pool(pool_id).is_some() {
             drop(core);
-            self.dirty_v4.insert(pool_id);
+            self.dirty_sets.insert(pool_id, HopType::V4);
         }
         // Unregistered pool_id → no-op (no path references it).
     }
@@ -47,10 +47,8 @@ impl ArbitrageEngine {
         self.core.write().expire_v3_buffered(block_number);
         self.core.write().expire_v4_buffered(block_number);
 
-        // Take ownership of dirty sets to avoid borrow conflict
-        let dirty_v2 = std::mem::take(&mut self.dirty_v2);
-        let dirty_v3 = std::mem::take(&mut self.dirty_v3);
-        let dirty_v4 = std::mem::take(&mut self.dirty_v4);
+        // Snapshot all dirty sets atomically (RAYPAR engine-shard T3).
+        let (dirty_v2, dirty_v3, dirty_v4) = self.dirty_sets.take_all();
 
         // Re-solve only paths containing updated pools (no batch send)
         self.rebuild_and_solve_affected(&dirty_v2, &dirty_v3, &dirty_v4, block_number, metadata);
@@ -72,7 +70,7 @@ impl ArbitrageEngine {
     /// calls that haven't been followed by `solve_dirty` yet.
     #[must_use]
     pub fn has_dirty_paths(&self) -> bool {
-        !self.dirty_v2.is_empty() || !self.dirty_v3.is_empty() || !self.dirty_v4.is_empty()
+        !self.dirty_sets.is_empty()
     }
 
     /// Snapshot every registered path's per-hop pool refs for the Option-A

@@ -57,6 +57,7 @@ use crate::bot_core::BotState;
 mod delivery_lifecycle;
 mod delivery_policy;
 mod diagnostic;
+pub(crate) mod dirty_sets;
 pub mod engine_handle;
 pub mod engine_subscriber;
 mod event_routing;
@@ -371,15 +372,10 @@ pub struct ArbitrageEngine {
     /// thresholds, and `result_tx`/`block_tx`; decoupled from solve state so a
     /// standalone consumer gets raw results without it.
     pub(crate) delivery: DeliveryPolicy,
-    /// Accumulated dirty V2 pool keys from `apply_log` calls since the last
-    /// `finalize_block`. Used by the pump for eager log processing.
-    dirty_v2: HashSet<u64>,
-    /// Accumulated dirty V3 pool keys from `apply_log` calls since the last
-    /// `finalize_block`. Used by the pump for eager log processing.
-    dirty_v3: HashSet<u64>,
-    /// Accumulated dirty V4 pool keys from `apply_log` calls since the last
-    /// `finalize_block`. Used by the pump for eager log processing.
-    dirty_v4: HashSet<u64>,
+    /// Shared dirty-pool-key sets (RAYPAR engine-shard T3, C42WKO).
+    /// Co-owned with the `EngineSubscriber` so `on_pool_state_updated`
+    /// can mark pools dirty without taking the engine Mutex.
+    pub(crate) dirty_sets: Arc<dirty_sets::DirtySets>,
     /// Dedup index: canonical `(pool_id, zero_for_one)` sequence → existing
     /// `path_id`. `register_path` is idempotent: re-registering the same hop
     /// sequence returns the existing `path_id` instead of allocating a new
@@ -443,9 +439,7 @@ impl ArbitrageEngine {
             next_path_id: 1, // path IDs start at 1
             path_signatures: HashMap::new(),
             delivery: DeliveryPolicy::default(),
-            dirty_v2: HashSet::new(),
-            dirty_v3: HashSet::new(),
-            dirty_v4: HashSet::new(),
+            dirty_sets: Arc::new(dirty_sets::DirtySets::new()),
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
         }
     }
@@ -605,19 +599,9 @@ impl ArbitrageEngine {
 
 #[cfg(test)]
 impl ArbitrageEngine {
-    /// Test-only: are the V2 dirty sets empty? (ADR-006 slice 4 adapter tests.)
+    /// Are all dirty sets empty? (Used by `has_dirty_paths` + adapter tests.)
     #[must_use]
-    pub fn dirty_v2_is_empty(&self) -> bool {
-        self.dirty_v2.is_empty()
-    }
-    /// Test-only: are the V3 dirty sets empty?
-    #[must_use]
-    pub fn dirty_v3_is_empty(&self) -> bool {
-        self.dirty_v3.is_empty()
-    }
-    /// Test-only: are the V4 dirty sets empty?
-    #[must_use]
-    pub fn dirty_v4_is_empty(&self) -> bool {
-        self.dirty_v4.is_empty()
+    pub fn dirty_sets_is_empty(&self) -> bool {
+        self.dirty_sets.is_empty()
     }
 }

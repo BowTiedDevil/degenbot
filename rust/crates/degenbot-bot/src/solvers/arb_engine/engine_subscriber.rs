@@ -3,19 +3,23 @@
 //! The engine is shared as `Arc<Mutex<ArbitrageEngine>>` (the pump + Python both
 //! hold clones). `EngineSubscriber` upgrades that to a subscriber: when
 //! `Bot`'s `LogDispatcher` notifies `on_pool_state_updated(pool_id)`, this
-//! adapter locks the engine **alone** (the `BotState` write guard is already
-//! released by `dispatch`) and calls `engine.insert_dirty(pool_id)`.
+//! adapter reads the shared `BotState` directly (no engine lock) and
+//! classifies the pool into the shared `DirtySets` (no engine lock).
 //!
-//! **Lock order (D2):** engine-then-core is preserved *by not nesting* — the
-//! core write was released before notify fired, so the engine lock here is
-//! taken with no core lock held. `insert_dirty` takes a *read* guard on core
-//! (engine-then-core-read), which is the same order `apply_log` already uses.
+//! RAYPAR engine-shard T3 (C42WKO): previously this adapter took the engine
+//! `Mutex` to call `engine.insert_dirty`, parking behind every drain.
+//! Now it holds a strong `Arc<DirtySets>` + `Arc<StateLock<BotState>>`
+//! and writes the dirty marker under a short per-set lock — zero engine
+//! contention with the drain path.
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 
 use crate::bot_core::log_dispatcher::PoolStateSubscriber;
+use crate::bot_core::state_lock::StateLock;
+use crate::bot_core::BotState;
+use crate::solvers::arb_engine::dirty_sets::DirtySets;
 use crate::solvers::arb_engine::ArbitrageEngine;
 
 /// A `PoolStateSubscriber` backed by a shared `ArbitrageEngine`.
@@ -26,31 +30,53 @@ use crate::solvers::arb_engine::ArbitrageEngine;
 /// `Weak<dyn PoolStateSubscriber>`.
 pub struct EngineSubscriber {
     engine: Weak<Mutex<ArbitrageEngine>>,
+    /// Shared dirty sets — written without taking the engine lock.
+    dirty: Arc<DirtySets>,
+    /// Shared core state for pool classification (V2/V3/V4).
+    core: Arc<StateLock<BotState>>,
 }
 
 impl EngineSubscriber {
-    /// Construct from a weak reference to the shared engine.
-    ///
-    /// The strong `Arc<dyn PoolStateSubscriber>` that keeps the dispatcher's
-    /// `Weak` alive is owned by [`EngineHandle`] (the cycle-free home on the
-    /// engine side, ADR-006) — see `EngineHandle::subscriber_weak`.
+    /// Construct from a weak reference to the shared engine + the shared
+    /// dirty sets + core state.
     #[must_use]
-    pub fn new(engine: Weak<Mutex<ArbitrageEngine>>) -> Self {
-        Self { engine }
+    pub(crate) fn new(
+        engine: Weak<Mutex<ArbitrageEngine>>,
+        dirty: Arc<DirtySets>,
+        core: Arc<StateLock<BotState>>,
+    ) -> Self {
+        Self {
+            engine,
+            dirty,
+            core,
+        }
     }
 }
 
 impl PoolStateSubscriber for EngineSubscriber {
     fn on_pool_state_updated(&self, pool_id: u64) {
-        // Upgrade the weak engine ref. If all strong handles dropped (engine
-        // de-registered), silently no-op — the dispatcher already skips dead
-        // Weaks, but this guards the race where the last handle drops between
-        // the dispatcher's `upgrade` and this call.
-        let Some(engine) = self.engine.upgrade() else {
+        // Liveness check: if the engine is gone, don't dirty (the drain won't
+        // run to consume it). This upgrade does NOT lock the engine Mutex —
+        // it just checks the Arc strong count.
+        let Some(_engine) = self.engine.upgrade() else {
             return;
         };
-        // Lock the engine ALONE (core write already released by `dispatch`).
-        engine.lock().insert_dirty(pool_id);
+        // Read core directly (no engine lock) to classify the pool.
+        let core = self.core.read();
+        if core.get_v2_pool_state(pool_id).is_some() {
+            drop(core);
+            self.dirty
+                .insert(pool_id, degenbot_solvers::mixed::HopType::V2);
+        } else if core.get_v3_pool(pool_id).is_some() {
+            drop(core);
+            self.dirty
+                .insert(pool_id, degenbot_solvers::mixed::HopType::V3);
+        } else if core.get_v4_pool(pool_id).is_some() {
+            drop(core);
+            self.dirty
+                .insert(pool_id, degenbot_solvers::mixed::HopType::V4);
+        }
+        // Unregistered pool_id → no-op (no path references it).
     }
 }
 
@@ -60,43 +86,34 @@ mod tests {
     use crate::solvers::arb_engine::ArbitrageEngine;
     use std::sync::Arc;
 
-    /// RED→GREEN tracer (ADR-006 slice 4): the adapter forwards a notify to
-    /// `engine.insert_dirty`, dirtying the pool in the engine's set. The
-    /// engine's own `core` is empty here so `insert_dirty` is a no-op, but the
-    /// adapter must not panic and must upgrade the weak ref successfully.
     #[test]
     fn adapter_forwards_notify_to_engine_insert_dirty() {
         let engine = Arc::new(Mutex::new(ArbitrageEngine::new()));
-        let subscriber = EngineSubscriber::new(Arc::downgrade(&engine));
+        let core = Arc::clone(engine.lock().core());
+        let dirty = Arc::clone(&engine.lock().dirty_sets);
+        let subscriber = EngineSubscriber::new(Arc::downgrade(&engine), dirty, core);
 
         // Engine has no pools registered → insert_dirty is a no-op, but the
-        // adapter must upgrade + lock + call without panic.
+        // adapter must upgrade + read core + call without panic.
         subscriber.on_pool_state_updated(42);
 
         // Dirty sets remain empty (pool 42 isn't registered).
         let engine_guard = engine.lock();
         assert!(
-            engine_guard.dirty_v2_is_empty(),
-            "unregistered pool must not dirty v2"
-        );
-        assert!(
-            engine_guard.dirty_v3_is_empty(),
-            "unregistered pool must not dirty v3"
-        );
-        assert!(
-            engine_guard.dirty_v4_is_empty(),
-            "unregistered pool must not dirty v4"
+            engine_guard.dirty_sets_is_empty(),
+            "unregistered pool must not dirty any set"
         );
     }
 
     /// A dead weak (engine dropped) → `on_pool_state_updated` silently no-ops.
     #[test]
     fn adapter_silently_skips_dropped_engine() {
-        let subscriber = {
-            let engine = Arc::new(Mutex::new(ArbitrageEngine::new()));
-            EngineSubscriber::new(Arc::downgrade(&engine))
-            // engine drops here → weak goes dead.
-        };
+        let engine = Arc::new(Mutex::new(ArbitrageEngine::new()));
+        let core = Arc::clone(engine.lock().core());
+        let dirty = Arc::clone(&engine.lock().dirty_sets);
+        let subscriber = EngineSubscriber::new(Arc::downgrade(&engine), dirty, core);
+        // Intentionally drop the engine AFTER constructing the subscriber.
+        drop(engine);
         // Must not panic.
         subscriber.on_pool_state_updated(42);
     }

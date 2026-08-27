@@ -1317,7 +1317,7 @@ mod tests {
 
         // Mark a pool dirty so `has_dirty_paths()` is true (mirrors a WS log
         // having arrived). The eagerly-solved result is already in `results`.
-        engine.dirty_v2.insert(v2_fwd_a);
+        engine.dirty_sets.insert(v2_fwd_a, HopType::V2);
 
         // Non-default metadata — every field non-zero and distinct from default.
         let metadata = BlockMetadata {
@@ -3157,16 +3157,9 @@ mod tests {
         engine.core.write().restore_all_pools_before_block(5);
         engine.path_resolved.clear();
         for &(hop_type, pool_key) in engine.pool_to_paths.keys() {
+            engine.dirty_sets.insert(pool_key, hop_type);
             match hop_type {
-                HopType::V2 => {
-                    engine.dirty_v2.insert(pool_key);
-                }
-                HopType::V3 => {
-                    engine.dirty_v3.insert(pool_key);
-                }
-                HopType::V4 => {
-                    engine.dirty_v4.insert(pool_key);
-                }
+                HopType::V2 | HopType::V3 | HopType::V4 => {}
                 HopType::SolidlyStable
                 | HopType::BalancerWeighted
                 | HopType::BalancerStable
@@ -5260,7 +5253,7 @@ mod tests {
         // T0 no-op gating: the span fires only when the engine holds dirty
         // paths — mark one so this test still exercises the emitted-span path.
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
-        engine.lock().dirty_v2.insert(0x0BAD_F00D);
+        engine.lock().dirty_sets.insert(0x0BAD_F00D, HopType::V2);
         let handle = EngineHandle::new(engine);
         tracing::subscriber::with_default(subscriber, || {
             handle.solve_dirty(MY_SOLVE_BLOCK, &BlockMetadata::default());

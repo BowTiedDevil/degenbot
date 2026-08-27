@@ -59,8 +59,14 @@ impl EngineHandle {
     /// for the dispatcher's `Weak`) — see [`subscriber_weak`](Self::subscriber_weak).
     #[must_use]
     pub fn new(engine: Arc<parking_lot::Mutex<ArbitrageEngine>>) -> Self {
+        // RAYPAR engine-shard T3: pass the shared dirty sets + core to the
+        // subscriber so on_pool_state_updated never takes the engine lock.
+        let (dirty, core) = {
+            let guard = engine.lock();
+            (Arc::clone(&guard.dirty_sets), Arc::clone(guard.core()))
+        };
         let subscriber: Arc<dyn PoolStateSubscriber> =
-            Arc::new(EngineSubscriber::new(Arc::downgrade(&engine)));
+            Arc::new(EngineSubscriber::new(Arc::downgrade(&engine), dirty, core));
         Self { engine, subscriber }
     }
 
