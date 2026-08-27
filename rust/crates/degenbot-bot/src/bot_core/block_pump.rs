@@ -13,7 +13,7 @@
 //!
 //! The pump's **mechanics stay unchanged** from the `BlockPump` era: dual
 //! `newHeads` + `logs` subscription, Rust-side topic+address filtering, block-
-//! boundary detection, 50ms send-result debounce, gap/timeout `eth_getLogs`
+//! boundary detection, send-result debounce, gap/timeout `eth_getLogs`
 //! backfill. Only the owner (`Bot`, via the wiring layer) + the per-block
 //! dispatch targets changed.
 //!
@@ -71,7 +71,7 @@ const BACKFILL_TIMEOUT_SECS: u64 = 60;
 /// before solving and dispatching results to Python. Each new log resets
 /// the timer. This debouncing ensures one dispatch per burst of logs
 /// rather than one per individual log.
-const DEBOUNCE_MS: u64 = 50;
+const DEBOUNCE_MS: u64 = 250;
 
 /// If no block header arrives within this window, poll `eth_blockNumber`
 /// and backfill the gap — independent of log activity.
@@ -1617,20 +1617,19 @@ impl BlockPump {
             // between frames), the poll found the channel empty and the solve
             // fired prematurely. The next frame then triggered ANOTHER solve,
             // producing 2-3 serial solves per block whose total wall-time was
-            // the sum. Replaced with a 50ms timed `peek()` await: if the WS
-            // has another event ready within 50ms, this resolves `Ok` and the
+            // the sum. Replaced with a timed `peek()` await: if the WS
+            // has another event ready, this resolves `Ok` and the
             // solve is skipped (the loop processes the new event + re-checks).
-            // If no event arrives in 50ms, the stream is genuinely quiet and
+            // If no event arrives, the stream is genuinely quiet and
             // the solve fires — coalescing all logs in the burst into one
-            // solve. 50ms is well within the 12s block interval and is the
-            // same `DEBOUNCE_MS` already used for the publish gate.
+            // solve.
             let has_buffered = if self.sink.has_dirty_paths() {
                 // Only await when there's work to solve — otherwise skip
                 // straight to the select (no dirty paths = nothing to do).
                 // `peek()` resolves immediately when an event is buffered or
                 // the stream has ended (Ready(None)); it returns Pending (and
                 // yields to the runtime so the WS task can deliver) only when
-                // the stream is alive but momentarily empty. The 50ms timeout
+                // the stream is alive but momentarily empty. The timeout
                 // fires only in that latter case — coalescing burst gaps without
                 // adding latency to streams with ready events.
                 use std::pin::Pin;
@@ -1640,8 +1639,9 @@ impl BlockPump {
                 )
                 .await
                 {
-                    Ok(Some(_)) => true, // event buffered — skip solve
-                    // stream ended OR 50ms elapsed — dispatch solve
+                    // event buffered — skip solve
+                    Ok(Some(_)) => true,
+                    // stream ended OR debounce timer elapsed — dispatch solve
                     _ => false,
                 }
             } else {
@@ -5169,7 +5169,7 @@ mod tests {
     /// 3 same-block logs in a tight burst → exactly ONE `on_send`, fired at
     /// the burst tail (after the 3rd log applies + the stream settles), NOT
     /// 3× (one per log) and NOT zero. RED against the wall-clock timer: with
-    /// `stream::iter` (no delay between events) the 50ms `DEBOUNCE_MS` timer
+    /// `stream::iter` (no delay between events) the `DEBOUNCE_MS` timer
     /// never fires before the stream ends, so `on_send` is never called.
     #[tokio::test]
     async fn burst_of_logs_publishes_once_at_tail_via_quiesce_gate() {
@@ -5185,7 +5185,7 @@ mod tests {
             ))
         };
         // 3 same-block sync logs, then stream exhaustion. Under the wall-clock
-        // debounce the 50ms timer never fires before Ok(None) returns → 0
+        // debounce the timer never fires before Ok(None) returns → 0
         // sends. Under the quiesce gate, after the 3rd log applies the settle
         // probe (timeout(ZERO) on the exhausted stream) flushes on_send once.
         let combined =

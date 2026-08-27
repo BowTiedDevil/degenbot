@@ -118,9 +118,8 @@ class TestPySubscriberAdapterParity:
     """§4.2 parity: Rust `LogDispatcher` fan-out matches the Python oracle's
     notification ordering + skip-on-drop contract.
 
-    Notifications are delivered via a batched drainer (50ms flush interval),
-    so each test waits up to `_SUBSCRIBER_FLUSH_S` after dispatch for the
-    expected notification to arrive.
+    Notifications are delivered via a batched drainer, so each test waits up to
+    `_SUBSCRIBER_FLUSH_S` after dispatch for the expected notification to arrive.
     """
 
     @staticmethod

@@ -27,7 +27,7 @@
 //! The subscriber notify queue is an **unbounded** lock-free queue
 //! ([`SegQueue`](crossbeam_queue::SegQueue)) — overflow is impossible by
 //! design. The drainer never blocks the emitter (the pump's notify path),
-//! and the OS thread always keeps up (50ms flush interval, 256-entry
+//! and the OS thread always keeps up (flush interval, 256-entry
 //! batches). At flush time, coalesce-to-latest-per-pool is applied: a
 //! `pool_id` appears at most once per batch per subscriber. A settlement-arbitrage bot
 //! solves off `BotState`'s current view, not every intermediate transition,
