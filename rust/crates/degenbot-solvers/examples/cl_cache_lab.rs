@@ -118,6 +118,8 @@ fn main() {
     let mut catalog = strategy_catalog();
     let mut total_mismatches: usize = 0;
     let mut n_paths = 0usize;
+    // Class-indexed rebuild-delta matrix rows: [strategy][class], class 0-3 = price/liquidity/tick/restore.
+    let mut class_agg: Vec<[u64; 4]> = vec![[0; 4]; catalog.len()];
 
     for (line_no, line) in content.lines().filter(|l| !l.trim().is_empty()).enumerate() {
         if n_paths >= max_paths {
@@ -193,6 +195,14 @@ fn main() {
                     CacheEvent::Restore
                 }
             };
+            let class: usize = match &event {
+                CacheEvent::PriceMove { .. } => 0,
+                CacheEvent::Liquidity { .. } => 1,
+                CacheEvent::TickCross { .. } => 2,
+                _ => 3,
+            };
+            let pre: Vec<degenbot_solvers::cl_cache::BuildCounters> =
+                catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
             let reference = degenbot_solvers::mobius_v3_int::int_solve_cl_path(&seq_refs);
             for (si, s) in catalog.iter_mut().enumerate() {
@@ -213,6 +223,11 @@ fn main() {
                     );
                 }
             }
+            for (si, s) in catalog.iter().enumerate() {
+                let post = s.counters();
+                class_agg[si][class] = class_agg[si][class]
+                    .saturating_add(post.crossing_tables.saturating_sub(pre[si].crossing_tables));
+            }
         }
         println!(
             "  path {pid} mismatches={:?}",
@@ -225,6 +240,17 @@ fn main() {
         n_paths += 1;
     }
 
+    println!("---- class rebuild deltas ----");
+    for (si, s) in catalog.iter().enumerate() {
+        println!(
+            "{} price={} liquidity={} tick={} restore={}",
+            s.name(),
+            class_agg[si][0],
+            class_agg[si][1],
+            class_agg[si][2],
+            class_agg[si][3]
+        );
+    }
     println!("---- counters ----");
     for s in &catalog {
         let c = s.counters();
