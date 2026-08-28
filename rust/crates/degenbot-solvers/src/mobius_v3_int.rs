@@ -1097,17 +1097,11 @@ pub fn int_solve_v3_v3(
 /// sequence.
 #[hotpath::measure(label = "cl_solve.build_crossing_table")]
 fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossing> {
-    // `compute_crossing(k)` is O(k); the full table is O(len²) with len
-    // typically ≤ 15 — negligible against a single simulation.
-    (0..seq.ranges.len())
-        .map(|k| {
-            #[expect(clippy::expect_used)] // k is always in 0..ranges.len() (documented)
-            {
-                seq.compute_crossing(k)
-                    .expect("k in 0..ranges.len() is always in bounds")
-            }
-        })
-        .collect()
+    // O(N) single pass via `crossings()` (replaces the prior O(N²)
+    // `compute_crossing(k)` per-k re-scan — the same fix applied to
+    // `profit_envelope::hop_lines_and_cap`). Byte-identical results
+    // (proven by `crossings_matches_per_k_compute_crossing`).
+    seq.crossings()
 }
 
 /// A CL `ending_range` with FEWER than this many word boundaries stays on the linear `int_simulate_v3_swap` walk (the profile is not worth building); denser ranges get a precomputed [`V3WordProfile`].
