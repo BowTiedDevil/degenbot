@@ -914,7 +914,20 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     // input, so the pruning endpoint assumption holds at discard time.
     let mut lines2 = vec![Line::IDENTITY];
     let domain = xmax;
-    for (hop_ls, _) in &all_hops {
+    for (hop_ls, _) in &mut all_hops {
+        // Prune each hop's tangent lines BEFORE composition.
+        //
+        // Soundness: CL swap output is monotonically increasing (more input
+        // → more output). If line A dominates line B within this hop
+        // (A ≤ B at both x=0 and x=domain), then for any subsequent
+        // increasing composition C, C∘A ≤ C∘B — the domination survives
+        // composition. So dropping B before the product loop changes
+        // nothing about the final envelope.
+        //
+        // Effect: collapses a 3000-line CL hop to ~50 Pareto-front survivors
+        // BEFORE the product loop, turning a 3000×3000 = 9M composition into
+        // 50×50 = 2500. The intermediate `next` never explodes.
+        prune(hop_ls, domain);
         let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
         for outer in hop_ls {
             for inner in &lines2 {
