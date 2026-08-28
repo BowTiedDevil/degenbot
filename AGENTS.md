@@ -20,6 +20,20 @@ Prefer enum-based finite state machines to manage transitions within systems. Wh
 ## Commands
 See the justfile.
 
+## Rebuilding the Rust `.so` after edits
+
+`uv run maturin develop` and even `cargo clean -p <crate>` do **not** reliably force a from-source recompile of the PyO3 `.so` — maturin uses cached artifacts across different feature-flag hash variants and `uv sync` installs a pre-built wheel in milliseconds. An apparently successful rebuild (~0.3–6s compile, no errors) silently ships a **stale `.so`** that doesn't contain the changes. This has bitten multiple sessions.
+
+The only reliable way to force the `.so` to pick up Rust source changes:
+
+```bash
+uv sync --reinstall-package degenbot
+```
+
+This takes ~15s (actual recompile). Verify before trusting any bot run after edits.
+
+The telltale sign of a stale `.so`: solve-phase telemetry repeating the **pre-fix** numbers and `slowest.paths` entries for the same path shape at the same multi-second latency, despite confirmed source edits + `cargo check` + `cargo test` passing locally.
+
 ## Python Environment
 Use `uv`.
 
