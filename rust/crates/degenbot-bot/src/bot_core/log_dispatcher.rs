@@ -483,6 +483,13 @@ impl LogDispatcher {
         if let Some(p) = crate::instruments::pipeline() {
             p.observe_log_decode(decode_start.elapsed().as_secs_f64());
         }
+        if decoded.is_some() {
+            if let Some(p) = crate::instruments::pipeline() {
+                p.count_log_decoded();
+            }
+        } else if let Some(p) = crate::instruments::pipeline() {
+            p.count_log_undecoded();
+        }
         let Some(decoded) = decoded else {
             // [trace-dispatch] (DEGENBOT_TRACE_DISPATCH): a relevant-topic log that
             // NO decoder recognized. Distinct from "apply miss". Zero-cost unless
@@ -572,6 +579,8 @@ impl LogDispatcher {
                 tracing::info!(
                     target: "degenbot::state",
                     block = log.block_number,
+                    log.index = ?log.log_index,
+                    tx.index = ?log.transaction_index,
                     pool.id = pool_id,
                     pool = %identity,
                     "[state] pool event applied"

@@ -47,10 +47,20 @@ pub struct PipelineInstruments {
     blocks_observed: Counter<u64>,
     /// Relevant-topic logs entering the dispatcher.
     logs_received: Counter<u64>,
+    /// Every `WsEvent::Log` received by the WS pump (pre topic-filter) — the
+    /// delivery-volume signal pairing with `logs_received` (relevant subset).
+    ws_logs_seen: Counter<u64>,
     /// Logs applied to a registered pool.
     logs_applied: Counter<u64>,
+    /// Relevant-topic logs a decoder recognized (decode success).
+    logs_decoded: Counter<u64>,
+    /// Relevant-topic logs that matched NO decoder (the undecoded topic0 /
+    /// unknown-fork class feeding `MissedLog` desyncs).
+    logs_undecoded: Counter<u64>,
     /// Relevant-topic logs that decoded but matched no registered pool (apply-miss).
     apply_missed: Counter<u64>,
+    /// Published blocks judged by the solver-state verifier.
+    solver_verify_blocks: Counter<u64>,
     /// Header-gap / settle backfills executed.
     backfills_executed: Counter<u64>,
     /// Drain FIFO depth at dispatch time (approximate backlog signal).
@@ -146,6 +156,22 @@ impl PipelineInstruments {
             apply_missed: meter
                 .u64_counter("degenbot.logs.apply_missed")
                 .with_description("Relevant-topic logs decoded but no registered pool (apply-miss)")
+                .build(),
+            ws_logs_seen: meter
+                .u64_counter("degenbot.ws.logs.seen")
+                .with_description("Every WS log event received by the pump (pre topic-filter)")
+                .build(),
+            logs_decoded: meter
+                .u64_counter("degenbot.logs.decoded")
+                .with_description("Relevant-topic logs a decoder recognized")
+                .build(),
+            logs_undecoded: meter
+                .u64_counter("degenbot.logs.undecoded")
+                .with_description("Relevant-topic logs that matched no decoder")
+                .build(),
+            solver_verify_blocks: meter
+                .u64_counter("degenbot.solver.verify.blocks")
+                .with_description("Published blocks judged by the solver-state verifier")
                 .build(),
             backfills_executed: meter
                 .u64_counter("degenbot.backfills.executed")
@@ -294,6 +320,26 @@ impl PipelineInstruments {
     /// One relevant-topic log that decoded but matched no registered pool.
     pub fn count_log_apply_missed(&self) {
         self.apply_missed.add(1, &[]);
+    }
+
+    /// One WS log event received by the pump (pre topic-filter).
+    pub fn count_ws_log_seen(&self) {
+        self.ws_logs_seen.add(1, &[]);
+    }
+
+    /// One relevant-topic log a decoder recognized.
+    pub fn count_log_decoded(&self) {
+        self.logs_decoded.add(1, &[]);
+    }
+
+    /// One relevant-topic log that matched no decoder (undecoded topic0).
+    pub fn count_log_undecoded(&self) {
+        self.logs_undecoded.add(1, &[]);
+    }
+
+    /// One published block handed to the solver-state verifier.
+    pub fn count_solver_verify_block(&self) {
+        self.solver_verify_blocks.add(1, &[]);
     }
 
     /// One executed backfill range.
@@ -485,6 +531,36 @@ mod kind_tests {
         assert!(text.contains("kind=\"sim_failure\""));
         assert!(text.contains("kind=\"ws_completeness\""));
         // Provider stays alive to the end of the test (readers hold no strong ref).
+        drop(provider);
+    }
+
+    /// WS-log pipeline counters for the desync visibility work (2BOI2V):
+    /// "degenbot.ws.logs.seen" (every WS log event), "degenbot.logs.decoded"
+    /// (decoder matched), "degenbot.logs.undecoded" (relevant-topic decode
+    /// miss), "degenbot.solver.verify.blocks" (published blocks judged).
+    /// These four families answer "did the log arrive, was it decoded, and
+    /// was the solver-state check reached" from the /metrics scrape alone.
+    #[test]
+    fn ws_pipeline_counter_families_are_scrapeable() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test_ws"));
+        instruments.count_ws_log_seen();
+        instruments.count_log_decoded();
+        instruments.count_log_undecoded();
+        instruments.count_solver_verify_block();
+        let text = crate::metrics::render(&registry);
+        for family in [
+            "degenbot_ws_logs_seen_total",
+            "degenbot_logs_decoded_total",
+            "degenbot_logs_undecoded_total",
+            "degenbot_solver_verify_blocks_total",
+        ] {
+            assert!(
+                text.contains(family),
+                "WS pipeline counter family missing from exposition: {family} (got {text})"
+            );
+        }
         drop(provider);
     }
 

@@ -66,6 +66,14 @@ pub mod instruments {
         /// no-op
         pub fn count_log_apply_missed(&self) {}
         /// no-op
+        pub fn count_ws_log_seen(&self) {}
+        /// no-op
+        pub fn count_log_decoded(&self) {}
+        /// no-op
+        pub fn count_log_undecoded(&self) {}
+        /// no-op
+        pub fn count_solver_verify_block(&self) {}
+        /// no-op
         pub fn count_backfill(&self) {}
         /// no-op
         pub fn set_drain_queue_depth(&self, _depth: u64) {}

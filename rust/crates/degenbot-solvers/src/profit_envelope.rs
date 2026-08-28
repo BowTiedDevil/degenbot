@@ -27,7 +27,7 @@
 
 use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
+use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 
 /// One affine upper-bound line: `y = ceil((A + B·x) / C)` with `C > 0`, `B ≥ 0`.
 /// `A` may be negative (lines anchored past their own window's left edge).
@@ -276,19 +276,18 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             if seq.ranges.is_empty() {
                 return None;
             }
-            let mut lines: Vec<Line> = Vec::with_capacity(seq.ranges.len());
-            let mut acc_in: U256;
-            let mut acc_out: U256;
-            for k in 0..seq.ranges.len() {
-                let cr: IntTickRangeCrossing = seq.compute_crossing(k)?;
+            // O(N) single pass: `crossings()` accumulates the per-range
+            // crossing once, replacing the prior O(N²) `compute_crossing(k)`
+            // per-iteration re-scan that dominated gate time on dense-tick
+            // pools (e.g. 1-bps USDC/USDT with thousands of ranges).
+            let crossings = seq.crossings();
+            let mut lines: Vec<Line> = Vec::with_capacity(crossings.len());
+            for cr in &crossings {
                 // Anchor cumulative (gross_input, output) at the boundary
-                // ENTERING range k: `compute_crossing(k)` already sums
-                // ranges [0, k), so it is the anchor this tangent line
-                // needs. The trailing `acc_*` updates after line emission
-                // Every `compute_crossing(k)` result provides the
-                // cumulative anchor at the boundary ENTERING range k.
-                acc_in = cr.crossing_gross_input;
-                acc_out = cr.crossing_output;
+                // ENTERING range k: `crossings[k]` carries the sum of
+                // ranges [0, k) — the anchor this tangent line needs.
+                let acc_in = cr.crossing_gross_input;
+                let acc_out = cr.crossing_output;
                 let er = &cr.ending_range;
                 let liq = er.liquidity;
                 if liq == 0 {
@@ -390,8 +389,10 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             // sqrt_price; the result narrows to U256 with saturation (a cap
             // shrunk by saturation is still a sound search-domain bound —
             // the binary search just explores a smaller input range).
-            let cr_last = seq.compute_crossing(seq.ranges.len() - 1)?;
-            let er = cr_last.ending_range;
+            // The last crossing already carries the accumulated anchor
+            // (O(1) reuse — no re-scan).
+            let cr_last = crossings.last()?;
+            let er = cr_last.ending_range.clone();
             let exit = if er.zero_for_one {
                 er.sqrt_price_lower_x96
             } else {
@@ -522,10 +523,8 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
         return "reject=empty_ranges".to_string();
     }
     let mut any_real = false;
-    for k in 0..seq.ranges.len() {
-        let Some(cr) = seq.compute_crossing(k) else {
-            return format!("reject=crossing_none@k={k}");
-        };
+    // O(N) single pass (same fix as `hop_lines_and_cap`).
+    for (k, cr) in seq.crossings().into_iter().enumerate() {
         let er = &cr.ending_range;
         // Zero-liquidity ranges are SKIPPED by the production envelope builder
         // (crossing is free in computeSwapStep L=0), so they are not a

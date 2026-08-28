@@ -26,7 +26,7 @@ use super::{ArbitrageEngine, BlockMetadata, HashMap, HashSet};
 // behavior (develop on loud failures).
 
 use crate::bot_core::resolve::resolve_hops;
-use ::degenbot_solvers::mixed::{HopType, ResolvedMixedPath, SolvePathResult};
+use ::degenbot_solvers::mixed::{HopType, ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
 /// How many slowest-path entries the solve-cycle completion event names
 /// (D63GSE intra-solve visibility).
@@ -755,6 +755,12 @@ impl ArbitrageEngine {
         // the CL solver can be optimized offline. None (no-op) unless gated.
         let capture = HeavyClPathCapture::from_env();
         let capture_ref: Option<&HeavyClPathCapture> = capture.as_ref();
+        // Optional offline mixed V2+CL solver capture (same gate): heavy
+        // mixed paths (e.g. path 7042 V2→V3→V3) dispatch to
+        // `exact_solve_mixed_path_n_cached`, which the all-CL capture skips.
+        // Captures to heavy_mixed_solve_captures.jsonl for the replay harness.
+        let capture_mixed = HeavyMixedPathCapture::from_env();
+        let capture_mixed_ref: Option<&HeavyMixedPathCapture> = capture_mixed.as_ref();
         let solved: Vec<(u64, SolvePathResult)> =
             hotpath::measure_block!("arb_solve.rayon_solve", {
                 // Per-path solve + diagnostics closure (shared by the LPT
@@ -826,6 +832,17 @@ impl ArbitrageEngine {
                         }
                     }
                     if let Some(cap) = capture_ref {
+                        cap.maybe_capture(
+                            pid,
+                            solve_block,
+                            u64::try_from(micros).unwrap_or(u64::MAX),
+                            u64::try_from(sims).unwrap_or(0),
+                            u64::try_from(pieces).unwrap_or(0),
+                            result.as_ref(),
+                            resolved,
+                        );
+                    }
+                    if let Some(cap) = capture_mixed_ref {
                         cap.maybe_capture(
                             pid,
                             solve_block,
@@ -1203,6 +1220,172 @@ impl HeavyClPathCapture {
         {
             use std::io::Write;
             let _ = writeln!(f, "{doc}");
+        }
+    }
+}
+
+/// One-shot capture of heavy *mixed* V2+CL solver inputs (the sibling of
+/// [`HeavyClPathCapture`] for paths that dispatch to
+/// `exact_solve_mixed_path_n_cached`). Records the V2 `IntHopState` per V2 hop
+/// and the `IntV3TickRangeSequence` ranges per CL hop (plus `hop_order`) so
+/// `examples/mixed_solve_replay.rs` can reconstruct the exact solver call,
+/// assert golden determinism, and profile the bottleneck offline.
+///
+/// Gated by the same `DEGENBOT_SOLVER_CAPTURE=1` env. Writes to
+/// `heavy_mixed_solve_captures.jsonl` (override via
+/// `DEGENBOT_SOLVER_CAPTURE_OUT`). Captures only paths that mix ≥1 V2 and
+/// ≥1 CL hop; all-CL and all-V2 paths are left to the existing captures.
+struct HeavyMixedPathCapture {
+    min_us: u64,
+    min_sims: u64,
+    max_captures: u64,
+    out_path: std::path::PathBuf,
+    seen: std::sync::Mutex<std::collections::HashSet<u64>>,
+    count: std::sync::atomic::AtomicU64,
+}
+
+impl HeavyMixedPathCapture {
+    fn from_env() -> Option<Self> {
+        std::env::var_os("DEGENBOT_SOLVER_CAPTURE")?;
+        Some(Self {
+            min_us: std::env::var("DEGENBOT_SOLVER_CAPTURE_MIN_US")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(50_000),
+            min_sims: std::env::var("DEGENBOT_SOLVER_CAPTURE_MIN_SIMS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2_000),
+            max_captures: std::env::var("DEGENBOT_SOLVER_CAPTURE_CAP")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(16),
+            out_path: std::env::var("DEGENBOT_SOLVER_CAPTURE_OUT").map_or_else(
+                |_| {
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../degenbot-solvers/tests/fixtures/heavy_mixed_solve_captures.jsonl")
+                },
+                |p| {
+                    // If the caller overrides the out path for both captures,
+                    // disambiguate the mixed corpus into a sibling filename
+                    // rather than overwriting the all-CL fixture.
+                    let mut pb = std::path::PathBuf::from(p);
+                    if pb.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                        if let Some(stem) = pb.file_stem().and_then(|s| s.to_str()) {
+                            pb.set_file_name(format!("{stem}_mixed.jsonl"));
+                        }
+                    }
+                    pb
+                },
+            ),
+            seen: std::sync::Mutex::new(std::collections::HashSet::new()),
+            count: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    /// Append the mixed V2+CL solver input for a resolved heavy path, iff it
+    /// is a mixed (≥1 V2 and ≥1 CL) not-yet-captured path.
+    #[expect(clippy::too_many_arguments)]
+    fn maybe_capture(
+        &self,
+        pid: u64,
+        block: u64,
+        micros_us: u64,
+        sims: u64,
+        pieces: u64,
+        golden: Option<&SolvePathResult>,
+        resolved: &ResolvedMixedPath,
+    ) {
+        if self.count.load(std::sync::atomic::Ordering::Relaxed) >= self.max_captures {
+            return;
+        }
+        if micros_us < self.min_us && sims < self.min_sims {
+            return;
+        }
+        if resolved.hops.len() < 2 {
+            return;
+        }
+        // Only mixed paths: ≥1 V2 hop AND ≥1 CL hop. The all-CL capture owns
+        // pure-CL; all-V2 dispatches to the closed-form Möbius solver.
+        let has_v2 = resolved
+            .hops
+            .iter()
+            .any(|h| matches!(h, ResolvedHop::V2 { .. }));
+        let has_cl = resolved.hops.iter().any(|h| h.as_int_sequence().is_some());
+        if !has_v2 || !has_cl {
+            return;
+        }
+        let Ok(mut seen) = self.seen.lock() else {
+            return;
+        };
+        if !seen.insert(pid) {
+            return;
+        }
+        self.count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Per-hop serialization: a `kind` discriminant + the hop's raw fields.
+        // V2 → reserve_in/out + gamma + fee_denom (decimal strings, no alloy
+        // serde). CL → the same `IntV3TickRangeSequence.ranges` shape the
+        // all-CL fixture uses, so the replay harness shares a CL-range parser.
+        let hop_order: Vec<bool> = resolved
+            .hops
+            .iter()
+            .map(|h| matches!(h, ResolvedHop::V2 { .. }))
+            .collect();
+        let hops = resolved
+            .hops
+            .iter()
+            .map(|h| match h {
+                ResolvedHop::V2 { state } => serde_json::json!({
+                    "kind": "V2",
+                    "reserve_in": state.reserve_in.to_string(),
+                    "reserve_out": state.reserve_out.to_string(),
+                    "gamma_numer": state.gamma_numer.to_string(),
+                    "fee_denom": state.fee_denom.to_string(),
+                }),
+                ResolvedHop::V3 { int_seq, .. } | ResolvedHop::V4 { int_seq, .. } => {
+                    serde_json::json!({
+                        "kind": "CL",
+                        "ranges": int_seq.ranges.iter().map(|r| serde_json::json!({
+                            "liquidity": r.liquidity.to_string(),
+                            "sqrt_price_x96": r.sqrt_price_x96.to_string(),
+                            "sqrt_price_lower_x96": r.sqrt_price_lower_x96.to_string(),
+                            "sqrt_price_upper_x96": r.sqrt_price_upper_x96.to_string(),
+                            "gamma_numer": r.gamma_numer,
+                            "fee_denom": r.fee_denom,
+                            "zero_for_one": r.zero_for_one,
+                            "word_boundary_prices": r.word_boundary_prices
+                                .iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
+                        })).collect::<Vec<_>>(),
+                    })
+                }
+                _ => serde_json::Value::Null,
+            })
+            .collect::<Vec<_>>();
+        let golden_json = golden.map(|g| {
+            serde_json::json!({
+                "optimal_input": g.optimal_input.to_string(),
+                "profit": g.profit.to_string(),
+                "hop_outputs": g.hop_outputs.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
+            })
+        });
+        let doc = serde_json::json!({
+            "path_id": pid,
+            "block": block,
+            "n_hops": resolved.hops.len(),
+            "hop_order": hop_order,
+            "hops": hops,
+            "measured": { "time_us": micros_us, "sims": sims, "pieces": pieces },
+            "golden": golden_json,
+        });
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.out_path)
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "{doc}");
         }
     }
 }

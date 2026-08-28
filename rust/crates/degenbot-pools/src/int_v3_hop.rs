@@ -505,6 +505,74 @@ impl IntV3TickRangeSequence {
             ending_range,
         })
     }
+
+    /// All crossings in one O(N) pass — equivalent to calling
+    /// `compute_crossing(k)` for every `k` in `0..ranges.len()` but without
+    /// the O(k) re-scan per call (so O(N) total, not O(N²)). This is the
+    /// hot-path entry point for `profit_envelope::hop_lines_and_cap`, which
+    /// previously called `compute_crossing(k)` inside a loop and dominated
+    /// gate time on dense-tick pools (e.g. 1-bps USDC/USDT).
+    ///
+    /// Each element `crossings[k]` carries the cumulative `(gross_input,
+    /// output)` to REACH range `k` (the sum of `full_crossing_of_range` for
+    /// ranges `0..k`) plus the ending-range metadata for `k` — byte-identical
+    /// to `compute_crossing(k)`.
+    #[must_use]
+    pub fn crossings(&self) -> Vec<IntTickRangeCrossing> {
+        let n = self.ranges.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let zfo = self.ranges[0].zero_for_one;
+        let mut crossing_gross_input = U256::ZERO;
+        let mut crossing_output = U256::ZERO;
+        let mut out = Vec::with_capacity(n);
+        for k in 0..n {
+            // Emit the crossing ENTERING range k (accumulator = sum of 0..k).
+            let ending = &self.ranges[k];
+            let entry_sqrt_price = if k == 0 {
+                ending.sqrt_price_x96
+            } else if zfo {
+                self.ranges[k - 1].sqrt_price_lower_x96
+            } else {
+                self.ranges[k - 1].sqrt_price_upper_x96
+            };
+            let ending_range = IntV3TickRangeHop {
+                liquidity: ending.liquidity,
+                sqrt_price_x96: entry_sqrt_price,
+                sqrt_price_lower_x96: ending.sqrt_price_lower_x96,
+                sqrt_price_upper_x96: ending.sqrt_price_upper_x96,
+                gamma_numer: ending.gamma_numer,
+                fee_denom: ending.fee_denom,
+                zero_for_one: ending.zero_for_one,
+                word_boundary_prices: ending.word_boundary_prices.clone(),
+            };
+            out.push(IntTickRangeCrossing {
+                crossing_gross_input,
+                crossing_output,
+                ending_range,
+            });
+            // THEN advance the accumulator with range k's own crossing,
+            // so the NEXT iteration's anchor includes range k.
+            let sp_start = if k == 0 {
+                self.ranges[0].sqrt_price_x96
+            } else if zfo {
+                self.ranges[k - 1].sqrt_price_lower_x96
+            } else {
+                self.ranges[k - 1].sqrt_price_upper_x96
+            };
+            let exit_price = if zfo {
+                self.ranges[k].sqrt_price_lower_x96
+            } else {
+                self.ranges[k].sqrt_price_upper_x96
+            };
+            let (gross_input, output) =
+                full_crossing_of_range(sp_start, exit_price, &self.ranges[k]);
+            crossing_gross_input = crossing_gross_input.saturating_add(gross_input);
+            crossing_output = crossing_output.saturating_add(output);
+        }
+        out
+    }
 }
 
 #[expect(clippy::unwrap_used)]
@@ -514,6 +582,74 @@ mod tests {
     use alloy::primitives::I256;
     use degenbot_math::cl::swap_math::compute_swap_step_v3;
     use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
+
+    /// O(N²)→O(N) performance proof: on a 500-range dense sequence,
+    /// `crossings()` (O(N)) must be dramatically faster than calling
+    /// `compute_crossing(k)` per k (O(N²)). Prints the ratio.
+    #[test]
+    #[expect(clippy::cast_precision_loss, clippy::print_stderr)]
+    fn crossings_perf_on_dense_sequence() {
+        let gamma_numer = 997_000u64;
+        let fee_denom = 1_000_000u64;
+        let mut ranges = Vec::new();
+        for i in 0..500i32 {
+            let tick_lo = -(i + 1);
+            let tick_hi = -i;
+            ranges.push(IntV3TickRangeHop {
+                liquidity: 1_000_000_000_000u128,
+                sqrt_price_x96: U256::from(get_sqrt_ratio_at_tick_internal(tick_hi).unwrap()),
+                sqrt_price_lower_x96: U256::from(get_sqrt_ratio_at_tick_internal(tick_lo).unwrap()),
+                sqrt_price_upper_x96: U256::from(get_sqrt_ratio_at_tick_internal(tick_hi).unwrap()),
+                gamma_numer,
+                fee_denom,
+                zero_for_one: true,
+                word_boundary_prices: Vec::new(),
+            });
+        }
+        let seq = IntV3TickRangeSequence::new(ranges).unwrap();
+        let t0 = std::time::Instant::now();
+        let fast = seq.crossings();
+        let fast_us = t0.elapsed().as_micros();
+        let t1 = std::time::Instant::now();
+        let slow: Vec<_> = (0..seq.ranges.len())
+            .map(|k| seq.compute_crossing(k).unwrap())
+            .collect();
+        let slow_us = t1.elapsed().as_micros();
+        for (k, cr) in fast.iter().enumerate() {
+            assert_eq!(
+                cr.crossing_gross_input, slow[k].crossing_gross_input,
+                "mismatch@{k}"
+            );
+        }
+        eprintln!("crossings(): {fast_us}us (O(N)) vs compute_crossing(k)×N: {slow_us}us (O(N²)) — ratio {:.1}x", slow_us as f64 / fast_us.max(1) as f64);
+    }
+
+    /// O(N) `crossings()` must be byte-identical to `compute_crossing(k)` for
+    /// every k (the fix that replaced the O(N²) per-k re-scan in
+    /// `profit_envelope::hop_lines_and_cap`).
+    #[test]
+    fn crossings_matches_per_k_compute_crossing() {
+        let liq = 1_000_000_000_000u128;
+        let seq = three_range_sequence(liq);
+        let all = seq.crossings();
+        assert_eq!(all.len(), seq.ranges.len());
+        for (k, cr) in all.iter().enumerate() {
+            let ref_k = seq.compute_crossing(k).unwrap();
+            assert_eq!(
+                cr.crossing_gross_input, ref_k.crossing_gross_input,
+                "gross_input@{k}"
+            );
+            assert_eq!(cr.crossing_output, ref_k.crossing_output, "output@{k}");
+            assert_eq!(
+                cr.ending_range.sqrt_price_x96, ref_k.ending_range.sqrt_price_x96,
+                "entry@{k}"
+            );
+            assert_eq!(
+                cr.ending_range.liquidity, ref_k.ending_range.liquidity,
+                "liq@{k}"
+            );
+        }
+    }
 
     /// Build a 3-range sequence crossing ticks -60, 0, +60 (tick_spacing=60)
     /// with liquidity `L` at every range + the standard net at each boundary.

@@ -13,7 +13,7 @@
 //!
 //! The pump's **mechanics stay unchanged** from the `BlockPump` era: dual
 //! `newHeads` + `logs` subscription, Rust-side topic+address filtering, block-
-//! boundary detection, send-result debounce, gap/timeout `eth_getLogs`
+//! boundary detection, 50ms send-result debounce, gap/timeout `eth_getLogs`
 //! backfill. Only the owner (`Bot`, via the wiring layer) + the per-block
 //! dispatch targets changed.
 //!
@@ -71,7 +71,7 @@ const BACKFILL_TIMEOUT_SECS: u64 = 60;
 /// before solving and dispatching results to Python. Each new log resets
 /// the timer. This debouncing ensures one dispatch per burst of logs
 /// rather than one per individual log.
-const DEBOUNCE_MS: u64 = 250;
+const DEBOUNCE_MS: u64 = 50;
 
 /// If no block header arrives within this window, poll `eth_blockNumber`
 /// and backfill the gap — independent of log activity.
@@ -688,6 +688,16 @@ impl BlockPump {
             // across the await.
             let reorg_evidence: Vec<TripReorgWindow> =
                 reorg_windows.lock().iter().copied().collect();
+            // Solver-state check timing (Jaeger): one span per judged block —
+            // overlaps the "did the pool's WS log apply BEFORE this check ran"
+            // question against the per-log events the dispatcher emits.
+            // Created outside the await, moved into the judge future via
+            // .instrument (no enter guard across an await — TQ7PD6).
+            let verify_span =
+                tracing::info_span!("degenbot.solver.verify", block, paths = path_refs.len(),);
+            if let Some(p) = crate::instruments::pipeline() {
+                p.count_solver_verify_block();
+            }
             if let GateVerdict::Divergent(d) = judge(
                 &provider,
                 &config,
@@ -695,6 +705,7 @@ impl BlockPump {
                 anchor,
                 &reorg_evidence,
             )
+            .instrument(verify_span)
             .await
             {
                 Self::trip_and_exit(&d);
@@ -1296,6 +1307,13 @@ impl BlockPump {
                 // Solve happens at the top of the next iteration. Batch send
                 // is debounced — the timer starts/resets on each log.
                 Ok(Some(WsEvent::Log(log))) => {
+                    // WS-delivery volume signal (pre topic-filter): pairs with
+                    // `degenbot.logs.received` (relevant subset) so a WS feed
+                    // that stops delivering relevant logs stays distinguishable
+                    // from one that stopped delivering logs at all.
+                    if let Some(p) = crate::instruments::pipeline() {
+                        p.count_ws_log_seen();
+                    }
                     // Logs-subscription liveness: ANY log (even one the topic
                     // pre-filter drops below) proves the `eth_subscribe
                     // "logs"` arm is delivering. Refresh before the pre-filter
@@ -1617,12 +1635,13 @@ impl BlockPump {
             // between frames), the poll found the channel empty and the solve
             // fired prematurely. The next frame then triggered ANOTHER solve,
             // producing 2-3 serial solves per block whose total wall-time was
-            // the sum. Replaced with a timed `peek()` await: if the WS
-            // has another event ready, this resolves `Ok` and the
+            // the sum. Replaced with a 50ms timed `peek()` await: if the WS
+            // has another event ready within 50ms, this resolves `Ok` and the
             // solve is skipped (the loop processes the new event + re-checks).
-            // If no event arrives, the stream is genuinely quiet and
+            // If no event arrives in 50ms, the stream is genuinely quiet and
             // the solve fires — coalescing all logs in the burst into one
-            // solve.
+            // solve. 50ms is well within the 12s block interval (same
+            // `DEBOUNCE_MS` as the publish gate).
             let has_buffered = if self.sink.has_dirty_paths() {
                 // Only await when there's work to solve — otherwise skip
                 // straight to the select (no dirty paths = nothing to do).

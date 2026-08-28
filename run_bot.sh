@@ -21,6 +21,8 @@ mkdir -p "$LOGDIR"
 # by default; there is no liberal default posture anymore. Flags that follow
 # are all default-ON in code via `bot_env_flag_default_on` (opt OUT with =0):
 #   DEGENBOT_ASSERT_SOLVER_STATE (ADR-021 publish tripwire, fatal on desync)
+#     — script-DISABLED here for the fast path (see export block below); the
+#       code default remains ON for hand-runs/harness.
 #   DEGENBOT_VERIFY_DBG          (structural verify diagnostics / divergence set)
 #   DEGENBOT_DUMP_CALL_TRACE     (full revm call trace on sim failure)
 #   DEGENBOT_V2_CALC_TRACE       (V2 reserves slot8 before each sim)
@@ -29,6 +31,12 @@ mkdir -p "$LOGDIR"
 #     script DEFAULTS it to 0; failing sims are identified via OTel traces.
 #   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-
 #     check; NEW default-ON since B4GX7C, so a live WS log drop aborts loudly)
+# Script-defaulted high-noise traces (set =0 to opt out; the Rust gate is
+# presence-gated on "1"/"true", so these are OFF in hand-runs by default):
+#   DEGENBOT_WS_TRACE           # [trace] ws-log for EVERY relevant-topic WS
+#     log with block/log_index/tx_index/topic0/removed/decision — high-volume,
+#     but the catch-all for "did this log even arrive and apply before the
+#     solver-state check fired" desync investigations
 # Per-target/high-noise (still OFF): DEGENBOT_DRAIN_DBG, DEGENBOT_TRACE_REGISTER_SEED
 #   DEGENBOT_DUMP_TICK_MAPS  (opt-in: dump full seed + verifier tick maps for the
 #     tick-map desync re-assembly aid; high volume, set only for an investigation)
@@ -65,6 +73,13 @@ export RUST_LOG="${RUST_LOG:-$DEFAULT_RUST_LOG}"
 export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-1}"
 export DEGENBOT_OTEL="${DEGENBOT_OTEL:-1}"
 export DEGENBOT_SIM_EXIT_ON_FAIL="${DEGENBOT_SIM_EXIT_ON_FAIL:-0}"
+export DEGENBOT_WS_TRACE="${DEGENBOT_WS_TRACE:-1}"
+# Solver-state verification policy: the CODE default stays ON (loud fail-stop),
+# but this script defaults the per-publish chain-diff verifier OFF so the bot
+# runs the fast "solve against possibly-stale state, invalidate later" path.
+# DEGENBOT_ASSERT_SOLVER_STATE=1 re-enables the hard gate for audits. A
+# sampling-based silent-decay detector is the planned replacement.
+export DEGENBOT_ASSERT_SOLVER_STATE="${DEGENBOT_ASSERT_SOLVER_STATE:-0}"
 
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).
