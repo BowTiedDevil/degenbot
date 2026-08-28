@@ -709,22 +709,38 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     if lines.len() < 2 {
         return;
     }
-    let keys: Vec<(I512, I512)> = lines
-        .iter()
-        .map(|l| (l.eval(&U256::ZERO), l.eval(&upper)))
-        .collect();
-    let dominated = |i: usize| -> bool {
-        (0..lines.len()).any(|j| {
-            let (ki, kj) = (keys[i], keys[j]);
-            i != j && kj.0 <= ki.0 && kj.1 <= ki.1 && (kj.0 < ki.0 || kj.1 < ki.1 || j < i)
+    // O(K log K) dominated-line pruning via sort + sweep.
+    //
+    // A line j dominates line i iff j ≤ i at BOTH x=0 and x=domain with at
+    // least one strict — a 2D Pareto front. We sort by (eval(0), eval(domain))
+    // and sweep for running minimum eval(domain): a line is non-dominated
+    // iff no line before it in sort order has eval(domain) < its eval(domain).
+    // Replaces the prior O(K²) pairwise check that dominated gate time on
+    // dense-CL paths (~100k intermediate composed lines → ~8s).
+    //
+    // Build (key0, key1, original_index) sorted ascending in all three so
+    // equal-key ties are broken by index (the original rule: j < i dominates
+    // on identical keys).
+    let mut indexed: Vec<([I512; 2], usize)> = (0..lines.len())
+        .map(|i| {
+            let l = &lines[i];
+            ([l.eval(&U256::ZERO), l.eval(&upper)], i)
         })
-    };
-    let survivors: Vec<Line> = lines
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|(i, _)| !dominated(*i))
-        .map(|(_, l)| l)
+        .collect();
+    indexed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    // Sweep: running min key1. A line is kept iff its key1 strictly improves
+    // (decreases) the running minimum — that places it on the Pareto front.
+    let mut keep = vec![false; lines.len()];
+    let mut min_key1 = I512::MAX;
+    for (keys, idx) in indexed {
+        if keys[1] < min_key1 {
+            keep[idx] = true;
+            min_key1 = keys[1];
+        }
+    }
+    let survivors: Vec<Line> = (0..lines.len())
+        .filter(|&i| keep[i])
+        .map(|i| lines[i])
         .collect();
     *lines = survivors;
 }
@@ -913,6 +929,18 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
         lines2 = next;
     }
     let lines = lines2;
+    // Diagnostic: line explosion is the gate bottleneck on dense-CL paths.
+    #[cfg(not(feature = "hotpath"))]
+    if lines.len() > 200 {
+        let hop_counts: Vec<usize> = all_hops.iter().map(|(ls, _)| ls.len()).collect();
+        tracing::warn!(
+                    target: "degenbot::solver",
+        gate_lines = lines.len(),
+                    gate_hop_line_counts = ?hop_counts,
+                    gate_domain = %domain,
+                    "[gate] composed tangent-line explosion"
+                );
+    }
     // Discrete concave max of f(x) = min_lines(x) − x over [0, xmax].
     if xmax.is_zero() {
         return Some(U256::ZERO);
