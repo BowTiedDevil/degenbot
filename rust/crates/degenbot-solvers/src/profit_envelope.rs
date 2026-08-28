@@ -273,6 +273,18 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             Some((vec![rise, flat], r_out))
         }
         HopMath::Cl(seq) => {
+            // Tangent-line budget: dense CL pools (1-bps USDC/USDT with
+            // 700+ ranges) emit one tangent per range. Composition across
+            // two CL hops produces R1×R2 composed tangent lines, each
+            // requiring 4 I512 multiplies — the 65k compositions dominate
+            // gate time. Capping at MAX_TANGENT_LINES keeps the composition
+            // product bounded (K² not R1×R2).
+            //
+            // Soundness: EVERY tangent line is a global upper bound on the
+            // concave output curve. Keeping fewer tangents makes min(lines)
+            // LOOSER (higher) — the gate becomes more conservative (passes
+            // more paths to the solver) but NEVER skips a profitable path.
+            const MAX_TANGENT_LINES: usize = 32;
             if seq.ranges.is_empty() {
                 return None;
             }
@@ -363,6 +375,27 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
                         }
                     }
                 }
+            }
+            // Cap tangent lines: sample MAX_TANGENT_LINES evenly-spaced
+            // entries (keeping the first + last, which anchor the envelope
+            // at both endpoints). The full set of CL tangents are ALL on
+            // the Pareto front (increasing intercept, decreasing slope), so
+            // prune() cannot reduce them. Sampling is the only way to bound
+            // the composition product.
+            if lines.len() > MAX_TANGENT_LINES {
+                let step = lines.len() / MAX_TANGENT_LINES;
+                let mut sampled = Vec::with_capacity(MAX_TANGENT_LINES + 1);
+                let mut i = 0;
+                while i < lines.len() {
+                    sampled.push(lines[i]);
+                    i += step.max(1);
+                }
+                // Always keep the last tangent (the flattest slope, highest
+                // intercept — the tightest bound at large x).
+                if sampled.last() != Some(&lines[lines.len() - 1]) {
+                    sampled.push(lines[lines.len() - 1]);
+                }
+                lines = sampled;
             }
             // Every range was zero-liquidity → genuinely dead pool (no
             // initialized tick reachable in the swap direction produces any

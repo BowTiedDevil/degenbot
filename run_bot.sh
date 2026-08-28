@@ -80,6 +80,10 @@ export DEGENBOT_WS_TRACE="${DEGENBOT_WS_TRACE:-1}"
 # DEGENBOT_ASSERT_SOLVER_STATE=1 re-enables the hard gate for audits. A
 # sampling-based silent-decay detector is the planned replacement.
 export DEGENBOT_ASSERT_SOLVER_STATE="${DEGENBOT_ASSERT_SOLVER_STATE:-0}"
+# Capture heavy mixed+CL paths for offline replay (gate p99 targets).
+export DEGENBOT_SOLVER_CAPTURE="${DEGENBOT_SOLVER_CAPTURE:-1}"
+export DEGENBOT_SOLVER_CAPTURE_MIN_US="${DEGENBOT_SOLVER_CAPTURE_MIN_US:-50000}"
+export DEGENBOT_SOLVER_CAPTURE_CAP="${DEGENBOT_SOLVER_CAPTURE_CAP:-8}"
 
 # The actual bot invocation (uv rebuilds the Rust extension if any rust
 # source / Cargo.toml is newer than the installed build).
