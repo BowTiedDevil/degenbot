@@ -783,8 +783,11 @@ impl ArbitrageEngine {
                     );
                     let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
                     if let Some(p) = crate::instruments::pipeline() {
-                        p.observe_per_path_solve_duration(micros as f64 / 1e6);
-                        p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
+                        #[expect(clippy::cast_precision_loss)]
+                        {
+                            p.observe_per_path_solve_duration(micros as f64 / 1e6);
+                            p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
+                        }
                     }
                     gate_evaluated_total
                         .fetch_add(gs.evaluated, std::sync::atomic::Ordering::Relaxed);

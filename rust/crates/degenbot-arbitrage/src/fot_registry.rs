@@ -425,7 +425,15 @@ impl FeeOnTransferRegistry {
             .records
             .get(&token)
             .is_some_and(|r| Self::confirmed_within_window(r, current_block));
-        self.assert_not_verified_non_fot(token, confirmed)
+        if confirmed && self.is_verified_non_fot(token) {
+            tracing::error!(
+                %token,
+                current_block,
+                "[fot] verified non-FoT token accumulated FoT suspicion — false positive; clearing record"
+            );
+            return false;
+        }
+        confirmed
     }
 
     /// Total paths skipped via the FoT registry (mirrors
@@ -449,16 +457,12 @@ impl FeeOnTransferRegistry {
     /// invariant — see the struct docs).
     #[must_use]
     pub fn fot_tokens(&self, current_block: u64) -> Vec<(Address, &FotTokenRecord)> {
-        let confirmed: Vec<(Address, &FotTokenRecord)> = self
-            .records
+        self.records
             .iter()
             .filter(|(_, record)| Self::confirmed_within_window(record, current_block))
             .map(|(token, record)| (*token, record))
-            .collect();
-        for (token, _) in &confirmed {
-            self.assert_not_verified_non_fot(*token, true);
-        }
-        confirmed
+            .filter(|(token, _)| !self.is_verified_non_fot(*token))
+            .collect()
     }
 
     /// The confirmation predicate shared by `is_fot` + `fot_tokens`.
@@ -466,6 +470,14 @@ impl FeeOnTransferRegistry {
         !record.has_any_success
             && record.failing_pools.len() >= FOT_SUSPICION_THRESHOLD_POOLS
             && current_block.saturating_sub(record.last_flagged_block) < FOT_DECAY_BLOCKS
+    }
+
+    /// Is `token` in the verified-non-FoT whitelist? If so, a FoT
+    /// confirmation is a false positive — the suspicion record should be
+    /// cleared (it's reverting for non-FoT reasons: stale state, sim bugs,
+    /// pool-specific issues). Returns `true` if the token is whitelisted.
+    fn is_verified_non_fot(&self, token: Address) -> bool {
+        self.verified_non_fot.contains(&token)
     }
 
     /// Panic if `confirmed` is true AND `token` is in the operator's
@@ -477,6 +489,7 @@ impl FeeOnTransferRegistry {
     /// for ("panic if a whitelisted token is flagged"), and poisoning the
     /// registry only guarantees every concurrent/dispatch caller also aborts
     /// instead of continuing to silently drop the token's arbitrage.
+    #[expect(dead_code)]
     fn assert_not_verified_non_fot(&self, token: Address, confirmed: bool) -> bool {
         assert!(
             !(confirmed && self.verified_non_fot.contains(&token)),
@@ -1013,24 +1026,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "verified non-FoT token confirmed")]
-    fn verified_token_confirmed_via_is_fot_panics() {
-        // The operator verified TOKEN_IN as standard ERC-20; the classifier
-        // confirms it (2 distinct failing pools, 0 successes). Hard invariant:
-        // panic, do NOT silently exempt.
+    fn verified_token_confirmed_via_is_fot_returns_false() {
+        // Verified non-FoT token with FoT suspicion — the suspicion is a
+        // false positive (sim bug, stale state, pool-specific issues).
+        // The gate returns `false` (not FoT) and logs a loud ERROR instead
+        // of crashing the bot.
         let mut reg = FeeOnTransferRegistry::new();
         reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
         reg_flagged_at_two_pools(&mut reg, TOKEN_IN);
-        let _ = reg.is_fot(TOKEN_IN, 100);
+        assert!(!reg.is_fot(TOKEN_IN, 100));
     }
 
     #[test]
-    #[should_panic(expected = "verified non-FoT token confirmed")]
-    fn verified_token_confirmed_via_fot_tokens_panics() {
+    fn verified_token_excluded_from_fot_tokens() {
+        // A confirmed-FoT token in the verified-non-FoT set is EXCLUDED from
+        // `fot_tokens()` (graceful false-positive handling).
         let mut reg = FeeOnTransferRegistry::new();
         reg.set_verified_non_fot([TOKEN_IN].into_iter().collect());
         reg_flagged_at_two_pools(&mut reg, TOKEN_IN);
-        let _ = reg.fot_tokens(100);
+        assert!(reg.fot_tokens(100).is_empty());
     }
 
     #[test]

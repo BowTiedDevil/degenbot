@@ -841,7 +841,6 @@ pub fn take_last_gate_stats() -> GateStats {
 /// Rigorous upper bound on `max_x [path_output(x) − x]`, or `None` when any
 /// hop is unsupported/degenerate (callers MUST NOT skip on `None`).
 #[must_use]
-#[expect(clippy::too_many_lines)]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     let gate_t0 = std::time::Instant::now();
     let result = path_profit_bound_inner(hops);
@@ -849,6 +848,7 @@ pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     result
 }
 
+#[expect(clippy::too_many_lines)]
 fn path_profit_bound_inner(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
