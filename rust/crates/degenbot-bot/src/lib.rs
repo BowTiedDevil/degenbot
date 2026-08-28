@@ -86,6 +86,10 @@ pub mod instruments {
         /// no-op
         pub fn observe_solve_duration(&self, _secs: f64) {}
         /// no-op
+        pub fn observe_per_path_solve_duration(&self, _secs: f64) {}
+        /// no-op
+        pub fn observe_per_path_gate_duration(&self, _secs: f64) {}
+        /// no-op
         pub fn count_solves_executed(&self) {}
         /// no-op
         pub fn set_registered_paths(&self, _count: u64) {}

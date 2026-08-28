@@ -2,7 +2,7 @@
  "title": "degenbot observability overview",
  "uid": "degenbot-overview",
  "schemaVersion": 39,
- "version": 5,
+ "version": 6,
  "refresh": "1s",
  "time": {
   "from": "now-30m",
@@ -1754,6 +1754,234 @@
     }
    },
    "description": "Seconds since the newest newHeads header (feed liveness) and since the newest log applied to state (apply liveness). Healthy = both pinned at ~0. A feed stall lifts the header age; a drain freeze lifts the apply age while the header age stays low and head-lag goes negative. Red at >=30s is a genuine freeze window."
+  },
+  {
+   "id": 34,
+   "title": "Per-path solver metrics",
+   "type": "row",
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 95
+   },
+   "panels": []
+  },
+  {
+   "id": 35,
+   "title": "Per-path solve duration (p50/p90/p95/p99)",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 95
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.50, sum(rate(degenbot_solve_path_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p50",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.90, sum(rate(degenbot_solve_path_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p90",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.95, sum(rate(degenbot_solve_path_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p95",
+     "refId": "C"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.99, sum(rate(degenbot_solve_path_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p99",
+     "refId": "D"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 36,
+   "title": "Per-path gate duration (p50/p90/p95/p99)",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 95
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.50, sum(rate(degenbot_solve_gate_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p50",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.90, sum(rate(degenbot_solve_gate_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p90",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.95, sum(rate(degenbot_solve_gate_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p95",
+     "refId": "C"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.99, sum(rate(degenbot_solve_gate_duration_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p99",
+     "refId": "D"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 37,
+   "title": "Gate: paths solved vs skipped (rate/min)",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 103
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_solves_executed_total[1m])",
+     "legendFormat": "solves/min",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_solve_path_duration_seconds_count[1m]) * 60",
+     "legendFormat": "paths evaluated/min",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
   }
  ],
  "templating": {

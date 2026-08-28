@@ -74,6 +74,13 @@ pub struct PipelineInstruments {
     /// Solve lock-hold duration (dirty solves only — no-op solves are gated
     /// out of the span path and the histogram alike).
     solve_duration: Histogram<f64>,
+    /// Per-path solve duration (the solve_fn closure timing — includes
+    /// the profit-envelope gate + the decomposed solver). Distinct from
+    /// `solve_duration` which measures the whole dirty-carrying solve CYCLE.
+    per_path_solve_duration: Histogram<f64>,
+    /// Per-path profit-envelope gate evaluation time (the `path_profit_bound`
+    /// call before the decomposed solver).
+    per_path_gate_duration: Histogram<f64>,
     /// Solve cycles that carried dirty work.
     solves_executed: Counter<u64>,
     /// Registered solver paths (engine gauge).
@@ -204,6 +211,18 @@ impl PipelineInstruments {
                 .with_unit("s")
                 .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Dirty-carrying solve cycle duration")
+                .build(),
+            per_path_solve_duration: meter
+                .f64_histogram("degenbot.solve.path_duration")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description("Per-path solve duration (gate + decomposed solver)")
+                .build(),
+            per_path_gate_duration: meter
+                .f64_histogram("degenbot.solve.gate_duration")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description("Per-path profit-envelope gate evaluation time")
                 .build(),
             solves_executed: meter
                 .u64_counter("degenbot.solves.executed")
@@ -375,6 +394,16 @@ impl PipelineInstruments {
     /// One dirty-carrying solve cycle's duration.
     pub fn observe_solve_duration(&self, secs: f64) {
         self.solve_duration.record(secs, &[]);
+    }
+
+    /// One per-path solve closure's duration (gate + decomposed solver).
+    pub fn observe_per_path_solve_duration(&self, secs: f64) {
+        self.per_path_solve_duration.record(secs, &[]);
+    }
+
+    /// One per-path profit-envelope gate evaluation time.
+    pub fn observe_per_path_gate_duration(&self, secs: f64) {
+        self.per_path_gate_duration.record(secs, &[]);
     }
 
     /// One solve cycle that carried dirty work.

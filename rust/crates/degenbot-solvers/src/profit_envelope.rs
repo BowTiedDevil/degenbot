@@ -762,6 +762,8 @@ pub struct GateStats {
     pub none_hop_unmapped: u64,
     pub none_degenerate: u64,
     pub none_overflow: u64,
+    /// Wall-clock time (nanoseconds) spent in `path_profit_bound` for this path.
+    pub duration_ns: u128,
 }
 
 thread_local! {
@@ -772,6 +774,7 @@ thread_local! {
     pub(crate) static GATE_NONE_HOP_UNMAPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_NONE_DEGENERATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_NONE_OVERFLOW: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_DURATION_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
 }
 
 /// Reset all gate counters on the calling thread (call at solve-cycle start,
@@ -783,6 +786,7 @@ pub fn reset_gate_stats() {
     GATE_NONE_HOP_UNMAPPED.with(|c| c.set(0));
     GATE_NONE_DEGENERATE.with(|c| c.set(0));
     GATE_NONE_OVERFLOW.with(|c| c.set(0));
+    GATE_DURATION_NS.with(|c| c.set(0));
 }
 
 /// Read-and-clear the calling thread's gate counters.
@@ -818,6 +822,11 @@ pub fn take_last_gate_stats() -> GateStats {
         c.set(0);
         v
     });
+    let duration_ns = GATE_DURATION_NS.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
     GateStats {
         evaluated,
         skipped,
@@ -825,6 +834,7 @@ pub fn take_last_gate_stats() -> GateStats {
         none_hop_unmapped,
         none_degenerate,
         none_overflow,
+        duration_ns,
     }
 }
 
@@ -833,6 +843,13 @@ pub fn take_last_gate_stats() -> GateStats {
 #[must_use]
 #[expect(clippy::too_many_lines)]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
+    let gate_t0 = std::time::Instant::now();
+    let result = path_profit_bound_inner(hops);
+    GATE_DURATION_NS.with(|c| c.set(gate_t0.elapsed().as_nanos()));
+    result
+}
+
+fn path_profit_bound_inner(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
     for (hop_idx, slot) in hops.iter().enumerate() {
