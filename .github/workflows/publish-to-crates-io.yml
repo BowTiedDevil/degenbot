@@ -49,7 +49,7 @@ jobs:
       - name: Install Rust
         # Pinned to the workspace `rust-version` (1.97), not @stable — the
         # published crates must build with the MSRV a consumer can have.
-        uses: dtolnay/rust-toolchain@1.97
+        uses: dtolnay/rust-toolchain@1.100
 
       - name: Cache Cargo
         uses: actions/cache@v6
