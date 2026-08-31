@@ -126,6 +126,10 @@ fn main() {
         let mut prod_times = Vec::new();
         let mut s1_times = Vec::new();
         let mut hull_times = Vec::new();
+        let mut reduce_times = Vec::new();
+        let mut postprune_times = Vec::new();
+        let mut sample_times = Vec::new();
+        let mut derive_times = Vec::new();
         for _ in 0..9 {
             let t0 = std::time::Instant::now();
             let _ = path_profit_bound(&views);
@@ -134,6 +138,11 @@ fn main() {
             prod_times.push(gs.product_ns / 1_000);
             s1_times.push(gs.prune_stage1_ns / 1_000);
             hull_times.push(gs.prune_hull_ns / 1_000);
+            reduce_times.push(gs.duration_ns / 1_000);
+            postprune_times.push(gs.postprune_reduce_ns / 1_000);
+            sample_times.push(gs.sample_ns / 1_000);
+            let (d, _, _) = degenbot_solvers::profit_envelope::take_gate_phases();
+            derive_times.push(d / 1_000);
         }
         let m = |v: &Vec<u128>| {
             let mut t = v.clone();
@@ -147,10 +156,13 @@ fn main() {
         let r2 = range_counts.get(2).copied().unwrap_or(0);
         let n_hops = hops.len();
         println!(
-            "{pid:>8} {n_hops:>4} {r1:>6} {r2:>6} gate={med:>8}/{p95:>8}us prod={:>6}us s1={:>6}us hull={:>6}us",
+            "{pid:>8} {n_hops:>4} {r1:>6} {r2:>6} gate={med:>8}/{p95:>8}us drv={:>6}us prod={:>6}us s1={:>6}us hull={:>6}us rdu={:>6}us smpl={:>6}us",
+            m(&derive_times),
             m(&prod_times),
             m(&s1_times),
             m(&hull_times),
+            m(&postprune_times),
+            m(&sample_times),
         );
     }
 }

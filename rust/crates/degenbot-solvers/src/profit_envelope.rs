@@ -308,7 +308,42 @@ fn hop_lines_and_cap(
             // per-range crossing once (either caller-carried or derived),
             // replacing the prior quadratic per-iteration re-scan that
             // dominated gate time on dense-tick pools.
-            let mut lines: Vec<Line> = Vec::with_capacity(crossings.len());
+            //
+            // Loop-12 PVOPYP: tangent lines are then SAMPLED to
+            // MAX_TANGENT_LINES entries, so on fat tables most of the
+            // ~300ns/range derivation is thrown away. Early-select the
+            // sampled keep-indices FIRST (same membership rule as the cap
+            // below: multiples of step + the last entry) and derive only
+            // those. Skip-membership counts only zero-liq / zero-price
+            // ranges — identical to the legacy filter for every normal
+            // table, so the resulting sampled set is byte-identical on the
+            // replay corpora; a would-be-I512-overflow range is the only
+            // case where the sampled set can differ, and there the bound
+            // stays sound (looser) by the tangent upper-bound argument.
+            let mut lines: Vec<Line> = Vec::with_capacity(MAX_TANGENT_LINES + 1);
+            let n_keeps_usize = crossings
+                .iter()
+                .filter(|cr| {
+                    let er = &cr.ending_range;
+                    er.liquidity != 0 && !er.sqrt_price_x96.is_zero()
+                })
+                .count();
+            let mut sel: Vec<usize> = Vec::with_capacity(MAX_TANGENT_LINES + 1);
+            let early = n_keeps_usize > MAX_TANGENT_LINES;
+            if early {
+                let step = (n_keeps_usize / MAX_TANGENT_LINES).max(1);
+                let mut idx = 0usize;
+                while idx < n_keeps_usize {
+                    sel.push(idx);
+                    idx += step;
+                }
+                let last = n_keeps_usize - 1;
+                if (last % step) != 0 {
+                    sel.push(last);
+                }
+            }
+            let mut keep_idx: usize = 0;
+            let mut sel_i: usize = 0;
             for cr in crossings {
                 // Anchor cumulative (gross_input, output) at the boundary
                 // ENTERING range k: `crossings[k]` carries the sum of
@@ -343,6 +378,18 @@ fn hop_lines_and_cap(
                     // case, not an arithmetic limitation.
                     return None;
                 }
+                // Early-select gate (loop-12 PVOPYP): derive only ranges
+                // whose keep-index is in sel; non-selected entries advance
+                // the counter and skip the coefficient derivation entirely.
+                if early {
+                    if sel_i < sel.len() && keep_idx == sel[sel_i] {
+                        sel_i += 1;
+                    } else {
+                        keep_idx += 1;
+                        continue;
+                    }
+                }
+                keep_idx += 1;
                 // Entry marginal rate m (out/in token units):
                 //   zfo: m = P²/2¹⁹² ; !zfo: m = 2¹⁹²/P²  (P = sqrt_ratio_x96)
                 // Slope = ceil-free EXACT fraction (γ_num·m / fee_denom);
@@ -905,6 +952,10 @@ pub struct GateStats {
     pub prune_stage1_ns: u128,
     /// Prune stage-2 hull wall time (ns).
     pub prune_hull_ns: u128,
+    /// Loop-12 split: post-prune survivor reduce pass (ns).
+    pub postprune_reduce_ns: u128,
+    /// Loop-12 split: sampled-cap construction (ns).
+    pub sample_ns: u128,
 }
 
 thread_local! {
@@ -923,6 +974,11 @@ thread_local! {
     pub(crate) static GATE_PRUNE_HULL_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_COMPOSE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_SEARCH_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    // Loop-12 PVOPYP: the post-prune survivor reduce pass and the sampled
+    // cap, split out — on fat crossing tables the unaccounted compose time
+    // lives here.
+    pub(crate) static GATE_POSTPRUNE_REDUCE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_SAMPLE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
     // Composition pair volume per path (hop_pruned_lines x running_lines).
     pub(crate) static GATE_PAIRS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_EVALUATED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -1004,6 +1060,8 @@ pub fn reset_gate_stats() {
     GATE_DERIVE_NS.with(|c| c.set(0));
     GATE_COMPOSE_NS.with(|c| c.set(0));
     GATE_SEARCH_NS.with(|c| c.set(0));
+    GATE_POSTPRUNE_REDUCE_NS.with(|c| c.set(0));
+    GATE_SAMPLE_NS.with(|c| c.set(0));
     GATE_EVALUATED.with(|c| c.set(0));
     GATE_SKIPPED.with(|c| c.set(0));
     GATE_UNSUPPORTED.with(|c| c.set(0));
@@ -1078,6 +1136,16 @@ pub fn take_last_gate_stats() -> GateStats {
         c.set(0);
         v
     });
+    let postprune_reduce_ns = GATE_POSTPRUNE_REDUCE_NS.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let sample_ns = GATE_SAMPLE_NS.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
     GateStats {
         evaluated,
         skipped,
@@ -1091,6 +1159,8 @@ pub fn take_last_gate_stats() -> GateStats {
         product_ns,
         prune_stage1_ns,
         prune_hull_ns,
+        postprune_reduce_ns,
+        sample_ns,
     }
 }
 
@@ -1367,8 +1437,12 @@ fn path_profit_bound_inner(
         // One reduction pass per hop boundary (O(survivors)) — replaces the
         // per-pair reduction removed from Line::compose. Byte-identical
         // coefficients to the old per-pair pass (same ceil/floor rules).
-        for l in &mut next {
-            l.reduce(COMPOSE_TARGET_BITS);
+        {
+            let t0 = std::time::Instant::now();
+            for l in &mut next {
+                l.reduce(COMPOSE_TARGET_BITS);
+            }
+            GATE_POSTPRUNE_REDUCE_NS.with(|c| c.set(c.get() + t0.elapsed().as_nanos()));
         }
         // SAMPLED_COMPOSE_LINES cap: the composing side is dropped to a
         // uniform Pareto-order sample across the lower envelope, bounding
@@ -1376,7 +1450,12 @@ fn path_profit_bound_inner(
         // tangent cap: min(fewer lines) ≥ min(all lines), so the bound can
         // only rise (skip less, never more). With the live min-profit floor
         // of zero the tightness loss does not affect skips.
-        if next.len() > SAMPLED_COMPOSE_LINES {
+        let samp_t0 = if next.len() > SAMPLED_COMPOSE_LINES {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+        if let Some(_t0) = samp_t0 {
             let step = next.len() / SAMPLED_COMPOSE_LINES;
             let mut sampled = Vec::with_capacity(SAMPLED_COMPOSE_LINES + 1);
             let mut i = 0usize;
@@ -1388,6 +1467,9 @@ fn path_profit_bound_inner(
                 sampled.push(next[next.len() - 1]);
             }
             next = sampled;
+        }
+        if let Some(t0) = samp_t0 {
+            GATE_SAMPLE_NS.with(|c| c.set(c.get() + t0.elapsed().as_nanos()));
         }
         // Cache the composed prefix set under this pure-CL prefix key with
         // the current crossing fingerprints (loop-8). Only miss paths reach
