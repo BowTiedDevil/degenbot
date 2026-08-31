@@ -22,6 +22,8 @@ the shared constants) has moved to ``degenbot.runner`` (epic 5TSYKN).
 
 import asyncio
 import contextlib
+import os
+import sys
 import time
 
 import dotenv
@@ -44,6 +46,75 @@ async def main() -> None:
     # and never needs the GIL to make progress.
     start_gil_probe(interval_ms=50, threshold_ms=100, stuck_ms=30_000)
     mark_progress()
+
+    # ── Gated incident instrumentation (missed-WS-pong diagnosis) ──────────
+    # With DEGENBOT_FAULTHANDLER_TIMEOUT_SECS > 0, arm a faulthandler repeat
+    # dump: whenever ANY thread stalls (main loop busy past the timeout), the
+    # CURRENT native + Python stacks of ALL threads are written to stderr
+    # (tee'd into logs/bot_run.log by run_bot.sh) — including the C/Rust frame
+    # of a GIL holder, which sys._current_frames() / logging cannot reveal.
+    # ── Gated memory instrumentation (RSS-growth diagnosis) ──────────────
+    # With DEGENBOT_TRACEMALLOC_SECS > 0, a daemon thread prints a tracemalloc
+    # snapshot diff to stderr every N seconds: total Python-reachable memory +
+    # the top growth sites (depth-1). A flat traced-current under a climbing
+    # RSS would pin the growth OUTSIDE the Python object graph (Rust heaps /
+    # allocator retention), splitting the diagnosis in half.
+    tm_timeout = float(os.environ.get("DEGENBOT_TRACEMALLOC_SECS", "0"))
+    if tm_timeout > 0:
+        import ctypes
+        import threading
+        import tracemalloc
+
+        tracemalloc.start(1)
+        mem_state = {"snap": tracemalloc.take_snapshot(), "n": 0}
+        libc = ctypes.CDLL("libc.so.6")
+        libc.fopen.restype = ctypes.c_void_p
+        libc.malloc_info.argtypes = [ctypes.c_int, ctypes.c_void_p]
+        libc.fclose.argtypes = [ctypes.c_void_p]
+        libc.malloc_trim.argtypes = [ctypes.c_size_t]
+
+        def dump_malloc_info() -> None:
+            mem_state["n"] += 1
+            path = f"/workspaces/degenbot/logs/malloc_info_{mem_state['n']}.json"
+            f = libc.fopen(path.encode(), b"w")
+            if f:
+                libc.malloc_info(0, f)
+                libc.fclose(f)
+
+        def mem_reporter() -> None:
+            while True:
+                time.sleep(tm_timeout)
+                snap = tracemalloc.take_snapshot()
+                dump_malloc_info()
+                # glibc compaction: force release of free pages on arena tops.
+                # Evidence probe — if RSS drops after this call the climb is
+                # free-chunk retention, not a logical leak.
+                libc.malloc_trim(0)
+                stats = snap.compare_to(mem_state["snap"], "lineno")
+                mem_state["snap"] = snap
+                current, peak = tracemalloc.get_traced_memory()
+                lines = [
+                    f"[mem] traced-current={current / 1e6:.1f}MB peak={peak / 1e6:.1f}MB "
+                    + f"trim-cycle={mem_state['n']} top-growth:"
+                ]
+                lines.extend(
+                    f"[mem]   +{stat.size_diff / 1e6:8.1f}MB count={stat.count_diff:+7d} "
+                    + f"{stat.traceback[0]}"
+                    for stat in stats[:10]
+                )
+                newline = chr(10)
+                sys.stderr.write(newline.join(lines) + newline)
+                sys.stderr.flush()
+
+        threading.Thread(target=mem_reporter, daemon=True, name="tracemalloc").start()
+
+    fh_timeout = float(os.environ.get("DEGENBOT_FAULTHANDLER_TIMEOUT_SECS", "0"))
+    if fh_timeout > 0:
+        import faulthandler
+
+        faulthandler.enable()
+        faulthandler.dump_traceback_later(fh_timeout, repeat=True, exit=False)
+        bot_logger.info(f"[diag] faulthandler armed: timeout={fh_timeout}s repeat=True")
 
     if args.permutation is not None:
         bot_logger.info(f"[startup] Permutation filter from CLI: {args.permutation}")

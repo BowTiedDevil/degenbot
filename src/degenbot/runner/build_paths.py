@@ -38,7 +38,9 @@ from degenbot.database.models.pools import (
 from degenbot.exceptions import (
     DirectionResolutionError,
     DynamicFeePoolRejectedError,
+    HighFeePoolRejectedError,
     HookedPoolRejectedError,
+    PoolAlreadyRegisteredError,
     VerificationMismatchError,
     VerificationRpcError,
 )
@@ -54,6 +56,7 @@ from degenbot.runner._driver_constants import (
     UNISWAP_V4_POOL_MANAGER_ADDRESS,
     WETH_ADDRESS,
 )
+from degenbot.runner.skip_gate import SkipGate
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
@@ -420,6 +423,12 @@ class PathRegistrationPipeline:
         self.v4_dynamic_fee_rejected = 0
         self.other_exc_count = 0
         self.registered_path_sigs: set[tuple[str | bool, ...]] = set()
+        # 2CBDPR: session-scoped fatal-skip memo + skip-log deduper. Immutable
+        # pool facts (V4 admission rejections, discovery id mismatches,
+        # duplicate registrations) short-circuit later blocks WITHOUT a
+        # rebuild; transient error log lines are emitted at most once per
+        # cooldown window per pool.
+        self.skip_gate = SkipGate()
         # INN6TK observability: reason-tagged skip breakdown + time-throttled
         # progress emission. The legacy `[build_paths] Progress` line only fires
         # when `path_count` crosses each 1000-boundary; a discovery-heavy crawl
@@ -443,6 +452,22 @@ class PathRegistrationPipeline:
         """Run a blocking pool-build callable on the bounded worker pool."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._bounded_build_executor(), fn)
+
+    def _reject_v4_from_memo(self, tag: str) -> bool:
+        """Replay the counter effect of a memoized fatal V4 skip.
+
+        Returns ``True`` when the memoized rejection is a V4 admission verdict
+        (hook / dynamic fee) — the caller must mirror the original branch's
+        ``v4_admission_rejected`` bookkeeping so the skip summary stays
+        byte-compatible with first-attempt behavior.
+        """
+        admission = tag in {"v4-hook-rejected", "v4-dynamic-fee-rejected"}
+        if tag == "v4-hook-rejected":
+            self.v4_hook_rejected += 1
+        elif tag == "v4-dynamic-fee-rejected":
+            self.v4_dynamic_fee_rejected += 1
+        self._record_skip(tag)
+        return admission
 
     def _record_skip(self, reason: str) -> None:
         """Record a reason-tagged skip so the periodic summary shows WHY.
@@ -612,16 +637,29 @@ class PathRegistrationPipeline:
         v4_admission_rejected = False
         for step, pt in zip(steps, pool_type_strs, strict=True):  # ruff:ignore[too-many-nested-blocks]
             if pt == "V2":
+                memo_tag = self.skip_gate.fatal_tag("v2", step.address)
+                if memo_tag is not None:
+                    self._record_skip(memo_tag)
+                    skip = True
+                    break
                 try:
                     pool = await self._run_build_offloaded(
                         lambda: self.constr_bot.build_pool(step.address, silent=True)
                     )
                 except Exception as exc:
-                    bot_logger.debug(f"Skip V2 {step.address}: {exc}")
-                    self._record_skip(f"build-v2:{type(exc).__name__}")
+                    tag = f"build-v2:{type(exc).__name__}"
+                    fatal = isinstance(exc, PoolAlreadyRegisteredError)
+                    if self.skip_gate.note("v2", step.address, tag, fatal=fatal):
+                        bot_logger.debug(f"Skip V2 {step.address}: {exc}")
+                    self._record_skip(tag)
                     skip = True
                     break
             elif pt == "V3":
+                memo_tag = self.skip_gate.fatal_tag("v3", step.address)
+                if memo_tag is not None:
+                    self._record_skip(memo_tag)
+                    skip = True
+                    break
                 try:
                     try:
                         pool = await self._run_build_offloaded(
@@ -648,13 +686,22 @@ class PathRegistrationPipeline:
                                     lambda: self.constr_bot.build_pool(step.address, silent=True)
                                 )
                 except Exception as exc:
-                    bot_logger.debug(f"Skip V3 {step.address}: {exc}")
-                    self._record_skip(f"build-v3:{type(exc).__name__}")
+                    tag = f"build-v3:{type(exc).__name__}"
+                    fatal = isinstance(exc, PoolAlreadyRegisteredError)
+                    if self.skip_gate.note("v3", step.address, tag, fatal=fatal):
+                        bot_logger.debug(f"Skip V3 {step.address}: {exc}")
+                    self._record_skip(tag)
                     skip = True
                     break
             elif pt == "V4":
                 if not step.hash:
                     self._record_skip("v4-no-hash")
+                    skip = True
+                    break
+                memo_tag = self.skip_gate.fatal_tag("v4", step.hash)
+                if memo_tag is not None:
+                    if self._reject_v4_from_memo(memo_tag):
+                        v4_admission_rejected = True
                     skip = True
                     break
                 try:
@@ -666,20 +713,32 @@ class PathRegistrationPipeline:
                         )
                     )
                 except HookedPoolRejectedError:
+                    self.skip_gate.note("v4", step.hash, "v4-hook-rejected", fatal=True)
                     self.v4_hook_rejected += 1
                     self._record_skip("v4-hook-rejected")
                     skip = True
                     v4_admission_rejected = True
                     break
                 except DynamicFeePoolRejectedError:
+                    self.skip_gate.note("v4", step.hash, "v4-dynamic-fee-rejected", fatal=True)
                     self.v4_dynamic_fee_rejected += 1
                     self._record_skip("v4-dynamic-fee-rejected")
                     skip = True
                     v4_admission_rejected = True
                     break
                 except Exception as exc:
-                    bot_logger.debug(f"Skip V4 {step.hash}: {exc}")
-                    self._record_skip(f"build-v4:{type(exc).__name__}")
+                    tag = f"build-v4:{type(exc).__name__}"
+                    fatal = isinstance(
+                        exc,
+                        (
+                            HighFeePoolRejectedError,
+                            PoolAlreadyRegisteredError,
+                            AssertionError,
+                        ),
+                    )
+                    if self.skip_gate.note("v4", step.hash, tag, fatal=fatal):
+                        bot_logger.debug(f"Skip V4 {step.hash}: {exc}")
+                    self._record_skip(tag)
                     skip = True
                     break
             else:

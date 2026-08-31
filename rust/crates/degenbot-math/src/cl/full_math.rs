@@ -42,15 +42,23 @@ pub fn muldiv(a: U256, b: U256, denominator: U256) -> Result<U256, ClMathError> 
 /// - [`ClMathError::Uint256Overflow`] if the result exceeds `U256::MAX`.
 #[must_use = "computation result should be used"]
 pub fn muldiv_rounding_up(a: U256, b: U256, denominator: U256) -> Result<U256, ClMathError> {
-    let result = muldiv(a, b, denominator)?;
-
-    // Round up if there's any remainder: (a*b) % d != 0
+    // Single-pass: product once; div + mod from the same U512 operands
+    // (previously muldiv() re-multiplied to obtain the remainder).
+    if denominator.is_zero() {
+        return Err(ClMathError::DivisionByZero);
+    }
     let product = U512::from(a) * U512::from(b);
-    let remainder = product % U512::from(denominator);
+    let den = U512::from(denominator);
+    let result = product / den;
+    if result > U512::from(U256::MAX) {
+        return Err(ClMathError::Uint256Overflow);
+    }
+    let remainder = product % den;
+    let floor = result.to::<U256>();
     if remainder.is_zero() {
-        Ok(result)
+        Ok(floor)
     } else {
-        result
+        floor
             .checked_add(U256::from(1u8))
             .ok_or(ClMathError::Uint256Overflow)
     }

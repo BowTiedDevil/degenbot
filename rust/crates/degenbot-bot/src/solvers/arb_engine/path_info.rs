@@ -99,6 +99,21 @@ impl ArbitrageEngine {
             .collect();
         format!("path_id={path_id} [{}]", hops.join(" -> "))
     }
+
+    /// [`Self::describe_path`] with a per-path cache: paths are immutable
+    /// after registration, so the hop description is built once and reused
+    /// every block when the activation telemetry formats span fields.
+    #[must_use]
+    pub fn describe_path_cached(&self, path_id: u64) -> std::sync::Arc<str> {
+        if let Some(hit) = self.path_description_cache.lock().get(&path_id) {
+            return std::sync::Arc::clone(hit);
+        }
+        let rendered: std::sync::Arc<str> = std::sync::Arc::from(self.describe_path(path_id));
+        self.path_description_cache
+            .lock()
+            .insert(path_id, std::sync::Arc::clone(&rendered));
+        rendered
+    }
 }
 
 /// Telemetry helper: render one hop as `FAMILY:pool(zfo=N)`. Unresolvable

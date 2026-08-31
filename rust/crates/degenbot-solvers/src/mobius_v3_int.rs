@@ -459,6 +459,10 @@ struct WalkRecorder {
     top_score: alloy::primitives::I256,
 }
 
+// (Duplicate-input probe counters removed after the measurement answered
+// the dedup question: 1.4% dup rate — memoization would cost more than it
+// saves. See epic YO2ST3 / task CGZBRP.)
+
 impl WalkRecorder {
     fn new() -> Self {
         Self {
@@ -541,9 +545,46 @@ fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> U256 {
 ///
 /// Sound by the same monotonicity argument as [`piece_window_left_edge`].
 fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option<U256> {
+    piece_window_right_edge_seeded(hops, ks, hint, None, None).0
+}
+
+/// [`piece_window_right_edge`] with warm-started bisection brackets.
+///
+/// Consecutive walked pieces advance `ks` componentwise and `landed(x)` is
+/// componentwise non-decreasing in x, so the previous piece's right edge is
+/// always a lower-bound seed for the next piece's edge — no probe needed.
+/// The hi seed is the previous bisection's tight confirmed-above bound
+/// (<= edge + 4 wei); the first probe of the grow loop doubles as its
+/// validation (a stale seed simple falls into the standard grow loop from
+/// there, never below the cold-path starting hi). Returns `(edge, hi_to_reuse)`
+/// where `hi_to_reuse` is the final confirmed-above bound — the caller feeds
+/// it back on the next piece.
+fn piece_window_right_edge_seeded(
+    hops: &[WalkHop],
+    ks: &[usize],
+    hint: U256,
+    lo_seed: Option<U256>,
+    hi_seed: Option<U256>,
+) -> (Option<U256>, U256) {
     let mut lo = U256::ZERO; // landed(0) = all zeros ≤ ks for any ks
     let mut hi = hint.max(U256::ONE);
     let mut confirmed = false;
+
+    // Lo warm start needs NO probe: ks advances componentwise between
+    // consecutive pieces and landed(x) is componentwise non-decreasing in x,
+    // so the previous piece's edge always lands ≤ the current ks. The seeded
+    // lo can only be invalid if ks went DOWNWARD, which the walk never does
+    // (landing scans return strictly-forward tuples; a jump tuple replaces ks
+    // with its own landing, still ≥ landed(xr_prev)).
+    if let Some(lseed) = lo_seed.filter(|s| !s.is_zero()) {
+        lo = lseed;
+    }
+    // Hi seed is the previous bisection's tight confirmed-above bound
+    // (≤ edge + 4): cold-quality lower bound so a stale seed cannot make
+    // the grow loop start lower than the cold path would.
+    if let Some(hseed) = hi_seed {
+        hi = hseed.max(hint.max(U256::ONE));
+    }
     for _ in 0..256 {
         let landed = simulate_walk_path(hi, hops).landed;
         if landed_any_above(&landed, ks) {
@@ -551,10 +592,13 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
             break;
         }
         lo = hi;
-        hi = hi.checked_mul(U256::from(2u64))?;
+        hi = match hi.checked_mul(U256::from(2u64)) {
+            Some(v) => v,
+            None => break,
+        };
     }
     if !confirmed {
-        return None; // unbounded region — terminal piece
+        return (None, hi); // unbounded region — terminal piece
     }
     // Bisect to a ≤4 bracket: lo is the largest known ≤ ks input.
     while hi.saturating_sub(lo) > U256::from(4u64) {
@@ -566,7 +610,7 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
             lo = mid;
         }
     }
-    Some(lo)
+    (Some(lo), hi)
 }
 
 /// Chain-saturation corner of a single-piece path (F1 guard), in PATH-INPUT
@@ -630,8 +674,14 @@ fn walk_refine_window(
     use alloy::primitives::I256;
     let mut argmax_x = lo;
     let mut best_score = I256::MIN;
-    let mut probe = |x: U256, hops: &[WalkHop], rec: &mut WalkRecorder| -> I256 {
+    // phase 0 = ternary narrowing, phase 1 = final grid / dense sweep.
+    let mut probe = |x: U256, hops: &[WalkHop], rec: &mut WalkRecorder, phase: u8| -> I256 {
         WALK_REFINE_SIMS.with(|c| c.set(c.get() + 1));
+        if phase == 0 {
+            WALK_TERNARY_SIMS.with(|c| c.set(c.get() + 1));
+        } else {
+            WALK_GRID_SIMS.with(|c| c.set(c.get() + 1));
+        }
         let o = rec.eval_and_record(x, hops);
         let s = walk_profit_score(o.final_output, x);
         if s > best_score {
@@ -646,8 +696,8 @@ fn walk_refine_window(
         let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
         let m1 = l + third;
         let m2 = r - third;
-        let s1 = probe(m1, hops, rec);
-        let s2 = probe(m2, hops, rec);
+        let s1 = probe(m1, hops, rec, 0);
+        let s2 = probe(m2, hops, rec, 0);
         if s1 < s2 {
             l = m1 + U256::from(1u64);
         } else {
@@ -659,7 +709,7 @@ fn walk_refine_window(
         // Narrow bracket → wei-precise sweep (cheap + exact for sharp peaks).
         let mut x = l;
         loop {
-            probe(x, hops, rec);
+            probe(x, hops, rec, 1);
             if x >= r {
                 break;
             }
@@ -673,7 +723,7 @@ fn walk_refine_window(
         let n = REFINE_GRID_POINTS;
         for i in 0..n {
             let x = l + (span * U256::from(i)) / U256::from(n - 1);
-            probe(x, hops, rec);
+            probe(x, hops, rec, 1);
         }
     }
     (argmax_x, best_score)
@@ -699,6 +749,11 @@ thread_local! {
     // Stop-time refinement (`walk_refine_window` ternary + dense sweep) sim
     // count — the measurement split for the 64-wei refinement-resolution cost.
     pub(crate) static WALK_REFINE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // Refinement split (J3OU5F): sims in the ternary narrowing phase vs sims
+    // in the final coarse-grid / dense-sweep phase. Names the probe-budget
+    // driver so the next optimization touches the right loop.
+    pub(crate) static WALK_TERNARY_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static WALK_GRID_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // Q3 telemetry: the largest word-boundary count any range reached on this
     // thread. DB audit (correct metric = max inter-init-tick gap in words,
     // per-pool ts): 210/47,679 registered UNI V3 pools have a >=128-word gap,
@@ -723,6 +778,8 @@ pub fn reset_walk_stats() {
     WALK_PATH_SIMULATIONS.with(|c| c.set(0));
     WALK_WORD_STEPS.with(|c| c.set(0));
     WALK_REFINE_SIMS.with(|c| c.set(0));
+    WALK_TERNARY_SIMS.with(|c| c.set(0));
+    WALK_GRID_SIMS.with(|c| c.set(0));
 }
 
 /// One path's walk-combinator counters (D63GSE follow-up): the FULL set, so
@@ -739,22 +796,45 @@ pub struct WalkStats {
     pub word_steps: usize,
     /// Stop-time refinement probes (`walk_refine_window` ternary + grid).
     pub refine_sims: usize,
+    /// Ternary-narrowing phase sims (subset of `refine_sims`).
+    pub ternary_sims: usize,
+    /// Final grid / dense-sweep phase sims (subset of `refine_sims`).
+    pub grid_sims: usize,
 }
 
 /// Read-and-clear ALL walk counters on the calling thread and return them
 /// locked in one value (no torn reads between the individually-countered
 /// stats).
+/// Read the walk counters WITHOUT clearing them. The solver's own
+/// end-of-walk telemetry must use this (not the clearing take variant),
+/// otherwise it wipes the per-path totals before the solve caller reads them.
+#[must_use]
+pub fn peek_walk_stats() -> WalkStats {
+    WalkStats {
+        pieces: WALK_PIECES_VISITED.with(std::cell::Cell::get),
+        sims: WALK_PATH_SIMULATIONS.with(std::cell::Cell::get),
+        word_steps: WALK_WORD_STEPS.with(std::cell::Cell::get),
+        refine_sims: WALK_REFINE_SIMS.with(std::cell::Cell::get),
+        ternary_sims: WALK_TERNARY_SIMS.with(std::cell::Cell::get),
+        grid_sims: WALK_GRID_SIMS.with(std::cell::Cell::get),
+    }
+}
+
 pub fn take_last_walk_stats_full() -> WalkStats {
     let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
     let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
     let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
     let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
+    let ternary_sims = WALK_TERNARY_SIMS.with(std::cell::Cell::get);
+    let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
     reset_walk_stats();
     WalkStats {
         pieces,
         sims,
         word_steps,
         refine_sims,
+        ternary_sims,
+        grid_sims,
     }
 }
 
@@ -853,6 +933,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         x_r: Option<U256>,
         hint: U256,
         rec: &mut WalkRecorder,
+        refine_neighbor: bool,
     ) {
         let hi_current = x_r.unwrap_or_else(|| {
             hint.saturating_mul(U256::from(4u64))
@@ -861,6 +942,58 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         });
         if x_l <= hi_current {
             walk_refine_window(hops, x_l, hi_current, rec);
+        }
+        // Gated forward-neighbor refine (6V3ZS6 follow-up): a full ternary +
+        // grid over the neighbor window runs on climbing stops (edge can
+        // straddle a peak) and — on falling stops — only when a cheap coarse
+        // 33-point evidence grid finds the neighbor competitive within a
+        // 0.1% grace band of the walk's best score. The absolute skip was
+        // measured WRONG by the fine-grid oracle (deep-liquidity family):
+        // the ±64 straddle probe can land past a thin neighbor piece, so a
+        // falling probe does NOT bound the neighbor's interior — the coarse
+        // grid must adjudicate instead. Direct wei corner probes at the
+        // shared edge (F1 per-piece analogue) run in every fall.
+        if !refine_neighbor {
+            let Some(xr) = x_r else {
+                return;
+            };
+            let Some(next) = landed_beyond(hops, xr, ks) else {
+                return;
+            };
+            let n_l = xr + U256::from(1u64);
+            let n_r = piece_window_right_edge(hops, &next, hint);
+            let n_hi = n_r.unwrap_or_else(|| {
+                hint.saturating_mul(U256::from(4u64))
+                    .max(n_l.saturating_mul(U256::from(2u64)))
+                    .max(n_l.saturating_add(U256::from(1024u64)))
+            });
+            if n_l <= n_hi {
+                let span = n_hi - n_l;
+                // Thin-edge peek trim (J3OU5F): the +2-wei corner probe
+                // survives only when the upcoming search does NOT cover it.
+                // The dense sweep spans [n_l, n_hi] (covers +2 whenever
+                // span >= 2); the coarse grid's first point is n_l (+1).
+                // The old standalone xr+1 probe duplicates the first
+                // grid/sweep point in every case, so it was removed.
+                if span < U256::from(2u64) {
+                    rec.eval_and_record(xr + U256::from(2u64), hops);
+                }
+                let mut best_coarse = alloy::primitives::I256::MIN;
+                for i in 0..33u64 {
+                    let x = n_l + (span * U256::from(i)) / U256::from(32u64);
+                    let o = rec.eval_and_record(x, hops);
+                    let s = walk_profit_score(o.final_output, x);
+                    if s > best_coarse {
+                        best_coarse = s;
+                    }
+                }
+                let grace = rec.top_score.max(alloy::primitives::I256::ZERO)
+                    / alloy::primitives::I256::from_raw(alloy::primitives::U256::from(1_000u64));
+                if best_coarse + grace >= rec.top_score {
+                    walk_refine_window(hops, n_l, n_hi, rec);
+                }
+            }
+            return;
         }
         let Some(xr) = x_r else {
             return;
@@ -904,6 +1037,11 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
     // window boundaries, so it doubles as the next piece's left-edge scan
     // start (saves a full bisection per visited piece).
     let mut prev_right_edge: Option<U256> = None;
+    // Bracket warm start for the right-edge bisection (J3OU5F): the prior
+    // piece's (edge, confirm_hi) pair. ks only advances componentwise, so
+    // the prior edge remains a lower bound; the seeded helper re-validates
+    // confirm_hi with a single probe. Byte-identical to the cold path.
+    let mut right_bracket: Option<(U256, U256)> = None;
 
     let single_piece_path = hops.iter().all(|h| match h {
         WalkHop::ConstantProduct(_) => true,
@@ -1010,13 +1148,20 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
             }
         }
 
-        let x_r = piece_window_right_edge(hops, &ks, anchor);
+        let (x_r, right_confirm_hi) = piece_window_right_edge_seeded(
+            hops,
+            &ks,
+            anchor,
+            right_bracket.map(|b| b.0),
+            right_bracket.map(|b| b.1),
+        );
         let Some(xr) = x_r else {
             // Terminal piece (unbounded right): refine and finish.
-            refine_at_stop(hops, &ks, x_l, None, anchor, &mut rec);
+            refine_at_stop(hops, &ks, x_l, None, anchor, &mut rec, false);
             break;
         };
         prev_right_edge = Some(xr);
+        right_bracket = Some((xr, right_confirm_hi));
 
         // Direction test: straddle probes at ±64 around the window's right
         // edge, with +1-wei staircase tolerance. Climbing ⇒ advance one
@@ -1033,7 +1178,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
                 continue;
             }
         }
-        refine_at_stop(hops, &ks, x_l, Some(xr), anchor, &mut rec);
+        refine_at_stop(hops, &ks, x_l, Some(xr), anchor, &mut rec, climbing);
         break;
     }
 
@@ -1043,7 +1188,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
     // but a pathological pool can still burn excessive pieces or
     // simulations. Surface those cases for diagnosis (not for screening —
     // the solve still completes and returns its result).
-    let ws = take_last_walk_stats_full();
+    let ws = peek_walk_stats();
     let over_threshold =
         ws.pieces > SOLVE_TELEMETRY_PIECES_WARN || ws.sims > SOLVE_TELEMETRY_SIMS_WARN;
     if over_threshold {
@@ -1104,12 +1249,14 @@ fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossin
     seq.crossings()
 }
 
-/// A CL `ending_range` with FEWER than this many word boundaries stays on the linear `int_simulate_v3_swap` walk (the profile is not worth building); denser ranges get a precomputed [`V3WordProfile`].
-const WORD_PROFILE_THRESHOLD: usize = 128;
-/// Q3: an observed range reaching half the dense threshold (64 word boundaries)
-/// is the signal to harvest a real dense capture and replace the synthetic
-/// guard (see the DB audit note on `WALK_MAX_DENSE_WORDS`).
-const DENSE_OBSERVE_THRESHOLD: usize = WORD_PROFILE_THRESHOLD / 2;
+/// EVERY nonzero-liquidity range carries a profile now (empty-boundary
+/// ranges degenerate to one constant terminal step; the old >=128/>=1
+/// word-boundary gates are gone). Per-sim walk cost dominated live heavy
+/// paths (7-17k word steps/path in release replay); profile queries collapse
+/// each sim to a partition search against cumulative constants + ONE live
+/// landing step, and full landings return constants with zero wide math.
+/// Build is O(K) once per (pool, direction) per state resolve.
+const DENSE_OBSERVE_THRESHOLD: usize = 64;
 
 /// Precomputed forward word-boundary profiles, parallel to `crossings`. A dense
 /// range re-walks the same word-boundary prefix on nearly every one of a path's
@@ -1146,13 +1293,7 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3W
     }
     crossings
         .iter()
-        .map(|c| {
-            if c.ending_range.word_boundary_prices.len() >= WORD_PROFILE_THRESHOLD {
-                V3WordProfile::build(&c.ending_range).map(Arc::new)
-            } else {
-                None
-            }
-        })
+        .map(|c| V3WordProfile::build(&c.ending_range).map(Arc::new))
         .collect()
 }
 
@@ -1424,7 +1565,7 @@ impl V3WordProfile {
         use alloy::primitives::I256;
         use degenbot_math::cl::swap_math::compute_swap_step_v3;
         let liquidity = i128::try_from(v3_hop.liquidity).ok()?;
-        if v3_hop.liquidity == 0 || v3_hop.word_boundary_prices.is_empty() {
+        if v3_hop.liquidity == 0 {
             return None;
         }
         let fee_pips = U256::from(v3_hop.fee_denom - v3_hop.gamma_numer);
@@ -3694,15 +3835,24 @@ mod tests {
         assert!(result.is_some());
         let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
         let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
-        eprintln!("[guard] deep fixture: pieces_visited={pieces} path_simulations={sims}");
+        let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
+        let ternary_sims = WALK_TERNARY_SIMS.with(std::cell::Cell::get);
+        let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
+        let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
+        eprintln!(
+            "[guard] deep fixture: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
+        );
         assert!(
             pieces <= 13 + 2,
             "visited pieces must be bounded by Σ ranges + 2, got {pieces}"
         );
-        // Generous but combinatorial-proof bound: ≤ 512 sims per range.
+        // Combinatorial bound PLUS the seeded-bracket regression contract
+        // (J3OU5F): the warm-started right-edge bisection must keep this
+        // fixture at/under the measured 832-sim ceiling. 900 = 832 + safety
+        // margin for word-boundary perturbations.
         assert!(
-            sims <= 512 * 13,
-            "simulation count must be linear-ish in Σ ranges, got {sims}"
+            sims <= 900,
+            "seed + dedup probe budget regressed, got {sims} sims (baseline 844, seeded 832)"
         );
 
         // Common case: 3-hop, moderate multi-range sequences.
@@ -3714,9 +3864,17 @@ mod tests {
         let _ = int_solve_cl_path(&[&s1, &s2, &s3]);
         let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
         let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
-        eprintln!("[guard] 3-hop: pieces_visited={pieces} path_simulations={sims}");
+        let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
+        let ternary_sims = WALK_TERNARY_SIMS.with(std::cell::Cell::get);
+        let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
+        let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
+        eprintln!(
+            "[guard] 3-hop: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
+        );
         assert!(pieces <= 24 + 2);
-        assert!(sims <= 512 * 24);
+        // Seeded-bracket regression contract (J3OU5F): 251 measured with the
+        // warm start; 300 keeps headroom.
+        assert!(sims <= 300);
     }
 
     /// Property (7J22EQ): the walk's profit must match a fine grid
@@ -4230,8 +4388,8 @@ mod tests {
             word_boundary_prices,
         };
         assert!(
-            hop.word_boundary_prices.len() >= WORD_PROFILE_THRESHOLD,
-            "test hop must be dense enough to take the profile path"
+            !hop.word_boundary_prices.is_empty(),
+            "test hop must carry word boundaries to take the profile path"
         );
         let prof = V3WordProfile::build(&hop).expect("profile builds for a valid dense hop");
         let full = prof.consumed.last().copied().expect("non-empty profile");
@@ -4393,8 +4551,8 @@ mod tests {
                 .map(|i| entry - span * U256::from(i) / U256::from(n + 1))
                 .collect();
             assert!(
-                r.word_boundary_prices.len() >= WORD_PROFILE_THRESHOLD,
-                "synthetic cell must be dense (>= {WORD_PROFILE_THRESHOLD} boundaries)"
+                r.word_boundary_prices.len() >= 128,
+                "synthetic cell must be dense (>= 128 boundaries)"
             );
         }
         // 2-range partner -> multi-piece, so the walk runs the ±64 direction

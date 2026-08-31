@@ -20,7 +20,10 @@ use degenbot_math::cl::swap_math::compute_swap_step_v3;
 use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::profit_envelope::{path_output_bound_at, path_profit_bound, HopMath};
+use degenbot_solvers::profit_envelope::{
+    path_output_bound_at, path_profit_bound, path_profit_bound_with_crossings,
+    path_profit_bound_with_crossings_and_prefixes, HopMath,
+};
 
 fn p_at_tick(tick: i32) -> U256 {
     U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap_or_default())
@@ -357,6 +360,93 @@ fn parse_range(v: &serde_json::Value) -> Option<IntV3TickRangeHop> {
         zero_for_one: v.get("zero_for_one")?.as_bool()?,
         word_boundary_prices: Vec::new(),
     })
+}
+
+#[test]
+fn precomputed_crossings_match_self_derived_bound() {
+    // BZSOJ7 parity gate: feeding the caller-carried crossing tables must
+    // produce the byte-identical bound as deriving them inside the envelope.
+    for line in CAPTURES.lines().filter(|l| !l.trim().is_empty()).take(24) {
+        let doc: serde_json::Value = serde_json::from_str(line).expect("valid capture JSONL");
+        let hops_v = doc
+            .get("hops")
+            .and_then(serde_json::Value::as_array)
+            .expect("hops array");
+        let owned_seqs: Vec<IntV3TickRangeSequence> = hops_v
+            .iter()
+            .map(|hop| {
+                let ra = hop.as_array().expect("hop is array of ranges");
+                let ranges: Vec<_> = ra
+                    .iter()
+                    .map(parse_range)
+                    .collect::<Option<Vec<_>>>()
+                    .expect("range fields");
+                mk_seq(ranges)
+            })
+            .collect();
+        let views: Vec<Option<HopMath<'_>>> =
+            owned_seqs.iter().map(|s| Some(HopMath::Cl(s))).collect();
+        let crossing_owned: Vec<Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>> = owned_seqs
+            .iter()
+            .map(degenbot_pools::int_v3_hop::IntV3TickRangeSequence::crossings)
+            .collect();
+        let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
+            crossing_owned.iter().map(|s| Some(s.as_slice())).collect();
+        let derived = path_profit_bound(&views);
+        let carried = path_profit_bound_with_crossings(&views, &with);
+        assert_eq!(
+            derived, carried,
+            "caller-carried crossing tables must not change the envelope (BZSOJ7)"
+        );
+    }
+}
+
+#[test]
+fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
+    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
+    let line = CAPTURES
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .expect("capture present");
+    let doc: serde_json::Value = serde_json::from_str(line).expect("valid capture JSONL");
+    let hops_v = doc
+        .get("hops")
+        .and_then(serde_json::Value::as_array)
+        .expect("hops array");
+    let owned_seqs: Vec<IntV3TickRangeSequence> = hops_v
+        .iter()
+        .map(|hop| {
+            let ra = hop.as_array().expect("hop is array of ranges");
+            let ranges: Vec<_> = ra
+                .iter()
+                .map(parse_range)
+                .collect::<Option<Vec<_>>>()
+                .expect("range fields");
+            mk_seq(ranges)
+        })
+        .collect();
+    let views: Vec<Option<HopMath<'_>>> = owned_seqs.iter().map(|s| Some(HopMath::Cl(s))).collect();
+    let crossing_owned: Vec<Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>> = owned_seqs
+        .iter()
+        .map(degenbot_pools::int_v3_hop::IntV3TickRangeSequence::crossings)
+        .collect();
+    let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
+        crossing_owned.iter().map(|s| Some(s.as_slice())).collect();
+
+    let first = path_profit_bound_with_crossings_and_prefixes(&views, &with, true);
+    let _gs1 = degenbot_solvers::profit_envelope::take_last_gate_stats();
+    let second = path_profit_bound_with_crossings_and_prefixes(&views, &with, true);
+    let gs2 = degenbot_solvers::profit_envelope::take_last_gate_stats();
+    assert_eq!(first, second, "prefix reuse must be byte-identical");
+    assert!(
+        gs2.prefix_hits > 0,
+        "second same-table solve must hit the prefix cache"
+    );
+    assert!(
+        gs2.boundaries_composed < gs2.prefix_hits + 1,
+        "prefix reuse should cut composed boundaries"
+    );
+    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
 }
 
 #[test]

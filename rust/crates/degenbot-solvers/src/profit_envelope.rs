@@ -27,7 +27,7 @@
 
 use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
+use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
 /// One affine upper-bound line: `y = ceil((A + B·x) / C)` with `C > 0`, `B ≥ 0`.
 /// `A` may be negative (lines anchored past their own window's left edge).
@@ -59,20 +59,20 @@ impl Line {
     /// ≤ 480 bits, comfortably within `I512` (511 bits). The lossy step adds
     /// at most 1 ULP per reduction, negligible at 240-bit widths.
     fn compose(&self, inner: &Self) -> Option<Self> {
-        // Fast path: exact (no reduction, no loss).
-        if let Some(mut r) = self.compose_exact(inner) {
-            // Cap the result for the next hop's compose (M6776W overflow fix).
-            r.reduce(COMPOSE_TARGET_BITS);
+        // Fast path: exact (no reduction). The caller reduces the composed
+        // set ONCE per hop boundary (after prune), which is O(survivors)
+        // instead of O(pairs) — soundness-identical since both paths apply
+        // the same ceil/floor reductions to the same line sets.
+        if let Some(r) = self.compose_exact(inner) {
             return Some(r);
         }
-        // Overflow: sound-reduce both operands and retry.
+        // Overflow: sound-reduce both operands and retry (rare; bounded
+        // intermediates keep the fast path exact for 240-bit inputs).
         let mut s = *self;
         let mut i = *inner;
         s.reduce(COMPOSE_TARGET_BITS);
         i.reduce(COMPOSE_TARGET_BITS);
-        let mut r = s.compose_exact(&i)?;
-        r.reduce(COMPOSE_TARGET_BITS);
-        Some(r)
+        s.compose_exact(&i)
     }
 
     /// Exact composition — the algebraic identity, no reduction. Returns
@@ -148,6 +148,10 @@ impl Line {
 /// within `I512` (511 bits). Leaves ~30 bits of headroom for the cross-term
 /// sum in `compose_exact`.
 const COMPOSE_TARGET_BITS: u32 = 240;
+/// Cap on the composed-line count carried into the next hop's product loop
+/// (survivor uniform sampling over the lower envelope). Bounds the product
+/// matrix at K² regardless of pool-liquidity range counts.
+const SAMPLED_COMPOSE_LINES: usize = 48;
 
 /// Right-shift an `I512` by `k` with **ceiling** rounding (toward +infinity).
 /// For any sign: `ceil(v / 2^k)` -- the smallest integer `>= v / 2^k`.
@@ -250,7 +254,10 @@ pub enum HopMath<'a> {
 /// Affine lines dominating one hop's output curve, plus the hop's maximum
 /// extractable output (used to cap the search domain).
 #[expect(clippy::too_many_lines)]
-fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
+fn hop_lines_and_cap(
+    hop: HopMath<'_>,
+    cl_crossings: Option<&[IntTickRangeCrossing]>,
+) -> Option<(Vec<Line>, U256)> {
     match hop {
         HopMath::V2(h) => {
             let (r_in, r_out) = (h.reserve_in, h.reserve_out);
@@ -288,13 +295,21 @@ fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
             if seq.ranges.is_empty() {
                 return None;
             }
-            // O(N) single pass: `crossings()` accumulates the per-range
-            // crossing once, replacing the prior O(N²) `compute_crossing(k)`
-            // per-iteration re-scan that dominated gate time on dense-tick
-            // pools (e.g. 1-bps USDC/USDT with thousands of ranges).
-            let crossings = seq.crossings();
+            // Precomputed crossings reuse (BZSOJ7): the caller already built
+            // this table once per (pool, direction) for the active-set walk;
+            // deriving it here per path dominated gate time. Fall back to an
+            // owned derivation when no table is supplied.
+            let owned_crossings = cl_crossings.is_none().then(|| seq.crossings());
+            let crossings: &[IntTickRangeCrossing] = match cl_crossings {
+                Some(c) => c,
+                None => owned_crossings.as_deref().unwrap_or(&[]),
+            };
+            // O(N) single pass: the crossings table accumulates the
+            // per-range crossing once (either caller-carried or derived),
+            // replacing the prior quadratic per-iteration re-scan that
+            // dominated gate time on dense-tick pools.
             let mut lines: Vec<Line> = Vec::with_capacity(crossings.len());
-            for cr in &crossings {
+            for cr in crossings {
                 // Anchor cumulative (gross_input, output) at the boundary
                 // ENTERING range k: `crossings[k]` carries the sum of
                 // ranges [0, k) — the anchor this tangent line needs.
@@ -742,40 +757,123 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     if lines.len() < 2 {
         return;
     }
-    // O(K log K) dominated-line pruning via sort + sweep.
+    // Exact lower-envelope hull restricted to [0, domain] (replaces the
+    // 2-D endpoint-dominance sweep, which survived near-parallel
+    // non-dominating lines and let the composition product explode — 28k
+    // pairs/path measured on heavy captures).
     //
-    // A line j dominates line i iff j ≤ i at BOTH x=0 and x=domain with at
-    // least one strict — a 2D Pareto front. We sort by (eval(0), eval(domain))
-    // and sweep for running minimum eval(domain): a line is non-dominated
-    // iff no line before it in sort order has eval(domain) < its eval(domain).
-    // Replaces the prior O(K²) pairwise check that dominated gate time on
-    // dense-CL paths (~100k intermediate composed lines → ~8s).
+    // The hull IS the min-line envelope: for affine lines the pointwise
+    // minimum passes through lines in slope order, switching at exact
+    // rational crossover points. A line is minimal somewhere inside
+    // [0, domain] iff its (ceil-rounded) takeover breakpoint lies ≤
+    // domain. Dropping the rest is EXACT (same min at every x), not just
+    // sound.
     //
-    // Build (key0, key1, original_index) sorted ascending in all three so
-    // equal-key ties are broken by index (the original rule: j < i dominates
-    // on identical keys).
-    let mut indexed: Vec<([I512; 2], usize)> = (0..lines.len())
-        .map(|i| {
-            let l = &lines[i];
-            ([l.eval(&U256::ZERO), l.eval(&upper)], i)
-        })
+    // Stage 1 (cheap, no wide divisions): endpoint-dominance sweep. A
+    // line is dropped only when another is ≤ it at BOTH x=0 and x=domain —
+    // the affine difference then bounds it everywhere in between. Removes
+    // the readily-dominated majority for ~2 evals per line.
+    //
+    // Stage 2 (exact hull on survivors): lines are first sound-reduced to
+    // COMPOSE_TARGET_BITS so the slope cross-products cannot overflow I512
+    // (composed intermediates can reach ~484 bits); reduction only raises
+    // values (ceil/floor rules), never under-cuts the bound. Divisions in
+    // the hull are then paid only over the (small) survivor set, not the
+    // full product set.
+    let stage1_t0 = std::time::Instant::now();
+    let mut indexed: Vec<([I512; 2], usize)> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| ([l.eval(&U256::ZERO), l.eval(&upper)], i))
         .collect();
     indexed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    // Sweep: running min key1. A line is kept iff its key1 strictly improves
-    // (decreases) the running minimum — that places it on the Pareto front.
-    let mut keep = vec![false; lines.len()];
     let mut min_key1 = I512::MAX;
-    for (keys, idx) in indexed {
+    let mut surv: Vec<Line> = Vec::with_capacity(lines.len() / 4);
+    for (keys, idx) in &indexed {
         if keys[1] < min_key1 {
-            keep[idx] = true;
             min_key1 = keys[1];
+            surv.push(lines[*idx]);
         }
     }
-    let survivors: Vec<Line> = (0..lines.len())
-        .filter(|&i| keep[i])
-        .map(|i| lines[i])
+    // Saturation guard (live crash 2026-08-30): when EVERY line's endpoint
+    // eval saturates to I512::MAX, the strict improvement test keeps none
+    // and the downstream hull indexed an empty set. Keep the smallest-key0
+    // line — still a sound global upper bound, so the envelope can only
+    // loosen, never under-cut.
+    if surv.is_empty() {
+        surv.push(lines[indexed[0].1]);
+    }
+    GATE_PRUNE_STAGE1_NS.with(|c| c.set(c.get() + stage1_t0.elapsed().as_nanos()));
+    if surv.len() < 2 {
+        *lines = surv;
+        return;
+    }
+    let hull_t0 = std::time::Instant::now();
+    let parsed = &mut surv;
+    for l in parsed.iter_mut() {
+        l.reduce(COMPOSE_TARGET_BITS);
+    }
+    let mut idx: Vec<usize> = (0..parsed.len()).collect();
+    idx.sort_by(|&i, &j| {
+        let (li, lj) = (&parsed[i], &parsed[j]);
+        // Descending slope b_i/c_i vs b_j/c_j (240-bit cross-products fit).
+        let lhs = li.b * lj.c;
+        let rhs = lj.b * li.c;
+        rhs.cmp(&lhs)
+    });
+    let mut hull: Vec<(U256, usize)> = Vec::with_capacity(idx.len());
+    for &li in &idx {
+        let l = &parsed[li];
+        if let Some(&(_, top)) = hull.last() {
+            let lt = &parsed[top];
+            // Same-slope pairs: the lower intercept dominates globally.
+            if lt.b * l.c == l.b * lt.c {
+                if lt.a * l.c <= l.a * lt.c {
+                    continue;
+                }
+                hull.pop();
+            }
+        }
+        let bp = if let Some(&(_, top)) = hull.last() {
+            let lt = &parsed[top];
+            let num = l.a * lt.c - lt.a * l.c;
+            let den = lt.b * l.c - l.b * lt.c;
+            ceil_div(num, den)
+        } else {
+            I512::ZERO
+        };
+        while hull.len() >= 2 {
+            let (bb, t) = hull[hull.len() - 1];
+            let lprev = &parsed[t];
+            let num = l.a * lprev.c - lprev.a * l.c;
+            let den = lprev.b * l.c - l.b * lprev.c;
+            let bb_i = I512::try_from(U512::from(bb)).unwrap_or(I512::MAX);
+            if ceil_div(num, den) <= bb_i {
+                hull.pop();
+            } else {
+                break;
+            }
+        }
+        let bx = if bp <= I512::ZERO {
+            U256::ZERO
+        } else {
+            let u = U512::try_from(bp).unwrap_or(U512::MAX);
+            if u > U512::from(U256::MAX) {
+                U256::MAX
+            } else {
+                u.to::<U256>()
+            }
+        };
+        hull.push((bx, li));
+    }
+    // Keep only lines whose takeover happens inside [0, domain].
+    let keep: Vec<Line> = hull
+        .iter()
+        .filter(|&&(bx, _)| bx <= upper)
+        .map(|&(_, i)| parsed[i])
         .collect();
-    *lines = survivors;
+    GATE_PRUNE_HULL_NS.with(|c| c.set(c.get() + hull_t0.elapsed().as_nanos()));
+    *lines = keep;
 }
 
 /// Gate telemetry: per-solve-cycle counters, thread-local like the walk
@@ -797,9 +895,36 @@ pub struct GateStats {
     pub none_overflow: u64,
     /// Wall-clock time (nanoseconds) spent in `path_profit_bound` for this path.
     pub duration_ns: u128,
+    /// Composed-boundary cache hits inside this path's envelope product.
+    pub prefix_hits: u64,
+    /// Composition boundaries actually executed for this path.
+    pub boundaries_composed: u64,
+    /// Product-matrix wall time (ns) across this path's boundaries.
+    pub product_ns: u128,
+    /// Prune stage-1 endpoint-sweep wall time (ns).
+    pub prune_stage1_ns: u128,
+    /// Prune stage-2 hull wall time (ns).
+    pub prune_hull_ns: u128,
 }
 
 thread_local! {
+    // Phase split of path_profit_bound wall time (also folded into
+    // GATE_DURATION_NS): derive = per-hop line/crossing derivation,
+    // compose = prune + composition products, search = final ternary.
+    pub(crate) static GATE_DERIVE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    // Prefix-composition cache telemetry (loop-8): composed-boundary hits
+    // vs total boundaries composed this path.
+    pub(crate) static GATE_PREFIX_HITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_BOUNDARIES_COMPOSED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    // Loop-9 sub-stage split of the compose phase: product matrix time vs
+    // prune stage-1 (endpoint sweep) vs prune stage-2 (hull) time.
+    pub(crate) static GATE_PRODUCT_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_PRUNE_STAGE1_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_PRUNE_HULL_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_COMPOSE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_SEARCH_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    // Composition pair volume per path (hop_pruned_lines x running_lines).
+    pub(crate) static GATE_PAIRS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_EVALUATED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_SKIPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_UNSUPPORTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -810,9 +935,75 @@ thread_local! {
     pub(crate) static GATE_DURATION_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
 }
 
+/// Prefix-composition cache (loop-8): composed lower-envelope line sets
+/// between hop boundaries, keyed by the crossing-table allocation pointers
+/// of the CL hops and fingerprinted on first/last range anchors. The solve
+/// cycle clears it per block (paths inside one drain share pool prefixes
+/// heavily; across blocks the fingerprints guard pool updates that reuse
+/// an allocation address).
+struct HopSliceFingerprint {
+    len: usize,
+    first_p_entry: U256,
+    first_liq: U256,
+    last_p_upper: U256,
+    last_liq: U256,
+}
+
+fn hop_slice_fingerprint(crossings: &[IntTickRangeCrossing]) -> HopSliceFingerprint {
+    let Some(first) = crossings.first() else {
+        return HopSliceFingerprint {
+            len: 0,
+            first_p_entry: U256::ZERO,
+            first_liq: U256::ZERO,
+            last_p_upper: U256::ZERO,
+            last_liq: U256::ZERO,
+        };
+    };
+    let last = crossings.last().unwrap_or(first);
+    HopSliceFingerprint {
+        len: crossings.len(),
+        first_p_entry: first.ending_range.sqrt_price_x96,
+        first_liq: U256::from(first.ending_range.liquidity),
+        last_p_upper: if last.ending_range.zero_for_one {
+            last.ending_range.sqrt_price_lower_x96
+        } else {
+            last.ending_range.sqrt_price_upper_x96
+        },
+        last_liq: U256::from(last.ending_range.liquidity),
+    }
+}
+
+struct PrefixCacheEntry {
+    lines: Vec<Line>,
+    fingerprints: Vec<HopSliceFingerprint>,
+}
+
+static PREFIX_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<Vec<usize>, PrefixCacheEntry>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Clear the prefix-composition cache. The bot's solve cycle calls this once
+/// per drain (alongside walk-stats reset) so in-block prefix reuse is
+/// maximal and no entry survives a block boundary.
+pub fn reset_envelope_prefix_cache() {
+    let Ok(mut cache) = PREFIX_CACHE.lock() else {
+        return;
+    };
+    cache.clear();
+}
+
 /// Reset all gate counters on the calling thread (call at solve-cycle start,
 /// mirroring [`crate::mobius_v3_int::reset_walk_stats`]).
 pub fn reset_gate_stats() {
+    GATE_PAIRS.with(|c| c.set(0));
+    GATE_PREFIX_HITS.with(|c| c.set(0));
+    GATE_BOUNDARIES_COMPOSED.with(|c| c.set(0));
+    GATE_PRODUCT_NS.with(|c| c.set(0));
+    GATE_PRUNE_STAGE1_NS.with(|c| c.set(0));
+    GATE_PRUNE_HULL_NS.with(|c| c.set(0));
+    GATE_DERIVE_NS.with(|c| c.set(0));
+    GATE_COMPOSE_NS.with(|c| c.set(0));
+    GATE_SEARCH_NS.with(|c| c.set(0));
     GATE_EVALUATED.with(|c| c.set(0));
     GATE_SKIPPED.with(|c| c.set(0));
     GATE_UNSUPPORTED.with(|c| c.set(0));
@@ -820,6 +1011,8 @@ pub fn reset_gate_stats() {
     GATE_NONE_DEGENERATE.with(|c| c.set(0));
     GATE_NONE_OVERFLOW.with(|c| c.set(0));
     GATE_DURATION_NS.with(|c| c.set(0));
+    GATE_PREFIX_HITS.with(|c| c.set(0));
+    GATE_BOUNDARIES_COMPOSED.with(|c| c.set(0));
 }
 
 /// Read-and-clear the calling thread's gate counters.
@@ -860,6 +1053,31 @@ pub fn take_last_gate_stats() -> GateStats {
         c.set(0);
         v
     });
+    let prefix_hits = GATE_PREFIX_HITS.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let boundaries_composed = GATE_BOUNDARIES_COMPOSED.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let product_ns = GATE_PRODUCT_NS.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let prune_stage1_ns = GATE_PRUNE_STAGE1_NS.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
+    let prune_hull_ns = GATE_PRUNE_HULL_NS.with(|c| {
+        let v = c.get();
+        c.set(0);
+        v
+    });
     GateStats {
         evaluated,
         skipped,
@@ -868,29 +1086,105 @@ pub fn take_last_gate_stats() -> GateStats {
         none_degenerate,
         none_overflow,
         duration_ns,
+        prefix_hits,
+        boundaries_composed,
+        product_ns,
+        prune_stage1_ns,
+        prune_hull_ns,
     }
+}
+
+/// Read the gate phase counters WITHOUT clearing (mirror of
+/// `crate::mobius_v3_int::peek_walk_stats`).
+#[must_use]
+pub fn peek_gate_phases() -> (u128, u128, u128) {
+    (
+        GATE_DERIVE_NS.with(std::cell::Cell::get),
+        GATE_COMPOSE_NS.with(std::cell::Cell::get),
+        GATE_SEARCH_NS.with(std::cell::Cell::get),
+    )
+}
+
+/// Read-and-clear the gate phase counters (per-path isolation for benches).
+#[must_use]
+pub fn take_gate_phases() -> (u128, u128, u128) {
+    let d = GATE_DERIVE_NS.with(std::cell::Cell::get);
+    let c = GATE_COMPOSE_NS.with(std::cell::Cell::get);
+    let s = GATE_SEARCH_NS.with(std::cell::Cell::get);
+    GATE_DERIVE_NS.with(|x| x.set(0));
+    GATE_COMPOSE_NS.with(|x| x.set(0));
+    GATE_SEARCH_NS.with(|x| x.set(0));
+    (d, c, s)
+}
+
+/// Composition pair volume since last reset (diagnostic only).
+#[must_use]
+pub fn take_gate_pairs() -> u64 {
+    let v = GATE_PAIRS.with(std::cell::Cell::get);
+    GATE_PAIRS.with(|x| x.set(0));
+    v
 }
 
 /// Rigorous upper bound on `max_x [path_output(x) − x]`, or `None` when any
 /// hop is unsupported/degenerate (callers MUST NOT skip on `None`).
+///
+/// Derives each CL hop's crossing table per call.
 #[must_use]
 pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
+    path_profit_bound_with_crossings(hops, &[])
+}
+
+/// [`path_profit_bound`] fed with precomputed per-Cl-hop crossing tables,
+/// parallel to `hops` (`None` = non-CL hop or derive internally). Live solves
+/// already carry the Arc crossing table on each resolved hop (built once per
+/// pool direction for the active-set walk); re-deriving it inside the
+/// envelope per path dominated gate time (loop-7 S3GK3S finance: gate.derive
+/// 1.42s/block for 1.1k paths against walk-carrying tables). Byte-identical
+/// results to the self-derived path — this is purely derivation reuse.
+#[must_use]
+pub fn path_profit_bound_with_crossings(
+    hops: &[Option<HopMath<'_>>],
+    cl_crossings: &[Option<&[IntTickRangeCrossing]>],
+) -> Option<U256> {
+    path_profit_bound_with_crossings_and_prefixes(hops, cl_crossings, false)
+}
+
+/// [`path_profit_bound_with_crossings`] with the prefix-composition cache
+/// OPTED IN. The cache keys on crossing-table ALLOCATION POINTERS and its
+/// liveness contract is "tables stay alive for the whole solve cycle", which
+/// holds for the bot's Arc projection tables but NOT for tests that rebuild
+/// perishable Vecs per call (allocator address reuse + fingerprint
+/// coincidence could serve a stale entry). Direct parity/offline callers must
+/// use the cacheless entry above; the bot's solve cycle is the only opt-in
+/// caller.
+#[must_use]
+pub fn path_profit_bound_with_crossings_and_prefixes(
+    hops: &[Option<HopMath<'_>>],
+    cl_crossings: &[Option<&[IntTickRangeCrossing]>],
+    prefix_cache_on: bool,
+) -> Option<U256> {
     let gate_t0 = std::time::Instant::now();
-    let result = path_profit_bound_inner(hops);
+    let result = path_profit_bound_inner(hops, cl_crossings, prefix_cache_on);
     GATE_DURATION_NS.with(|c| c.set(gate_t0.elapsed().as_nanos()));
     result
 }
 
 #[expect(clippy::too_many_lines)]
-fn path_profit_bound_inner(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
+fn path_profit_bound_inner(
+    hops: &[Option<HopMath<'_>>],
+    cl_crossings: &[Option<&[IntTickRangeCrossing]>],
+    prefix_cache_on: bool,
+) -> Option<U256> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
+    let phase_derive = std::time::Instant::now();
     for (hop_idx, slot) in hops.iter().enumerate() {
         let Some(hop) = slot.as_ref() else {
             GATE_NONE_HOP_UNMAPPED.with(|c| c.set(c.get() + 1));
             return None;
         };
-        let Some((hop_ls, cap)) = hop_lines_and_cap(*hop) else {
+        let cl_crossings_i = cl_crossings.get(hop_idx).copied().flatten();
+        let Some((hop_ls, cap)) = hop_lines_and_cap(*hop, cl_crossings_i) else {
             GATE_NONE_DEGENERATE.with(|c| c.set(c.get() + 1));
             // M6776W degenerate diagnostic: log the hop family + the reject
             // reason so the steady-state degenerate rate can be classified as
@@ -959,12 +1253,88 @@ fn path_profit_bound_inner(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
         }
         all_hops.push((hop_ls, cap));
     }
+    GATE_DERIVE_NS.with(|c| c.set(c.get() + phase_derive.elapsed().as_nanos()));
+    let phase_compose = std::time::Instant::now();
     // Second pass against the FULL known input domain. Every line that
     // cannot be beaten below within [0,domain] can never best at any path
     // input, so the pruning endpoint assumption holds at discard time.
     let mut lines2 = vec![Line::IDENTITY];
     let domain = xmax;
-    for (hop_ls, _) in &mut all_hops {
+    // Prefix-composition cache (loop-8): crossing-table allocation pointers
+    // per hop — the key for the composed-boundary line-set cache above.
+    let crossing_ptrs: Vec<Option<usize>> = (0..hops.len())
+        .map(|i| {
+            cl_crossings
+                .get(i)
+                .copied()
+                .flatten()
+                .map(|s| s.as_ptr() as usize)
+        })
+        .collect();
+    let mut chain: Vec<usize> = Vec::with_capacity(hops.len());
+    for (hop_idx, (hop_ls, _)) in all_hops.iter_mut().enumerate() {
+        let chainable = prefix_cache_on
+            && crossing_ptrs
+                .get(hop_idx)
+                .copied()
+                .flatten()
+                .is_some_and(|ptr| {
+                    chain.push(ptr);
+                    true
+                });
+        if chainable {
+            // Cache lookup for this exact pure-CL prefix. Fingerprints must
+            // match every hop's current crossing table (guards pool-state
+            // updates that reused an allocator address since insertion).
+            let hit = match PREFIX_CACHE.lock() {
+                Ok(cache) => cache.get(&chain).and_then(|entry| {
+                    if entry.fingerprints.len() != chain.len() {
+                        return None;
+                    }
+                    let mut ok = true;
+                    for (i, _key_ptr) in chain.iter().enumerate() {
+                        let Some(slice) = cl_crossings.get(i).copied().flatten() else {
+                            ok = false;
+                            break;
+                        };
+                        let Some(f) = slice.first() else {
+                            ok = false;
+                            break;
+                        };
+                        let Some(l) = slice.last() else {
+                            ok = false;
+                            break;
+                        };
+                        let stored = &entry.fingerprints[i];
+                        if stored.len != slice.len()
+                            || stored.first_p_entry != f.ending_range.sqrt_price_x96
+                            || stored.first_liq != U256::from(f.ending_range.liquidity)
+                            || stored.last_p_upper
+                                != (if l.ending_range.zero_for_one {
+                                    l.ending_range.sqrt_price_lower_x96
+                                } else {
+                                    l.ending_range.sqrt_price_upper_x96
+                                })
+                            || stored.last_liq != U256::from(l.ending_range.liquidity)
+                        {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    ok.then(|| entry.lines.clone())
+                }),
+                Err(_) => None,
+            };
+            if let Some(hit_lines) = hit {
+                lines2 = hit_lines;
+                GATE_PREFIX_HITS.with(|c| c.set(c.get() + 1));
+                continue;
+            }
+        } else {
+            // Non-CL hop: the reusable pure-CL key ends here.
+            chain.clear();
+        }
+        GATE_BOUNDARIES_COMPOSED.with(|c| c.set(c.get() + 1));
         // Prune each hop's tangent lines BEFORE composition.
         //
         // Soundness: CL swap output is monotonically increasing (more input
@@ -979,18 +1349,73 @@ fn path_profit_bound_inner(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
         // 50×50 = 2500. The intermediate `next` never explodes.
         prune(hop_ls, domain);
         let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
-        for outer in hop_ls {
-            for inner in &lines2 {
-                let Some(composed) = outer.compose(inner) else {
-                    GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
-                    return None;
-                };
-                next.push(composed);
+        GATE_PAIRS.with(|c| c.set(c.get() + (hop_ls.len() * lines2.len()) as u64));
+        {
+            let product_t0 = std::time::Instant::now();
+            for outer in hop_ls {
+                for inner in &lines2 {
+                    let Some(composed) = outer.compose(inner) else {
+                        GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+                        return None;
+                    };
+                    next.push(composed);
+                }
             }
+            GATE_PRODUCT_NS.with(|c| c.set(c.get() + product_t0.elapsed().as_nanos()));
         }
         prune(&mut next, domain);
+        // One reduction pass per hop boundary (O(survivors)) — replaces the
+        // per-pair reduction removed from Line::compose. Byte-identical
+        // coefficients to the old per-pair pass (same ceil/floor rules).
+        for l in &mut next {
+            l.reduce(COMPOSE_TARGET_BITS);
+        }
+        // SAMPLED_COMPOSE_LINES cap: the composing side is dropped to a
+        // uniform Pareto-order sample across the lower envelope, bounding
+        // the next product at K². Sound by the same argument as the CL
+        // tangent cap: min(fewer lines) ≥ min(all lines), so the bound can
+        // only rise (skip less, never more). With the live min-profit floor
+        // of zero the tightness loss does not affect skips.
+        if next.len() > SAMPLED_COMPOSE_LINES {
+            let step = next.len() / SAMPLED_COMPOSE_LINES;
+            let mut sampled = Vec::with_capacity(SAMPLED_COMPOSE_LINES + 1);
+            let mut i = 0usize;
+            while i < next.len() {
+                sampled.push(next[i]);
+                i += step.max(1);
+            }
+            if sampled.last() != Some(&next[next.len() - 1]) {
+                sampled.push(next[next.len() - 1]);
+            }
+            next = sampled;
+        }
+        // Cache the composed prefix set under this pure-CL prefix key with
+        // the current crossing fingerprints (loop-8). Only miss paths reach
+        // here; a hit path returns early via the hit branch above.
+        if !chain.is_empty() && chainable {
+            let mut fps = Vec::with_capacity(chain.len());
+            let mut fp_ok = true;
+            for i in 0..chain.len() {
+                let Some(slice) = cl_crossings.get(i).copied().flatten() else {
+                    fp_ok = false;
+                    break;
+                };
+                fps.push(hop_slice_fingerprint(slice));
+            }
+            if fp_ok {
+                let entry = PrefixCacheEntry {
+                    lines: next.clone(),
+                    fingerprints: fps,
+                };
+                if let Ok(mut cache) = PREFIX_CACHE.lock() {
+                    cache.insert(chain.clone(), entry);
+                }
+            }
+        }
         lines2 = next;
     }
+    GATE_COMPOSE_NS.with(|c| c.set(c.get() + phase_compose.elapsed().as_nanos()));
+    let phase_search = std::time::Instant::now();
     let lines = lines2;
     // Diagnostic: line explosion is the gate bottleneck on dense-CL paths.
     #[cfg(not(feature = "hotpath"))]
@@ -1008,15 +1433,99 @@ fn path_profit_bound_inner(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
     if xmax.is_zero() {
         return Some(U256::ZERO);
     }
-    let f = |x: &U256| -> I512 {
-        let mut best = I512::MAX;
-        for l in &lines {
-            let v = l.eval(x);
-            if v < best {
-                best = v;
+    // Lower-envelope hull over the surviving lines: order by slope (b/c,
+    // exact rational compare) descending, drop same-slope dominated
+    // intercepts, and store per-hull-line the ceil-rounded integer
+    // breakpoint at which it takes over the running minimum. f(x) then
+    // costs ONE line eval instead of one eval per line per probe.
+    //
+    // Measured basis: the ternary dominates up to ~38% of gate wall on
+    // range-heavy paths (O(lines) eval per probe x ~256 probes).
+    let mut idx: Vec<usize> = (0..lines.len()).collect();
+    idx.sort_by(|&i, &j| {
+        let (li, lj) = (&lines[i], &lines[j]);
+        // descending slope by b_i/c_i vs b_j/c_j
+        let lhs = li.b * lj.c;
+        let rhs = lj.b * li.c;
+        rhs.cmp(&lhs)
+    });
+    // Hull: (breakpoint_x, line_index). Breakpoints monotonically increase.
+    let mut hull: Vec<(U256, usize)> = Vec::with_capacity(lines.len());
+    for &li in &idx {
+        let l = &lines[li];
+        if let Some(&(_, top)) = hull.last() {
+            if top != usize::MAX {
+                let lt = &lines[top];
+                // same-slope (b_t·c == b·c_t) with lower-or-equal intercept
+                // dominates the candidate everywhere — drop the candidate.
+                let s_eq = lt.b * l.c == l.b * lt.c;
+                let dom = lt.a * l.c <= l.a * lt.c;
+                if s_eq && dom {
+                    continue;
+                }
+                if s_eq {
+                    // candidate dominates the top of equal slope: replace it.
+                    hull.pop();
+                }
             }
         }
-        best - I512::try_from(U512::from(*x)).unwrap_or(I512::MAX)
+        let bp = if let Some(&(_, top)) = hull.last() {
+            let lt = &lines[top];
+            // x = (A_i·C_t − A_t·C_i) / (B_t·C_i − B_i·C_t), ceil-rounded so
+            // the incumbent is never under-cut before the true take-over.
+            let num = l.a * lt.c - lt.a * l.c;
+            let den = lt.b * l.c - l.b * lt.c;
+            ceil_div(num, den)
+        } else {
+            I512::ZERO
+        };
+        // Hull monotonicity: pop tops whose stored breakpoint would sit at/after
+        // this candidate's — they can never be minimal again.
+        while hull.len() >= 2 {
+            let (bb, t) = hull[hull.len() - 1];
+            let lprev = &lines[t];
+            let num = l.a * lprev.c - lprev.a * l.c;
+            let den = lprev.b * l.c - l.b * lprev.c;
+            let bb_i = I512::try_from(U512::from(bb)).unwrap_or(I512::MAX);
+            if ceil_div(num, den) <= bb_i {
+                hull.pop();
+            } else {
+                break;
+            }
+        }
+        // Positive take-over: saturate to U256 (a later breakpoint keeps the
+        // incumbent selected longer — strictly conservative for a bound).
+        let bx = if bp <= I512::ZERO {
+            U256::ZERO
+        } else {
+            let u = U512::try_from(bp).unwrap_or(U512::MAX);
+            if u > U512::from(U256::MAX) {
+                U256::MAX
+            } else {
+                u.to::<U256>()
+            }
+        };
+        hull.push((bx, li));
+    }
+    let hlen = hull.len();
+    let hull_ref = &hull;
+    let lines_ref = &lines;
+    let f = |x: &U256| -> I512 {
+        // Binary search: last breakpoint ≤ x owns the minimum line.
+        let mut ix = hlen; // default = last line (dominates near infinity)
+        let mut lo = 0usize;
+        let mut hi = hlen;
+        while lo < hi {
+            let mid = (lo + hi) >> 1;
+            if hull_ref[mid].0 <= *x {
+                ix = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let li = hull_ref[if ix == hlen { hlen - 1 } else { ix }].1;
+        lines_ref[li].eval(x) - I512::try_from(U512::from(*x)).unwrap_or(I512::MAX)
     };
     let one = U256::from(1u8);
     let (mut lo, mut hi) = (U256::ZERO, xmax);
@@ -1029,16 +1538,19 @@ fn path_profit_bound_inner(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
         }
     }
     let best = f(&lo);
+    GATE_SEARCH_NS.with(|c| c.set(c.get() + phase_search.elapsed().as_nanos()));
     // Rounding slack: composed reductions and I512 ceiling evaluation can
-    // leave one candidate line up to ~2^-11 of the bound BELOW the true
-    // curve for very deep chains (block 25826949 path 400:
-    // under-cut 200M on a 7.23e13 bound). Add `bound/2048` for heavy
-    // chains so the gate stays sound at the cost of a tiny skip margin.
-    // Only applied when the pre-scan fallback already ran (lines > 200).
-    if lines.len() > 200 {
-        if let Some(b) = narrow(best) {
-            return Some(b.saturating_add(b / U256::from(2048u64)));
-        }
+    // leave the derived lower envelope a hair BELOW the true curve. The
+    // deficit is ~2^-11 of the bound per reduction for very deep chains
+    // (block 25826949 path 400: 200M under-cut on a 7.23e13 bound), but the
+    // same per-hop reductions compound on moderate chains too: block
+    // 25826949 path 704 under-cut 3.7e15 on a 2.7e23 bound while its
+    // composed survivor count stayed <= 200, so the old lines>200 gate
+    // skipped the slack. The slack must be UNCONDITIONAL — soundness of the
+    // skip decision is the only contract; the 1/2048 (~0.05%) looseness is
+    // invisible to live skips against the incumbent/floor comparisons.
+    if let Some(b) = narrow(best) {
+        return Some(b.saturating_add(b / U256::from(2048u64)));
     }
     narrow(best)
 }
@@ -1070,7 +1582,7 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
             GATE_NONE_HOP_UNMAPPED.with(|c| c.set(c.get() + 1));
             return None;
         };
-        let (hop_ls, _cap) = hop_lines_and_cap(*hop)?;
+        let (hop_ls, _cap) = hop_lines_and_cap(*hop, None)?;
         let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
         for outer in &hop_ls {
             for inner in &lines {
@@ -1128,6 +1640,26 @@ mod tests {
         // And sound reduction must not make the slope smaller than before.
         let (b1, c1) = (U512::from(l.b), U512::from(l.c));
         assert!(b1 * c0 >= b0 * c1, "reduced slope under-cuts original");
+    }
+
+    /// RED (live crash): when every endpoint eval saturates to I512::MAX the
+    /// stage-1 sweep used to drop every line and the hull search panicked on
+    /// the empty set. prune must never return empty (soundness: the kept line
+    /// is still a global upper bound).
+    #[test]
+    fn prune_never_empties_when_all_endpoint_evals_saturate() {
+        let extreme = Line {
+            a: I512::MAX,
+            b: I512::MAX,
+            c: I512::ONE,
+        };
+        let upper = U256::MAX;
+        let mut lines = vec![extreme, extreme, extreme];
+        prune(&mut lines, upper);
+        assert!(
+            !lines.is_empty(),
+            "prune must keep a line even when every endpoint eval saturates"
+        );
     }
 
     #[test]

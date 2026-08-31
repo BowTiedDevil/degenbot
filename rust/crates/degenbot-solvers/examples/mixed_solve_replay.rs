@@ -1,10 +1,17 @@
 // Dev/example-only harness: offline replay + profiler for captured *mixed*
 // V2+CL solver fixtures. Pedantic lints production code denies are relaxed.
 #![expect(
+    clippy::cast_lossless,
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::map_unwrap_or,
     clippy::print_stderr,
     clippy::print_stdout,
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::type_complexity,
+    clippy::unnecessary_cast
 )]
 
 //! Offline heavy mixed V2+CL path replay harness with N-repeat stable timing.
@@ -12,8 +19,8 @@
 //! `exact_solve_mixed_path_n_cached` (V2→V3→V3, V2→V3→V4, …).
 //!
 //! Usage:
-//!   cargo run -p degenbot-solvers --example mixed_solve_replay -- [<capture.jsonl>]
-//!   DR_REPLAY_ITERS=25   // more reps for tighter p95 (default 9)
+//!   `cargo run -p degenbot-solvers --example mixed_solve_replay -- [<capture.jsonl>]`
+//!   `DR_REPLAY_ITERS=25`   // more reps for tighter p95 (default 9)
 //!
 //! Re-reads a `heavy_mixed_solve_captures.jsonl` produced by the live hook
 //! (`solver_dispatch` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
@@ -270,7 +277,7 @@ fn main() {
             }
             last_result = r;
         }
-        times_us.sort();
+        times_us.sort_unstable();
         let min_us = *times_us.first().unwrap_or(&0);
         let med_us = pct(&times_us, 0.5);
         let p95_us = pct(&times_us, 0.95);

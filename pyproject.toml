@@ -297,7 +297,7 @@ profile = "dev"
 # list with `--features pyo3/extension-module` (see
 # .github/workflows/publish-to-pypi.yaml) so the shipped artifact excludes
 # hotpath — macros are no-op `lib_off`, zero runtime penalty.
-features = ["pyo3/extension-module", "degenbot-bot/hotpath", "degenbot-solvers/hotpath", "otel"]
+features = ["pyo3/extension-module", "degenbot-bot/hotpath", "degenbot-solvers/hotpath", "otel", "mimalloc"]
 python-packages = ["degenbot"]
 
 [tool.alembic]

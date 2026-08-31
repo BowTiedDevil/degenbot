@@ -1,9 +1,10 @@
 #![expect(
-    clippy::cast_possible_truncation,
     clippy::print_stdout,
-    clippy::too_many_lines
+    clippy::print_stderr,
+    clippy::too_many_lines,
+    clippy::unwrap_used
 )]
-//! Gate-only benchmark: calls path_profit_bound on captured mixed-path
+//! Gate-only benchmark: calls `path_profit_bound` on captured mixed-path
 //! fixtures to isolate gate time from the decomposed solver time.
 
 use alloy::primitives::U256;
@@ -122,19 +123,34 @@ fn main() {
             }
         }
         let mut times = Vec::new();
+        let mut prod_times = Vec::new();
+        let mut s1_times = Vec::new();
+        let mut hull_times = Vec::new();
         for _ in 0..9 {
             let t0 = std::time::Instant::now();
             let _ = path_profit_bound(&views);
-            times.push(t0.elapsed().as_micros() as u128);
+            times.push(t0.elapsed().as_micros());
+            let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
+            prod_times.push(gs.product_ns / 1_000);
+            s1_times.push(gs.prune_stage1_ns / 1_000);
+            hull_times.push(gs.prune_hull_ns / 1_000);
         }
-        times.sort();
+        let m = |v: &Vec<u128>| {
+            let mut t = v.clone();
+            t.sort_unstable();
+            t[t.len() / 2]
+        };
         let n = times.len();
-        let min = times[0];
         let med = times[n / 2];
         let p95 = times[(n * 95) / 100];
         let r1 = range_counts.get(1).copied().unwrap_or(0);
         let r2 = range_counts.get(2).copied().unwrap_or(0);
         let n_hops = hops.len();
-        println!("{pid:>8} {n_hops:>4} {r1:>6} {r2:>6} {min:>10} {med:>10} {p95:>10}");
+        println!(
+            "{pid:>8} {n_hops:>4} {r1:>6} {r2:>6} gate={med:>8}/{p95:>8}us prod={:>6}us s1={:>6}us hull={:>6}us",
+            m(&prod_times),
+            m(&s1_times),
+            m(&hull_times),
+        );
     }
 }

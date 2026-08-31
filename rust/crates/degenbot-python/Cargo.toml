@@ -51,6 +51,7 @@ dashmap = { version = "^6.2" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }
 lru = { version = "^0.18" }
+mimalloc = { version = "0.1", optional = true }
 # Engine-slice map type mirrors the core hashbrown maps.
 hashbrown.workspace = true
 parking_lot = { version = "^0.12" }
@@ -103,6 +104,7 @@ uniswap = ["dep:degenbot-uniswap"]
 decoders = ["dep:degenbot-decoders"]
 pathfinding = ["dep:degenbot-pathfinding"]
 async = []
+mimalloc = ["dep:mimalloc"]
 # OTel span export for the Python-driven path (K6PCKP): pulls degenbot-bot
 # with its `otel` feature (OTLP exporter + layer). NOT in `default` -
 # release/CI wheels must not ship the OTLP client footprint (same

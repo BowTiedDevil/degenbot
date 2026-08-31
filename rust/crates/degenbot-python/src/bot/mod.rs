@@ -1025,6 +1025,7 @@ impl PyBot {
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, state_view_address, block=None, db=true, tick_data_fetcher=None))]
     #[expect(clippy::too_many_arguments)]
     #[expect(clippy::type_complexity)]
+    #[expect(clippy::too_many_lines)] // PyO3 V4 build surface: full build + already-registered fast path in one tuple contract
     fn build_v4_pool(
         &self,
         py: Python<'_>,
@@ -1070,6 +1071,49 @@ impl PyBot {
         {
             self.with_state_mut(py, |s| s.register_v4_state_view(pm, state_view));
         }
+
+        // ── Already-registered fast path (missed-WS-pong 2026-08-28) ──────────
+        // The per-block driver re-attempts build_managed_pool for V4 hops whose
+        // pools are ALREADY registered in the shared core (DB-snapshot seeds).
+        // The historical behavior re-ran the FULL builder (fresh slot0/liquidity
+        // RPC reads + tick-map assembly) and only failed at the terminal
+        // register_v4_pool with AlreadyRegistered — ~13k wasted builds per
+        // block; the RPC load + GIL/log flooding starved the WS keepalive and
+        // produced the "WS server missed a pong" teardown. Return the existing
+        // registration instead — identity from the core's immutable key,
+        // protocol_fee from the core's state machine, coverage as recorded —
+        // under ONE read guard and with NO RPC. `block`, `db`, and
+        // `tick_data_fetcher` are no-ops on this path: the core-tracked state
+        // is the freshest source, and the driver still runs the registration
+        // lifecycle (quarantine/verify/pin) off the returned handle as usual.
+        //
+        // hook_flags is NOT re-derived here: the Python driver resolves the
+        // identity (DB two-step, no RPC) before this call and passes the same
+        // immutable hook mask the core registered with.
+        if let Some(existing) = self.with_state(py, |s| s.try_registered_v4(pm, &pool_id)) {
+            let coverage_str = match existing.coverage {
+                degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
+                degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
+            };
+            let key = existing.pool_key;
+            // `lp_fee` = the static pool-key fee: dynamic-fee pools are
+            // admission-rejected and never registered, so they never reach
+            // this branch.
+            return Ok((
+                existing.pool_id,
+                coverage_str.to_string(),
+                key.currency0.to_checksum(None),
+                key.currency1.to_checksum(None),
+                pm.to_checksum(None),
+                key.fee,
+                key.tick_spacing,
+                hook_flags,
+                format!("0x{}", alloy::hex::encode(pool_id)),
+                existing.protocol_fee,
+                key.fee,
+            ));
+        }
+
         let io = self.bot.construction_io_arc().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "build_v4_pool: no ConstructionIo attached (requires an alloy provider)",

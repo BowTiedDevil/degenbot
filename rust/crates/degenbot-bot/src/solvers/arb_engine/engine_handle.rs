@@ -128,7 +128,9 @@ impl Engine for EngineHandle {
         // drowning the real solves. Emit the span only when there is dirty
         // work. Behavior is unchanged — solve_dirty re-derives the dirty set
         // under its own lock; this gate only decides whether the span exists.
-        if !self.engine.lock().has_dirty_paths() {
+        if !hotpath::measure_block!("EngineHandle::solve_dirty.probe_lock", {
+            self.engine.lock().has_dirty_paths()
+        }) {
             self.engine.lock().solve_dirty(block, metadata);
             return;
         }
@@ -138,7 +140,11 @@ impl Engine for EngineHandle {
         // no-op path above returns before this).
         let solve_start = std::time::Instant::now();
         {
-            let mut engine = self.engine.lock();
+            // Acquire wait is its own label: loop-5 accounting found the
+            // mutex handover could mask the real in-engine wall.
+            let mut engine = hotpath::measure_block!("EngineHandle::solve_dirty.acquire_lock", {
+                self.engine.lock()
+            });
             if let Some(p) = crate::instruments::pipeline() {
                 p.set_registered_paths(u64::try_from(engine.path_count()).unwrap_or(u64::MAX));
             }

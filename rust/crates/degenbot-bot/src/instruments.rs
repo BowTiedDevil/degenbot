@@ -74,7 +74,7 @@ pub struct PipelineInstruments {
     /// Solve lock-hold duration (dirty solves only — no-op solves are gated
     /// out of the span path and the histogram alike).
     solve_duration: Histogram<f64>,
-    /// Per-path solve duration (the solve_fn closure timing — includes
+    /// Per-path solve duration (the `solve_fn` closure timing — includes
     /// the profit-envelope gate + the decomposed solver). Distinct from
     /// `solve_duration` which measures the whole dirty-carrying solve CYCLE.
     per_path_solve_duration: Histogram<f64>,

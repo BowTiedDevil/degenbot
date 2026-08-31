@@ -115,10 +115,10 @@ fn min_profit_floor() -> U256 {
 }
 
 /// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
-/// `path_sims`, `word_steps`, `refine_sims`, `path_id`) — lets the
-/// completion event name the walk-combinatorial cost driver of the slowest
-/// routes, not just wall time.
-type PathTimeRecord = (u128, u64, u64, u64, u64, u64);
+/// `path_sims`, `word_steps`, `refine_sims`, `gate_us`, `path_id`) — lets the
+/// completion event name the cost driver of the slowest routes: gate-envelope
+/// bound composition vs the walk proper, not just wall time.
+type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64);
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
 type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
 
@@ -453,48 +453,50 @@ impl ArbitrageEngine {
         // path re-checks ONLY when a responsible pool goes dirty AND the
         // container empties (last faulty pool cleared). Unrelated co-hop dirt
         // leaves an Invalid path untouched — no 100k-path re-resolve churn.
-        for pool_key in v2_affected {
-            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V2, *pool_key)) {
-                for &path_id in path_ids {
-                    if self
-                        .path_status
-                        .entry(path_id)
-                        .or_default()
-                        .on_pool_dirty((HopType::V2, *pool_key))
-                    {
-                        affected_path_ids.insert(path_id);
+        hotpath::measure_block!("arb_solve.dirty_status_scan", {
+            for pool_key in v2_affected {
+                if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V2, *pool_key)) {
+                    for &path_id in path_ids {
+                        if self
+                            .path_status
+                            .entry(path_id)
+                            .or_default()
+                            .on_pool_dirty((HopType::V2, *pool_key))
+                        {
+                            affected_path_ids.insert(path_id);
+                        }
                     }
                 }
             }
-        }
-        for pool_key in v3_affected {
-            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *pool_key)) {
-                for &path_id in path_ids {
-                    if self
-                        .path_status
-                        .entry(path_id)
-                        .or_default()
-                        .on_pool_dirty((HopType::V3, *pool_key))
-                    {
-                        affected_path_ids.insert(path_id);
+            for pool_key in v3_affected {
+                if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *pool_key)) {
+                    for &path_id in path_ids {
+                        if self
+                            .path_status
+                            .entry(path_id)
+                            .or_default()
+                            .on_pool_dirty((HopType::V3, *pool_key))
+                        {
+                            affected_path_ids.insert(path_id);
+                        }
                     }
                 }
             }
-        }
-        for pool_key in v4_affected {
-            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V4, *pool_key)) {
-                for &path_id in path_ids {
-                    if self
-                        .path_status
-                        .entry(path_id)
-                        .or_default()
-                        .on_pool_dirty((HopType::V4, *pool_key))
-                    {
-                        affected_path_ids.insert(path_id);
+            for pool_key in v4_affected {
+                if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V4, *pool_key)) {
+                    for &path_id in path_ids {
+                        if self
+                            .path_status
+                            .entry(path_id)
+                            .or_default()
+                            .on_pool_dirty((HopType::V4, *pool_key))
+                        {
+                            affected_path_ids.insert(path_id);
+                        }
                     }
                 }
             }
-        }
+        });
 
         // Also re-solve any paths registered via register_and_solve_path that
         // haven't been through rebuild_and_solve_affected yet. These paths were
@@ -535,18 +537,25 @@ impl ArbitrageEngine {
         // with its concrete hop list — a Jaeger trace now answers "which pools
         // are in this path" without cross-referencing Python state. Runs under
         // the drainer's `degenbot.arb.solve` span, so the events parent there.
-        for &path_id in &affected_path_ids {
-            tracing::info!(
-                target: "degenbot::engine",
-                block_number = solve_block,
-                path.id = path_id,
-                path.hops = %self.describe_path(path_id),
-                dirty.v2 = v2_affected.len(),
-                dirty.v3 = v3_affected.len(),
-                dirty.v4 = v4_affected.len(),
-                "[path] activated by dirty pool"
-            );
-        }
+        hotpath::measure_block!("arb_solve.fanout_activate_telemetry", {
+            // Per-path activation events are debug-level now (N225ET): the
+            // per-event span plumbing dominated the fan-out phase; the
+            // diagnostic remains reachable via RUST_LOG degenbot::engine=debug.
+            if tracing::enabled!(target: "degenbot::engine", tracing::Level::DEBUG) {
+                for &path_id in &affected_path_ids {
+                    tracing::debug!(
+                        target: "degenbot::engine",
+                        block_number = solve_block,
+                        path.id = path_id,
+                        path.hops = %self.describe_path_cached(path_id),
+                        dirty.v2 = v2_affected.len(),
+                        dirty.v3 = v3_affected.len(),
+                        dirty.v4 = v4_affected.len(),
+                        "[path] activated by dirty pool"
+                    );
+                }
+            }
+        });
 
         // Telemetry: fan-out summary (activations above can be hundreds of
         // events; this one line carries the aggregate).
@@ -592,6 +601,7 @@ impl ArbitrageEngine {
         // affected set dies before solving (SequenceUnavailable vs MissingState
         // vs ...). Emitted on the resolve phase event.
         let mut invalid_reasons: HashMap<String, u64> = HashMap::new();
+        self.paths_same_state_this_cycle = 0;
         hotpath::measure_block!("arb_solve.resolve", {
             let core = self.core.read();
             for &path_id in &affected_path_ids {
@@ -605,6 +615,24 @@ impl ArbitrageEngine {
                 // `crate::bot_core::solve_anchor`; after the head floor a hop can
                 // beat the anchor only on a mid-solve state advance (belt +
                 // suspenders, normally unreachable).
+                // Reuse ceiling probe (epic RZRORC last leaf): compare the
+                // hop update-block snapshot against the previous cycle's
+                // recorded one. Byte-identical ⇒ the solve intake (every hop
+                // state) is unchanged since the stored result was produced.
+                let update_snapshot: Vec<u64> = path
+                    .pools
+                    .iter()
+                    .map(|pool_ref| core.pool_update_block(pool_ref.pool_key))
+                    .collect();
+                let same_state = self
+                    .resolved_update_snapshot
+                    .get(&path_id)
+                    .is_some_and(|prev| *prev == update_snapshot);
+                self.resolved_update_snapshot
+                    .insert(path_id, update_snapshot);
+                if same_state {
+                    self.paths_same_state_this_cycle += 1;
+                }
                 let future = path
                     .pools
                     .iter()
@@ -651,6 +679,7 @@ impl ArbitrageEngine {
             target: "degenbot::solver",
             block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
+            paths.same_state = self.paths_same_state_this_cycle,
             hop.projections = self.hop_projection_count,
             paths.deferred_future_price = deferred_paths.len(),
             invalid.reasons = %invalid_reasons.iter().map(|(r, c)| format!("{c}x {r}")).collect::<Vec<_>>().join(", "),
@@ -733,6 +762,32 @@ impl ArbitrageEngine {
             std::sync::atomic::AtomicU64::new(0);
         let walk_refine_sims_total: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(0);
+        // J3OU5F follow-up (loop-7 S3GK3S): refine-phase split + envelope
+        // phase splits, explicit counters — impl_type hotpath rows cannot be
+        // trusted for skew-sensitive labels, so the finance event carries
+        // first-class phase sums instead.
+        let walk_ternary_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let walk_grid_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let gate_derive_us_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_compose_us_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_search_us_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_prefix_hits_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_boundaries_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        // Loop-9 compose sub-split totals (product / prune stage-1 / hull).
+        let gate_product_us_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_prune_stage1_us_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let gate_prune_hull_us_total: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        // Prefix-composition cache lifecycle (loop-8): one envelope line-set
+        // reuse domain per solve cycle.
+        ::degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
         // Profit-envelope gate totals (SU7MAE): evaluated / skipped /
         // unsupported across this solve cycle's paths.
         let gate_evaluated_total: std::sync::atomic::AtomicU64 =
@@ -782,6 +837,7 @@ impl ArbitrageEngine {
                         std::sync::atomic::Ordering::Relaxed,
                     );
                     let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
+                    let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
                     if let Some(p) = crate::instruments::pipeline() {
                         #[expect(clippy::cast_precision_loss)]
                         {
@@ -801,8 +857,52 @@ impl ArbitrageEngine {
                     gate_none_overflow_total
                         .fetch_add(gs.none_overflow, std::sync::atomic::Ordering::Relaxed);
                     let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
-                    let (pieces, sims, word_steps, refine_sims) =
-                        (ws.pieces, ws.sims, ws.word_steps, ws.refine_sims);
+                    let (pieces, sims, word_steps, refine_sims, ternary_sims, grid_sims) = (
+                        ws.pieces,
+                        ws.sims,
+                        ws.word_steps,
+                        ws.refine_sims,
+                        ws.ternary_sims,
+                        ws.grid_sims,
+                    );
+                    let (gate_derive_us, gate_compose_us, gate_search_us) = {
+                        let (d, c, s) = ::degenbot_solvers::profit_envelope::take_gate_phases();
+                        (
+                            u64::try_from(d / 1_000).unwrap_or(u64::MAX),
+                            u64::try_from(c / 1_000).unwrap_or(u64::MAX),
+                            u64::try_from(s / 1_000).unwrap_or(u64::MAX),
+                        )
+                    };
+                    walk_ternary_total.fetch_add(
+                        u64::try_from(ternary_sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_grid_total.fetch_add(
+                        u64::try_from(grid_sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    gate_derive_us_total
+                        .fetch_add(gate_derive_us, std::sync::atomic::Ordering::Relaxed);
+                    gate_compose_us_total
+                        .fetch_add(gate_compose_us, std::sync::atomic::Ordering::Relaxed);
+                    gate_search_us_total
+                        .fetch_add(gate_search_us, std::sync::atomic::Ordering::Relaxed);
+                    gate_prefix_hits_total
+                        .fetch_add(gs.prefix_hits, std::sync::atomic::Ordering::Relaxed);
+                    gate_boundaries_total
+                        .fetch_add(gs.boundaries_composed, std::sync::atomic::Ordering::Relaxed);
+                    gate_product_us_total.fetch_add(
+                        u64::try_from(gs.product_ns / 1_000).unwrap_or(u64::MAX),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    gate_prune_stage1_us_total.fetch_add(
+                        u64::try_from(gs.prune_stage1_ns / 1_000).unwrap_or(u64::MAX),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    gate_prune_hull_us_total.fetch_add(
+                        u64::try_from(gs.prune_hull_ns / 1_000).unwrap_or(u64::MAX),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                     walk_pieces_total.fetch_add(
                         u64::try_from(pieces).unwrap_or(0),
                         std::sync::atomic::Ordering::Relaxed,
@@ -823,7 +923,7 @@ impl ArbitrageEngine {
                     {
                         let worst = heap
                             .peek()
-                            .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _))| *w);
+                            .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _, _))| *w);
                         if heap.len() < SLOWEST_PATHS_K || micros > worst {
                             heap.push(std::cmp::Reverse((
                                 micros,
@@ -831,6 +931,7 @@ impl ArbitrageEngine {
                                 u64::try_from(sims).unwrap_or(0),
                                 u64::try_from(word_steps).unwrap_or(0),
                                 u64::try_from(refine_sims).unwrap_or(0),
+                                gate_us,
                                 pid,
                             )));
                             if heap.len() > SLOWEST_PATHS_K {
@@ -934,11 +1035,13 @@ impl ArbitrageEngine {
 
         // Telemetry: pure solver phase done — name the K slowest paths.
         let slowest: Vec<String> = path_times.lock().iter()
-            .map(|std::cmp::Reverse((us, pieces, sims, word_steps, refine_sims, pid))| {
-                format!(
-                    "{pid}:{us}us:sims={sims}:pieces={pieces}:steps={word_steps}:refine={refine_sims}"
-                )
-            })
+            .map(
+                |std::cmp::Reverse((us, pieces, sims, word_steps, refine_sims, gate_us, pid))| {
+                    format!(
+                        "{pid}:{us}us:sims={sims}:pieces={pieces}:steps={word_steps}:refine={refine_sims}:gate={gate_us}us"
+                    )
+                },
+            )
             .collect();
         tracing::info!(
             target: "degenbot::solver",
@@ -950,6 +1053,16 @@ impl ArbitrageEngine {
             walk.sims = walk_sims_total.load(std::sync::atomic::Ordering::Relaxed),
             walk.steps = walk_word_steps_total.load(std::sync::atomic::Ordering::Relaxed),
             walk.refine_sims = walk_refine_sims_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.ternary = walk_ternary_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.grid = walk_grid_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.derive_us = gate_derive_us_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.compose_us = gate_compose_us_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.search_us = gate_search_us_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.prefix_hits = gate_prefix_hits_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.boundaries_composed = gate_boundaries_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.product_us = gate_product_us_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.prune_stage1_us = gate_prune_stage1_us_total.load(std::sync::atomic::Ordering::Relaxed),
+            gate.prune_hull_us = gate_prune_hull_us_total.load(std::sync::atomic::Ordering::Relaxed),
             gate.evaluated = gate_evaluated_total.load(std::sync::atomic::Ordering::Relaxed),
             gate.skipped = gate_skipped_total.load(std::sync::atomic::Ordering::Relaxed),
             gate.unsupported = gate_unsupported_total.load(std::sync::atomic::Ordering::Relaxed),
@@ -983,7 +1096,7 @@ impl ArbitrageEngine {
                     path.id = pid,
                     input = %solve_result.optimal_input,
                     profit = %solve_result.profit,
-                    path.hops = %self.describe_path(pid),
+                    path.hops = %self.describe_path_cached(pid),
                     "[path] profitable solve"
                 );
                 self.results.insert(pid, solve_result);

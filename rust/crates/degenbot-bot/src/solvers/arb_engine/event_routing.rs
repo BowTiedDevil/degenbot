@@ -140,6 +140,30 @@ impl ArbitrageEngine {
             self.last_solved_block = block;
             self.has_logs_this_block = false;
         }
+        // Authoritative per-family apply split (2SDIQW): hotpath labels do
+        // not aggregate reliably in impl_type mode, so the atomics summarize
+        // per block here. Format: calls:us per family.
+        let (apply_calls, apply_us) = crate::bot_core::apply_telemetry::snapshot_reset();
+        if apply_calls.iter().any(|&c| c > 0) {
+            let mut parts = Vec::with_capacity(5);
+            for i in 0..5 {
+                if apply_calls[i] > 0 {
+                    parts.push(format!(
+                        "{}={}:{}us",
+                        crate::bot_core::apply_telemetry::FAMILY_NAMES[i],
+                        apply_calls[i],
+                        apply_us[i] / 1_000
+                    ));
+                }
+            }
+            tracing::info!(
+                target: "degenbot::state",
+                block_number = block,
+                apply.block_us = apply_us.iter().sum::<u128>() / 1_000,
+                apply.families = %parts.join(","),
+                "[apply-telemetry] block family split"
+            );
+        }
     }
 
     /// Process pre-decoded updates for testing.

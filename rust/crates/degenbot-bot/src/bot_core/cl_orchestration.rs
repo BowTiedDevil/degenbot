@@ -23,7 +23,7 @@ use crate::bot_core::cl_route::{
 use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
 use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent};
 use degenbot_pools::v4_state::{
-    BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4StateSync, V4_DYNAMIC_FEE_FLAG,
+    BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4PoolKey, V4StateSync, V4_DYNAMIC_FEE_FLAG,
 };
 
 use super::{
@@ -1826,6 +1826,39 @@ impl BotState {
         self.v4_pool_ids.get(&(pool_manager, *pool_id)).copied()
     }
 
+    /// One-read fast-path lookup for the `PyO3` `build_v4_pool` re-build guard
+    /// (missed-WS-pong incident 2026-08-28).
+    ///
+    /// The driver re-attempts `build_managed_pool` for V4 hops whose pools
+    /// are ALREADY registered in this shared core (DB-snapshot seeds). The
+    /// historical behavior re-ran the full builder (fresh slot0/liquidity
+    /// RPC reads + tick-map assembly) and only failed at the terminal
+    /// `register_v4_pool` with `AlreadyRegistered` — ~13k wasted builds per
+    /// block, whose RPC load + GIL/log flooding starved the WS keepalive. This
+    /// accessor resolves the existing registration under ONE read guard so the
+    /// `PyO3` layer can synthesize the builder's return surface (identity +
+    /// coverage + fees) with core-tracked values and NO RPC.
+    ///
+    /// Dynamic-fee / hooked / fee-exceeds-encoder pools are admission-rejected
+    /// and never registered, so they miss here and keep their existing typed
+    /// rejections.
+    #[must_use]
+    pub fn try_registered_v4(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<RegisteredV4> {
+        let id = self.v4_pool_id_by_key(pool_manager, pool_id)?;
+        let identity = self.get_v4_identity(id)?;
+        let state = self.get_v4_pool(id)?;
+        Some(RegisteredV4 {
+            pool_id: id,
+            pool_key: identity.pool_key.clone(),
+            protocol_fee: state.protocol_fee,
+            coverage: state.coverage,
+        })
+    }
+
     /// Read the pinned snapshot seed for a V4 pool (CBCH6H — V4 twin of
     /// `v3_snapshot_seed`). Keyed by `(pool_manager, pool_id)`.
     #[must_use]
@@ -2023,6 +2056,122 @@ impl BotState {
         state.update_block = update.update_block;
         state.tick_data_block = update.update_block;
         state.invalidate_tick_range_cache();
+    }
+}
+
+/// One-read snapshot of an ALREADY-registered V4 pool's return-relevant
+/// state — the numeric pool id, immutable registration key, core-tracked
+/// protocol fee, and registration coverage. Produced by
+/// [`BotState::try_registered_v4`] for the `PyO3` `build_v4_pool` fast path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisteredV4 {
+    /// The auto-assigned numeric pool id in the shared core.
+    pub pool_id: u64,
+    /// The immutable V4 pool key (`currency0/currency1/fee/tick_spacing/hooks`).
+    pub pool_key: V4PoolKey,
+    /// The packed `slot0.protocolFee` tracked by the core's state machine.
+    pub protocol_fee: u32,
+    /// `Sparse` or `Tracked` coverage recorded at registration.
+    pub coverage: PoolTickCoverage,
+}
+
+#[cfg(test)]
+mod registered_v4_fast_path_tests {
+    use alloy::primitives::{Address, U256};
+    use degenbot_decoders::v4_swap_decoder::V4PoolId;
+    use degenbot_pools::v3_state::PoolTickCoverage;
+    use degenbot_pools::v4_state::V4PoolKey;
+    use hashbrown::HashMap;
+
+    use super::{BotState, RegisterV4PoolParams};
+
+    #[expect(clippy::expect_used)]
+    fn register_v4(
+        core: &mut BotState,
+        pid: [u8; 32],
+        coverage: PoolTickCoverage,
+        protocol_fee: u32,
+    ) -> u64 {
+        core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager: Address::from([0x44u8; 20]),
+            pool_id: pid,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::from([0x22u8; 20]),
+            },
+            hook_flags: 0,
+            protocol_fee,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            tick_data_block: None,
+            coverage,
+            fetcher: None,
+        })
+        .expect("test setup: V4 registration")
+    }
+
+    /// The 2026-08-28 missed-WS-pong fix: an already-registered V4 pool must
+    /// re-resolve from the core alone (identity + fees + coverage) so the
+    /// PyO3 builder can skip the RPC build pipeline entirely.
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn existing_registration_returns_identity_fees_and_coverage_tracked() {
+        let mut core = BotState::new();
+        let pm = Address::from([0x44u8; 20]);
+        let pid: V4PoolId = [0xeeu8; 32];
+        let registered = register_v4(&mut core, pid, PoolTickCoverage::Tracked, 0x0102);
+
+        let existing = core
+            .try_registered_v4(pm, &pid)
+            .expect("registered pool must resolve by (pool_manager, pool_id)");
+        assert_eq!(existing.pool_id, registered, "must be the same numeric id");
+        let key = &existing.pool_key;
+        assert_eq!(key.currency0, Address::ZERO);
+        assert_eq!(key.currency1, Address::from([1u8; 20]));
+        assert_eq!(key.fee, 500);
+        assert_eq!(key.tick_spacing, 10);
+        assert_eq!(key.hooks, Address::from([0x22u8; 20]));
+        assert_eq!(existing.protocol_fee, 0x0102);
+        assert_eq!(existing.coverage, PoolTickCoverage::Tracked);
+    }
+
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn existing_registration_reports_sparse_coverage() {
+        let mut core = BotState::new();
+        let pm = Address::from([0x44u8; 20]);
+        let pid: V4PoolId = [0xeeu8; 32];
+        let _ = register_v4(&mut core, pid, PoolTickCoverage::Sparse, 0);
+
+        let existing = core
+            .try_registered_v4(pm, &pid)
+            .expect("registered pool must resolve");
+        assert_eq!(existing.coverage, PoolTickCoverage::Sparse);
+    }
+
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn unknown_key_resolves_none() {
+        let mut core = BotState::new();
+        let pm = Address::from([0x44u8; 20]);
+        let _ = register_v4(&mut core, [0xeeu8; 32], PoolTickCoverage::Sparse, 0);
+
+        assert_eq!(
+            core.try_registered_v4(pm, &[0xffu8; 32]),
+            None,
+            "an unregistered pool_id under the same manager must miss"
+        );
+        assert_eq!(
+            core.try_registered_v4(Address::from([0x45u8; 20]), &[0xeeu8; 32]),
+            None,
+            "an unknown pool_manager must miss"
+        );
     }
 }
 

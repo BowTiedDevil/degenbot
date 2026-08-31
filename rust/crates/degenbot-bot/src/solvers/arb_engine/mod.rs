@@ -376,6 +376,19 @@ pub struct ArbitrageEngine {
     /// Co-owned with the `EngineSubscriber` so `on_pool_state_updated`
     /// can mark pools dirty without taking the engine Mutex.
     pub(crate) dirty_sets: Arc<dirty_sets::DirtySets>,
+    /// Telemetry string cache: path id → formatted hop description, built
+    /// once at first emission (paths are immutable after registration, so the
+    /// cache never invalidates). Turns the per-block per-path hop formatting
+    /// of the activation telemetry into an Arc clone.
+    path_description_cache: parking_lot::Mutex<HashMap<u64, std::sync::Arc<str>>>,
+    /// Per-path snapshot of every hop's `pool_update_block` at the last
+    /// successful resolve. A byte-identical snapshot on the next cycle means
+    /// the whole solve intake (all hop states) is unchanged — the measured
+    /// ceiling for cross-block result reuse (epic RZRORC last leaf).
+    resolved_update_snapshot: HashMap<u64, Vec<u64>>,
+    /// Reuse-eligibility counter for the current solve cycle (probe only;
+    /// reset each `solve_dirty` and surfaced on the resolve event).
+    paths_same_state_this_cycle: u64,
     /// Dedup index: canonical `(pool_id, zero_for_one)` sequence → existing
     /// `path_id`. `register_path` is idempotent: re-registering the same hop
     /// sequence returns the existing `path_id` instead of allocating a new
@@ -438,6 +451,9 @@ impl ArbitrageEngine {
             last_solved_path_ids: HashSet::new(),
             next_path_id: 1, // path IDs start at 1
             path_signatures: HashMap::new(),
+            path_description_cache: parking_lot::Mutex::new(HashMap::new()),
+            resolved_update_snapshot: HashMap::new(),
+            paths_same_state_this_cycle: 0,
             delivery: DeliveryPolicy::default(),
             dirty_sets: Arc::new(dirty_sets::DirtySets::new()),
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),

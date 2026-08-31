@@ -11,6 +11,7 @@ use alloy::primitives::{Address, U256};
 use ::degenbot_pools::state_history::{JournalError, ReorgPoolState};
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
+pub mod apply_telemetry;
 pub mod balance_vector_orchestration;
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
@@ -69,6 +70,7 @@ pub use balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
 pub use block_clock_pipe::BlockNotification;
+pub use cl_orchestration::RegisteredV4;
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
 use degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};

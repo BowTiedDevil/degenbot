@@ -23,6 +23,20 @@
 //!
 //! See individual module documentation for usage examples.
 
+// Opt-in allocator swap for churn-heavy workloads (missed-WS-pong follow-up,
+// RSS-growth investigation). The measured pathology was glibc free-page
+// retention across per-thread arenas (system vs in-use spread of gigabytes,
+// reclaimed on demand by malloc_trim). mimalloc returns freed segments to the
+// OS aggressively instead of pooling them, at the cost of the system
+// allocator's free-list caching. Dev builds opt in via pyproject
+// [tool.maturin] features; release wheels keep the system allocator until the
+// swap is judged (same policy as hotpath/otel). NOTE: this switches only the
+// Rust global allocator — CPython's pymalloc and third-party C libs (sqlite,
+// etc.) keep glibc, so the blast radius is the Rust heap only.
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// PyO3 seam for the `degenbot-aave` chunk loop (`run_aave_update`).
 #[cfg(feature = "aave-updater")]
 pub mod aave_updater;

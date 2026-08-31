@@ -170,8 +170,22 @@ impl DecodedPoolEvent {
 
     /// Apply this event to `bot_state`, returning the affected `pool_id` (or
     /// `None` if the pool isn't registered / the event is a no-op).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "five family arms plus the atomic-telemetry prelude"
+    )]
     fn apply(self, bot_state: &mut BotState) -> ApplyOutcome {
-        match self {
+        // Family-cost telemetry (2SDIQW): self tropical atomic split of the
+        // apply wall per family, surfaced on the block-end event.
+        let family = match self {
+            Self::V2Sync { .. } => crate::bot_core::apply_telemetry::ApplyFamily::V2Sync,
+            Self::V3Swap { .. } => crate::bot_core::apply_telemetry::ApplyFamily::V3Swap,
+            Self::V3Liquidity { .. } => crate::bot_core::apply_telemetry::ApplyFamily::V3Liquidity,
+            Self::V4Swap { .. } => crate::bot_core::apply_telemetry::ApplyFamily::V4Swap,
+            Self::V4Liquidity { .. } => crate::bot_core::apply_telemetry::ApplyFamily::V4Liquidity,
+        };
+        let at0 = std::time::Instant::now();
+        let out = match self {
             Self::V2Sync {
                 pool_address,
                 reserve0,
@@ -263,7 +277,12 @@ impl DecodedPoolEvent {
                 ),
                 &[],
             ),
-        }
+        };
+        crate::bot_core::apply_telemetry::record(
+            family,
+            u64::try_from(at0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+        out
     }
 }
 

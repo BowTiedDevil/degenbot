@@ -14,8 +14,9 @@ use std::sync::Arc;
 
 use alloy::primitives::{U256, U512};
 
-use crate::profit_envelope::{path_profit_bound, HopMath};
+use crate::profit_envelope::{path_profit_bound_with_crossings_and_prefixes, HopMath};
 use crate::profit_envelope::{GATE_EVALUATED, GATE_SKIPPED, GATE_UNSUPPORTED};
+use degenbot_pools::int_v3_hop::IntTickRangeCrossing;
 
 use crate::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
@@ -131,7 +132,19 @@ fn solve_path_gated(
             }
         })
         .collect();
-    match path_profit_bound(&views) {
+    // Carry the Arc crossing tables the resolve pass already built (BZSOJ7):
+    // the envelope must not re-derive them per path. &[] for zero-hop slices.
+    let cl_crossings: Vec<Option<&[IntTickRangeCrossing]>> = resolved
+        .hops
+        .iter()
+        .map(|h| match h {
+            ResolvedHop::V3 { crossing_table, .. } | ResolvedHop::V4 { crossing_table, .. } => {
+                Some(crossing_table.as_slice())
+            }
+            _ => None,
+        })
+        .collect();
+    match path_profit_bound_with_crossings_and_prefixes(&views, &cl_crossings, true) {
         // Unsupported families are SOLVED unscreened, never skipped.
         None => GATE_UNSUPPORTED.with(|c| c.set(c.get() + 1)),
         Some(bound) => {
