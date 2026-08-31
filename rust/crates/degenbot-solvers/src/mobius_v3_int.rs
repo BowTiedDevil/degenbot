@@ -672,10 +672,10 @@ fn walk_refine_window(
     rec: &mut WalkRecorder,
 ) -> (U256, alloy::primitives::I256) {
     // Refine narrowing mode (loop-11 FWB3SH Q6DMHV): 0 = legacy ternary
-    // (2 evals/iter), 1 = golden-section (1 retained eval + 1 fresh/iter).
-    // Test-only hook while the cutover is gated; mode 1 not implemented yet,
-    // so it behaves like mode 0 until D4DEBJ lands (RED first).
-    let _mode = WALK_REFINE_MODE.with(std::cell::Cell::get);
+    // (2 evals/iter, shrink 2/3), 1 = golden-section (1 retained eval +
+    // 1 fresh/iter, shrink 0.618). Same stop condition and tail, so mode 1
+    // spends ~58% fewer narrowing probes at identical final bracket.
+    let mode = WALK_REFINE_MODE.with(std::cell::Cell::get);
     use alloy::primitives::I256;
     let mut argmax_x = lo;
     let mut best_score = I256::MIN;
@@ -697,16 +697,61 @@ fn walk_refine_window(
     };
     let mut l = lo;
     let mut r = hi;
-    while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
-        let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
-        let m1 = l + third;
-        let m2 = r - third;
-        let s1 = probe(m1, hops, rec, 0);
-        let s2 = probe(m2, hops, rec, 0);
-        if s1 < s2 {
-            l = m1 + U256::from(1u64);
-        } else {
-            r = m2.saturating_sub(U256::from(1u64));
+    if mode == 1 {
+        // Golden-section narrowing: ρ = (3−√5)/2 ≈ 0.38196601125. m1 sits at
+        // l+ρ·span, m2 at r−ρ·span (symmetric interior points); each round
+        // reuses the retained probe and evaluates ONE fresh point, shrinking
+        // the bracket ×0.618 per fresh eval vs ternary's ×2/3 per TWO evals.
+        const RHO_NUM: u128 = 3_819_660_112_501_051;
+        const RHO_DEN: u128 = 10_000_000_000_000_000;
+        let rho_span = |a: U256, span: U256| -> U256 {
+            // span·RHO_NUM/RHO_DEN exactly, avoiding a U256 overflow via
+            // q·N + (r·N)/D (q = span/D, r = span%D ≤ 1e16, so r·N < 2^128
+            // comfortably and q·N < span·RHO_NUM/RHO_DEN ≤ span).
+            let (q, rem) = span.div_rem(U256::from(RHO_DEN));
+            let scaled = q * U256::from(RHO_NUM) + rem * U256::from(RHO_NUM) / U256::from(RHO_DEN);
+            // scaled < span, so a + scaled cannot overflow a U256
+            a + scaled
+        };
+        let mut s1 = rho_span(l, r - l);
+        let mut s2 = r - (s1 - l); // symmetric: r − ρ·span
+        let mut f1 = probe(s1, hops, rec, 0);
+        let mut f2 = probe(s2, hops, rec, 0);
+        while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
+            if f1 < f2 {
+                l = s1;
+                s1 = s2;
+                f1 = f2;
+                let span = r - l;
+                if span.is_zero() {
+                    break;
+                }
+                s2 = r - (rho_span(l, span) - l);
+                f2 = probe(s2, hops, rec, 0);
+            } else {
+                r = s2;
+                s2 = s1;
+                f2 = f1;
+                let span = r - l;
+                if span.is_zero() {
+                    break;
+                }
+                s1 = rho_span(l, span);
+                f1 = probe(s1, hops, rec, 0);
+            }
+        }
+    } else {
+        while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
+            let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
+            let m1 = l + third;
+            let m2 = r - third;
+            let s1 = probe(m1, hops, rec, 0);
+            let s2 = probe(m2, hops, rec, 0);
+            if s1 < s2 {
+                l = m1 + U256::from(1u64);
+            } else {
+                r = m2.saturating_sub(U256::from(1u64));
+            }
         }
     }
     let span = r.saturating_sub(l);
