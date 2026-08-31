@@ -84,6 +84,19 @@ fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
         .sum()
 }
 
+/// LPT cost used at binning: max(structural word-boundary proxy, previous
+/// block's measured walk sims). The measured count predicts the current
+/// block's combinatorics better for stable pool shapes; the proxy floors it
+/// for freshly dirty pools whose state changed since the last measure.
+/// (loop-12 BY7BLS KUKHMX)
+fn sims_aware_cost(proxy: usize, last_sims: Option<u64>) -> usize {
+    let measured = match last_sims {
+        Some(v) => usize::try_from(v).unwrap_or(usize::MAX),
+        None => 0,
+    };
+    proxy.max(measured)
+}
+
 #[expect(clippy::doc_markdown)]
 /// RAYPAR T3: LPT-pre-balanced scoped-thread partition replaces rayon
 /// par_iter work-stealing fan-out for the solve phase. Default ON; set
@@ -816,6 +829,7 @@ impl ArbitrageEngine {
         // Captures to heavy_mixed_solve_captures.jsonl for the replay harness.
         let capture_mixed = HeavyMixedPathCapture::from_env();
         let capture_mixed_ref: Option<&HeavyMixedPathCapture> = capture_mixed.as_ref();
+        let sims_recorder: &parking_lot::Mutex<HashMap<u64, u64>> = &self.last_walk_sims;
         let solved: Vec<(u64, SolvePathResult)> =
             hotpath::measure_block!("arb_solve.rayon_solve", {
                 // Per-path solve + diagnostics closure (shared by the LPT
@@ -865,6 +879,11 @@ impl ArbitrageEngine {
                         ws.ternary_sims,
                         ws.grid_sims,
                     );
+                    // Record this block's measured walk sims for the next
+                    // block's LPT cost (loop-12 KUKHMX).
+                    sims_recorder
+                        .lock()
+                        .insert(pid, u64::try_from(sims).unwrap_or(0));
                     let (gate_derive_us, gate_compose_us, gate_search_us) = {
                         let (d, c, s) = ::degenbot_solvers::profit_envelope::take_gate_phases();
                         (
@@ -972,8 +991,18 @@ impl ArbitrageEngine {
                     // allocator arenas across drains (the pool was built once
                     // at import by configure_rayon_solver_pool).
                     let n_threads = rayon::current_num_threads().max(1);
-                    let costs: Vec<usize> =
-                        to_solve.iter().map(|(_, r)| path_cost_proxy(r)).collect();
+                    // Loop-12 KUKHMX: previous-block measured walk sims refine
+                    // the LPT cost; snapshot once (single lock) before binning.
+                    let last_sims_snapshot: HashMap<u64, u64> = sims_recorder.lock().clone();
+                    let costs: Vec<usize> = to_solve
+                        .iter()
+                        .map(|(pid, r)| {
+                            sims_aware_cost(
+                                path_cost_proxy(r),
+                                last_sims_snapshot.get(pid).copied(),
+                            )
+                        })
+                        .collect();
                     let bins = lpt_partition(to_solve.len(), n_threads, |i| costs[i]);
                     let to_solve_ref = &to_solve;
                     let solve_ref = &solve_fn;
@@ -1154,7 +1183,14 @@ impl ArbitrageEngine {
         // RAYPAR T3: LPT-pre-balanced partition on rayons persistent pool.
         // The cold-start path has the same cost skew as the hot path.
         let n_threads = rayon::current_num_threads().max(1);
-        let costs: Vec<usize> = to_solve.iter().map(|(_, r)| path_cost_proxy(r)).collect();
+        // Cold-start has no previous-block sims yet: structural proxy only.
+        let last_sims_snapshot: HashMap<u64, u64> = HashMap::new();
+        let costs: Vec<usize> = to_solve
+            .iter()
+            .map(|(pid, r)| {
+                sims_aware_cost(path_cost_proxy(r), last_sims_snapshot.get(pid).copied())
+            })
+            .collect();
         let bins = lpt_partition(to_solve.len(), n_threads, |i| costs[i]);
         let to_solve_ref = &to_solve;
         let solve_span_ref = &solve_span;
@@ -1663,6 +1699,20 @@ mod lpt_partition_tests {
             "load spread {max_load}-{min_load}={spread} exceeds max_item",
             spread = max_load - min_load
         );
+    }
+
+    #[test]
+    fn sims_aware_cost_prefers_measured_last_block_walk() {
+        // No measured value → structural proxy governs.
+        assert_eq!(sims_aware_cost(500, None), 500);
+        // Measured below the proxy → proxy still governs (fresh pool state
+        // can always cost at least the structural floor).
+        assert_eq!(sims_aware_cost(500, Some(300)), 500);
+        // Measured above the proxy → measured wins (the last block's sims
+        // predict the current block's cost better than structure alone).
+        assert_eq!(sims_aware_cost(300, Some(900)), 900);
+        // Oversized measured values saturate to usize::MAX rather than wrap.
+        assert_eq!(sims_aware_cost(1, Some(u64::MAX)), usize::MAX);
     }
 
     #[test]

@@ -386,6 +386,10 @@ pub struct ArbitrageEngine {
     /// the whole solve intake (all hop states) is unchanged — the measured
     /// ceiling for cross-block result reuse (epic RZRORC last leaf).
     resolved_update_snapshot: HashMap<u64, Vec<u64>>,
+    /// Per-path previous-block MEASURED walk sims (recorded by solve_fn
+    /// after each solve; lock-free-read at bin construction). Refines the
+    /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
+    last_walk_sims: parking_lot::Mutex<HashMap<u64, u64>>,
     /// Reuse-eligibility counter for the current solve cycle (probe only;
     /// reset each `solve_dirty` and surfaced on the resolve event).
     paths_same_state_this_cycle: u64,
@@ -453,6 +457,7 @@ impl ArbitrageEngine {
             path_signatures: HashMap::new(),
             path_description_cache: parking_lot::Mutex::new(HashMap::new()),
             resolved_update_snapshot: HashMap::new(),
+            last_walk_sims: parking_lot::Mutex::new(HashMap::new()),
             paths_same_state_this_cycle: 0,
             delivery: DeliveryPolicy::default(),
             dirty_sets: Arc::new(dirty_sets::DirtySets::new()),
