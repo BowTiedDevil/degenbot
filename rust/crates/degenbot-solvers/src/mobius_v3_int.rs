@@ -671,11 +671,6 @@ fn walk_refine_window(
     hi: U256,
     rec: &mut WalkRecorder,
 ) -> (U256, alloy::primitives::I256) {
-    // Refine narrowing mode (loop-11 FWB3SH Q6DMHV): 0 = legacy ternary
-    // (2 evals/iter, shrink 2/3), 1 = golden-section (1 retained eval +
-    // 1 fresh/iter, shrink 0.618). Same stop condition and tail, so mode 1
-    // spends ~58% fewer narrowing probes at identical final bracket.
-    let mode = WALK_REFINE_MODE.with(std::cell::Cell::get);
     use alloy::primitives::I256;
     let mut argmax_x = lo;
     let mut best_score = I256::MIN;
@@ -697,61 +692,16 @@ fn walk_refine_window(
     };
     let mut l = lo;
     let mut r = hi;
-    if mode == 1 {
-        // Golden-section narrowing: ρ = (3−√5)/2 ≈ 0.38196601125. m1 sits at
-        // l+ρ·span, m2 at r−ρ·span (symmetric interior points); each round
-        // reuses the retained probe and evaluates ONE fresh point, shrinking
-        // the bracket ×0.618 per fresh eval vs ternary's ×2/3 per TWO evals.
-        const RHO_NUM: u128 = 3_819_660_112_501_051;
-        const RHO_DEN: u128 = 10_000_000_000_000_000;
-        let rho_span = |a: U256, span: U256| -> U256 {
-            // span·RHO_NUM/RHO_DEN exactly, avoiding a U256 overflow via
-            // q·N + (r·N)/D (q = span/D, r = span%D ≤ 1e16, so r·N < 2^128
-            // comfortably and q·N < span·RHO_NUM/RHO_DEN ≤ span).
-            let (q, rem) = span.div_rem(U256::from(RHO_DEN));
-            let scaled = q * U256::from(RHO_NUM) + rem * U256::from(RHO_NUM) / U256::from(RHO_DEN);
-            // scaled < span, so a + scaled cannot overflow a U256
-            a + scaled
-        };
-        let mut s1 = rho_span(l, r - l);
-        let mut s2 = r - (s1 - l); // symmetric: r − ρ·span
-        let mut f1 = probe(s1, hops, rec, 0);
-        let mut f2 = probe(s2, hops, rec, 0);
-        while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
-            if f1 < f2 {
-                l = s1;
-                s1 = s2;
-                f1 = f2;
-                let span = r - l;
-                if span.is_zero() {
-                    break;
-                }
-                s2 = r - (rho_span(l, span) - l);
-                f2 = probe(s2, hops, rec, 0);
-            } else {
-                r = s2;
-                s2 = s1;
-                f2 = f1;
-                let span = r - l;
-                if span.is_zero() {
-                    break;
-                }
-                s1 = rho_span(l, span);
-                f1 = probe(s1, hops, rec, 0);
-            }
-        }
-    } else {
-        while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
-            let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
-            let m1 = l + third;
-            let m2 = r - third;
-            let s1 = probe(m1, hops, rec, 0);
-            let s2 = probe(m2, hops, rec, 0);
-            if s1 < s2 {
-                l = m1 + U256::from(1u64);
-            } else {
-                r = m2.saturating_sub(U256::from(1u64));
-            }
+    while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
+        let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
+        let m1 = l + third;
+        let m2 = r - third;
+        let s1 = probe(m1, hops, rec, 0);
+        let s2 = probe(m2, hops, rec, 0);
+        if s1 < s2 {
+            l = m1 + U256::from(1u64);
+        } else {
+            r = m2.saturating_sub(U256::from(1u64));
         }
     }
     let span = r.saturating_sub(l);
@@ -804,8 +754,6 @@ thread_local! {
     // driver so the next optimization touches the right loop.
     pub(crate) static WALK_TERNARY_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_GRID_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    // loop-11 FWB3SH: narrowing-mode hook (0 = ternary, 1 = golden section).
-    pub(crate) static WALK_REFINE_MODE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     // Q3 telemetry: the largest word-boundary count any range reached on this
     // thread. DB audit (correct metric = max inter-init-tick gap in words,
     // per-pool ts): 210/47,679 registered UNI V3 pools have a >=128-word gap,
@@ -832,11 +780,6 @@ pub fn reset_walk_stats() {
     WALK_REFINE_SIMS.with(|c| c.set(0));
     WALK_TERNARY_SIMS.with(|c| c.set(0));
     WALK_GRID_SIMS.with(|c| c.set(0));
-}
-
-/// Test-only: select the refine narrowing mode (0 = ternary, 1 = golden).
-pub fn set_refine_mode_for_test(mode: u8) {
-    WALK_REFINE_MODE.with(|c| c.set(mode));
 }
 
 /// One path's walk-combinator counters (D63GSE follow-up): the FULL set, so
@@ -3932,51 +3875,6 @@ mod tests {
         // Seeded-bracket regression contract (J3OU5F): 251 measured with the
         // warm start; 300 keeps headroom.
         assert!(sims <= 300);
-    }
-
-    /// Loop-11 FWB3SH Q6DMHV (RED): strict dominance of the golden-section
-    /// refine over the legacy ternary refine. Mode 1 must never return less
-    /// profit, and must spend strictly fewer refine probes on the deep
-    /// late-liquidity fixture (its ternary budget is 112 probes — golden
-    /// reuses the retained probe, so it cuts ~58% of the narrowing probes
-    /// at an identical final bracket → the profitable winner is strict).
-    ///
-    /// FAILS until D4DEBJ implements mode 1 (today it silently behaves as
-    /// mode 0, so the strict-fewer half fails — that is the RED signal).
-    #[test]
-    fn golden_refine_mode_never_loses_profit_and_spends_fewer_probes() {
-        // Deep fixture (Σ ranges = 13): optimum beyond the legacy prefix.
-        let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
-        let mut liquidities = vec![1_000_000_000u128; 10];
-        liquidities.push(10_000_000_000_000u128);
-        liquidities.push(1_000_000_000u128);
-        let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-
-        set_refine_mode_for_test(0);
-        reset_walk_stats();
-        let base = int_solve_cl_path(&[&seq1, &seq2]).expect("deep fixture solves");
-        let base_refine = WALK_REFINE_SIMS.with(std::cell::Cell::get);
-
-        set_refine_mode_for_test(1);
-        reset_walk_stats();
-        let gold = int_solve_cl_path(&[&seq1, &seq2]).expect("deep fixture solves");
-        let gold_refine = WALK_REFINE_SIMS.with(std::cell::Cell::get);
-        set_refine_mode_for_test(0);
-
-        eprintln!(
-            "[loop-11 RED] ternary refine_sims={base_refine} profit={} golden refine_sims={gold_refine} profit={}",
-            base.1, gold.1
-        );
-        assert!(
-            gold.1 >= base.1,
-            "golden refine must never return less profit (golden={} ternary={})",
-            gold.1,
-            base.1
-        );
-        assert!(
-            gold_refine < base_refine,
-            "golden refine must spend strictly fewer probes (golden={gold_refine} ternary={base_refine})"
-        );
     }
 
     /// Property (7J22EQ): the walk's profit must match a fine grid
