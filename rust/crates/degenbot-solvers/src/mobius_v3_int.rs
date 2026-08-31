@@ -507,6 +507,7 @@ fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> U256 {
     let mut lo = U256::ZERO;
     let mut hi = hint.max(U256::ONE);
     for _ in 0..256 {
+        WALK_LEFT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
         let landed = simulate_walk_path(hi, hops).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             break; // predicate true
@@ -521,6 +522,7 @@ fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> U256 {
     // then scan for the exact first in-window input.
     while hi.saturating_sub(lo) > U256::from(64u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
+        WALK_LEFT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
         let landed = simulate_walk_path(mid, hops).landed;
         if landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             lo = mid;
@@ -530,6 +532,7 @@ fn piece_window_left_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> U256 {
     }
     let mut x = lo + U256::from(1u64);
     while x < hi {
+        WALK_LEFT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
         let landed = simulate_walk_path(x, hops).landed;
         if !landed.iter().zip(ks.iter()).any(|(a, &b)| *a < b) {
             return x;
@@ -586,6 +589,7 @@ fn piece_window_right_edge_seeded(
         hi = hseed.max(hint.max(U256::ONE));
     }
     for _ in 0..256 {
+        WALK_RIGHT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
         let landed = simulate_walk_path(hi, hops).landed;
         if landed_any_above(&landed, ks) {
             confirmed = true;
@@ -603,6 +607,7 @@ fn piece_window_right_edge_seeded(
     // Bisect to a ≤4 bracket: lo is the largest known ≤ ks input.
     while hi.saturating_sub(lo) > U256::from(4u64) {
         let mid = lo + (hi - lo) / U256::from(2u64);
+        WALK_RIGHT_EDGE_SIMS.with(|c| c.set(c.get() + 1));
         let landed = simulate_walk_path(mid, hops).landed;
         if landed_any_above(&landed, ks) {
             hi = mid;
@@ -754,6 +759,13 @@ thread_local! {
     // driver so the next optimization touches the right loop.
     pub(crate) static WALK_TERNARY_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_GRID_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // Loop-13 YHR3ZH atomization: per-piece window-edge bisection probes and
+    // the transitional-anchor sweep. Everything else (straddle probes,
+    // landed_beyond scans, skipped-tuple checks, neighbor coarse grids) is
+    // the residual of total - (left+right+anchor+refine).
+    pub(crate) static WALK_LEFT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static WALK_RIGHT_EDGE_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static WALK_ANCHOR_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     // Q3 telemetry: the largest word-boundary count any range reached on this
     // thread. DB audit (correct metric = max inter-init-tick gap in words,
     // per-pool ts): 210/47,679 registered UNI V3 pools have a >=128-word gap,
@@ -780,6 +792,9 @@ pub fn reset_walk_stats() {
     WALK_REFINE_SIMS.with(|c| c.set(0));
     WALK_TERNARY_SIMS.with(|c| c.set(0));
     WALK_GRID_SIMS.with(|c| c.set(0));
+    WALK_LEFT_EDGE_SIMS.with(|c| c.set(0));
+    WALK_RIGHT_EDGE_SIMS.with(|c| c.set(0));
+    WALK_ANCHOR_SIMS.with(|c| c.set(0));
 }
 
 /// One path's walk-combinator counters (D63GSE follow-up): the FULL set, so
@@ -800,6 +815,12 @@ pub struct WalkStats {
     pub ternary_sims: usize,
     /// Final grid / dense-sweep phase sims (subset of `refine_sims`).
     pub grid_sims: usize,
+    /// Loop-13: left-window-edge bisection/scan probes.
+    pub left_edge_sims: usize,
+    /// Loop-13: right-window-edge (seeded) bisection probes.
+    pub right_edge_sims: usize,
+    /// Loop-13: transitional-anchor ±2 sweep probes.
+    pub anchor_sims: usize,
 }
 
 /// Read-and-clear ALL walk counters on the calling thread and return them
@@ -817,6 +838,9 @@ pub fn peek_walk_stats() -> WalkStats {
         refine_sims: WALK_REFINE_SIMS.with(std::cell::Cell::get),
         ternary_sims: WALK_TERNARY_SIMS.with(std::cell::Cell::get),
         grid_sims: WALK_GRID_SIMS.with(std::cell::Cell::get),
+        left_edge_sims: WALK_LEFT_EDGE_SIMS.with(std::cell::Cell::get),
+        right_edge_sims: WALK_RIGHT_EDGE_SIMS.with(std::cell::Cell::get),
+        anchor_sims: WALK_ANCHOR_SIMS.with(std::cell::Cell::get),
     }
 }
 
@@ -827,6 +851,9 @@ pub fn take_last_walk_stats_full() -> WalkStats {
     let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
     let ternary_sims = WALK_TERNARY_SIMS.with(std::cell::Cell::get);
     let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
+    let left_edge_sims = WALK_LEFT_EDGE_SIMS.with(std::cell::Cell::get);
+    let right_edge_sims = WALK_RIGHT_EDGE_SIMS.with(std::cell::Cell::get);
+    let anchor_sims = WALK_ANCHOR_SIMS.with(std::cell::Cell::get);
     reset_walk_stats();
     WalkStats {
         pieces,
@@ -835,6 +862,9 @@ pub fn take_last_walk_stats_full() -> WalkStats {
         refine_sims,
         ternary_sims,
         grid_sims,
+        left_edge_sims,
+        right_edge_sims,
+        anchor_sims,
     }
 }
 
@@ -1058,6 +1088,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         // hint; never trusted for the direction decision.
         let anchor = walk_piece_anchor(hops, &ks);
         if !anchor.is_zero() {
+            let anchor_t0 = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
             for delta in -2i32..=2 {
                 let candidate = if delta >= 0 {
                     anchor.saturating_add(U256::from(delta.cast_unsigned()))
@@ -1069,6 +1100,8 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
                 }
                 rec.eval_and_record(candidate, hops);
             }
+            let anchor_delta = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get) - anchor_t0;
+            WALK_ANCHOR_SIMS.with(|c| c.set(c.get() + anchor_delta));
         }
         if single_piece_path {
             // F1 corner guard (adversarial review): the exact unclamped smooth
@@ -1163,7 +1196,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
         prev_right_edge = Some(xr);
         right_bracket = Some((xr, right_confirm_hi));
 
-        // Direction test: straddle probes at ±64 around the window's right
+        // Direction test: straddle probes at ±64 around the window’s right
         // edge, with +1-wei staircase tolerance. Climbing ⇒ advance one
         // piece; falling or level ⇒ the peak is at or behind this edge —
         // stop and refine this piece plus its forward neighbor.

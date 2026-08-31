@@ -32,7 +32,7 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::mobius_v3_int::{
-    int_solve_cl_path, last_refine_sims, reset_walk_stats, take_last_walk_stats,
+    int_solve_cl_path, last_refine_sims, reset_walk_stats, take_last_walk_stats_full,
     take_last_word_boundary_steps,
 };
 use degenbot_solvers::profit_envelope::{path_profit_bound, HopMath};
@@ -214,7 +214,12 @@ fn main() {
         }
         let wsteps = take_last_word_boundary_steps();
         let refine = last_refine_sims();
-        let (pieces, sims) = take_last_walk_stats();
+        let ws = take_last_walk_stats_full();
+        let pieces = ws.pieces;
+        let sims = ws.sims;
+        let ls = ws.left_edge_sims;
+        let rs = ws.right_edge_sims;
+        let ans = ws.anchor_sims;
         if consistent {
             n_consistent += 1;
         } else {
@@ -328,7 +333,7 @@ fn main() {
             .map(|r| r.word_boundary_prices.len())
             .sum();
         println!(
-            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} refine={refine} pieces={pieces} wsteps={wsteps}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
+            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} refine={refine} pieces={pieces} wsteps={wsteps} left={ls} right={rs} anchor={ans}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
             if ok { "OK" } else { "MISMATCH" }
         );
         n_paths += 1;
