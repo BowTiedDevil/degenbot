@@ -671,6 +671,11 @@ fn walk_refine_window(
     hi: U256,
     rec: &mut WalkRecorder,
 ) -> (U256, alloy::primitives::I256) {
+    // Refine narrowing mode (loop-11 FWB3SH Q6DMHV): 0 = legacy ternary
+    // (2 evals/iter), 1 = golden-section (1 retained eval + 1 fresh/iter).
+    // Test-only hook while the cutover is gated; mode 1 not implemented yet,
+    // so it behaves like mode 0 until D4DEBJ lands (RED first).
+    let _mode = WALK_REFINE_MODE.with(std::cell::Cell::get);
     use alloy::primitives::I256;
     let mut argmax_x = lo;
     let mut best_score = I256::MIN;
@@ -754,6 +759,8 @@ thread_local! {
     // driver so the next optimization touches the right loop.
     pub(crate) static WALK_TERNARY_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static WALK_GRID_SIMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // loop-11 FWB3SH: narrowing-mode hook (0 = ternary, 1 = golden section).
+    pub(crate) static WALK_REFINE_MODE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     // Q3 telemetry: the largest word-boundary count any range reached on this
     // thread. DB audit (correct metric = max inter-init-tick gap in words,
     // per-pool ts): 210/47,679 registered UNI V3 pools have a >=128-word gap,
@@ -780,6 +787,11 @@ pub fn reset_walk_stats() {
     WALK_REFINE_SIMS.with(|c| c.set(0));
     WALK_TERNARY_SIMS.with(|c| c.set(0));
     WALK_GRID_SIMS.with(|c| c.set(0));
+}
+
+/// Test-only: select the refine narrowing mode (0 = ternary, 1 = golden).
+pub fn set_refine_mode_for_test(mode: u8) {
+    WALK_REFINE_MODE.with(|c| c.set(mode));
 }
 
 /// One path's walk-combinator counters (D63GSE follow-up): the FULL set, so
@@ -3875,6 +3887,51 @@ mod tests {
         // Seeded-bracket regression contract (J3OU5F): 251 measured with the
         // warm start; 300 keeps headroom.
         assert!(sims <= 300);
+    }
+
+    /// Loop-11 FWB3SH Q6DMHV (RED): strict dominance of the golden-section
+    /// refine over the legacy ternary refine. Mode 1 must never return less
+    /// profit, and must spend strictly fewer refine probes on the deep
+    /// late-liquidity fixture (its ternary budget is 112 probes — golden
+    /// reuses the retained probe, so it cuts ~58% of the narrowing probes
+    /// at an identical final bracket → the profitable winner is strict).
+    ///
+    /// FAILS until D4DEBJ implements mode 1 (today it silently behaves as
+    /// mode 0, so the strict-fewer half fails — that is the RED signal).
+    #[test]
+    fn golden_refine_mode_never_loses_profit_and_spends_fewer_probes() {
+        // Deep fixture (Σ ranges = 13): optimum beyond the legacy prefix.
+        let seq1 = multi_range_sequence(750, 1300, true, &[1_000_000_000_000_000]);
+        let mut liquidities = vec![1_000_000_000u128; 10];
+        liquidities.push(10_000_000_000_000u128);
+        liquidities.push(1_000_000_000u128);
+        let seq2 = multi_range_sequence(0, 60, false, &liquidities);
+
+        set_refine_mode_for_test(0);
+        reset_walk_stats();
+        let base = int_solve_cl_path(&[&seq1, &seq2]).expect("deep fixture solves");
+        let base_refine = WALK_REFINE_SIMS.with(std::cell::Cell::get);
+
+        set_refine_mode_for_test(1);
+        reset_walk_stats();
+        let gold = int_solve_cl_path(&[&seq1, &seq2]).expect("deep fixture solves");
+        let gold_refine = WALK_REFINE_SIMS.with(std::cell::Cell::get);
+        set_refine_mode_for_test(0);
+
+        eprintln!(
+            "[loop-11 RED] ternary refine_sims={base_refine} profit={} golden refine_sims={gold_refine} profit={}",
+            base.1, gold.1
+        );
+        assert!(
+            gold.1 >= base.1,
+            "golden refine must never return less profit (golden={} ternary={})",
+            gold.1,
+            base.1
+        );
+        assert!(
+            gold_refine < base_refine,
+            "golden refine must spend strictly fewer probes (golden={gold_refine} ternary={base_refine})"
+        );
     }
 
     /// Property (7J22EQ): the walk's profit must match a fine grid
