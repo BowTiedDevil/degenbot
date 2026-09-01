@@ -850,6 +850,9 @@ pub static WALK_ANCHOR_US_TOTAL: std::sync::atomic::AtomicU64 =
 /// Loop-17 census: event-solver prediction wall time.
 pub static WALK_PRED_US_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Loop-17 census: whole active-set walk wall time.
+pub static WALK_SOLVE_US_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn landed_ending_range_index(crossings: &[IntTickRangeCrossing], available: U256) -> usize {
     debug_assert!(!crossings.is_empty());
     debug_assert!(crossings[0].crossing_gross_input.is_zero());
@@ -1595,6 +1598,16 @@ const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 
 #[hotpath::measure(label = "cl_solve.active_set")]
 fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
+    let s_t0 = std::time::Instant::now();
+    let out = solve_active_set_path_inner(hops);
+    WALK_SOLVE_US_TOTAL.fetch_add(
+        u64::try_from(s_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    out
+}
+
+fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
     fn landed_beyond(hops: &[WalkHop], right_edge: U256, ks: &[usize]) -> Option<Vec<usize>> {

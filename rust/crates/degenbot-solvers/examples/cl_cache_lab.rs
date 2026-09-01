@@ -255,8 +255,10 @@ fn main() {
         .swap(0, std::sync::atomic::Ordering::Relaxed);
     let pred_us = degenbot_solvers::mobius_v3_int::WALK_PRED_US_TOTAL
         .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let solve_us = degenbot_solvers::mobius_v3_int::WALK_SOLVE_US_TOTAL
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
     println!(
-        "  walk-sim: {sim_us} us | anchors: {anchor_us} us | predictions: {pred_us} us (all strategies+reference)"
+        "  walk-sim: {sim_us} us | anchors: {anchor_us} us | predictions: {pred_us} us | solve: {solve_us} us (all strategies+reference)"
     );
     println!(
         "---- per-transition averages over {total_events} events ----\n  reference (full build+solve): {:.2} ms/event",
