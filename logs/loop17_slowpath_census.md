@@ -66,3 +66,25 @@ prints them alongside per-strategy refill+solve timings.
    strategy (S1/S4) into the production refill path.
 4. Anchor coefficient memoization across consecutive pieces (shared tuple
    prefixes) for the 0.82ms anchor-compose slice (pure fn → byte-identical).
+
+## T4 — end-to-end verification (post-campaign, live bot run)
+
+13-minute dry-run (`run_bot.sh`, capture threshold lowered to 5ms):
+
+- **Stability**: zero missed WS pongs, zero errors/panics; 499 heavy-path
+  captures (>5ms) in 13 min.
+- **Solver correctness**: `cl_solve_replay` golden match 217/217 (old
+  capture) and **499/499** (new capture), deterministic across iterations.
+- **Heaviest medians**: old fixture 9064µs, new epoch 9013µs (the replay is
+  build+gate+walk per rep; the walk share dropped far more — see lab
+  numbers above — while build ~2.8ms and gate ~1.7ms now floor the
+  replay). Slowest-path telemetry now shows the **gate** as the top slice
+  on the worst paths (e.g. path 719: 19.1ms total, 19.1ms gate, sims=0).
+- **Skip-gate note**: fresh-epoch replays show 2/499 FALSE SKIPs at a
+  1e12-wei hypothetical floor (0 at the 1e9 production floor — the loop-16
+  floor discipline holds).
+
+Campaign totals vs loop-16 baseline (same lab harness, heaviest quartet):
+reference event 9.82 -> 7.26 ms (-26%), cached walk solve 4.75 -> ~3.8 ms.
+NEXT loop candidates: gate (dominates worst-path telemetry), then the
+golden-fork probe-set campaign.
