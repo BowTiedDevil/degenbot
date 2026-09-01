@@ -221,6 +221,9 @@ fn main() {
             let reference = degenbot_solvers::mobius_v3_int::int_solve_cl_path(&seq_refs);
             reference_ns += t_ref.elapsed().as_nanos();
             total_events += 1;
+            if std::env::var("DRCLAB_DIGEST").is_ok() {
+                println!("DIGEST path {pid} t={t} {reference:?}");
+            }
             for (si, s) in catalog.iter_mut().enumerate() {
                 let t_strat = std::time::Instant::now();
                 let cached = if si == 0 {

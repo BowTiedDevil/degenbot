@@ -1239,6 +1239,15 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
 // bisection (A/B toggle for the replay harness; read once per process).
 static EVENT_SOLVER_LEGACY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
+/// Loop-17 A/B: `DEGENBOT_WALK_ANCHOR_SWEEP=0` disables the per-piece anchor
+/// ±2 probe sweep (EXPERIMENTAL toggle, default ON; production unchanged).
+fn anchor_sweep_disabled() -> bool {
+    *ANCHOR_SWEEP_OFF
+        .get_or_init(|| std::env::var("DEGENBOT_WALK_ANCHOR_SWEEP").is_ok_and(|v| v == "0"))
+}
+
+static ANCHOR_SWEEP_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
 fn piece_window_right_edge_evented(
     hops: &[WalkHop],
     ks: &[usize],
@@ -1834,8 +1843,12 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
 
         // Transitional anchor: extra candidates (±2 sweep) and edge-growth
         // hint; never trusted for the direction decision.
+        // Loop-17 A/B (EXPERIMENTAL, default ON): `DEGENBOT_WALK_ANCHOR_SWEEP=0`
+        // disables the ±2 probe set to measure its value. The anchor VALUE is
+        // still computed and used as the window-edge hint either way.
+        let sweep_off = anchor_sweep_disabled();
         let anchor = walk_piece_anchor(hops, &ks);
-        if !anchor.is_zero() {
+        if !anchor.is_zero() && !sweep_off {
             let anchor_t0 = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
             for delta in -2i32..=2 {
                 let candidate = if delta >= 0 {
