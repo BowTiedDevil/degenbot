@@ -158,7 +158,37 @@ const COMPOSE_TARGET_BITS: u32 = 240;
 /// Cap on the composed-line count carried into the next hop's product loop
 /// (survivor uniform sampling over the lower envelope). Bounds the product
 /// matrix at K² regardless of pool-liquidity range counts.
-const SAMPLED_COMPOSE_LINES: usize = 48;
+fn sampled_compose_lines() -> usize {
+    env_compose_lines()
+}
+
+/// Loop-18 T2 sweep knob: tangent-lines-per-hop cap. Default 32 (the
+/// loop-9/16 production value); `DEGENBOT_ENVELOPE_MAX_TANGENT_LINES`
+/// overrides at process start. Higher caps = tighter (lower) envelope =
+/// fewer missed opportunities, more compose time.
+fn env_tangent_lines() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("DEGENBOT_ENVELOPE_MAX_TANGENT_LINES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(32)
+            .max(1)
+    })
+}
+
+/// Loop-18 T2 sweep knob: composed-survivor line cap.
+/// `DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES` overrides at process start.
+fn env_compose_lines() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(48)
+            .max(1)
+    })
+}
 
 /// Magnitude bit length of an `I512` by direct limb scan (loop-16: the
 /// `Signed::bits()` route cost ~90ns per call; this is ~5ns).
@@ -405,7 +435,7 @@ fn hop_lines_and_cap(
             // concave output curve. Keeping fewer tangents makes min(lines)
             // LOOSER (higher) — the gate becomes more conservative (passes
             // more paths to the solver) but NEVER skips a profitable path.
-            const MAX_TANGENT_LINES: usize = 32;
+            let max_tangent_lines = env_tangent_lines();
             if seq.ranges.is_empty() {
                 return None;
             }
@@ -434,7 +464,7 @@ fn hop_lines_and_cap(
             // replay corpora; a would-be-I512-overflow range is the only
             // case where the sampled set can differ, and there the bound
             // stays sound (looser) by the tangent upper-bound argument.
-            let mut lines: Vec<Line> = Vec::with_capacity(MAX_TANGENT_LINES + 1);
+            let mut lines: Vec<Line> = Vec::with_capacity(max_tangent_lines + 1);
             let n_keeps_usize = crossings
                 .iter()
                 .filter(|cr| {
@@ -442,10 +472,10 @@ fn hop_lines_and_cap(
                     er.liquidity != 0 && !er.sqrt_price_x96.is_zero()
                 })
                 .count();
-            let mut sel: Vec<usize> = Vec::with_capacity(MAX_TANGENT_LINES + 1);
-            let early = n_keeps_usize > MAX_TANGENT_LINES;
+            let mut sel: Vec<usize> = Vec::with_capacity(max_tangent_lines + 1);
+            let early = n_keeps_usize > max_tangent_lines;
             if early {
-                let step = (n_keeps_usize / MAX_TANGENT_LINES).max(1);
+                let step = (n_keeps_usize / max_tangent_lines).max(1);
                 let mut idx = 0usize;
                 while idx < n_keeps_usize {
                     sel.push(idx);
@@ -558,9 +588,9 @@ fn hop_lines_and_cap(
             // the Pareto front (increasing intercept, decreasing slope), so
             // prune() cannot reduce them. Sampling is the only way to bound
             // the composition product.
-            if lines.len() > MAX_TANGENT_LINES {
-                let step = lines.len() / MAX_TANGENT_LINES;
-                let mut sampled = Vec::with_capacity(MAX_TANGENT_LINES + 1);
+            if lines.len() > max_tangent_lines {
+                let step = lines.len() / max_tangent_lines;
+                let mut sampled = Vec::with_capacity(max_tangent_lines + 1);
                 let mut i = 0;
                 while i < lines.len() {
                     sampled.push(lines[i]);
@@ -1777,20 +1807,20 @@ fn path_profit_bound_inner(
             }
             gate_tls(|t| t.postprune_reduce_ns += t0.elapsed().as_nanos());
         }
-        // SAMPLED_COMPOSE_LINES cap: the composing side is dropped to a
+        // sampled_compose_lines() cap: the composing side is dropped to a
         // uniform Pareto-order sample across the lower envelope, bounding
         // the next product at K². Sound by the same argument as the CL
         // tangent cap: min(fewer lines) ≥ min(all lines), so the bound can
         // only rise (skip less, never more). With the live min-profit floor
         // of zero the tightness loss does not affect skips.
-        let samp_t0 = if next.len() > SAMPLED_COMPOSE_LINES {
+        let samp_t0 = if next.len() > sampled_compose_lines() {
             Some(std::time::Instant::now())
         } else {
             None
         };
         if let Some(_t0) = samp_t0 {
-            let step = next.len() / SAMPLED_COMPOSE_LINES;
-            let mut sampled = Vec::with_capacity(SAMPLED_COMPOSE_LINES + 1);
+            let step = next.len() / sampled_compose_lines();
+            let mut sampled = Vec::with_capacity(sampled_compose_lines() + 1);
             let mut i = 0usize;
             while i < next.len() {
                 sampled.push(next[i]);

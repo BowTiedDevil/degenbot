@@ -390,6 +390,11 @@ pub struct ArbitrageEngine {
     /// after each solve; lock-free-read at bin construction). Refines the
     /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
     last_walk_sims: parking_lot::Mutex<HashMap<u64, u64>>,
+    /// Per-path previous-block MEASURED gate time (µs, recorded by solve_fn;
+    /// lock-free-read at bin construction). Loop-18: gate-heavy paths
+    /// (dense-CL envelope compose, sims≈0) were invisible to the LPT cost —
+    /// bin-packed as cheap while dominating wall time.
+    last_gate_us: parking_lot::Mutex<HashMap<u64, u64>>,
     /// Reuse-eligibility counter for the current solve cycle (probe only;
     /// reset each `solve_dirty` and surfaced on the resolve event).
     paths_same_state_this_cycle: u64,
@@ -458,6 +463,7 @@ impl ArbitrageEngine {
             path_description_cache: parking_lot::Mutex::new(HashMap::new()),
             resolved_update_snapshot: HashMap::new(),
             last_walk_sims: parking_lot::Mutex::new(HashMap::new()),
+            last_gate_us: parking_lot::Mutex::new(HashMap::new()),
             paths_same_state_this_cycle: 0,
             delivery: DeliveryPolicy::default(),
             dirty_sets: Arc::new(dirty_sets::DirtySets::new()),

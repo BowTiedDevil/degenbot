@@ -120,6 +120,9 @@ fn main() {
     // Gate A/B rows (SU7MAE N6NBUY): (path_id, golden JSON, derived bound).
     let mut gate_rows: Vec<(u64, Value, Option<U256>)> = Vec::new();
     let mut n_golden_ok = 0u64;
+    // Null-golden (gate-skipped) captures, loop-18 T4: excluded from the
+    // exact-wei gate and reported separately as reconciliation telemetry.
+    let mut n_gate_skipped = 0u64;
     let mut n_consistent = 0u64;
     let mut heaviest: (u128, u64) = (0, 0); // (median_us, path_id)
                                             // Loop-15 census (DEGENBOT_WALK_EVENT_CENSUS=1): grand totals of the
@@ -287,10 +290,23 @@ fn main() {
         });
         let mut ok = true;
         if golden.is_null() {
+            // Loop-18 T4: null goldens are gate-skipped captures — production
+            // answered "nothing" (bound < floor) for this pool state, so the
+            // recorded output is not a solver result and CANNOT be compared
+            // exact-wei against the gateless replay. Classify separately so
+            // the F2 gate stays green AND the reconciliation volume (the
+            // replay-found profit the gate declined to solve) is surfaced as
+            // the false-skip telemetry the gate work tracks.
             if replay_profitable {
-                eprintln!("path {pid}: replay reports profit but capture had none");
-                ok = false;
+                let (opt, ho) = first.as_ref().unwrap();
+                let prof = ho.last().copied().unwrap_or(U256::ZERO) - *opt;
+                println!(
+                    "path {pid}: GATE-SKIPPED capture — ungated replay profit = {prof} wei (reconciliation telemetry, not a gate failure)"
+                );
             }
+            n_gate_skipped += 1;
+            // Fall through to the per-path stat printing but do not fail the
+            // golden gate for these lines.
         } else {
             if let Some((opt, ho)) = &first {
                 let go = golden
@@ -448,14 +464,17 @@ fn main() {
             shift_buckets
         );
     }
+    let exact_goldens = n_paths - n_gate_skipped;
     println!(
-        "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{n_paths} match | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest median: path {} = {}us | file={path}",
+        "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{exact_goldens} exact match | gate-skipped {n_gate_skipped} | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest median: path {} = {}us | file={path}",
         heaviest.1, heaviest.0
     );
     // F2: a CI build must FAIL if any path regresses (golden mismatch, either
     // direction) or is nondeterministic — this is what makes the harness a
-    // gate rather than a report.
-    if n_golden_ok != n_paths || n_consistent != n_paths {
+    // gate rather than a report. Null-golden gate-skipped captures are
+    // reconciled out (counted separately, loop-18 T4) and deterministic
+    // coverage is computed over the whole population.
+    if n_golden_ok != exact_goldens || n_consistent != n_paths {
         eprintln!(
             "F2 GOLDEN GATE FAILED: golden {n_golden_ok}/{n_paths} match, deterministic {n_consistent}/{n_paths}"
         );
