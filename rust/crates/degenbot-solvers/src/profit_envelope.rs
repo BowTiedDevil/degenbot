@@ -1375,6 +1375,7 @@ pub fn take_gate_census() -> GateCensus {
 /// cycle clears it per block (paths inside one drain share pool prefixes
 /// heavily; across blocks the fingerprints guard pool updates that reuse
 /// an allocation address).
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct HopSliceFingerprint {
     len: usize,
     first_p_entry: U256,
@@ -1407,13 +1408,44 @@ fn hop_slice_fingerprint(crossings: &[IntTickRangeCrossing]) -> HopSliceFingerpr
     }
 }
 
+/// Chain identity of one hop for the prefix cache (loop-16 T3). CL hops
+/// key on the crossing-table allocation pointer (Arc-stable per solve
+/// cycle); Möbius-family hops (V2 / Solidly volatile) key on a content
+/// hash of reserves + fee — allocation-independent and exact-checked by
+/// the stored fingerprint.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum HopCacheKey {
+    ClTable(usize),
+    MobiusHop(u128),
+}
+
+/// Full content fingerprint of one chain hop (hit validation).
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum HopCacheFingerprint {
+    Cl(HopSliceFingerprint),
+    Mobius {
+        reserve_in: U256,
+        reserve_out: U256,
+        gamma_numer: U256,
+        fee_denom: U256,
+    },
+}
+
+/// FNV-1a-style 128-bit content mix for `U256` words.
+fn content_mix_u256(mut h: u128, v: &U256) -> u128 {
+    for w in v.as_limbs() {
+        h = (h ^ u128::from(*w)).wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
 struct PrefixCacheEntry {
     lines: Vec<Line>,
-    fingerprints: Vec<HopSliceFingerprint>,
+    fingerprints: Vec<HopCacheFingerprint>,
 }
 
 static PREFIX_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<Vec<usize>, PrefixCacheEntry>>,
+    std::sync::Mutex<std::collections::HashMap<(Vec<HopCacheKey>, U256), PrefixCacheEntry>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// Clear the prefix-composition cache. The bot's solve cycle calls this once
@@ -1719,54 +1751,127 @@ fn path_profit_bound_inner(
                 .map(|s| s.as_ptr() as usize)
         })
         .collect();
-    let mut chain: Vec<usize> = Vec::with_capacity(hops.len());
-    for (hop_idx, (hop_ls, _)) in all_hops.iter_mut().enumerate() {
-        let chainable = prefix_cache_on
-            && crossing_ptrs
+    // Loop-16 T3: the chain grows through Möbius-family hops too (content
+    // hash keys — allocation-independent), and the domain joins the cache
+    // key (entries were pruned under a specific x-domain; sharing across
+    // different tails could serve line sets pruned with windows irrelevant
+    // to the reader). Keyed exact-domain reuse only.
+    let mobius_key =
+        |reserve_in: &U256, reserve_out: &U256, gamma_numer: &U256, fee_denom: &U256| {
+            let mut h = content_mix_u256(0xcbf2_9ce4_8422_2325_u128, reserve_in);
+            h = content_mix_u256(h, reserve_out);
+            h = content_mix_u256(h, gamma_numer);
+            content_mix_u256(h, fee_denom)
+        };
+    let mobius_fp =
+        |reserve_in: &U256, reserve_out: &U256, gamma_numer: &U256, fee_denom: &U256| {
+            HopCacheFingerprint::Mobius {
+                reserve_in: *reserve_in,
+                reserve_out: *reserve_out,
+                gamma_numer: *gamma_numer,
+                fee_denom: *fee_denom,
+            }
+        };
+    let hop_key = |hop_idx: usize| -> Option<HopCacheKey> {
+        match hops.get(hop_idx).and_then(Option::as_ref) {
+            Some(HopMath::Cl(_)) => crossing_ptrs
                 .get(hop_idx)
                 .copied()
                 .flatten()
-                .is_some_and(|ptr| {
-                    chain.push(ptr);
-                    true
-                });
+                .map(HopCacheKey::ClTable),
+            Some(HopMath::V2(h)) => Some(HopCacheKey::MobiusHop(mobius_key(
+                &h.reserve_in,
+                &h.reserve_out,
+                &h.gamma_numer,
+                &h.fee_denom,
+            ))),
+            _ => None,
+        }
+    };
+    let mut chain: Vec<HopCacheKey> = Vec::with_capacity(hops.len());
+    for (hop_idx, (hop_ls, _)) in all_hops.iter_mut().enumerate() {
+        match if prefix_cache_on {
+            hop_key(hop_idx)
+        } else {
+            None
+        } {
+            Some(k) => chain.push(k),
+            None => chain.clear(),
+        }
+        let chainable = prefix_cache_on && !chain.is_empty();
         if chainable {
-            // Cache lookup for this exact pure-CL prefix. Fingerprints must
-            // match every hop's current crossing table (guards pool-state
-            // updates that reused an allocator address since insertion).
+            // Cache lookup for this exact prefix + domain. Fingerprints
+            // must match every hop's current content (guards pool-state
+            // updates that reused a table allocation since insertion, and
+            // Möbius hash collisions — checked exactly).
             let hit = match PREFIX_CACHE.lock() {
-                Ok(cache) => cache.get(&chain).and_then(|entry| {
+                Ok(cache) => cache.get(&(chain.clone(), domain)).and_then(|entry| {
                     if entry.fingerprints.len() != chain.len() {
                         return None;
                     }
                     let mut ok = true;
-                    for (i, _key_ptr) in chain.iter().enumerate() {
-                        let Some(slice) = cl_crossings.get(i).copied().flatten() else {
-                            ok = false;
-                            break;
-                        };
-                        let Some(f) = slice.first() else {
-                            ok = false;
-                            break;
-                        };
-                        let Some(l) = slice.last() else {
-                            ok = false;
-                            break;
-                        };
-                        let stored = &entry.fingerprints[i];
-                        if stored.len != slice.len()
-                            || stored.first_p_entry != f.ending_range.sqrt_price_x96
-                            || stored.first_liq != U256::from(f.ending_range.liquidity)
-                            || stored.last_p_upper
-                                != (if l.ending_range.zero_for_one {
-                                    l.ending_range.sqrt_price_lower_x96
-                                } else {
-                                    l.ending_range.sqrt_price_upper_x96
-                                })
-                            || stored.last_liq != U256::from(l.ending_range.liquidity)
-                        {
-                            ok = false;
-                            break;
+                    for (i, key) in chain.iter().enumerate() {
+                        match key {
+                            HopCacheKey::ClTable(_) => {
+                                let Some(slice) = cl_crossings.get(i).copied().flatten() else {
+                                    ok = false;
+                                    break;
+                                };
+                                let stored = match &entry.fingerprints[i] {
+                                    HopCacheFingerprint::Cl(f) => f,
+                                    _ => {
+                                        ok = false;
+                                        break;
+                                    }
+                                };
+                                let Some(f) = slice.first() else {
+                                    ok = false;
+                                    break;
+                                };
+                                let Some(l) = slice.last() else {
+                                    ok = false;
+                                    break;
+                                };
+                                if stored.len != slice.len()
+                                    || stored.first_p_entry != f.ending_range.sqrt_price_x96
+                                    || stored.first_liq != U256::from(f.ending_range.liquidity)
+                                    || stored.last_p_upper
+                                        != (if l.ending_range.zero_for_one {
+                                            l.ending_range.sqrt_price_lower_x96
+                                        } else {
+                                            l.ending_range.sqrt_price_upper_x96
+                                        })
+                                    || stored.last_liq != U256::from(l.ending_range.liquidity)
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                            HopCacheKey::MobiusHop(_) => {
+                                let Some(HopMath::V2(h)) = hops.get(i).and_then(Option::as_ref)
+                                else {
+                                    ok = false;
+                                    break;
+                                };
+                                let stored_ok = match &entry.fingerprints[i] {
+                                    HopCacheFingerprint::Mobius {
+                                        reserve_in,
+                                        reserve_out,
+                                        gamma_numer,
+                                        fee_denom,
+                                    } => {
+                                        *reserve_in == h.reserve_in
+                                            && *reserve_out == h.reserve_out
+                                            && *gamma_numer == h.gamma_numer
+                                            && *fee_denom == h.fee_denom
+                                    }
+                                    _ => false,
+                                };
+                                if !stored_ok {
+                                    ok = false;
+                                    break;
+                                }
+                            }
                         }
                     }
                     ok.then(|| entry.lines.clone())
@@ -1778,9 +1883,6 @@ fn path_profit_bound_inner(
                 GATE_PREFIX_HITS.with(|c| c.set(c.get() + 1));
                 continue;
             }
-        } else {
-            // Non-CL hop: the reusable pure-CL key ends here.
-            chain.clear();
         }
         GATE_BOUNDARIES_COMPOSED.with(|c| c.set(c.get() + 1));
         // Prune each hop's tangent lines BEFORE composition.
@@ -1856,12 +1958,28 @@ fn path_profit_bound_inner(
         if !chain.is_empty() && chainable {
             let mut fps = Vec::with_capacity(chain.len());
             let mut fp_ok = true;
-            for i in 0..chain.len() {
-                let Some(slice) = cl_crossings.get(i).copied().flatten() else {
-                    fp_ok = false;
-                    break;
-                };
-                fps.push(hop_slice_fingerprint(slice));
+            for (i, key) in chain.iter().enumerate() {
+                match key {
+                    HopCacheKey::ClTable(_) => {
+                        let Some(slice) = cl_crossings.get(i).copied().flatten() else {
+                            fp_ok = false;
+                            break;
+                        };
+                        fps.push(HopCacheFingerprint::Cl(hop_slice_fingerprint(slice)));
+                    }
+                    HopCacheKey::MobiusHop(_) => {
+                        let Some(HopMath::V2(h)) = hops.get(i).and_then(Option::as_ref) else {
+                            fp_ok = false;
+                            break;
+                        };
+                        fps.push(mobius_fp(
+                            &h.reserve_in,
+                            &h.reserve_out,
+                            &h.gamma_numer,
+                            &h.fee_denom,
+                        ));
+                    }
+                }
             }
             if fp_ok {
                 let entry = PrefixCacheEntry {
@@ -1869,7 +1987,7 @@ fn path_profit_bound_inner(
                     fingerprints: fps,
                 };
                 if let Ok(mut cache) = PREFIX_CACHE.lock() {
-                    cache.insert(chain.clone(), entry);
+                    cache.insert((chain.clone(), domain), entry);
                 }
             }
         }

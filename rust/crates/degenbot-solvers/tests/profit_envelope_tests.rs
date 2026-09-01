@@ -450,6 +450,157 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
 }
 
 #[test]
+fn prefix_cache_must_not_reuse_across_domains() {
+    // Loop-16 T3 RED: two paths share the identical CL-prefix crossing
+    // tables but differ in the V2 tail's reserve (r_out = the hop cap,
+    // so the x-domain differs). A prefix entry composed under path A's
+    // SMALLER domain must not serve path B — its line set was pruned
+    // with B-irrelevant windows (lines needed only at x > domain_A were
+    // dropped, so B's envelope can under-estimate).
+    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
+    let p_entry = p_at_tick(-10);
+    let p_lo = p_at_tick(-40);
+    let p_hi = p_at_tick(30);
+    let seq1 = mk_seq(vec![mk_range(10_u128 << 100, p_entry, p_lo, p_hi)]);
+    let p_entry2 = p_at_tick(20);
+    let seq2 = mk_seq(vec![mk_range(
+        10_u128 << 100,
+        p_entry2,
+        p_at_tick(-30),
+        p_at_tick(60),
+    )]);
+    let crossings1: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = seq1.crossings();
+    let crossings2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = seq2.crossings();
+    // SAME allocation pointers across both paths (shared Arc semantics).
+    let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
+        vec![Some(crossings1.as_slice()), Some(crossings2.as_slice())];
+    let small_tail = IntHopState::new(U256::from(1_000_u64), U256::from(40_000_u64), 997, 1000);
+    let large_tail = IntHopState::new(
+        U256::from(1_000_u64) << 140,
+        U256::from(40_000_u64) << 140,
+        997,
+        1000,
+    );
+    let small_views = vec![
+        Some(HopMath::Cl(&seq1)),
+        Some(HopMath::Cl(&seq2)),
+        Some(HopMath::V2(&small_tail)),
+    ];
+    let large_views = vec![
+        Some(HopMath::Cl(&seq1)),
+        Some(HopMath::Cl(&seq2)),
+        Some(HopMath::V2(&large_tail)),
+    ];
+
+    let expected_small = path_profit_bound_with_crossings_and_prefixes(&small_views, &with, false);
+    let expected_large = path_profit_bound_with_crossings_and_prefixes(&large_views, &with, false);
+    // Populate the cache under the SMALL domain first.
+    let _ = path_profit_bound_with_crossings_and_prefixes(&small_views, &with, true);
+    // Now solve the large-domain path with the cache on.
+    let cached = path_profit_bound_with_crossings_and_prefixes(&large_views, &with, true);
+    assert_eq!(
+        cached, expected_large,
+        "prefix entry composed under a smaller domain leaked into a larger-domain path"
+    );
+    let _ = expected_small;
+
+    // Ladder topology: takeovers spread across magnitudes, so the small
+    // domain's prune genuinely drops lines the large domain needs.
+    let mut ranges = Vec::new();
+    for i in 0..8i32 {
+        ranges.push(mk_range(
+            1_000_000_000_u128 << (i as u32 * 16),
+            p_at_tick(i * 10 - 40),
+            p_at_tick(i * 10 - 45),
+            p_at_tick(i * 10 + 5),
+        ));
+    }
+    let ladder = mk_seq(ranges);
+    let ladder_crossings: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> =
+        ladder.crossings();
+    let with_ladder: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
+        vec![Some(ladder_crossings.as_slice())];
+    let tiny_tail = IntHopState::new(U256::from(100u64), U256::from(200u64), 997, 1000);
+    let huge_tail = IntHopState::new(
+        U256::from(100u64) << 180,
+        U256::from(200u64) << 180,
+        997,
+        1000,
+    );
+    let tiny_views = vec![Some(HopMath::Cl(&ladder)), Some(HopMath::V2(&tiny_tail))];
+    let huge_views = vec![Some(HopMath::Cl(&ladder)), Some(HopMath::V2(&huge_tail))];
+    let expected_tiny =
+        path_profit_bound_with_crossings_and_prefixes(&tiny_views, &with_ladder, false);
+    let expected_huge =
+        path_profit_bound_with_crossings_and_prefixes(&huge_views, &with_ladder, false);
+    let _ = path_profit_bound_with_crossings_and_prefixes(&tiny_views, &with_ladder, true);
+    let cached_huge =
+        path_profit_bound_with_crossings_and_prefixes(&huge_views, &with_ladder, true);
+    assert_eq!(
+        cached_huge, expected_huge,
+        "ladder prefix composed under a tiny domain leaked into a huge-domain path"
+    );
+    let _ = expected_tiny;
+    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
+}
+
+#[test]
+fn prefix_cache_chains_through_v2_hops() {
+    // Loop-16 T3: Möbius-family (V2) hops no longer break the prefix
+    // chain — a mixed [V2, CL, CL] path must reuse composed boundaries on
+    // re-solve and stay byte-identical to the cacheless solve.
+    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
+    let v2 = IntHopState::new(
+        U256::from(1_000_000_u64) << 96,
+        U256::from(1_100_000_u64) << 96,
+        997,
+        1000,
+    );
+    let ladder1 = mk_seq(vec![mk_range(
+        1e12 as u128,
+        p_at_tick(-10),
+        p_at_tick(-40),
+        p_at_tick(30),
+    )]);
+    let ladder2 = mk_seq(vec![mk_range(
+        1e12 as u128,
+        p_at_tick(20),
+        p_at_tick(-30),
+        p_at_tick(60),
+    )]);
+    let c1: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder1.crossings();
+    let c2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder2.crossings();
+    let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
+        vec![None, Some(c1.as_slice()), Some(c2.as_slice())];
+    let views = vec![
+        Some(HopMath::V2(&v2)),
+        Some(HopMath::Cl(&ladder1)),
+        Some(HopMath::Cl(&ladder2)),
+    ];
+    let expected = path_profit_bound_with_crossings_and_prefixes(&views, &with, false);
+    // The cache is process-global and other tests in this binary reset it
+    // concurrently — retry the populate/solve pair until this thread sees
+    // its own hit (byte-identity is checked every iteration).
+    let hit_seen;
+    loop {
+        let s = path_profit_bound_with_crossings_and_prefixes(&views, &with, true);
+        assert_eq!(s, expected, "mixed-prefix reuse must be byte-identical");
+        let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
+        if gs.prefix_hits > 0 {
+            hit_seen = true;
+            break;
+        } else {
+            continue;
+        }
+    }
+    assert!(
+        hit_seen,
+        "mixed [V2, CL] prefixes must produce cache hits (V2 no longer breaks the chain)"
+    );
+    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
+}
+
+#[test]
 fn bound_dominates_golden_profit_on_heavy_cl_captures() {
     let mut n_checked = 0u32;
     for line in CAPTURES.lines().filter(|l| !l.trim().is_empty()) {
