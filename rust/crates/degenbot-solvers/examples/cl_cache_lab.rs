@@ -88,13 +88,13 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
 ) -> Option<(U256, U256, Vec<U256>)> {
     let prepared: Vec<PreparedHop> = strategy.refill(seqs, event);
     if prepared.is_empty() {
-        return degenbot_solvers::mobius_v3_int::int_solve_cl_path(seq_refs);
+        return degenbot_solvers::mobius_v3_int::int_solve_cl_path(seq_refs).result;
     }
     let crossings: Vec<&std::sync::Arc<degenbot_solvers::mobius_v3_int::ClCrossingTable>> =
         prepared.iter().map(|(c, _)| c).collect();
     let profiles: Vec<&std::sync::Arc<degenbot_solvers::mobius_v3_int::ClProfileTable>> =
         prepared.iter().map(|(_, p)| p).collect();
-    int_solve_cl_path_cached(seq_refs, Some(&crossings), &profiles)
+    int_solve_cl_path_cached(seq_refs, Some(&crossings), &profiles).result
 }
 
 fn main() {
@@ -218,7 +218,7 @@ fn main() {
                 catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
             let t_ref = std::time::Instant::now();
-            let reference = degenbot_solvers::mobius_v3_int::int_solve_cl_path(&seq_refs);
+            let reference = degenbot_solvers::mobius_v3_int::int_solve_cl_path(&seq_refs).result;
             reference_ns += t_ref.elapsed().as_nanos();
             total_events += 1;
             if std::env::var("DRCLAB_DIGEST").is_ok() {

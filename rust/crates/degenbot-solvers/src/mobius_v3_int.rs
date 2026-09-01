@@ -606,20 +606,6 @@ impl WalkEventCensus {
     }
 }
 
-/// Take (and reset) the census tally.
-#[must_use]
-pub fn take_event_census() -> WalkEventCensus {
-    let c = EVENT_CENSUS.get();
-    EVENT_CENSUS.set(WalkEventCensus::default());
-    c
-}
-
-/// Take (and clear) the per-piece `(ks, right-edge)` log — the T2 recorder.
-#[must_use]
-pub fn take_event_census_pieces() -> Vec<(Vec<usize>, U256)> {
-    EVENT_CENSUS_PIECES.with_borrow_mut(std::mem::take)
-}
-
 // ---------------------------------------------------------------------------
 // N-hop CL Path Simulation
 // ---------------------------------------------------------------------------
@@ -1527,29 +1513,6 @@ thread_local! {
     pub(crate) static WALK_MAX_DENSE_WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-// Q3 one-shot alert flag, PROCESS-WIDE (not thread-local): the rayon solve
-// pool keeps many long-lived worker threads alive, so a per-thread flag would
-// print one line per worker; this logs once across the whole process.
-static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Reset the walk counters on the calling thread. The rayon solve calls this at
-/// the start of each path's solve so a `take_last_walk_stats` right after
-/// `solve_path` returns this path's piece/simulation counts in isolation.
-pub fn reset_walk_stats() {
-    WALK_PIECES_VISITED.with(|c| c.set(0));
-    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-    WALK_WORD_STEPS.with(|c| c.set(0));
-    WALK_REFINE_SIMS.with(|c| c.set(0));
-    WALK_TERNARY_SIMS.with(|c| c.set(0));
-    WALK_GRID_SIMS.with(|c| c.set(0));
-    WALK_LEFT_EDGE_SIMS.with(|c| c.set(0));
-    WALK_RIGHT_EDGE_SIMS.with(|c| c.set(0));
-    WALK_ANCHOR_SIMS.with(|c| c.set(0));
-    WALK_EVENT_SOLVER_OK.with(|c| c.set(0));
-    WALK_EVENT_SOLVER_FALLBACKS.with(|c| c.set(0));
-}
-
 /// One path's walk-combinator counters (D63GSE follow-up): the FULL set, so
 /// solve telemetry can name the real cost driver — `sims × per-sim word_steps`
 /// vs `refine_sims` (input-partition refinement probes).
@@ -1578,16 +1541,66 @@ pub struct WalkStats {
     pub event_solver_ok: usize,
     /// Event-solver pieces that fell back to grow + bisection.
     pub event_solver_fallbacks: usize,
+    /// Largest word-boundary count any range reached (Q3 dense telemetry;
+    /// the one-shot alert is the CONSUMER's decision — the walk reports).
+    pub max_dense_words: usize,
+    /// Loop-15 census tally (predicted vs bisected first-above). All-zero
+    /// unless the census env gate is on.
+    pub census: WalkEventCensus,
 }
 
-/// Read-and-clear ALL walk counters on the calling thread and return them
-/// locked in one value (no torn reads between the individually-countered
-/// stats).
-/// Read the walk counters WITHOUT clearing them. The solver's own
-/// end-of-walk telemetry must use this (not the clearing take variant),
-/// otherwise it wipes the per-path totals before the solve caller reads them.
+/// The walk entry's whole return: result + returned telemetry (SU7MAE
+/// deepening — no frozen thread-locals on the read-back path; the entry
+/// drains its own counters at entry and reports this stats value at exit).
+#[derive(Debug, Default)]
+pub struct WalkOutcome {
+    /// `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
+    pub result: Option<(U256, U256, Vec<U256>)>,
+    /// This path's walk-combinator counters + census tally.
+    pub stats: WalkStats,
+    /// Census piece recorder (drained; empty unless the census gate is on).
+    pub census_pieces: Vec<(Vec<usize>, U256)>,
+}
+
+impl WalkOutcome {
+    fn none() -> Self {
+        Self {
+            result: None,
+            stats: WalkStats::default(),
+            census_pieces: Vec::new(),
+        }
+    }
+
+    fn from_result(result: Option<(U256, U256, Vec<U256>)>) -> Self {
+        Self {
+            result,
+            stats: WalkStats::default(),
+            census_pieces: Vec::new(),
+        }
+    }
+}
+
+/// Drain ALL walk counters + census state on the calling thread (SU7MAE T2:
+/// entries drain their own counters at entry — the solve caller no longer
+/// resets). Drain = read-and-clear; the discarded value is the prior path's.
+pub(crate) fn reset_walk_stats() {
+    EVENT_CENSUS.with(|c| c.set(WalkEventCensus::default()));
+    WALK_PIECES_VISITED.with(|c| c.set(0));
+    WALK_PATH_SIMULATIONS.with(|c| c.set(0));
+    WALK_WORD_STEPS.with(|c| c.set(0));
+    WALK_REFINE_SIMS.with(|c| c.set(0));
+    WALK_TERNARY_SIMS.with(|c| c.set(0));
+    WALK_GRID_SIMS.with(|c| c.set(0));
+    WALK_LEFT_EDGE_SIMS.with(|c| c.set(0));
+    WALK_RIGHT_EDGE_SIMS.with(|c| c.set(0));
+    WALK_ANCHOR_SIMS.with(|c| c.set(0));
+    WALK_EVENT_SOLVER_OK.with(|c| c.set(0));
+    WALK_EVENT_SOLVER_FALLBACKS.with(|c| c.set(0));
+}
+
+/// Snapshot (no clearing) of the full per-thread walk telemetry.
 #[must_use]
-pub fn peek_walk_stats() -> WalkStats {
+fn peek_walk_stats() -> WalkStats {
     WalkStats {
         pieces: WALK_PIECES_VISITED.with(std::cell::Cell::get),
         sims: WALK_PATH_SIMULATIONS.with(std::cell::Cell::get),
@@ -1600,69 +1613,9 @@ pub fn peek_walk_stats() -> WalkStats {
         anchor_sims: WALK_ANCHOR_SIMS.with(std::cell::Cell::get),
         event_solver_ok: WALK_EVENT_SOLVER_OK.with(std::cell::Cell::get),
         event_solver_fallbacks: WALK_EVENT_SOLVER_FALLBACKS.with(std::cell::Cell::get),
+        max_dense_words: WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get),
+        census: EVENT_CENSUS.with(std::cell::Cell::get),
     }
-}
-
-pub fn take_last_walk_stats_full() -> WalkStats {
-    let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
-    let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
-    let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
-    let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
-    let ternary_sims = WALK_TERNARY_SIMS.with(std::cell::Cell::get);
-    let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
-    let left_edge_sims = WALK_LEFT_EDGE_SIMS.with(std::cell::Cell::get);
-    let right_edge_sims = WALK_RIGHT_EDGE_SIMS.with(std::cell::Cell::get);
-    let anchor_sims = WALK_ANCHOR_SIMS.with(std::cell::Cell::get);
-    let event_solver_ok = WALK_EVENT_SOLVER_OK.with(std::cell::Cell::get);
-    let event_solver_fallbacks = WALK_EVENT_SOLVER_FALLBACKS.with(std::cell::Cell::get);
-    reset_walk_stats();
-    WalkStats {
-        pieces,
-        sims,
-        word_steps,
-        refine_sims,
-        ternary_sims,
-        grid_sims,
-        left_edge_sims,
-        right_edge_sims,
-        anchor_sims,
-        event_solver_ok,
-        event_solver_fallbacks,
-    }
-}
-
-/// Read-and-clear the walk counters on the calling thread and return
-/// `(pieces_visited, path_simulations)` accumulated since the last reset.
-#[must_use]
-pub fn take_last_walk_stats() -> (usize, usize) {
-    let ws = take_last_walk_stats_full();
-    (ws.pieces, ws.sims)
-}
-
-/// Read (without clearing) the stop-time refinement sim count accumulated on
-/// the calling thread since the last `reset_walk_stats`.
-#[must_use]
-pub fn last_refine_sims() -> usize {
-    WALK_REFINE_SIMS.with(std::cell::Cell::get)
-}
-
-/// Read-and-clear the word-boundary step counter (see `WALK_WORD_STEPS`).
-/// The always-on mirror of `take_last_walk_stats` for the step-level cost.
-pub fn take_last_word_boundary_steps() -> usize {
-    let s = WALK_WORD_STEPS.with(std::cell::Cell::get);
-    WALK_WORD_STEPS.with(|c| c.set(0));
-    s
-}
-
-/// Read (without clearing) the largest word-boundary count any range reached
-/// on this thread since the last `reset_walk_stats`. Q3: dense ranges
-/// (>= WORD_PROFILE_THRESHOLD) are real — the DB audit finds ~161 registered
-/// sparse pools with an in-window dense gap (27 with the current tick inside
-/// it), so this surfaces the largest count observed as an observation rather
-/// than an assumption; a one-shot `>= DENSE_OBSERVE_THRESHOLD` alert fires
-/// when one approaches it.
-pub fn last_max_dense_words() -> usize {
-    WALK_MAX_DENSE_WORDS.with(std::cell::Cell::get)
 }
 
 /// Solve an arbitrary V2/CL path with the active-set piecewise Möbius walk.
@@ -1700,14 +1653,24 @@ const SOLVE_TELEMETRY_PIECES_WARN: usize = 500;
 const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 
 #[hotpath::measure(label = "cl_solve.active_set")]
-fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
+fn solve_active_set_path(hops: &[WalkHop]) -> WalkOutcome {
     let s_t0 = std::time::Instant::now();
+    // SU7MAE T2: the walk drains its own counters at entry — the solve
+    // caller no longer resets, and the returned outcome carries THIS path's
+    // telemetry (no frozen thread-locals on the read-back path).
+    reset_walk_stats();
     let out = solve_active_set_path_inner(hops);
     WALK_SOLVE_NS_TOTAL.fetch_add(
         u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         std::sync::atomic::Ordering::Relaxed,
     );
-    out
+    let stats = peek_walk_stats();
+    let census_pieces = EVENT_CENSUS_PIECES.with_borrow_mut(std::mem::take);
+    WalkOutcome {
+        result: out,
+        stats,
+        census_pieces,
+    }
 }
 
 fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
@@ -2142,7 +2105,7 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
 pub fn int_solve_v3_v3(
     seq1: &IntV3TickRangeSequence,
     seq2: &IntV3TickRangeSequence,
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> WalkOutcome {
     solve_active_set_path(&[cl_walk_hop(seq1, None), cl_walk_hop(seq2, None)])
 }
 
@@ -2164,7 +2127,10 @@ fn build_crossing_table(seq: &IntV3TickRangeSequence) -> Vec<IntTickRangeCrossin
 /// each sim to a partition search against cumulative constants + ONE live
 /// landing step, and full landings return constants with zero wide math.
 /// Build is O(K) once per (pool, direction) per state resolve.
-const DENSE_OBSERVE_THRESHOLD: usize = 64;
+/// Q3: dense word-boundary profiles are load-bearing on real sparse pools —
+/// when a range reaches this many boundaries the walk reports
+/// `WalkStats::max_dense_words` and the CONSUMER decides to alert.
+pub const DENSE_OBSERVE_THRESHOLD: usize = 64;
 
 /// Precomputed forward word-boundary profiles, parallel to `crossings`. A dense
 /// range re-walks the same word-boundary prefix on nearly every one of a path's
@@ -2181,18 +2147,6 @@ fn build_word_profiles(crossings: &[IntTickRangeCrossing]) -> Vec<Option<Arc<V3W
                 m.set(n);
             }
         });
-        // Q3 telemetry (one-shot): the DB audit finds ~161 registered sparse
-        // pools with an in-window dense gap (27 with the current tick inside
-        // one), so dense is real. If a range ever crosses the half threshold
-        // we log once so a real dense capture can be harvested from one of
-        // those pools (replacing the synthetic guard).
-        if n >= DENSE_OBSERVE_THRESHOLD
-            && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
-        {
-            tracing::warn!(
-                "Q3-DENSE: a CL range reached {n} word boundaries (>= {DENSE_OBSERVE_THRESHOLD}); dense is load-bearing (KEEP) - harvest a real capture from one of the ~27 current-tick-in-gap pools"
-            );
-        }
         // KEEP ledger (Stage-1 sharing): a dense profile builds ONCE per
         // (pool, direction) and is Arc-shared across every path reusing the
         // projection — build cost amortized over paths, O(1) clone per path,
@@ -2269,9 +2223,9 @@ fn cl_walk_hop<'a>(
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[i]` = output after hop `i`.
 #[must_use]
-pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256, U256, Vec<U256>)> {
+pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> WalkOutcome {
     if sequences.is_empty() {
-        return None;
+        return WalkOutcome::none();
     }
     let hops: Vec<WalkHop> = sequences.iter().map(|seq| cl_walk_hop(seq, None)).collect();
     solve_active_set_path(&hops)
@@ -2288,12 +2242,12 @@ pub fn int_solve_cl_path_cached(
     sequences: &[&IntV3TickRangeSequence],
     crossings: Option<&[&Arc<ClCrossingTable>]>,
     profiles: &[&Arc<ClProfileTable>],
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> WalkOutcome {
     if sequences.is_empty() || sequences.len() != profiles.len() {
-        return None;
+        return WalkOutcome::none();
     }
     if crossings.is_some_and(|c| c.len() != sequences.len()) {
-        return None;
+        return WalkOutcome::none();
     }
     // Cross-block composition memo probe (DEGENBOT_SOLVER_WALK_MEMO=1 /
     // _STATS=1). The fingerprint is the exact correctness key: the crossing
@@ -2306,12 +2260,12 @@ pub fn int_solve_cl_path_cached(
     }
     let fp = walk_path_fingerprint(sequences);
     if let Some(hit) = walk_memo_probe(fp) {
-        return Some(hit);
+        return WalkOutcome::from_result(Some(hit));
     }
-    let result = solve_active_set_path_uncached(sequences, crossings, profiles);
-    walk_memo_note_cost(fp, peek_walk_stats().sims as u64);
-    walk_memo_store(fp, &result);
-    result
+    let outcome = solve_active_set_path_uncached(sequences, crossings, profiles);
+    walk_memo_note_cost(fp, outcome.stats.sims as u64);
+    walk_memo_store(fp, &outcome.result);
+    outcome
 }
 
 /// The un-gated solve body (the memo hook is the only difference).
@@ -2319,12 +2273,12 @@ fn solve_active_set_path_uncached(
     sequences: &[&IntV3TickRangeSequence],
     crossings: Option<&[&Arc<ClCrossingTable>]>,
     profiles: &[&Arc<ClProfileTable>],
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> WalkOutcome {
     if sequences.is_empty() || sequences.len() != profiles.len() {
-        return None;
+        return WalkOutcome::none();
     }
     if crossings.is_some_and(|c| c.len() != sequences.len()) {
-        return None;
+        return WalkOutcome::none();
     }
     let hops: Vec<WalkHop> = sequences
         .iter()
@@ -2341,7 +2295,7 @@ fn solve_active_set_path_uncached(
 pub fn int_solve_cl_path_with_profiles(
     sequences: &[&IntV3TickRangeSequence],
     profiles: &[&Arc<ClProfileTable>],
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> WalkOutcome {
     int_solve_cl_path_cached(sequences, None, profiles)
 }
 
@@ -2614,7 +2568,7 @@ pub fn exact_solve_mixed_v2_v3_sequence(
     v2_hops: &[IntHopState],
     v3_sequence: &IntV3TickRangeSequence,
     v3_first: bool,
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> WalkOutcome {
     let mut hops: Vec<WalkHop> = Vec::with_capacity(v2_hops.len() + 1);
     let cl_hop = cl_walk_hop(v3_sequence, None);
     if v3_first {
@@ -2783,22 +2737,27 @@ pub fn exact_solve_mixed_path_n_cached(
     cl_crossings: Option<&[Option<Arc<ClCrossingTable>>]>,
     cl_profiles: Option<&[Option<Arc<ClProfileTable>>]>,
     hop_order: &[bool], // true = V2, false = CL
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> WalkOutcome {
     let n_hops = hop_order.len();
     if n_hops < 2 || v2_hops.len() != n_hops || cl_sequences.len() != n_hops {
-        return None;
+        return WalkOutcome::none();
     }
     if cl_crossings.is_some_and(|c| c.len() != n_hops)
         || cl_profiles.is_some_and(|p| p.len() != n_hops)
     {
-        return None;
+        return WalkOutcome::none();
     }
     let mut hops: Vec<WalkHop> = Vec::with_capacity(n_hops);
     for (i, &is_v2) in hop_order.iter().enumerate() {
         if is_v2 {
-            hops.push(WalkHop::ConstantProduct(v2_hops[i].as_ref()?));
+            let Some(v2) = v2_hops[i].as_ref() else {
+                return WalkOutcome::none();
+            };
+            hops.push(WalkHop::ConstantProduct(v2));
         } else {
-            let seq = cl_sequences[i].as_ref()?;
+            let Some(seq) = cl_sequences[i].as_ref() else {
+                return WalkOutcome::none();
+            };
             let crossings = cl_crossings.and_then(|c| c.get(i)).and_then(|c| c.as_ref());
             let profiles = cl_profiles.and_then(|p| p.get(i)).and_then(|p| p.as_ref());
             hops.push(cl_walk_hop_cached(seq, crossings, profiles));
@@ -2814,7 +2773,7 @@ pub fn exact_solve_mixed_path_n(
     v2_hops: &[Option<IntHopState>],
     cl_sequences: &[Option<IntV3TickRangeSequence>],
     hop_order: &[bool], // true = V2, false = CL
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> WalkOutcome {
     exact_solve_mixed_path_n_cached(v2_hops, cl_sequences, None, None, hop_order)
 }
 
@@ -3044,7 +3003,7 @@ mod tests {
 
         let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
 
-        let result = exact_solve_mixed_v2_v3_sequence(&[v2_hop], &v3_seq, true);
+        let result = exact_solve_mixed_v2_v3_sequence(&[v2_hop], &v3_seq, true).result;
         // Key thing is no panics.
         let _ = result;
     }
@@ -3236,7 +3195,7 @@ mod tests {
         let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
         let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
         let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
-        let result = int_solve_v3_v3(&seq1, &seq2);
+        let result = int_solve_v3_v3(&seq1, &seq2).result;
         assert!(
             result.is_none(),
             "Same-price pools should not be profitable"
@@ -3281,7 +3240,7 @@ mod tests {
 
         let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
         let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
-        let _ = int_solve_v3_v3(&seq1, &seq2);
+        let _ = int_solve_v3_v3(&seq1, &seq2).result;
     }
 
     #[test]
@@ -3332,7 +3291,7 @@ mod tests {
 
         let seq1 = IntV3TickRangeSequence::new(vec![range1_0, range1_1]).unwrap();
         let seq2 = IntV3TickRangeSequence::new(vec![range2_0]).unwrap();
-        let _ = int_solve_v3_v3(&seq1, &seq2);
+        let _ = int_solve_v3_v3(&seq1, &seq2).result;
     }
 
     // ── Per-hop output tests ──────────────────────────────────────
@@ -3459,8 +3418,8 @@ mod tests {
         let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
         let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
 
-        let result_cl = int_solve_cl_path(&[&seq1, &seq2]);
-        let result_v3v3 = int_solve_v3_v3(&seq1, &seq2);
+        let result_cl = int_solve_cl_path(&[&seq1, &seq2]).result;
+        let result_v3v3 = int_solve_v3_v3(&seq1, &seq2).result;
 
         assert_eq!(result_cl, result_v3v3);
     }
@@ -3494,7 +3453,7 @@ mod tests {
         let seq3 = IntV3TickRangeSequence::new(vec![hop3]).unwrap();
 
         // Same-product 3-hop — should not be profitable
-        let result = int_solve_cl_path(&[&seq1, &seq2, &seq3]);
+        let result = int_solve_cl_path(&[&seq1, &seq2, &seq3]).result;
         assert!(
             result.is_none(),
             "Same-product 3-hop should not be profitable"
@@ -3567,7 +3526,7 @@ mod tests {
         let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
         let seq3 = IntV3TickRangeSequence::new(vec![hop3]).unwrap();
 
-        let result = int_solve_cl_path(&[&seq1, &seq2, &seq3]);
+        let result = int_solve_cl_path(&[&seq1, &seq2, &seq3]).result;
 
         // This should produce a result — there's genuine price disagreement
         // across the three pools. However, fees may eat all profit.
@@ -3638,8 +3597,9 @@ mod tests {
 
         // Cached crossing tables must equal the profile-only solver that
         // rebuilds them per call (byte-identical CL math).
-        let cached = int_solve_cl_path_cached(&[&seq1, &seq2], Some(&[&c1, &c2]), &[&p1, &p2]);
-        let offline = int_solve_cl_path_with_profiles(&[&seq1, &seq2], &[&p1, &p2]);
+        let cached =
+            int_solve_cl_path_cached(&[&seq1, &seq2], Some(&[&c1, &c2]), &[&p1, &p2]).result;
+        let offline = int_solve_cl_path_with_profiles(&[&seq1, &seq2], &[&p1, &p2]).result;
         assert_eq!(cached, offline);
         assert!(cached.is_some(), "late-liquidity fixture is profitable");
     }
@@ -3674,9 +3634,12 @@ mod tests {
             Some(&cl_profiles),
             &[true, false],
         );
-        let offline = exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false]);
-        assert_eq!(cached, offline);
-        assert!(cached.is_some(), "mixed fixture has profit past the prefix");
+        let offline = exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false]).result;
+        assert_eq!(cached.result, offline);
+        assert!(
+            cached.result.is_some(),
+            "mixed fixture has profit past the prefix"
+        );
     }
 
     #[test]
@@ -3712,7 +3675,7 @@ mod tests {
         // For arb: buy WETH cheap (pool1), sell WETH expensive (pool2).
         // But that's only 2 hops. With V3 in the middle, it's still the same direction.
         // The result is that there should be profit from the V2 price disagreement.
-        if let Some((optimal_input, profit, hop_outputs)) = result {
+        if let Some((optimal_input, profit, hop_outputs)) = result.result {
             assert!(!optimal_input.is_zero());
             assert!(!profit.is_zero());
             assert_eq!(hop_outputs.len(), 3);
@@ -3755,9 +3718,10 @@ mod tests {
             Some(&cl_profiles),
             &[true, false, true],
         );
-        let offline = exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false, true]);
-        assert_eq!(cached, offline);
-        assert!(cached.is_some(), "3-hop mixed fixture is profitable");
+        let offline =
+            exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false, true]).result;
+        assert_eq!(cached.result, offline);
+        assert!(cached.result.is_some(), "3-hop mixed fixture is profitable");
     }
 
     #[test]
@@ -4882,6 +4846,7 @@ mod tests {
         );
 
         let (x, profit, _hop_outputs) = int_solve_cl_path(&[&seq1, &seq2])
+            .result
             .expect("the active-set walk must find the deep range-10/11 profit");
 
         // Non-vacuity floor: a coarse ×2 grid scan of the same path already
@@ -4939,7 +4904,7 @@ mod tests {
         // the walk's dense final sweep picks the exact discrete maximizer —
         // the walk may beat the reference by a wei here (observed: 25189262
         // vs 25189261). The assertion that matters is NEVER WORSE.
-        let solver_profit = result.map_or(U256::ZERO, |(_, profit, _)| profit);
+        let solver_profit = result.result.map_or(U256::ZERO, |(_, profit, _)| profit);
         let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
         assert!(
             solver_profit >= reference_profit,
@@ -4969,7 +4934,7 @@ mod tests {
                 liquidities.push(1_000_000_000u128);
                 let seq2 = multi_range_sequence(0, 60, false, &liquidities);
 
-                let solver = int_solve_cl_path(&[&seq1, &seq2]);
+                let solver = int_solve_cl_path(&[&seq1, &seq2]).result;
                 let reference = reference_uncapped_cl_solve(&[&seq1, &seq2]);
                 let solver_profit = solver.map_or(U256::ZERO, |(_, profit, _)| profit);
                 let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
@@ -5012,7 +4977,7 @@ mod tests {
 
         WALK_PIECES_VISITED.with(|c| c.set(0));
         WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-        let result = int_solve_cl_path(&[&seq1, &seq2]);
+        let result = int_solve_cl_path(&[&seq1, &seq2]).result;
         assert!(result.is_some());
         let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
         let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
@@ -5042,7 +5007,7 @@ mod tests {
         let s3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
         WALK_PIECES_VISITED.with(|c| c.set(0));
         WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-        let _ = int_solve_cl_path(&[&s1, &s2, &s3]);
+        let _ = int_solve_cl_path(&[&s1, &s2, &s3]).result;
         let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
         let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
         let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
@@ -5123,7 +5088,7 @@ mod tests {
                 let seqs = [&seq1, &seq2];
                 let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
                 let oracle = grid_oracle_profit(&hops);
-                let solver = int_solve_cl_path(&seqs);
+                let solver = int_solve_cl_path(&seqs).result;
                 let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
                 eprintln!(
                     "[grid] deep_liquidity={deep_liquidity} deep_index={deep_index}:                      oracle={oracle} solver={solver_profit}"
@@ -5171,14 +5136,14 @@ mod tests {
         let sr1 = multi_range_sequence(-100, 200, true, &[5_000_000_000_000u128]);
         let sr2 = multi_range_sequence(0, 200, false, &[10_000_000_000_000u128]);
         time_solve("2-hop single-range", || {
-            let _ = int_solve_cl_path(&[&sr1, &sr2]);
+            let _ = int_solve_cl_path(&[&sr1, &sr2]).result;
         });
 
         // 8-range 2-hop
         let mr2h1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
         let mr2h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
         time_solve("2-hop 8-range", || {
-            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]);
+            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]).result;
         });
 
         // 3-hop 8-range each
@@ -5186,7 +5151,7 @@ mod tests {
         let mr3h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
         let mr3h3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
         time_solve("3-hop 8-range", || {
-            let _ = int_solve_cl_path(&[&mr3h1, &mr3h2, &mr3h3]);
+            let _ = int_solve_cl_path(&[&mr3h1, &mr3h2, &mr3h3]).result;
         });
 
         // Legacy-style enumeration (uncapped) on the same 8-range 2-hop —
@@ -5202,7 +5167,7 @@ mod tests {
             let _ = Relaxed;
             WALK_PATH_SIMULATIONS.with(|c| c.set(0));
             WALK_PIECES_VISITED.with(|c| c.set(0));
-            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]);
+            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]).result;
             eprintln!(
                 "[bench] 2-hop 8-range walk: pieces={} sims={}",
                 WALK_PIECES_VISITED.with(std::cell::Cell::get),
@@ -5275,7 +5240,8 @@ mod tests {
                         *l = deep_liquidity;
                     }
                     let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-                    let Some((x_star, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]) else {
+                    let Some((x_star, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]).result
+                    else {
                         continue;
                     };
                     assert!(!profit.is_zero());
@@ -5631,7 +5597,7 @@ mod tests {
             anchor > x_sat,
             "cell sanity: requires anchor > x_sat (got anchor={anchor}, x_sat={x_sat})"
         );
-        let Some((x, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]) else {
+        let Some((x, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]).result else {
             panic!(
                 "F1 silent under-shoot: solver=None while the saturation corner x={x_sat} is worth {corner_profit} (anchor={anchor}); the single-piece terminal refine must bracket the corner"
             );
@@ -5694,7 +5660,7 @@ mod tests {
             corner_profit > U256::from(1_000_000u64),
             "cell needs a substantial hop1-binding profit (got {corner_profit})"
         );
-        let Some((x, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]) else {
+        let Some((x, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]).result else {
             panic!(
                 "hop1-binding kink dropped: solver=None while x_cap={x_cap} is worth {corner_profit}; the terminal refine must not silently skip it"
             );
@@ -5780,7 +5746,7 @@ mod tests {
         }
 
         let eps = U256::from(REFINE_BRACKET_WEI);
-        let Some((xr, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]) else {
+        let Some((xr, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]).result else {
             panic!("solver=None on a dense path while the fine oracle is {oracle_profit}");
         };
         assert!(

@@ -46,9 +46,7 @@ use std::time::Instant;
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::mixed::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
-use degenbot_solvers::mobius_v3_int::{
-    build_cl_crossing_table, build_cl_word_profiles, reset_walk_stats, take_last_walk_stats_full,
-};
+use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles, WalkStats};
 use degenbot_solvers::profit_envelope::{reset_gate_stats, take_last_gate_stats};
 use rayon::prelude::*;
 use serde_json::Value;
@@ -192,14 +190,14 @@ fn reconstruct(doc: &Value) -> Result<(u64, Arc<ResolvedMixedPath>, Option<u128>
     ))
 }
 
-fn solve_measure(p: &Arc<ResolvedMixedPath>) -> (u128, bool) {
+fn solve_measure(p: &Arc<ResolvedMixedPath>) -> (u128, bool, WalkStats) {
     let t0 = Instant::now();
-    let r = solve_path_with_min_profit(
+    let out = solve_path_with_min_profit(
         p.as_ref(),
         U256::ZERO,
         &::degenbot_solvers::profit_envelope::GateDeps::offline(),
     );
-    (t0.elapsed().as_micros(), r.is_some())
+    (t0.elapsed().as_micros(), out.result.is_some(), out.stats)
 }
 
 /// Rayon fan-out over the items: bare solve vs production-diagnostics closure
@@ -227,16 +225,15 @@ fn run_rayon(items: &[Arc<ResolvedMixedPath>], threads: usize, diag: bool) -> Ro
                 .par_iter()
                 .map(|p| {
                     let _g = span.enter();
-                    reset_walk_stats();
                     reset_gate_stats();
-                    let (us, some) = solve_measure(p);
+                    let (us, some, ws) = solve_measure(p);
                     c0.fetch_add(u64::try_from(us).unwrap_or(u64::MAX), Relaxed);
                     c1.fetch_add(u64::from(some), Relaxed);
                     let gs = take_last_gate_stats();
                     c2.fetch_add(gs.evaluated, Relaxed);
                     c3.fetch_add(gs.skipped, Relaxed);
                     c4.fetch_add(gs.unsupported, Relaxed);
-                    let ws = take_last_walk_stats_full();
+
                     c5.fetch_add(u64::try_from(ws.pieces).unwrap_or(0), Relaxed);
                     c6.fetch_add(u64::try_from(ws.sims).unwrap_or(0), Relaxed);
                     c7.fetch_add(u64::try_from(ws.refine_sims).unwrap_or(0), Relaxed);
@@ -456,7 +453,8 @@ loaded {} paths",
                 p.as_ref(),
                 U256::ZERO,
                 &::degenbot_solvers::profit_envelope::GateDeps::offline(),
-            );
+            )
+            .result;
             match (&r, golden[idx]) {
                 (Some(res), Some(gp)) => {
                     let rp = u128::try_from(res.profit).expect("profit fits u128");

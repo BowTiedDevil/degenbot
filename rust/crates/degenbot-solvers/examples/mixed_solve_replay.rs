@@ -51,9 +51,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{
-    exact_solve_mixed_path_n_cached, reset_walk_stats, take_last_walk_stats_full, WalkStats,
-};
+use degenbot_solvers::mobius_v3_int::{exact_solve_mixed_path_n_cached, WalkStats};
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;
@@ -258,19 +256,19 @@ fn main() {
             }
         };
 
-        // Warm + time N reps. Reset walk stats so each rep's stats are
-        // attributable (we report the final rep's walk breakdown).
+        // Warm + time N reps. Each rep's WalkOutcome carries its own
+        // attributable stats (we report the final rep's walk breakdown).
         let mut times_us: Vec<u128> = Vec::with_capacity(iters);
-        let mut last_ws: WalkStats = take_last_walk_stats_full();
+        let mut last_ws: WalkStats = WalkStats::default();
         let mut last_result: Option<(U256, U256, Vec<U256>)> = None;
         let mut divergent_reps = false;
         for _ in 0..iters {
-            reset_walk_stats();
             let t0 = std::time::Instant::now();
-            let r = exact_solve_mixed_path_n_cached(&v2_hops, &cl_seqs, None, None, &hop_order);
+            let out = exact_solve_mixed_path_n_cached(&v2_hops, &cl_seqs, None, None, &hop_order);
             let us = t0.elapsed().as_micros() as u128;
             times_us.push(us);
-            last_ws = take_last_walk_stats_full();
+            last_ws = out.stats;
+            let r = out.result;
             if let Some(prev) = last_result.as_ref() {
                 if prev.1 != r.as_ref().map(|(_, p, _)| *p).unwrap_or(U256::ZERO) {
                     divergent_reps = true;

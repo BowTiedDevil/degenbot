@@ -2908,7 +2908,8 @@ mod tests {
         let result = ::degenbot_solvers::mixed::solve_path(
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
-        );
+        )
+        .result;
         let _ = result; // No panic = test passes
     }
 
@@ -3003,7 +3004,8 @@ mod tests {
         let result = ::degenbot_solvers::mixed::solve_path(
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
-        );
+        )
+        .result;
         let _ = result;
     }
 
@@ -4067,6 +4069,7 @@ mod tests {
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
         )
+        .result
         .expect("profitable path solves");
         assert!(!result.optimal_input.is_zero());
         assert!(!result.profit.is_zero());
@@ -4189,6 +4192,7 @@ mod tests {
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
         )
+        .result
         .expect("profitable mixed path solves");
         assert!(!result.profit.is_zero());
 
@@ -4237,6 +4241,7 @@ mod tests {
                 resolved,
                 &::degenbot_solvers::profit_envelope::GateDeps::offline()
             )
+            .result
             .is_none(),
             "round-trip through one pool is unprofitable"
         );
@@ -4318,6 +4323,7 @@ mod tests {
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline()
         )
+        .result
         .is_none());
     }
     // -----------------------------------------------------------------------
@@ -4568,6 +4574,7 @@ mod tests {
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
         )
+        .result
         .expect("bw path should solve");
 
         // The two profits should be in the same ballpark (within 1% of each
@@ -4696,6 +4703,7 @@ mod tests {
                 resolved,
                 &::degenbot_solvers::profit_envelope::GateDeps::offline()
             )
+            .result
             .is_none(),
             "Balancer weighted + CL must not solve"
         );
@@ -5027,6 +5035,7 @@ mod tests {
                 resolved,
                 &::degenbot_solvers::profit_envelope::GateDeps::offline()
             )
+            .result
             .is_none(),
             "Balancer stable + CL must not solve"
         );
@@ -5260,6 +5269,7 @@ mod tests {
                 resolved,
                 &::degenbot_solvers::profit_envelope::GateDeps::offline()
             )
+            .result
             .is_none(),
             "Curve + CL must not solve"
         );

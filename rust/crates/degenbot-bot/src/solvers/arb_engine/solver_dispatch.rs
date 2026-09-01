@@ -32,6 +32,11 @@ use ::degenbot_solvers::mixed::{HopType, ResolvedHop, ResolvedMixedPath, SolvePa
 /// (D63GSE intra-solve visibility).
 const SLOWEST_PATHS_K: usize = 5;
 
+/// Q3 dense one-shot alert flag — the CONSUMER side of the moved alert: the
+/// walk reports `WalkStats::max_dense_words`; this logs once per process.
+static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 // ---------------------------------------------------------------------------
 // RAYPAR T3: LPT-pre-balanced scoped-thread partition
 // ---------------------------------------------------------------------------
@@ -821,130 +826,146 @@ impl ArbitrageEngine {
         let capture_mixed_ref: Option<&HeavyMixedPathCapture> = capture_mixed.as_ref();
         let sims_recorder: &parking_lot::Mutex<HashMap<u64, u64>> = &self.last_walk_sims;
         let gate_recorder: &parking_lot::Mutex<HashMap<u64, u64>> = &self.last_gate_us;
-        let solved: Vec<(u64, SolvePathResult)> =
-            hotpath::measure_block!("arb_solve.rayon_solve", {
+        let solved: Vec<(u64, SolvePathResult)> = hotpath::measure_block!(
+            "arb_solve.rayon_solve",
+            {
                 // Per-path solve + diagnostics closure (shared by the LPT
                 // scoped-thread path and the rayon par_iter fallback).
-                let solve_fn =
-                    |pid: u64, resolved: &ResolvedMixedPath| -> Option<(u64, SolvePathResult)> {
-                        let _solve_ctx = solve_span.enter();
-                        ::degenbot_solvers::mobius_v3_int::reset_walk_stats();
-                        ::degenbot_solvers::profit_envelope::reset_gate_stats();
-                        let t0 = std::time::Instant::now();
-                        let result = ::degenbot_solvers::mixed::solve_path_with_min_profit(
-                            resolved,
-                            min_profit_floor(),
-                            &gate_deps,
-                        );
-                        let micros = t0.elapsed().as_micros();
-                        solve_cpu_us.fetch_add(
-                            u64::try_from(micros).unwrap_or(u64::MAX),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
-                        let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
-                        if let Some(p) = crate::instruments::pipeline() {
-                            #[expect(clippy::cast_precision_loss)]
-                            {
-                                p.observe_per_path_solve_duration(micros as f64 / 1e6);
-                                p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
-                            }
-                        }
-                        gate_total.lock().merge(&gs);
-                        let ws = ::degenbot_solvers::mobius_v3_int::take_last_walk_stats_full();
-                        let (pieces, sims, word_steps, refine_sims, ternary_sims, grid_sims) = (
-                            ws.pieces,
-                            ws.sims,
-                            ws.word_steps,
-                            ws.refine_sims,
-                            ws.ternary_sims,
-                            ws.grid_sims,
-                        );
-                        // Record this block's measured walk sims for the next
-                        // block's LPT cost (loop-12 KUKHMX).
-                        sims_recorder
-                            .lock()
-                            .insert(pid, u64::try_from(sims).unwrap_or(0));
-                        // Loop-18: record measured gate time for the LPT cost too
-                        // (gate-heavy paths carry sims≈0 and were bin-packed cheap).
-                        gate_recorder.lock().insert(pid, gate_us);
-                        let (gate_derive_us, gate_compose_us, gate_search_us) = (
-                            u64::try_from(gs.derive_ns / 1_000).unwrap_or(u64::MAX),
-                            u64::try_from(gs.compose_ns / 1_000).unwrap_or(u64::MAX),
-                            u64::try_from(gs.search_ns / 1_000).unwrap_or(u64::MAX),
-                        );
-                        walk_ternary_total.fetch_add(
-                            u64::try_from(ternary_sims).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_grid_total.fetch_add(
-                            u64::try_from(grid_sims).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_pieces_total.fetch_add(
-                            u64::try_from(pieces).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_sims_total.fetch_add(
-                            u64::try_from(sims).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_word_steps_total.fetch_add(
-                            u64::try_from(word_steps).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        walk_refine_sims_total.fetch_add(
-                            u64::try_from(refine_sims).unwrap_or(0),
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                        let mut heap = path_times.lock();
+                let solve_fn = |pid: u64,
+                                resolved: &ResolvedMixedPath|
+                 -> Option<(u64, SolvePathResult)> {
+                    let _solve_ctx = solve_span.enter();
+                    ::degenbot_solvers::profit_envelope::reset_gate_stats();
+                    let t0 = std::time::Instant::now();
+                    let outcome = ::degenbot_solvers::mixed::solve_path_with_min_profit(
+                        resolved,
+                        min_profit_floor(),
+                        &gate_deps,
+                    );
+                    let micros = t0.elapsed().as_micros();
+                    solve_cpu_us.fetch_add(
+                        u64::try_from(micros).unwrap_or(u64::MAX),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
+                    let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
+                    if let Some(p) = crate::instruments::pipeline() {
+                        #[expect(clippy::cast_precision_loss)]
                         {
-                            let worst = heap.peek().map_or(
-                                u128::MAX,
-                                |std::cmp::Reverse((w, _, _, _, _, _, _, _, _, _))| *w,
+                            p.observe_per_path_solve_duration(micros as f64 / 1e6);
+                            p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
+                        }
+                    }
+                    gate_total.lock().merge(&gs);
+                    // Walk telemetry OUT the return path (SU7MAE T2): the
+                    // outcome carries this path's counters — no TLS
+                    // read-back. The Q3 dense one-shot alert is the
+                    // CONSUMER's decision.
+                    let outcome_stats = &outcome.stats;
+                    if outcome_stats.max_dense_words
+                        >= ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD
+                        && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        tracing::warn!(
+                                max_dense_words = outcome_stats.max_dense_words,
+                                threshold = ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD,
+                                "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
                             );
-                            if heap.len() < SLOWEST_PATHS_K || micros > worst {
-                                heap.push(std::cmp::Reverse((
-                                    micros,
-                                    u64::try_from(pieces).unwrap_or(0),
-                                    u64::try_from(sims).unwrap_or(0),
-                                    u64::try_from(word_steps).unwrap_or(0),
-                                    u64::try_from(refine_sims).unwrap_or(0),
-                                    gate_us,
-                                    gate_derive_us,
-                                    gate_compose_us,
-                                    gate_search_us,
-                                    pid,
-                                )));
-                                if heap.len() > SLOWEST_PATHS_K {
-                                    heap.pop();
-                                }
+                    }
+                    let ws = *outcome_stats;
+                    let (pieces, sims, word_steps, refine_sims, ternary_sims, grid_sims) = (
+                        ws.pieces,
+                        ws.sims,
+                        ws.word_steps,
+                        ws.refine_sims,
+                        ws.ternary_sims,
+                        ws.grid_sims,
+                    );
+                    // Record this block's measured walk sims for the next
+                    // block's LPT cost (loop-12 KUKHMX).
+                    sims_recorder
+                        .lock()
+                        .insert(pid, u64::try_from(sims).unwrap_or(0));
+                    // Loop-18: record measured gate time for the LPT cost too
+                    // (gate-heavy paths carry sims≈0 and were bin-packed cheap).
+                    gate_recorder.lock().insert(pid, gate_us);
+                    let (gate_derive_us, gate_compose_us, gate_search_us) = (
+                        u64::try_from(gs.derive_ns / 1_000).unwrap_or(u64::MAX),
+                        u64::try_from(gs.compose_ns / 1_000).unwrap_or(u64::MAX),
+                        u64::try_from(gs.search_ns / 1_000).unwrap_or(u64::MAX),
+                    );
+                    walk_ternary_total.fetch_add(
+                        u64::try_from(ternary_sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_grid_total.fetch_add(
+                        u64::try_from(grid_sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_pieces_total.fetch_add(
+                        u64::try_from(pieces).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_sims_total.fetch_add(
+                        u64::try_from(sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_word_steps_total.fetch_add(
+                        u64::try_from(word_steps).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    walk_refine_sims_total.fetch_add(
+                        u64::try_from(refine_sims).unwrap_or(0),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    let mut heap = path_times.lock();
+                    {
+                        let worst = heap.peek().map_or(
+                            u128::MAX,
+                            |std::cmp::Reverse((w, _, _, _, _, _, _, _, _, _))| *w,
+                        );
+                        if heap.len() < SLOWEST_PATHS_K || micros > worst {
+                            heap.push(std::cmp::Reverse((
+                                micros,
+                                u64::try_from(pieces).unwrap_or(0),
+                                u64::try_from(sims).unwrap_or(0),
+                                u64::try_from(word_steps).unwrap_or(0),
+                                u64::try_from(refine_sims).unwrap_or(0),
+                                gate_us,
+                                gate_derive_us,
+                                gate_compose_us,
+                                gate_search_us,
+                                pid,
+                            )));
+                            if heap.len() > SLOWEST_PATHS_K {
+                                heap.pop();
                             }
                         }
-                        if let Some(cap) = capture_ref {
-                            cap.maybe_capture(
-                                pid,
-                                solve_block,
-                                u64::try_from(micros).unwrap_or(u64::MAX),
-                                u64::try_from(sims).unwrap_or(0),
-                                u64::try_from(pieces).unwrap_or(0),
-                                result.as_ref(),
-                                resolved,
-                            );
-                        }
-                        if let Some(cap) = capture_mixed_ref {
-                            cap.maybe_capture(
-                                pid,
-                                solve_block,
-                                u64::try_from(micros).unwrap_or(u64::MAX),
-                                u64::try_from(sims).unwrap_or(0),
-                                u64::try_from(pieces).unwrap_or(0),
-                                result.as_ref(),
-                                resolved,
-                            );
-                        }
-                        result.map(|r| (pid, r))
-                    };
+                    }
+                    if let Some(cap) = capture_ref {
+                        cap.maybe_capture(
+                            pid,
+                            solve_block,
+                            u64::try_from(micros).unwrap_or(u64::MAX),
+                            u64::try_from(sims).unwrap_or(0),
+                            u64::try_from(pieces).unwrap_or(0),
+                            outcome.result.as_ref(),
+                            resolved,
+                        );
+                    }
+                    if let Some(cap) = capture_mixed_ref {
+                        cap.maybe_capture(
+                            pid,
+                            solve_block,
+                            u64::try_from(micros).unwrap_or(u64::MAX),
+                            u64::try_from(sims).unwrap_or(0),
+                            u64::try_from(pieces).unwrap_or(0),
+                            outcome.result.as_ref(),
+                            resolved,
+                        );
+                    }
+                    outcome.result.map(|r| (pid, r))
+                };
 
                 if lpt_partition_enabled() {
                     // RAYPAR T3: LPT-pre-balanced partition on rayon's persistent global
@@ -1020,7 +1041,8 @@ impl ArbitrageEngine {
                         .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
                         .collect()
                 }
-            });
+            }
+        );
         if let Some(c) = capture.as_ref() {
             tracing::info!(
                 target: "degenbot::solver",
@@ -1207,6 +1229,7 @@ impl ArbitrageEngine {
                             min_profit_floor(),
                             &gate_deps,
                         )
+                        .result
                         .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
                         .inspect(|r| {
                             if !r.solver_pool_states.is_empty() {

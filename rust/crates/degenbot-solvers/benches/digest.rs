@@ -263,8 +263,11 @@ fn bench_solve_balancer_stable(c: &mut Criterion) {
         &path,
         &::degenbot_solvers::profit_envelope::GateDeps::offline(),
     );
-    assert!(probe.is_some(), "balancer-stable path must be profitable");
-    assert!(!probe.unwrap().profit.is_zero());
+    assert!(
+        probe.result.is_some(),
+        "balancer-stable path must be profitable"
+    );
+    assert!(!probe.result.unwrap().profit.is_zero());
 
     c.bench_function("solve_balancer_stable_path", |bencher| {
         bencher.iter(|| {
@@ -283,8 +286,11 @@ fn bench_solve_curve(c: &mut Criterion) {
         &path,
         &::degenbot_solvers::profit_envelope::GateDeps::offline(),
     );
-    assert!(probe.is_some(), "curve-stable path must be profitable");
-    assert!(!probe.unwrap().profit.is_zero());
+    assert!(
+        probe.result.is_some(),
+        "curve-stable path must be profitable"
+    );
+    assert!(!probe.result.unwrap().profit.is_zero());
 
     c.bench_function("solve_curve_path", |bencher| {
         bencher.iter(|| {

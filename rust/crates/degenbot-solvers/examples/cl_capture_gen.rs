@@ -59,9 +59,7 @@ use degenbot_pools::TickBootstrapRpc;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickBootstrapRpc;
-use degenbot_solvers::mobius_v3_int::{
-    int_solve_cl_path, reset_walk_stats, take_last_walk_stats, IntV3TickRangeSequence,
-};
+use degenbot_solvers::mobius_v3_int::{int_solve_cl_path, IntV3TickRangeSequence};
 use serde_json::{json, Value};
 
 const MAX_FETCHES: usize = 320; // per-pool tick-word fetch cap, overridable
@@ -329,11 +327,11 @@ fn main() -> ExitCode {
             }
             let _zfo_a = other_a == a_t0;
             let _zfo_b = s == b_t0;
-            reset_walk_stats();
             let t0 = std::time::Instant::now();
-            let res = int_solve_cl_path(&[sa, sb]);
+            let out = int_solve_cl_path(&[sa, sb]);
+            let res = out.result;
             let micros = t0.elapsed().as_micros();
-            let (pieces, sims) = take_last_walk_stats();
+            let (pieces, sims) = (out.stats.pieces, out.stats.sims);
             let profitable = res.is_some();
             n_paths += 1;
             if profitable {

@@ -31,11 +31,7 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{
-    int_solve_cl_path, last_refine_sims, reset_walk_stats, take_event_census,
-    take_event_census_pieces, take_last_walk_stats_full, take_last_word_boundary_steps,
-    WalkEventCensus,
-};
+use degenbot_solvers::mobius_v3_int::{int_solve_cl_path, WalkEventCensus};
 use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 
@@ -222,12 +218,15 @@ fn main() {
         let mut times: Vec<u128> = Vec::with_capacity(iters);
         let mut first: Option<(U256, Vec<U256>)> = None;
         let mut consistent = true;
+        let mut last_stats: Option<degenbot_solvers::mobius_v3_int::WalkStats> = None;
+        let mut path_pieces: Vec<(Vec<usize>, U256)> = Vec::new();
         for _ in 0..iters {
-            reset_walk_stats();
             let t0 = std::time::Instant::now();
-            let r = int_solve_cl_path(refs.as_slice());
+            let out = int_solve_cl_path(refs.as_slice());
             times.push(t0.elapsed().as_micros());
-            match r.as_ref() {
+            last_stats = Some(out.stats);
+            path_pieces = out.census_pieces;
+            match out.result.as_ref() {
                 Some((opt, _p, ho)) => match &first {
                     None => first = Some((*opt, ho.clone())),
                     Some((fo, fh)) => {
@@ -243,13 +242,14 @@ fn main() {
                 }
             }
         }
-        let wsteps = take_last_word_boundary_steps();
-        let refine = last_refine_sims();
-        // Census + T2 recorder: one take per path (the tally accumulates
-        // across this path's iterations; pieces log likewise).
-        let path_census = take_event_census();
-        census_total.accumulate_event_census(path_census);
-        let path_pieces = take_event_census_pieces();
+        // Census + per-piece log ride the last rep's WalkOutcome (T2: out
+        // the return path; no frozen-thread-local takes).
+        let wsteps = last_stats.as_ref().map_or(0, |s| s.word_steps);
+        let refine = last_stats.as_ref().map_or(0, |s| s.refine_sims);
+        let last_census = last_stats
+            .as_ref()
+            .map_or(WalkEventCensus::default(), |s| s.census);
+        census_total.accumulate_event_census(last_census);
         if let Some(prev) = last_pieces_by_pid.get(&pid) {
             cross_block_pids += 1;
             let prev_map: std::collections::HashMap<&Vec<usize>, &U256> =
@@ -275,14 +275,14 @@ fn main() {
             }
         }
         last_pieces_by_pid.insert(pid, path_pieces);
-        let ws = take_last_walk_stats_full();
-        let pieces = ws.pieces;
-        let sims = ws.sims;
-        let ls = ws.left_edge_sims;
-        let rs = ws.right_edge_sims;
-        let ans = ws.anchor_sims;
-        let esok = ws.event_solver_ok;
-        let esfb = ws.event_solver_fallbacks;
+        let ws_last = last_stats;
+        let pieces = ws_last.as_ref().map_or(0, |s| s.pieces);
+        let sims = ws_last.as_ref().map_or(0, |s| s.sims);
+        let ls = ws_last.as_ref().map_or(0, |s| s.left_edge_sims);
+        let rs = ws_last.as_ref().map_or(0, |s| s.right_edge_sims);
+        let ans = ws_last.as_ref().map_or(0, |s| s.anchor_sims);
+        let esok = ws_last.as_ref().map_or(0, |s| s.event_solver_ok);
+        let esfb = ws_last.as_ref().map_or(0, |s| s.event_solver_fallbacks);
         if consistent {
             n_consistent += 1;
         } else {

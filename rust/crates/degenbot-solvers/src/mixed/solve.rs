@@ -33,8 +33,16 @@ use crate::mixed::{
 /// `solve_all` invoke `solve_path` from a rayon `par_iter` closure without
 /// borrowing `self` (which would conflict with the `&mut self` write to
 /// `self.results` that follows the solve).
+/// The mixed solve entry's whole return: result + returned walk telemetry
+/// (SU7MAE T2 — no frozen thread-locals on the read-back path).
+#[derive(Debug, Default)]
+pub struct SolveOutcome {
+    pub result: Option<SolvePathResult>,
+    pub stats: crate::mobius_v3_int::WalkStats,
+}
+
 #[must_use]
-pub fn solve_path(resolved: &ResolvedMixedPath, gate: &GateDeps<'_>) -> Option<SolvePathResult> {
+pub fn solve_path(resolved: &ResolvedMixedPath, gate: &GateDeps<'_>) -> SolveOutcome {
     solve_path_with_min_profit(resolved, U256::ZERO, gate)
 }
 
@@ -49,7 +57,7 @@ pub fn solve_path_with_min_profit(
     resolved: &ResolvedMixedPath,
     min_profit: U256,
     gate: &GateDeps<'_>,
-) -> Option<SolvePathResult> {
+) -> SolveOutcome {
     // Hard cutover (SU7MAE task 7SI5G2): the gate is unconditional.
     let views: Vec<Option<crate::profit_envelope::HopMath<'_>>> = resolved
         .hops
@@ -134,11 +142,12 @@ pub fn solve_path_with_min_profit(
             // the walk.
             if bound <= min_profit {
                 gate_tls(|t| t.skipped += 1);
-                return None;
+                return SolveOutcome::default();
             }
         }
     }
-    solve_path_inner(resolved)
+    let (result, stats) = solve_path_inner(resolved);
+    SolveOutcome { result, stats }
 }
 
 #[must_use]
@@ -147,10 +156,12 @@ pub fn solve_path_with_min_profit(
 // retained `expect` would trip as unfulfilled.
 #[cfg_attr(not(feature = "hotpath"), expect(clippy::too_many_lines))]
 #[hotpath::measure(label = "mixed.solve_path_inner")]
-pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+pub fn solve_path_inner(
+    resolved: &ResolvedMixedPath,
+) -> (Option<SolvePathResult>, crate::mobius_v3_int::WalkStats) {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
-        return None;
+        return (None, crate::mobius_v3_int::WalkStats::default());
     }
     let all_v2 = resolved
         .hops
@@ -198,39 +209,43 @@ pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
         )
     });
 
-    let result = if all_v2 {
+    let (result, walk_stats) = if all_v2 {
         let int_hops: Vec<_> = resolved
             .hops
             .iter()
             .filter_map(ResolvedHop::as_v2_state)
             .cloned()
             .collect();
+        // Non-CL arms never touch the walk counters — zero stats.
         if int_hops.len() == resolved.hops.len() {
-            crate::mobius_int_exact::exact_mobius_solve(&int_hops)
-                .ok()
-                .and_then(|r| {
-                    if r.is_profitable && !r.optimal_input.is_zero() && !r.profit.is_zero() {
-                        // V2 constant-product pools: each hop's consumed input
-                        // is the previous hop's output (hop_outputs[i-1]),
-                        // with hop 0 consuming optimal_input.
-                        let mut consumed_inputs = Vec::with_capacity(r.hop_outputs.len());
-                        consumed_inputs.push(r.optimal_input);
-                        for i in 1..r.hop_outputs.len() {
-                            consumed_inputs.push(r.hop_outputs[i - 1]);
+            (
+                crate::mobius_int_exact::exact_mobius_solve(&int_hops)
+                    .ok()
+                    .and_then(|r| {
+                        if r.is_profitable && !r.optimal_input.is_zero() && !r.profit.is_zero() {
+                            // V2 constant-product pools: each hop's consumed input
+                            // is the previous hop's output (hop_outputs[i-1]),
+                            // with hop 0 consuming optimal_input.
+                            let mut consumed_inputs = Vec::with_capacity(r.hop_outputs.len());
+                            consumed_inputs.push(r.optimal_input);
+                            for i in 1..r.hop_outputs.len() {
+                                consumed_inputs.push(r.hop_outputs[i - 1]);
+                            }
+                            Some(SolvePathResult {
+                                optimal_input: r.optimal_input,
+                                profit: r.profit,
+                                hop_outputs: r.hop_outputs,
+                                consumed_inputs,
+                                ..Default::default()
+                            })
+                        } else {
+                            None
                         }
-                        Some(SolvePathResult {
-                            optimal_input: r.optimal_input,
-                            profit: r.profit,
-                            hop_outputs: r.hop_outputs,
-                            consumed_inputs,
-                            ..Default::default()
-                        })
-                    } else {
-                        None
-                    }
-                })
+                    }),
+                crate::mobius_v3_int::WalkStats::default(),
+            )
         } else {
-            None
+            (None, crate::mobius_v3_int::WalkStats::default())
         }
     } else if all_cl {
         // V3-V3, V4-V4, V3-V4, V4-V3, V3-V3-V3, etc: all concentrated-liquidity
@@ -250,74 +265,89 @@ pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
             .filter_map(ResolvedHop::as_crossing_table)
             .collect();
         if int_sequences.len() >= 2 {
-            crate::mobius_v3_int::int_solve_cl_path_cached(
+            let out = crate::mobius_v3_int::int_solve_cl_path_cached(
                 &int_sequences,
                 Some(&cl_crossings),
                 &cl_profiles,
+            );
+            (
+                out.result.map(|(optimal_input, _profit, hop_outputs)| {
+                    // consumed_inputs[0] = optimal_input (first hop always consumes
+                    // its full input for single-range paths; no partial fill).
+                    // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
+                    // output becomes this hop's input — matching the pipeline:
+                    // V3 output flows into V4 as amountSpecified).
+                    let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+                    consumed_inputs.push(optimal_input);
+                    for i in 1..hop_outputs.len() {
+                        consumed_inputs.push(hop_outputs[i - 1]);
+                    }
+                    let profit = hop_outputs
+                        .last()
+                        .copied()
+                        .unwrap_or(U256::ZERO)
+                        .saturating_sub(consumed_inputs[0]);
+                    SolvePathResult {
+                        optimal_input,
+                        profit,
+                        hop_outputs,
+                        consumed_inputs,
+                        ..Default::default()
+                    }
+                }),
+                out.stats,
             )
-            .map(|(optimal_input, _profit, hop_outputs)| {
-                // consumed_inputs[0] = optimal_input (first hop always consumes
-                // its full input for single-range paths; no partial fill).
-                // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
-                // output becomes this hop's input — matching the pipeline:
-                // V3 output flows into V4 as amountSpecified).
-                let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-                consumed_inputs.push(optimal_input);
-                for i in 1..hop_outputs.len() {
-                    consumed_inputs.push(hop_outputs[i - 1]);
-                }
-                let profit = hop_outputs
-                    .last()
-                    .copied()
-                    .unwrap_or(U256::ZERO)
-                    .saturating_sub(consumed_inputs[0]);
-                SolvePathResult {
-                    optimal_input,
-                    profit,
-                    hop_outputs,
-                    consumed_inputs,
-                    ..Default::default()
-                }
-            })
         } else {
-            None
+            (None, crate::mobius_v3_int::WalkStats::default())
         }
     } else if all_v2_or_solidly && has_solidly {
         // All-V2-or-Solidly with ≥1 Solidly hop — the two-stage Möbius
         // precheck + golden-section solve (task DMPSNG). Scope (p):
         // Solidly mixed with CL is rejected below.
-        solve_solidly_path_int(resolved)
+        (
+            solve_solidly_path_int(resolved),
+            crate::mobius_v3_int::WalkStats::default(),
+        )
     } else if has_solidly {
         // A Solidly hop alongside a CL hop — out of scope (p). The
         // Solidly solve is a per-hop `swap_fn` walk incompatible with
         // CL tick-range enumeration; Python rejects these too.
-        None
+        (None, crate::mobius_v3_int::WalkStats::default())
     } else if all_v2_or_weighted && has_balancer_weighted {
         // All-V2-or-Balancer-weighted with ≥1 weighted hop — the
         // Möbius precheck + golden-section solve over the Balancer
         // weighted math leaf. Scope: weighted mixed with CL is
         // rejected below (same scope rule as Solidly+CL).
-        solve_balancer_weighted_path_int(resolved)
+        (
+            solve_balancer_weighted_path_int(resolved),
+            crate::mobius_v3_int::WalkStats::default(),
+        )
     } else if has_balancer_weighted {
         // A weighted hop alongside a CL hop — out of scope (same
         // rationale as Solidly+CL).
-        None
+        (None, crate::mobius_v3_int::WalkStats::default())
     } else if all_v2_or_stable && has_balancer_stable {
         // All-V2-or-Balancer-stable with ≥1 stable hop — the
         // Möbius precheck + golden-section solve over the Balancer
         // stable math leaf. Scope: stable mixed with CL or weighted is
         // rejected below.
-        solve_balancer_stable_path_int(resolved)
+        (
+            solve_balancer_stable_path_int(resolved),
+            crate::mobius_v3_int::WalkStats::default(),
+        )
     } else if has_balancer_stable {
         // A stable hop alongside a CL or weighted hop — out of scope.
-        None
+        (None, crate::mobius_v3_int::WalkStats::default())
     } else if all_v2_or_curve && has_curve {
         // All-V2-or-Curve with ≥1 Curve hop — the Möbius precheck +
         // golden-section solve over the Curve stableswap math leaf.
-        solve_curve_path_int(resolved)
+        (
+            solve_curve_path_int(resolved),
+            crate::mobius_v3_int::WalkStats::default(),
+        )
     } else if has_curve {
         // A Curve hop alongside a CL or Balancer hop — out of scope.
-        None
+        (None, crate::mobius_v3_int::WalkStats::default())
     } else {
         // Mixed V2 + CL (V3 or V4)
         solve_mixed_path_int(resolved)
@@ -332,13 +362,13 @@ pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
                 let consumed = r.consumed_inputs.get(i).copied().unwrap_or(U256::ZERO);
                 let output = r.hop_outputs.get(i).copied().unwrap_or(U256::ZERO);
                 if consumed > INT128_MAX || output > INT128_MAX {
-                    return None;
+                    return (None, walk_stats);
                 }
             }
         }
     }
 
-    result.map(|mut r| {
+    let result = result.map(|mut r| {
         r.state_nonces.clone_from(&resolved.state_nonces);
         // Capture solver pool state for diagnostic cross-referencing.
         let pool_states: Vec<String> = resolved
@@ -373,7 +403,8 @@ pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
             .collect();
         r.solver_pool_states = pool_states;
         r
-    })
+    });
+    (result, walk_stats)
 }
 
 /// Solve a mixed V2 + CL (V3 or V4) path using integer-exact Möbius solver.
@@ -386,9 +417,11 @@ pub fn solve_path_inner(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
 /// the optimal input for each piece, validating with crossing-aware
 /// simulation. This eliminates false positives from single-range
 /// approximation when swaps exceed the current tick range capacity.
-fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+fn solve_mixed_path_int(
+    resolved: &ResolvedMixedPath,
+) -> (Option<SolvePathResult>, crate::mobius_v3_int::WalkStats) {
     if resolved.hops.len() < 2 {
-        return None;
+        return (None, crate::mobius_v3_int::WalkStats::default());
     }
 
     // Check that this is actually a mixed path (both V2 and CL hops)
@@ -398,7 +431,8 @@ fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
         .any(|h| matches!(h, ResolvedHop::V2 { .. }));
     let has_cl = resolved.hops.iter().any(|h| h.as_int_sequence().is_some());
     if !has_v2 || !has_cl {
-        return None; // not a mixed path — should be handled by other dispatches
+        // not a mixed path — should be handled by other dispatches
+        return (None, crate::mobius_v3_int::WalkStats::default());
     }
 
     // Build hop_order and adapter arrays from the enum
@@ -428,30 +462,33 @@ fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult>
         .map(|h| h.as_word_profiles().cloned())
         .collect();
 
-    crate::mobius_v3_int::exact_solve_mixed_path_n_cached(
+    let out = crate::mobius_v3_int::exact_solve_mixed_path_n_cached(
         &v2_hops,
         &int_v3_sequences,
         Some(&cl_crossings),
         Some(&cl_profiles),
         &hop_order,
+    );
+    (
+        out.result.map(|(optimal_input, profit, hop_outputs)| {
+            // consumed_inputs[0] = optimal_input (first hop consumes full input).
+            // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
+            // becomes this hop's input).
+            let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+            consumed_inputs.push(optimal_input);
+            for i in 1..hop_outputs.len() {
+                consumed_inputs.push(hop_outputs[i - 1]);
+            }
+            SolvePathResult {
+                optimal_input,
+                profit,
+                hop_outputs,
+                consumed_inputs,
+                ..Default::default()
+            }
+        }),
+        out.stats,
     )
-    .map(|(optimal_input, profit, hop_outputs)| {
-        // consumed_inputs[0] = optimal_input (first hop consumes full input).
-        // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
-        // becomes this hop's input).
-        let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-        consumed_inputs.push(optimal_input);
-        for i in 1..hop_outputs.len() {
-            consumed_inputs.push(hop_outputs[i - 1]);
-        }
-        SolvePathResult {
-            optimal_input,
-            profit,
-            hop_outputs,
-            consumed_inputs,
-            ..Default::default()
-        }
-    })
 }
 
 /// Solve an all-V2-or-Solidly (no CL hops, ≥1 Solidly) path using the
@@ -1424,8 +1461,8 @@ mod gate_tests {
     fn gate_disabled_matches_ungated_result() {
         let p = profitable_path();
         assert_eq!(
-            solve_path_with_min_profit(&p, U256::from(u64::MAX), &GateDeps::offline()),
-            solve_path_inner(&p),
+            solve_path_with_min_profit(&p, U256::from(u64::MAX), &GateDeps::offline()).result,
+            solve_path_inner(&p).0,
             "offline deps (no prefix cache) must be bit-for-bit identical"
         );
     }
@@ -1435,7 +1472,10 @@ mod gate_tests {
         let p = profitable_path();
         let _ = take_last_gate_stats(); // clear thread counters
         let r = solve_path_with_min_profit(&p, U256::MAX, &GateDeps::offline());
-        assert!(r.is_none(), "infinite floor skips every screened path");
+        assert!(
+            r.result.is_none(),
+            "infinite floor skips every screened path"
+        );
         let stats = take_last_gate_stats();
         assert_eq!(stats.skipped, 1, "skip must be counted");
         assert_eq!(stats.evaluated, 1);
@@ -1456,7 +1496,7 @@ mod gate_tests {
         let _ = take_last_gate_stats();
         let r = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
         assert!(
-            r.is_none(),
+            r.result.is_none(),
             "fee-dominated round trip must be skipped at floor 0"
         );
         let stats = take_last_gate_stats();

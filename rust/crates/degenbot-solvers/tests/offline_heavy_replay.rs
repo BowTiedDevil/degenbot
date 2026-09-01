@@ -14,9 +14,7 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{
-    int_solve_cl_path, reset_walk_stats, take_last_walk_stats_full,
-};
+use degenbot_solvers::mobius_v3_int::{int_solve_cl_path, WalkStats};
 use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 use std::time::Instant;
@@ -97,9 +95,9 @@ fn replay_captured_heavy_paths() {
         let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
         let (d_ns, c_ns, s_ns) = (gs.derive_ns, gs.compose_ns, gs.search_ns);
         let pairs = gs.pairs;
-        reset_walk_stats();
         let t0 = Instant::now();
-        let result = int_solve_cl_path(&seq_refs);
+        let outcome = int_solve_cl_path(&seq_refs);
+        let result = outcome.result;
         // Green net: profile-widened solve must reproduce the recorded golden
         // byte-for-byte (optimal_input + hop_outputs) for every captured path.
         if let Some(golden) = doc.get("golden").and_then(serde_json::Value::as_object) {
@@ -116,7 +114,7 @@ fn replay_captured_heavy_paths() {
             }
         }
         let us = t0.elapsed().as_micros();
-        let ws = take_last_walk_stats_full();
+        let ws: WalkStats = outcome.stats;
         if n < 2 {
             println!("raw-after[{n}] pid={pid} {ws:?}");
         }

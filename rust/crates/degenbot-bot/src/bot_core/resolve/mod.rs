@@ -686,6 +686,7 @@ mod tests {
             Some(&crossings),
             &profiles,
         )
+        .result
     }
 
     /// The mixed intake: resolve -> cached tables -> `exact_solve_mixed_path_n_cached`.
@@ -731,6 +732,7 @@ mod tests {
             Some(&profiles),
             &hop_order,
         )
+        .result
     }
 
     /// Memo ON vs OFF parity on an all-CL (V3 -> V4) two-hop path: solving
