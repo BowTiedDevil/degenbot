@@ -104,7 +104,15 @@ uniswap = ["dep:degenbot-uniswap"]
 decoders = ["dep:degenbot-decoders"]
 pathfinding = ["dep:degenbot-pathfinding"]
 async = []
-mimalloc = ["dep:mimalloc"]
+# mimalloc fixes OOM under bursty allocation vs. the default system allocator.
+# local_dynamic_tls is REQUIRED: its default initial-exec TLS model must fit in
+# glibc's ~1664-byte static TLS surplus at dlopen() time, which fails whenever
+# any other extension module (e.g. pytest) is imported first —
+# "ImportError: cannot allocate memory in static TLS block". The dynamic
+# TLS model routes the per-thread heaps through the DTV instead. Do not drop
+# this feature unless the initial-exec relocation count of _ffi.abi3.so
+# (readelf -rW .../abi3.so | grep -c TPOFF64) is verifiably still zero.
+mimalloc = ["dep:mimalloc", "mimalloc/local_dynamic_tls"]
 # OTel span export for the Python-driven path (K6PCKP): pulls degenbot-bot
 # with its `otel` feature (OTLP exporter + layer). NOT in `default` -
 # release/CI wheels must not ship the OTLP client footprint (same
