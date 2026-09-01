@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use alloy::primitives::{U256, U512};
 
+use crate::profit_envelope::gate_tls;
 use crate::profit_envelope::{path_profit_bound_with_crossings_and_prefixes, HopMath};
-use crate::profit_envelope::{GATE_EVALUATED, GATE_SKIPPED, GATE_UNSUPPORTED};
 use degenbot_pools::int_v3_hop::IntTickRangeCrossing;
 
 use crate::mixed::{
@@ -146,15 +146,15 @@ fn solve_path_gated(
         .collect();
     match path_profit_bound_with_crossings_and_prefixes(&views, &cl_crossings, true) {
         // Unsupported families are SOLVED unscreened, never skipped.
-        None => GATE_UNSUPPORTED.with(|c| c.set(c.get() + 1)),
+        None => gate_tls(|t| t.unsupported += 1),
         Some(bound) => {
-            GATE_EVALUATED.with(|c| c.set(c.get() + 1));
+            gate_tls(|t| t.evaluated += 1);
             // `<=`: a path whose rigorous max profit cannot STRICTLY exceed the
             // floor is unexecutable at that floor (dispatch discards zero-profit
             // results downstream), so skipping is outcome-identical and saves
             // the walk.
             if bound <= min_profit {
-                GATE_SKIPPED.with(|c| c.set(c.get() + 1));
+                gate_tls(|t| t.skipped += 1);
                 return None;
             }
         }

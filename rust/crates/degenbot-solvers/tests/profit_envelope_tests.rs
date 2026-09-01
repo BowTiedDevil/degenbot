@@ -450,13 +450,16 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
 }
 
 #[test]
-fn prefix_cache_must_not_reuse_across_domains() {
-    // Loop-16 T3 RED: two paths share the identical CL-prefix crossing
-    // tables but differ in the V2 tail's reserve (r_out = the hop cap,
-    // so the x-domain differs). A prefix entry composed under path A's
-    // SMALLER domain must not serve path B — its line set was pruned
-    // with B-irrelevant windows (lines needed only at x > domain_A were
-    // dropped, so B's envelope can under-estimate).
+fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
+    // Loop-16 T3: two paths share the identical CL-prefix crossing tables
+    // but differ in the V2 tail's reserve (r_out = the hop cap, so the
+    // x-domain differs). Cross-domain reuse is SOUND by construction
+    // (every stored line globally dominates the true output; see the
+    // cache-key doc in profit_envelope.rs) but may shift the bound's
+    // tightness. This sentinel pins that these two shapes reuse
+    // value-identically (the observed behavior for tangent-stack
+    // prefixes: line takeovers stay below the prefix capacity, so the
+    // domain never actually bites).
     degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
     let p_entry = p_at_tick(-10);
     let p_lo = p_at_tick(-40);

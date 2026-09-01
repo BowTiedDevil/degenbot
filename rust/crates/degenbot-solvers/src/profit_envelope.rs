@@ -954,8 +954,6 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     // Saturation modeling: `eval` saturates the b·x multiply and the a +
     // bx add to I512::MAX on overflow; the keys model BOTH channels with
     // the same min-clipping in f64 (max_f stands in for I512::MAX).
-    let s1_evals_t0 = std::time::Instant::now();
-    let mut sat_upper: u64 = 0;
     let upper_f = i512_to_f64(I512::try_from(U512::from(upper)).unwrap_or(I512::MAX));
     let max_f = i512_to_f64(I512::MAX);
     struct S1Key {
@@ -971,9 +969,6 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
             let b_f = i512_to_f64(l.b);
             let c_f = i512_to_f64(l.c);
             let prod_f = (b_f * upper_f).min(max_f);
-            if prod_f >= max_f {
-                sat_upper += 1;
-            }
             let n_f = (a_f + prod_f).min(max_f);
             S1Key {
                 f0: a_f / c_f,
@@ -982,8 +977,6 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
             }
         })
         .collect();
-    GATE_S1_EVALS_NS.with(|c| c.set(c.get() + s1_evals_t0.elapsed().as_nanos()));
-    let s1_sort_t0 = std::time::Instant::now();
     let exact_at_zero = |i: usize| lines[i].eval(&U256::ZERO);
     let exact_at_upper = |i: usize| lines[i].eval(&upper);
     indexed.sort_by(|x, y| {
@@ -993,8 +986,6 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
             .then_with(|| exact_at_upper(x.idx).cmp(&exact_at_upper(y.idx)))
             .then(x.idx.cmp(&y.idx))
     });
-    GATE_S1_SORT_NS.with(|c| c.set(c.get() + s1_sort_t0.elapsed().as_nanos()));
-    let s1_sweep_t0 = std::time::Instant::now();
     let mut min_f = f64::INFINITY;
     let mut min_idx = usize::MAX;
     let mut min_exact: Option<I512> = None;
@@ -1028,21 +1019,16 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     if surv.is_empty() {
         surv.push(lines[indexed[0].idx]);
     }
-    GATE_S1_SWEEP_NS.with(|c| c.set(c.get() + s1_sweep_t0.elapsed().as_nanos()));
-    GATE_PRUNE_STAGE1_NS.with(|c| c.set(c.get() + stage1_t0.elapsed().as_nanos()));
-    gate_census_record_prune(lines.len(), surv.len(), sat_upper);
+    gate_tls(|t| t.prune_stage1_ns += stage1_t0.elapsed().as_nanos());
     if surv.len() < 2 {
         *lines = surv;
         return;
     }
     let hull_t0 = std::time::Instant::now();
     let parsed = &mut surv;
-    let h_reduce_t0 = std::time::Instant::now();
     for l in parsed.iter_mut() {
         l.reduce(COMPOSE_TARGET_BITS);
     }
-    GATE_H_REDUCE_NS.with(|c| c.set(c.get() + h_reduce_t0.elapsed().as_nanos()));
-    let h_sort_t0 = std::time::Instant::now();
     let mut idx: Vec<usize> = (0..parsed.len()).collect();
     // Approx slope keys (descending) with exact cross-mult fallback — same
     // approx_cmp band discipline as stage 1, byte-identical ordering.
@@ -1058,8 +1044,6 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
             rhs.cmp(&lhs)
         })
     });
-    GATE_H_SORT_NS.with(|c| c.set(c.get() + h_sort_t0.elapsed().as_nanos()));
-    let h_stack_t0 = std::time::Instant::now();
     let mut hull: Vec<(U256, usize)> = Vec::with_capacity(idx.len());
     for &li in &idx {
         let l = &parsed[li];
@@ -1131,15 +1115,13 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
         };
         hull.push((bx, li));
     }
-    GATE_H_STACK_NS.with(|c| c.set(c.get() + h_stack_t0.elapsed().as_nanos()));
     // Keep only lines whose takeover happens inside [0, domain].
     let keep: Vec<Line> = hull
         .iter()
         .filter(|&&(bx, _)| bx <= upper)
         .map(|&(_, i)| parsed[i])
         .collect();
-    GATE_PRUNE_HULL_NS.with(|c| c.set(c.get() + hull_t0.elapsed().as_nanos()));
-    gate_census_record_hull(keep.len());
+    gate_tls(|t| t.prune_hull_ns += hull_t0.elapsed().as_nanos());
     *lines = keep;
 }
 
@@ -1178,195 +1160,61 @@ pub struct GateStats {
     pub sample_ns: u128,
 }
 
-thread_local! {
-    // Phase split of path_profit_bound wall time (also folded into
-    // GATE_DURATION_NS): derive = per-hop line/crossing derivation,
-    // compose = prune + composition products, search = final ternary.
-    pub(crate) static GATE_DERIVE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    // Prefix-composition cache telemetry (loop-8): composed-boundary hits
-    // vs total boundaries composed this path.
-    pub(crate) static GATE_PREFIX_HITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_BOUNDARIES_COMPOSED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    // Loop-9 sub-stage split of the compose phase: product matrix time vs
-    // prune stage-1 (endpoint sweep) vs prune stage-2 (hull) time.
-    pub(crate) static GATE_PRODUCT_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_PRUNE_STAGE1_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_PRUNE_HULL_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_COMPOSE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_SEARCH_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    // Loop-12 PVOPYP: the post-prune survivor reduce pass and the sampled
-    // cap, split out — on fat crossing tables the unaccounted compose time
-    // lives here.
-    pub(crate) static GATE_POSTPRUNE_REDUCE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_SAMPLE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    // Loop-16 stage-1 interior split: endpoint evals vs sort vs sweep.
-    pub(crate) static GATE_S1_EVALS_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_S1_SORT_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_S1_SWEEP_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    // Loop-16 hull interior split (prune stage 2).
-    pub(crate) static GATE_H_REDUCE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_H_SORT_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_H_STACK_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    // Composition pair volume per path (hop_pruned_lines x running_lines).
-    pub(crate) static GATE_PAIRS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_EVALUATED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_SKIPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_UNSUPPORTED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    // M6776W per-cause None breakdown (advance on the early-return path).
-    pub(crate) static GATE_NONE_HOP_UNMAPPED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_NONE_DEGENERATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_NONE_OVERFLOW: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    pub(crate) static GATE_DURATION_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-}
-
-/// Gate census (loop-16 T1): one session's distribution of line-set sizes,
-/// survivor counts and eval saturation inside `prune()`, plus hop-boundary
-/// composition sizes. Env-gated by `DEGENBOT_GATE_CENSUS=1` (read once);
-/// purely observational, zero effect on results.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GateCensus {
-    /// `prune()` invocations observed.
-    pub prune_calls: u64,
-    /// Sum of input line-set sizes across prune calls.
-    pub in_lines: u64,
-    /// Input sizes bucketed: <=8, <=64, <=256, <=1024, <=4096, >4096.
-    pub in_buckets: [u64; 6],
-    /// Sum of stage-1 (endpoint sweep) survivors.
-    pub s1_survivors: u64,
-    /// Sum of stage-2 (hull) survivors.
-    pub hull_survivors: u64,
-    /// Stage-1 endpoint evals at x=upper.
-    pub evals_upper: u64,
-    /// Of those, results saturating I512::MAX (the wide-div saturation
-    /// path hypothesis for the stage-1 cost).
-    pub evals_saturated: u64,
-    /// Hop-boundary compositions observed (product matrix boundaries).
-    pub boundaries: u64,
-    /// Derived hop line-set sizes bucketed: <=8, <=64, <=256, <=1024, >1024.
-    pub hop_lines_buckets: [u64; 5],
-    /// Lines2 sizes facing the product bucketed the same way.
-    pub lines2_buckets: [u64; 5],
-    /// Product pair volume observed.
-    pub pairs: u64,
+pub(crate) struct GateTls {
+    pub(crate) derive_ns: u128,
+    pub(crate) prefix_hits: u64,
+    pub(crate) boundaries_composed: u64,
+    pub(crate) product_ns: u128,
+    pub(crate) prune_stage1_ns: u128,
+    pub(crate) prune_hull_ns: u128,
+    pub(crate) compose_ns: u128,
+    pub(crate) search_ns: u128,
+    pub(crate) postprune_reduce_ns: u128,
+    pub(crate) sample_ns: u128,
+    pub(crate) pairs: u64,
+    pub(crate) evaluated: u64,
+    pub(crate) skipped: u64,
+    pub(crate) unsupported: u64,
+    pub(crate) none_hop_unmapped: u64,
+    pub(crate) none_degenerate: u64,
+    pub(crate) none_overflow: u64,
+    pub(crate) duration_ns: u128,
 }
 
 thread_local! {
-    static GATE_CENSUS: std::cell::Cell<GateCensus> =
-        const { std::cell::Cell::new(GateCensus::EMPTY) };
+    // ONE TLS block entry (loop-16 T4): the per-timer statics exhausted
+    // the dlopen static-TLS surplus on the Python import path
+    // ("cannot allocate memory in static TLS block").
+    static GATE_TLS: std::cell::RefCell<GateTls> =
+        const { std::cell::RefCell::new(GateTls::EMPTY) };
 }
 
-impl GateCensus {
+impl GateTls {
     const EMPTY: Self = Self {
-        prune_calls: 0,
-        in_lines: 0,
-        in_buckets: [0; 6],
-        s1_survivors: 0,
-        hull_survivors: 0,
-        evals_upper: 0,
-        evals_saturated: 0,
-        boundaries: 0,
-        hop_lines_buckets: [0; 5],
-        lines2_buckets: [0; 5],
+        derive_ns: 0,
+        prefix_hits: 0,
+        boundaries_composed: 0,
+        product_ns: 0,
+        prune_stage1_ns: 0,
+        prune_hull_ns: 0,
+        compose_ns: 0,
+        search_ns: 0,
+        postprune_reduce_ns: 0,
+        sample_ns: 0,
         pairs: 0,
+        evaluated: 0,
+        skipped: 0,
+        unsupported: 0,
+        none_hop_unmapped: 0,
+        none_degenerate: 0,
+        none_overflow: 0,
+        duration_ns: 0,
     };
 }
 
-/// Runtime gate `DEGENBOT_GATE_CENSUS=1` (read once per process).
-fn gate_census_on() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("DEGENBOT_GATE_CENSUS").as_deref() == Ok("1"))
-}
-
-fn gate_census_size_bucket(n: usize) -> usize {
-    match n {
-        0..=8 => 0,
-        9..=64 => 1,
-        65..=256 => 2,
-        257..=1024 => 3,
-        1025..=4096 => 4,
-        _ => 5,
-    }
-}
-
-fn gate_census_boundary_bid(n: usize) -> usize {
-    match n {
-        0..=8 => 0,
-        9..=64 => 1,
-        65..=256 => 2,
-        257..=1024 => 3,
-        _ => 4,
-    }
-}
-
-fn gate_census_mut<R>(f: impl FnOnce(&mut GateCensus) -> R) -> Option<R> {
-    if !gate_census_on() {
-        return None;
-    }
-    GATE_CENSUS.with(|c| {
-        let mut v = c.take();
-        let r = f(&mut v);
-        c.set(v);
-        Some(r)
-    })
-}
-
-/// Record one `prune()` call: input size, stage-1 survivors, saturated
-/// upper-endpoint evals.
-fn gate_census_record_prune(n_in: usize, s1: usize, sat_upper: u64) {
-    gate_census_mut(|g| {
-        g.prune_calls += 1;
-        g.in_lines += n_in as u64;
-        g.in_buckets[gate_census_size_bucket(n_in)] += 1;
-        g.s1_survivors += s1 as u64;
-        g.evals_upper += n_in as u64;
-        g.evals_saturated += sat_upper;
-    });
-}
-
-/// Record the stage-2 hull survivor count for a prune already counted by
-/// `gate_census_record_prune` (called once per prune; prunes that early-
-/// return before stage 2 record `hull_survivors` as the stage-1 count).
-fn gate_census_record_hull(hull: usize) {
-    gate_census_mut(|g| {
-        g.hull_survivors += hull as u64;
-    });
-}
-
-/// Record one hop-boundary composition: derived hop lines and the running
-/// lines2 facing them.
-fn gate_census_record_boundary(hop_lines: usize, lines2: usize) {
-    gate_census_mut(|g| {
-        g.boundaries += 1;
-        g.hop_lines_buckets[gate_census_boundary_bid(hop_lines)] += 1;
-        g.lines2_buckets[gate_census_boundary_bid(lines2)] += 1;
-        g.pairs += (hop_lines * lines2) as u64;
-    });
-}
-
-/// Drain the loop-16 hull interior split (reduce / sort / stack, ns).
-#[must_use]
-pub fn take_gate_hull_split() -> (u128, u128, u128) {
-    (
-        GATE_H_REDUCE_NS.with(std::cell::Cell::take),
-        GATE_H_SORT_NS.with(std::cell::Cell::take),
-        GATE_H_STACK_NS.with(std::cell::Cell::take),
-    )
-}
-
-/// Drain the loop-16 stage-1 interior split (evals / sort / sweep, ns).
-#[must_use]
-pub fn take_gate_s1_split() -> (u128, u128, u128) {
-    (
-        GATE_S1_EVALS_NS.with(std::cell::Cell::take),
-        GATE_S1_SORT_NS.with(std::cell::Cell::take),
-        GATE_S1_SWEEP_NS.with(std::cell::Cell::take),
-    )
-}
-
-/// Drain this thread's census tally (loop-15 walk-census pattern).
-#[must_use]
-pub fn take_gate_census() -> GateCensus {
-    GATE_CENSUS.with(std::cell::Cell::take)
+pub(crate) fn gate_tls<R>(f: impl FnOnce(&mut GateTls) -> R) -> R {
+    GATE_TLS.with(|t| f(&mut t.borrow_mut()))
 }
 
 /// Prefix-composition cache (loop-8): composed lower-envelope line sets
@@ -1445,7 +1293,7 @@ struct PrefixCacheEntry {
 }
 
 static PREFIX_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<(Vec<HopCacheKey>, U256), PrefixCacheEntry>>,
+    std::sync::Mutex<std::collections::HashMap<Vec<HopCacheKey>, PrefixCacheEntry>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// Clear the prefix-composition cache. The bot's solve cycle calls this once
@@ -1461,99 +1309,99 @@ pub fn reset_envelope_prefix_cache() {
 /// Reset all gate counters on the calling thread (call at solve-cycle start,
 /// mirroring [`crate::mobius_v3_int::reset_walk_stats`]).
 pub fn reset_gate_stats() {
-    GATE_PAIRS.with(|c| c.set(0));
-    GATE_PREFIX_HITS.with(|c| c.set(0));
-    GATE_BOUNDARIES_COMPOSED.with(|c| c.set(0));
-    GATE_PRODUCT_NS.with(|c| c.set(0));
-    GATE_PRUNE_STAGE1_NS.with(|c| c.set(0));
-    GATE_PRUNE_HULL_NS.with(|c| c.set(0));
-    GATE_DERIVE_NS.with(|c| c.set(0));
-    GATE_COMPOSE_NS.with(|c| c.set(0));
-    GATE_SEARCH_NS.with(|c| c.set(0));
-    GATE_POSTPRUNE_REDUCE_NS.with(|c| c.set(0));
-    GATE_SAMPLE_NS.with(|c| c.set(0));
-    GATE_EVALUATED.with(|c| c.set(0));
-    GATE_SKIPPED.with(|c| c.set(0));
-    GATE_UNSUPPORTED.with(|c| c.set(0));
-    GATE_NONE_HOP_UNMAPPED.with(|c| c.set(0));
-    GATE_NONE_DEGENERATE.with(|c| c.set(0));
-    GATE_NONE_OVERFLOW.with(|c| c.set(0));
-    GATE_DURATION_NS.with(|c| c.set(0));
-    GATE_PREFIX_HITS.with(|c| c.set(0));
-    GATE_BOUNDARIES_COMPOSED.with(|c| c.set(0));
+    gate_tls(|t| t.pairs = 0);
+    gate_tls(|t| t.prefix_hits = 0);
+    gate_tls(|t| t.boundaries_composed = 0);
+    gate_tls(|t| t.product_ns = 0);
+    gate_tls(|t| t.prune_stage1_ns = 0);
+    gate_tls(|t| t.prune_hull_ns = 0);
+    gate_tls(|t| t.derive_ns = 0);
+    gate_tls(|t| t.compose_ns = 0);
+    gate_tls(|t| t.search_ns = 0);
+    gate_tls(|t| t.postprune_reduce_ns = 0);
+    gate_tls(|t| t.sample_ns = 0);
+    gate_tls(|t| t.evaluated = 0);
+    gate_tls(|t| t.skipped = 0);
+    gate_tls(|t| t.unsupported = 0);
+    gate_tls(|t| t.none_hop_unmapped = 0);
+    gate_tls(|t| t.none_degenerate = 0);
+    gate_tls(|t| t.none_overflow = 0);
+    gate_tls(|t| t.duration_ns = 0);
+    gate_tls(|t| t.prefix_hits = 0);
+    gate_tls(|t| t.boundaries_composed = 0);
 }
 
 /// Read-and-clear the calling thread's gate counters.
 #[must_use]
 pub fn take_last_gate_stats() -> GateStats {
-    let evaluated = GATE_EVALUATED.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let evaluated = gate_tls(|t| {
+        let v = t.evaluated;
+        t.evaluated = 0;
         v
     });
-    let skipped = GATE_SKIPPED.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let skipped = gate_tls(|t| {
+        let v = t.skipped;
+        t.skipped = 0;
         v
     });
-    let unsupported = GATE_UNSUPPORTED.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let unsupported = gate_tls(|t| {
+        let v = t.unsupported;
+        t.unsupported = 0;
         v
     });
-    let none_hop_unmapped = GATE_NONE_HOP_UNMAPPED.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let none_hop_unmapped = gate_tls(|t| {
+        let v = t.none_hop_unmapped;
+        t.none_hop_unmapped = 0;
         v
     });
-    let none_degenerate = GATE_NONE_DEGENERATE.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let none_degenerate = gate_tls(|t| {
+        let v = t.none_degenerate;
+        t.none_degenerate = 0;
         v
     });
-    let none_overflow = GATE_NONE_OVERFLOW.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let none_overflow = gate_tls(|t| {
+        let v = t.none_overflow;
+        t.none_overflow = 0;
         v
     });
-    let duration_ns = GATE_DURATION_NS.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let duration_ns = gate_tls(|t| {
+        let v = t.duration_ns;
+        t.duration_ns = 0;
         v
     });
-    let prefix_hits = GATE_PREFIX_HITS.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let prefix_hits = gate_tls(|t| {
+        let v = t.prefix_hits;
+        t.prefix_hits = 0;
         v
     });
-    let boundaries_composed = GATE_BOUNDARIES_COMPOSED.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let boundaries_composed = gate_tls(|t| {
+        let v = t.boundaries_composed;
+        t.boundaries_composed = 0;
         v
     });
-    let product_ns = GATE_PRODUCT_NS.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let product_ns = gate_tls(|t| {
+        let v = t.product_ns;
+        t.product_ns = 0;
         v
     });
-    let prune_stage1_ns = GATE_PRUNE_STAGE1_NS.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let prune_stage1_ns = gate_tls(|t| {
+        let v = t.prune_stage1_ns;
+        t.prune_stage1_ns = 0;
         v
     });
-    let prune_hull_ns = GATE_PRUNE_HULL_NS.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let prune_hull_ns = gate_tls(|t| {
+        let v = t.prune_hull_ns;
+        t.prune_hull_ns = 0;
         v
     });
-    let postprune_reduce_ns = GATE_POSTPRUNE_REDUCE_NS.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let postprune_reduce_ns = gate_tls(|t| {
+        let v = t.postprune_reduce_ns;
+        t.postprune_reduce_ns = 0;
         v
     });
-    let sample_ns = GATE_SAMPLE_NS.with(|c| {
-        let v = c.get();
-        c.set(0);
+    let sample_ns = gate_tls(|t| {
+        let v = t.sample_ns;
+        t.sample_ns = 0;
         v
     });
     GateStats {
@@ -1578,31 +1426,29 @@ pub fn take_last_gate_stats() -> GateStats {
 /// `crate::mobius_v3_int::peek_walk_stats`).
 #[must_use]
 pub fn peek_gate_phases() -> (u128, u128, u128) {
-    (
-        GATE_DERIVE_NS.with(std::cell::Cell::get),
-        GATE_COMPOSE_NS.with(std::cell::Cell::get),
-        GATE_SEARCH_NS.with(std::cell::Cell::get),
-    )
+    gate_tls(|t| (t.derive_ns, t.compose_ns, t.search_ns))
 }
 
 /// Read-and-clear the gate phase counters (per-path isolation for benches).
 #[must_use]
 pub fn take_gate_phases() -> (u128, u128, u128) {
-    let d = GATE_DERIVE_NS.with(std::cell::Cell::get);
-    let c = GATE_COMPOSE_NS.with(std::cell::Cell::get);
-    let s = GATE_SEARCH_NS.with(std::cell::Cell::get);
-    GATE_DERIVE_NS.with(|x| x.set(0));
-    GATE_COMPOSE_NS.with(|x| x.set(0));
-    GATE_SEARCH_NS.with(|x| x.set(0));
-    (d, c, s)
+    gate_tls(|t| {
+        let v = (t.derive_ns, t.compose_ns, t.search_ns);
+        t.derive_ns = 0;
+        t.compose_ns = 0;
+        t.search_ns = 0;
+        v
+    })
 }
 
 /// Composition pair volume since last reset (diagnostic only).
 #[must_use]
 pub fn take_gate_pairs() -> u64 {
-    let v = GATE_PAIRS.with(std::cell::Cell::get);
-    GATE_PAIRS.with(|x| x.set(0));
-    v
+    gate_tls(|t| {
+        let v = t.pairs;
+        t.pairs = 0;
+        v
+    })
 }
 
 /// Rigorous upper bound on `max_x [path_output(x) − x]`, or `None` when any
@@ -1645,7 +1491,7 @@ pub fn path_profit_bound_with_crossings_and_prefixes(
 ) -> Option<U256> {
     let gate_t0 = std::time::Instant::now();
     let result = path_profit_bound_inner(hops, cl_crossings, prefix_cache_on);
-    GATE_DURATION_NS.with(|c| c.set(gate_t0.elapsed().as_nanos()));
+    gate_tls(|t| t.duration_ns = gate_t0.elapsed().as_nanos());
     result
 }
 
@@ -1660,12 +1506,12 @@ fn path_profit_bound_inner(
     let phase_derive = std::time::Instant::now();
     for (hop_idx, slot) in hops.iter().enumerate() {
         let Some(hop) = slot.as_ref() else {
-            GATE_NONE_HOP_UNMAPPED.with(|c| c.set(c.get() + 1));
+            gate_tls(|t| t.none_hop_unmapped += 1);
             return None;
         };
         let cl_crossings_i = cl_crossings.get(hop_idx).copied().flatten();
         let Some((hop_ls, cap)) = hop_lines_and_cap(*hop, cl_crossings_i) else {
-            GATE_NONE_DEGENERATE.with(|c| c.set(c.get() + 1));
+            gate_tls(|t| t.none_degenerate += 1);
             // M6776W degenerate diagnostic: log the hop family + the reject
             // reason so the steady-state degenerate rate can be classified as
             // the expected shape (sparse CL with empty active range / zero
@@ -1728,12 +1574,12 @@ fn path_profit_bound_inner(
         if let Some(v) = xmax.checked_add(cap) {
             xmax = v;
         } else {
-            GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+            gate_tls(|t| t.none_overflow += 1);
             return None;
         }
         all_hops.push((hop_ls, cap));
     }
-    GATE_DERIVE_NS.with(|c| c.set(c.get() + phase_derive.elapsed().as_nanos()));
+    gate_tls(|t| t.derive_ns += phase_derive.elapsed().as_nanos());
     let phase_compose = std::time::Instant::now();
     // Second pass against the FULL known input domain. Every line that
     // cannot be beaten below within [0,domain] can never best at any path
@@ -1752,10 +1598,17 @@ fn path_profit_bound_inner(
         })
         .collect();
     // Loop-16 T3: the chain grows through Möbius-family hops too (content
-    // hash keys — allocation-independent), and the domain joins the cache
-    // key (entries were pruned under a specific x-domain; sharing across
-    // different tails could serve line sets pruned with windows irrelevant
-    // to the reader). Keyed exact-domain reuse only.
+    // hash keys — allocation-independent).
+    //
+    // Cross-DOMAIN reuse is sound WITHOUT keying on the domain: every
+    // stored line globally dominates the true prefix output (tangent
+    // property), so serving a set pruned under a different domain can
+    // only shift the bound's TIGHTNESS (a smaller domain's entry is a
+    // subset of the reader's fresh set → looser bound → skips less; a
+    // larger domain's entry is a superset → tighter bound → more skips,
+    // each still justified: the bound remains an upper bound of the true
+    // curve). Skip validity is the only contract, so reuse stays keyed
+    // on the chain alone.
     let mobius_key =
         |reserve_in: &U256, reserve_out: &U256, gamma_numer: &U256, fee_denom: &U256| {
             let mut h = content_mix_u256(0xcbf2_9ce4_8422_2325_u128, reserve_in);
@@ -1805,7 +1658,7 @@ fn path_profit_bound_inner(
             // updates that reused a table allocation since insertion, and
             // Möbius hash collisions — checked exactly).
             let hit = match PREFIX_CACHE.lock() {
-                Ok(cache) => cache.get(&(chain.clone(), domain)).and_then(|entry| {
+                Ok(cache) => cache.get(&chain).and_then(|entry| {
                     if entry.fingerprints.len() != chain.len() {
                         return None;
                     }
@@ -1880,11 +1733,11 @@ fn path_profit_bound_inner(
             };
             if let Some(hit_lines) = hit {
                 lines2 = hit_lines;
-                GATE_PREFIX_HITS.with(|c| c.set(c.get() + 1));
+                gate_tls(|t| t.prefix_hits += 1);
                 continue;
             }
         }
-        GATE_BOUNDARIES_COMPOSED.with(|c| c.set(c.get() + 1));
+        gate_tls(|t| t.boundaries_composed += 1);
         // Prune each hop's tangent lines BEFORE composition.
         //
         // Soundness: CL swap output is monotonically increasing (more input
@@ -1897,22 +1750,21 @@ fn path_profit_bound_inner(
         // Effect: collapses a 3000-line CL hop to ~50 Pareto-front survivors
         // BEFORE the product loop, turning a 3000×3000 = 9M composition into
         // 50×50 = 2500. The intermediate `next` never explodes.
-        gate_census_record_boundary(hop_ls.len(), lines2.len());
         prune(hop_ls, domain);
         let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
-        GATE_PAIRS.with(|c| c.set(c.get() + (hop_ls.len() * lines2.len()) as u64));
+        gate_tls(|t| t.pairs += (hop_ls.len() as u64) * (lines2.len() as u64));
         {
             let product_t0 = std::time::Instant::now();
             for outer in hop_ls {
                 for inner in &lines2 {
                     let Some(composed) = outer.compose(inner) else {
-                        GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+                        gate_tls(|t| t.none_overflow += 1);
                         return None;
                     };
                     next.push(composed);
                 }
             }
-            GATE_PRODUCT_NS.with(|c| c.set(c.get() + product_t0.elapsed().as_nanos()));
+            gate_tls(|t| t.product_ns += product_t0.elapsed().as_nanos());
         }
         prune(&mut next, domain);
         // One reduction pass per hop boundary (O(survivors)) — replaces the
@@ -1923,7 +1775,7 @@ fn path_profit_bound_inner(
             for l in &mut next {
                 l.reduce(COMPOSE_TARGET_BITS);
             }
-            GATE_POSTPRUNE_REDUCE_NS.with(|c| c.set(c.get() + t0.elapsed().as_nanos()));
+            gate_tls(|t| t.postprune_reduce_ns += t0.elapsed().as_nanos());
         }
         // SAMPLED_COMPOSE_LINES cap: the composing side is dropped to a
         // uniform Pareto-order sample across the lower envelope, bounding
@@ -1950,7 +1802,7 @@ fn path_profit_bound_inner(
             next = sampled;
         }
         if let Some(t0) = samp_t0 {
-            GATE_SAMPLE_NS.with(|c| c.set(c.get() + t0.elapsed().as_nanos()));
+            gate_tls(|t| t.sample_ns += t0.elapsed().as_nanos());
         }
         // Cache the composed prefix set under this pure-CL prefix key with
         // the current crossing fingerprints (loop-8). Only miss paths reach
@@ -1987,13 +1839,13 @@ fn path_profit_bound_inner(
                     fingerprints: fps,
                 };
                 if let Ok(mut cache) = PREFIX_CACHE.lock() {
-                    cache.insert((chain.clone(), domain), entry);
+                    cache.insert(chain.clone(), entry);
                 }
             }
         }
         lines2 = next;
     }
-    GATE_COMPOSE_NS.with(|c| c.set(c.get() + phase_compose.elapsed().as_nanos()));
+    gate_tls(|t| t.compose_ns += phase_compose.elapsed().as_nanos());
     let phase_search = std::time::Instant::now();
     let lines = lines2;
     // Diagnostic: line explosion is the gate bottleneck on dense-CL paths.
@@ -2124,7 +1976,7 @@ fn path_profit_bound_inner(
         }
     }
     let best = f(&lo);
-    GATE_SEARCH_NS.with(|c| c.set(c.get() + phase_search.elapsed().as_nanos()));
+    gate_tls(|t| t.search_ns += phase_search.elapsed().as_nanos());
     // Rounding slack: composed reductions and I512 ceiling evaluation can
     // leave the derived lower envelope a hair BELOW the true curve. The
     // deficit is ~2^-11 of the bound per reduction for very deep chains
@@ -2165,7 +2017,7 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
     let mut lines = vec![Line::IDENTITY];
     for slot in hops {
         let Some(hop) = slot.as_ref() else {
-            GATE_NONE_HOP_UNMAPPED.with(|c| c.set(c.get() + 1));
+            gate_tls(|t| t.none_hop_unmapped += 1);
             return None;
         };
         let (hop_ls, _cap) = hop_lines_and_cap(*hop, None)?;
@@ -2173,7 +2025,7 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
         for outer in &hop_ls {
             for inner in &lines {
                 let Some(composed) = outer.compose(inner) else {
-                    GATE_NONE_OVERFLOW.with(|c| c.set(c.get() + 1));
+                    gate_tls(|t| t.none_overflow += 1);
                     return None;
                 };
                 next.push(composed);
@@ -2232,23 +2084,6 @@ mod tests {
     /// stage-1 sweep used to drop every line and the hull search panicked on
     /// the empty set. prune must never return empty (soundness: the kept line
     /// is still a global upper bound).
-    #[test]
-    fn gate_census_buckets_record_prune_shapes() {
-        assert_eq!(gate_census_size_bucket(0), 0);
-        assert_eq!(gate_census_size_bucket(8), 0);
-        assert_eq!(gate_census_size_bucket(9), 1);
-        assert_eq!(gate_census_size_bucket(64), 1);
-        assert_eq!(gate_census_size_bucket(1024), 3);
-        assert_eq!(gate_census_size_bucket(1025), 4);
-        assert_eq!(gate_census_size_bucket(4096), 4);
-        assert_eq!(gate_census_size_bucket(4097), 5);
-        assert_eq!(gate_census_boundary_bid(9), 1);
-        assert_eq!(gate_census_boundary_bid(1025), 4);
-        // Draining the tally is side-effect free when off.
-        let before = take_gate_census();
-        assert_eq!(before, before);
-    }
-
     /// Loop-16 T2 differential sentinel: the optimized prune must remain
     /// byte-identical to this FROZEN REFERENCE COPY of the pre-optimization
     /// implementation on randomized line sets (seeded LCG; no external
