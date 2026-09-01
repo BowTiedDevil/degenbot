@@ -520,6 +520,176 @@ pub fn compute_shifted_piece_mobius_coefficients(
     ShiftedMobiusPieceCoefficients::Big(compute_big(hops))
 }
 
+// ---------------------------------------------------------------------------
+// Incremental prefix-fold composer (loop-17 anchor memoization)
+// ---------------------------------------------------------------------------
+
+/// Byte-exact incremental composer for the walk's successive piece anchors.
+///
+/// [`compute_shifted_piece_mobius_coefficients`] folds the hop-local matrices
+/// left-to-right, so the prefix partial `P_i = L_i ∘ … ∘ L_0` depends only on
+/// tuple components `ks[0..=i]`. Consecutive pieces of the same walk share a
+/// prefix of their tuples (componentwise advancement), so the stored partials
+/// for the shared prefix are reused verbatim and only the changed suffix is
+/// recomposed.
+///
+/// Exactness: the I1024 fast path uses checked arithmetic (no rounding), and
+/// the BigInt path is arbitrary-precision — a stored partial therefore equals
+/// the value a fresh fold would produce for the same prefix, in either
+/// representation. The memo never mixes representations: a piece whose
+/// fast-path extension overflows recomputes the whole piece in BigInt, and
+/// pieces following an overflowing piece compose in BigInt (identical
+/// results, as both representations are exact).
+///
+/// The composer is scoped to ONE solve of ONE hop sequence: `hops` tables are
+/// immutable during a solve, so no fingerprinting is needed.
+#[derive(Default)]
+pub struct ShiftedPieceComposer {
+    last_ks: Vec<usize>,
+    /// Prefix partials of the last piece, one per hop. All entries share one
+    /// representation (`Fast` or `Big`), enforced by the commit paths.
+    stages: Vec<StageCoeffs>,
+}
+
+#[derive(Clone)]
+enum StageCoeffs {
+    Fast(FastShiftedCoeffs),
+    Big(BigShiftedCoeffs),
+}
+
+impl ShiftedPieceComposer {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            last_ks: Vec::new(),
+            stages: Vec::new(),
+        }
+    }
+
+    /// Byte-exact memoizing replacement for
+    /// [`compute_shifted_piece_mobius_coefficients`] when called on
+    /// successive pieces of the same hop sequence.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an empty `hops` slice (same contract as the fresh compute).
+    #[must_use]
+    pub fn piece_coefficients(
+        &mut self,
+        hops: &[ShiftedPieceHop],
+        ks: &[usize],
+    ) -> ShiftedMobiusPieceCoefficients {
+        assert!(!hops.is_empty(), "shifted piece needs at least one hop");
+        let n = hops.len();
+
+        // Longest common prefix with the previous piece's tuple.
+        let shared = if self.last_ks.len() == n && self.stages.len() == n {
+            self.last_ks
+                .iter()
+                .zip(ks.iter())
+                .take_while(|(a, b)| a == b)
+                .count()
+        } else {
+            0
+        };
+
+        // Fast extension only when the reusable prefix is fast-typed.
+        let fast_extensible = shared > 0
+            && self
+                .stages
+                .iter()
+                .take(shared)
+                .all(|s| matches!(s, StageCoeffs::Fast(_)));
+        if shared == 0 || fast_extensible {
+            if let Some(stages) = self.extend_fast(hops, shared) {
+                let final_coeffs = match stages.last() {
+                    Some(StageCoeffs::Fast(c)) => c.clone(),
+                    _ => unreachable!("fast extension produces only fast stages"),
+                };
+                self.commit(stages, ks);
+                return ShiftedMobiusPieceCoefficients::Fast(final_coeffs);
+            }
+            // Fast failed at or after the shared prefix: the memo stages are
+            // fast-typed and cannot serve the exact BigInt recomposition, so
+            // start BigInt from scratch.
+            let stages = self.extend_big(hops, 0);
+            let final_coeffs = match stages.last() {
+                Some(StageCoeffs::Big(c)) => c.clone(),
+                _ => unreachable!("big extension produces only big stages"),
+            };
+            self.commit(stages, ks);
+            return ShiftedMobiusPieceCoefficients::Big(final_coeffs);
+        }
+
+        // Memo holds BigInt stages: extend them exactly.
+        let stages = self.extend_big(hops, shared);
+        let final_coeffs = match stages.last() {
+            Some(StageCoeffs::Big(c)) => c.clone(),
+            _ => unreachable!("big extension produces only big stages"),
+        };
+        self.commit(stages, ks);
+        ShiftedMobiusPieceCoefficients::Big(final_coeffs)
+    }
+
+    /// Build `ks[shared..n]` partials in I1024 on top of the memo's fast
+    /// prefix. Returns `None` when the memo prefix is not fast-typed or any
+    /// step overflows; `self` is left untouched either way.
+    fn extend_fast(&self, hops: &[ShiftedPieceHop], shared: usize) -> Option<Vec<StageCoeffs>> {
+        if shared > self.stages.len()
+            || self.stages[..shared]
+                .iter()
+                .any(|s| matches!(s, StageCoeffs::Big(_)))
+        {
+            return None;
+        }
+        let mut stages: Vec<StageCoeffs> = self.stages[..shared].to_vec();
+        let mut acc: Option<FastShiftedCoeffs> = match stages.last() {
+            Some(StageCoeffs::Fast(c)) => Some(c.clone()),
+            _ => None,
+        };
+        for hop in &hops[shared..] {
+            let local = build_local_matrix_fast(hop)?;
+            let candidate = match acc {
+                None => local,
+                Some(prev) => checked_matrix_compose(&local, &prev)?,
+            };
+            stages.push(StageCoeffs::Fast(candidate.clone()));
+            acc = Some(candidate);
+        }
+        Some(stages)
+    }
+
+    /// BigInt extension from prefix depth `from` (infallible — arbitrary
+    /// precision). Reuses `self.stages[0..from]` when they are all Big.
+    fn extend_big(&self, hops: &[ShiftedPieceHop], from: usize) -> Vec<StageCoeffs> {
+        let usable = from <= self.stages.len()
+            && self.stages[..from]
+                .iter()
+                .all(|s| matches!(s, StageCoeffs::Big(_)));
+        let from = if usable { from } else { 0 };
+        let mut stages: Vec<StageCoeffs> = self.stages[..from].to_vec();
+        let mut acc: Option<BigShiftedCoeffs> = match stages.last() {
+            Some(StageCoeffs::Big(c)) => Some(c.clone()),
+            _ => None,
+        };
+        for hop in &hops[from..] {
+            let local = build_local_matrix_big(hop);
+            let candidate = match acc {
+                None => local,
+                Some(prev) => matrix_compose_big(&local, &prev),
+            };
+            stages.push(StageCoeffs::Big(candidate.clone()));
+            acc = Some(candidate);
+        }
+        stages
+    }
+
+    fn commit(&mut self, stages: Vec<StageCoeffs>, ks: &[usize]) {
+        self.stages = stages;
+        self.last_ks = ks.to_vec();
+    }
+}
+
 /// Attempt the I1024 fast-path composition. Returns `None` as soon as any
 /// local-matrix construction or composition step overflows I1024.
 fn try_compute_fast(hops: &[ShiftedPieceHop]) -> Option<FastShiftedCoeffs> {
@@ -794,5 +964,77 @@ mod tests {
         // Must have taken the Big path AND returned without panic.
         assert!(matches!(coeffs, ShiftedMobiusPieceCoefficients::Big(_)));
         let _ = shifted_piece_model_optimal_input(&coeffs); // no panic
+    }
+
+    /// Loop-17: the memoizing composer must be byte-exact against a fresh
+    /// fold for every step of a randomized piece sequence, including prefix
+    /// reuse, representation switches (Fast->Big), and full-advancement
+    /// (shared prefix 0).
+    #[test]
+    fn memoizing_composer_is_byte_exact() {
+        // Small deterministic LCG — the crate has no rand dependency.
+        let mut state: u64 = 0x1DC0_17;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            state >> 33
+        };
+        for trial in 0..64u64 {
+            let n = 2 + (trial as usize) % 2;
+            let shift: u64 = (trial % 3) * 60;
+            let hops: Vec<ShiftedPieceHop> = (0..n)
+                .map(|i| ShiftedPieceHop {
+                    hop: IntHopState::new(
+                        u256(4_500_000) + u256(i as u64 * 977 + shift),
+                        u256(3_100_000) + u256(i as u64 * 613 + shift),
+                        997,
+                        1000,
+                    ),
+                    gross_input_offset: U256::ZERO,
+                    output_offset: U256::ZERO,
+                })
+                .collect();
+
+            let mut composer = ShiftedPieceComposer::new();
+            for _ in 0..48 {
+                let ks: Vec<usize> = hops.iter().map(|_| (next() % 13) as usize).collect();
+                let pieces: Vec<ShiftedPieceHop> = hops
+                    .iter()
+                    .zip(ks.iter())
+                    .map(|(base, &k)| ShiftedPieceHop {
+                        hop: IntHopState::new(
+                            base.hop.reserve_in + u256(k as u64),
+                            base.hop.reserve_out + u256(k as u64),
+                            997,
+                            1000,
+                        ),
+                        gross_input_offset: if k > 0 {
+                            u256(k as u64) * u256(1_000_003)
+                        } else {
+                            U256::ZERO
+                        },
+                        output_offset: u256(k as u64) * u256(997),
+                    })
+                    .collect();
+                let memoized = composer.piece_coefficients(&pieces, &ks);
+                let fresh = compute_shifted_piece_mobius_coefficients(&pieces);
+                match (&fresh, &memoized) {
+                    (
+                        ShiftedMobiusPieceCoefficients::Fast(a),
+                        ShiftedMobiusPieceCoefficients::Fast(b),
+                    ) => {
+                        assert_eq!(a, b, "trial {trial} ks {ks:?}: fast coefficients differ")
+                    }
+                    (
+                        ShiftedMobiusPieceCoefficients::Big(a),
+                        ShiftedMobiusPieceCoefficients::Big(b),
+                    ) => {
+                        assert_eq!(a, b, "trial {trial} ks {ks:?}: big coefficients differ")
+                    }
+                    _ => panic!("trial {trial} ks {ks:?}: representation mismatch"),
+                }
+            }
+        }
     }
 }

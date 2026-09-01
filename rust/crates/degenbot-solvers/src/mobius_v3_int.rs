@@ -1063,21 +1063,23 @@ fn build_shifted_piece_hops(
 /// never depends on the anchor. A piece whose optimum is a range-saturation
 /// corner (the smooth argmax runs past the pinned edge) is owned by
 /// `walk_refine_window`, which searches for the discrete peak.
+#[cfg(test)]
 fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
-    let a_t0 = std::time::Instant::now();
-    let out = walk_piece_anchor_inner(hops, ks);
-    WALK_ANCHOR_NS_TOTAL.fetch_add(
-        u64::try_from(a_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    out
-}
-
-fn walk_piece_anchor_inner(hops: &[WalkHop], ks: &[usize]) -> U256 {
+    // Fresh single-shot reference for the doc tests: production uses the
+    // memoizing `ShiftedPieceComposer` inline (byte-identical results).
     let pieces = build_shifted_piece_hops(hops, ks);
     let coeffs = crate::mobius_shifted_piece::compute_shifted_piece_mobius_coefficients(&pieces);
     crate::mobius_shifted_piece::shifted_piece_model_optimal_input(&coeffs).unwrap_or(U256::ZERO)
 }
+
+/// Loop-17 census: anchor-phase wall split — hop construction vs coefficient
+/// compose vs model argmax (all ns, process-wide).
+pub static WALK_ANCHOR_BUILD_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static WALK_ANCHOR_COMPOSE_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static WALK_ANCHOR_ARGMAX_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 /// The pre-EHSWSX transitional anchor (unshifted ending-range coefficients
 /// plus additive `Σ crossing_gross_input`): misprices downstream crossings
@@ -1834,7 +1836,11 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
     let mut ks = vec![0usize; hops.len()];
     let mut visited: HashSet<Vec<usize>> = HashSet::new();
     let mut rec = WalkRecorder::new();
-    // Right edge of the previously visited piece: consecutive pieces share
+    // Loop-17 anchor memoization: consecutive pieces share tuple prefixes,
+    // so the Möbius fold reuses prefix partials (byte-exact — see
+    // `ShiftedPieceComposer`). One composer per solve; `hops` is immutable
+    // within a solve.
+    let mut anchor_memo = crate::mobius_shifted_piece::ShiftedPieceComposer::new();
     // window boundaries, so it doubles as the next piece's left-edge scan
     // start (saves a full bisection per visited piece).
     let mut prev_right_edge: Option<U256> = None;
@@ -1861,7 +1867,30 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
         // disables the ±2 probe set to measure its value. The anchor VALUE is
         // still computed and used as the window-edge hint either way.
         let sweep = anchor_sweep_mode();
-        let anchor = walk_piece_anchor(hops, &ks);
+        let anchor_all_t0 = std::time::Instant::now();
+        let anchor_build_t0 = std::time::Instant::now();
+        let anchor_pieces = build_shifted_piece_hops(hops, &ks);
+        WALK_ANCHOR_BUILD_NS.fetch_add(
+            u64::try_from(anchor_build_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let anchor_compose_t0 = std::time::Instant::now();
+        let anchor_coeffs = anchor_memo.piece_coefficients(&anchor_pieces, &ks);
+        WALK_ANCHOR_COMPOSE_NS.fetch_add(
+            u64::try_from(anchor_compose_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let anchor_argmax_t0 = std::time::Instant::now();
+        let anchor = crate::mobius_shifted_piece::shifted_piece_model_optimal_input(&anchor_coeffs)
+            .unwrap_or(U256::ZERO);
+        WALK_ANCHOR_ARGMAX_NS.fetch_add(
+            u64::try_from(anchor_argmax_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        WALK_ANCHOR_NS_TOTAL.fetch_add(
+            u64::try_from(anchor_all_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         if !anchor.is_zero() {
             let anchor_t0 = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
             let deltas: &[i32] = match sweep {
@@ -2023,6 +2052,10 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
         prev_right_edge = Some(xr);
         right_bracket = Some((xr, right_confirm_hi));
 
+        // Loop-17 anchor memoization: consecutive pieces share tuple prefixes,
+        // so the Möbius fold reuses prefix partials (byte-exact — see
+        // `ShiftedPieceComposer`). One composer per solve; `hops` is immutable
+        // within a solve.
         // Direction test: straddle probes at ±64 around the window’s right
         // edge, with +1-wei staircase tolerance. Climbing ⇒ advance one
         // piece; falling or level ⇒ the peak is at or behind this edge —

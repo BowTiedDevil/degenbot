@@ -294,6 +294,18 @@ fn main() {
         .swap(0, std::sync::atomic::Ordering::Relaxed);
     let refine_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REFINE_SIMNS
         .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let ab_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_BUILD_NS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let ac_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_COMPOSE_NS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let am_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_ARGMAX_NS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    println!(
+        "  anchor split: build {:.1} ms | compose {:.1} ms | argmax {:.1} ms (of anchors total)",
+        ab_ns as f64 / 1e6,
+        ac_ns as f64 / 1e6,
+        am_ns as f64 / 1e6
+    );
     println!(
         "  walk-sim: {:.1} ms | anchors: {:.1} ms | predictions: {:.1} ms | solve: {:.1} ms (all strategies+reference)",
         sim_ns as f64 / 1e6,

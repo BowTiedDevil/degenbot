@@ -320,6 +320,26 @@ pub fn isqrt_u2048(n: U2048) -> U2048 {
         return U2048::from(1u64);
     }
 
+    // Loop-17: the walk's anchor argmax calls this per piece, and real
+    // 1-3-hop determinants are far narrower than U2048 (each hop multiplies
+    // ~140-bit per-hop determinants). Narrow the Newton iteration to the
+    // smallest limb count: mathematically the same floor-√ algorithm on the
+    // same value, so the result is provably identical at a fraction of the
+    // wide-division cost.
+    if bit_len <= 256 {
+        let narrow = u2048_to_u256_lossy(n);
+        let root = isqrt_u512(u512_from_u256(narrow));
+        if let Some(rt) = u512_to_u2048(root) {
+            return rt;
+        }
+    } else if bit_len <= 512 {
+        let narrow = u2048_to_u512(n);
+        let root = isqrt_u512(narrow);
+        if let Some(rt) = u512_to_u2048(root) {
+            return rt;
+        }
+    }
+
     let half_bits = (bit_len + 1).div_ceil(2);
     let mut x = U2048::from(1u64) << half_bits;
 
@@ -340,6 +360,37 @@ pub fn isqrt_u2048(n: U2048) -> U2048 {
     }
 
     x
+}
+
+fn u2048_to_u256_lossy(n: U2048) -> U256 {
+    let limbs = n.into_limbs();
+    debug_assert!(limbs[4..].iter().all(|&l| l == 0));
+    U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]])
+}
+
+fn u512_from_u256(v: U256) -> U512 {
+    let limbs = v.into_limbs();
+    let mut wide = [0u64; 8];
+    wide[..4].copy_from_slice(&limbs);
+    U512::from_limbs(wide)
+}
+
+fn u2048_to_u512(n: U2048) -> U512 {
+    let limbs = n.into_limbs();
+    debug_assert!(limbs[8..].iter().all(|&l| l == 0));
+    U512::from_limbs([
+        limbs[0], limbs[1], limbs[2], limbs[3], limbs[4], limbs[5], limbs[6], limbs[7],
+    ])
+}
+
+fn u512_to_u2048(v: U512) -> Option<U2048> {
+    let limbs = v.into_limbs();
+    if limbs[8..].iter().any(|&l| l != 0) {
+        return None;
+    }
+    let mut wide = [0u64; 32];
+    wide[..8].copy_from_slice(&limbs);
+    Some(U2048::from_limbs(wide))
 }
 
 /// Convert U512 to U256, returning U256::ZERO if the value overflows.
