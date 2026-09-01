@@ -146,7 +146,7 @@ pub fn solve_path_with_min_profit(
             }
         }
     }
-    let (result, stats) = solve_path_inner(resolved);
+    let (result, stats) = solve_path_inner(resolved, gate);
     SolveOutcome { result, stats }
 }
 
@@ -158,6 +158,7 @@ pub fn solve_path_with_min_profit(
 #[hotpath::measure(label = "mixed.solve_path_inner")]
 pub fn solve_path_inner(
     resolved: &ResolvedMixedPath,
+    gate: &GateDeps<'_>,
 ) -> (Option<SolvePathResult>, crate::mobius_v3_int::WalkStats) {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
@@ -265,10 +266,19 @@ pub fn solve_path_inner(
             .filter_map(ResolvedHop::as_crossing_table)
             .collect();
         if int_sequences.len() >= 2 {
-            let out = crate::mobius_v3_int::int_solve_cl_path_cached(
+            let prepared: Vec<crate::mobius_v3_int::ClPrepared> = int_sequences
+                .iter()
+                .zip(cl_crossings.iter())
+                .zip(cl_profiles.iter())
+                .map(|((_, c), p)| crate::mobius_v3_int::ClPrepared {
+                    crossings: Arc::clone(c),
+                    profiles: Arc::clone(p),
+                })
+                .collect();
+            let out = crate::mobius_v3_int::int_solve_cl_path(
                 &int_sequences,
-                Some(&cl_crossings),
-                &cl_profiles,
+                &prepared,
+                gate.walk_memo(),
             );
             (
                 out.result.map(|(optimal_input, _profit, hop_outputs)| {
@@ -462,11 +472,25 @@ fn solve_mixed_path_int(
         .map(|h| h.as_word_profiles().cloned())
         .collect();
 
-    let out = crate::mobius_v3_int::exact_solve_mixed_path_n_cached(
+    // Per-CL-hop prepared tables from the projection (V2 positions None).
+    let cl_prepared: Vec<Option<crate::mobius_v3_int::ClPrepared>> = hop_order
+        .iter()
+        .enumerate()
+        .map(|(i, &is_v2)| {
+            if is_v2 {
+                None
+            } else {
+                Some(crate::mobius_v3_int::ClPrepared {
+                    crossings: Arc::clone(cl_crossings[i].as_ref()?),
+                    profiles: Arc::clone(cl_profiles[i].as_ref()?),
+                })
+            }
+        })
+        .collect();
+    let out = crate::mobius_v3_int::exact_solve_mixed_path_n(
         &v2_hops,
         &int_v3_sequences,
-        Some(&cl_crossings),
-        Some(&cl_profiles),
+        &cl_prepared,
         &hop_order,
     );
     (
@@ -1462,7 +1486,7 @@ mod gate_tests {
         let p = profitable_path();
         assert_eq!(
             solve_path_with_min_profit(&p, U256::from(u64::MAX), &GateDeps::offline()).result,
-            solve_path_inner(&p).0,
+            solve_path_inner(&p, &GateDeps::offline()).0,
             "offline deps (no prefix cache) must be bit-for-bit identical"
         );
     }

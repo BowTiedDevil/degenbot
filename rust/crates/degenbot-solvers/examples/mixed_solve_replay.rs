@@ -16,7 +16,7 @@
 
 //! Offline heavy mixed V2+CL path replay harness with N-repeat stable timing.
 //! Mirrors `cl_solve_replay.rs` for paths that dispatch to
-//! `exact_solve_mixed_path_n_cached` (V2→V3→V3, V2→V3→V4, …).
+//! `exact_solve_mixed_path_n` (V2→V3→V3, V2→V3→V4, …).
 //!
 //! Usage:
 //!   `cargo run -p degenbot-solvers --example mixed_solve_replay -- [<capture.jsonl>]`
@@ -26,7 +26,7 @@
 //! the live hook
 //! (`solver_dispatch` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
 //! `IntHopState` per V2 hop + `IntV3TickRangeSequence` per CL hop from the
-//! captured fields, and re-runs `exact_solve_mixed_path_n_cached` — the exact
+//! captured fields, and re-runs `exact_solve_mixed_path_n` — the exact
 //! decomposed call `mixed::solve_mixed_path_int` makes — OFFLINE, with no
 //! bot / RPC / DB. Each path is solved N times; the median / p95 / min wall
 //! time is the stable A/B signal. Per-run nondeterminism is flagged (the solver
@@ -37,7 +37,7 @@
 //! The capture records `measured.time_us` for the FULL `solve_path_with_min`
 //! call (profit-envelope gate + resolve + the decomposed solver). This harness
 //! re-runs only the decomposed solver entry
-//! (`exact_solve_mixed_path_n_cached`, no crossings/profiles → rebuilt per
+//! (`exact_solve_mixed_path_n`, no crossings/profiles → rebuilt per
 //! call). If the replay time ≪ `measured.time_us`, the bottleneck is NOT the
 //! active-set walk — it lives in the profit-envelope gate or the resolve phase
 //! (which run before the decomposed solver). The walk-stats line
@@ -51,7 +51,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{exact_solve_mixed_path_n_cached, WalkStats};
+use degenbot_solvers::mobius_v3_int::{exact_solve_mixed_path_n, WalkStats};
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;
@@ -264,7 +264,8 @@ fn main() {
         let mut divergent_reps = false;
         for _ in 0..iters {
             let t0 = std::time::Instant::now();
-            let out = exact_solve_mixed_path_n_cached(&v2_hops, &cl_seqs, None, None, &hop_order);
+            let no_tables = vec![None; hop_order.len()];
+            let out = exact_solve_mixed_path_n(&v2_hops, &cl_seqs, &no_tables, &hop_order);
             let us = t0.elapsed().as_micros() as u128;
             times_us.push(us);
             last_ws = out.stats;

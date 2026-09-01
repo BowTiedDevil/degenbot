@@ -24,7 +24,7 @@ extern crate degenbot_solvers;
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_solvers::cl_cache::{strategy_catalog, CacheEvent, ClCacheStrategy, PreparedHop};
-use degenbot_solvers::mobius_v3_int::int_solve_cl_path_cached;
+use degenbot_solvers::mobius_v3_int::int_solve_cl_path;
 use serde_json::Value;
 
 fn u256(s: &str) -> Result<U256, String> {
@@ -88,13 +88,21 @@ fn solve_prepared<S: ClCacheStrategy + ?Sized>(
 ) -> Option<(U256, U256, Vec<U256>)> {
     let prepared: Vec<PreparedHop> = strategy.refill(seqs, event);
     if prepared.is_empty() {
-        return degenbot_solvers::mobius_v3_int::int_solve_cl_path(seq_refs).result;
+        return degenbot_solvers::mobius_v3_int::solve_cl_derived(seq_refs).result;
     }
     let crossings: Vec<&std::sync::Arc<degenbot_solvers::mobius_v3_int::ClCrossingTable>> =
         prepared.iter().map(|(c, _)| c).collect();
     let profiles: Vec<&std::sync::Arc<degenbot_solvers::mobius_v3_int::ClProfileTable>> =
         prepared.iter().map(|(_, p)| p).collect();
-    int_solve_cl_path_cached(seq_refs, Some(&crossings), &profiles).result
+    let prepared_hops: Vec<degenbot_solvers::mobius_v3_int::ClPrepared> = crossings
+        .iter()
+        .zip(profiles.iter())
+        .map(|(c, p)| degenbot_solvers::mobius_v3_int::ClPrepared {
+            crossings: std::sync::Arc::clone(c),
+            profiles: std::sync::Arc::clone(p),
+        })
+        .collect();
+    int_solve_cl_path(seq_refs, &prepared_hops, None).result
 }
 
 fn main() {
@@ -218,7 +226,7 @@ fn main() {
                 catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
             let t_ref = std::time::Instant::now();
-            let reference = degenbot_solvers::mobius_v3_int::int_solve_cl_path(&seq_refs).result;
+            let reference = degenbot_solvers::mobius_v3_int::solve_cl_derived(&seq_refs).result;
             reference_ns += t_ref.elapsed().as_nanos();
             total_events += 1;
             if std::env::var("DRCLAB_DIGEST").is_ok() {

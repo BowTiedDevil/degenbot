@@ -31,7 +31,7 @@
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::mobius_v3_int::{int_solve_cl_path, WalkEventCensus};
+use degenbot_solvers::mobius_v3_int::WalkEventCensus;
 use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 
@@ -222,7 +222,7 @@ fn main() {
         let mut path_pieces: Vec<(Vec<usize>, U256)> = Vec::new();
         for _ in 0..iters {
             let t0 = std::time::Instant::now();
-            let out = int_solve_cl_path(refs.as_slice());
+            let out = degenbot_solvers::mobius_v3_int::solve_cl_derived(refs.as_slice());
             times.push(t0.elapsed().as_micros());
             last_stats = Some(out.stats);
             path_pieces = out.census_pieces;

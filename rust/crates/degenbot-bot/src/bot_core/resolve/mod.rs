@@ -664,7 +664,7 @@ mod tests {
             .collect()
     }
 
-    /// The all-CL intake: resolve -> cached tables -> `int_solve_cl_path_cached`.
+    /// The all-CL intake: resolve -> cached tables -> `int_solve_cl_path`.
     fn all_cl_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
         let seqs: Vec<_> = r
             .hops
@@ -681,12 +681,16 @@ mod tests {
             .iter()
             .filter_map(ResolvedHop::as_crossing_table)
             .collect();
-        degenbot_solvers::mobius_v3_int::int_solve_cl_path_cached(
-            &seqs,
-            Some(&crossings),
-            &profiles,
-        )
-        .result
+        let prepared: Vec<degenbot_solvers::mobius_v3_int::ClPrepared> = seqs
+            .iter()
+            .zip(crossings.iter())
+            .zip(profiles.iter())
+            .map(|((_, c), p)| degenbot_solvers::mobius_v3_int::ClPrepared {
+                crossings: std::sync::Arc::clone(c),
+                profiles: std::sync::Arc::clone(p),
+            })
+            .collect();
+        degenbot_solvers::mobius_v3_int::int_solve_cl_path(&seqs, &prepared, None).result
     }
 
     /// The mixed intake: resolve -> cached tables -> `exact_solve_mixed_path_n_cached`.
@@ -725,11 +729,24 @@ mod tests {
                 .map(ResolvedHop::as_word_profiles)
                 .map(|opt| opt.cloned())
                 .collect();
-        degenbot_solvers::mobius_v3_int::exact_solve_mixed_path_n_cached(
+        let cl_prepared: Vec<Option<degenbot_solvers::mobius_v3_int::ClPrepared>> = hop_order
+            .iter()
+            .enumerate()
+            .map(|(i, &is_v2)| {
+                if is_v2 {
+                    None
+                } else {
+                    Some(degenbot_solvers::mobius_v3_int::ClPrepared {
+                        crossings: std::sync::Arc::clone(crossings[i].as_ref()?),
+                        profiles: std::sync::Arc::clone(profiles[i].as_ref()?),
+                    })
+                }
+            })
+            .collect();
+        degenbot_solvers::mobius_v3_int::exact_solve_mixed_path_n(
             &v2_hops,
             &seqs,
-            Some(&crossings),
-            Some(&profiles),
+            &cl_prepared,
             &hop_order,
         )
         .result

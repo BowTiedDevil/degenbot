@@ -749,6 +749,7 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
         epoch: 0,
         prefix_cache: false,
         capture: Some(&capture_cfg),
+        walk_memo: None,
     };
     assert!(matches!(
         path_profit_bound(&views, &deps),

@@ -115,37 +115,144 @@ impl Default for WalkMemoState {
     }
 }
 
-static WALK_MEMO_STATE: std::sync::OnceLock<std::sync::Mutex<WalkMemoState>> =
-    std::sync::OnceLock::new();
-
-/// Opt-in runtime gate: `DEGENBOT_SOLVER_WALK_MEMO=1` caches walk results
-/// keyed by path-composition content; `DEGENBOT_SOLVER_WALK_MEMO_STATS=1`
-/// counts cross-block repeats WITHOUT changing results. Both read once at
-/// first use (the guard is not constructed otherwise, so default runs stay
-/// byte-identical).
-/// Whether either memo gate is on (read once; lets the production path skip
-/// the fingerprint + probe/store entirely when disabled).
-fn walk_memo_active() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| {
-        std::env::var("DEGENBOT_SOLVER_WALK_MEMO_STATS").as_deref() == Ok("1")
-            || std::env::var("DEGENBOT_SOLVER_WALK_MEMO").as_deref() == Ok("1")
-    })
+/// The engine's OWNED cross-block walk-composition handle (SU7MAE T3 / Q12a):
+/// an `Arc<WalkMemo>` passed into the CL solve entry — no global state, and
+/// no environment read inside the solver (the enabled flags are constructor
+/// fields; the owner builds them from its config, `from_env` at the
+/// engine-construction boundary). Internal mutex is shared under rayon.
+pub struct WalkMemo {
+    inner: std::sync::Mutex<WalkMemoState>,
 }
 
-fn walk_memo_enabled() -> std::sync::MutexGuard<'static, WalkMemoState> {
-    WALK_MEMO_STATE
-        .get_or_init(|| {
-            let stats_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO_STATS").as_deref() == Ok("1");
-            let memo_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO").as_deref() == Ok("1");
-            std::sync::Mutex::new(WalkMemoState {
+impl WalkMemo {
+    #[must_use]
+    pub fn new(memo_on: bool, stats_on: bool) -> Self {
+        Self {
+            inner: std::sync::Mutex::new(WalkMemoState {
                 stats_on,
                 memo_on,
                 ..WalkMemoState::default()
-            })
-        })
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+            }),
+        }
+    }
+
+    /// Opt-in constructor at the engine-construction boundary (the ONE env
+    /// read; names the gates exactly as the old in-solver reads did).
+    #[must_use]
+    pub fn from_env() -> Self {
+        let memo_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO").as_deref() == Ok("1");
+        let stats_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO_STATS").as_deref() == Ok("1");
+        Self::new(memo_on, stats_on)
+    }
+
+    /// Whether either memo gate is on (lets the entry skip the fingerprint +
+    /// probe/store entirely when disabled).
+    #[must_use]
+    fn active(&self) -> bool {
+        let st = self.lock();
+        st.memo_on || st.stats_on
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, WalkMemoState> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Advance the cross-block epoch and swap the composition census (call
+    /// at block-lifecycle start — replaces the global set-epoch accessor).
+    pub fn begin_block(&self, epoch: u64) {
+        let mut st = self.lock();
+        if epoch == st.epoch {
+            return;
+        }
+        st.epoch = epoch;
+        st.prev = std::mem::take(&mut st.curr);
+        let reserve = st.prev.len();
+        st.curr.reserve(reserve);
+        st.prev_costs = std::mem::take(&mut st.curr_costs);
+        let reserve_n = st.prev.len();
+        st.curr_costs.reserve(reserve_n);
+    }
+
+    /// Take (and reset) the per-epoch accounting counters.
+    #[must_use]
+    pub fn take_stats(&self) -> WalkMemoStats {
+        let mut st = self.lock();
+        let out = WalkMemoStats {
+            epoch: st.epoch,
+            probes: st.probes,
+            hits: st.hits,
+            distinct: st.curr.len() as u64,
+            cache_plays: st.cache_plays,
+            negative_entries: st.cache.values().filter(|v| v.is_none()).count() as u64,
+            probes_sims: st.probes_sims,
+            hits_sims: st.hits_sims,
+        };
+        st.probes = 0;
+        st.hits = 0;
+        st.cache_plays = 0;
+        st.probes_sims = 0;
+        st.hits_sims = 0;
+        out
+    }
+
+    fn probe(&self, fp: u128) -> Option<(U256, U256, Vec<U256>)> {
+        let mut st = self.lock();
+        if st.stats_on {
+            st.probes += 1;
+            let hit_now = st.prev.contains(&fp);
+            if hit_now {
+                st.hits += 1;
+                st.hits_sims += st.prev_costs.get(&fp).copied().unwrap_or(0);
+            }
+            st.curr.insert(fp);
+            if st.memo_on {
+                let hit = st.cache.get(&fp).cloned();
+                st.cache_plays += 1;
+                if let Some(entry) = hit.flatten() {
+                    return Some(entry);
+                }
+                return None;
+            }
+            return None;
+        }
+        if st.memo_on {
+            let hit = st.cache.get(&fp).cloned();
+            st.cache_plays += 1;
+            if let Some(entry) = hit.flatten() {
+                return Some(entry);
+            }
+            return None;
+        }
+        None
+    }
+
+    fn note_cost(&self, fp: u128, sims: u64) {
+        let mut st = self.lock();
+        if !st.stats_on {
+            return;
+        }
+        st.probes_sims += sims;
+        st.curr_costs.insert(fp, sims);
+    }
+
+    fn store(&self, fp: u128, result: Option<&(U256, U256, Vec<U256>)>) {
+        let mut st = self.lock();
+        if !st.memo_on {
+            return;
+        }
+        if st.cache.len() >= 4096 {
+            st.cache.clear();
+        }
+        st.cache.insert(fp, result.cloned());
+    }
+}
+
+impl std::fmt::Debug for WalkMemo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WalkMemo").finish_non_exhaustive()
+    }
 }
 
 /// Bilinear mixing of a `U256` into a `u64` accumulator (deterministic,
@@ -206,104 +313,6 @@ pub fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
         }
     }
     (u128::from(lane_a) << 64) | u128::from(lane_b)
-}
-
-/// Probe the cross-block recomposition rate for a path composition.
-/// STATS mode counts `fp ∈ previous epoch` (a same-state re-solve);
-/// MEMO mode additionally replays the cached walk result. Cached misses
-/// in MEMO mode are stored after the solve (see the solve hook).
-pub(crate) fn walk_memo_probe(fp: u128) -> Option<(U256, U256, Vec<U256>)> {
-    let mut st = walk_memo_enabled();
-    if st.stats_on {
-        st.probes += 1;
-        let hit_now = st.prev.contains(&fp);
-        if hit_now {
-            st.hits += 1;
-            st.hits_sims += st.prev_costs.get(&fp).copied().unwrap_or(0);
-        }
-        st.curr.insert(fp);
-        if st.memo_on {
-            let hit = st.cache.get(&fp).cloned();
-            st.cache_plays += 1;
-            if let Some(entry) = hit.flatten() {
-                return Some(entry);
-            }
-            return None;
-        }
-        return None;
-    }
-    if st.memo_on {
-        let hit = st.cache.get(&fp).cloned();
-        st.cache_plays += 1;
-        if let Some(entry) = hit.flatten() {
-            return Some(entry);
-        }
-        return None;
-    }
-    None
-}
-
-/// Store a fresh solve result (or a proven-negative one) under the
-/// composition fingerprint. Capacity 4096 entries (~sub-MB); a simple
-/// clear-on-full policy bounds memory without LRU bookkeeping (the hottest
-/// compositions per block re-populate immediately).
-/// STATS-mode after-solve hook: attribute this composition's walker sims
-/// to the epoch (lets the census report the sims-weighted hit value).
-pub(crate) fn walk_memo_note_cost(fp: u128, sims: u64) {
-    let mut st = walk_memo_enabled();
-    if !st.stats_on {
-        return;
-    }
-    st.probes_sims += sims;
-    st.curr_costs.insert(fp, sims);
-}
-
-pub(crate) fn walk_memo_store(fp: u128, result: &Option<(U256, U256, Vec<U256>)>) {
-    let mut st = walk_memo_enabled();
-    if !st.memo_on {
-        return;
-    }
-    if st.cache.len() >= 4096 {
-        st.cache.clear();
-    }
-    st.cache.insert(fp, result.clone());
-}
-
-/// Advance the cross-block epoch and swap the composition census.
-pub fn walk_memo_set_epoch(epoch: u64) {
-    let mut st = walk_memo_enabled();
-    if epoch == st.epoch {
-        return;
-    }
-    st.epoch = epoch;
-    st.prev = std::mem::take(&mut st.curr);
-    let reserve = st.prev.len();
-    st.curr.reserve(reserve);
-    st.prev_costs = std::mem::take(&mut st.curr_costs);
-    let reserve_n = st.prev.len();
-    st.curr_costs.reserve(reserve_n);
-}
-
-/// Take (and reset) the per-epoch accounting counters.
-#[must_use]
-pub fn walk_memo_take_stats() -> WalkMemoStats {
-    let mut st = walk_memo_enabled();
-    let out = WalkMemoStats {
-        epoch: st.epoch,
-        probes: st.probes,
-        hits: st.hits,
-        distinct: st.curr.len() as u64,
-        cache_plays: st.cache_plays,
-        negative_entries: st.cache.values().filter(|v| v.is_none()).count() as u64,
-        probes_sims: st.probes_sims,
-        hits_sims: st.hits_sims,
-    };
-    st.probes = 0;
-    st.hits = 0;
-    st.cache_plays = 0;
-    st.probes_sims = 0;
-    st.hits_sims = 0;
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -2222,13 +2231,32 @@ fn cl_walk_hop<'a>(
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
 /// `hop_outputs[i]` = output after hop `i`.
-#[must_use]
-pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> WalkOutcome {
-    if sequences.is_empty() {
-        return WalkOutcome::none();
+/// One CL hop's prepared tables (crossing + word profiles): the intake value
+/// for the solve entry — built ONCE per (pool, direction) by the projection,
+/// or derived via [`ClPrepared::derive`] by tableless callers (their cost).
+#[derive(Clone)]
+pub struct ClPrepared {
+    pub crossings: std::sync::Arc<ClCrossingTable>,
+    pub profiles: std::sync::Arc<ClProfileTable>,
+}
+
+impl ClPrepared {
+    #[must_use]
+    pub fn derive(seq: &IntV3TickRangeSequence) -> Self {
+        Self {
+            crossings: std::sync::Arc::new(build_cl_crossing_table(seq)),
+            profiles: std::sync::Arc::new(build_word_profiles(&build_cl_crossing_table(seq))),
+        }
     }
-    let hops: Vec<WalkHop> = sequences.iter().map(|seq| cl_walk_hop(seq, None)).collect();
-    solve_active_set_path(&hops)
+}
+
+/// Convenience for callers that only have sequences (tests, examples,
+/// golden-reference harnesses): derives the tables per call (cost is the
+/// caller's) and runs the entry with no memo.
+#[must_use]
+pub fn solve_cl_derived(sequences: &[&IntV3TickRangeSequence]) -> WalkOutcome {
+    let prepared: Vec<ClPrepared> = sequences.iter().map(|s| ClPrepared::derive(s)).collect();
+    int_solve_cl_path(sequences, &prepared, None)
 }
 
 /// Stage-1 all-CL solve consuming the projection's precomputed crossing
@@ -2236,67 +2264,51 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> WalkOutcome {
 /// `HopProjectionCache`, shared via `Arc` across paths). `crossings[k]` and
 /// `profiles[k]` are parallel to `sequences[k]`. `crossings = None` builds the
 /// crossing tables per call (offline mirror of [`int_solve_cl_path`]).
+/// THE all-CL solve entry: one interface taking the hop sequences, the
+/// prepared tables (parallel to `sequences`), and the caller's
+/// engine-owned cross-block memo handle. SU7MAE T3: the
+/// `_cached` / `_with_profiles` ladder and the global memo are gone.
 #[must_use]
-#[hotpath::measure(label = "cl_solve.int_solve_cl_path_cached")]
-pub fn int_solve_cl_path_cached(
+#[hotpath::measure(label = "cl_solve.int_solve_cl_path")]
+pub fn int_solve_cl_path(
     sequences: &[&IntV3TickRangeSequence],
-    crossings: Option<&[&Arc<ClCrossingTable>]>,
-    profiles: &[&Arc<ClProfileTable>],
+    prepared: &[ClPrepared],
+    memo: Option<&WalkMemo>,
 ) -> WalkOutcome {
-    if sequences.is_empty() || sequences.len() != profiles.len() {
+    if sequences.is_empty() || prepared.len() != sequences.len() {
         return WalkOutcome::none();
     }
-    if crossings.is_some_and(|c| c.len() != sequences.len()) {
-        return WalkOutcome::none();
+    // Cross-block composition memo: the fingerprint is the exact correctness
+    // key (the tables are pure derivations of the sequence), so an identical
+    // key cannot carry a stale result. `None` memo = disabled run never pays
+    // the fingerprint or the lock.
+    if let Some(memo) = memo {
+        if memo.active() {
+            let fp = walk_path_fingerprint(sequences);
+            if let Some(hit) = memo.probe(fp) {
+                return WalkOutcome::from_result(Some(hit));
+            }
+            let outcome = int_solve_cl_path_inner(sequences, prepared);
+            memo.note_cost(fp, outcome.stats.sims as u64);
+            memo.store(fp, outcome.result.as_ref());
+            return outcome;
+        }
     }
-    // Cross-block composition memo probe (DEGENBOT_SOLVER_WALK_MEMO=1 /
-    // _STATS=1). The fingerprint is the exact correctness key: the crossing
-    // tables + word profiles are pure deterministic derivations of the
-    // sequence, so an identical key cannot carry a stale result.
-    // `walk_memo_active()` reads the env gate ONCE, so a disabled run never
-    // pays the fingerprint or the lock.
-    if !walk_memo_active() {
-        return solve_active_set_path_uncached(sequences, crossings, profiles);
-    }
-    let fp = walk_path_fingerprint(sequences);
-    if let Some(hit) = walk_memo_probe(fp) {
-        return WalkOutcome::from_result(Some(hit));
-    }
-    let outcome = solve_active_set_path_uncached(sequences, crossings, profiles);
-    walk_memo_note_cost(fp, outcome.stats.sims as u64);
-    walk_memo_store(fp, &outcome.result);
-    outcome
+    int_solve_cl_path_inner(sequences, prepared)
 }
 
-/// The un-gated solve body (the memo hook is the only difference).
-fn solve_active_set_path_uncached(
+/// The memo-less solve body (the memo hook is the only difference).
+fn int_solve_cl_path_inner(
     sequences: &[&IntV3TickRangeSequence],
-    crossings: Option<&[&Arc<ClCrossingTable>]>,
-    profiles: &[&Arc<ClProfileTable>],
+    prepared: &[ClPrepared],
 ) -> WalkOutcome {
-    if sequences.is_empty() || sequences.len() != profiles.len() {
-        return WalkOutcome::none();
-    }
-    if crossings.is_some_and(|c| c.len() != sequences.len()) {
-        return WalkOutcome::none();
-    }
-    let hops: Vec<WalkHop> = sequences
-        .iter()
-        .enumerate()
-        .map(|(i, seq)| cl_walk_hop_cached(seq, crossings.map(|c| c[i]), Some(profiles[i])))
+    let hops: Vec<WalkHop> = (0..sequences.len())
+        .map(|i| WalkHop::Cl {
+            crossings: Arc::clone(&prepared[i].crossings),
+            profiles: Arc::clone(&prepared[i].profiles),
+        })
         .collect();
     solve_active_set_path(&hops)
-}
-
-/// Profile-only Stage-1 all-CL solve (crossing tables rebuilt per call).
-/// Retained as the offline/API wrapper; projection-backed paths use
-/// [`int_solve_cl_path_cached`].
-#[must_use]
-pub fn int_solve_cl_path_with_profiles(
-    sequences: &[&IntV3TickRangeSequence],
-    profiles: &[&Arc<ClProfileTable>],
-) -> WalkOutcome {
-    int_solve_cl_path_cached(sequences, None, profiles)
 }
 
 // ---------------------------------------------------------------------------
@@ -2729,22 +2741,22 @@ fn int_simulate_mixed_path_n(
 /// - `hop_order`: true = V2 hop, false = CL hop
 ///
 /// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
+/// THE mixed V2+CL solve entry (the `_n_cached` variant is gone — prepared
+/// tables ride [`ClPrepared`] per CL hop position; `None` derives them at
+/// the caller's cost, the offline/replay shape).
 #[must_use]
 #[hotpath::measure(label = "cl_solve.exact_solve_mixed_path_n")]
-pub fn exact_solve_mixed_path_n_cached(
+pub fn exact_solve_mixed_path_n(
     v2_hops: &[Option<IntHopState>],
     cl_sequences: &[Option<IntV3TickRangeSequence>],
-    cl_crossings: Option<&[Option<Arc<ClCrossingTable>>]>,
-    cl_profiles: Option<&[Option<Arc<ClProfileTable>>]>,
+    cl_prepared: &[Option<ClPrepared>],
     hop_order: &[bool], // true = V2, false = CL
 ) -> WalkOutcome {
     let n_hops = hop_order.len();
     if n_hops < 2 || v2_hops.len() != n_hops || cl_sequences.len() != n_hops {
         return WalkOutcome::none();
     }
-    if cl_crossings.is_some_and(|c| c.len() != n_hops)
-        || cl_profiles.is_some_and(|p| p.len() != n_hops)
-    {
+    if cl_prepared.len() != n_hops {
         return WalkOutcome::none();
     }
     let mut hops: Vec<WalkHop> = Vec::with_capacity(n_hops);
@@ -2758,23 +2770,22 @@ pub fn exact_solve_mixed_path_n_cached(
             let Some(seq) = cl_sequences[i].as_ref() else {
                 return WalkOutcome::none();
             };
-            let crossings = cl_crossings.and_then(|c| c.get(i)).and_then(|c| c.as_ref());
-            let profiles = cl_profiles.and_then(|p| p.get(i)).and_then(|p| p.as_ref());
-            hops.push(cl_walk_hop_cached(seq, crossings, profiles));
+            let crossings;
+            let profiles;
+            if let Some(prep) = cl_prepared[i].as_ref() {
+                crossings = Arc::clone(&prep.crossings);
+                profiles = Arc::clone(&prep.profiles);
+            } else {
+                crossings = Arc::new(build_cl_crossing_table(seq));
+                profiles = Arc::new(build_word_profiles(&crossings));
+            }
+            hops.push(WalkHop::Cl {
+                crossings,
+                profiles,
+            });
         }
     }
     solve_active_set_path(&hops)
-}
-
-/// Offline/API wrapper for [`exact_solve_mixed_path_n_cached`] (no cached
-/// crossing/profile tables). Projection-backed paths use the cached form.
-#[must_use]
-pub fn exact_solve_mixed_path_n(
-    v2_hops: &[Option<IntHopState>],
-    cl_sequences: &[Option<IntV3TickRangeSequence>],
-    hop_order: &[bool], // true = V2, false = CL
-) -> WalkOutcome {
-    exact_solve_mixed_path_n_cached(v2_hops, cl_sequences, None, None, hop_order)
 }
 
 // ---------------------------------------------------------------------------
@@ -3418,7 +3429,7 @@ mod tests {
         let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
         let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
 
-        let result_cl = int_solve_cl_path(&[&seq1, &seq2]).result;
+        let result_cl = solve_cl_derived(&[&seq1, &seq2]).result;
         let result_v3v3 = int_solve_v3_v3(&seq1, &seq2).result;
 
         assert_eq!(result_cl, result_v3v3);
@@ -3453,7 +3464,7 @@ mod tests {
         let seq3 = IntV3TickRangeSequence::new(vec![hop3]).unwrap();
 
         // Same-product 3-hop — should not be profitable
-        let result = int_solve_cl_path(&[&seq1, &seq2, &seq3]).result;
+        let result = solve_cl_derived(&[&seq1, &seq2, &seq3]).result;
         assert!(
             result.is_none(),
             "Same-product 3-hop should not be profitable"
@@ -3526,7 +3537,7 @@ mod tests {
         let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
         let seq3 = IntV3TickRangeSequence::new(vec![hop3]).unwrap();
 
-        let result = int_solve_cl_path(&[&seq1, &seq2, &seq3]).result;
+        let result = solve_cl_derived(&[&seq1, &seq2, &seq3]).result;
 
         // This should produce a result — there's genuine price disagreement
         // across the three pools. However, fees may eat all profit.
@@ -3575,6 +3586,7 @@ mod tests {
         let result = exact_solve_mixed_path_n(
             &[Some(v2_hop.clone()), None],
             &[None, Some(v3_seq.clone())],
+            &[None, None], // offline shape: tables derive here
             &[true, false],
         );
 
@@ -3595,11 +3607,20 @@ mod tests {
         let p1 = Arc::new(build_cl_word_profiles(&seq1));
         let p2 = Arc::new(build_cl_word_profiles(&seq2));
 
-        // Cached crossing tables must equal the profile-only solver that
-        // rebuilds them per call (byte-identical CL math).
-        let cached =
-            int_solve_cl_path_cached(&[&seq1, &seq2], Some(&[&c1, &c2]), &[&p1, &p2]).result;
-        let offline = int_solve_cl_path_with_profiles(&[&seq1, &seq2], &[&p1, &p2]).result;
+        // Carried tables must equal the per-call derived solve (byte-identical
+        // CL math).
+        let prepared = [
+            ClPrepared {
+                crossings: Arc::clone(&c1),
+                profiles: Arc::clone(&p1),
+            },
+            ClPrepared {
+                crossings: Arc::clone(&c2),
+                profiles: Arc::clone(&p2),
+            },
+        ];
+        let cached = int_solve_cl_path(&[&seq1, &seq2], &prepared, None).result;
+        let offline = solve_cl_derived(&[&seq1, &seq2]).result;
         assert_eq!(cached, offline);
         assert!(cached.is_some(), "late-liquidity fixture is profitable");
     }
@@ -3622,19 +3643,20 @@ mod tests {
         let profile = Arc::new(build_cl_word_profiles(
             cl_sequences[1].as_ref().expect("CL hop present"),
         ));
-        let cl_crossings = [None, Some(crossing)];
-        let cl_profiles = [None, Some(profile)];
+        let cl_prepared = [
+            None,
+            Some(ClPrepared {
+                crossings: crossing,
+                profiles: profile,
+            }),
+        ];
 
         // Projection-backed cached tables must equal the offline build
         // (byte-identical mixed-path math).
-        let cached = exact_solve_mixed_path_n_cached(
-            &v2_hops,
-            &cl_sequences,
-            Some(&cl_crossings),
-            Some(&cl_profiles),
-            &[true, false],
-        );
-        let offline = exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false]).result;
+        let cached =
+            exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &cl_prepared, &[true, false]);
+        let offline =
+            exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[None, None], &[true, false]).result;
         assert_eq!(cached.result, offline);
         assert!(
             cached.result.is_some(),
@@ -3664,6 +3686,7 @@ mod tests {
         let result = exact_solve_mixed_path_n(
             &[Some(v2_hop1.clone()), None, Some(v2_hop2.clone())],
             &[None, Some(v3_seq), None],
+            &[None, None, None],  // offline shape: tables derive here
             &[true, false, true], // V2 → CL → V2
         );
 
@@ -3708,18 +3731,24 @@ mod tests {
             cl_sequences[1].as_ref().expect("CL hop present"),
         ));
         let profile = Arc::new(build_cl_word_profiles_from_crossings(&crossing));
-        let cl_crossings = [None, Some(crossing), None];
-        let cl_profiles = [None, Some(profile), None];
+        let cl_prepared = [
+            None,
+            Some(ClPrepared {
+                crossings: crossing,
+                profiles: profile,
+            }),
+            None,
+        ];
 
-        let cached = exact_solve_mixed_path_n_cached(
+        let cached =
+            exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &cl_prepared, &[true, false, true]);
+        let offline = exact_solve_mixed_path_n(
             &v2_hops,
             &cl_sequences,
-            Some(&cl_crossings),
-            Some(&cl_profiles),
+            &[None, None, None],
             &[true, false, true],
-        );
-        let offline =
-            exact_solve_mixed_path_n(&v2_hops, &cl_sequences, &[true, false, true]).result;
+        )
+        .result;
         assert_eq!(cached.result, offline);
         assert!(cached.result.is_some(), "3-hop mixed fixture is profitable");
     }
@@ -4845,7 +4874,7 @@ mod tests {
             "oracle sanity: the corner-blind reference must find NOTHING here ({reference:?})"
         );
 
-        let (x, profit, _hop_outputs) = int_solve_cl_path(&[&seq1, &seq2])
+        let (x, profit, _hop_outputs) = solve_cl_derived(&[&seq1, &seq2])
             .result
             .expect("the active-set walk must find the deep range-10/11 profit");
 
@@ -4896,6 +4925,7 @@ mod tests {
         let result = exact_solve_mixed_path_n(
             &[Some(v2_entry), None],
             &[None, Some(cl_seq)],
+            &[None, None],
             &[true, false],
         );
 
@@ -4934,7 +4964,7 @@ mod tests {
                 liquidities.push(1_000_000_000u128);
                 let seq2 = multi_range_sequence(0, 60, false, &liquidities);
 
-                let solver = int_solve_cl_path(&[&seq1, &seq2]).result;
+                let solver = solve_cl_derived(&[&seq1, &seq2]).result;
                 let reference = reference_uncapped_cl_solve(&[&seq1, &seq2]);
                 let solver_profit = solver.map_or(U256::ZERO, |(_, profit, _)| profit);
                 let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
@@ -4977,7 +5007,7 @@ mod tests {
 
         WALK_PIECES_VISITED.with(|c| c.set(0));
         WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-        let result = int_solve_cl_path(&[&seq1, &seq2]).result;
+        let result = solve_cl_derived(&[&seq1, &seq2]).result;
         assert!(result.is_some());
         let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
         let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
@@ -5007,7 +5037,7 @@ mod tests {
         let s3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
         WALK_PIECES_VISITED.with(|c| c.set(0));
         WALK_PATH_SIMULATIONS.with(|c| c.set(0));
-        let _ = int_solve_cl_path(&[&s1, &s2, &s3]).result;
+        let _ = solve_cl_derived(&[&s1, &s2, &s3]).result;
         let pieces = WALK_PIECES_VISITED.with(std::cell::Cell::get);
         let sims = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
         let refine_sims = WALK_REFINE_SIMS.with(std::cell::Cell::get);
@@ -5088,7 +5118,7 @@ mod tests {
                 let seqs = [&seq1, &seq2];
                 let hops = [cl_walk_hop(&seq1, None), cl_walk_hop(&seq2, None)];
                 let oracle = grid_oracle_profit(&hops);
-                let solver = int_solve_cl_path(&seqs).result;
+                let solver = solve_cl_derived(&seqs).result;
                 let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
                 eprintln!(
                     "[grid] deep_liquidity={deep_liquidity} deep_index={deep_index}:                      oracle={oracle} solver={solver_profit}"
@@ -5136,14 +5166,14 @@ mod tests {
         let sr1 = multi_range_sequence(-100, 200, true, &[5_000_000_000_000u128]);
         let sr2 = multi_range_sequence(0, 200, false, &[10_000_000_000_000u128]);
         time_solve("2-hop single-range", || {
-            let _ = int_solve_cl_path(&[&sr1, &sr2]).result;
+            let _ = solve_cl_derived(&[&sr1, &sr2]).result;
         });
 
         // 8-range 2-hop
         let mr2h1 = multi_range_sequence(-100, 60, true, &[5_000_000_000_000u128; 8]);
         let mr2h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
         time_solve("2-hop 8-range", || {
-            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]).result;
+            let _ = solve_cl_derived(&[&mr2h1, &mr2h2]).result;
         });
 
         // 3-hop 8-range each
@@ -5151,7 +5181,7 @@ mod tests {
         let mr3h2 = multi_range_sequence(0, 60, false, &[10_000_000_000_000u128; 8]);
         let mr3h3 = multi_range_sequence(100, 60, true, &[5_000_000_000_000u128; 8]);
         time_solve("3-hop 8-range", || {
-            let _ = int_solve_cl_path(&[&mr3h1, &mr3h2, &mr3h3]).result;
+            let _ = solve_cl_derived(&[&mr3h1, &mr3h2, &mr3h3]).result;
         });
 
         // Legacy-style enumeration (uncapped) on the same 8-range 2-hop —
@@ -5167,7 +5197,7 @@ mod tests {
             let _ = Relaxed;
             WALK_PATH_SIMULATIONS.with(|c| c.set(0));
             WALK_PIECES_VISITED.with(|c| c.set(0));
-            let _ = int_solve_cl_path(&[&mr2h1, &mr2h2]).result;
+            let _ = solve_cl_derived(&[&mr2h1, &mr2h2]).result;
             eprintln!(
                 "[bench] 2-hop 8-range walk: pieces={} sims={}",
                 WALK_PIECES_VISITED.with(std::cell::Cell::get),
@@ -5240,8 +5270,7 @@ mod tests {
                         *l = deep_liquidity;
                     }
                     let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-                    let Some((x_star, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]).result
-                    else {
+                    let Some((x_star, profit, _)) = solve_cl_derived(&[&seq1, &seq2]).result else {
                         continue;
                     };
                     assert!(!profit.is_zero());
@@ -5597,7 +5626,7 @@ mod tests {
             anchor > x_sat,
             "cell sanity: requires anchor > x_sat (got anchor={anchor}, x_sat={x_sat})"
         );
-        let Some((x, profit, _)) = int_solve_cl_path(&[&seq1, &seq2]).result else {
+        let Some((x, profit, _)) = solve_cl_derived(&[&seq1, &seq2]).result else {
             panic!(
                 "F1 silent under-shoot: solver=None while the saturation corner x={x_sat} is worth {corner_profit} (anchor={anchor}); the single-piece terminal refine must bracket the corner"
             );
@@ -5660,7 +5689,7 @@ mod tests {
             corner_profit > U256::from(1_000_000u64),
             "cell needs a substantial hop1-binding profit (got {corner_profit})"
         );
-        let Some((x, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]).result else {
+        let Some((x, profit, _)) = solve_cl_derived(&[&seq0, &seq1]).result else {
             panic!(
                 "hop1-binding kink dropped: solver=None while x_cap={x_cap} is worth {corner_profit}; the terminal refine must not silently skip it"
             );
@@ -5746,7 +5775,7 @@ mod tests {
         }
 
         let eps = U256::from(REFINE_BRACKET_WEI);
-        let Some((xr, profit, _)) = int_solve_cl_path(&[&seq0, &seq1]).result else {
+        let Some((xr, profit, _)) = solve_cl_derived(&[&seq0, &seq1]).result else {
             panic!("solver=None on a dense path while the fine oracle is {oracle_profit}");
         };
         assert!(

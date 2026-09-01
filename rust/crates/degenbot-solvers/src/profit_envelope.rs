@@ -1299,7 +1299,7 @@ fn content_mix_u256(mut h: u128, v: &U256) -> u128 {
 /// the old pointer key only partially guarded against (its endpoint
 /// fingerprints could not see mid-table pool updates).
 fn cl_table_key(crossings: &[IntTickRangeCrossing]) -> u128 {
-    let mut h = 0xcbf2_9ce4_8422_2325_u128 ^ (crossings.len() as u128);
+    let mut h = 0xcbf2_9ce4_8422_2325_u128 ^ u128::try_from(crossings.len()).unwrap_or(u128::MAX);
     for cr in crossings {
         h = content_mix_u256(h, &cr.crossing_gross_input);
         h = content_mix_u256(h, &cr.crossing_output);
@@ -1376,10 +1376,13 @@ pub struct GateDeps<'a> {
     pub epoch: u64,
     pub prefix_cache: bool,
     pub capture: Option<&'a GateCaptureCfg>,
+    /// The engine-owned cross-block walk-memo handle (SU7MAE T3); `None`
+    /// disables the memo for this solve.
+    pub walk_memo: Option<&'a crate::mobius_v3_int::WalkMemo>,
 }
 
 impl GateDeps<'_> {
-    /// Offline/cacheless: no prefix reuse, epoch 0, capture off.
+    /// Offline/cacheless: no prefix reuse, epoch 0, capture off, no memo.
     #[must_use]
     pub fn offline() -> Self {
         Self::default()
@@ -1392,7 +1395,14 @@ impl GateDeps<'_> {
             epoch,
             prefix_cache: true,
             capture,
+            walk_memo: None,
         }
+    }
+
+    /// The engine-owned walk-memo handle, if any (`None` disables it).
+    #[must_use]
+    pub fn walk_memo(&self) -> Option<&crate::mobius_v3_int::WalkMemo> {
+        self.walk_memo
     }
 }
 

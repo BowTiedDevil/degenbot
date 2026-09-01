@@ -555,8 +555,8 @@ impl ArbitrageEngine {
         let solve_block = anchor.block();
         // Cross-block walk-composition census: advance the epoch BEFORE the
         // per-path probes so a path solved both this block and the previous
-        // one reports a hit (DEGENBOT_SOLVER_WALK_MEMO_STATS=1 / _MEMO=1).
-        degenbot_solvers::mobius_v3_int::walk_memo_set_epoch(solve_block);
+        // one reports a hit (the engine-owned WalkMemo handle, SU7MAE T3).
+        self.walk_memo.begin_block(solve_block);
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
             self.results_block = solve_block;
@@ -808,10 +808,11 @@ impl ArbitrageEngine {
         // composition cache is generationed by the block epoch inside the
         // gate deps (no public reset to call anymore).
         let gate_capture = ::degenbot_solvers::profit_envelope::GateCaptureCfg::from_env();
-        let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
+        let mut gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
             solve_block,
             gate_capture.as_ref(),
         );
+        gate_deps.walk_memo = Some(&self.walk_memo);
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
@@ -1053,7 +1054,7 @@ impl ArbitrageEngine {
         }
 
         // Telemetry: pure solver phase done — name the K slowest paths.
-        let memo_stats = degenbot_solvers::mobius_v3_int::walk_memo_take_stats();
+        let memo_stats = self.walk_memo.take_stats();
         let gate_tots = gate_total.into_inner();
         let slowest: Vec<String> = path_times.lock().iter()
             .map(
@@ -1211,10 +1212,11 @@ impl ArbitrageEngine {
         let solve_span_ref = &solve_span;
         let self_ref = &self;
 
-        // Cold start: no capture wiring — cacheless-capable deps with the
-        // registered-epoch guard (content-keyed, so entries are safe either way).
-        let gate_deps =
+        // Cold start: no capture wiring — deps with the registered-epoch
+        // guard + the engine's walk-memo handle.
+        let mut gate_deps =
             ::degenbot_solvers::profit_envelope::GateDeps::per_block(self.results_block, None);
+        gate_deps.walk_memo = Some(&self.walk_memo);
         let (tx, rx) = std::sync::mpsc::channel();
         rayon::scope(|s| {
             for bin in &bins {

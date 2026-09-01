@@ -390,6 +390,11 @@ pub struct ArbitrageEngine {
     /// after each solve; lock-free-read at bin construction). Refines the
     /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
     last_walk_sims: parking_lot::Mutex<HashMap<u64, u64>>,
+    /// The engine-owned cross-block walk-composition memo (SU7MAE T3, Q12a):
+    /// passed into the solve entries by handle; epoch advances at the
+    /// block-lifecycle start. Enabled flags come from the owner's config
+    /// (`from_env` at construction until the config task lands).
+    walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
     /// Per-path previous-block MEASURED gate time (µs, recorded by solve_fn;
     /// lock-free-read at bin construction). Loop-18: gate-heavy paths
     /// (dense-CL envelope compose, sims≈0) were invisible to the LPT cost —
@@ -464,6 +469,7 @@ impl ArbitrageEngine {
             resolved_update_snapshot: HashMap::new(),
             last_walk_sims: parking_lot::Mutex::new(HashMap::new()),
             last_gate_us: parking_lot::Mutex::new(HashMap::new()),
+            walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::from_env()),
             paths_same_state_this_cycle: 0,
             delivery: DeliveryPolicy::default(),
             dirty_sets: Arc::new(dirty_sets::DirtySets::new()),
