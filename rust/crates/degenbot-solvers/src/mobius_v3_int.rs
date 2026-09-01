@@ -405,8 +405,8 @@ fn cl_hop_min_input_for_output(
 fn walk_event_first_above_predicted(hops: &[WalkHop], ks: &[usize]) -> Option<U256> {
     let p_t0 = std::time::Instant::now();
     let out = walk_event_first_above_predicted_inner(hops, ks);
-    WALK_PRED_US_TOTAL.fetch_add(
-        u64::try_from(p_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+    WALK_PRED_NS_TOTAL.fetch_add(
+        u64::try_from(p_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         std::sync::atomic::Ordering::Relaxed,
     );
     out
@@ -840,18 +840,96 @@ enum WalkHop<'a> {
 /// LARGEST index — the swap entered every zero-cost range.
 /// Loop-17 census: total wall time spent inside `simulate_walk_path`
 /// (process-wide atomics — avoids thread-local TLS budget).
-pub static WALK_SIM_US_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static WALK_SIM_NS_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Loop-17 census: total anchor computation wall time (per-piece shifted
 /// Möbius + isqrt).
-pub static WALK_ANCHOR_US_TOTAL: std::sync::atomic::AtomicU64 =
+pub static WALK_ANCHOR_NS_TOTAL: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 /// Loop-17 census: event-solver prediction wall time.
-pub static WALK_PRED_US_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static WALK_PRED_NS_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Loop-17 census: whole active-set walk wall time.
-pub static WALK_SOLVE_US_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static WALK_SOLVE_NS_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 census: left-edge determination (wall ns + sims consumed inside).
+pub static WALK_CENSUS_EDGE_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_EDGE_SIMS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 census: per-section walk-sim wall time (ns) — subtract from the
+/// section wall to isolate non-sim machinery.
+pub static WALK_CENSUS_SIMNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_EDGE_SIMNS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 census: right-edge determination (wall ns + sims consumed inside).
+pub static WALK_CENSUS_REDGE_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_REDGE_SIMS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_REDGE_SIMNS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 census: direction test + advancement (wall ns + sims consumed).
+pub static WALK_CENSUS_DIR_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_DIR_SIMS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_DIR_SIMNS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 census: terminal refine (wall ns + sims consumed). Includes the
+/// anchor-corner probes and the single-piece refine path.
+pub static WALK_CENSUS_REFINE_NS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_REFINE_SIMS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static WALK_CENSUS_REFINE_SIMNS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 section census helper: records (wall ns, sims, sim wall ns)
+/// between `Mark::start()` and `commit`, attributing them to a section.
+struct Mark {
+    at: std::time::Instant,
+    probes: u64,
+    probe_ns: u64,
+}
+
+impl Mark {
+    #[inline]
+    fn start() -> Self {
+        Self {
+            at: std::time::Instant::now(),
+            probes: u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get))
+                .unwrap_or(u64::MAX),
+            probe_ns: WALK_SIM_NS_TOTAL.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    #[inline]
+    fn commit(
+        self,
+        wall: &std::sync::atomic::AtomicU64,
+        tally: &std::sync::atomic::AtomicU64,
+        probe_ns: &std::sync::atomic::AtomicU64,
+    ) {
+        use std::sync::atomic::Ordering::Relaxed;
+        wall.fetch_add(
+            u64::try_from(self.at.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            Relaxed,
+        );
+        let now_probes =
+            u64::try_from(WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)).unwrap_or(u64::MAX);
+        tally.fetch_add(now_probes.saturating_sub(self.probes), Relaxed);
+        probe_ns.fetch_add(
+            WALK_SIM_NS_TOTAL
+                .load(Relaxed)
+                .saturating_sub(self.probe_ns),
+            Relaxed,
+        );
+    }
+}
 
 fn landed_ending_range_index(crossings: &[IntTickRangeCrossing], available: U256) -> usize {
     debug_assert!(!crossings.is_empty());
@@ -883,8 +961,8 @@ fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
     WALK_PATH_SIMULATIONS.with(|c| c.set(c.get() + 1));
     let sim_t0 = std::time::Instant::now();
     let out = simulate_walk_path_inner(amount_in, hops);
-    WALK_SIM_US_TOTAL.fetch_add(
-        u64::try_from(sim_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+    WALK_SIM_NS_TOTAL.fetch_add(
+        u64::try_from(sim_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         std::sync::atomic::Ordering::Relaxed,
     );
     out
@@ -988,8 +1066,8 @@ fn build_shifted_piece_hops(
 fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
     let a_t0 = std::time::Instant::now();
     let out = walk_piece_anchor_inner(hops, ks);
-    WALK_ANCHOR_US_TOTAL.fetch_add(
-        u64::try_from(a_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+    WALK_ANCHOR_NS_TOTAL.fetch_add(
+        u64::try_from(a_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         std::sync::atomic::Ordering::Relaxed,
     );
     out
@@ -1600,8 +1678,8 @@ const SOLVE_TELEMETRY_SIMS_WARN: usize = 50_000;
 fn solve_active_set_path(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
     let s_t0 = std::time::Instant::now();
     let out = solve_active_set_path_inner(hops);
-    WALK_SOLVE_US_TOTAL.fetch_add(
-        u64::try_from(s_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+    WALK_SOLVE_NS_TOTAL.fetch_add(
+        u64::try_from(s_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         std::sync::atomic::Ordering::Relaxed,
     );
     out
@@ -1797,14 +1875,21 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
             }
             let hi = sat.map_or(anchor.max(U256::from(1024)), |e| e.max(anchor));
             if hi > U256::ZERO {
+                let rq_mk = Mark::start();
                 walk_refine_window(hops, U256::ZERO, hi, &mut rec);
+                rq_mk.commit(
+                    &WALK_CENSUS_REFINE_NS,
+                    &WALK_CENSUS_REFINE_SIMS,
+                    &WALK_CENSUS_REFINE_SIMNS,
+                );
             }
             break;
         }
 
         // Window left edge: reuse the previous piece's right edge when
         // walking consecutively (scan a few steps forward); fall back to a
-        // full bisection otherwise.
+        // full bisection otherwise. (Section-census timers on every exit.)
+        let le_mk = Mark::start();
         let x_l = if ks.iter().all(|&k| k == 0) {
             U256::ZERO
         } else if let Some(prev) = prev_right_edge {
@@ -1834,6 +1919,11 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
                 if landed_any_above(&landed, &ks) {
                     ks = landed;
                     prev_right_edge = None;
+                    le_mk.commit(
+                        &WALK_CENSUS_EDGE_NS,
+                        &WALK_CENSUS_EDGE_SIMS,
+                        &WALK_CENSUS_EDGE_SIMNS,
+                    );
                     continue;
                 }
                 // landed BELOW ks means the left-edge search went wrong;
@@ -1844,13 +1934,29 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
                     if landed_any_above(&landed_full, &ks) {
                         ks = landed_full;
                         prev_right_edge = None;
+                        le_mk.commit(
+                            &WALK_CENSUS_EDGE_NS,
+                            &WALK_CENSUS_EDGE_SIMS,
+                            &WALK_CENSUS_EDGE_SIMNS,
+                        );
                         continue;
                     }
+                    le_mk.commit(
+                        &WALK_CENSUS_EDGE_NS,
+                        &WALK_CENSUS_EDGE_SIMS,
+                        &WALK_CENSUS_EDGE_SIMNS,
+                    );
                     break; // degenerate piece — terminate with what we have
                 }
             }
         }
+        le_mk.commit(
+            &WALK_CENSUS_EDGE_NS,
+            &WALK_CENSUS_EDGE_SIMS,
+            &WALK_CENSUS_EDGE_SIMNS,
+        );
 
+        let re_mk = Mark::start();
         let (x_r, right_confirm_hi) = piece_window_right_edge_evented(
             hops,
             &ks,
@@ -1862,9 +1968,20 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
         // ceil-inversion's prediction vs this bisection bracket. No-op
         // (one bool load) when the gate is unset.
         event_census_record(hops, &ks, x_r, right_confirm_hi);
+        re_mk.commit(
+            &WALK_CENSUS_REDGE_NS,
+            &WALK_CENSUS_REDGE_SIMS,
+            &WALK_CENSUS_REDGE_SIMNS,
+        );
         let Some(xr) = x_r else {
             // Terminal piece (unbounded right): refine and finish.
+            let term_mk = Mark::start();
             refine_at_stop(hops, &ks, x_l, None, anchor, &mut rec, false);
+            term_mk.commit(
+                &WALK_CENSUS_REFINE_NS,
+                &WALK_CENSUS_REFINE_SIMS,
+                &WALK_CENSUS_REFINE_SIMNS,
+            );
             break;
         };
         prev_right_edge = Some(xr);
@@ -1874,18 +1991,33 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
         // edge, with +1-wei staircase tolerance. Climbing ⇒ advance one
         // piece; falling or level ⇒ the peak is at or behind this edge —
         // stop and refine this piece plus its forward neighbor.
+        let di_mk = Mark::start();
         let back = xr.saturating_sub(U256::from(64u64)).max(x_l);
         let fwd = xr.saturating_add(U256::from(64u64));
         let score_back = walk_profit_score(rec.eval_and_record(back, hops).final_output, back);
         let score_fwd = walk_profit_score(rec.eval_and_record(fwd, hops).final_output, fwd);
         let climbing = score_fwd + I256::ONE >= score_back;
-        if climbing {
-            if let Some(next) = landed_beyond(hops, xr, &ks) {
-                ks = next;
-                continue;
-            }
+        let advance = if climbing {
+            landed_beyond(hops, xr, &ks)
+        } else {
+            None
+        };
+        di_mk.commit(
+            &WALK_CENSUS_DIR_NS,
+            &WALK_CENSUS_DIR_SIMS,
+            &WALK_CENSUS_DIR_SIMNS,
+        );
+        if let Some(next) = advance {
+            ks = next;
+            continue;
         }
+        let term_mk = Mark::start();
         refine_at_stop(hops, &ks, x_l, Some(xr), anchor, &mut rec, climbing);
+        term_mk.commit(
+            &WALK_CENSUS_REFINE_NS,
+            &WALK_CENSUS_REFINE_SIMS,
+            &WALK_CENSUS_REFINE_SIMNS,
+        );
         break;
     }
 

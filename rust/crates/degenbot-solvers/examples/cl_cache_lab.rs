@@ -259,16 +259,60 @@ fn main() {
         n_paths += 1;
     }
 
-    let sim_us = degenbot_solvers::mobius_v3_int::WALK_SIM_US_TOTAL
+    let sim_ns = degenbot_solvers::mobius_v3_int::WALK_SIM_NS_TOTAL
         .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let anchor_us = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_US_TOTAL
+    let anchor_ns = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_NS_TOTAL
         .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let pred_us = degenbot_solvers::mobius_v3_int::WALK_PRED_US_TOTAL
+    let pred_ns = degenbot_solvers::mobius_v3_int::WALK_PRED_NS_TOTAL
         .swap(0, std::sync::atomic::Ordering::Relaxed);
-    let solve_us = degenbot_solvers::mobius_v3_int::WALK_SOLVE_US_TOTAL
+    let solve_ns = degenbot_solvers::mobius_v3_int::WALK_SOLVE_NS_TOTAL
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let edge_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_EDGE_NS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let edge_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_EDGE_SIMS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let edge_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_EDGE_SIMNS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let redge_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REDGE_NS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let redge_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REDGE_SIMS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let redge_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REDGE_SIMNS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let dir_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_DIR_NS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let dir_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_DIR_SIMS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let dir_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_DIR_SIMNS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let refine_ns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REFINE_NS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let refine_sims = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REFINE_SIMS
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let refine_simns = degenbot_solvers::mobius_v3_int::WALK_CENSUS_REFINE_SIMNS
         .swap(0, std::sync::atomic::Ordering::Relaxed);
     println!(
-        "  walk-sim: {sim_us} us | anchors: {anchor_us} us | predictions: {pred_us} us | solve: {solve_us} us (all strategies+reference)"
+        "  walk-sim: {:.1} ms | anchors: {:.1} ms | predictions: {:.1} ms | solve: {:.1} ms (all strategies+reference)",
+        sim_ns as f64 / 1e6,
+        anchor_ns as f64 / 1e6,
+        pred_ns as f64 / 1e6,
+        solve_ns as f64 / 1e6
+    );
+    println!(
+        "  sections: edge {:.1} ms ({} sims, sim {:.1} ms) | redge {:.1} ms ({} sims, sim {:.1} ms) | dir {:.1} ms ({} sims, sim {:.1} ms) | refine {:.1} ms ({} sims, sim {:.1} ms) | in-section sim total {:.1} ms",
+        edge_ns as f64 / 1e6,
+        edge_sims,
+        edge_simns as f64 / 1e6,
+        redge_ns as f64 / 1e6,
+        redge_sims,
+        redge_simns as f64 / 1e6,
+        dir_ns as f64 / 1e6,
+        dir_sims,
+        dir_simns as f64 / 1e6,
+        refine_ns as f64 / 1e6,
+        refine_sims,
+        refine_simns as f64 / 1e6,
+        (edge_simns + redge_simns + dir_simns + refine_simns) as f64 / 1e6
     );
     println!(
         "---- per-transition averages over {total_events} events ----\n  reference (full build+solve): {:.2} ms/event",

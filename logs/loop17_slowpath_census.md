@@ -27,25 +27,42 @@ prints them alongside per-strategy refill+solve timings.
 
 ## Key findings
 
+## Key findings (updated after the T3 per-sim strike)
+
 1. Slow paths = 3-hop dense-CL. NOT dominated by rebuild (2.8ms once per
-   pool/block) nor the gate (1.7ms): the walk carries it, and its top bucket
-   is the **sims themselves** — 3,321 probes at ~0.64µs (≈13 probes per piece
-   over 274 pieces: 5 anchor±2, ~3 left-edge straddle, 1 skipped-tuple check,
-   2 right-edge verifies, 2 direction probes).
-2. The cached pipeline additionally pays ~2.4ms of refill/assembly per solve
-   outside the walk — the lab strategies (S1..S7, byte-equal proven) address
-   exactly this slice.
+   pool/block) nor the gate (1.7ms): the walk carries it.
+2. Accurate ns-resolution census (216 lab solves, heaviest quartet):
 
-## Recommended T3 sequence
+   | bucket | per solve | share |
+   |---|---|---|
+   | walk probes (sims) | ~2.69 ms | **69%** |
+   | — anchor ±2 probe sweep | ~0.98 ms | 25% (the top single slice) |
+   | — direction test + advancement | ~0.52 ms | 13% |
+   | — right-edge verifies | ~0.42 ms | 11% |
+   | — refine grids | ~0.47 ms | 12% |
+   | — left-edge straddle | ~0.29 ms | 7% |
+   | anchor compose + isqrt | ~0.82 ms | 21% |
+   | climb machinery (non-sim) | ~0.26 ms | 7% (redge 0.19) |
 
-1. **Per-sim cost** (0.64µs = 3 hops × profile query: binary search + one
-   partial-landing `compute_swap_step_v3`): a specialized narrow-mulDiv path
-   could halve it. Byte-identical, no golden risk — the safest first strike.
-2. **Probe-count reduction** (~13/piece): the left-edge straddle probes and
-   the anchor ±2 sweep revisit landing-derivable quantities. WARNING: probe
-   grid changes shift goldens (1-wei plateau alignment, cf. the loop-15
-   flat-top lesson) — deliberate regeneration + differential discipline.
-3. **Refill assembly** (~2.4ms): wire the best lab strategy (S1/S4) into the
-   production refill path.
+   (The earlier "4.2ms machinery" figure was a census artifact — the sim
+   timer truncated to whole µs, hiding sub-µs sims. All census timers now
+   store ns.)
+3. Per-sim is what it is: ~0.77µs = 3×(crossing partition_point ≈10ns +
+   profile partition + one `compute_swap_step_v3`).
+
+## Recommended T3 sequence — updated state
+
+1. ~~Per-sim cost~~ **DONE** (`a9ae5983e`): byte-identical fast division
+   paths in `compute_swap_step_v3` — power-of-two denominators become
+   shifts (the Q96 sites), narrow operands take 256/256 division, and all
+   rounding-up helpers fuse their remainder pass. Step 278→213ns; walk-sim
+   −29%; reference event 9.82→8.5ms; zero divergences; 2696/2696 suites.
+2. **Probe-count reduction** (~13/piece): the anchor ±2 sweep (~0.98ms/solve)
+   and landed_beyond in the direction test are the landing-derivable
+   candidates. WARNING: probe grid changes shift goldens (1-wei plateau
+   alignment, cf. the loop-15 flat-top lesson) — deliberate regeneration +
+   differential discipline. **Fork: needs a dedicated campaign.**
+3. **Refill assembly** (~2.4ms cached-pipeline slice): wire the best lab
+   strategy (S1/S4) into the production refill path.
 4. Anchor coefficient memoization across consecutive pieces (shared tuple
-   prefixes) for the 0.7ms anchor slice.
+   prefixes) for the 0.82ms anchor-compose slice (pure fn → byte-identical).
