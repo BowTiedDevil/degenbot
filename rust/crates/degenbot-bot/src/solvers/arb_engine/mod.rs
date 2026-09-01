@@ -447,6 +447,12 @@ impl ArbitrageEngine {
     /// for path/solver state; only the core lock type/flavor changes).
     #[must_use]
     pub fn with_core(core: Arc<StateLock<BotState>>) -> Self {
+        // T4: the ONE env-parsing point for the engine's runtime stances
+        // (LPT partition, min_profit floor, walk memo toggles, envelope
+        // caps, census/anchor/event-solver gates). First engine wins.
+        if ::degenbot_solvers::runtime::runtime_is_default() {
+            solver_dispatch::install_engine_env_stances();
+        }
         Self {
             core,
             path_pools: HashMap::new(),
@@ -469,7 +475,10 @@ impl ArbitrageEngine {
             resolved_update_snapshot: HashMap::new(),
             last_walk_sims: parking_lot::Mutex::new(HashMap::new()),
             last_gate_us: parking_lot::Mutex::new(HashMap::new()),
-            walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::from_env()),
+            walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
+                ::degenbot_solvers::runtime::runtime().memo_on,
+                ::degenbot_solvers::runtime::runtime().memo_stats,
+            )),
             paths_same_state_this_cycle: 0,
             delivery: DeliveryPolicy::default(),
             dirty_sets: Arc::new(dirty_sets::DirtySets::new()),

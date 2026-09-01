@@ -96,24 +96,16 @@ pub(crate) type HopProjectionCache = HashMap<(HopType, u64, bool), (CachedProjec
 #[must_use]
 pub(crate) fn projection_memo_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var("DEGENBOT_CL_PROJECTION_CACHE") {
-        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
-            "" | "1" | "on" | "true" | "enabled" => true,
-            "0" | "off" | "false" | "disabled" => false,
-            other => {
-                if WARNED.set(()).is_ok() {
-                    tracing::warn!(
-                        raw = %other,
-                        "DEGENBOT_CL_PROJECTION_CACHE not understood (0|off|false to disable, 1|on|true to enable) — using enabled"
-                    );
-                }
-                true
-            }
-        },
-        Err(_) => true,
-    })
+    *ENABLED.get_or_init(|| PROJECTION_MEMO_STANCE.get().copied().unwrap_or(true))
 }
+
+/// The parsed stance (T4: the engine installer parses
+/// `DEGENBOT_CL_PROJECTION_CACHE` once at construction; default ON).
+pub fn install_projection_memo_stance(enabled: bool) {
+    let _ = PROJECTION_MEMO_STANCE.set(enabled);
+}
+
+static PROJECTION_MEMO_STANCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 /// Why a `project_<family>` hop could not be projected. Granular-but-grouped:
 /// each variant maps 1:1 to a failure mode the flat match today encodes as a

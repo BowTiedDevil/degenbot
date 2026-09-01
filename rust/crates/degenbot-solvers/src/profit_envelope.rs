@@ -164,32 +164,16 @@ fn sampled_compose_lines() -> usize {
     env_compose_lines()
 }
 
-/// Loop-18 T2 sweep knob: tangent-lines-per-hop cap. Default 32 (the
-/// loop-9/16 production value); `DEGENBOT_ENVELOPE_MAX_TANGENT_LINES`
-/// overrides at process start. Higher caps = tighter (lower) envelope =
-/// fewer missed opportunities, more compose time.
+/// Loop-18 T2 sweep knobs read from the injected runtime config (T4) —
+/// defaults 32/48 (the loop-9/16 production values); the owner overrides
+/// at construction. Higher caps = tighter (lower) envelope = fewer missed
+/// opportunities, more compose time.
 fn env_tangent_lines() -> usize {
-    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CAP.get_or_init(|| {
-        std::env::var("DEGENBOT_ENVELOPE_MAX_TANGENT_LINES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(32)
-            .max(1)
-    })
+    crate::runtime::runtime().max_tangent_lines.max(1)
 }
 
-/// Loop-18 T2 sweep knob: composed-survivor line cap.
-/// `DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES` overrides at process start.
 fn env_compose_lines() -> usize {
-    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CAP.get_or_init(|| {
-        std::env::var("DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(48)
-            .max(1)
-    })
+    crate::runtime::runtime().sampled_compose_lines.max(1)
 }
 
 /// Magnitude bit length of an `I512` by direct limb scan (loop-16: the
@@ -1414,27 +1398,6 @@ impl GateDeps<'_> {
 pub struct GateCaptureCfg {
     pub out_path: std::path::PathBuf,
     pub max_paths: u64,
-}
-
-impl GateCaptureCfg {
-    #[must_use]
-    pub fn from_env() -> Option<Self> {
-        if std::env::var_os("DEGENBOT_GATE_CAPTURE").is_none() {
-            return None;
-        }
-        let out_path = std::env::var("DEGENBOT_GATE_CAPTURE_OUT").map_or_else(
-            |_| std::path::PathBuf::from("/tmp/gate_degenerate.jsonl"),
-            std::path::PathBuf::from,
-        );
-        let max_paths = std::env::var("DEGENBOT_GATE_CAPTURE_CAP")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(50);
-        Some(Self {
-            out_path,
-            max_paths,
-        })
-    }
 }
 
 /// The ONE gate entry: a rigorous upper bound on

@@ -113,13 +113,10 @@ fn sims_aware_cost(proxy: usize, last_sims: Option<u64>, last_gate_us: Option<u6
 /// par_iter work-stealing fan-out for the solve phase. Default ON; set
 /// DEGENBOT_LPT_PARTITION=0 to fall back to rayon par_iter for A/B comparison.
 /// The lab report shows LPT achieves 7.80/8 vs rayon 4.91/8.
+/// (T4: the stance is an engine construction field set once from env —
+/// never read at call time.)
 fn lpt_partition_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("DEGENBOT_LPT_PARTITION").map_or(true, |s| {
-            s != "0" && !s.eq_ignore_ascii_case("false") && !s.eq_ignore_ascii_case("off")
-        })
-    })
+    LPT_PARTITION_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Pre-solve profitability floor for the profit-envelope gate (SU7MAE).
@@ -128,14 +125,80 @@ fn lpt_partition_enabled() -> bool {
 /// The full fee-aware derivation (`gas × base_fee_next + priority_fee`, the
 /// same shape as degenbot-execution's assess rule) replaces this once live
 /// numbers justify it — the solver API needs no change for that.
+/// (T4: parsed once from env at engine construction — see the runtime
+/// stance installer; the fn reads the static, never the environment.)
 fn min_profit_floor() -> U256 {
-    static FLOOR: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
-    *FLOOR.get_or_init(|| {
-        std::env::var("DEGENBOT_MIN_PROFIT_WEI")
-            .ok()
-            .and_then(|s| s.parse::<U256>().ok())
-            .unwrap_or(U256::ZERO)
+    MIN_PROFIT_FLOOR_WEI.get().copied().unwrap_or(U256::ZERO)
+}
+
+static LPT_PARTITION_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
+
+/// Degenerate-path capture config parse (M6776W) — the owner side of the
+/// `DEGENBOT_GATE_CAPTURE*` env family (the gate itself reads no env).
+#[must_use]
+fn gate_capture_from_env() -> Option<::degenbot_solvers::profit_envelope::GateCaptureCfg> {
+    if std::env::var_os("DEGENBOT_GATE_CAPTURE").is_none() {
+        return None;
+    }
+    let out_path = std::env::var("DEGENBOT_GATE_CAPTURE_OUT").map_or_else(
+        |_| std::path::PathBuf::from("/tmp/gate_degenerate.jsonl"),
+        std::path::PathBuf::from,
+    );
+    let max_paths = std::env::var("DEGENBOT_GATE_CAPTURE_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    Some(::degenbot_solvers::profit_envelope::GateCaptureCfg {
+        out_path,
+        max_paths,
     })
+}
+
+/// T4: the ONE env-parsing point for the engine's runtime stances — called
+/// once at engine construction; hot paths read the parsed statics/config.
+pub fn install_engine_env_stances() {
+    LPT_PARTITION_ENABLED.store(
+        std::env::var("DEGENBOT_LPT_PARTITION").map_or(true, |s| {
+            s != "0" && !s.eq_ignore_ascii_case("false") && !s.eq_ignore_ascii_case("off")
+        }),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let min_profit = std::env::var("DEGENBOT_MIN_PROFIT_WEI")
+        .ok()
+        .and_then(|s| s.parse::<U256>().ok())
+        .unwrap_or(U256::ZERO);
+    let _ = MIN_PROFIT_FLOOR_WEI.set(min_profit);
+    let memo_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO").as_deref() == Ok("1");
+    let memo_stats = std::env::var("DEGENBOT_SOLVER_WALK_MEMO_STATS").as_deref() == Ok("1");
+    let projection_memo = match std::env::var("DEGENBOT_CL_PROJECTION_CACHE") {
+        Ok(raw) => !matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "disabled"
+        ),
+        Err(_) => true,
+    };
+    crate::bot_core::resolve::install_projection_memo_stance(projection_memo);
+    ::degenbot_solvers::runtime::set_runtime(::degenbot_solvers::runtime::SolveRuntimeConfig {
+        event_solver_legacy: std::env::var("DEGENBOT_WALK_EVENT_SOLVER").as_deref() == Ok("0"),
+        walk_event_census: std::env::var("DEGENBOT_WALK_EVENT_CENSUS").as_deref() == Ok("1"),
+        anchor_sweep: match std::env::var("DEGENBOT_WALK_ANCHOR_SWEEP").as_deref() {
+            Ok("0") => ::degenbot_solvers::runtime::AnchorSweep::Off,
+            Ok("2") => ::degenbot_solvers::runtime::AnchorSweep::CenterOnly,
+            _ => ::degenbot_solvers::runtime::AnchorSweep::Full,
+        },
+        max_tangent_lines: std::env::var("DEGENBOT_ENVELOPE_MAX_TANGENT_LINES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(32),
+        sampled_compose_lines: std::env::var("DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(48),
+        memo_on,
+        memo_stats,
+    });
 }
 
 /// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
@@ -807,7 +870,7 @@ impl ArbitrageEngine {
         // at the owner; the gate itself reads no environment. The prefix-
         // composition cache is generationed by the block epoch inside the
         // gate deps (no public reset to call anymore).
-        let gate_capture = ::degenbot_solvers::profit_envelope::GateCaptureCfg::from_env();
+        let gate_capture = gate_capture_from_env();
         let mut gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
             solve_block,
             gate_capture.as_ref(),

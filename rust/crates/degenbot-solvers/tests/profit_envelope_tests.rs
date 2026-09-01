@@ -727,9 +727,6 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
 fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     let tmp = tempfile::NamedTempFile::new().expect("temp file");
     let path = tmp.path().to_str().unwrap().to_string();
-    std::env::set_var("DEGENBOT_GATE_CAPTURE", "1");
-    std::env::set_var("DEGENBOT_GATE_CAPTURE_OUT", &path);
-    std::env::set_var("DEGENBOT_GATE_CAPTURE_CAP", "10");
 
     // The existing thread-local capture counter persists across tests; reset
     // it so the cap doesn't prematurely fire.
@@ -743,8 +740,10 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
 
     // path_profit_bound returns Unsupported(DegenerateHop) and triggers the
     // capture (the harness supplies the config the gate reads no env for).
-    let capture_cfg = degenbot_solvers::profit_envelope::GateCaptureCfg::from_env()
-        .expect("capture cfg parsed from env");
+    let capture_cfg = degenbot_solvers::profit_envelope::GateCaptureCfg {
+        out_path: std::path::PathBuf::from(&path),
+        max_paths: 10,
+    };
     let deps = degenbot_solvers::profit_envelope::GateDeps {
         epoch: 0,
         prefix_cache: false,
@@ -780,10 +779,6 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
         ranges[0]["gamma_numer"].as_u64() == Some(997_000),
         "gamma_numer must be serialized"
     );
-
-    std::env::remove_var("DEGENBOT_GATE_CAPTURE");
-    std::env::remove_var("DEGENBOT_GATE_CAPTURE_OUT");
-    std::env::remove_var("DEGENBOT_GATE_CAPTURE_CAP");
 }
 
 /// The envelope must NOT reject a CL hop with an extreme entry price.

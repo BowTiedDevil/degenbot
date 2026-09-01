@@ -136,15 +136,6 @@ impl WalkMemo {
         }
     }
 
-    /// Opt-in constructor at the engine-construction boundary (the ONE env
-    /// read; names the gates exactly as the old in-solver reads did).
-    #[must_use]
-    pub fn from_env() -> Self {
-        let memo_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO").as_deref() == Ok("1");
-        let stats_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO_STATS").as_deref() == Ok("1");
-        Self::new(memo_on, stats_on)
-    }
-
     /// Whether either memo gate is on (lets the entry skip the fingerprint +
     /// probe/store entirely when disabled).
     #[must_use]
@@ -538,10 +529,10 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Runtime gate `DEGENBOT_WALK_EVENT_CENSUS=1` (read once).
+/// Census gate from the injected runtime config (T4: no env read here —
+/// the owner packs the stance at construction).
 fn event_census_on() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("DEGENBOT_WALK_EVENT_CENSUS").as_deref() == Ok("1"))
+    crate::runtime::runtime().walk_event_census
 }
 
 fn event_census_bucket(d: U256) -> usize {
@@ -1232,31 +1223,12 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
 ///
 /// Census (live corpus, 104 paths, 9 reps): 158,283 / 158,283 pieces exact;
 /// 0 misses of any size.
-// Rollout gate: `DEGENBOT_WALK_EVENT_SOLVER=0` forces the legacy grow +
-// bisection (A/B toggle for the replay harness; read once per process).
-static EVENT_SOLVER_LEGACY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-/// Loop-17 A/B: `DEGENBOT_WALK_ANCHOR_SWEEP` — `0` disables the per-piece
-/// anchor probe sweep entirely; `2` records the anchor only (no ±2
-/// neighbors); unset/anything else keeps the full ±2 sweep (default =
-/// production).
-#[derive(Clone, Copy)]
-enum AnchorSweep {
-    Full,
-    CenterOnly,
-    Off,
-}
-
-static ANCHOR_SWEEP_MODE: std::sync::OnceLock<AnchorSweep> = std::sync::OnceLock::new();
+// Rollout gate + anchor-sweep stance come from the injected runtime config
+// (SU7MAE T4) — the owner packs the env stances at construction.
+use crate::runtime::AnchorSweep;
 
 fn anchor_sweep_mode() -> AnchorSweep {
-    *ANCHOR_SWEEP_MODE.get_or_init(|| {
-        match std::env::var("DEGENBOT_WALK_ANCHOR_SWEEP").as_deref() {
-            Ok("0") => AnchorSweep::Off,
-            Ok("2") => AnchorSweep::CenterOnly,
-            _ => AnchorSweep::Full,
-        }
-    })
+    crate::runtime::runtime().anchor_sweep
 }
 
 fn piece_window_right_edge_evented(
@@ -1266,11 +1238,9 @@ fn piece_window_right_edge_evented(
     lo_seed: Option<U256>,
     hi_seed: Option<U256>,
 ) -> (Option<U256>, U256) {
-    // Rollout gate: `DEGENBOT_WALK_EVENT_SOLVER=0` forces the legacy grow +
-    // bisection (A/B toggle; read once per process).
-    if *EVENT_SOLVER_LEGACY
-        .get_or_init(|| std::env::var("DEGENBOT_WALK_EVENT_SOLVER").as_deref() == Ok("0"))
-    {
+    // Rollout gate: the runtime config's stance forces the legacy grow +
+    // bisection (A/B toggle; packed by the owner at construction).
+    if crate::runtime::runtime().event_solver_legacy {
         return piece_window_right_edge_seeded(hops, ks, hint, lo_seed, hi_seed);
     }
     if let Some(pa) = walk_event_first_above_predicted(hops, ks) {
