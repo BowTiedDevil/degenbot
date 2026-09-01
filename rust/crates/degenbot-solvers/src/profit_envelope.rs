@@ -22,9 +22,11 @@
 //! validity window (deeper later ranges can beat it). Only the entry-slope
 //! envelope form is sound.
 //!
-//! Unsupported hop families (Solidly/Curve/Balancer) make derivation return
-//! `None`; the caller must NOT skip in that case (conservative).
+//! Unsupported hop families make the gate return `Envelope::Unsupported`;
+//! the caller must NOT skip in that case (conservative) — the verdict type
+//! carries the distinction, so it cannot be ignored by accident.
 
+use crate::mobius_v3_int::{build_cl_crossing_table, ClCrossingTable};
 use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
@@ -357,12 +359,15 @@ fn ceil_div(n: I512, d: I512) -> I512 {
 /// exceed the entry rate when the pool is imbalanced toward the input), so a
 /// tangent-at-zero slope is NOT sound and the amplification-bounded peak-rate
 /// derivation is a documented follow-up.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum HopMath<'a> {
     /// Constant-product hop (exact Möbius family: V2/Aerodrome-style state).
     V2(&'a IntHopState),
-    /// Concentrated-liquidity hop (ordered tick-range sequence, swap direction).
-    Cl(&'a IntV3TickRangeSequence),
+    /// Concentrated-liquidity hop: the ordered tick-range sequence plus its
+    /// carried crossing table (production: the table the resolve pass already
+    /// built — never re-derived per path, BZSOJ7; tableless callers use
+    /// [`HopMath::cl_derived`]).
+    Cl(ClHop<'a>),
     /// Solidly volatile pool (constant-product family). SOUND: identical
     /// Möbius family → the V2 rise+flat lines. The fee is taken on input,
     /// which only reduces output, so the fee-agnostic bound stays rigorous
@@ -395,13 +400,33 @@ pub enum HopMath<'a> {
     ReserveCap { reserve_out: U256 },
 }
 
+/// One CL hop's gate view: the sequence plus its crossing table.
+#[derive(Clone, Debug)]
+pub struct ClHop<'a> {
+    pub seq: &'a IntV3TickRangeSequence,
+    /// Borrowed from the resolve pass's Arc table in production; owned
+    /// (built once via the production builder) in the derived convenience.
+    pub crossings: std::borrow::Cow<'a, ClCrossingTable>,
+}
+
+impl<'a> HopMath<'a> {
+    /// Convenience for callers that only have a sequence (tests, examples,
+    /// golden-reference harnesses): builds the crossing table with the
+    /// production builder and carries it. The derive cost is the caller's —
+    /// live solves always pass tables already built for the walk.
+    #[must_use]
+    pub fn cl_derived(seq: &'a IntV3TickRangeSequence) -> Self {
+        Self::Cl(ClHop {
+            seq,
+            crossings: std::borrow::Cow::Owned(build_cl_crossing_table(seq)),
+        })
+    }
+}
+
 /// Affine lines dominating one hop's output curve, plus the hop's maximum
 /// extractable output (used to cap the search domain).
 #[expect(clippy::too_many_lines)]
-fn hop_lines_and_cap(
-    hop: HopMath<'_>,
-    cl_crossings: Option<&[IntTickRangeCrossing]>,
-) -> Option<(Vec<Line>, U256)> {
+fn hop_lines_and_cap(hop: HopMath<'_>) -> Option<(Vec<Line>, U256)> {
     match hop {
         HopMath::V2(h) => {
             let (r_in, r_out) = (h.reserve_in, h.reserve_out);
@@ -423,7 +448,8 @@ fn hop_lines_and_cap(
             };
             Some((vec![rise, flat], r_out))
         }
-        HopMath::Cl(seq) => {
+        HopMath::Cl(ch) => {
+            let seq = ch.seq;
             // Tangent-line budget: dense CL pools (1-bps USDC/USDT with
             // 700+ ranges) emit one tangent per range. Composition across
             // two CL hops produces R1×R2 composed tangent lines, each
@@ -439,15 +465,12 @@ fn hop_lines_and_cap(
             if seq.ranges.is_empty() {
                 return None;
             }
-            // Precomputed crossings reuse (BZSOJ7): the caller already built
-            // this table once per (pool, direction) for the active-set walk;
-            // deriving it here per path dominated gate time. Fall back to an
-            // owned derivation when no table is supplied.
-            let owned_crossings = cl_crossings.is_none().then(|| seq.crossings());
-            let crossings: &[IntTickRangeCrossing] = match cl_crossings {
-                Some(c) => c,
-                None => owned_crossings.as_deref().unwrap_or(&[]),
-            };
+            // Carried crossings (BZSOJ7): the table the resolve pass already
+            // built once per (pool, direction) for the active-set walk —
+            // deriving it here per path dominated gate time. The table rides
+            // the [ClHop] descriptor; tableless callers pay their own derive
+            // via HopMath::cl_derived.
+            let crossings: &[IntTickRangeCrossing] = ch.crossings.as_ref();
             // O(N) single pass: the crossings table accumulates the
             // per-range crossing once (either caller-carried or derived),
             // replacing the prior quadratic per-iteration re-scan that
@@ -824,12 +847,9 @@ fn cl_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
 /// state + the precise rejection reason to a JSONL file so the pool states
 /// can be replayed offline for fix experimentation.
 ///
-/// # Env vars
-///
-/// - `DEGENBOT_GATE_CAPTURE=1` — enable capture (default: off)
-/// - `DEGENBOT_GATE_CAPTURE_OUT=<path>` — output file (default:
-///   `/tmp/gate_degenerate.jsonl`)
-/// - `DEGENBOT_GATE_CAPTURE_CAP=<N>` — max captured paths (default: 50)
+/// The capture config arrives as a [`GateCaptureCfg`] (the caller builds it
+/// from the `DEGENBOT_GATE_CAPTURE*` env vars — the gate reads no
+/// environment).
 ///
 /// Thread-safety: a static `Mutex<()>` serializes the open + `write_all` +
 /// trailing newline so concurrent path-registration threads cannot
@@ -847,6 +867,7 @@ pub(crate) fn capture_degenerate_path(
     hops: &[Option<HopMath<'_>>],
     reject_hop_index: usize,
     reject_reason: &str,
+    cfg: &GateCaptureCfg,
 ) {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -854,17 +875,10 @@ pub(crate) fn capture_degenerate_path(
 
     static CAPTURE_COUNT: AtomicU64 = AtomicU64::new(0);
     static WRITE_LOCK: Mutex<()> = Mutex::new(());
-    let max: u64 = std::env::var("DEGENBOT_GATE_CAPTURE_CAP")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
-    if CAPTURE_COUNT.fetch_add(1, Ordering::Relaxed) >= max {
+    if CAPTURE_COUNT.fetch_add(1, Ordering::Relaxed) >= cfg.max_paths {
         return;
     }
-    let out_path = std::env::var("DEGENBOT_GATE_CAPTURE_OUT").map_or_else(
-        |_| std::path::PathBuf::from("/tmp/gate_degenerate.jsonl"),
-        std::path::PathBuf::from,
-    );
+    let out_path = cfg.out_path.clone();
     // Serialize every hop's CL ranges (V2/Solidly/Weighted/ReserveCap are
     // captured as their family name + key scalars — the off-line harness
     // reconstructs CL from ranges; V2 from (reserve_in, reserve_out); etc.).
@@ -889,7 +903,7 @@ pub(crate) fn capture_degenerate_path(
                 }
             };
             let ranges = match slot {
-                Some(HopMath::Cl(seq)) => cl_seq_to_json(seq),
+                Some(HopMath::Cl(ch)) => cl_seq_to_json(ch.seq),
                 _ => serde_json::Value::Null,
             };
             serde_json::json!({
@@ -1188,51 +1202,18 @@ pub struct GateStats {
     pub postprune_reduce_ns: u128,
     /// Loop-12 split: sampled-cap construction (ns).
     pub sample_ns: u128,
+    /// Derivation phase wall time (ns) — per-hop tangent-line derivation.
+    pub derive_ns: u128,
+    /// Compose phase wall time (ns) — line chaining + prune over the chain.
+    pub compose_ns: u128,
+    /// Search phase wall time (ns) — the discrete concave max search.
+    pub search_ns: u128,
+    /// Affine composition pairs evaluated (diagnostic).
+    pub pairs: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct GateTls {
-    pub(crate) derive_ns: u128,
-    pub(crate) prefix_hits: u64,
-    pub(crate) boundaries_composed: u64,
-    pub(crate) product_ns: u128,
-    pub(crate) prune_stage1_ns: u128,
-    pub(crate) prune_hull_ns: u128,
-    pub(crate) compose_ns: u128,
-    pub(crate) search_ns: u128,
-    pub(crate) postprune_reduce_ns: u128,
-    pub(crate) sample_ns: u128,
-    pub(crate) pairs: u64,
-    pub(crate) evaluated: u64,
-    pub(crate) skipped: u64,
-    pub(crate) unsupported: u64,
-    pub(crate) none_hop_unmapped: u64,
-    pub(crate) none_degenerate: u64,
-    pub(crate) none_overflow: u64,
-    pub(crate) duration_ns: u128,
-}
-
-thread_local! {
-    // ONE TLS block entry (loop-16 T4): the per-timer statics exhausted
-    // the dlopen static-TLS surplus on the Python import path
-    // ("cannot allocate memory in static TLS block").
-    static GATE_TLS: std::cell::RefCell<GateTls> =
-        const { std::cell::RefCell::new(GateTls::EMPTY) };
-}
-
-impl GateTls {
-    const EMPTY: Self = Self {
-        derive_ns: 0,
-        prefix_hits: 0,
-        boundaries_composed: 0,
-        product_ns: 0,
-        prune_stage1_ns: 0,
-        prune_hull_ns: 0,
-        compose_ns: 0,
-        search_ns: 0,
-        postprune_reduce_ns: 0,
-        sample_ns: 0,
-        pairs: 0,
+impl GateStats {
+    pub(crate) const EMPTY: Self = Self {
         evaluated: 0,
         skipped: 0,
         unsupported: 0,
@@ -1240,73 +1221,68 @@ impl GateTls {
         none_degenerate: 0,
         none_overflow: 0,
         duration_ns: 0,
+        prefix_hits: 0,
+        boundaries_composed: 0,
+        product_ns: 0,
+        prune_stage1_ns: 0,
+        prune_hull_ns: 0,
+        derive_ns: 0,
+        compose_ns: 0,
+        search_ns: 0,
+        postprune_reduce_ns: 0,
+        sample_ns: 0,
+        pairs: 0,
     };
+
+    /// Aggregate one worker thread's per-path counters into these cycle
+    /// totals (replaces the engine's per-field atomic hand-aggregation).
+    pub fn merge(&mut self, other: &Self) {
+        self.evaluated += other.evaluated;
+        self.skipped += other.skipped;
+        self.unsupported += other.unsupported;
+        self.none_hop_unmapped += other.none_hop_unmapped;
+        self.none_degenerate += other.none_degenerate;
+        self.none_overflow += other.none_overflow;
+        self.duration_ns += other.duration_ns;
+        self.prefix_hits += other.prefix_hits;
+        self.boundaries_composed += other.boundaries_composed;
+        self.product_ns += other.product_ns;
+        self.prune_stage1_ns += other.prune_stage1_ns;
+        self.prune_hull_ns += other.prune_hull_ns;
+        self.derive_ns += other.derive_ns;
+        self.compose_ns += other.compose_ns;
+        self.search_ns += other.search_ns;
+        self.postprune_reduce_ns += other.postprune_reduce_ns;
+        self.sample_ns += other.sample_ns;
+        self.pairs += other.pairs;
+    }
 }
 
-pub(crate) fn gate_tls<R>(f: impl FnOnce(&mut GateTls) -> R) -> R {
+thread_local! {
+    // ONE TLS block entry (loop-16 T4): the per-timer statics exhausted
+    // the dlopen static-TLS surplus on the Python import path
+    // ("cannot allocate memory in static TLS block").
+    static GATE_TLS: std::cell::RefCell<GateStats> =
+        const { std::cell::RefCell::new(GateStats::EMPTY) };
+}
+
+pub(crate) fn gate_tls<R>(f: impl FnOnce(&mut GateStats) -> R) -> R {
     GATE_TLS.with(|t| f(&mut t.borrow_mut()))
 }
 
 /// Prefix-composition cache (loop-8): composed lower-envelope line sets
-/// between hop boundaries, keyed by the crossing-table allocation pointers
-/// of the CL hops and fingerprinted on first/last range anchors. The solve
-/// cycle clears it per block (paths inside one drain share pool prefixes
-/// heavily; across blocks the fingerprints guard pool updates that reuse
-/// an allocation address).
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct HopSliceFingerprint {
-    len: usize,
-    first_p_entry: U256,
-    first_liq: U256,
-    last_p_upper: U256,
-    last_liq: U256,
-}
-
-fn hop_slice_fingerprint(crossings: &[IntTickRangeCrossing]) -> HopSliceFingerprint {
-    let Some(first) = crossings.first() else {
-        return HopSliceFingerprint {
-            len: 0,
-            first_p_entry: U256::ZERO,
-            first_liq: U256::ZERO,
-            last_p_upper: U256::ZERO,
-            last_liq: U256::ZERO,
-        };
-    };
-    let last = crossings.last().unwrap_or(first);
-    HopSliceFingerprint {
-        len: crossings.len(),
-        first_p_entry: first.ending_range.sqrt_price_x96,
-        first_liq: U256::from(first.ending_range.liquidity),
-        last_p_upper: if last.ending_range.zero_for_one {
-            last.ending_range.sqrt_price_lower_x96
-        } else {
-            last.ending_range.sqrt_price_upper_x96
-        },
-        last_liq: U256::from(last.ending_range.liquidity),
-    }
-}
-
-/// Chain identity of one hop for the prefix cache (loop-16 T3). CL hops
-/// key on the crossing-table allocation pointer (Arc-stable per solve
-/// cycle); Möbius-family hops (V2 / Solidly volatile) key on a content
-/// hash of reserves + fee — allocation-independent and exact-checked by
-/// the stored fingerprint.
+/// between hop boundaries, keyed by a FULL-CONTENT key per hop — the CL
+/// hop's whole crossing table hashed, the Möbius hop a reserves+fee hash
+/// (the allocation-pointer key + endpoint-fingerprint revalidation pair is
+/// retired: identical content is the common case across a block's paths,
+/// and a 128-bit FNV hit is the worst-case collision). Entries are
+/// generationed by the solve-cycle epoch carried in [`GateDeps`]: first
+/// touch of a new epoch clears older entries, so no entry survives a block
+/// boundary and no public reset exists.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum HopCacheKey {
-    ClTable(usize),
+    ClTable(u128),
     MobiusHop(u128),
-}
-
-/// Full content fingerprint of one chain hop (hit validation).
-#[derive(Clone, PartialEq, Eq, Debug)]
-enum HopCacheFingerprint {
-    Cl(HopSliceFingerprint),
-    Mobius {
-        reserve_in: U256,
-        reserve_out: U256,
-        gamma_numer: U256,
-        fee_denom: U256,
-    },
 }
 
 /// FNV-1a-style 128-bit content mix for `U256` words.
@@ -1317,231 +1293,181 @@ fn content_mix_u256(mut h: u128, v: &U256) -> u128 {
     h
 }
 
-struct PrefixCacheEntry {
-    lines: Vec<Line>,
-    fingerprints: Vec<HopCacheFingerprint>,
+/// Full-content key of one CL hop's crossing table. Hashing the whole table
+/// per path costs a few ns/entry — far below the tangent-derivation +
+/// compose work the cache saves, and immune to the allocator address reuse
+/// the old pointer key only partially guarded against (its endpoint
+/// fingerprints could not see mid-table pool updates).
+fn cl_table_key(crossings: &[IntTickRangeCrossing]) -> u128 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u128 ^ (crossings.len() as u128);
+    for cr in crossings {
+        h = content_mix_u256(h, &cr.crossing_gross_input);
+        h = content_mix_u256(h, &cr.crossing_output);
+        let er = &cr.ending_range;
+        h = content_mix_u256(h, &er.sqrt_price_x96);
+        h = content_mix_u256(h, &er.sqrt_price_lower_x96);
+        h = content_mix_u256(h, &er.sqrt_price_upper_x96);
+        h = (h ^ u128::from(er.liquidity)).wrapping_mul(0x0000_0100_0000_01B3);
+        h = (h
+            ^ u128::from(er.gamma_numer)
+            ^ u128::from(er.fee_denom)
+            ^ u128::from(u64::from(er.zero_for_one)))
+        .wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
 }
 
-static PREFIX_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<Vec<HopCacheKey>, PrefixCacheEntry>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// Clear the prefix-composition cache. The bot's solve cycle calls this once
-/// per drain (alongside walk-stats reset) so in-block prefix reuse is
-/// maximal and no entry survives a block boundary.
-pub fn reset_envelope_prefix_cache() {
-    let Ok(mut cache) = PREFIX_CACHE.lock() else {
-        return;
-    };
-    cache.clear();
+struct PrefixCacheState {
+    epoch: u64,
+    map: std::collections::HashMap<Vec<HopCacheKey>, Vec<Line>>,
 }
+
+static PREFIX_CACHE: std::sync::LazyLock<std::sync::Mutex<PrefixCacheState>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(PrefixCacheState {
+            epoch: 0,
+            map: std::collections::HashMap::new(),
+        })
+    });
 
 /// Reset all gate counters on the calling thread (call at solve-cycle start,
 /// mirroring [`crate::mobius_v3_int::reset_walk_stats`]).
 pub fn reset_gate_stats() {
-    gate_tls(|t| t.pairs = 0);
-    gate_tls(|t| t.prefix_hits = 0);
-    gate_tls(|t| t.boundaries_composed = 0);
-    gate_tls(|t| t.product_ns = 0);
-    gate_tls(|t| t.prune_stage1_ns = 0);
-    gate_tls(|t| t.prune_hull_ns = 0);
-    gate_tls(|t| t.derive_ns = 0);
-    gate_tls(|t| t.compose_ns = 0);
-    gate_tls(|t| t.search_ns = 0);
-    gate_tls(|t| t.postprune_reduce_ns = 0);
-    gate_tls(|t| t.sample_ns = 0);
-    gate_tls(|t| t.evaluated = 0);
-    gate_tls(|t| t.skipped = 0);
-    gate_tls(|t| t.unsupported = 0);
-    gate_tls(|t| t.none_hop_unmapped = 0);
-    gate_tls(|t| t.none_degenerate = 0);
-    gate_tls(|t| t.none_overflow = 0);
-    gate_tls(|t| t.duration_ns = 0);
-    gate_tls(|t| t.prefix_hits = 0);
-    gate_tls(|t| t.boundaries_composed = 0);
+    gate_tls(|t| *t = GateStats::EMPTY);
 }
 
-/// Read-and-clear the calling thread's gate counters.
+/// Read-and-clear the calling thread's gate counters (the ONE read-back
+/// accessor — phase splits and pair volume are fields of the same struct).
 #[must_use]
 pub fn take_last_gate_stats() -> GateStats {
-    let evaluated = gate_tls(|t| {
-        let v = t.evaluated;
-        t.evaluated = 0;
-        v
-    });
-    let skipped = gate_tls(|t| {
-        let v = t.skipped;
-        t.skipped = 0;
-        v
-    });
-    let unsupported = gate_tls(|t| {
-        let v = t.unsupported;
-        t.unsupported = 0;
-        v
-    });
-    let none_hop_unmapped = gate_tls(|t| {
-        let v = t.none_hop_unmapped;
-        t.none_hop_unmapped = 0;
-        v
-    });
-    let none_degenerate = gate_tls(|t| {
-        let v = t.none_degenerate;
-        t.none_degenerate = 0;
-        v
-    });
-    let none_overflow = gate_tls(|t| {
-        let v = t.none_overflow;
-        t.none_overflow = 0;
-        v
-    });
-    let duration_ns = gate_tls(|t| {
-        let v = t.duration_ns;
-        t.duration_ns = 0;
-        v
-    });
-    let prefix_hits = gate_tls(|t| {
-        let v = t.prefix_hits;
-        t.prefix_hits = 0;
-        v
-    });
-    let boundaries_composed = gate_tls(|t| {
-        let v = t.boundaries_composed;
-        t.boundaries_composed = 0;
-        v
-    });
-    let product_ns = gate_tls(|t| {
-        let v = t.product_ns;
-        t.product_ns = 0;
-        v
-    });
-    let prune_stage1_ns = gate_tls(|t| {
-        let v = t.prune_stage1_ns;
-        t.prune_stage1_ns = 0;
-        v
-    });
-    let prune_hull_ns = gate_tls(|t| {
-        let v = t.prune_hull_ns;
-        t.prune_hull_ns = 0;
-        v
-    });
-    let postprune_reduce_ns = gate_tls(|t| {
-        let v = t.postprune_reduce_ns;
-        t.postprune_reduce_ns = 0;
-        v
-    });
-    let sample_ns = gate_tls(|t| {
-        let v = t.sample_ns;
-        t.sample_ns = 0;
-        v
-    });
-    GateStats {
-        evaluated,
-        skipped,
-        unsupported,
-        none_hop_unmapped,
-        none_degenerate,
-        none_overflow,
-        duration_ns,
-        prefix_hits,
-        boundaries_composed,
-        product_ns,
-        prune_stage1_ns,
-        prune_hull_ns,
-        postprune_reduce_ns,
-        sample_ns,
+    gate_tls(|t| std::mem::replace(t, GateStats::EMPTY))
+}
+
+/// The gate's typed verdict (SU7MAE deepening): [`Envelope::Bound`] is a
+/// rigorous upper bound on `max_x [path_output(x) − x]` — skip ONLY when its
+/// value is at or below the caller's profit floor. [`Envelope::Unsupported`]
+/// means NO sound bound exists: the path is SOLVED unscreened, never skipped
+/// (type-enforced replacement of the overloaded `None`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Envelope {
+    Bound(U256),
+    Unsupported(GateSkipCause),
+}
+
+/// Why no bound was derivable (the per-cause M6776W counters name the same
+/// three exits).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GateSkipCause {
+    /// A hop slot was `None` (caller couldn't map the family).
+    UnmappedHop,
+    /// A hop's line derivation rejected (zero reserves / no reachable
+    /// liquidity).
+    DegenerateHop,
+    /// A coefficient or domain overflow made the bound unusable.
+    DomainOverflow,
+}
+
+/// The gate's per-call dependency value. Carries everything that used to be
+/// process-global: the solve-cycle epoch (the prefix cache drops entries
+/// from an older epoch on first touch), the cache opt-in, and the optional
+/// degenerate-path capture config. One interface, no hidden state.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GateDeps<'a> {
+    pub epoch: u64,
+    pub prefix_cache: bool,
+    pub capture: Option<&'a GateCaptureCfg>,
+}
+
+impl GateDeps<'_> {
+    /// Offline/cacheless: no prefix reuse, epoch 0, capture off.
+    #[must_use]
+    pub fn offline() -> Self {
+        Self::default()
+    }
+
+    /// Production solve cycle: the prefix cache against this block's epoch.
+    #[must_use]
+    pub fn per_block(epoch: u64, capture: Option<&GateCaptureCfg>) -> GateDeps<'_> {
+        GateDeps {
+            epoch,
+            prefix_cache: true,
+            capture,
+        }
     }
 }
 
-/// Read the gate phase counters WITHOUT clearing (mirror of
-/// `crate::mobius_v3_int::peek_walk_stats`).
-#[must_use]
-pub fn peek_gate_phases() -> (u128, u128, u128) {
-    gate_tls(|t| (t.derive_ns, t.compose_ns, t.search_ns))
+/// Degenerate-path capture config (M6776W): where to write + how many paths
+/// to capture. The production engine and the harnesses build it from the
+/// `DEGENBOT_GATE_CAPTURE*` env vars via [`GateCaptureCfg::from_env`]; the
+/// gate itself reads no environment.
+#[derive(Clone, Debug)]
+pub struct GateCaptureCfg {
+    pub out_path: std::path::PathBuf,
+    pub max_paths: u64,
 }
 
-/// Read-and-clear the gate phase counters (per-path isolation for benches).
-#[must_use]
-pub fn take_gate_phases() -> (u128, u128, u128) {
-    gate_tls(|t| {
-        let v = (t.derive_ns, t.compose_ns, t.search_ns);
-        t.derive_ns = 0;
-        t.compose_ns = 0;
-        t.search_ns = 0;
-        v
-    })
+impl GateCaptureCfg {
+    #[must_use]
+    pub fn from_env() -> Option<Self> {
+        if std::env::var_os("DEGENBOT_GATE_CAPTURE").is_none() {
+            return None;
+        }
+        let out_path = std::env::var("DEGENBOT_GATE_CAPTURE_OUT").map_or_else(
+            |_| std::path::PathBuf::from("/tmp/gate_degenerate.jsonl"),
+            std::path::PathBuf::from,
+        );
+        let max_paths = std::env::var("DEGENBOT_GATE_CAPTURE_CAP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(50);
+        Some(Self {
+            out_path,
+            max_paths,
+        })
+    }
 }
 
-/// Composition pair volume since last reset (diagnostic only).
+/// The ONE gate entry: a rigorous upper bound on
+/// `max_x [path_output(x) − x]`, or a typed [`GateSkipCause`]. Crossings ride
+/// each CL hop's [`ClHop`] descriptor; the prefix-composition cache is keyed
+/// on full hop content and generationed by [`GateDeps::epoch`].
 #[must_use]
-pub fn take_gate_pairs() -> u64 {
-    gate_tls(|t| {
-        let v = t.pairs;
-        t.pairs = 0;
-        v
-    })
-}
-
-/// Rigorous upper bound on `max_x [path_output(x) − x]`, or `None` when any
-/// hop is unsupported/degenerate (callers MUST NOT skip on `None`).
-///
-/// Derives each CL hop's crossing table per call.
-#[must_use]
-pub fn path_profit_bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
-    path_profit_bound_with_crossings(hops, &[])
-}
-
-/// [`path_profit_bound`] fed with precomputed per-Cl-hop crossing tables,
-/// parallel to `hops` (`None` = non-CL hop or derive internally). Live solves
-/// already carry the Arc crossing table on each resolved hop (built once per
-/// pool direction for the active-set walk); re-deriving it inside the
-/// envelope per path dominated gate time (loop-7 S3GK3S finance: gate.derive
-/// 1.42s/block for 1.1k paths against walk-carrying tables). Byte-identical
-/// results to the self-derived path — this is purely derivation reuse.
-#[must_use]
-pub fn path_profit_bound_with_crossings(
-    hops: &[Option<HopMath<'_>>],
-    cl_crossings: &[Option<&[IntTickRangeCrossing]>],
-) -> Option<U256> {
-    path_profit_bound_with_crossings_and_prefixes(hops, cl_crossings, false)
-}
-
-/// [`path_profit_bound_with_crossings`] with the prefix-composition cache
-/// OPTED IN. The cache keys on crossing-table ALLOCATION POINTERS and its
-/// liveness contract is "tables stay alive for the whole solve cycle", which
-/// holds for the bot's Arc projection tables but NOT for tests that rebuild
-/// perishable Vecs per call (allocator address reuse + fingerprint
-/// coincidence could serve a stale entry). Direct parity/offline callers must
-/// use the cacheless entry above; the bot's solve cycle is the only opt-in
-/// caller.
-#[must_use]
-pub fn path_profit_bound_with_crossings_and_prefixes(
-    hops: &[Option<HopMath<'_>>],
-    cl_crossings: &[Option<&[IntTickRangeCrossing]>],
-    prefix_cache_on: bool,
-) -> Option<U256> {
+pub fn path_profit_bound(hops: &[Option<HopMath<'_>>], deps: &GateDeps<'_>) -> Envelope {
     let gate_t0 = std::time::Instant::now();
-    let result = path_profit_bound_inner(hops, cl_crossings, prefix_cache_on);
+    let result = path_profit_bound_inner(hops, deps);
     gate_tls(|t| t.duration_ns = gate_t0.elapsed().as_nanos());
-    result
+    match result {
+        Ok(b) => {
+            gate_tls(|t| t.evaluated += 1);
+            Envelope::Bound(b)
+        }
+        Err(cause) => {
+            gate_tls(|t| {
+                t.unsupported += 1;
+                match cause {
+                    GateSkipCause::UnmappedHop => t.none_hop_unmapped += 1,
+                    GateSkipCause::DegenerateHop => t.none_degenerate += 1,
+                    GateSkipCause::DomainOverflow => t.none_overflow += 1,
+                }
+            });
+            Envelope::Unsupported(cause)
+        }
+    }
 }
 
 #[expect(clippy::too_many_lines)]
 fn path_profit_bound_inner(
     hops: &[Option<HopMath<'_>>],
-    cl_crossings: &[Option<&[IntTickRangeCrossing]>],
-    prefix_cache_on: bool,
-) -> Option<U256> {
+    deps: &GateDeps<'_>,
+) -> Result<U256, GateSkipCause> {
     let mut all_hops: Vec<(Vec<Line>, U256)> = Vec::with_capacity(hops.len());
     let mut xmax = U256::ZERO;
     let phase_derive = std::time::Instant::now();
     for (hop_idx, slot) in hops.iter().enumerate() {
         let Some(hop) = slot.as_ref() else {
-            gate_tls(|t| t.none_hop_unmapped += 1);
-            return None;
+            return Err(GateSkipCause::UnmappedHop);
         };
-        let cl_crossings_i = cl_crossings.get(hop_idx).copied().flatten();
-        let Some((hop_ls, cap)) = hop_lines_and_cap(*hop, cl_crossings_i) else {
-            gate_tls(|t| t.none_degenerate += 1);
+        let Some((hop_ls, cap)) = hop_lines_and_cap(hop.clone()) else {
             // M6776W degenerate diagnostic: log the hop family + the reject
             // reason so the steady-state degenerate rate can be classified as
             // the expected shape (sparse CL with empty active range / zero
@@ -1552,12 +1478,12 @@ fn path_profit_bound_inner(
                     let z = h.reserve_in.is_zero() || h.reserve_out.is_zero();
                     format!("V2(zero_reserve={z})")
                 }
-                HopMath::Cl(seq) => {
-                    let empty = seq.ranges.is_empty();
-                    let reason = classify_cl_rejection(seq);
+                HopMath::Cl(ch) => {
+                    let empty = ch.seq.ranges.is_empty();
+                    let reason = classify_cl_rejection(ch.seq);
                     format!(
                         "Cl(ranges={n},empty={empty},{reason})",
-                        n = seq.ranges.len()
+                        n = ch.seq.ranges.len()
                     )
                 }
                 HopMath::SolidlyVolatile {
@@ -1589,23 +1515,22 @@ fn path_profit_bound_inner(
                 family = %family,
                 "[gate] degenerate hop rejected (impossible to bound — solved unscreened)"
             );
-            // M6776W golden capture: serialize the full per-hop state when
-            // env-gated so the pool states can be replayed offline for fix
-            // experimentation (DEGENBOT_GATE_CAPTURE=1).
-            if std::env::var_os("DEGENBOT_GATE_CAPTURE").is_some() {
+            // M6776W golden capture: serialize the full per-hop state when a
+            // capture harness is configured so the pool states can be replayed
+            // offline for fix experimentation.
+            if let Some(cfg) = deps.capture {
                 let reason = match hop {
-                    HopMath::Cl(seq) => classify_cl_rejection(seq),
+                    HopMath::Cl(ch) => classify_cl_rejection(ch.seq),
                     _ => family.clone(),
                 };
-                capture_degenerate_path(hops, hop_idx, &reason);
+                capture_degenerate_path(hops, hop_idx, &reason, cfg);
             }
-            return None;
+            return Err(GateSkipCause::DegenerateHop);
         };
         if let Some(v) = xmax.checked_add(cap) {
             xmax = v;
         } else {
-            gate_tls(|t| t.none_overflow += 1);
-            return None;
+            return Err(GateSkipCause::DomainOverflow);
         }
         all_hops.push((hop_ls, cap));
     }
@@ -1616,19 +1541,12 @@ fn path_profit_bound_inner(
     // input, so the pruning endpoint assumption holds at discard time.
     let mut lines2 = vec![Line::IDENTITY];
     let domain = xmax;
-    // Prefix-composition cache (loop-8): crossing-table allocation pointers
-    // per hop — the key for the composed-boundary line-set cache above.
-    let crossing_ptrs: Vec<Option<usize>> = (0..hops.len())
-        .map(|i| {
-            cl_crossings
-                .get(i)
-                .copied()
-                .flatten()
-                .map(|s| s.as_ptr() as usize)
-        })
-        .collect();
-    // Loop-16 T3: the chain grows through Möbius-family hops too (content
-    // hash keys — allocation-independent).
+    // Prefix-composition cache (loop-8): every chainable hop contributes a
+    // FULL-CONTENT key — the CL hop's whole crossing table hashed (a content
+    // hash, not an allocation pointer; the pointer key + endpoint-fingerprint
+    // revalidation pair is retired), the Möbius hop a reserves+fee hash. A
+    // 128-bit FNV hit is the only stale-serve risk — the same trust level
+    // the Möbius key already carried.
     //
     // Cross-DOMAIN reuse is sound WITHOUT keying on the domain: every
     // stored line globally dominates the true prefix output (tangent
@@ -1646,22 +1564,11 @@ fn path_profit_bound_inner(
             h = content_mix_u256(h, gamma_numer);
             content_mix_u256(h, fee_denom)
         };
-    let mobius_fp =
-        |reserve_in: &U256, reserve_out: &U256, gamma_numer: &U256, fee_denom: &U256| {
-            HopCacheFingerprint::Mobius {
-                reserve_in: *reserve_in,
-                reserve_out: *reserve_out,
-                gamma_numer: *gamma_numer,
-                fee_denom: *fee_denom,
-            }
-        };
     let hop_key = |hop_idx: usize| -> Option<HopCacheKey> {
         match hops.get(hop_idx).and_then(Option::as_ref) {
-            Some(HopMath::Cl(_)) => crossing_ptrs
-                .get(hop_idx)
-                .copied()
-                .flatten()
-                .map(HopCacheKey::ClTable),
+            Some(HopMath::Cl(ch)) => {
+                Some(HopCacheKey::ClTable(cl_table_key(ch.crossings.as_ref())))
+            }
             Some(HopMath::V2(h)) => Some(HopCacheKey::MobiusHop(mobius_key(
                 &h.reserve_in,
                 &h.reserve_out,
@@ -1673,7 +1580,7 @@ fn path_profit_bound_inner(
     };
     let mut chain: Vec<HopCacheKey> = Vec::with_capacity(hops.len());
     for (hop_idx, (hop_ls, _)) in all_hops.iter_mut().enumerate() {
-        match if prefix_cache_on {
+        match if deps.prefix_cache {
             hop_key(hop_idx)
         } else {
             None
@@ -1681,84 +1588,20 @@ fn path_profit_bound_inner(
             Some(k) => chain.push(k),
             None => chain.clear(),
         }
-        let chainable = prefix_cache_on && !chain.is_empty();
+        let chainable = deps.prefix_cache && !chain.is_empty();
         if chainable {
-            // Cache lookup for this exact prefix + domain. Fingerprints
-            // must match every hop's current content (guards pool-state
-            // updates that reused a table allocation since insertion, and
-            // Möbius hash collisions — checked exactly).
+            // Cache lookup for this exact content chain. The key IS the full
+            // per-hop content, so a hit is a content match; entries from an
+            // older epoch are dropped on first touch of the new one (no
+            // public reset — the epoch rides [GateDeps]).
             let hit = match PREFIX_CACHE.lock() {
-                Ok(cache) => cache.get(&chain).and_then(|entry| {
-                    if entry.fingerprints.len() != chain.len() {
-                        return None;
+                Ok(mut cache) => {
+                    if cache.epoch != deps.epoch {
+                        cache.epoch = deps.epoch;
+                        cache.map.clear();
                     }
-                    let mut ok = true;
-                    for (i, key) in chain.iter().enumerate() {
-                        match key {
-                            HopCacheKey::ClTable(_) => {
-                                let Some(slice) = cl_crossings.get(i).copied().flatten() else {
-                                    ok = false;
-                                    break;
-                                };
-                                let stored = match &entry.fingerprints[i] {
-                                    HopCacheFingerprint::Cl(f) => f,
-                                    _ => {
-                                        ok = false;
-                                        break;
-                                    }
-                                };
-                                let Some(f) = slice.first() else {
-                                    ok = false;
-                                    break;
-                                };
-                                let Some(l) = slice.last() else {
-                                    ok = false;
-                                    break;
-                                };
-                                if stored.len != slice.len()
-                                    || stored.first_p_entry != f.ending_range.sqrt_price_x96
-                                    || stored.first_liq != U256::from(f.ending_range.liquidity)
-                                    || stored.last_p_upper
-                                        != (if l.ending_range.zero_for_one {
-                                            l.ending_range.sqrt_price_lower_x96
-                                        } else {
-                                            l.ending_range.sqrt_price_upper_x96
-                                        })
-                                    || stored.last_liq != U256::from(l.ending_range.liquidity)
-                                {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                            HopCacheKey::MobiusHop(_) => {
-                                let Some(HopMath::V2(h)) = hops.get(i).and_then(Option::as_ref)
-                                else {
-                                    ok = false;
-                                    break;
-                                };
-                                let stored_ok = match &entry.fingerprints[i] {
-                                    HopCacheFingerprint::Mobius {
-                                        reserve_in,
-                                        reserve_out,
-                                        gamma_numer,
-                                        fee_denom,
-                                    } => {
-                                        *reserve_in == h.reserve_in
-                                            && *reserve_out == h.reserve_out
-                                            && *gamma_numer == h.gamma_numer
-                                            && *fee_denom == h.fee_denom
-                                    }
-                                    _ => false,
-                                };
-                                if !stored_ok {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    ok.then(|| entry.lines.clone())
-                }),
+                    cache.map.get(&chain).cloned()
+                }
                 Err(_) => None,
             };
             if let Some(hit_lines) = hit {
@@ -1788,8 +1631,7 @@ fn path_profit_bound_inner(
             for outer in hop_ls {
                 for inner in &lines2 {
                     let Some(composed) = outer.compose(inner) else {
-                        gate_tls(|t| t.none_overflow += 1);
-                        return None;
+                        return Err(GateSkipCause::DomainOverflow);
                     };
                     next.push(composed);
                 }
@@ -1834,43 +1676,15 @@ fn path_profit_bound_inner(
         if let Some(t0) = samp_t0 {
             gate_tls(|t| t.sample_ns += t0.elapsed().as_nanos());
         }
-        // Cache the composed prefix set under this pure-CL prefix key with
-        // the current crossing fingerprints (loop-8). Only miss paths reach
-        // here; a hit path returns early via the hit branch above.
-        if !chain.is_empty() && chainable {
-            let mut fps = Vec::with_capacity(chain.len());
-            let mut fp_ok = true;
-            for (i, key) in chain.iter().enumerate() {
-                match key {
-                    HopCacheKey::ClTable(_) => {
-                        let Some(slice) = cl_crossings.get(i).copied().flatten() else {
-                            fp_ok = false;
-                            break;
-                        };
-                        fps.push(HopCacheFingerprint::Cl(hop_slice_fingerprint(slice)));
-                    }
-                    HopCacheKey::MobiusHop(_) => {
-                        let Some(HopMath::V2(h)) = hops.get(i).and_then(Option::as_ref) else {
-                            fp_ok = false;
-                            break;
-                        };
-                        fps.push(mobius_fp(
-                            &h.reserve_in,
-                            &h.reserve_out,
-                            &h.gamma_numer,
-                            &h.fee_denom,
-                        ));
-                    }
+        // Cache the composed prefix set under the content-key chain. Only
+        // miss paths reach here; a hit path returns early above.
+        if chainable {
+            if let Ok(mut cache) = PREFIX_CACHE.lock() {
+                if cache.epoch != deps.epoch {
+                    cache.epoch = deps.epoch;
+                    cache.map.clear();
                 }
-            }
-            if fp_ok {
-                let entry = PrefixCacheEntry {
-                    lines: next.clone(),
-                    fingerprints: fps,
-                };
-                if let Ok(mut cache) = PREFIX_CACHE.lock() {
-                    cache.insert(chain.clone(), entry);
-                }
+                cache.map.insert(chain.clone(), next.clone());
             }
         }
         lines2 = next;
@@ -1892,7 +1706,7 @@ fn path_profit_bound_inner(
     }
     // Discrete concave max of f(x) = min_lines(x) − x over [0, xmax].
     if xmax.is_zero() {
-        return Some(U256::ZERO);
+        return Ok(U256::ZERO);
     }
     // Lower-envelope hull over the surviving lines: order by slope (b/c,
     // exact rational compare) descending, drop same-slope dominated
@@ -2018,9 +1832,9 @@ fn path_profit_bound_inner(
     // skip decision is the only contract; the 1/2048 (~0.05%) looseness is
     // invisible to live skips against the incumbent/floor comparisons.
     if let Some(b) = narrow(best) {
-        return Some(b.saturating_add(b / U256::from(2048u64)));
+        return Ok(b.saturating_add(b / U256::from(2048u64)));
     }
-    narrow(best)
+    Err(GateSkipCause::DomainOverflow)
 }
 
 /// Narrow a non-negative bound value; `None` on overflow (>U256::MAX is
@@ -2050,7 +1864,7 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
             gate_tls(|t| t.none_hop_unmapped += 1);
             return None;
         };
-        let (hop_ls, _cap) = hop_lines_and_cap(*hop, None)?;
+        let (hop_ls, _cap) = hop_lines_and_cap(hop.clone())?;
         let mut next: Vec<Line> = Vec::with_capacity(lines.len() * hop_ls.len());
         for outer in &hop_ls {
             for inner in &lines {

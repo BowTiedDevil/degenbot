@@ -10,7 +10,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::profit_envelope::{path_profit_bound, HopMath};
+use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 
 fn u256(s: &str) -> Result<U256, String> {
@@ -46,6 +46,7 @@ fn clr(v: &Value) -> Result<IntV3TickRangeHop, String> {
 }
 
 fn main() {
+    let gate_deps = GateDeps::offline();
     let path = std::env::args().nth(1).unwrap_or_else(|| {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/heavy_mixed_solve_captures.jsonl")
@@ -109,7 +110,8 @@ fn main() {
                 }
             }
         }
-        // Build views: interleave V2 and CL references
+        // Build views: interleave V2 and CL references (CL hops carry their
+        // crossing table via the derived convenience — cost is the bench's)
         let mut vi = 0; // v2_states index
         let mut ci = 0; // cl_seqs index
         let mut views: Vec<Option<HopMath>> = Vec::with_capacity(hops.len());
@@ -118,7 +120,7 @@ fn main() {
                 views.push(Some(HopMath::V2(&v2_states[vi])));
                 vi += 1;
             } else {
-                views.push(Some(HopMath::Cl(&cl_seqs[ci])));
+                views.push(Some(HopMath::cl_derived(&cl_seqs[ci])));
                 ci += 1;
             }
         }
@@ -132,7 +134,7 @@ fn main() {
         let mut derive_times = Vec::new();
         for _ in 0..9 {
             let t0 = std::time::Instant::now();
-            let _ = path_profit_bound(&views);
+            let _ = path_profit_bound(&views, &gate_deps);
             times.push(t0.elapsed().as_micros());
             let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
             prod_times.push(gs.product_ns / 1_000);
@@ -141,8 +143,7 @@ fn main() {
             reduce_times.push(gs.duration_ns / 1_000);
             postprune_times.push(gs.postprune_reduce_ns / 1_000);
             sample_times.push(gs.sample_ns / 1_000);
-            let (d, _, _) = degenbot_solvers::profit_envelope::take_gate_phases();
-            derive_times.push(d / 1_000);
+            derive_times.push(gs.derive_ns / 1_000);
         }
         let m = |v: &Vec<u128>| {
             let mut t = v.clone();

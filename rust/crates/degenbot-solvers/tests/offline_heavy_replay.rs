@@ -17,9 +17,7 @@ use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::mobius_v3_int::{
     int_solve_cl_path, reset_walk_stats, take_last_walk_stats_full,
 };
-use degenbot_solvers::profit_envelope::{
-    path_profit_bound, take_gate_pairs, take_gate_phases, HopMath,
-};
+use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 use std::time::Instant;
 
@@ -89,13 +87,16 @@ fn replay_captured_heavy_paths() {
             small_k_covered,
             "sub-128-word-boundary ranges must carry a word profile"
         );
-        let views: Vec<Option<HopMath<'_>>> =
-            seq_refs.iter().map(|s| Some(HopMath::Cl(s))).collect();
+        let views: Vec<Option<HopMath<'_>>> = seq_refs
+            .iter()
+            .map(|s| Some(HopMath::cl_derived(s)))
+            .collect();
         let gt0 = Instant::now();
-        let _bound = path_profit_bound(&views);
+        let _bound = path_profit_bound(&views, &GateDeps::offline());
         let gate_us = gt0.elapsed().as_micros();
-        let (d_ns, c_ns, s_ns) = take_gate_phases();
-        let pairs = take_gate_pairs();
+        let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
+        let (d_ns, c_ns, s_ns) = (gs.derive_ns, gs.compose_ns, gs.search_ns);
+        let pairs = gs.pairs;
         reset_walk_stats();
         let t0 = Instant::now();
         let result = int_solve_cl_path(&seq_refs);

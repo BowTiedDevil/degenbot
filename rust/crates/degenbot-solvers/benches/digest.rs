@@ -259,13 +259,19 @@ fn bench_digest_curve_xp(c: &mut Criterion) {
 fn bench_solve_balancer_stable(c: &mut Criterion) {
     let path = balancer_stable_path();
     // Sanity: confirm the fixture is profitable (so the 25-iter search runs).
-    let probe = solve_path(&path);
+    let probe = solve_path(
+        &path,
+        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+    );
     assert!(probe.is_some(), "balancer-stable path must be profitable");
     assert!(!probe.unwrap().profit.is_zero());
 
     c.bench_function("solve_balancer_stable_path", |bencher| {
         bencher.iter(|| {
-            let r = solve_path(black_box(&path));
+            let r = solve_path(
+                black_box(&path),
+                &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+            );
             black_box(r);
         });
     });
@@ -273,13 +279,19 @@ fn bench_solve_balancer_stable(c: &mut Criterion) {
 
 fn bench_solve_curve(c: &mut Criterion) {
     let path = curve_stable_path();
-    let probe = solve_path(&path);
+    let probe = solve_path(
+        &path,
+        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+    );
     assert!(probe.is_some(), "curve-stable path must be profitable");
     assert!(!probe.unwrap().profit.is_zero());
 
     c.bench_function("solve_curve_path", |bencher| {
         bencher.iter(|| {
-            let r = solve_path(black_box(&path));
+            let r = solve_path(
+                black_box(&path),
+                &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+            );
             black_box(r);
         });
     });

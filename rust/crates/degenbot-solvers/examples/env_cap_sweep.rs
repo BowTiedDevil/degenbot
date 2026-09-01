@@ -7,8 +7,9 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntTickRangeCrossing;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::profit_envelope::{path_profit_bound, HopMath};
+use degenbot_solvers::profit_envelope::{path_profit_bound, ClHop, GateDeps, HopMath};
 use serde_json::Value;
+use std::borrow::Cow;
 
 fn u256(s: &str) -> U256 {
     s.trim().parse::<U256>().unwrap_or(U256::ZERO)
@@ -104,7 +105,8 @@ fn main() {
             })
             .collect();
         let range_counts: Vec<usize> = seqs.iter().map(|s| s.ranges.len()).collect();
-        let views: Vec<Option<HopMath>> = seqs.iter().map(HopMath::Cl).map(Some).collect();
+        let views: Vec<Option<HopMath>> =
+            seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
 
         let mut t_all = 0u128;
         let mut t_prod = 0u128;
@@ -112,9 +114,9 @@ fn main() {
         let mut bound = String::from("None");
         for _ in 0..5 {
             let t0 = std::time::Instant::now();
-            let r = path_profit_bound(&views);
+            let r = path_profit_bound(&views, &GateDeps::offline());
             t_all += t0.elapsed().as_micros();
-            if let Some(b) = r {
+            if let degenbot_solvers::profit_envelope::Envelope::Bound(b) = r {
                 bound = b.to_string();
             }
             let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
@@ -180,20 +182,21 @@ fn run_cycle_sim(path: &str) {
         })
         .collect();
 
-    let run_gate = |p: usize| -> (u128, u128, u128) {
+    let run_gate = |cycle: u64, p: usize| -> (u128, u128, u128) {
         let (_, seqs, _) = &paths[p];
-        let views: Vec<Option<HopMath>> = seqs.iter().map(HopMath::Cl).map(Some).collect();
-        let cl_crossings: Vec<Option<&[IntTickRangeCrossing]>> = seqs
+        // Carried tables (production shape): the Arcs the sim built up front.
+        let views: Vec<Option<HopMath>> = seqs
             .iter()
             .enumerate()
-            .map(|(i, _)| Some(crossing_arcs[p][i].as_slice()))
+            .map(|(i, s)| {
+                Some(HopMath::Cl(ClHop {
+                    seq: s,
+                    crossings: Cow::Borrowed(&crossing_arcs[p][i]),
+                }))
+            })
             .collect();
         let t0 = std::time::Instant::now();
-        let _ = degenbot_solvers::profit_envelope::path_profit_bound_with_crossings_and_prefixes(
-            &views,
-            &cl_crossings,
-            true,
-        );
+        let _ = path_profit_bound(&views, &GateDeps::per_block(cycle, None));
         let us = t0.elapsed().as_micros();
         let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
         (us, 0u128, gs.product_ns / 1_000)
@@ -203,9 +206,10 @@ fn run_cycle_sim(path: &str) {
     let mut first_touch = vec![0u128; paths.len()];
     let mut steady = vec![0u128; paths.len()];
     for cycle in 0..n_cycles {
-        degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
+        // Production-style per-cycle generation: epoch = cycle index drops
+        // older entries on first touch (no public reset).
         for p in 0..paths.len() {
-            let (us, _compose, _prod) = run_gate(p);
+            let (us, _compose, _prod) = run_gate(cycle, p);
             if cycle == 0 {
                 first_touch[p] = us;
             } else if cycle == n_cycles - 1 {

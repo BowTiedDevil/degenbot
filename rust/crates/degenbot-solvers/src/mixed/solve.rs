@@ -15,8 +15,7 @@ use std::sync::Arc;
 use alloy::primitives::{U256, U512};
 
 use crate::profit_envelope::gate_tls;
-use crate::profit_envelope::{path_profit_bound_with_crossings_and_prefixes, HopMath};
-use degenbot_pools::int_v3_hop::IntTickRangeCrossing;
+use crate::profit_envelope::{path_profit_bound, ClHop, Envelope, GateDeps, HopMath};
 
 use crate::mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
@@ -35,49 +34,41 @@ use crate::mixed::{
 /// borrowing `self` (which would conflict with the `&mut self` write to
 /// `self.results` that follows the solve).
 #[must_use]
-pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-    solve_path_with_min_profit(resolved, U256::ZERO)
+pub fn solve_path(resolved: &ResolvedMixedPath, gate: &GateDeps<'_>) -> Option<SolvePathResult> {
+    solve_path_with_min_profit(resolved, U256::ZERO, gate)
 }
 
 /// [`solve_path`] with the profit-envelope gate active at floor `min_profit`:
 /// when the rigorous upper bound on path profit falls below the floor, the
 /// path is provably unprofitable and returns `None` WITHOUT running any
-/// walk. See CONTEXT.md → "Profit envelope gate".
+/// walk. See CONTEXT.md → "Profit envelope gate". The gate's epoch / cache /
+/// capture stance rides [`GateDeps`] — `GateDeps::per_block` in the engine,
+/// `GateDeps::offline` in tests and replays.
 #[must_use]
 pub fn solve_path_with_min_profit(
     resolved: &ResolvedMixedPath,
     min_profit: U256,
+    gate: &GateDeps<'_>,
 ) -> Option<SolvePathResult> {
-    // Hard cutover (SU7MAE task 7SI5G2): the gate is unconditional. The
-    // `enabled` flag survives only as a test seam (env flags are process-global
-    // and untestable in a shared test binary).
-    solve_path_gated(resolved, min_profit, true)
-}
-
-/// Gate logic split out for direct testing (env flags are process-global and
-/// untestable in a shared test binary).
-fn solve_path_gated(
-    resolved: &ResolvedMixedPath,
-    min_profit: U256,
-    enabled: bool,
-) -> Option<SolvePathResult> {
-    // The degenerate-path golden capture lives inside `path_profit_bound`
-    // (profit_envelope.rs) where the rejection occurs and the per-hop CL
-    // ranges are in scope. Env vars:
-    //     DEGENBOT_GATE_CAPTURE=1
-    //     DEGENBOT_GATE_CAPTURE_OUT=path  (default: /tmp/gate_degenerate.jsonl)
-    //     DEGENBOT_GATE_CAPTURE_CAP=N     (default: 50 paths)
-    if !enabled {
-        return solve_path_inner(resolved);
-    }
+    // Hard cutover (SU7MAE task 7SI5G2): the gate is unconditional.
     let views: Vec<Option<crate::profit_envelope::HopMath<'_>>> = resolved
         .hops
         .iter()
         .map(|h| match h {
             ResolvedHop::V2 { state } => Some(HopMath::V2(state)),
-            ResolvedHop::V3 { int_seq, .. } | ResolvedHop::V4 { int_seq, .. } => {
-                Some(HopMath::Cl(int_seq))
+            ResolvedHop::V3 {
+                int_seq,
+                crossing_table,
+                ..
             }
+            | ResolvedHop::V4 {
+                int_seq,
+                crossing_table,
+                ..
+            } => Some(HopMath::Cl(ClHop {
+                seq: int_seq,
+                crossings: std::borrow::Cow::Borrowed(crossing_table),
+            })),
             // M6776W: Solidly volatile is the constant-product family → the
             // fee-agnostic V2 lines. Solidly stable is a stableswap whose
             // marginal rate is non-monotone → sound reserve cap only (loose);
@@ -132,23 +123,11 @@ fn solve_path_gated(
             }
         })
         .collect();
-    // Carry the Arc crossing tables the resolve pass already built (BZSOJ7):
-    // the envelope must not re-derive them per path. &[] for zero-hop slices.
-    let cl_crossings: Vec<Option<&[IntTickRangeCrossing]>> = resolved
-        .hops
-        .iter()
-        .map(|h| match h {
-            ResolvedHop::V3 { crossing_table, .. } | ResolvedHop::V4 { crossing_table, .. } => {
-                Some(crossing_table.as_slice())
-            }
-            _ => None,
-        })
-        .collect();
-    match path_profit_bound_with_crossings_and_prefixes(&views, &cl_crossings, true) {
-        // Unsupported families are SOLVED unscreened, never skipped.
-        None => gate_tls(|t| t.unsupported += 1),
-        Some(bound) => {
-            gate_tls(|t| t.evaluated += 1);
+    match path_profit_bound(&views, gate) {
+        // Unsupported families are SOLVED unscreened, never skipped — the
+        // gate counts its own verdicts (evaluated / unsupported / cause).
+        Envelope::Unsupported(_) => {}
+        Envelope::Bound(bound) => {
             // `<=`: a path whose rigorous max profit cannot STRICTLY exceed the
             // floor is unexecutable at that floor (dispatch discards zero-profit
             // results downstream), so skipping is outcome-identical and saves
@@ -1445,9 +1424,9 @@ mod gate_tests {
     fn gate_disabled_matches_ungated_result() {
         let p = profitable_path();
         assert_eq!(
-            solve_path_gated(&p, U256::from(u64::MAX), false),
+            solve_path_with_min_profit(&p, U256::from(u64::MAX), &GateDeps::offline()),
             solve_path_inner(&p),
-            "flag OFF must be bit-for-bit identical"
+            "offline deps (no prefix cache) must be bit-for-bit identical"
         );
     }
 
@@ -1455,7 +1434,7 @@ mod gate_tests {
     fn gate_huge_floor_skips_and_counts() {
         let p = profitable_path();
         let _ = take_last_gate_stats(); // clear thread counters
-        let r = solve_path_gated(&p, U256::MAX, true);
+        let r = solve_path_with_min_profit(&p, U256::MAX, &GateDeps::offline());
         assert!(r.is_none(), "infinite floor skips every screened path");
         let stats = take_last_gate_stats();
         assert_eq!(stats.skipped, 1, "skip must be counted");
@@ -1475,7 +1454,7 @@ mod gate_tests {
             max_update_block: 0,
         };
         let _ = take_last_gate_stats();
-        let r = solve_path_gated(&p, U256::ZERO, true);
+        let r = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
         assert!(
             r.is_none(),
             "fee-dominated round trip must be skipped at floor 0"
@@ -1696,7 +1675,7 @@ mod gate_tests {
             max_update_block: 0,
         };
         let _ = take_last_gate_stats();
-        let _ = solve_path_gated(&p, U256::ZERO, true);
+        let _ = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
         let stats = take_last_gate_stats();
         assert_eq!(stats.unsupported, 0);
         assert_eq!(stats.evaluated, 1);

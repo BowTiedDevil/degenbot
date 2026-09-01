@@ -21,9 +21,29 @@ use degenbot_math::cl::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::profit_envelope::{
-    path_output_bound_at, path_profit_bound, path_profit_bound_with_crossings,
-    path_profit_bound_with_crossings_and_prefixes, HopMath,
+    path_output_bound_at, path_profit_bound, ClHop, Envelope, GateDeps, GateSkipCause, HopMath,
 };
+use std::borrow::Cow;
+
+/// The gate through its one entry at offline deps, unwrapped to the bound
+/// (legacy Option shape) for soundness-only assertions.
+fn bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
+    match path_profit_bound(hops, &GateDeps::offline()) {
+        Envelope::Bound(b) => Some(b),
+        Envelope::Unsupported(_) => None,
+    }
+}
+
+/// Cl-carrying view helper: sequence + a borrowed table (the carried shape).
+fn cl_carried<'a>(
+    seq: &'a IntV3TickRangeSequence,
+    table: &'a Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>,
+) -> Option<HopMath<'a>> {
+    Some(HopMath::Cl(ClHop {
+        seq,
+        crossings: Cow::Borrowed(table),
+    }))
+}
 
 fn p_at_tick(tick: i32) -> U256 {
     U256::from(get_sqrt_ratio_at_tick_internal(tick).unwrap_or_default())
@@ -100,7 +120,7 @@ const SWEEP: [u64; 22] = [
 ];
 
 fn assert_dominates(seq: &IntV3TickRangeSequence) {
-    let view = [Some(HopMath::Cl(seq))];
+    let view = [Some(HopMath::cl_derived(seq))];
     for &x in &SWEEP {
         let x = U256::from(x);
         let bound = path_output_bound_at(&view, &x).expect("derives");
@@ -206,7 +226,7 @@ fn mixed_v2_cl_path_pointwise_dominance() {
     )]);
     let views = [
         Some(HopMath::V2(&v2)),
-        Some(HopMath::Cl(&cl)),
+        Some(HopMath::cl_derived(&cl)),
         Some(HopMath::V2(&v2)),
     ];
     for &x in &SWEEP {
@@ -240,7 +260,12 @@ fn mobius(r_in: U256, r_out: U256, gamma_num: u64, fee_den: u64, x: U256) -> U51
 
 #[test]
 fn unsupported_family_poisons_bound() {
-    assert!(path_profit_bound(&[None]).is_none());
+    // Type-enforced: an unmapped hop is Unsupported(UnmappedHop) — solved
+    // unscreened, never skip-eligible.
+    assert!(matches!(
+        path_profit_bound(&[None], &GateDeps::offline()),
+        Envelope::Unsupported(GateSkipCause::UnmappedHop)
+    ));
     assert!(path_output_bound_at(&[None], &U256::from(1u64)).is_none());
 }
 
@@ -255,7 +280,7 @@ fn m6776w_overflow_paths_compose_without_poisoning() {
     let v2 = HopMath::V2(&IntHopState::new(big, big, 997_000, 1_000_000));
     let views = vec![Some(v2); 4];
     // Must return Some (not None = unsupported).
-    let bound = path_profit_bound(&views).expect("reduced compose must not overflow");
+    let bound = bound(&views).expect("reduced compose must not overflow");
     // Soundness: the bound must still dominate the real output at any x.
     let x = U256::from(1_000_000u64);
     let out_bound = path_output_bound_at(&views, &x).expect("bound at x");
@@ -309,13 +334,16 @@ fn m6776w_balancer_weighted_3hop_no_overflow() {
 
 #[test]
 fn m6776w_none_cause_classifies_each_exit() {
-    // The per-cause counters should classify WHY path_profit_bound returned
-    // None — used to diagnose the prod soak's still-high unsupported rate.
+    // The typed verdict + per-cause counters classify WHY the gate returned
+    // Unsupported — used to diagnose the prod soak's unsupported rate.
     use degenbot_solvers::profit_envelope::{reset_gate_stats, take_last_gate_stats};
     reset_gate_stats();
     // Hop unmapped: a None slot (a hop family the gate doesn't map OR a
     // degenerate hop_state the caller couldn't build).
-    assert!(path_profit_bound(&[None]).is_none());
+    assert!(matches!(
+        path_profit_bound(&[None], &GateDeps::offline()),
+        Envelope::Unsupported(GateSkipCause::UnmappedHop)
+    ));
     let s = take_last_gate_stats();
     assert_eq!(s.none_hop_unmapped, 1);
     assert_eq!(s.none_degenerate, 0);
@@ -329,7 +357,10 @@ fn m6776w_none_cause_classifies_each_exit() {
         0,
         1,
     ));
-    assert!(path_profit_bound(&[Some(v2_zero)]).is_none());
+    assert!(matches!(
+        path_profit_bound(&[Some(v2_zero)], &GateDeps::offline()),
+        Envelope::Unsupported(GateSkipCause::DegenerateHop)
+    ));
     let s = take_last_gate_stats();
     assert_eq!(s.none_hop_unmapped, 0);
     assert_eq!(s.none_degenerate, 1);
@@ -384,18 +415,23 @@ fn precomputed_crossings_match_self_derived_bound() {
                 mk_seq(ranges)
             })
             .collect();
-        let views: Vec<Option<HopMath<'_>>> =
-            owned_seqs.iter().map(|s| Some(HopMath::Cl(s))).collect();
+        let derived: Vec<Option<HopMath<'_>>> = owned_seqs
+            .iter()
+            .map(|s| Some(HopMath::cl_derived(s)))
+            .collect();
         let crossing_owned: Vec<Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>> = owned_seqs
             .iter()
             .map(degenbot_pools::int_v3_hop::IntV3TickRangeSequence::crossings)
             .collect();
-        let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
-            crossing_owned.iter().map(|s| Some(s.as_slice())).collect();
-        let derived = path_profit_bound(&views);
-        let carried = path_profit_bound_with_crossings(&views, &with);
+        let carried: Vec<Option<HopMath<'_>>> = owned_seqs
+            .iter()
+            .zip(crossing_owned.iter())
+            .map(|(s, t)| cl_carried(s, t))
+            .collect();
+        let derived_bound = path_profit_bound(&derived, &GateDeps::offline());
+        let carried_bound = path_profit_bound(&carried, &GateDeps::offline());
         assert_eq!(
-            derived, carried,
+            derived_bound, carried_bound,
             "caller-carried crossing tables must not change the envelope (BZSOJ7)"
         );
     }
@@ -403,7 +439,6 @@ fn precomputed_crossings_match_self_derived_bound() {
 
 #[test]
 fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
-    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
     let line = CAPTURES
         .lines()
         .find(|l| !l.trim().is_empty())
@@ -425,17 +460,16 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
             mk_seq(ranges)
         })
         .collect();
-    let views: Vec<Option<HopMath<'_>>> = owned_seqs.iter().map(|s| Some(HopMath::Cl(s))).collect();
-    let crossing_owned: Vec<Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>> = owned_seqs
+    let views: Vec<Option<HopMath<'_>>> = owned_seqs
         .iter()
-        .map(degenbot_pools::int_v3_hop::IntV3TickRangeSequence::crossings)
+        .map(|s| Some(HopMath::cl_derived(s)))
         .collect();
-    let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
-        crossing_owned.iter().map(|s| Some(s.as_slice())).collect();
 
-    let first = path_profit_bound_with_crossings_and_prefixes(&views, &with, true);
+    // Same epoch both calls: populate the (content-keyed) cache, then reuse.
+    let deps = degenbot_solvers::profit_envelope::GateDeps::per_block(1, None);
+    let first = path_profit_bound(&views, &deps);
     let _gs1 = degenbot_solvers::profit_envelope::take_last_gate_stats();
-    let second = path_profit_bound_with_crossings_and_prefixes(&views, &with, true);
+    let second = path_profit_bound(&views, &deps);
     let gs2 = degenbot_solvers::profit_envelope::take_last_gate_stats();
     assert_eq!(first, second, "prefix reuse must be byte-identical");
     assert!(
@@ -446,7 +480,14 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
         gs2.boundaries_composed < gs2.prefix_hits + 1,
         "prefix reuse should cut composed boundaries"
     );
-    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
+    // No cache reset exists — a new epoch in GateDeps drops older entries.
+    let dropped = path_profit_bound(&views, &GateDeps::per_block(2, None));
+    let gs3 = degenbot_solvers::profit_envelope::take_last_gate_stats();
+    assert_eq!(dropped, first, "new-epoch solve must be byte-identical");
+    assert_eq!(
+        gs3.prefix_hits, 0,
+        "entries from an older epoch must not survive"
+    );
 }
 
 #[test]
@@ -460,7 +501,6 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     // value-identically (the observed behavior for tangent-stack
     // prefixes: line takeovers stay below the prefix capacity, so the
     // domain never actually bites).
-    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
     let p_entry = p_at_tick(-10);
     let p_lo = p_at_tick(-40);
     let p_hi = p_at_tick(30);
@@ -474,9 +514,6 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     )]);
     let crossings1: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = seq1.crossings();
     let crossings2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = seq2.crossings();
-    // SAME allocation pointers across both paths (shared Arc semantics).
-    let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
-        vec![Some(crossings1.as_slice()), Some(crossings2.as_slice())];
     let small_tail = IntHopState::new(U256::from(1_000_u64), U256::from(40_000_u64), 997, 1000);
     let large_tail = IntHopState::new(
         U256::from(1_000_u64) << 140,
@@ -485,22 +522,22 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         1000,
     );
     let small_views = vec![
-        Some(HopMath::Cl(&seq1)),
-        Some(HopMath::Cl(&seq2)),
+        cl_carried(&seq1, &crossings1),
+        cl_carried(&seq2, &crossings2),
         Some(HopMath::V2(&small_tail)),
     ];
     let large_views = vec![
-        Some(HopMath::Cl(&seq1)),
-        Some(HopMath::Cl(&seq2)),
+        cl_carried(&seq1, &crossings1),
+        cl_carried(&seq2, &crossings2),
         Some(HopMath::V2(&large_tail)),
     ];
 
-    let expected_small = path_profit_bound_with_crossings_and_prefixes(&small_views, &with, false);
-    let expected_large = path_profit_bound_with_crossings_and_prefixes(&large_views, &with, false);
+    let expected_small = path_profit_bound(&small_views, &GateDeps::offline());
+    let expected_large = path_profit_bound(&large_views, &GateDeps::offline());
     // Populate the cache under the SMALL domain first.
-    let _ = path_profit_bound_with_crossings_and_prefixes(&small_views, &with, true);
-    // Now solve the large-domain path with the cache on.
-    let cached = path_profit_bound_with_crossings_and_prefixes(&large_views, &with, true);
+    let _ = path_profit_bound(&small_views, &GateDeps::per_block(3, None));
+    // Now solve the large-domain path with the cache on (same epoch).
+    let cached = path_profit_bound(&large_views, &GateDeps::per_block(3, None));
     assert_eq!(
         cached, expected_large,
         "prefix entry composed under a smaller domain leaked into a larger-domain path"
@@ -521,8 +558,6 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     let ladder = mk_seq(ranges);
     let ladder_crossings: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> =
         ladder.crossings();
-    let with_ladder: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
-        vec![Some(ladder_crossings.as_slice())];
     let tiny_tail = IntHopState::new(U256::from(100u64), U256::from(200u64), 997, 1000);
     let huge_tail = IntHopState::new(
         U256::from(100u64) << 180,
@@ -530,21 +565,23 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         997,
         1000,
     );
-    let tiny_views = vec![Some(HopMath::Cl(&ladder)), Some(HopMath::V2(&tiny_tail))];
-    let huge_views = vec![Some(HopMath::Cl(&ladder)), Some(HopMath::V2(&huge_tail))];
-    let expected_tiny =
-        path_profit_bound_with_crossings_and_prefixes(&tiny_views, &with_ladder, false);
-    let expected_huge =
-        path_profit_bound_with_crossings_and_prefixes(&huge_views, &with_ladder, false);
-    let _ = path_profit_bound_with_crossings_and_prefixes(&tiny_views, &with_ladder, true);
-    let cached_huge =
-        path_profit_bound_with_crossings_and_prefixes(&huge_views, &with_ladder, true);
+    let tiny_views = vec![
+        cl_carried(&ladder, &ladder_crossings),
+        Some(HopMath::V2(&tiny_tail)),
+    ];
+    let huge_views = vec![
+        cl_carried(&ladder, &ladder_crossings),
+        Some(HopMath::V2(&huge_tail)),
+    ];
+    let expected_tiny = path_profit_bound(&tiny_views, &GateDeps::offline());
+    let expected_huge = path_profit_bound(&huge_views, &GateDeps::offline());
+    let _ = path_profit_bound(&tiny_views, &GateDeps::per_block(4, None));
+    let cached_huge = path_profit_bound(&huge_views, &GateDeps::per_block(4, None));
     assert_eq!(
         cached_huge, expected_huge,
         "ladder prefix composed under a tiny domain leaked into a huge-domain path"
     );
     let _ = expected_tiny;
-    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
 }
 
 #[test]
@@ -552,7 +589,6 @@ fn prefix_cache_chains_through_v2_hops() {
     // Loop-16 T3: Möbius-family (V2) hops no longer break the prefix
     // chain — a mixed [V2, CL, CL] path must reuse composed boundaries on
     // re-solve and stay byte-identical to the cacheless solve.
-    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
     let v2 = IntHopState::new(
         U256::from(1_000_000_u64) << 96,
         U256::from(1_100_000_u64) << 96,
@@ -573,20 +609,18 @@ fn prefix_cache_chains_through_v2_hops() {
     )]);
     let c1: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder1.crossings();
     let c2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder2.crossings();
-    let with: Vec<Option<&[degenbot_pools::int_v3_hop::IntTickRangeCrossing]>> =
-        vec![None, Some(c1.as_slice()), Some(c2.as_slice())];
     let views = vec![
         Some(HopMath::V2(&v2)),
-        Some(HopMath::Cl(&ladder1)),
-        Some(HopMath::Cl(&ladder2)),
+        cl_carried(&ladder1, &c1),
+        cl_carried(&ladder2, &c2),
     ];
-    let expected = path_profit_bound_with_crossings_and_prefixes(&views, &with, false);
-    // The cache is process-global and other tests in this binary reset it
+    let expected = path_profit_bound(&views, &GateDeps::offline());
+    // The cache is process-global and other tests in this binary hit it
     // concurrently — retry the populate/solve pair until this thread sees
     // its own hit (byte-identity is checked every iteration).
     let hit_seen;
     loop {
-        let s = path_profit_bound_with_crossings_and_prefixes(&views, &with, true);
+        let s = path_profit_bound(&views, &GateDeps::per_block(5, None));
         assert_eq!(s, expected, "mixed-prefix reuse must be byte-identical");
         let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
         if gs.prefix_hits > 0 {
@@ -600,7 +634,6 @@ fn prefix_cache_chains_through_v2_hops() {
         hit_seen,
         "mixed [V2, CL] prefixes must produce cache hits (V2 no longer breaks the chain)"
     );
-    degenbot_solvers::profit_envelope::reset_envelope_prefix_cache();
 }
 
 #[test]
@@ -624,8 +657,10 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
                 mk_seq(ranges)
             })
             .collect();
-        let views: Vec<Option<HopMath<'_>>> =
-            owned_seqs.iter().map(|s| Some(HopMath::Cl(s))).collect();
+        let views: Vec<Option<HopMath<'_>>> = owned_seqs
+            .iter()
+            .map(|s| Some(HopMath::cl_derived(s)))
+            .collect();
         let golden = doc.get("golden").cloned().unwrap_or_default();
         if golden.is_null() {
             continue;
@@ -651,7 +686,7 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
             .unwrap();
         let golden_profit = go_last.saturating_sub(go_in);
 
-        let bound = path_profit_bound(&views).expect("all-CL capture derives");
+        let bound = bound(&views).expect("all-CL capture derives");
         let doc_pid = doc.get("path_id").cloned().unwrap_or_default();
         let doc_block = doc.get("block").cloned().unwrap_or_default();
         if bound < golden_profit {
@@ -704,10 +739,23 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     let good_price = p_at_tick(0);
     let range = mk_range(0, good_price, p_at_tick(-10), p_at_tick(10));
     let seq = mk_seq(vec![range]);
-    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::Cl(&seq))];
+    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::cl_derived(&seq))];
 
-    // path_profit_bound returns None (degenerate) and triggers the capture.
-    assert!(path_profit_bound(&views).is_none());
+    // path_profit_bound returns Unsupported(DegenerateHop) and triggers the
+    // capture (the harness supplies the config the gate reads no env for).
+    let capture_cfg = degenbot_solvers::profit_envelope::GateCaptureCfg::from_env()
+        .expect("capture cfg parsed from env");
+    let deps = degenbot_solvers::profit_envelope::GateDeps {
+        epoch: 0,
+        prefix_cache: false,
+        capture: Some(&capture_cfg),
+    };
+    assert!(matches!(
+        path_profit_bound(&views, &deps),
+        degenbot_solvers::profit_envelope::Envelope::Unsupported(
+            degenbot_solvers::profit_envelope::GateSkipCause::DegenerateHop
+        )
+    ));
 
     // The JSONL file must exist and contain one line with the rejection reason.
     let content = std::fs::read_to_string(&path).expect("capture file written");
@@ -757,13 +805,13 @@ fn extreme_entry_price_is_not_rejected() {
         extreme_price * U256::from(2u64),
     );
     let seq = mk_seq(vec![range]);
-    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::Cl(&seq))];
+    let views: Vec<Option<HopMath<'_>>> = vec![Some(HopMath::cl_derived(&seq))];
 
     // The envelope must succeed (return Some bound), not reject the hop.
     // A single range with real liquidity and an extreme price is a perfectly
     // valid concave piece — the tangent line just has extreme coefficients,
     // but P^2 = 2^260 fits in I512 (max 2^511).
-    let bound = path_profit_bound(&views);
+    let bound = bound(&views);
     assert!(
         bound.is_some(),
         "extreme entry price should not be rejected (real arbitrage opportunity)"
@@ -798,9 +846,9 @@ fn probe_cap_tail_extreme_ofz() {
         ..mk_range(liq, p_at_tick(100), p_at_tick(100), p_max)
     };
     let seq = mk_seq(vec![r0, r1]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
     assert!(
-        path_profit_bound(&views).is_some(),
+        bound(&views).is_some(),
         "OFZ extreme should not be rejected"
     );
 }
@@ -814,9 +862,9 @@ fn probe_cap_tail_extreme_zfo() {
     let r0 = mk_range(liq, p0, p_at_tick(-100), p0);
     let r1 = mk_range(liq, p_at_tick(-100), p_min, p_at_tick(-100));
     let seq = mk_seq(vec![r0, r1]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
     assert!(
-        path_profit_bound(&views).is_some(),
+        bound(&views).is_some(),
         "ZFO extreme should not be rejected"
     );
 }
@@ -840,13 +888,13 @@ fn probe_cap_tail_u128_max_liquidity_rejects() {
     // Single range, normal price, extreme liquidity:
     let r = mk_range(liq, p0, p0, p100);
     let seq = mk_seq(vec![r]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
     // u128::MAX liquidity exceeds i128::MAX, so the old cap-tail's
     // `i128::try_from(er.liquidity).ok()?` rejected the whole hop. The
     // U512-based cap-tail computes the same formula directly, accepting
     // the on-chain uint128 liquidity type without truncation.
     assert!(
-        path_profit_bound(&views).is_some(),
+        bound(&views).is_some(),
         "u128::MAX liquidity should not be rejected (on-chain uint128 type)"
     );
 }
@@ -862,9 +910,9 @@ fn probe_cap_tail_u128_max_liquidity_extreme_price() {
         ..mk_range(liq, p0, p0, p_max)
     };
     let seq = mk_seq(vec![r]);
-    let views: Vec<Option<HopMath>> = vec![Some(HopMath::Cl(&seq))];
+    let views: Vec<Option<HopMath>> = vec![Some(HopMath::cl_derived(&seq))];
     assert!(
-        path_profit_bound(&views).is_some(),
+        bound(&views).is_some(),
         "u128::MAX liquidity at extreme price should not be rejected"
     );
 }

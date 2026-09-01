@@ -194,7 +194,11 @@ fn reconstruct(doc: &Value) -> Result<(u64, Arc<ResolvedMixedPath>, Option<u128>
 
 fn solve_measure(p: &Arc<ResolvedMixedPath>) -> (u128, bool) {
     let t0 = Instant::now();
-    let r = solve_path_with_min_profit(p.as_ref(), U256::ZERO);
+    let r = solve_path_with_min_profit(
+        p.as_ref(),
+        U256::ZERO,
+        &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+    );
     (t0.elapsed().as_micros(), r.is_some())
 }
 
@@ -448,7 +452,11 @@ loaded {} paths",
     let mut golden_ok = 0usize;
     if !skip_gate {
         for (idx, p) in items.iter().enumerate() {
-            let r = solve_path_with_min_profit(p.as_ref(), U256::ZERO);
+            let r = solve_path_with_min_profit(
+                p.as_ref(),
+                U256::ZERO,
+                &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+            );
             match (&r, golden[idx]) {
                 (Some(res), Some(gp)) => {
                     let rp = u128::try_from(res.profit).expect("profit fits u128");

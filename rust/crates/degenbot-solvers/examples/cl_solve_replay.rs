@@ -36,7 +36,7 @@ use degenbot_solvers::mobius_v3_int::{
     take_event_census_pieces, take_last_walk_stats_full, take_last_word_boundary_steps,
     WalkEventCensus,
 };
-use degenbot_solvers::profit_envelope::{path_profit_bound, HopMath};
+use degenbot_solvers::profit_envelope::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 
 /// Max acceptable profit under-shoot (wei) of the exact-wei golden for the
@@ -194,9 +194,16 @@ fn main() {
         // Gate A/B (SU7MAE N6NBUY): derive the profit-envelope bound and time
         // it, so the end-of-run floor analysis can name would-be skips and the
         // derivation overhead per path.
-        let views: Vec<Option<HopMath<'_>>> = seqs.iter().map(|s| Some(HopMath::Cl(s))).collect();
+        let views: Vec<Option<HopMath<'_>>> =
+            seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
         let bound_t0 = std::time::Instant::now();
-        let bound = path_profit_bound(&views);
+        let bound = match path_profit_bound(&views, &GateDeps::offline()) {
+            degenbot_solvers::profit_envelope::Envelope::Bound(b) => Some(b),
+            degenbot_solvers::profit_envelope::Envelope::Unsupported(cause) => {
+                eprintln!("path {pid}: gate unsupported: {cause:?}");
+                None
+            }
+        };
         let bound_us = bound_t0.elapsed().as_micros();
         gate_rows.push((
             pid,

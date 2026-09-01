@@ -201,7 +201,10 @@ impl ArbitrageEngine {
         // Eagerly solve the newly registered path
         if let Some(resolved) = self.path_resolved.get(&path_id) {
             if resolved.valid {
-                if let Some(mut solve_result) = ::degenbot_solvers::mixed::solve_path(resolved) {
+                if let Some(mut solve_result) = ::degenbot_solvers::mixed::solve_path(
+                    resolved,
+                    &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+                ) {
                     if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
                         self.clamp_cl_hop_capacity(path_id, &mut solve_result);
                         self.results.insert(path_id, solve_result);

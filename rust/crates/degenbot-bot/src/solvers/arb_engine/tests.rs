@@ -2905,7 +2905,10 @@ mod tests {
         // Now the N-hop CL solver runs. With 3 pools at the same price but
         // different liquidity, the path is unlikely to be profitable after fees,
         // but the solver must not reject due to hop count.
-        let result = ::degenbot_solvers::mixed::solve_path(resolved);
+        let result = ::degenbot_solvers::mixed::solve_path(
+            resolved,
+            &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        );
         let _ = result; // No panic = test passes
     }
 
@@ -2997,7 +3000,10 @@ mod tests {
         assert_eq!(resolved.hops[2].hop_type(), HopType::V2);
 
         // Key: previously this returned None due to hop_types.len() != 2
-        let result = ::degenbot_solvers::mixed::solve_path(resolved);
+        let result = ::degenbot_solvers::mixed::solve_path(
+            resolved,
+            &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        );
         let _ = result;
     }
 
@@ -4057,8 +4063,11 @@ mod tests {
             ])
             .expect("path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
-        let result =
-            ::degenbot_solvers::mixed::solve_path(resolved).expect("profitable path solves");
+        let result = ::degenbot_solvers::mixed::solve_path(
+            resolved,
+            &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        )
+        .expect("profitable path solves");
         assert!(!result.optimal_input.is_zero());
         assert!(!result.profit.is_zero());
         assert_eq!(result.hop_outputs.len(), 2);
@@ -4176,8 +4185,11 @@ mod tests {
             ])
             .expect("mixed V2+Solidly path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
-        let result =
-            ::degenbot_solvers::mixed::solve_path(resolved).expect("profitable mixed path solves");
+        let result = ::degenbot_solvers::mixed::solve_path(
+            resolved,
+            &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        )
+        .expect("profitable mixed path solves");
         assert!(!result.profit.is_zero());
 
         // Grid scan parity check (Solidly hop uses the integer leaf, V2 hop
@@ -4221,7 +4233,11 @@ mod tests {
             .expect("path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         assert!(
-            ::degenbot_solvers::mixed::solve_path(resolved).is_none(),
+            ::degenbot_solvers::mixed::solve_path(
+                resolved,
+                &::degenbot_solvers::profit_envelope::GateDeps::offline()
+            )
+            .is_none(),
             "round-trip through one pool is unprofitable"
         );
     }
@@ -4298,7 +4314,11 @@ mod tests {
             .expect("path registers (resolve is per-arm)");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         // Solidly + CL is out of scope (p): solve_path returns None.
-        assert!(::degenbot_solvers::mixed::solve_path(resolved).is_none());
+        assert!(::degenbot_solvers::mixed::solve_path(
+            resolved,
+            &::degenbot_solvers::profit_envelope::GateDeps::offline()
+        )
+        .is_none());
     }
     // -----------------------------------------------------------------------
     // Balancer weighted solve branch (AT2TGZ)
@@ -4544,8 +4564,11 @@ mod tests {
             .unwrap();
         // resolve + solve the bw path specifically
         let resolved = &engine.path_resolved[&bw_path];
-        let bw_result =
-            ::degenbot_solvers::mixed::solve_path(resolved).expect("bw path should solve");
+        let bw_result = ::degenbot_solvers::mixed::solve_path(
+            resolved,
+            &::degenbot_solvers::profit_envelope::GateDeps::offline(),
+        )
+        .expect("bw path should solve");
 
         // The two profits should be in the same ballpark (within 1% of each
         // other — the Balancer weighted solve uses golden-section search, not
@@ -4669,7 +4692,11 @@ mod tests {
         let resolved = &engine.path_resolved[&path_id];
         // Balancer weighted + CL is out of scope — solve_path returns None.
         assert!(
-            ::degenbot_solvers::mixed::solve_path(resolved).is_none(),
+            ::degenbot_solvers::mixed::solve_path(
+                resolved,
+                &::degenbot_solvers::profit_envelope::GateDeps::offline()
+            )
+            .is_none(),
             "Balancer weighted + CL must not solve"
         );
     }
@@ -4996,7 +5023,11 @@ mod tests {
             .expect("path registers (resolve succeeds per-arm)");
         let resolved = &engine.path_resolved[&path_id];
         assert!(
-            ::degenbot_solvers::mixed::solve_path(resolved).is_none(),
+            ::degenbot_solvers::mixed::solve_path(
+                resolved,
+                &::degenbot_solvers::profit_envelope::GateDeps::offline()
+            )
+            .is_none(),
             "Balancer stable + CL must not solve"
         );
     }
@@ -5225,7 +5256,11 @@ mod tests {
             .expect("path registers (resolve succeeds per-arm)");
         let resolved = &engine.path_resolved[&path_id];
         assert!(
-            ::degenbot_solvers::mixed::solve_path(resolved).is_none(),
+            ::degenbot_solvers::mixed::solve_path(
+                resolved,
+                &::degenbot_solvers::profit_envelope::GateDeps::offline()
+            )
+            .is_none(),
             "Curve + CL must not solve"
         );
     }
