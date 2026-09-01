@@ -128,10 +128,12 @@ fn min_profit_floor() -> U256 {
 }
 
 /// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
-/// `path_sims`, `word_steps`, `refine_sims`, `gate_us`, `path_id`) — lets the
-/// completion event name the cost driver of the slowest routes: gate-envelope
-/// bound composition vs the walk proper, not just wall time.
-type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64);
+/// `path_sims`, `word_steps`, `refine_sims`, `gate_us`, `gate_derive_us`,
+/// `gate_compose_us`, `gate_search_us`, `path_id`) — lets the completion
+/// event name the cost driver of the slowest routes: gate-envelope bound
+/// composition (with its derive/compose/search phase split) vs the walk
+/// proper, not just wall time.
+type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
 type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
 
@@ -944,9 +946,10 @@ impl ArbitrageEngine {
                     );
                     let mut heap = path_times.lock();
                     {
-                        let worst = heap
-                            .peek()
-                            .map_or(u128::MAX, |std::cmp::Reverse((w, _, _, _, _, _, _))| *w);
+                        let worst = heap.peek().map_or(
+                            u128::MAX,
+                            |std::cmp::Reverse((w, _, _, _, _, _, _, _, _, _))| *w,
+                        );
                         if heap.len() < SLOWEST_PATHS_K || micros > worst {
                             heap.push(std::cmp::Reverse((
                                 micros,
@@ -955,6 +958,9 @@ impl ArbitrageEngine {
                                 u64::try_from(word_steps).unwrap_or(0),
                                 u64::try_from(refine_sims).unwrap_or(0),
                                 gate_us,
+                                gate_derive_us,
+                                gate_compose_us,
+                                gate_search_us,
                                 pid,
                             )));
                             if heap.len() > SLOWEST_PATHS_K {
@@ -1070,9 +1076,20 @@ impl ArbitrageEngine {
         let memo_stats = degenbot_solvers::mobius_v3_int::walk_memo_take_stats();
         let slowest: Vec<String> = path_times.lock().iter()
             .map(
-                |std::cmp::Reverse((us, pieces, sims, word_steps, refine_sims, gate_us, pid))| {
+                |std::cmp::Reverse((
+                    us,
+                    pieces,
+                    sims,
+                    word_steps,
+                    refine_sims,
+                    gate_us,
+                    gate_derive_us,
+                    gate_compose_us,
+                    gate_search_us,
+                    pid,
+                ))| {
                     format!(
-                        "{pid}:{us}us:sims={sims}:pieces={pieces}:steps={word_steps}:refine={refine_sims}:gate={gate_us}us"
+                        "{pid}:{us}us:sims={sims}:pieces={pieces}:steps={word_steps}:refine={refine_sims}:gate={gate_us}us(g={gate_derive_us}/c={gate_compose_us}/s={gate_search_us})"
                     )
                 },
             )
