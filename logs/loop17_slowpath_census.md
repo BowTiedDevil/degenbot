@@ -88,3 +88,36 @@ Campaign totals vs loop-16 baseline (same lab harness, heaviest quartet):
 reference event 9.82 -> 7.26 ms (-26%), cached walk solve 4.75 -> ~3.8 ms.
 NEXT loop candidates: gate (dominates worst-path telemetry), then the
 golden-fork probe-set campaign.
+
+---
+
+# Loop-18 pre-work (gate campaign opened)
+
+Pre-soak instrument (commit 9eca5c8a4): the K-slowest-paths overlay now
+names the per-path gate phase split. A 2-minute smoke already attributed
+the worst-path gate time: **compose phase ≈99%** (path 560: gate 14.2ms,
+compose 14.1ms, derive 35µs, search 124µs).
+
+Two hard exhibits, both pre-dating loop-17 (reproduced identically at the
+loop-16 tip 62e4983a0):
+
+1. **Compose blowup on giant-range hops**: path 4 (ranges/hop [891,41],
+   667 word bounds) spends **~155 ms inside gate envelope compose** per
+   solve, then the path is skipped/walked-never (sims=0) — pure waste on
+   the worst path shape seen live.
+2. **Envelope-bound false skips of ~1e12 wei**: heavy_cl_solve_captures
+   carries 15 path-4 captures with null goldens (production answered
+   "nothing" — bound < floor) where the ungated replay finds profit
+   ~998.4e9 wei (~1e12, i.e. ~1000× above the 1e9 floor). This is the
+   cost of the loop-16 d3b285b 32-line-per-hop tangent cap: bounded
+   compose, looser bound. The F2 golden gate has been failing 692/701 on
+   this fixture since before loop-17 — flagged then as FALSE SKIP
+   telemetry, now quantified.
+
+Fixture provenance: heavy_cl_solve_captures.jsonl mixes full-solver
+epochs (goldens) with gate-skipped captures (golden:null) — the F2 gate
+compares the null-golden lines against a gateless replay, which can
+never match. Loop-18 must (a) tighten or adaptively raise the tangent
+cap for the blowup shapes, and (b) reconcile the F2 classification for
+null-golden (gate-skipped) captures, either by excluding them from the
+exact-wei gate or teaching the replay to bound-check them only.
