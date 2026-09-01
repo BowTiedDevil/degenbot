@@ -540,6 +540,10 @@ impl ArbitrageEngine {
         let anchor =
             crate::bot_core::solve_anchor::SolveAnchor::resolve(block_number, &self.core.read());
         let solve_block = anchor.block();
+        // Cross-block walk-composition census: advance the epoch BEFORE the
+        // per-path probes so a path solved both this block and the previous
+        // one reports a hit (DEGENBOT_SOLVER_WALK_MEMO_STATS=1 / _MEMO=1).
+        degenbot_solvers::mobius_v3_int::walk_memo_set_epoch(solve_block);
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
             self.results_block = solve_block;
@@ -1063,6 +1067,7 @@ impl ArbitrageEngine {
         }
 
         // Telemetry: pure solver phase done — name the K slowest paths.
+        let memo_stats = degenbot_solvers::mobius_v3_int::walk_memo_take_stats();
         let slowest: Vec<String> = path_times.lock().iter()
             .map(
                 |std::cmp::Reverse((us, pieces, sims, word_steps, refine_sims, gate_us, pid))| {
@@ -1102,6 +1107,13 @@ impl ArbitrageEngine {
             profitable = solved.len(),
             slowest.paths = %slowest.join(","),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+            memo.probes = memo_stats.probes,
+            memo.hits = memo_stats.hits,
+            memo.distinct = memo_stats.distinct,
+            memo.cache_plays = memo_stats.cache_plays,
+            memo.negative = memo_stats.negative_entries,
+            memo.sims = memo_stats.probes_sims,
+            memo.hit_sims = memo_stats.hits_sims,
             "[solve-phase] rayon solve complete"
         );
 

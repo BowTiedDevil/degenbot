@@ -60,6 +60,253 @@ pub type ClCrossingTable = Vec<IntTickRangeCrossing>;
 pub type ClProfileTable = Vec<Option<Arc<V3WordProfile>>>;
 
 // ---------------------------------------------------------------------------
+// Cross-block composition memo (walk_climb_fork follow-up; F4YJL8)
+// ---------------------------------------------------------------------------
+
+/// One epoch's walk-composition memo accounting. `hits` = probes whose
+/// fingerprint appeared in the PREVIOUS epoch (= solves a same-state
+/// composition again, the usable cross-block reuse); `distinct` = unique
+/// compositions in the current epoch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WalkMemoStats {
+    pub epoch: u64,
+    pub probes: u64,
+    pub hits: u64,
+    pub distinct: u64,
+    pub cache_plays: u64,
+    pub negative_entries: u64,
+    pub probes_sims: u64,
+    pub hits_sims: u64,
+}
+
+struct WalkMemoState {
+    stats_on: bool,
+    memo_on: bool,
+    epoch: u64,
+    prev: hashbrown::HashSet<u128>,
+    curr: hashbrown::HashSet<u128>,
+    prev_costs: hashbrown::HashMap<u128, u64>,
+    curr_costs: hashbrown::HashMap<u128, u64>,
+    cache: hashbrown::HashMap<u128, Option<(U256, U256, Vec<U256>)>>,
+    probes: u64,
+    hits: u64,
+    cache_plays: u64,
+    probes_sims: u64,
+    hits_sims: u64,
+}
+
+impl Default for WalkMemoState {
+    fn default() -> Self {
+        Self {
+            stats_on: false,
+            memo_on: false,
+            epoch: 0,
+            prev: hashbrown::HashSet::new(),
+            curr: hashbrown::HashSet::new(),
+            prev_costs: hashbrown::HashMap::new(),
+            curr_costs: hashbrown::HashMap::new(),
+            cache: hashbrown::HashMap::new(),
+            probes: 0,
+            hits: 0,
+            cache_plays: 0,
+            probes_sims: 0,
+            hits_sims: 0,
+        }
+    }
+}
+
+static WALK_MEMO_STATE: std::sync::OnceLock<std::sync::Mutex<WalkMemoState>> =
+    std::sync::OnceLock::new();
+
+/// Opt-in runtime gate: `DEGENBOT_SOLVER_WALK_MEMO=1` caches walk results
+/// keyed by path-composition content; `DEGENBOT_SOLVER_WALK_MEMO_STATS=1`
+/// counts cross-block repeats WITHOUT changing results. Both read once at
+/// first use (the guard is not constructed otherwise, so default runs stay
+/// byte-identical).
+/// Whether either memo gate is on (read once; lets the production path skip
+/// the fingerprint + probe/store entirely when disabled).
+fn walk_memo_active() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("DEGENBOT_SOLVER_WALK_MEMO_STATS").as_deref() == Ok("1")
+            || std::env::var("DEGENBOT_SOLVER_WALK_MEMO").as_deref() == Ok("1")
+    })
+}
+
+fn walk_memo_enabled() -> std::sync::MutexGuard<'static, WalkMemoState> {
+    WALK_MEMO_STATE
+        .get_or_init(|| {
+            let stats_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO_STATS").as_deref() == Ok("1");
+            let memo_on = std::env::var("DEGENBOT_SOLVER_WALK_MEMO").as_deref() == Ok("1");
+            std::sync::Mutex::new(WalkMemoState {
+                stats_on,
+                memo_on,
+                ..WalkMemoState::default()
+            })
+        })
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Bilinear mixing of a `U256` into a `u64` accumulator (deterministic,
+/// order-sensitive; folded per range across every state field). 128-bit pair
+/// of accumulators bounds collision risk without hashing-cost contention on
+/// the rayon pool (no SipHash per solve).
+fn mix_u256(acc: &mut u64, v: U256) {
+    let l = v.into_limbs();
+    *acc = acc
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(l[0])
+        .wrapping_add(l[1].rotate_left(29))
+        .wrapping_add(l[2].rotate_left(17))
+        .wrapping_add(l[3].rotate_left(11))
+        .rotate_left(7)
+        ^ 0xD6E8_FEB8_6659_FD93;
+}
+
+/// 128-bit content fingerprint of the path composition: one lane folds hop
+/// order + per-range liquidity/prices/gamma, the other folds the derived
+/// capacity fields (gross/output pairs) so two distinct compositions that
+/// collapse one lane cannot collapse both. The crossing tables + word
+/// profiles are pure deterministic derivations of the sequence, so this
+/// fingerprint is the EXACT correctness key for a cached result.
+pub fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
+    let mut lane_a: u64 = 0xCBF2_9CE4_8422_2325;
+    let mut lane_b: u64 = 0x6E99_B980_B247_C7F6;
+    let mut gross = U256::ZERO;
+    let mut cross = U256::ZERO;
+    for (i, seq) in sequences.iter().enumerate() {
+        mix_u256(&mut lane_a, U256::from((i as u64).wrapping_add(3)));
+        mix_u256(&mut lane_b, U256::from((i as u64).wrapping_add(5)));
+        if seq.ranges.is_empty() {
+            mix_u256(&mut lane_a, U256::from(0xDEADu64));
+            mix_u256(&mut lane_b, U256::from(0xBEEFu64));
+            continue;
+        }
+        for r in &seq.ranges {
+            mix_u256(&mut lane_a, U256::from(r.gamma_numer));
+            mix_u256(&mut lane_a, U256::from(r.fee_denom));
+            mix_u256(&mut lane_a, r.sqrt_price_lower_x96);
+            mix_u256(&mut lane_a, r.sqrt_price_upper_x96);
+            mix_u256(&mut lane_a, U256::from(r.liquidity));
+            mix_u256(&mut lane_a, r.sqrt_price_x96);
+            gross = gross.wrapping_add(U256::from(r.liquidity));
+            cross = cross.wrapping_add(r.sqrt_price_x96);
+            mix_u256(&mut lane_b, gross);
+            mix_u256(&mut lane_b, cross);
+        }
+        for r in &seq.ranges {
+            let mut gf = U256::from(r.gamma_numer as u64)
+                .saturating_mul(U256::from(r.word_boundary_prices.len() as u64))
+                .saturating_add(U256::from(r.liquidity));
+            if !r.word_boundary_prices.is_empty() {
+                gf = gf.saturating_add(r.word_boundary_prices[0]);
+            }
+            mix_u256(&mut lane_b, gf);
+        }
+    }
+    (u128::from(lane_a) << 64) | u128::from(lane_b)
+}
+
+/// Probe the cross-block recomposition rate for a path composition.
+/// STATS mode counts `fp ∈ previous epoch` (a same-state re-solve);
+/// MEMO mode additionally replays the cached walk result. Cached misses
+/// in MEMO mode are stored after the solve (see the solve hook).
+pub(crate) fn walk_memo_probe(fp: u128) -> Option<(U256, U256, Vec<U256>)> {
+    let mut st = walk_memo_enabled();
+    if st.stats_on {
+        st.probes += 1;
+        let hit_now = st.prev.contains(&fp);
+        if hit_now {
+            st.hits += 1;
+            st.hits_sims += st.prev_costs.get(&fp).copied().unwrap_or(0);
+        }
+        st.curr.insert(fp);
+        if st.memo_on {
+            let hit = st.cache.get(&fp).cloned();
+            st.cache_plays += 1;
+            if let Some(entry) = hit.flatten() {
+                return Some(entry);
+            }
+            return None;
+        }
+        return None;
+    }
+    if st.memo_on {
+        let hit = st.cache.get(&fp).cloned();
+        st.cache_plays += 1;
+        if let Some(entry) = hit.flatten() {
+            return Some(entry);
+        }
+        return None;
+    }
+    None
+}
+
+/// Store a fresh solve result (or a proven-negative one) under the
+/// composition fingerprint. Capacity 4096 entries (~sub-MB); a simple
+/// clear-on-full policy bounds memory without LRU bookkeeping (the hottest
+/// compositions per block re-populate immediately).
+/// STATS-mode after-solve hook: attribute this composition's walker sims
+/// to the epoch (lets the census report the sims-weighted hit value).
+pub(crate) fn walk_memo_note_cost(fp: u128, sims: u64) {
+    let mut st = walk_memo_enabled();
+    if !st.stats_on {
+        return;
+    }
+    st.probes_sims += sims;
+    st.curr_costs.insert(fp, sims);
+}
+
+pub(crate) fn walk_memo_store(fp: u128, result: &Option<(U256, U256, Vec<U256>)>) {
+    let mut st = walk_memo_enabled();
+    if !st.memo_on {
+        return;
+    }
+    if st.cache.len() >= 4096 {
+        st.cache.clear();
+    }
+    st.cache.insert(fp, result.clone());
+}
+
+/// Advance the cross-block epoch and swap the composition census.
+pub fn walk_memo_set_epoch(epoch: u64) {
+    let mut st = walk_memo_enabled();
+    if epoch == st.epoch {
+        return;
+    }
+    st.epoch = epoch;
+    st.prev = std::mem::take(&mut st.curr);
+    let reserve = st.prev.len();
+    st.curr.reserve(reserve);
+    st.prev_costs = std::mem::take(&mut st.curr_costs);
+    let reserve_n = st.prev.len();
+    st.curr_costs.reserve(reserve_n);
+}
+
+/// Take (and reset) the per-epoch accounting counters.
+#[must_use]
+pub fn walk_memo_take_stats() -> WalkMemoStats {
+    let mut st = walk_memo_enabled();
+    let out = WalkMemoStats {
+        epoch: st.epoch,
+        probes: st.probes,
+        hits: st.hits,
+        distinct: st.curr.len() as u64,
+        cache_plays: st.cache_plays,
+        negative_entries: st.cache.values().filter(|v| v.is_none()).count() as u64,
+        probes_sims: st.probes_sims,
+        hits_sims: st.hits_sims,
+    };
+    st.probes = 0;
+    st.hits = 0;
+    st.cache_plays = 0;
+    st.probes_sims = 0;
+    st.hits_sims = 0;
+    out
+}
+
+// ---------------------------------------------------------------------------
 // N-hop CL Path Simulation
 // ---------------------------------------------------------------------------
 
@@ -1420,6 +1667,37 @@ pub fn int_solve_cl_path_cached(
     if crossings.is_some_and(|c| c.len() != sequences.len()) {
         return None;
     }
+    // Cross-block composition memo probe (DEGENBOT_SOLVER_WALK_MEMO=1 /
+    // _STATS=1). The fingerprint is the exact correctness key: the crossing
+    // tables + word profiles are pure deterministic derivations of the
+    // sequence, so an identical key cannot carry a stale result.
+    // `walk_memo_active()` reads the env gate ONCE, so a disabled run never
+    // pays the fingerprint or the lock.
+    if !walk_memo_active() {
+        return solve_active_set_path_uncached(sequences, crossings, profiles);
+    }
+    let fp = walk_path_fingerprint(sequences);
+    if let Some(hit) = walk_memo_probe(fp) {
+        return Some(hit);
+    }
+    let result = solve_active_set_path_uncached(sequences, crossings, profiles);
+    walk_memo_note_cost(fp, peek_walk_stats().sims as u64);
+    walk_memo_store(fp, &result);
+    result
+}
+
+/// The un-gated solve body (the memo hook is the only difference).
+fn solve_active_set_path_uncached(
+    sequences: &[&IntV3TickRangeSequence],
+    crossings: Option<&[&Arc<ClCrossingTable>]>,
+    profiles: &[&Arc<ClProfileTable>],
+) -> Option<(U256, U256, Vec<U256>)> {
+    if sequences.is_empty() || sequences.len() != profiles.len() {
+        return None;
+    }
+    if crossings.is_some_and(|c| c.len() != sequences.len()) {
+        return None;
+    }
     let hops: Vec<WalkHop> = sequences
         .iter()
         .enumerate()
@@ -2518,6 +2796,30 @@ mod tests {
         assert_eq!(result_n.final_output, result_v3v3.final_output);
         assert_eq!(result_n.hop_outputs, result_v3v3.hop_outputs);
         assert_eq!(result_n.consumed_inputs, result_v3v3.consumed_inputs);
+    }
+
+    #[test]
+    fn walk_fingerprint_is_content_stable_and_separates_compositions() {
+        let hop1 = make_v3_hop_at_1to1(10_000_000_000_000u128, true);
+        let hop2 = make_v3_hop_at_1to1(8_000_000_000_000u128, false);
+        let seq1 = IntV3TickRangeSequence::new(vec![hop1.clone()]).unwrap();
+        let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
+        let sv = [&seq1, &seq2];
+
+        let fp_a = walk_path_fingerprint(&sv);
+        let fp_b = walk_path_fingerprint(&sv);
+        assert_eq!(fp_a, fp_b, "fingerprint must be a pure function of content");
+
+        // Reversed hop order is a different composition.
+        let fp_rev = walk_path_fingerprint(&[&seq2, &seq1]);
+        assert_ne!(fp_a, fp_rev, "hop order must separate compositions");
+
+        // A single-field state change must change the key.
+        let mut h1 = hop1.clone();
+        h1.liquidity += 1;
+        let seq1b = IntV3TickRangeSequence::new(vec![h1]).unwrap();
+        let fp_changed = walk_path_fingerprint(&[&seq1b, &seq2]);
+        assert_ne!(fp_a, fp_changed, "a liquidity delta must change the key");
     }
 
     #[test]
