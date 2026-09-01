@@ -835,7 +835,7 @@ class Bot:
         tick_spacing: int | None = None,
         hook_address: str | None = None,
         state_view_address: str | None = None,
-    ) -> tuple[str, str, int, int, int, str]: ...
+    ) -> tuple[str, str, int, int, int, str, str]: ...
     def build_v4_pool(
         self,
         pool_manager: str,
@@ -844,7 +844,7 @@ class Bot:
         currency1: str,
         fee: int,
         tick_spacing: int,
-        hook_flags: int,
+        hook_address: str | None,
         state_view_address: str,
         block: int | None = None,
         db: bool = True,
@@ -916,7 +916,7 @@ class Bot:
         currency1: str,
         fee: int,
         tick_spacing: int,
-        hook_flags: int,
+        hook_address: str | None,
         sqrt_price_x96: int,
         liquidity: int,
         tick: int,

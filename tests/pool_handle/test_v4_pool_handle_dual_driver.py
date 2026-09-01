@@ -21,7 +21,7 @@ def v4_pool():
         currency1="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         fee=3000,
         tick_spacing=60,
-        hook_flags=0,
+        hook_address=None,
         sqrt_price_x96=1 << 96,
         liquidity=1_000_000,
         tick=0,

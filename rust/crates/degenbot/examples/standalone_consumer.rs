@@ -702,7 +702,7 @@ fn in_process_sim_standalone_slice() {
         currency1: POOL_C,
         fee: 0x10_0000,
         tick_spacing: 1,
-        hook_flags: 0,
+        hook_address: Address::ZERO,
     };
     let err = degenbot::runtime::get_runtime().block_on(build_v4(v4_id, None, &io, None));
     assert!(

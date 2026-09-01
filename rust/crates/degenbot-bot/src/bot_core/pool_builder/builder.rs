@@ -1203,8 +1203,12 @@ pub struct V4PoolBuildIdentity {
     pub fee: u32,
     /// `pool_key.tick_spacing`.
     pub tick_spacing: i32,
-    /// Pre-decoded hook-flags bitmask (`& 0xCC != 0` rejected at admission).
-    pub hook_flags: u16,
+    /// `pool_key.hooks` — the REAL hook contract address. Carried in full (not
+    /// reduced to its 16-bit flag mask) so the registered identity round-trips
+    /// `pool_id = keccak(abi.encode(pool_key))` and the ADR-037 hook guards
+    /// (`has_amount_modifying_hook`) read the true permissions. The flag mask
+    /// is derived on demand via [`derive_hook_flags`].
+    pub hook_address: Address,
 }
 
 /// The complete result of a V4 pool build: the registration params plus the
@@ -1289,9 +1293,13 @@ pub async fn build_v4(
                 currency1: id.currency1,
                 fee: id.fee,
                 tick_spacing: id.tick_spacing,
-                hooks: Address::ZERO,
+                // The REAL hook address (pool-ID mismatch regression, MTMPQB):
+                // a zeroed hooks breaks the keccak(pool_key) round-trip the
+                // Python companion asserts and disables the ADR-037
+                // has_amount_modifying_hook guards (both read the identity).
+                hooks: id.hook_address,
             },
-            hook_flags: id.hook_flags,
+            hook_flags: derive_hook_flags(id.hook_address),
             protocol_fee,
             sqrt_price_x96,
             liquidity: liquidity_u.to::<u128>(),
@@ -1382,7 +1390,10 @@ pub async fn resolve_v4_identity(
             currency1: token1.address,
             fee: u32::try_from(v4_row.fee_currency0).ok()?,
             tick_spacing: i32::try_from(v4_row.tick_spacing).ok()?,
-            hook_flags: derive_hook_flags(v4_row.hooks),
+            // The DB row carries the real hook contract address — keep it in
+            // full so the registered pool key round-trips the pool_id hash
+            // (pool-ID mismatch regression, MTMPQB).
+            hook_address: v4_row.hooks,
         })
     })
     .await;
@@ -1423,16 +1434,15 @@ pub async fn resolve_v4_identity(
         currency1,
         fee: overrides.fee.expect("checked present"),
         tick_spacing: overrides.tick_spacing.expect("checked present"),
-        hook_flags: derive_hook_flags(overrides.hook_address.unwrap_or_default()),
+        hook_address: overrides.hook_address.unwrap_or_default(),
     })
 }
 
-/// Derive the V4 `hook_flags` bitmask from a hook contract address. The
-/// practical value is `0` (no-hook pools are the only ones the solver
-/// admits); a real hook address contributes its low 16 bits, mirroring the
-/// retired Python driver's `int(hook_address, 16)` with no overflow for
-/// 20-byte addresses.
-fn derive_hook_flags(hook_address: Address) -> u16 {
+/// Derive the V4 `hook_flags` bitmask from a hook contract address.
+/// `pub` because the PyO3 seam derives the same mask from the stored
+/// identity (already-registered fast-path echo + registration params) — the
+/// address is the single source of truth; the mask is a derived quantity.
+pub fn derive_hook_flags(hook_address: Address) -> u16 {
     u16::from_be_bytes([hook_address[18], hook_address[19]])
 }
 

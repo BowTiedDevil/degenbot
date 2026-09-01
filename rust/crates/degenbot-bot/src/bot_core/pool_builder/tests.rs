@@ -784,6 +784,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     );
     let io = io_with(f);
 
+    let hook_addr = alloy::primitives::address!("0x99999999990a45c0ab9ec7e4b076dcfa05898f48");
     let result = builder::build_v4(
         builder::V4PoolBuildIdentity {
             pool_manager: pm,
@@ -793,7 +794,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
             currency1: SV,
             fee: 500,
             tick_spacing: 1,
-            hook_flags: 0,
+            hook_address: hook_addr,
         },
         None,
         &io,
@@ -808,8 +809,12 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     assert_eq!(params.pool_key.currency1, SV);
     assert_eq!(params.pool_key.fee, 500);
     assert_eq!(params.pool_key.tick_spacing, 1);
+    // Regression (pool-ID mismatch incident): the registered pool key must
+    // carry the REAL hook address, not Address::ZERO — the Python companion
+    // re-derives pool_id = keccak(pool_key) from this identity.
+    assert_eq!(params.pool_key.hooks, hook_addr);
+    assert_eq!(params.hook_flags, builder::derive_hook_flags(hook_addr));
     assert_eq!(params.protocol_fee, 300);
-    assert_eq!(params.hook_flags, 0);
     assert_eq!(params.tick, 5);
     assert_eq!(params.coverage, PoolTickCoverage::Sparse);
     assert!(params.tick_data.is_empty());
@@ -1822,7 +1827,14 @@ async fn resolve_v4_identity_orders_currencies_and_derives_hook_flags() {
     assert_eq!(id.currency1, second);
     assert_eq!(id.fee, 3000);
     assert_eq!(id.tick_spacing, 60);
-    assert_eq!(id.hook_flags, u16::from_be_bytes([SV[18], SV[19]]));
+    // The FULL hook address must survive identity resolution (the pool_id
+    // round-trip + the ADR-037 hook guards read it) — not just its 16-bit
+    // flag mask.
+    assert_eq!(id.hook_address, SV);
+    assert_eq!(
+        builder::derive_hook_flags(id.hook_address),
+        u16::from_be_bytes([SV[18], SV[19]])
+    );
     assert_eq!(id.state_view, SV);
 }
 

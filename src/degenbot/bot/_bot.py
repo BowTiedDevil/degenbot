@@ -1005,6 +1005,7 @@ class Bot:
                 fee_for_pool,
                 tick_spacing_for_pool,
                 hook_flags,
+                hook_address,
                 state_view_hex,
             ) = self._py_bot.resolve_v4_identity(
                 chain_id=int(chain_id),
@@ -1066,7 +1067,10 @@ class Bot:
             currency1=currency1_address,
             fee=fee_for_pool,
             tick_spacing=tick_spacing_for_pool,
-            hook_flags=hook_flags,
+            # The REAL hook address (pool-ID mismatch regression, MTMPQB): the
+            # core registers it in the pool key so the identity round-trips
+            # keccak(abi.encode(pool_key)). The flag mask is derived core-side.
+            hook_address=hook_address,
             state_view_address=state_view_address,
             block=int(head_block) if head_block is not None else None,
             db=True,
@@ -1080,6 +1084,7 @@ class Bot:
         # TF7RZB-S2/S3 return-surface parity: the identity the builder echoes
         # back must match what the core resolver produced (a divergence is a
         # real seam bug), and the pool_id must round-trip the requested hash.
+        # hook flags are derived from the same hook address on both sides.
         b_identity_ok = all([
             b_cur0.lower() == currency0_address.lower(),
             b_cur1.lower() == currency1_address.lower(),

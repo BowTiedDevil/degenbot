@@ -248,7 +248,7 @@ class TestV4SeamAdmission:
             "currency1": self.C1,
             "fee": 500,
             "tick_spacing": 10,
-            "hook_flags": 0,
+            "hook_address": None,
             "sqrt_price_x96": V3_SQRT_1_TO_1,
             "liquidity": 1_000_000,
             "tick": 0,
@@ -290,7 +290,8 @@ class TestV4SeamAdmission:
         for API compatibility, but register_v4_pool no longer raises it."""
         bot = Bot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e3" * 32)
-        kw["hook_flags"] = 0x80  # BEFORE_SWAP — amount-modifying
+        # low16 = 0x0080 = BEFORE_SWAP — amount-modifying
+        kw["hook_address"] = "0x" + "00" * 19 + "80"
         bot.register_v4_pool(**kw)  # admitted; no HookedPoolRejectedError raised
 
     def test_high_static_fee_raises_high_fee_pool_rejected_error(self) -> None:

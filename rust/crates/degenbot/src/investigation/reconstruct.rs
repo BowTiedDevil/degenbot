@@ -142,9 +142,14 @@ pub fn register_v4_with(
             currency1: p.currency1.expect("v4 currency1"),
             fee: p.fee_currency0.expect("v4 fee"),
             tick_spacing: p.tick_spacing.expect("v4 tick_spacing"),
-            hooks: Address::ZERO,
+            // The REAL hook address from the fixture (captured from the DB
+            // row). A ZERO default would break the keccak(pool_key) round-trip
+            // and blind the ADR-037 guards in replay (MTMPQB).
+            hooks: p.hooks.unwrap_or_default(),
         },
-        hook_flags: 0,
+        hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
+            p.hooks.unwrap_or_default(),
+        ),
         protocol_fee: protocol_fee_override.unwrap_or(p.protocol_fee.unwrap_or(0)),
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),
@@ -196,9 +201,12 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
             currency1: p.currency1.expect("v4 currency1"),
             fee: p.fee_currency0.expect("v4 fee"),
             tick_spacing: p.tick_spacing.expect("v4 tick_spacing"),
-            hooks: Address::ZERO,
+            // Same as register_v4_with: carry the REAL hook address (MTMPQB).
+            hooks: p.hooks.unwrap_or_default(),
         },
-        hook_flags: 0,
+        hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
+            p.hooks.unwrap_or_default(),
+        ),
         protocol_fee: p.protocol_fee.unwrap_or(0),
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),
@@ -211,4 +219,58 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state
+}
+
+#[cfg(test)]
+mod hook_wiring_tests {
+    //! Replay-vs-DB hook parity (MTMPQB): a captured-path V4 pool with a
+    //! nonzero hook address must register with the REAL hook in its identity so
+    //! the pool key round-trips keccak(abi.encode(pool_key)) and the ADR-037
+    //! guard surface stays truthful in investigations.
+    use super::*;
+    use crate::bot_core::BotState;
+    use crate::investigation::fixture::Amount;
+
+    #[test]
+    fn replay_v4_pool_carries_hook_from_fixture() {
+        let t0 = Address::new([0x22u8; 20]);
+        let t1 = Address::new([0xa0u8; 20]);
+        let mut hook_bytes = [0u8; 20];
+        hook_bytes[19] = 0x80; // low16 = 0x0080 = BEFORE_SWAP (amount-modifying)
+        let hook = Address::new(hook_bytes);
+        let pm = Address::new([0x44u8; 20]);
+        let pool_id = crate::pools::v4_storage_slots::v4_pool_id(&V4PoolKey {
+            currency0: t0,
+            currency1: t1,
+            fee: 100,
+            tick_spacing: 4,
+            hooks: hook,
+        });
+        let p = PoolData {
+            pool_manager: Some(pm),
+            pool_id: Some(format!("0x{}", alloy::hex::encode(pool_id))),
+            currency0: Some(t0),
+            currency1: Some(t1),
+            fee_currency0: Some(100),
+            tick_spacing: Some(4),
+            tick: Some(0),
+            sqrt_price_x96: Some(Amount(U256::from(1u128 << 96))),
+            liquidity: Some(Amount(U256::from(1_000_000u64))),
+            liquidity_update_block: Some(0),
+            hooks: Some(hook),
+            ..Default::default()
+        };
+        let mut core = BotState::new();
+        let registered = register_v4(&mut core, &p).expect("register");
+        let identity = core.get_v4_identity(registered).expect("identity");
+        assert_eq!(
+            identity.pool_key.hooks, hook,
+            "hook address must survive replay registration"
+        );
+        assert_eq!(
+            crate::pools::v4_storage_slots::v4_pool_id(&identity.pool_key),
+            identity.pool_id,
+            "replayed identity must round-trip the pool_id hash",
+        );
+    }
 }

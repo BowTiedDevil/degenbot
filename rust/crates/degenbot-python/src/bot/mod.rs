@@ -968,7 +968,7 @@ impl PyBot {
         tick_spacing: Option<i32>,
         hook_address: Option<&str>,
         state_view_address: Option<&str>,
-    ) -> PyResult<(String, String, u32, i32, u16, String)> {
+    ) -> PyResult<(String, String, u32, i32, u16, String, String)> {
         use degenbot_bot::bot_core::pool_builder::builder;
         use degenbot_core::runtime::get_runtime;
         let pm = parse_address(pool_manager).map_err(|e| {
@@ -1017,12 +1017,17 @@ impl PyBot {
             id.currency1.to_checksum(None),
             id.fee,
             id.tick_spacing,
-            id.hook_flags,
+            // Derived mask — kept for the driver's existing flag-parity check.
+            degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(id.hook_address),
+            // The REAL hook address (pool-ID mismatch regression, MTMPQB): the
+            // driver must thread this through to build_v4_pool so the
+            // registered pool key round-trips keccak(abi.encode(pool_key)).
+            id.hook_address.to_checksum(None),
             id.state_view.to_checksum(None),
         ))
     }
 
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, state_view_address, block=None, db=true, tick_data_fetcher=None))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, state_view_address, block=None, db=true, tick_data_fetcher=None))]
     #[expect(clippy::too_many_arguments)]
     #[expect(clippy::type_complexity)]
     #[expect(clippy::too_many_lines)] // PyO3 V4 build surface: full build + already-registered fast path in one tuple contract
@@ -1035,7 +1040,11 @@ impl PyBot {
         currency1: &str,
         fee: u32,
         tick_spacing: i32,
-        hook_flags: u16,
+        // The REAL hook contract address (from resolve_v4_identity — DB
+        // two-step or caller override; None/empty = no hook). The flag mask
+        // is DERIVED here: the address is the single identity source so the
+        // registered pool key round-trips keccak(abi.encode(pool_key)).
+        hook_address: Option<&str>,
         state_view_address: &str,
         block: Option<u64>,
         db: bool,
@@ -1087,9 +1096,9 @@ impl PyBot {
         // is the freshest source, and the driver still runs the registration
         // lifecycle (quarantine/verify/pin) off the returned handle as usual.
         //
-        // hook_flags is NOT re-derived here: the Python driver resolves the
+        // hook_address is NOT re-resolved here: the Python driver resolves the
         // identity (DB two-step, no RPC) before this call and passes the same
-        // immutable hook mask the core registered with.
+        // immutable hook address the core registered with.
         if let Some(existing) = self.with_state(py, |s| s.try_registered_v4(pm, &pool_id)) {
             let coverage_str = match existing.coverage {
                 degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
@@ -1107,7 +1116,10 @@ impl PyBot {
                 pm.to_checksum(None),
                 key.fee,
                 key.tick_spacing,
-                hook_flags,
+                // Derived mask — the driver's parity check compares it against
+                // the resolve_v4_identity mask, both derived from the same
+                // hook address.
+                degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(key.hooks),
                 format!("0x{}", alloy::hex::encode(pool_id)),
                 existing.protocol_fee,
                 key.fee,
@@ -1124,6 +1136,17 @@ impl PyBot {
         let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
             .as_deref()
             .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
+        let hook_addr = hook_address
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                parse_address(s).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "build_v4_pool: malformed hook_address {s:?}: {e}"
+                    ))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
         let id = builder::V4PoolBuildIdentity {
             pool_manager: pm,
             state_view,
@@ -1140,7 +1163,7 @@ impl PyBot {
             })?,
             fee,
             tick_spacing,
-            hook_flags,
+            hook_address: hook_addr,
         };
         // TF7RZB-S2 (builder return surface): capture the normalized identity
         // tuple before `id` is moved into `build_v4`.
@@ -1150,7 +1173,7 @@ impl PyBot {
             id.pool_manager.to_checksum(None),
             id.fee,
             id.tick_spacing,
-            id.hook_flags,
+            builder::derive_hook_flags(id.hook_address),
             format!("0x{}", alloy::hex::encode(id.pool_id)),
         );
         let result = py
@@ -1852,14 +1875,18 @@ impl PyBot {
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
-    /// Returns the auto-assigned pool ID. The hook + dynamic-fee admission
-    /// floor lives in `BotState::register_v4_pool` (ADR-005 slice 9a): pools
-    /// with amount-modifying hooks (`hook_flags & 0xCC != 0`), dynamic fees
-    /// (`fee == 0x100000`), or static fees exceeding the executor's 2-byte
-    /// encoding limit (`fee > 65535`) are rejected here, surfacing as typed
-    /// Python exceptions (`HookedPoolRejectedError` /
-    /// `DynamicFeePoolRejectedError` / `HighFeePoolRejectedError`) so Python
-    /// classifies by type, not string matching.
+    /// Returns the auto-assigned pool ID. The dynamic-fee admission floor
+    /// lives in `BotState::register_v4_pool` (ADR-005 slice 9a): pools with
+    /// dynamic fees (`fee == 0x100000`) or static fees exceeding the
+    /// executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
+    /// surfacing as typed Python exceptions
+    /// (`DynamicFeePoolRejectedError` / `HighFeePoolRejectedError`) so Python
+    /// classifies by type, not string matching. Since ADR-037/X4EU3J
+    /// amount-modifying hooked pools are ADMITTED (the ADR-037 guards use the
+    /// registered hook address at hop projection / simulation-caveat time),
+    /// and the `HookedPoolRejectedError` raise site is reserved (no longer
+    /// fires). The FULL `hook_address` rides into the registered pool key so
+    /// the identity round-trips `keccak(abi.encode(pool_key))` (MTMPQB).
     ///
     /// ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
     /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
@@ -1871,13 +1898,12 @@ impl PyBot {
     /// mismatch). Mirrors the V3 closure.
     ///
     /// Raises:
-    ///     `HookedPoolRejectedError`: If `hook_flags & 0xCC != 0`.
     ///     `DynamicFeePoolRejectedError`: If `fee == 0x100000`.
     ///     `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode).
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[expect(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None))]
     fn register_v4_pool(
         &self,
         py: Python<'_>,
@@ -1887,7 +1913,11 @@ impl PyBot {
         currency1: &str,
         fee: u32,
         tick_spacing: i32,
-        hook_flags: u16,
+        // The REAL hook contract address (None/empty = no hook). Registered
+        // in the pool key in full so the identity round-trips
+        // keccak(abi.encode(pool_key)) (pool-ID mismatch regression, MTMPQB);
+        // the derived 16-bit mask rides along in params.hook_flags.
+        hook_address: Option<&str>,
         sqrt_price_x96: &Bound<'_, PyAny>,
         liquidity: u128,
         tick: i32,
@@ -1948,6 +1978,15 @@ impl PyBot {
                 )));
             }
         };
+        let hook_addr = hook_address
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.parse::<Address>().map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Invalid hook_address: {e}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
         let params = RegisterV4PoolParams {
             pool_manager: pm,
             pool_id,
@@ -1956,9 +1995,11 @@ impl PyBot {
                 currency1: c1,
                 fee,
                 tick_spacing,
-                hooks: Address::ZERO, // Hook filtering already done via hook_flags.
+                // The REAL hook address — the identity must round-trip
+                // keccak(abi.encode(pool_key)) (pool-ID mismatch, MTMPQB).
+                hooks: hook_addr,
             },
-            hook_flags,
+            hook_flags: degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(hook_addr),
             protocol_fee,
             sqrt_price_x96: sp,
             liquidity,

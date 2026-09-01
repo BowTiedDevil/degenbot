@@ -72,7 +72,7 @@ def _register_canonical_v4_pool(py_bot: Bot) -> int:
         currency1=_CURRENCY1,
         fee=_FEE,
         tick_spacing=_TICK_SPACING,
-        hook_flags=0,
+        hook_address=_HOOKS,
         sqrt_price_x96=_SQRT_PRICE_1TO1,
         liquidity=_LIQUIDITY,
         tick=_TICK,

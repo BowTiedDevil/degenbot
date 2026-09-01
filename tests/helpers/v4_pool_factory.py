@@ -66,7 +66,6 @@ def make_v4_pool(
     Returns the V4 companion over the `LiquidityPool` handle.
     """
     bot = py_bot or Bot()
-    hook_flags = int(hook_address, 16) if hook_address else 0
     blk = state_block if state_block is not None else 0
 
     # ADR-006 rolling-start race closure: seed tick_data INLINE in
@@ -99,7 +98,9 @@ def make_v4_pool(
         currency1=token1.address,
         fee=fee,
         tick_spacing=tick_spacing,
-        hook_flags=hook_flags,
+        # The REAL hook address — registered in the pool key in full so the
+        # identity round-trips keccak(abi.encode(pool_key)) (MTMPQB).
+        hook_address=hook_address,
         sqrt_price_x96=sqrt_price_x96,
         liquidity=liquidity,
         tick=tick,

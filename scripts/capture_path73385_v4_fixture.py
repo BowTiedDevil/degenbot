@@ -128,10 +128,10 @@ def v4_scalars():
 
 
 def load_v4_pool(cur):
-    (t0, t1, f0, f1, denom, ts, ublk, mp) = cur.execute(
+    (t0, t1, f0, f1, denom, ts, ublk, mp, hooks) = cur.execute(
         """SELECT t0.address, t1.address, uv4.fee_currency0, uv4.fee_currency1,
                   uv4.fee_denominator, uv4.tick_spacing, uv4.liquidity_update_block,
-                  uv4.managed_pool_id
+                  uv4.managed_pool_id, uv4.hooks
            FROM uniswap_v4_pools uv4
            JOIN erc20_tokens t0 ON t0.id=uv4.currency0_id
            JOIN erc20_tokens t1 ON t1.id=uv4.currency1_id
@@ -140,11 +140,14 @@ def load_v4_pool(cur):
         "SELECT tick, liquidity_net, liquidity_gross FROM managed_pool_liquidity_positions "
         "WHERE managed_pool_id=?", (mp,)).fetchall()
     tick_data = {t: {"liquidity_net": n, "liquidity_gross": g} for t, n, g in tick_rows}
+    # hooks is captured IN FULL so replay registration round-trips the pool_id
+    # hash (keccak(abi.encode(pool_key))) — a hooked pool captured without it
+    # would reconstruct with a corrupted identity (MTMPQB).
     return {"family": "uniswap_v4", "pool_manager":
             "0x000000000004444c5dc75cb358380d2e3de08a90", "pool_id": V4_PID,
             "currency0": t0, "currency1": t1, "fee_currency0": f0, "fee_currency1": f1,
             "fee_denominator": denom, "tick_spacing": ts, "liquidity_update_block": ublk,
-            "tick_data": tick_data}
+            "hooks": hooks, "tick_data": tick_data}
 
 
 def main():

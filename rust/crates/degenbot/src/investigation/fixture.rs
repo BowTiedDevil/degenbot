@@ -71,6 +71,12 @@ pub struct PoolData {
     pub currency0: Option<Address>,
     #[serde(default)]
     pub currency1: Option<Address>,
+    /// `pool_key.hooks` — the REAL hook contract address from the DB row.
+    /// Zero/absent for the common no-hook pools. Carried in full so the
+    /// replayed identity round-trips `pool_id = keccak(abi.encode(pool_key))`
+    /// (pool-ID mismatch regression, MTMPQB).
+    #[serde(default)]
+    pub hooks: Option<Address>,
     #[serde(default)]
     pub tick_spacing: Option<i32>,
     #[serde(default)]
