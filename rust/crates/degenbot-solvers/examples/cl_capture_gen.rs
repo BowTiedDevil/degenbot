@@ -25,8 +25,20 @@
 //! + golden) to a JSONL consumed by `cl_solve_replay`. Deterministic,
 //! network-gated source of real heavy-CL data, no full bot soak.
 //!
-//!   `DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545`/ //!   `DEGENBOT_CLCAP_BLOCK=25826800` //!   cargo run -p degenbot-solvers --example `cl_capture_gen`
-//!   cargo run -p degenbot-solvers --example `cl_solve_replay` <capture.jsonl>
+//!   `DEGENBOT_CLCAP_RPC=http://host.containers.internal:8545`,
+//!   `DEGENBOT_CLCAP_BLOCK=<pinned block>`,
+//!   `DEGENBOT_CLCAP_MAX_FETCHES=320`,
+//!   `cargo run -p degenbot-solvers --example cl_capture_gen [-- <out.jsonl>]
+//!   `cargo run -p degenbot-solvers --example cl_solve_replay <capture.jsonl>`
+//!
+//! This generator is the ONLY sanctioned producer of exact-wei goldens
+//! (loop-18 T4): it writes sequences + the current solver's result from ONE
+//! pinned block, so goldens and solver share an epoch. Production captures
+//! (`DEGENBOT_SOLVER_CAPTURE*`) append working rows to NON-fixture paths —
+//! never paste them into a fixture: their pool state and their recorded
+//! answer come from different contexts. For stale epochs, refresh via this
+//! generator (preferred) or `DR_REPLAY_REGEN=1` on cl_solve_replay for
+//! over-shoot-only stale goldens.
 //!
 //! A `.block` sidecar is written next to the output recording the pinned block
 //! + regen command so the offline fixture is reproducible. Raise

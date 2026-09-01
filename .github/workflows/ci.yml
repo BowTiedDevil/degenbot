@@ -149,8 +149,14 @@ jobs:
           # Fail (nonzero exit) if any path regresses: profit under-shoot above
           # PROFIT_EPS, profit over-shoot past the few-wei tolerance in either
           # direction, or nondeterminism across reps. No RPC/DB needed.
+          # Loop-18: the exact-wei goldens are re-anchored to blocks
+          # 25879435..25879446 by cl_capture_gen (see sidecars *.jsonl.block);
+          # both the single-block offline anchor and the 156-row heavy corpus
+          # gate here (2s combined).
           cargo run -q -p degenbot-solvers --example cl_solve_replay -- \
             crates/degenbot-solvers/tests/fixtures/cl_capture_offline.jsonl
+          cargo run -q -p degenbot-solvers --example cl_solve_replay -- \
+            crates/degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl
 
         # NOTE: add this job to the required checks in branch protection so a
         # golden regression blocks merges.
