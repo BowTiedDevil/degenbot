@@ -835,10 +835,11 @@ impl ArbitrageEngine {
         // the CL solver can be optimized offline. None (no-op) unless gated.
         let capture = HeavyClPathCapture::from_env();
         let capture_ref: Option<&HeavyClPathCapture> = capture.as_ref();
-        // Optional offline mixed V2+CL solver capture (same gate): heavy
+        // Optional mixed V2+CL solver capture (same gate): heavy
         // mixed paths (e.g. path 7042 V2→V3→V3) dispatch to
         // `exact_solve_mixed_path_n_cached`, which the all-CL capture skips.
-        // Captures to heavy_mixed_solve_captures.jsonl for the replay harness.
+        // Defaults OUT of the fixtures dir (loop-18: working rows never
+        // accrete there; goldens are produced only by cl_capture_gen).
         let capture_mixed = HeavyMixedPathCapture::from_env();
         let capture_mixed_ref: Option<&HeavyMixedPathCapture> = capture_mixed.as_ref();
         let sims_recorder: &parking_lot::Mutex<HashMap<u64, u64>> = &self.last_walk_sims;
@@ -1323,11 +1324,15 @@ impl HeavyClPathCapture {
                 .unwrap_or(16),
             out_path: std::env::var("DEGENBOT_SOLVER_CAPTURE_OUT").map_or_else(
                 |_| {
-                    // Default to the same canonical solver fixtures dir the offline
-                    // replay + CI read, resolved machine-independently from the bot
-                    // crate root (degenbot-bot/../degenbot-solvers/tests/fixtures/).
+                    // Loop-18: production captures are WORKING rows (state and
+                    // recorded answer come from different contexts) — they
+                    // must NEVER accrete into the exact-wei fixtures: that
+                    // accretion (513 null-golden rows, 9 stale epochs) was
+                    // what red the F2 gate pre-re-anchor. Default out of the
+                    // fixtures dir; exact-wei goldens are produced ONLY by
+                    // cl_capture_gen (see its doc: the sanctioned producer).
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("../degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl")
+                        .join("../../../logs/solver_capture/cl_heavy_paths.jsonl")
                 },
                 std::path::PathBuf::from,
             ),
@@ -1467,8 +1472,10 @@ impl HeavyMixedPathCapture {
                 .unwrap_or(16),
             out_path: std::env::var("DEGENBOT_SOLVER_CAPTURE_OUT").map_or_else(
                 |_| {
+                    // Loop-18: mixed captures default OUT of the fixtures dir
+                    // (working rows; see the Cl-side comment).
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("../degenbot-solvers/tests/fixtures/heavy_mixed_solve_captures.jsonl")
+                        .join("../../../logs/solver_capture/cl_mixed_paths.jsonl")
                 },
                 |p| {
                     // If the caller overrides the out path for both captures,

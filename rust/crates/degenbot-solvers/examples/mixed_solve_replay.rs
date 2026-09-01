@@ -22,7 +22,8 @@
 //!   `cargo run -p degenbot-solvers --example mixed_solve_replay -- [<capture.jsonl>]`
 //!   `DR_REPLAY_ITERS=25`   // more reps for tighter p95 (default 9)
 //!
-//! Re-reads a `heavy_mixed_solve_captures.jsonl` produced by the live hook
+//! Re-reads a `heavy_mixed_solve_captures.jsonl`-FORMAT capture produced by
+//! the live hook
 //! (`solver_dispatch` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
 //! `IntHopState` per V2 hop + `IntV3TickRangeSequence` per CL hop from the
 //! captured fields, and re-runs `exact_solve_mixed_path_n_cached` — the exact
