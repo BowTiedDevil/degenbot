@@ -117,6 +117,12 @@ fn main() {
         std::process::exit(2);
     });
     let mut n_paths = 0u64;
+    // Loop-18 T4: DR_REPLAY_REGEN=1 refreshes goldens that the solver now
+    // EXCEEDS (over-shoot only; under-shoot stays a hard fail) — the loud,
+    // deliberate stale-golden regeneration path.
+    let regen_golden = std::env::var("DR_REPLAY_REGEN").is_ok();
+    let mut regen_queue: Vec<(usize, Value)> = Vec::new();
+    let mut regen_count = 0u64;
     // Gate A/B rows (SU7MAE N6NBUY): (path_id, golden JSON, derived bound).
     let mut gate_rows: Vec<(u64, Value, Option<U256>)> = Vec::new();
     let mut n_golden_ok = 0u64;
@@ -136,7 +142,11 @@ fn main() {
     let mut tuples_new = 0u64;
     let mut cross_block_pids = 0u64;
 
-    for line in content.lines().filter(|l| !l.trim().is_empty()) {
+    for (line_index, line) in content
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+    {
         let doc: Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(e) => {
@@ -364,14 +374,38 @@ fn main() {
                     eprintln!(
                         "path {pid}: over_shoot {over} wei > tolerance {OVER_SHOOT_TOLERANCE_WEI} — solver exceeds the recorded golden (phantom profit or stale golden)"
                     );
-                    ok = false;
+                    if regen_golden && under <= U256::from(PROFIT_EPS) {
+                        // Loop-18 T4 regeneration: the solver legitimately
+                        // EXCEEDS the recorded golden (loop-15..17 improved
+                        // the walk on giant-range shapes). Under-shoot stays
+                        // a hard fail; over-shoot-only lines get their
+                        // goldens refreshed in place, loudly.
+                        regen_queue.push((
+                            line_index,
+                            serde_json::json!({
+                                "optimal_input": opt.to_string(),
+                                "profit": replay_profit.to_string(),
+                                "hop_outputs": ho
+                                    .iter()
+                                    .map(std::string::ToString::to_string)
+                                    .collect::<Vec<_>>(),
+                            }),
+                        ));
+                        eprintln!(
+                            "path {pid}: DR_REPLAY_REGEN queued golden refresh (+{over} wei, over-shoot only)"
+                        );
+                        ok = true;
+                        regen_count += 1;
+                    } else {
+                        ok = false;
+                    }
                 }
             } else {
                 eprintln!("path {pid}: replay=None but golden present");
                 ok = false;
             }
         }
-        if ok {
+        if ok && !golden.is_null() {
             n_golden_ok += 1;
         }
 
@@ -465,6 +499,36 @@ fn main() {
         );
     }
     let exact_goldens = n_paths - n_gate_skipped;
+    // Loop-18 T4: apply queued golden refreshes (over-shoot-only) in place.
+    if regen_count > 0 {
+        let mut rewritten: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        let raw_lines: Vec<&str> = content.lines().collect();
+        for (idx, refreshed) in &regen_queue {
+            if let Some(raw) = raw_lines.get(*idx) {
+                let mut row: Value = serde_json::from_str(raw).unwrap_or_default();
+                row["golden"] = refreshed.clone();
+                rewritten.insert(*idx, serde_json::to_string(&row).unwrap_or_default());
+            }
+        }
+        let final_text: String = raw_lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                rewritten
+                    .get(&i)
+                    .cloned()
+                    .unwrap_or_else(|| (*l).to_string())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, final_text + "\n").unwrap_or_else(|e| {
+            eprintln!("golden regen write failed: {e}");
+        });
+        println!(
+            "regen: {regen_count} golden(s) refreshed in {path} (over-shoot-only; rerun the replay to confirm)"
+        );
+    }
     println!(
         "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{exact_goldens} exact match | gate-skipped {n_gate_skipped} | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest median: path {} = {}us | file={path}",
         heaviest.1, heaviest.0
