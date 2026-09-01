@@ -123,6 +123,9 @@ fn main() {
     let mut class_ns: Vec<[u128; 4]> = vec![[0; 4]; catalog.len()];
     let mut reference_ns: u128 = 0;
     let mut total_events: u64 = 0;
+    // Micro-bench capture (DRCLAB_MICRO=1): densest hop-0 path tables.
+    let mut micro_seqs: Option<Vec<IntV3TickRangeSequence>> = None;
+    let mut micro_best: usize = 0;
 
     for (line_no, line) in content.lines().filter(|l| !l.trim().is_empty()).enumerate() {
         if n_paths >= max_paths {
@@ -146,6 +149,13 @@ fn main() {
         };
         if baseline.is_empty() {
             continue;
+        }
+        if baseline
+            .first()
+            .is_some_and(|s| s.ranges.len() > micro_best)
+        {
+            micro_best = baseline[0].ranges.len();
+            micro_seqs = Some(baseline.clone());
         }
         let mut seqs = baseline.clone();
         let mut seed: u64 = pid.wrapping_add(line_no as u64).wrapping_mul(0x9E37_79B9);
@@ -305,6 +315,9 @@ fn main() {
             c.solves
         );
     }
+    if std::env::var("DRCLAB_MICRO").is_ok() {
+        run_micro_bench(micro_seqs);
+    }
     println!(
         "----\nreplayed {n_paths} path(s) with {trans} transitions each | total divergences {total_mismatches}"
     );
@@ -312,6 +325,151 @@ fn main() {
         eprintln!("CACHE-LAB FAILED: exact accuracy violated");
         std::process::exit(1);
     }
+}
+
+/// Loop-17 T3 micro-bench: split one walk sim (~640ns for 3 dense hops) into
+/// crossing-table partition_point, compute_swap_step_v3, and Vec alloc cost.
+fn run_micro_bench(micro_seqs: Option<Vec<IntV3TickRangeSequence>>) {
+    use degenbot_math::cl::swap_math::compute_swap_step_v3;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const ITERS: u64 = 200_000;
+    let Some(seqs) = micro_seqs else {
+        println!("micro-bench: no path captured");
+        return;
+    };
+    println!("---- micro-bench (DRCLAB_MICRO, {ITERS} iters) ----");
+
+    // Build the tables for the densest hop once.
+    let seq = &seqs[0];
+    let crossings = degenbot_solvers::mobius_v3_int::build_cl_crossing_table(seq);
+    let profiles =
+        degenbot_solvers::mobius_v3_int::build_cl_word_profiles_from_crossings(&crossings);
+    println!(
+        "  hop0: {} ranges, {} word-profiles",
+        crossings.len(),
+        profiles.iter().filter(|p| p.is_some()).count(),
+    );
+    // V3WordProfile fields are private; pull step params out of the first
+    // crossing's ending range instead.
+    let hop = &crossings[crossings.len() / 2].ending_range;
+
+    // A: partition_point over the crossing table (scattered query values).
+    let mut x = U256::from(0x1234_5678_9abc_def0_u64);
+    let t0 = Instant::now();
+    for _ in 0..ITERS {
+        x = x
+            .wrapping_mul(U256::from(6_364_136_223_846_793_005_u64))
+            .wrapping_add(U256::from(1_442_695_040_888_963_407_u64));
+        let k = crossings.partition_point(|c| c.crossing_gross_input <= x);
+        black_box(k);
+    }
+    let a_us = t0.elapsed().as_micros();
+
+    // B: one compute_swap_step_v3 (the partial-landing unit).
+    let sp = hop.sqrt_price_x96;
+    let target = if hop.zero_for_one {
+        hop.sqrt_price_lower_x96
+    } else {
+        hop.sqrt_price_upper_x96
+    };
+    let remaining = U256::from(10).pow(U256::from(21));
+    let liquidity = hop.liquidity;
+    let fee = U256::from(hop.fee_denom - hop.gamma_numer);
+    let mut acc = U256::ZERO;
+    let t0 = Instant::now();
+    for _ in 0..ITERS {
+        if let Ok(step) = compute_swap_step_v3(
+            sp,
+            target,
+            i128::try_from(liquidity).unwrap_or(i128::MAX),
+            alloy::primitives::I256::try_from(remaining).unwrap_or(alloy::primitives::I256::MAX),
+            fee,
+        ) {
+            acc = acc.wrapping_add(step.amount_out);
+        }
+    }
+    let b_us = t0.elapsed().as_micros();
+    black_box(acc);
+
+    // C: the per-sim Vec pair allocation overhead (capacity 3, 3 pushes, drop).
+    let t0 = Instant::now();
+    for i in 0..ITERS {
+        let mut vo: Vec<U256> = Vec::with_capacity(3);
+        vo.push(U256::from(i as u64));
+        vo.push(U256::from(i as u64 + 1));
+        vo.push(U256::from(i as u64 + 2));
+        let mut vl: Vec<usize> = Vec::with_capacity(3);
+        vl.push(1);
+        vl.push(2);
+        vl.push(3);
+        black_box((vo[2], vl[2]));
+    }
+    let c_us = t0.elapsed().as_micros();
+
+    use degenbot_math::cl::full_math::{muldiv, muldiv_rounding_up};
+    let narrow_a = U256::from(1u64) << U256::from(100);
+    let narrow_b = U256::from(0xffff_ffff_ffff_ffff_u64) * U256::from(1_000_003_u64); // < 2^128
+    let q96 = U256::from(1) << U256::from(96);
+    let mut md_acc = U256::ZERO;
+    let t0 = Instant::now();
+    for _ in 0..ITERS {
+        md_acc = md_acc.wrapping_add(muldiv(narrow_a, narrow_b, q96).unwrap_or_default());
+    }
+    let d_us = t0.elapsed().as_micros();
+    black_box(md_acc);
+    let wide_a = U256::from(1u64) << U256::from(200);
+    let mut md_acc2 = U256::ZERO;
+    let t0 = Instant::now();
+    for _ in 0..ITERS {
+        md_acc2 = md_acc2.wrapping_add(muldiv(wide_a, narrow_b, q96).unwrap_or_default());
+    }
+    let e_us = t0.elapsed().as_micros();
+    black_box(md_acc2);
+    let mut md_acc3 = U256::ZERO;
+    let t0 = Instant::now();
+    for _ in 0..ITERS {
+        md_acc3 =
+            md_acc3.wrapping_add(muldiv_rounding_up(narrow_a, narrow_b, q96).unwrap_or_default());
+    }
+    let f_us = t0.elapsed().as_micros();
+    black_box(md_acc3);
+
+    println!(
+        "  A crossing partition_point: {:.1} ns/op",
+        a_us as f64 * 1e3 / ITERS as f64
+    );
+    (
+        "  A crossing partition_point: {:.1} ns/op",
+        a_us as f64 * 1e3 / ITERS as f64,
+    );
+    println!(
+        "  B compute_swap_step_v3:     {:.1} ns/op",
+        b_us as f64 * 1e3 / ITERS as f64
+    );
+    println!(
+        "  D muldiv narrow (fits 256): {:.1} ns/op",
+        d_us as f64 * 1e3 / ITERS as f64
+    );
+    println!(
+        "  E muldiv wide (needs 512):  {:.1} ns/op",
+        e_us as f64 * 1e3 / ITERS as f64
+    );
+    println!(
+        "  F muldiv_rounding_up nar.:  {:.1} ns/op",
+        f_us as f64 * 1e3 / ITERS as f64
+    );
+    println!(
+        "  C vec-pair alloc:           {:.1} ns/op",
+        c_us as f64 * 1e3 / ITERS as f64
+    );
+    println!(
+        "  per-sim estimate (3 hops):  A*3 + B*~3 + C = {:.0} ns vs measured ~640 ns/sim",
+        a_us as f64 * 1e3 / ITERS as f64 * 3.0
+            + b_us as f64 * 1e3 / ITERS as f64 * 3.0
+            + c_us as f64 * 1e3 / ITERS as f64
+    );
 }
 
 /// Move hop `i`'s current-range sqrt price toward its exit boundary (midpoint

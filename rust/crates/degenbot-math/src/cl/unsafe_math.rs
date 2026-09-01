@@ -13,8 +13,7 @@ pub fn div_rounding_up(x: U256, y: U256) -> U256 {
     if y.is_zero() {
         return U256::ZERO;
     }
-    let quotient = x / y;
-    let remainder = x % y;
+    let (quotient, remainder) = x.div_rem(y);
     if remainder.is_zero() {
         quotient
     } else {

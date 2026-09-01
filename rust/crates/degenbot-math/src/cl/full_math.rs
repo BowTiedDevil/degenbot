@@ -10,6 +10,59 @@ use alloy::primitives::{U256, U512};
 
 use degenbot_core::errors::ClMathError;
 
+/// Byte-identical fast paths shared by [`muldiv`] / [`muldiv_rounding_up`].
+///
+/// Returns `None` when no fast path applies (caller falls back to the U512
+/// product + U512 division). Both paths are exact-integer rewrites:
+/// - power-of-two denominator: `(a*b) >> s` plus a remainder test for the
+///   rounding-up variant — division by 2^s is a shift;
+/// - narrow operands (`a`, `b` ≤ 2^128 − 1): the product fits `U256`, so the
+///   division runs at 256/256 bits instead of 512/512.
+enum FastDiv {
+    Floor(U256),
+    Ceil(U256),
+}
+
+#[inline]
+fn fast_muldiv(a: U256, b: U256, denominator: U256, rounding_up: bool) -> Option<FastDiv> {
+    // Power-of-two denominator: the wide product shifted by `s` is exactly
+    // the quotient; the high bits of `s` form the remainder (for the ceil
+    // variant) and the same result bound governs the overflow check.
+    if denominator.count_ones() == 1 {
+        let shift = denominator.trailing_zeros();
+        let product = U512::from(a) * U512::from(b);
+        let quotient = product >> shift;
+        if quotient > U512::from(U256::MAX) {
+            // Overflow must surface identically to the generic path. The
+            // rounded-up quotient can only distinguish itself from the floor
+            // by +1 when the discarded bits are nonzero; if the floor already
+            // exceeds U256::MAX the ceil does too.
+            return None;
+        }
+        let floor = quotient.to::<U256>();
+        if rounding_up
+            && (product & (U512::from(1u8) << shift).wrapping_sub(U512::from(1u8))) != U512::ZERO
+        {
+            return floor.checked_add(U256::from(1u8)).map(FastDiv::Ceil);
+        }
+        return Some(FastDiv::Floor(floor));
+    }
+    // Narrow operands: 256/256 division instead of 512/512.
+    if a <= U256::from(u128::MAX) && b <= U256::from(u128::MAX) {
+        let product = a.wrapping_mul(b); // < 2^256: both factors < 2^128
+        let quotient = product / denominator;
+        if rounding_up {
+            let remainder = product % denominator;
+            if remainder.is_zero() {
+                return Some(FastDiv::Floor(quotient));
+            }
+            return quotient.checked_add(U256::from(1u8)).map(FastDiv::Ceil);
+        }
+        return Some(FastDiv::Floor(quotient));
+    }
+    None
+}
+
 /// Compute `floor(a * b / denominator)` with full 512-bit precision.
 ///
 /// # Errors
@@ -20,6 +73,10 @@ use degenbot_core::errors::ClMathError;
 pub fn muldiv(a: U256, b: U256, denominator: U256) -> Result<U256, ClMathError> {
     if denominator.is_zero() {
         return Err(ClMathError::DivisionByZero);
+    }
+
+    if let Some(FastDiv::Floor(result)) = fast_muldiv(a, b, denominator, false) {
+        return Ok(result);
     }
 
     // Promote to U512 to hold the full 512-bit product without overflow.
@@ -47,14 +104,18 @@ pub fn muldiv_rounding_up(a: U256, b: U256, denominator: U256) -> Result<U256, C
     if denominator.is_zero() {
         return Err(ClMathError::DivisionByZero);
     }
+    if let Some(fast) = fast_muldiv(a, b, denominator, true) {
+        return Ok(match fast {
+            FastDiv::Floor(v) | FastDiv::Ceil(v) => v,
+        });
+    }
     let product = U512::from(a) * U512::from(b);
     let den = U512::from(denominator);
-    let result = product / den;
-    if result > U512::from(U256::MAX) {
+    let (raw_result, remainder) = product.div_rem(den);
+    if raw_result > U512::from(U256::MAX) {
         return Err(ClMathError::Uint256Overflow);
     }
-    let remainder = product % den;
-    let floor = result.to::<U256>();
+    let floor = raw_result.to::<U256>();
     if remainder.is_zero() {
         Ok(floor)
     } else {
