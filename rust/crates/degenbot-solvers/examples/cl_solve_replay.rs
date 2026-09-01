@@ -32,8 +32,9 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_solvers::mobius_v3_int::{
-    int_solve_cl_path, last_refine_sims, reset_walk_stats, take_last_walk_stats_full,
-    take_last_word_boundary_steps,
+    int_solve_cl_path, last_refine_sims, reset_walk_stats, take_event_census,
+    take_event_census_pieces, take_last_walk_stats_full, take_last_word_boundary_steps,
+    WalkEventCensus,
 };
 use degenbot_solvers::profit_envelope::{path_profit_bound, HopMath};
 use serde_json::Value;
@@ -121,6 +122,16 @@ fn main() {
     let mut n_golden_ok = 0u64;
     let mut n_consistent = 0u64;
     let mut heaviest: (u128, u64) = (0, 0); // (median_us, path_id)
+                                            // Loop-15 census (DEGENBOT_WALK_EVENT_CENSUS=1): grand totals of the
+                                            // nested-inversion tally + the T2 cross-block edge-shift analysis.
+    let mut census_total = WalkEventCensus::default();
+    let mut last_pieces_by_pid: std::collections::HashMap<u64, Vec<(Vec<usize>, U256)>> =
+        std::collections::HashMap::new();
+    let mut shift_min = None;
+    let mut shift_buckets = [0u64; 4];
+    let mut tuples_matched = 0u64;
+    let mut tuples_new = 0u64;
+    let mut cross_block_pids = 0u64;
 
     for line in content.lines().filter(|l| !l.trim().is_empty()) {
         let doc: Value = match serde_json::from_str(line) {
@@ -214,12 +225,44 @@ fn main() {
         }
         let wsteps = take_last_word_boundary_steps();
         let refine = last_refine_sims();
+        // Census + T2 recorder: one take per path (the tally accumulates
+        // across this path's iterations; pieces log likewise).
+        let path_census = take_event_census();
+        census_total.accumulate_event_census(path_census);
+        let path_pieces = take_event_census_pieces();
+        if let Some(prev) = last_pieces_by_pid.get(&pid) {
+            cross_block_pids += 1;
+            let prev_map: std::collections::HashMap<&Vec<usize>, &U256> =
+                prev.iter().map(|(k, e)| (k, e)).collect();
+            for (ks, edge) in &path_pieces {
+                if let Some(pe) = prev_map.get(ks).copied() {
+                    tuples_matched += 1;
+                    let d = if edge > pe { edge - pe } else { pe - edge };
+                    *shift_min.get_or_insert(d) = shift_min.map_or(d, |m| m.min(d));
+                    let b = if d <= U256::from(4u64) {
+                        0
+                    } else if d <= U256::from(65_536u64) {
+                        1
+                    } else if d <= (U256::ONE << 40) {
+                        2
+                    } else {
+                        3
+                    };
+                    shift_buckets[b] += 1;
+                } else {
+                    tuples_new += 1;
+                }
+            }
+        }
+        last_pieces_by_pid.insert(pid, path_pieces);
         let ws = take_last_walk_stats_full();
         let pieces = ws.pieces;
         let sims = ws.sims;
         let ls = ws.left_edge_sims;
         let rs = ws.right_edge_sims;
         let ans = ws.anchor_sims;
+        let esok = ws.event_solver_ok;
+        let esfb = ws.event_solver_fallbacks;
         if consistent {
             n_consistent += 1;
         } else {
@@ -333,7 +376,7 @@ fn main() {
             .map(|r| r.word_boundary_prices.len())
             .sum();
         println!(
-            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} refine={refine} pieces={pieces} wsteps={wsteps} left={ls} right={rs} anchor={ans}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
+            "path {pid}  median={med}us p95={p95}us min={tmin}us ({iters}x)  sims={sims} refine={refine} pieces={pieces} wsteps={wsteps} left={ls} right={rs} anchor={ans} evtslv={esok}/{esfb}  captured(t={ctime}us,s={csims},p={cpieces})  golden={}  ranges/hop={ranges_per_hop:?}  n_word_bounds={n_wbp}",
             if ok { "OK" } else { "MISMATCH" }
         );
         n_paths += 1;
@@ -379,6 +422,30 @@ fn main() {
         println!(
             "floor {floor_wei} wei: would_skip {skipped}/{} | goldens checked {goldens} | false skips {false_skips}",
             gate_rows.len()
+        );
+    }
+    if census_total.pieces + census_total.pred_none + census_total.terminal_agree > 0 {
+        let pi_ = |v: u64, d: u64| (100 * v) / d.max(1);
+        println!(
+            "----\nEVENT CENSUS: pieces={} exact={} ({}%) in_bracket_only={} early={:?} late={:?} pred_none={} terminal_agree={} terminal_disagree={} census_sims={}",
+            census_total.pieces,
+            census_total.exact,
+            pi_(census_total.exact, census_total.pieces),
+            census_total.in_bracket - census_total.exact,
+            census_total.early,
+            census_total.late,
+            census_total.pred_none,
+            census_total.terminal_agree,
+            census_total.terminal_disagree,
+            census_total.census_sims,
+        );
+        println!(
+            "EDGE-SHIFT (T2): pids_seen_again={} tuples_matched={} tuples_new={} shift_min={} buckets(d4,64k,2^40,beyond)={:?}",
+            cross_block_pids,
+            tuples_matched,
+            tuples_new,
+            shift_min.map_or_else(|| "-".to_string(), |d| d.to_string()),
+            shift_buckets
         );
     }
     println!(
