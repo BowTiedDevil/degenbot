@@ -403,6 +403,16 @@ fn cl_hop_min_input_for_output(
 /// lemma; the loop-15 census measures how often it agrees with the bisection
 /// ground truth on captured states.
 fn walk_event_first_above_predicted(hops: &[WalkHop], ks: &[usize]) -> Option<U256> {
+    let p_t0 = std::time::Instant::now();
+    let out = walk_event_first_above_predicted_inner(hops, ks);
+    WALK_PRED_US_TOTAL.fetch_add(
+        u64::try_from(p_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    out
+}
+
+fn walk_event_first_above_predicted_inner(hops: &[WalkHop], ks: &[usize]) -> Option<U256> {
     let mut best: Option<U256> = None;
     for i in 0..hops.len() {
         let crossings = match &hops[i] {
@@ -828,6 +838,18 @@ enum WalkHop<'a> {
 /// non-negative per-range gross inputs), so the landed index is a partition
 /// point. Ties (zero-liquidity ranges cost nothing to cross) resolve to the
 /// LARGEST index — the swap entered every zero-cost range.
+/// Loop-17 census: total wall time spent inside `simulate_walk_path`
+/// (process-wide atomics — avoids thread-local TLS budget).
+pub static WALK_SIM_US_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 census: total anchor computation wall time (per-piece shifted
+/// Möbius + isqrt).
+pub static WALK_ANCHOR_US_TOTAL: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Loop-17 census: event-solver prediction wall time.
+pub static WALK_PRED_US_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn landed_ending_range_index(crossings: &[IntTickRangeCrossing], available: U256) -> usize {
     debug_assert!(!crossings.is_empty());
     debug_assert!(crossings[0].crossing_gross_input.is_zero());
@@ -856,6 +878,16 @@ struct WalkPathOutcome {
 /// any candidate.
 fn simulate_walk_path(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
     WALK_PATH_SIMULATIONS.with(|c| c.set(c.get() + 1));
+    let sim_t0 = std::time::Instant::now();
+    let out = simulate_walk_path_inner(amount_in, hops);
+    WALK_SIM_US_TOTAL.fetch_add(
+        u64::try_from(sim_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    out
+}
+
+fn simulate_walk_path_inner(amount_in: U256, hops: &[WalkHop]) -> WalkPathOutcome {
     let n_hops = hops.len();
     let mut hop_outputs = Vec::with_capacity(n_hops);
     let mut landed = Vec::with_capacity(n_hops);
@@ -951,6 +983,16 @@ fn build_shifted_piece_hops(
 /// corner (the smooth argmax runs past the pinned edge) is owned by
 /// `walk_refine_window`, which searches for the discrete peak.
 fn walk_piece_anchor(hops: &[WalkHop], ks: &[usize]) -> U256 {
+    let a_t0 = std::time::Instant::now();
+    let out = walk_piece_anchor_inner(hops, ks);
+    WALK_ANCHOR_US_TOTAL.fetch_add(
+        u64::try_from(a_t0.elapsed().as_nanos() / 1_000).unwrap_or(u64::MAX),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    out
+}
+
+fn walk_piece_anchor_inner(hops: &[WalkHop], ks: &[usize]) -> U256 {
     let pieces = build_shifted_piece_hops(hops, ks);
     let coeffs = crate::mobius_shifted_piece::compute_shifted_piece_mobius_coefficients(&pieces);
     crate::mobius_shifted_piece::shifted_piece_model_optimal_input(&coeffs).unwrap_or(U256::ZERO)

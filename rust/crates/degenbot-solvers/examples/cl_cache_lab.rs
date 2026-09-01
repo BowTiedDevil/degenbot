@@ -120,6 +120,9 @@ fn main() {
     let mut n_paths = 0usize;
     // Class-indexed rebuild-delta matrix rows: [strategy][class], class 0-3 = price/liquidity/tick/restore.
     let mut class_agg: Vec<[u64; 4]> = vec![[0; 4]; catalog.len()];
+    let mut class_ns: Vec<[u128; 4]> = vec![[0; 4]; catalog.len()];
+    let mut reference_ns: u128 = 0;
+    let mut total_events: u64 = 0;
 
     for (line_no, line) in content.lines().filter(|l| !l.trim().is_empty()).enumerate() {
         if n_paths >= max_paths {
@@ -204,8 +207,12 @@ fn main() {
             let pre: Vec<degenbot_solvers::cl_cache::BuildCounters> =
                 catalog.iter().map(|s| s.counters().clone()).collect();
             let seq_refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
+            let t_ref = std::time::Instant::now();
             let reference = degenbot_solvers::mobius_v3_int::int_solve_cl_path(&seq_refs);
+            reference_ns += t_ref.elapsed().as_nanos();
+            total_events += 1;
             for (si, s) in catalog.iter_mut().enumerate() {
+                let t_strat = std::time::Instant::now();
                 let cached = if si == 0 {
                     // S0 IS the reference; still run its refill so the
                     // rebuild counters stay comparable across the catalog.
@@ -214,6 +221,7 @@ fn main() {
                 } else {
                     solve_prepared(s.as_mut(), &seqs, &event, &seq_refs)
                 };
+                class_ns[si][class] += t_strat.elapsed().as_nanos();
                 let name = s.name();
                 if cached != reference {
                     mismatches[si] += 1;
@@ -227,6 +235,7 @@ fn main() {
                 let post = s.counters();
                 class_agg[si][class] = class_agg[si][class]
                     .saturating_add(post.crossing_tables.saturating_sub(pre[si].crossing_tables));
+                let _ = &class_ns;
             }
         }
         println!(
@@ -240,8 +249,38 @@ fn main() {
         n_paths += 1;
     }
 
+    let sim_us = degenbot_solvers::mobius_v3_int::WALK_SIM_US_TOTAL
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let anchor_us = degenbot_solvers::mobius_v3_int::WALK_ANCHOR_US_TOTAL
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    let pred_us = degenbot_solvers::mobius_v3_int::WALK_PRED_US_TOTAL
+        .swap(0, std::sync::atomic::Ordering::Relaxed);
+    println!(
+        "  walk-sim: {sim_us} us | anchors: {anchor_us} us | predictions: {pred_us} us (all strategies+reference)"
+    );
+    println!(
+        "---- per-transition averages over {total_events} events ----\n  reference (full build+solve): {:.2} ms/event",
+        reference_ns as f64 / 1e6 / total_events.max(1) as f64
+    );
+    for (si, s) in catalog.iter().enumerate() {
+        let tot: u128 = class_ns[si].iter().sum();
+        println!(
+            "  {} refill+cached_solve: {:.2} ms/event",
+            s.name(),
+            tot as f64 / 1e6 / total_events.max(1) as f64
+        );
+    }
     println!("---- class rebuild deltas ----");
     for (si, s) in catalog.iter().enumerate() {
+        let [t_price, t_liq, t_tick, t_restore]: [u128; 4] = class_ns[si];
+        println!(
+            "  {} refill+solve ms/class: price={:.2} liquidity={:.2} tick={:.2} restore={:.2}",
+            s.name(),
+            t_price as f64 / 1e6,
+            t_liq as f64 / 1e6,
+            t_tick as f64 / 1e6,
+            t_restore as f64 / 1e6
+        );
         println!(
             "{} price={} liquidity={} tick={} restore={}",
             s.name(),
