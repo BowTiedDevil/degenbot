@@ -1239,14 +1239,28 @@ fn piece_window_right_edge(hops: &[WalkHop], ks: &[usize], hint: U256) -> Option
 // bisection (A/B toggle for the replay harness; read once per process).
 static EVENT_SOLVER_LEGACY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// Loop-17 A/B: `DEGENBOT_WALK_ANCHOR_SWEEP=0` disables the per-piece anchor
-/// ±2 probe sweep (EXPERIMENTAL toggle, default ON; production unchanged).
-fn anchor_sweep_disabled() -> bool {
-    *ANCHOR_SWEEP_OFF
-        .get_or_init(|| std::env::var("DEGENBOT_WALK_ANCHOR_SWEEP").is_ok_and(|v| v == "0"))
+/// Loop-17 A/B: `DEGENBOT_WALK_ANCHOR_SWEEP` — `0` disables the per-piece
+/// anchor probe sweep entirely; `2` records the anchor only (no ±2
+/// neighbors); unset/anything else keeps the full ±2 sweep (default =
+/// production).
+#[derive(Clone, Copy)]
+enum AnchorSweep {
+    Full,
+    CenterOnly,
+    Off,
 }
 
-static ANCHOR_SWEEP_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static ANCHOR_SWEEP_MODE: std::sync::OnceLock<AnchorSweep> = std::sync::OnceLock::new();
+
+fn anchor_sweep_mode() -> AnchorSweep {
+    *ANCHOR_SWEEP_MODE.get_or_init(|| {
+        match std::env::var("DEGENBOT_WALK_ANCHOR_SWEEP").as_deref() {
+            Ok("0") => AnchorSweep::Off,
+            Ok("2") => AnchorSweep::CenterOnly,
+            _ => AnchorSweep::Full,
+        }
+    })
+}
 
 fn piece_window_right_edge_evented(
     hops: &[WalkHop],
@@ -1846,15 +1860,24 @@ fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256
         // Loop-17 A/B (EXPERIMENTAL, default ON): `DEGENBOT_WALK_ANCHOR_SWEEP=0`
         // disables the ±2 probe set to measure its value. The anchor VALUE is
         // still computed and used as the window-edge hint either way.
-        let sweep_off = anchor_sweep_disabled();
+        let sweep = anchor_sweep_mode();
         let anchor = walk_piece_anchor(hops, &ks);
-        if !anchor.is_zero() && !sweep_off {
+        if !anchor.is_zero() {
             let anchor_t0 = WALK_PATH_SIMULATIONS.with(std::cell::Cell::get);
-            for delta in -2i32..=2 {
-                let candidate = if delta >= 0 {
-                    anchor.saturating_add(U256::from(delta.cast_unsigned()))
-                } else {
-                    anchor.saturating_sub(U256::from((-delta).cast_unsigned()))
+            let deltas: &[i32] = match sweep {
+                AnchorSweep::Full => &[-2, -1, 0, 1, 2],
+                AnchorSweep::CenterOnly => &[0],
+                AnchorSweep::Off => &[],
+            };
+            for &delta in deltas {
+                let candidate = match delta.cmp(&0) {
+                    std::cmp::Ordering::Equal => anchor,
+                    std::cmp::Ordering::Greater => {
+                        anchor.saturating_add(U256::from(delta.unsigned_abs()))
+                    }
+                    std::cmp::Ordering::Less => {
+                        anchor.saturating_sub(U256::from(delta.unsigned_abs()))
+                    }
                 };
                 if candidate.is_zero() {
                     continue;
