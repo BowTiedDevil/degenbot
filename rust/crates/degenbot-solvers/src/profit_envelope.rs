@@ -97,7 +97,9 @@ impl Line {
     /// ≥ 1. The error is ≤ 1 ULP at the shift width — negligible for a
     /// profitability gate at 240+ bit coefficients.
     fn reduce(&mut self, target_bits: u32) {
-        let max_bits = self.a.bits().max(self.b.bits()).max(self.c.bits());
+        let max_bits = i512_mag_bit_len(&self.a)
+            .max(i512_mag_bit_len(&self.b))
+            .max(i512_mag_bit_len(&self.c));
         if max_bits <= target_bits {
             return;
         }
@@ -120,10 +122,15 @@ impl Line {
             return;
         }
         let c_u512 = U512::try_from(self.c).unwrap_or(U512::MAX);
+        let (nc_shifted, _nc_rem) = if k >= 512 {
+            (U512::ZERO, c_u512 != U512::ZERO)
+        } else {
+            (c_u512 >> k, false)
+        };
         let (na, nb, nc) = (
             ceil_shr_i512(self.a, k),
             ceil_shr_i512(self.b, k),
-            I512::from_raw((c_u512 / (U512::ONE << k)).max(U512::ONE)),
+            I512::from_raw(nc_shifted.max(U512::ONE)),
         );
         self.a = na;
         self.b = nb;
@@ -153,23 +160,56 @@ const COMPOSE_TARGET_BITS: u32 = 240;
 /// matrix at K² regardless of pool-liquidity range counts.
 const SAMPLED_COMPOSE_LINES: usize = 48;
 
+/// Magnitude bit length of an `I512` by direct limb scan (loop-16: the
+/// `Signed::bits()` route cost ~90ns per call; this is ~5ns).
+#[inline]
+fn i512_mag_bit_len(v: &I512) -> u32 {
+    i512_mag_bit_len_u(&v.unsigned_abs())
+}
+
+#[inline]
+fn i512_mag_bit_len_u(mag: &U512) -> u32 {
+    let limbs = mag.as_limbs();
+    let mut i = 8usize;
+    while i > 0 {
+        i -= 1;
+        if limbs[i] != 0 {
+            return i as u32 * 64 + (64 - limbs[i].leading_zeros());
+        }
+    }
+    0
+}
+
 /// Right-shift an `I512` by `k` with **ceiling** rounding (toward +infinity).
 /// For any sign: `ceil(v / 2^k)` -- the smallest integer `>= v / 2^k`.
 /// Used by `Line::reduce` to keep A/B from under-cutting the bound.
 ///
-/// Implemented with `U512` division rather than the `I512` shift operators:
+/// Implemented with `U512` limbs rather than the `I512` shift operators:
 /// `alloy::I512`'s `wrapping_shr` returns ZERO for any shift >= 256 (it
 /// forwards to a 256-bit path), which previously crushed reduced lines into
 /// `(1,1,1)` identity shells.
 fn ceil_shr_i512(value: I512, shift: u32) -> I512 {
+    // Divide-by-power-of-two == right shift on the magnitude; the shift
+    // replaces a wide `U512` division (loop-16: reduce was 43% of the hull
+    // phase).
+    let shr_mag = |m: U512| -> (U512, bool) {
+        if shift >= 512 {
+            let nonzero = m != U512::ZERO;
+            return (U512::ZERO, nonzero);
+        }
+        if shift == 0 {
+            return (m, false);
+        }
+        let q = m >> shift;
+        let r = m & ((U512::ONE << shift) - U512::ONE);
+        (q, r != U512::ZERO)
+    };
     if shift == 0 {
         return value;
     }
-    let divisor = U512::ONE << shift;
     if value >= I512::ZERO {
         let magnitude = U512::try_from(value).unwrap_or(U512::MAX);
-        let quotient = magnitude / divisor;
-        let has_remainder = (magnitude % divisor) != U512::ZERO;
+        let (quotient, has_remainder) = shr_mag(magnitude);
         I512::from_raw(if has_remainder {
             quotient + U512::ONE
         } else {
@@ -180,13 +220,87 @@ fn ceil_shr_i512(value: I512, shift: u32) -> I512 {
         // `twos_complement()` over Signed is only valid for negatives (it
         // yields |value| as a U512 magnitude).
         let magnitude = value.twos_complement();
-        let quotient = magnitude / divisor;
+        let (quotient, _rem) = shr_mag(magnitude);
         // With or without a remainder: ceil(-quotient.frac) = -quotient.
         -I512::from_raw(quotient)
     }
 }
 
 /// Ceiling division for `d > 0` (truncation-toward-zero makes negatives exact).
+/// Relative-error band for approximate ordering keys. Approximation error
+/// is ~2^-48 relative (53-bit f64 mantissas composed through a few flops);
+/// anything outside this band is ordered correctly by the approximation,
+/// anything inside falls back to the exact comparator. Byte-identical
+/// ordering guaranteed either way.
+const APPROX_ORDER_BAND: f64 = 1e-6;
+
+/// `I512` magnitude as `f64` (relative error 2^-53). The u64→f64 limb
+/// conversions are the entire point of the approximation.
+#[inline]
+#[expect(clippy::cast_precision_loss)]
+fn i512_to_f64(v: I512) -> f64 {
+    let neg = v < I512::ZERO;
+    let mag = v.unsigned_abs();
+    let bits = mag.bit_len();
+    let f = if bits == 0 {
+        0.0
+    } else if bits <= 53 {
+        mag.as_limbs()[0] as f64
+    } else {
+        let shift: u32 = TryFrom::try_from(bits - 53).unwrap_or(459);
+        let m = (mag >> shift).as_limbs()[0] as f64;
+        m * f64_from_exp2(shift)
+    };
+    if neg {
+        -f
+    } else {
+        f
+    }
+}
+
+/// `2^s` for `s < 1024` (exponent-bits construction, no libm).
+#[inline]
+const fn f64_from_exp2(s: u32) -> f64 {
+    f64::from_bits((1023u64 + s as u64) << 52)
+}
+
+/// Approximate ordering: `Less`/`Greater` only when confidently distinct
+/// (both approximations carry <<2^-30 relative error); `Equal` means
+/// "inside the band — use the exact comparator". `±INF` keys are allowed
+/// (they model the eval saturation channel: `b·x` overflow in `eval` maps
+/// to `I512::MAX` exactly as the approximation maps it to `INF`).
+/// Approximate ordering for CEIL-DIVISION keys (the exact quantity is
+/// `ceil(x)`): the approximation of the pre-ceiling ratio differs from the
+/// exact key by < 1 ABSOLUTE (the ceiling) plus ~2^-48 relative, so the
+/// margin must cover both. Returns `Less`/`Greater` only when confidently
+/// distinct; `Equal` means "inside the band — use the exact comparator".
+/// `±INF`-free by construction (max_f stands in for I512::MAX).
+#[inline]
+fn approx_cmp_ceil(x: f64, y: f64) -> std::cmp::Ordering {
+    let m = 1.0 + APPROX_ORDER_BAND * x.abs().max(y.abs());
+    if x < y - m {
+        std::cmp::Ordering::Less
+    } else if x > y + m {
+        std::cmp::Ordering::Greater
+    } else {
+        std::cmp::Ordering::Equal
+    }
+}
+
+/// Approximate ordering for PURE-RATIO keys (exact quantity is a rational,
+/// e.g. the slope b/c in the hull sorts): only relative error applies.
+#[inline]
+fn approx_cmp_ratio(x: f64, y: f64) -> std::cmp::Ordering {
+    let m = APPROX_ORDER_BAND * x.abs().max(y.abs());
+    if x < y - m {
+        std::cmp::Ordering::Less
+    } else if x > y + m {
+        std::cmp::Ordering::Greater
+    } else {
+        std::cmp::Ordering::Equal
+    }
+}
+
 fn ceil_div(n: I512, d: I512) -> I512 {
     debug_assert!(d > I512::ZERO);
     if n >= I512::ZERO {
@@ -828,18 +942,82 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     // the hull are then paid only over the (small) survivor set, not the
     // full product set.
     let stage1_t0 = std::time::Instant::now();
-    let mut indexed: Vec<([I512; 2], usize)> = lines
+    // Loop-16 T2: approximate ordering keys with exact fallbacks. The
+    // endpoint evals dominated gate time (I512 division = 109ns of a 126ns
+    // eval; evals were 69% of stage 1 on the heavyweight fixtures). The
+    // keys carry ~2^-48 relative error; `approx_cmp`'s 1e-6 band separates
+    // confidently-ordered comparisons from exact-comparator fallbacks, so
+    // both the sort and the survivor sweep produce byte-identical results
+    // to the exact-eval implementation — pinned by the randomized
+    // differential test against the frozen reference copy.
+    //
+    // Saturation modeling: `eval` saturates the b·x multiply and the a +
+    // bx add to I512::MAX on overflow; the keys model BOTH channels with
+    // the same min-clipping in f64 (max_f stands in for I512::MAX).
+    let s1_evals_t0 = std::time::Instant::now();
+    let mut sat_upper: u64 = 0;
+    let upper_f = i512_to_f64(I512::try_from(U512::from(upper)).unwrap_or(I512::MAX));
+    let max_f = i512_to_f64(I512::MAX);
+    struct S1Key {
+        f0: f64,
+        fu: f64,
+        idx: usize,
+    }
+    let mut indexed: Vec<S1Key> = lines
         .iter()
         .enumerate()
-        .map(|(i, l)| ([l.eval(&U256::ZERO), l.eval(&upper)], i))
+        .map(|(i, l)| {
+            let a_f = i512_to_f64(l.a);
+            let b_f = i512_to_f64(l.b);
+            let c_f = i512_to_f64(l.c);
+            let prod_f = (b_f * upper_f).min(max_f);
+            if prod_f >= max_f {
+                sat_upper += 1;
+            }
+            let n_f = (a_f + prod_f).min(max_f);
+            S1Key {
+                f0: a_f / c_f,
+                fu: n_f / c_f,
+                idx: i,
+            }
+        })
         .collect();
-    indexed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    let mut min_key1 = I512::MAX;
+    GATE_S1_EVALS_NS.with(|c| c.set(c.get() + s1_evals_t0.elapsed().as_nanos()));
+    let s1_sort_t0 = std::time::Instant::now();
+    let exact_at_zero = |i: usize| lines[i].eval(&U256::ZERO);
+    let exact_at_upper = |i: usize| lines[i].eval(&upper);
+    indexed.sort_by(|x, y| {
+        approx_cmp_ceil(x.f0, y.f0)
+            .then_with(|| exact_at_zero(x.idx).cmp(&exact_at_zero(y.idx)))
+            .then(approx_cmp_ceil(x.fu, y.fu))
+            .then_with(|| exact_at_upper(x.idx).cmp(&exact_at_upper(y.idx)))
+            .then(x.idx.cmp(&y.idx))
+    });
+    GATE_S1_SORT_NS.with(|c| c.set(c.get() + s1_sort_t0.elapsed().as_nanos()));
+    let s1_sweep_t0 = std::time::Instant::now();
+    let mut min_f = f64::INFINITY;
+    let mut min_idx = usize::MAX;
+    let mut min_exact: Option<I512> = None;
     let mut surv: Vec<Line> = Vec::with_capacity(lines.len() / 4);
-    for (keys, idx) in &indexed {
-        if keys[1] < min_key1 {
-            min_key1 = keys[1];
-            surv.push(lines[*idx]);
+    for item in &indexed {
+        let keep = match approx_cmp_ceil(item.fu, min_f) {
+            std::cmp::Ordering::Less => true,
+            std::cmp::Ordering::Greater => false,
+            std::cmp::Ordering::Equal => {
+                let cand = exact_at_upper(item.idx);
+                if min_idx == usize::MAX {
+                    cand < I512::MAX
+                } else {
+                    let mv = min_exact.get_or_insert_with(|| exact_at_upper(min_idx));
+                    cand < *mv
+                }
+            }
+        };
+        if keep {
+            min_f = item.fu;
+            min_idx = item.idx;
+            min_exact = None;
+            surv.push(lines[item.idx]);
         }
     }
     // Saturation guard (live crash 2026-08-30): when EVERY line's endpoint
@@ -848,33 +1026,52 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     // line — still a sound global upper bound, so the envelope can only
     // loosen, never under-cut.
     if surv.is_empty() {
-        surv.push(lines[indexed[0].1]);
+        surv.push(lines[indexed[0].idx]);
     }
+    GATE_S1_SWEEP_NS.with(|c| c.set(c.get() + s1_sweep_t0.elapsed().as_nanos()));
     GATE_PRUNE_STAGE1_NS.with(|c| c.set(c.get() + stage1_t0.elapsed().as_nanos()));
+    gate_census_record_prune(lines.len(), surv.len(), sat_upper);
     if surv.len() < 2 {
         *lines = surv;
         return;
     }
     let hull_t0 = std::time::Instant::now();
     let parsed = &mut surv;
+    let h_reduce_t0 = std::time::Instant::now();
     for l in parsed.iter_mut() {
         l.reduce(COMPOSE_TARGET_BITS);
     }
+    GATE_H_REDUCE_NS.with(|c| c.set(c.get() + h_reduce_t0.elapsed().as_nanos()));
+    let h_sort_t0 = std::time::Instant::now();
     let mut idx: Vec<usize> = (0..parsed.len()).collect();
+    // Approx slope keys (descending) with exact cross-mult fallback — same
+    // approx_cmp band discipline as stage 1, byte-identical ordering.
+    let slope_f: Vec<f64> = parsed
+        .iter()
+        .map(|l| i512_to_f64(l.b) / i512_to_f64(l.c))
+        .collect();
     idx.sort_by(|&i, &j| {
-        let (li, lj) = (&parsed[i], &parsed[j]);
-        // Descending slope b_i/c_i vs b_j/c_j (240-bit cross-products fit).
-        let lhs = li.b * lj.c;
-        let rhs = lj.b * li.c;
-        rhs.cmp(&lhs)
+        approx_cmp_ratio(slope_f[j], slope_f[i]).then_with(|| {
+            let (li, lj) = (&parsed[i], &parsed[j]);
+            let lhs = li.b * lj.c;
+            let rhs = lj.b * li.c;
+            rhs.cmp(&lhs)
+        })
     });
+    GATE_H_SORT_NS.with(|c| c.set(c.get() + h_sort_t0.elapsed().as_nanos()));
+    let h_stack_t0 = std::time::Instant::now();
     let mut hull: Vec<(U256, usize)> = Vec::with_capacity(idx.len());
     for &li in &idx {
         let l = &parsed[li];
         if let Some(&(_, top)) = hull.last() {
             let lt = &parsed[top];
             // Same-slope pairs: the lower intercept dominates globally.
-            if lt.b * l.c == l.b * lt.c {
+            // Band-proximity gates the exact cross-mult check (loop-16
+            // T2): confidently-distinct slopes skip the multiplications;
+            // anything inside the band runs the exact check (which also
+            // guards the pop-loop division against zero denominators —
+            // exact-equal slopes must never reach `ceil_div`).
+            if approx_cmp_ratio(slope_f[top], slope_f[li]).is_eq() && lt.b * l.c == l.b * lt.c {
                 if lt.a * l.c <= l.a * lt.c {
                     continue;
                 }
@@ -889,14 +1086,35 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
         } else {
             I512::ZERO
         };
+        // First pop-loop iteration reuses the bp pair (same candidate, same
+        // top — the 4 wide multiplications and the division are already
+        // paid; loop-16 T2).
+        let mut first_iter = true;
         while hull.len() >= 2 {
             let (bb, t) = hull[hull.len() - 1];
-            let lprev = &parsed[t];
-            let num = l.a * lprev.c - lprev.a * l.c;
-            let den = lprev.b * l.c - l.b * lprev.c;
             let bb_i = I512::try_from(U512::from(bb)).unwrap_or(I512::MAX);
-            if ceil_div(num, den) <= bb_i {
+            let dominated = if first_iter {
+                bp <= bb_i
+            } else {
+                let lprev = &parsed[t];
+                let num = l.a * lprev.c - lprev.a * l.c;
+                let den = lprev.b * l.c - l.b * lprev.c;
+                // ceil(num/den) <= bb_i ⟺ num <= bb_i·den for den > 0 —
+                // the multiplication replaces the wide division (falls back
+                // to the division on the impossible-under-slope-order
+                // den <= 0 case).
+                if den > I512::ZERO {
+                    match bb_i.checked_mul(den) {
+                        Some(lhs) => num <= lhs,
+                        None => ceil_div(num, den) <= bb_i,
+                    }
+                } else {
+                    ceil_div(num, den) <= bb_i
+                }
+            };
+            if dominated {
                 hull.pop();
+                first_iter = false;
             } else {
                 break;
             }
@@ -913,6 +1131,7 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
         };
         hull.push((bx, li));
     }
+    GATE_H_STACK_NS.with(|c| c.set(c.get() + h_stack_t0.elapsed().as_nanos()));
     // Keep only lines whose takeover happens inside [0, domain].
     let keep: Vec<Line> = hull
         .iter()
@@ -920,6 +1139,7 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
         .map(|&(_, i)| parsed[i])
         .collect();
     GATE_PRUNE_HULL_NS.with(|c| c.set(c.get() + hull_t0.elapsed().as_nanos()));
+    gate_census_record_hull(keep.len());
     *lines = keep;
 }
 
@@ -979,6 +1199,14 @@ thread_local! {
     // lives here.
     pub(crate) static GATE_POSTPRUNE_REDUCE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_SAMPLE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    // Loop-16 stage-1 interior split: endpoint evals vs sort vs sweep.
+    pub(crate) static GATE_S1_EVALS_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_S1_SORT_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_S1_SWEEP_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    // Loop-16 hull interior split (prune stage 2).
+    pub(crate) static GATE_H_REDUCE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_H_SORT_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    pub(crate) static GATE_H_STACK_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
     // Composition pair volume per path (hop_pruned_lines x running_lines).
     pub(crate) static GATE_PAIRS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_EVALUATED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -989,6 +1217,156 @@ thread_local! {
     pub(crate) static GATE_NONE_DEGENERATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_NONE_OVERFLOW: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     pub(crate) static GATE_DURATION_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+}
+
+/// Gate census (loop-16 T1): one session's distribution of line-set sizes,
+/// survivor counts and eval saturation inside `prune()`, plus hop-boundary
+/// composition sizes. Env-gated by `DEGENBOT_GATE_CENSUS=1` (read once);
+/// purely observational, zero effect on results.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GateCensus {
+    /// `prune()` invocations observed.
+    pub prune_calls: u64,
+    /// Sum of input line-set sizes across prune calls.
+    pub in_lines: u64,
+    /// Input sizes bucketed: <=8, <=64, <=256, <=1024, <=4096, >4096.
+    pub in_buckets: [u64; 6],
+    /// Sum of stage-1 (endpoint sweep) survivors.
+    pub s1_survivors: u64,
+    /// Sum of stage-2 (hull) survivors.
+    pub hull_survivors: u64,
+    /// Stage-1 endpoint evals at x=upper.
+    pub evals_upper: u64,
+    /// Of those, results saturating I512::MAX (the wide-div saturation
+    /// path hypothesis for the stage-1 cost).
+    pub evals_saturated: u64,
+    /// Hop-boundary compositions observed (product matrix boundaries).
+    pub boundaries: u64,
+    /// Derived hop line-set sizes bucketed: <=8, <=64, <=256, <=1024, >1024.
+    pub hop_lines_buckets: [u64; 5],
+    /// Lines2 sizes facing the product bucketed the same way.
+    pub lines2_buckets: [u64; 5],
+    /// Product pair volume observed.
+    pub pairs: u64,
+}
+
+thread_local! {
+    static GATE_CENSUS: std::cell::Cell<GateCensus> =
+        const { std::cell::Cell::new(GateCensus::EMPTY) };
+}
+
+impl GateCensus {
+    const EMPTY: Self = Self {
+        prune_calls: 0,
+        in_lines: 0,
+        in_buckets: [0; 6],
+        s1_survivors: 0,
+        hull_survivors: 0,
+        evals_upper: 0,
+        evals_saturated: 0,
+        boundaries: 0,
+        hop_lines_buckets: [0; 5],
+        lines2_buckets: [0; 5],
+        pairs: 0,
+    };
+}
+
+/// Runtime gate `DEGENBOT_GATE_CENSUS=1` (read once per process).
+fn gate_census_on() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("DEGENBOT_GATE_CENSUS").as_deref() == Ok("1"))
+}
+
+fn gate_census_size_bucket(n: usize) -> usize {
+    match n {
+        0..=8 => 0,
+        9..=64 => 1,
+        65..=256 => 2,
+        257..=1024 => 3,
+        1025..=4096 => 4,
+        _ => 5,
+    }
+}
+
+fn gate_census_boundary_bid(n: usize) -> usize {
+    match n {
+        0..=8 => 0,
+        9..=64 => 1,
+        65..=256 => 2,
+        257..=1024 => 3,
+        _ => 4,
+    }
+}
+
+fn gate_census_mut<R>(f: impl FnOnce(&mut GateCensus) -> R) -> Option<R> {
+    if !gate_census_on() {
+        return None;
+    }
+    GATE_CENSUS.with(|c| {
+        let mut v = c.take();
+        let r = f(&mut v);
+        c.set(v);
+        Some(r)
+    })
+}
+
+/// Record one `prune()` call: input size, stage-1 survivors, saturated
+/// upper-endpoint evals.
+fn gate_census_record_prune(n_in: usize, s1: usize, sat_upper: u64) {
+    gate_census_mut(|g| {
+        g.prune_calls += 1;
+        g.in_lines += n_in as u64;
+        g.in_buckets[gate_census_size_bucket(n_in)] += 1;
+        g.s1_survivors += s1 as u64;
+        g.evals_upper += n_in as u64;
+        g.evals_saturated += sat_upper;
+    });
+}
+
+/// Record the stage-2 hull survivor count for a prune already counted by
+/// `gate_census_record_prune` (called once per prune; prunes that early-
+/// return before stage 2 record `hull_survivors` as the stage-1 count).
+fn gate_census_record_hull(hull: usize) {
+    gate_census_mut(|g| {
+        g.hull_survivors += hull as u64;
+    });
+}
+
+/// Record one hop-boundary composition: derived hop lines and the running
+/// lines2 facing them.
+fn gate_census_record_boundary(hop_lines: usize, lines2: usize) {
+    gate_census_mut(|g| {
+        g.boundaries += 1;
+        g.hop_lines_buckets[gate_census_boundary_bid(hop_lines)] += 1;
+        g.lines2_buckets[gate_census_boundary_bid(lines2)] += 1;
+        g.pairs += (hop_lines * lines2) as u64;
+    });
+}
+
+/// Drain the loop-16 hull interior split (reduce / sort / stack, ns).
+#[must_use]
+pub fn take_gate_hull_split() -> (u128, u128, u128) {
+    (
+        GATE_H_REDUCE_NS.with(std::cell::Cell::take),
+        GATE_H_SORT_NS.with(std::cell::Cell::take),
+        GATE_H_STACK_NS.with(std::cell::Cell::take),
+    )
+}
+
+/// Drain the loop-16 stage-1 interior split (evals / sort / sweep, ns).
+#[must_use]
+pub fn take_gate_s1_split() -> (u128, u128, u128) {
+    (
+        GATE_S1_EVALS_NS.with(std::cell::Cell::take),
+        GATE_S1_SORT_NS.with(std::cell::Cell::take),
+        GATE_S1_SWEEP_NS.with(std::cell::Cell::take),
+    )
+}
+
+/// Drain this thread's census tally (loop-15 walk-census pattern).
+#[must_use]
+pub fn take_gate_census() -> GateCensus {
+    GATE_CENSUS.with(std::cell::Cell::take)
 }
 
 /// Prefix-composition cache (loop-8): composed lower-envelope line sets
@@ -1417,6 +1795,7 @@ fn path_profit_bound_inner(
         // Effect: collapses a 3000-line CL hop to ~50 Pareto-front survivors
         // BEFORE the product loop, turning a 3000×3000 = 9M composition into
         // 50×50 = 2500. The intermediate `next` never explodes.
+        gate_census_record_boundary(hop_ls.len(), lines2.len());
         prune(hop_ls, domain);
         let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
         GATE_PAIRS.with(|c| c.set(c.get() + (hop_ls.len() * lines2.len()) as u64));
@@ -1524,12 +1903,19 @@ fn path_profit_bound_inner(
     // Measured basis: the ternary dominates up to ~38% of gate wall on
     // range-heavy paths (O(lines) eval per probe x ~256 probes).
     let mut idx: Vec<usize> = (0..lines.len()).collect();
+    // Approx slope keys (descending) with exact cross-mult fallback — same
+    // approx_cmp band discipline as stage 1, byte-identical ordering.
+    let slope_f: Vec<f64> = lines
+        .iter()
+        .map(|l| i512_to_f64(l.b) / i512_to_f64(l.c))
+        .collect();
     idx.sort_by(|&i, &j| {
-        let (li, lj) = (&lines[i], &lines[j]);
-        // descending slope by b_i/c_i vs b_j/c_j
-        let lhs = li.b * lj.c;
-        let rhs = lj.b * li.c;
-        rhs.cmp(&lhs)
+        approx_cmp_ratio(slope_f[j], slope_f[i]).then_with(|| {
+            let (li, lj) = (&lines[i], &lines[j]);
+            let lhs = li.b * lj.c;
+            let rhs = lj.b * li.c;
+            rhs.cmp(&lhs)
+        })
     });
     // Hull: (breakpoint_x, line_index). Breakpoints monotonically increase.
     let mut hull: Vec<(U256, usize)> = Vec::with_capacity(lines.len());
@@ -1728,6 +2114,205 @@ mod tests {
     /// stage-1 sweep used to drop every line and the hull search panicked on
     /// the empty set. prune must never return empty (soundness: the kept line
     /// is still a global upper bound).
+    #[test]
+    fn gate_census_buckets_record_prune_shapes() {
+        assert_eq!(gate_census_size_bucket(0), 0);
+        assert_eq!(gate_census_size_bucket(8), 0);
+        assert_eq!(gate_census_size_bucket(9), 1);
+        assert_eq!(gate_census_size_bucket(64), 1);
+        assert_eq!(gate_census_size_bucket(1024), 3);
+        assert_eq!(gate_census_size_bucket(1025), 4);
+        assert_eq!(gate_census_size_bucket(4096), 4);
+        assert_eq!(gate_census_size_bucket(4097), 5);
+        assert_eq!(gate_census_boundary_bid(9), 1);
+        assert_eq!(gate_census_boundary_bid(1025), 4);
+        // Draining the tally is side-effect free when off.
+        let before = take_gate_census();
+        assert_eq!(before, before);
+    }
+
+    /// Loop-16 T2 differential sentinel: the optimized prune must remain
+    /// byte-identical to this FROZEN REFERENCE COPY of the pre-optimization
+    /// implementation on randomized line sets (seeded LCG; no external
+    /// deps). Any divergence in survivor order/content fails the test.
+    fn prune_reference_implementation(lines: &mut Vec<Line>, upper: U256) {
+        if lines.len() < 2 {
+            return;
+        }
+        let mut indexed: Vec<([I512; 2], usize)> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| ([l.eval(&U256::ZERO), l.eval(&upper)], i))
+            .collect();
+        indexed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut min_key1 = I512::MAX;
+        let mut surv: Vec<Line> = Vec::with_capacity(lines.len() / 4);
+        for (keys, idx) in &indexed {
+            if keys[1] < min_key1 {
+                min_key1 = keys[1];
+                surv.push(lines[*idx]);
+            }
+        }
+        if surv.is_empty() {
+            surv.push(lines[indexed[0].1]);
+        }
+        *lines = surv;
+        if lines.len() < 2 {
+            return;
+        }
+        for l in lines.iter_mut() {
+            l.reduce(COMPOSE_TARGET_BITS);
+        }
+        let mut idx: Vec<usize> = (0..lines.len()).collect();
+        idx.sort_by(|&i, &j| {
+            let (li, lj) = (&lines[i], &lines[j]);
+            let lhs = li.b * lj.c;
+            let rhs = lj.b * li.c;
+            rhs.cmp(&lhs)
+        });
+        let mut hull: Vec<(U256, usize)> = Vec::with_capacity(idx.len());
+        for &li in &idx {
+            let l = &lines[li];
+            if let Some(&(_, top)) = hull.last() {
+                let lt = &lines[top];
+                if lt.b * l.c == l.b * lt.c {
+                    if lt.a * l.c <= l.a * lt.c {
+                        continue;
+                    }
+                    hull.pop();
+                }
+            }
+            let bp = if let Some(&(_, top)) = hull.last() {
+                let lt = &lines[top];
+                let num = l.a * lt.c - lt.a * l.c;
+                let den = lt.b * l.c - l.b * lt.c;
+                ceil_div(num, den)
+            } else {
+                I512::ZERO
+            };
+            while hull.len() >= 2 {
+                let (bb, t) = hull[hull.len() - 1];
+                let lprev = &lines[t];
+                let num = l.a * lprev.c - lprev.a * l.c;
+                let den = lprev.b * l.c - l.b * lprev.c;
+                let bb_i = I512::try_from(U512::from(bb)).unwrap_or(I512::MAX);
+                if ceil_div(num, den) <= bb_i {
+                    hull.pop();
+                } else {
+                    break;
+                }
+            }
+            let bx = if bp <= I512::ZERO {
+                U256::ZERO
+            } else {
+                let u = U512::try_from(bp).unwrap_or(U512::MAX);
+                if u > U512::from(U256::MAX) {
+                    U256::MAX
+                } else {
+                    u.to::<U256>()
+                }
+            };
+            hull.push((bx, li));
+        }
+        let keep: Vec<Line> = hull
+            .iter()
+            .filter(|&&(bx, _)| bx <= upper)
+            .map(|&(_, i)| lines[i])
+            .collect();
+        *lines = keep;
+    }
+
+    fn seeded_line(lcg: &mut u64) -> Line {
+        let r = |lcg: &mut u64, bits: u32| {
+            *lcg = lcg
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let mut v = I512::from_raw(U512::from(*lcg));
+            if bits > 64 {
+                *lcg = lcg
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                v = (v << 64) | I512::from_raw(U512::from(*lcg));
+                let shift = bits - 128;
+                if shift > 0 {
+                    v <<= shift.min(500);
+                }
+            } else {
+                v <<= 0;
+                let _ = v;
+                v = I512::from_raw(U512::from(*lcg & ((1u64 << bits.min(63)) - 1)));
+            }
+            v
+        };
+        Line {
+            // Negative-intercept lines and near-tie cases are the whole
+            // point of the differential (the approx-key fallback path).
+            a: {
+                let v = r(lcg, 128);
+                if *lcg % 3 == 0 {
+                    -v
+                } else {
+                    v
+                }
+            },
+            b: r(lcg, 128),
+            c: I512::ONE + r(lcg, 128),
+        }
+    }
+
+    #[test]
+    fn prune_matches_frozen_on_adversarial_ceil_boundaries() {
+        let mk = |a: I512, b: I512, c: I512| Line { a, b, c };
+        let two = I512::from_raw(U512::from(2u64));
+        let big = I512::from_raw(U512::from(0xffff_u64) << 200);
+        // ceil-boundary pairs: a/c ratios differing by <1 absolute — the
+        // approximation must fall back to the exact comparator.
+        let mut lines = vec![
+            mk(big, big, big),
+            mk(big + two, big, big),
+            mk(big - two, big, big),
+            mk(-big, big, big),
+            mk(-big - two, big, big),
+        ];
+        // Equal slopes (same b/c) with different intercepts.
+        lines.push(mk(I512::from_raw(U512::from(7u64)), big, big));
+        lines.push(mk(I512::ZERO, big, big));
+        // Saturation-boundary pair: b·U just below and just above 2^511.
+        let upper = U256::MAX;
+        let b_hi = I512::ONE << 255;
+        let b_lo = I512::ONE << 254;
+        lines.push(mk(I512::ZERO, b_hi, big));
+        lines.push(mk(I512::ZERO, b_lo, big));
+        let mut reference = lines.clone();
+        prune_reference_implementation(&mut reference, upper);
+        prune(&mut lines, upper);
+        assert_eq!(lines, reference);
+    }
+
+    #[test]
+    fn prune_matches_frozen_reference_on_randomized_sets() {
+        for seed in 0..256u64 {
+            let mut lcg = seed | (seed << 32) | 1;
+            let n = (seed % 40) as usize + 2;
+            let mut lines: Vec<Line> = (0..n).map(|_| seeded_line(&mut lcg)).collect();
+            // Upper points sweep a few magnitudes (endpoint eval saturation
+            // and domain-dependent domination both matter).
+            let upper = match seed % 4 {
+                0 => U256::from(1_000u64) << 96,
+                1 => U256::from(1_000u64) << 190,
+                2 => U256::MAX - U256::from(1337u64),
+                _ => U256::from(9_000_000_000u64),
+            };
+            let mut reference = lines.clone();
+            prune_reference_implementation(&mut reference, upper);
+            prune(&mut lines, upper);
+            assert_eq!(
+                lines, reference,
+                "prune diverged from the frozen reference for seed {seed}"
+            );
+        }
+    }
+
     #[test]
     fn prune_never_empties_when_all_endpoint_evals_saturate() {
         let extreme = Line {

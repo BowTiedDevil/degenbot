@@ -10,7 +10,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_solvers::profit_envelope::{path_profit_bound, HopMath};
+use degenbot_solvers::profit_envelope::{self, path_profit_bound, HopMath};
 use serde_json::Value;
 
 fn u256(s: &str) -> Result<U256, String> {
@@ -163,6 +163,48 @@ fn main() {
             m(&hull_times),
             m(&postprune_times),
             m(&sample_times),
+        );
+    }
+    // Loop-16 gate census summary (DEGENBOT_GATE_CENSUS=1).
+    let (s1_evals_ns, s1_sort_ns, s1_sweep_ns) = profit_envelope::take_gate_s1_split();
+    let (h_red, h_sort, h_stack) = profit_envelope::take_gate_hull_split();
+    println!(
+        "[census] hull split: reduce={}us sort={}us stack={}us",
+        h_red / 1_000,
+        h_sort / 1_000,
+        h_stack / 1_000
+    );
+    println!(
+        "[census] s1 split: evals={}us sort={}us sweep={}us",
+        s1_evals_ns / 1_000,
+        s1_sort_ns / 1_000,
+        s1_sweep_ns / 1_000
+    );
+    let census = profit_envelope::take_gate_census();
+    if census.prune_calls > 0 {
+        println!(
+            "\n[census] prune_calls={} in_lines={} s1={} hull={} evals_upper={} sat_upper={}({:.1}%) boundaries={} pairs={}",
+            census.prune_calls,
+            census.in_lines,
+            census.s1_survivors,
+            census.hull_survivors,
+            census.evals_upper,
+            census.evals_saturated,
+            100.0 * census.evals_saturated as f64 / census.evals_upper.max(1) as f64,
+            census.boundaries,
+            census.pairs
+        );
+        println!(
+            "[census] in_buckets(<=8,<=64,<=256,<=1k,<=4k,>4k)={:?}",
+            census.in_buckets
+        );
+        println!(
+            "[census] hop_lines(<=8,<=64,<=256,<=1k,>1k)={:?}",
+            census.hop_lines_buckets
+        );
+        println!(
+            "[census] lines2(<=8,<=64,<=256,<=1k,>1k)={:?}",
+            census.lines2_buckets
         );
     }
 }
