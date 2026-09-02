@@ -1427,7 +1427,7 @@
       "type": "prometheus",
       "uid": "${DS_PROMETHEUS}"
      },
-     "expr": "degenbot_profit_realized_total",
+     "expr": "degenbot_profit_realized_total / 1e9",
      "legendFormat": "realized (confirmed)",
      "refId": "A"
     },
@@ -1436,14 +1436,14 @@
       "type": "prometheus",
       "uid": "${DS_PROMETHEUS}"
      },
-     "expr": "degenbot_profit_missed_total",
+     "expr": "degenbot_profit_missed_total / 1e9",
      "legendFormat": "missed (found, unsubmitted)",
      "refId": "B"
     }
    ],
    "fieldConfig": {
     "defaults": {
-     "unit": "wei",
+     "unit": "gwei",
      "color": {
       "mode": "palette-classic"
      },

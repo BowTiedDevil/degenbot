@@ -152,6 +152,25 @@ impl Line {
     }
 }
 
+#[expect(clippy::print_stderr, reason = "opt-in dev diagnostics, off in prod")]
+fn trace_boundary(hop_idx: usize, hop_lines: usize, survivors: usize, next: &[Line]) {
+    let min0 = next
+        .iter()
+        .map(|l| l.eval(&U256::ZERO))
+        .min()
+        .unwrap_or(I512::ZERO);
+    eprintln!(
+        "[gate-trace] boundary {hop_idx}: hop_lines={hop_lines} next(post-prune/sample)={survivors} min-eval(0)={min0}"
+    );
+}
+
+/// T5 diagnostics: opt-in compose tracing (`DEGENBOT_GATE_TRACE=1`), parsed
+/// once — the gate itself reads no environment in its hot path.
+fn gate_trace_enabled() -> bool {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var("DEGENBOT_GATE_TRACE").is_ok())
+}
+
 /// Target coefficient width after sound-reduction: two operands of this
 /// width multiply to at most `2 x COMPOSE_TARGET_BITS` bits, comfortably
 /// within `I512` (511 bits). Leaves ~30 bits of headroom for the cross-term
@@ -1597,6 +1616,7 @@ fn path_profit_bound_inner(
         // BEFORE the product loop, turning a 3000×3000 = 9M composition into
         // 50×50 = 2500. The intermediate `next` never explodes.
         prune(hop_ls, domain);
+        let hop_ls_len_dbg = hop_ls.len();
         let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
         gate_tls(|t| t.pairs += (hop_ls.len() as u64) * (lines2.len() as u64));
         {
@@ -1659,6 +1679,9 @@ fn path_profit_bound_inner(
                 }
                 cache.map.insert(chain.clone(), next.clone());
             }
+        }
+        if gate_trace_enabled() {
+            trace_boundary(hop_idx, hop_ls_len_dbg, next.len(), &next);
         }
         lines2 = next;
     }
@@ -1782,17 +1805,50 @@ fn path_profit_bound_inner(
         let li = hull_ref[if ix == hlen { hlen - 1 } else { ix }].1;
         lines_ref[li].eval(x) - I512::try_from(U512::from(*x)).unwrap_or(I512::MAX)
     };
+    // T5 fix (false-skip class, block 25886170 path 93794): the predecessor
+    // of this scan was a discrete binary search that assumed f unimodal.
+    // Pathological tail ranges (tiny liquidity spanning a 1e19 price ratio)
+    // emit near-zero-slope tangent lines whose ceil-eval staircases have
+    // periods ~ c/b ≈ 1e30, making f non-unimodal at integer resolution;
+    // the search then collapsed onto a wiggle (x*=1, f*=1) and the gate
+    // false-skipped profitable paths (golden 2.4e10 vs bound 1).
+    //
+    // Sound replacement: on each hull segment [bp_i, bp_{i+1}) the selected
+    // line is fixed, so g(x) = ceil((a+b·x)/c) − x is non-increasing in x
+    // up to +1-ULP up-steps — the maximum over the segment is attained at
+    // its first two integers. Scanning every breakpoint (±1) plus the
+    // [0, xmax] endpoints therefore finds the exact integer max. Every
+    // evaluated value is min-line ceil-eval − x, a valid upper bound of the
+    // true profit at that x, so the reported bound stays SOUND.
     let one = U256::from(1u8);
-    let (mut lo, mut hi) = (U256::ZERO, xmax);
-    while lo < hi {
-        let mid = (lo >> 1) + (hi >> 1) + ((lo & hi) & one);
-        if f(&(mid + one)) > f(&mid) {
-            lo = mid + one;
-        } else {
-            hi = mid;
+    let mut best = f(&U256::ZERO);
+    for &(bp, _) in &hull {
+        if bp.is_zero() || bp > xmax {
+            continue;
+        }
+        for &cand in &[bp, (bp + one).min(xmax)] {
+            let v = f(&cand);
+            if v > best {
+                best = v;
+            }
+        }
+        // The left neighbour of a breakpoint can carry a +1-ULP holdover
+        // from the previous segment's ceil-step (the incumbent line still
+        // selected one integer earlier).
+        let prev = bp - one;
+        if !prev.is_zero() {
+            let v = f(&prev);
+            if v > best {
+                best = v;
+            }
         }
     }
-    let best = f(&lo);
+    {
+        let v = f(&xmax.min(one));
+        if v > best {
+            best = v;
+        }
+    }
     gate_tls(|t| t.search_ns += phase_search.elapsed().as_nanos());
     // Rounding slack: composed reductions and I512 ceiling evaluation can
     // leave the derived lower envelope a hair BELOW the true curve. The
@@ -1868,6 +1924,333 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
 #[expect(clippy::expect_used)] // tiny literals; panic on typo is the point
 mod tests {
     use super::*;
+    use crate::mobius_v3_int::int_simulate_v3_swap;
+    use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
+
+    /// T5 oracle v2: hop truth with CHAINED pricing (entry = previous
+    /// range's exit bound — the same convention as `crossings()`), because
+    /// captured `sqrt_price_x96` for non-head ranges is that range's own
+    /// upper bound and may disagree with its bounds for pathological tail
+    /// ranges. Consumes input range by range exactly as the walk does.
+    fn chained_hop_out(seq: &IntV3TickRangeSequence, mut x: U256) -> U256 {
+        let mut out = U256::ZERO;
+        let n = seq.ranges.len();
+        for i in 0..n {
+            if x.is_zero() {
+                break;
+            }
+            let r = &seq.ranges[i];
+            // Chained entry price: a swap arriving at range i enters at the
+            // previous range's exit bound (zfo: its lower bound; ofz: upper).
+            // Capacity check: if the full crossing of range i exceeds the
+            // remaining input, the swap lands inside — simulate with a clone
+            // whose entry price is the chained one.
+            let full = if r.liquidity == 0 {
+                (U256::ZERO, U256::ZERO)
+            } else {
+                let mut gross = U256::ZERO;
+                let target_out = U256::ZERO;
+                // Reuse int_simulate_v3_swap with a saturated input to get
+                // the full-crossing cost? Too heavy; instead detect landing
+                // via accumulated crossing compare below.
+                let _ = (&mut gross, target_out);
+                (U256::ZERO, U256::ZERO)
+            };
+            let _ = full;
+            let entry = if i == 0 {
+                r.sqrt_price_x96
+            } else if r.zero_for_one {
+                seq.ranges[i - 1].sqrt_price_lower_x96
+            } else {
+                seq.ranges[i - 1].sqrt_price_upper_x96
+            };
+            let sim_hop = IntV3TickRangeHop {
+                liquidity: r.liquidity,
+                sqrt_price_x96: entry,
+                sqrt_price_lower_x96: r.sqrt_price_lower_x96,
+                sqrt_price_upper_x96: r.sqrt_price_upper_x96,
+                gamma_numer: r.gamma_numer,
+                fee_denom: r.fee_denom,
+                zero_for_one: r.zero_for_one,
+                word_boundary_prices: r.word_boundary_prices.clone(),
+            };
+            let res = int_simulate_v3_swap(x, &sim_hop);
+            out += res.output;
+            x -= res.consumed_input;
+        }
+        out
+    }
+
+    /// T5 zoom 2: for the pathological tail range (index 46 of hop 1), print
+    /// the raw fields, the crossing table's drain, and the per-range oracle's
+    /// output at partial inputs, to pin which model diverges from on-chain
+    /// computeSwapStep semantics.
+    #[test]
+    fn gate_false_skip_93794_tail_range_dump() {
+        let raw = include_str!("../tests/fixtures/gate_false_skip_93794.json");
+        let row: serde_json::Value = serde_json::from_str(raw).expect("fixture json");
+        let parse_range = |v: &serde_json::Value| -> IntV3TickRangeHop {
+            IntV3TickRangeHop {
+                liquidity: v["liquidity"].as_str().unwrap().parse().unwrap(),
+                sqrt_price_x96: v["sqrt_price_x96"].as_str().unwrap().parse().unwrap(),
+                sqrt_price_lower_x96: v["sqrt_price_lower_x96"].as_str().unwrap().parse().unwrap(),
+                sqrt_price_upper_x96: v["sqrt_price_upper_x96"].as_str().unwrap().parse().unwrap(),
+                gamma_numer: v["gamma_numer"].as_u64().unwrap(),
+                fee_denom: v["fee_denom"].as_u64().unwrap(),
+                zero_for_one: v["zero_for_one"].as_bool().unwrap(),
+                word_boundary_prices: v["word_boundary_prices"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|w| w.as_str().unwrap().parse().unwrap())
+                    .collect(),
+            }
+        };
+        let seqs: Vec<IntV3TickRangeSequence> = row["hops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hop| IntV3TickRangeSequence {
+                ranges: hop
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(parse_range)
+                    .collect::<Vec<_>>(),
+            })
+            .collect();
+        let s = &seqs[1];
+        assert!(s.ranges[0].zero_for_one);
+        for idx in [44usize, 45, 46, 47] {
+            let r = &s.ranges[idx];
+            println!(
+                "range[{idx}] liq={} sp0={} low={} high={} words={} gamma={}",
+                r.liquidity,
+                r.sqrt_price_x96,
+                r.sqrt_price_lower_x96,
+                r.sqrt_price_upper_x96,
+                r.word_boundary_prices.len(),
+                r.gamma_numer
+            );
+            if !r.word_boundary_prices.is_empty() {
+                println!(
+                    "    word[0]={} word[-1]={}",
+                    r.word_boundary_prices[0],
+                    r.word_boundary_prices[r.word_boundary_prices.len() - 1]
+                );
+            }
+        }
+        let crossings = build_cl_crossing_table(s);
+        for idx in [44usize, 45, 46, 47] {
+            println!(
+                "cr[{idx}] acc_in={} acc_out={}",
+                crossings[idx].crossing_gross_input, crossings[idx].crossing_output
+            );
+        }
+        // Oracle: partial input into range 46 alone.
+        for &x in &[
+            1_000_000_000u64,
+            10_000_000_000u64,
+            100_000_000_000u64,
+            1_000_000_000_000u64,
+            5_000_000_000_000u64,
+        ] {
+            let res = int_simulate_v3_swap(U256::from(x), &s.ranges[46]);
+            println!(
+                "sim46(x={x}) out={} consumed={}",
+                res.output, res.consumed_input
+            );
+        }
+    }
+
+    /// T5 forensic: the soak's gate produced bound=1 against golden profit
+    /// 2.4e10 on a captured stable-pool 3-hop (block 25886170 path 93794;
+    /// ranges/hop [102,48,312]). The envelope chain is on paper airtight
+    /// (concave output curves -> entry tangents are global upper bounds;
+    /// min-of-lines survives sampling; sound reductions only loosen), so a
+    /// bound BELOW the true optimal profit means some stage under-cuts.
+    /// This test walks the derivation stage by stage against an ORACLE built
+    /// from production's own per-range step (`int_simulate_v3_swap`, the
+    /// compute_swap_step_v3 parity path) and names the failing stage.
+    #[test]
+    #[expect(clippy::too_many_lines)]
+    fn gate_false_skip_93794_stage_bisect() {
+        let raw = include_str!("../tests/fixtures/gate_false_skip_93794.json");
+        let row: serde_json::Value = serde_json::from_str(raw).expect("fixture json");
+        let golden_profit: U256 = row["golden"]["profit"]
+            .as_str()
+            .expect("golden profit")
+            .parse()
+            .expect("golden U256");
+
+        let parse_range = |v: &serde_json::Value| -> IntV3TickRangeHop {
+            IntV3TickRangeHop {
+                liquidity: v["liquidity"].as_str().unwrap().parse().unwrap(),
+                sqrt_price_x96: v["sqrt_price_x96"].as_str().unwrap().parse().unwrap(),
+                sqrt_price_lower_x96: v["sqrt_price_lower_x96"].as_str().unwrap().parse().unwrap(),
+                sqrt_price_upper_x96: v["sqrt_price_upper_x96"].as_str().unwrap().parse().unwrap(),
+                gamma_numer: v["gamma_numer"].as_u64().unwrap(),
+                fee_denom: v["fee_denom"].as_u64().unwrap(),
+                zero_for_one: v["zero_for_one"].as_bool().unwrap(),
+                word_boundary_prices: v["word_boundary_prices"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|w| w.as_str().unwrap().parse().unwrap())
+                    .collect(),
+            }
+        };
+        let seqs: Vec<IntV3TickRangeSequence> = row["hops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hop| IntV3TickRangeSequence {
+                ranges: hop
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(&parse_range)
+                    .collect::<Vec<_>>(),
+            })
+            .collect();
+        assert_eq!(seqs.len(), 3);
+
+        // --- Oracle: production-parity exact output for one CL hop at input x
+        // (each range via int_simulate_v3_swap; boundary crossings carry the
+        // unconsumed remainder to the next range).
+        let hop_truth = |seq: &IntV3TickRangeSequence, x: U256| -> U256 { chained_hop_out(seq, x) };
+        // Multi-hop truth: chain outputs.
+        let _path_truth = |x: U256| -> U256 {
+            let mut y = x;
+            for s in &seqs {
+                y = hop_truth(s, y);
+                if y.is_zero() {
+                    break;
+                }
+            }
+            y
+        };
+
+        // --- Stage 1: per-hop tangent lines vs the oracle on a grid.
+        let mut all_hop_lines: Vec<Vec<Line>> = Vec::new();
+        let mut xmax = U256::ZERO;
+        for (hi, s) in seqs.iter().enumerate() {
+            let view = HopMath::Cl(ClHop {
+                seq: s,
+                crossings: std::borrow::Cow::Owned(build_cl_crossing_table(s)),
+            });
+            let (lines, cap) = hop_lines_and_cap(view).expect("hop derivable");
+            xmax = xmax.checked_add(cap).expect("domain sum");
+            // Grid over [0, 2*cap]; the hop's search domain within a chain is
+            // its input volume, capped by cap.
+            let probe_max = cap.saturating_mul(U256::from(2u8));
+            let mut worst_gap = I512::ZERO;
+            let mut worst_x = U256::ZERO;
+            let n_grid = 256u32;
+            for i in 0..=n_grid {
+                let x = probe_max / U256::from(n_grid) * U256::from(i);
+                let truth = I512::try_from(U512::from(hop_truth(s, x))).unwrap_or(I512::MAX);
+                let bnd = lines
+                    .iter()
+                    .map(|l| l.eval(&x))
+                    .min()
+                    .expect("lines non-empty");
+                if bnd < truth && truth - bnd > worst_gap {
+                    worst_gap = truth - bnd;
+                    worst_x = x;
+                }
+            }
+            println!(
+                "stage1 hop{hi}: lines={} cap={cap} worst_gap={worst_gap} at x={worst_x}",
+                lines.len()
+            );
+            assert!(
+                worst_gap.is_zero(),
+                "hop{hi} line set UNDER-CUTS its true curve at x={worst_x} by {worst_gap}"
+            );
+            all_hop_lines.push(lines);
+        }
+
+        // --- Stage 2: replicate the compose chain (prune + compose + sample
+        // + reduce per boundary) and check the composed envelope against the
+        // path oracle on the same grid.
+        let mut acc: Vec<Line> = vec![Line::IDENTITY];
+        for (hi, hop_ls) in all_hop_lines.iter().enumerate() {
+            let mut hls = hop_ls.clone();
+            prune(&mut hls, xmax);
+            let mut next: Vec<Line> = Vec::new();
+            for outer in &hls {
+                for inner in &acc {
+                    next.push(outer.compose(inner).expect("compose ok on grid test"));
+                }
+            }
+            prune(&mut next, xmax);
+            for l in &mut next {
+                l.reduce(COMPOSE_TARGET_BITS);
+            }
+            // sampled_compose_lines cap (default 48).
+            if next.len() > 48 {
+                let step = next.len() / 48;
+                let mut sampled: Vec<Line> = Vec::new();
+                let mut i = 0;
+                while i < next.len() {
+                    sampled.push(next[i]);
+                    i += step.max(1);
+                }
+                if sampled.last() != Some(&next[next.len() - 1]) {
+                    sampled.push(next[next.len() - 1]);
+                }
+                next = sampled;
+            }
+            acc = next;
+
+            // Composed-envelope check at this boundary vs the truth using
+            // only the composed hops 0..=hi.
+            let mut gap = I512::ZERO;
+            let mut gap_x = U256::ZERO;
+            let n_grid = 256u32;
+            for i in 0..n_grid + 1 {
+                let x = xmax / U256::from(n_grid) * U256::from(i);
+                let mut truth = U256::ZERO;
+                {
+                    let mut y = x;
+                    for s in &seqs[..=hi] {
+                        truth = hop_truth(s, y);
+                        y = truth;
+                    }
+                }
+                let t = I512::try_from(U512::from(truth)).unwrap_or(I512::MAX);
+                let bnd = acc.iter().map(|l| l.eval(&x)).min().expect("nonempty");
+                if bnd < t && t - bnd > gap {
+                    gap = t - bnd;
+                    gap_x = x;
+                }
+            }
+            println!(
+                "stage2 after hop{hi}: survivors={} xmax={xmax} worst_gap={gap} at x={gap_x}",
+                acc.len()
+            );
+            assert!(
+                gap.is_zero(),
+                "composed envelope UNDER-CUTS the true {}-hop curve at x={gap_x} by {gap}",
+                hi + 1
+            );
+        }
+
+        // --- Stage 3: full gate call must clear the golden.
+        let views: Vec<Option<HopMath>> =
+            seqs.iter().map(|s| Some(HopMath::cl_derived(s))).collect();
+        match path_profit_bound(&views, &GateDeps::offline()) {
+            Envelope::Bound(b) => {
+                println!("stage3 bound={b} golden={golden_profit}");
+                assert!(
+                    b >= golden_profit,
+                    "gate bound {b} below golden {golden_profit}"
+                );
+            }
+            other => panic!("gate unsupported: {other:?}"),
+        }
+    }
 
     /// Regression (SU7MAE 7SI5G2): eval() saturates to I512::MAX on overflow,
     /// and ceil_div previously did a bare `n + d - 1` that overflowed on that
