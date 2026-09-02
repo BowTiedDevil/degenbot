@@ -56,6 +56,7 @@ const MI_OPTION_PURGE_DELAY: i32 = 15;
 /// is measurable until the kernel actually needs them under memory pressure.
 /// Matrix arm `madv-free` (epic AZZDBI T3): faults/block 5,598 vs 49,612 at
 /// default, best `on_drain` p95 of all arms, RSS delta fully reclaimable.
+#[cfg_attr(not(feature = "allocator-ctrl"), allow(dead_code))]
 const MI_OPTION_PURGE_DECOMMITS: i32 = 5;
 /// Also `mi_option_purge_decommits` (index 5) — same in v2/v3.
 /// The vendored C source ships BOTH mimalloc v2 (2.3.02,
@@ -234,6 +235,11 @@ fn apply_decommits(decommits: bool) {
         decommits,
         "[allocator-ctrl] mimalloc purge decommits applied (false = MADV_FREE)"
     );
+}
+
+#[cfg(not(feature = "allocator-ctrl"))]
+fn apply_decommits(decommits: bool) {
+    let _ = decommits; // inert without the feature; same one-time contract as apply_delay_ms
 }
 
 #[cfg(feature = "allocator-ctrl")]
