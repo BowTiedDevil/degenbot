@@ -97,10 +97,10 @@
     // Applied ONLY at container creation (devcontainer up / rebuild.sh /
     // VSCode reopen) — attach.sh's `podman start` cannot change them.
     "--cpus=8",
-    "--memory=24g",
+    "--memory=8g",
     // Swap == memory: no extra swap headroom, so OOM-kill happens on real
     // pressure instead of thrashing the host into unresponsiveness.
-    "--memory-swap=24g",
+    "--memory-swap=8g",
     // Finite PID ceiling (replaces the removed --pids-limit=-1): far above
     // anything cargo/pytest/forge legitimately spawn, but a runaway fork
     // loop fails loudly with EAGAIN instead of starving everything. The
