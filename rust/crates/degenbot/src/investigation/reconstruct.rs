@@ -225,7 +225,7 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
 mod hook_wiring_tests {
     //! Replay-vs-DB hook parity (MTMPQB): a captured-path V4 pool with a
     //! nonzero hook address must register with the REAL hook in its identity so
-    //! the pool key round-trips keccak(abi.encode(pool_key)) and the ADR-037
+    //! the pool key round-trips `keccak(abi.encode(pool_key))` and the ADR-037
     //! guard surface stays truthful in investigations.
     use super::*;
     use crate::bot_core::BotState;

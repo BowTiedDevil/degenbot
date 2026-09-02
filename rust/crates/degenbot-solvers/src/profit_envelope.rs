@@ -190,6 +190,7 @@ fn i512_mag_bit_len_u(mag: &U512) -> u32 {
     while i > 0 {
         i -= 1;
         if limbs[i] != 0 {
+            #[expect(clippy::cast_possible_truncation)]
             return i as u32 * 64 + (64 - limbs[i].leading_zeros());
         }
     }
@@ -942,7 +943,13 @@ pub(crate) fn capture_degenerate_path(
 /// bounding the line count across chained hops. `upper` is the envelope
 /// domain endpoint: a candidate dominated at both 0 and `upper` never
 /// matters for any input in [0, upper] (two affine lines cross once).
+#[expect(clippy::too_many_lines)]
 fn prune(lines: &mut Vec<Line>, upper: U256) {
+    struct S1Key {
+        f0: f64,
+        fu: f64,
+        idx: usize,
+    }
     if lines.len() < 2 {
         return;
     }
@@ -971,8 +978,6 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     // full product set.
     let stage1_t0 = std::time::Instant::now();
     // Loop-16 T2: approximate ordering keys with exact fallbacks. The
-    // endpoint evals dominated gate time (I512 division = 109ns of a 126ns
-    // eval; evals were 69% of stage 1 on the heavyweight fixtures). The
     // keys carry ~2^-48 relative error; `approx_cmp`'s 1e-6 band separates
     // confidently-ordered comparisons from exact-comparator fallbacks, so
     // both the sort and the survivor sweep produce byte-identical results
@@ -984,11 +989,6 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
     // the same min-clipping in f64 (max_f stands in for I512::MAX).
     let upper_f = i512_to_f64(I512::try_from(U512::from(upper)).unwrap_or(I512::MAX));
     let max_f = i512_to_f64(I512::MAX);
-    struct S1Key {
-        f0: f64,
-        fu: f64,
-        idx: usize,
-    }
     let mut indexed: Vec<S1Key> = lines
         .iter()
         .enumerate()
@@ -1291,7 +1291,7 @@ fn cl_table_key(crossings: &[IntTickRangeCrossing]) -> u128 {
         h = content_mix_u256(h, &er.sqrt_price_x96);
         h = content_mix_u256(h, &er.sqrt_price_lower_x96);
         h = content_mix_u256(h, &er.sqrt_price_upper_x96);
-        h = (h ^ u128::from(er.liquidity)).wrapping_mul(0x0000_0100_0000_01B3);
+        h = (h ^ er.liquidity).wrapping_mul(0x0000_0100_0000_01B3);
         h = (h
             ^ u128::from(er.gamma_numer)
             ^ u128::from(er.fee_denom)
@@ -1995,13 +1995,13 @@ mod tests {
     fn seeded_line(lcg: &mut u64) -> Line {
         let r = |lcg: &mut u64, bits: u32| {
             *lcg = lcg
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             let mut v = I512::from_raw(U512::from(*lcg));
             if bits > 64 {
                 *lcg = lcg
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
                 v = (v << 64) | I512::from_raw(U512::from(*lcg));
                 let shift = bits - 128;
                 if shift > 0 {
@@ -2019,7 +2019,7 @@ mod tests {
             // point of the differential (the approx-key fallback path).
             a: {
                 let v = r(lcg, 128);
-                if *lcg % 3 == 0 {
+                if (*lcg).is_multiple_of(3) {
                     -v
                 } else {
                     v

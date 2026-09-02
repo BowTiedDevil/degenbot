@@ -1,8 +1,14 @@
-#![expect(clippy::print_stdout, clippy::print_stderr, clippy::unwrap_used)]
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::unwrap_used,
+    clippy::cast_possible_truncation,
+    clippy::exit
+)]
 //! Loop-18 T2: sweep the envelope gate cap pair (tangent lines x survivor
 //! lines) over captured all-CL pool states, reporting bound + gate phase
 //! split per configuration. The process must be RESTARTED per config (the
-//! caps are OnceLock env reads).
+//! caps are `OnceLock` env reads).
 
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntTickRangeCrossing;

@@ -2118,7 +2118,7 @@ mod registered_v4_fast_path_tests {
 
     /// The 2026-08-28 missed-WS-pong fix: an already-registered V4 pool must
     /// re-resolve from the core alone (identity + fees + coverage) so the
-    /// PyO3 builder can skip the RPC build pipeline entirely.
+    /// `PyO3` builder can skip the RPC build pipeline entirely.
     #[test]
     #[expect(clippy::expect_used)]
     fn existing_registration_returns_identity_fees_and_coverage_tracked() {

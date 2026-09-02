@@ -16,7 +16,9 @@
     clippy::expect_used,
     clippy::print_stderr,
     clippy::print_stdout,
-    clippy::too_many_lines
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args
 )]
 
 extern crate degenbot_solvers;
@@ -464,9 +466,9 @@ fn run_micro_bench(micro_seqs: Option<Vec<IntV3TickRangeSequence>>) {
     let t0 = Instant::now();
     for i in 0..ITERS {
         let mut vo: Vec<U256> = Vec::with_capacity(3);
-        vo.push(U256::from(i as u64));
-        vo.push(U256::from(i as u64 + 1));
-        vo.push(U256::from(i as u64 + 2));
+        vo.push(U256::from(i));
+        vo.push(U256::from(i + 1));
+        vo.push(U256::from(i + 2));
         let mut vl: Vec<usize> = Vec::with_capacity(3);
         vl.push(1);
         vl.push(2);

@@ -1439,9 +1439,10 @@ pub async fn resolve_v4_identity(
 }
 
 /// Derive the V4 `hook_flags` bitmask from a hook contract address.
-/// `pub` because the PyO3 seam derives the same mask from the stored
+/// `pub` because the `PyO3` seam derives the same mask from the stored
 /// identity (already-registered fast-path echo + registration params) — the
 /// address is the single source of truth; the mask is a derived quantity.
+#[must_use]
 pub fn derive_hook_flags(hook_address: Address) -> u16 {
     u16::from_be_bytes([hook_address[18], hook_address[19]])
 }

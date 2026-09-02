@@ -139,9 +139,7 @@ static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::ne
 /// `DEGENBOT_GATE_CAPTURE*` env family (the gate itself reads no env).
 #[must_use]
 fn gate_capture_from_env() -> Option<::degenbot_solvers::profit_envelope::GateCaptureCfg> {
-    if std::env::var_os("DEGENBOT_GATE_CAPTURE").is_none() {
-        return None;
-    }
+    std::env::var_os("DEGENBOT_GATE_CAPTURE")?;
     let out_path = std::env::var("DEGENBOT_GATE_CAPTURE_OUT").map_or_else(
         |_| std::path::PathBuf::from("/tmp/gate_degenerate.jsonl"),
         std::path::PathBuf::from,

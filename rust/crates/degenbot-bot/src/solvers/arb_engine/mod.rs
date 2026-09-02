@@ -386,7 +386,7 @@ pub struct ArbitrageEngine {
     /// the whole solve intake (all hop states) is unchanged — the measured
     /// ceiling for cross-block result reuse (epic RZRORC last leaf).
     resolved_update_snapshot: HashMap<u64, Vec<u64>>,
-    /// Per-path previous-block MEASURED walk sims (recorded by solve_fn
+    /// Per-path previous-block MEASURED walk sims (recorded by `solve_fn`
     /// after each solve; lock-free-read at bin construction). Refines the
     /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
     last_walk_sims: parking_lot::Mutex<HashMap<u64, u64>>,
@@ -395,7 +395,7 @@ pub struct ArbitrageEngine {
     /// block-lifecycle start. Enabled flags come from the owner's config
     /// (`from_env` at construction until the config task lands).
     walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
-    /// Per-path previous-block MEASURED gate time (µs, recorded by solve_fn;
+    /// Per-path previous-block MEASURED gate time (µs, recorded by `solve_fn`;
     /// lock-free-read at bin construction). Loop-18: gate-heavy paths
     /// (dense-CL envelope compose, sims≈0) were invisible to the LPT cost —
     /// bin-packed as cheap while dominating wall time.

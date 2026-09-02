@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn memoizing_composer_is_byte_exact() {
         // Small deterministic LCG — the crate has no rand dependency.
-        let mut state: u64 = 0x1DC0_17;
+        let mut state: u64 = 0x001D_C017;
         let mut next = move || {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
@@ -981,7 +981,7 @@ mod tests {
             state >> 33
         };
         for trial in 0..64u64 {
-            let n = 2 + (trial as usize) % 2;
+            let n = 2 + usize::try_from(trial).unwrap_or(0) % 2;
             let shift: u64 = (trial % 3) * 60;
             let hops: Vec<ShiftedPieceHop> = (0..n)
                 .map(|i| ShiftedPieceHop {
@@ -1024,13 +1024,13 @@ mod tests {
                         ShiftedMobiusPieceCoefficients::Fast(a),
                         ShiftedMobiusPieceCoefficients::Fast(b),
                     ) => {
-                        assert_eq!(a, b, "trial {trial} ks {ks:?}: fast coefficients differ")
+                        assert_eq!(a, b, "trial {trial} ks {ks:?}: fast coefficients differ");
                     }
                     (
                         ShiftedMobiusPieceCoefficients::Big(a),
                         ShiftedMobiusPieceCoefficients::Big(b),
                     ) => {
-                        assert_eq!(a, b, "trial {trial} ks {ks:?}: big coefficients differ")
+                        assert_eq!(a, b, "trial {trial} ks {ks:?}: big coefficients differ");
                     }
                     _ => panic!("trial {trial} ks {ks:?}: representation mismatch"),
                 }

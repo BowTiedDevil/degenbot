@@ -268,6 +268,7 @@ fn mix_u256(acc: &mut u64, v: U256) {
 /// collapse one lane cannot collapse both. The crossing tables + word
 /// profiles are pure deterministic derivations of the sequence, so this
 /// fingerprint is the EXACT correctness key for a cached result.
+#[must_use]
 pub fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
     let mut lane_a: u64 = 0xCBF2_9CE4_8422_2325;
     let mut lane_b: u64 = 0x6E99_B980_B247_C7F6;
@@ -294,7 +295,7 @@ pub fn walk_path_fingerprint(sequences: &[&IntV3TickRangeSequence]) -> u128 {
             mix_u256(&mut lane_b, cross);
         }
         for r in &seq.ranges {
-            let mut gf = U256::from(r.gamma_numer as u64)
+            let mut gf = U256::from(r.gamma_numer)
                 .saturating_mul(U256::from(r.word_boundary_prices.len() as u64))
                 .saturating_add(U256::from(r.liquidity));
             if !r.word_boundary_prices.is_empty() {
@@ -346,7 +347,7 @@ fn word_profile_min_input_for_output(profile: &V3WordProfile, w: U256) -> Option
     }
     // `output[]` is non-decreasing (step outputs are non-negative): find the
     // first step boundary that reaches `w`.
-    if profile.output.last().map_or(true, |o| *o < w) {
+    if profile.output.last().is_none_or(|o| *o < w) {
         return None; // beyond the ending range's total capacity
     }
     let m = profile.output.partition_point(|o| *o < w);
@@ -382,12 +383,11 @@ fn cl_hop_min_input_for_output(
     let w_ending = w - crossing.crossing_output;
     // Profiles are byte-equivalent to the linear `int_simulate_v3_swap`
     // walk (E7ALWT), so the inversion routes through the profile tables.
-    let r = match profile {
-        Some(p) => word_profile_min_input_for_output(p, w_ending)?,
-        None => {
-            let built = V3WordProfile::build(&crossing.ending_range)?;
-            word_profile_min_input_for_output(&built, w_ending)?
-        }
+    let r = if let Some(p) = profile {
+        word_profile_min_input_for_output(p, w_ending)?
+    } else {
+        let built = V3WordProfile::build(&crossing.ending_range)?;
+        word_profile_min_input_for_output(&built, w_ending)?
     };
     crossing.crossing_gross_input.checked_add(r)
 }
@@ -433,13 +433,14 @@ fn walk_event_first_above_predicted_inner(hops: &[WalkHop], ks: &[usize]) -> Opt
                 break;
             }
             match &hops[h] {
-                WalkHop::ConstantProduct(state) => match state.swap_exact_out(demand) {
-                    Ok(z) => demand = z,
-                    Err(_) => {
+                WalkHop::ConstantProduct(state) => {
+                    if let Ok(z) = state.swap_exact_out(demand) {
+                        demand = z;
+                    } else {
                         reachable = false;
                         break;
                     }
-                },
+                }
                 WalkHop::Cl {
                     crossings,
                     profiles,
@@ -1652,6 +1653,7 @@ fn solve_active_set_path(hops: &[WalkHop]) -> WalkOutcome {
     }
 }
 
+#[expect(clippy::too_many_lines)]
 fn solve_active_set_path_inner(hops: &[WalkHop]) -> Option<(U256, U256, Vec<U256>)> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).

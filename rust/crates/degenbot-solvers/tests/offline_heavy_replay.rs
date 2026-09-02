@@ -50,6 +50,7 @@ fn parse_hop(v: &Value) -> Option<IntV3TickRangeSequence> {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn replay_captured_heavy_paths() {
     let path = std::env::var("DBENCH_CAPTURES")
         .unwrap_or_else(|_| "/workspaces/degenbot/logs/heavy_cl_captures_1.jsonl".to_string());

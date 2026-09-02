@@ -626,9 +626,8 @@ fn prefix_cache_chains_through_v2_hops() {
         if gs.prefix_hits > 0 {
             hit_seen = true;
             break;
-        } else {
-            continue;
         }
+        continue;
     }
     assert!(
         hit_seen,

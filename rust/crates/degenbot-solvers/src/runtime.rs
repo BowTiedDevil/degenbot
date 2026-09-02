@@ -16,7 +16,11 @@ pub enum AnchorSweep {
 }
 
 /// The solver crate's runtime tunables. Defaults match the loop-17
-/// production stances; the owner overrides at construction.
+/// production stances; the owner overrides at construction. The bool flags
+/// are deliberate — each names one rollout stance from the perf campaign
+/// (clippy::struct_excessive_bools accepted: a stance PACK is the point of
+/// the value).
+#[expect(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug)]
 pub struct SolveRuntimeConfig {
     /// Loop-15 event-solver rollout gate: DEGENBOT_WALK_EVENT_SOLVER=0

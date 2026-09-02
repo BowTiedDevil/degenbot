@@ -804,6 +804,14 @@ mod tests {
     /// must not blind the drainer-liveness detector (U4UOIS).
     #[test]
     fn watchdog_aborts_when_pump_stops_dispatching_proc() {
+        // Guard against self-recursion (SYRRUL sweep finding): the child
+        // harness runs on a SUBSTRING filter that also matches this very
+        // test, so a nested proc test would spawn a grandchild ad
+        // infinitum under suite load. The env var below marks "this
+        // process IS the child" — a nested proc test must not spawn.
+        if std::env::var("DEGENBOT_NO_PROGRESS_ABORT_TEST").as_deref() == Ok("1") {
+            return;
+        }
         let exe = std::env::current_exe().expect("current test exe");
         let out = std::process::Command::new("sh")
             .arg("-c")

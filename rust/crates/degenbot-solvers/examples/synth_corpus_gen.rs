@@ -1,14 +1,14 @@
-#![expect(clippy::print_stdout, clippy::unwrap_used)]
+#![expect(clippy::print_stdout, clippy::similar_names, clippy::unwrap_used)]
 //! Loop-12 (BY7BLS 4EG7P3): synthesize replayable corpus lines for the
 //! giant-liquidity family shapes observed live (walk-heavy path 27817: ~400
 //! piece hop with deep middle liquidity; gate-heavy paths 10760/15012/26030:
 //! fat multi-hundred-to-low-thousands tick ranges feeding the envelope).
 //! Emits TWO files matching the offline harness schemas:
-//!   1. cl_solve_replay format:  {"block":..,"golden":null,"hops":[[range,..],..]}
-//!   2. mixed_solve_replay / gate_bench format: {"path_id":..,"block":..,
-//!      "n_hops":3,"hop_order":[false,..],"hops":[{"kind":"CL","ranges":[...]},..]}
+//!   1. `cl_solve_replay` format:  {"block":..,"golden":null,"hops":[[range,..],..]}
+//!   2. `mixed_solve_replay` / `gate_bench` format: {"`path_id":..,"block"`:..,
+//!      "`n_hops":3,"hop_order"`:[false,..],"hops":[{"kind":"CL","ranges":[...]},..]}
 //!
-//! Usage: cargo run --release -p degenbot-solvers --example synth_corpus_gen
+//! Usage: cargo run --release -p degenbot-solvers --example `synth_corpus_gen`
 //! Geometry replicates the deep-late-liquidity fixtures that the production
 //! walk solves correctly (optimum beyond the legacy enumeration prefix).
 
