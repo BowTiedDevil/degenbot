@@ -1,0 +1,6 @@
+# Large capture fixtures ship ONLY as .jsonl.zst (see src/capture_fixture.rs);
+# plain .jsonl here is untracked regenerable capture output.
+heavy_cl_solve_captures.jsonl
+heavy_mixed_solve_captures.jsonl
+live_capture_loop13.jsonl
+live_capture_loop17.jsonl

@@ -1,9 +1,4 @@
-#![expect(
-    clippy::print_stdout,
-    clippy::print_stderr,
-    clippy::cast_possible_truncation,
-    clippy::exit
-)]
+#![expect(clippy::print_stdout, clippy::cast_possible_truncation)]
 //! Loop-18 T2: sweep the envelope gate cap pair (tangent lines x survivor
 //! lines) over captured all-CL pool states, reporting bound + gate phase
 //! split per configuration. The process must be RESTARTED per config (the
@@ -87,10 +82,7 @@ fn main() {
             .to_string_lossy()
             .into_owned()
     });
-    let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("cannot read {path}: {e}");
-        std::process::exit(2);
-    });
+    let content = degenbot_solvers::capture_fixture::read_fixture(&path);
 
     for line in content.lines().filter(|l| !l.trim().is_empty()) {
         let Ok(doc) = serde_json::from_str::<Value>(line) else {
@@ -144,10 +136,7 @@ fn main() {
 /// persistent cache, and report per-path first-touch vs steady cost.
 fn run_cycle_sim(path: &str) {
     use std::sync::Arc;
-    let content = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("cannot read {path}: {e}");
-        std::process::exit(2);
-    });
+    let content = degenbot_solvers::capture_fixture::read_fixture(std::path::Path::new(path));
     println!("cycle sim (tangent=32/48 defaults; env override applies)");
 
     // Dedupe: first line per path_id.

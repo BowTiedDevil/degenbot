@@ -1,9 +1,4 @@
-#![expect(
-    clippy::print_stdout,
-    clippy::print_stderr,
-    clippy::too_many_lines,
-    clippy::unwrap_used
-)]
+#![expect(clippy::print_stdout, clippy::too_many_lines, clippy::unwrap_used)]
 //! Gate-only benchmark: calls `path_profit_bound` on captured mixed-path
 //! fixtures to isolate gate time from the decomposed solver time.
 
@@ -53,10 +48,7 @@ fn main() {
             .to_string_lossy()
             .into_owned()
     });
-    let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("cannot read {path}: {e}");
-        std::process::exit(2);
-    });
+    let content = degenbot_solvers::capture_fixture::read_fixture(&path);
     println!(
         "{:>8} {:>4} {:>6} {:>6} {:>10} {:>10} {:>10}",
         "path", "hops", "r1", "r2", "min_us", "med_us", "p95_us"

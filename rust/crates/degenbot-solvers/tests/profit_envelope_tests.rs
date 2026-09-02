@@ -375,11 +375,11 @@ fn m6776w_none_cause_classifies_each_exit() {
 // ---------------------------------------------------------------------------
 
 static CAPTURES: LazyLock<String> = LazyLock::new(|| {
-    std::fs::read_to_string(
+    degenbot_solvers::capture_fixture::read_fixture(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/heavy_cl_solve_captures.jsonl"),
+            .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
+            .as_path(),
     )
-    .expect("heavy-CL capture fixture present")
 });
 
 fn parse_range(v: &serde_json::Value) -> Option<IntV3TickRangeHop> {

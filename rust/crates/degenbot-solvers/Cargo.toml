@@ -16,6 +16,9 @@ alloy = { version = "^2.4" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 serde_json = { version = "^1.0" }
+# Capture-fixture transparent decompress (src/capture_fixture.rs); large
+# fixtures ship as .jsonl.zst, readers decode in memory (ergo 4FEWWJ).
+zstd.workspace = true
 num-bigint = { version = "^0.5" }
 num-integer = { version = "^0.1" }
 degenbot-math.workspace = true

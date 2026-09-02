@@ -113,7 +113,7 @@ fn window_slide(seqs: &mut [IntV3TickRangeSequence], i: usize) {
 fn golden_epochs_and_transitioned_epochs_stay_exact() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/heavy_cl_solve_captures.jsonl");
-    let content = std::fs::read_to_string(fixture).expect("fixture present");
+    let content = degenbot_solvers::capture_fixture::read_fixture(&fixture);
     let max_paths: usize = std::env::var("DRCLAB_GOLD_PATHS")
         .ok()
         .and_then(|s| s.parse().ok())

@@ -95,6 +95,10 @@ degenbot-uniswap = { version = "0.6.0-alpha.7", path = "crates/degenbot-uniswap"
 # resolve transitively (indexmap 2.14 / lru 0.18), so this direct dependency
 # unifies the graph instead of growing it. default-hasher = foldhash.
 hashbrown = { version = "0.17", features = ["default-hasher"] }
+# zstd: decode-only use for the committed .jsonl.zst capture fixtures
+# (degenbot-solvers/src/capture_fixture.rs). arrays avoids building the
+# legacy/mt C code paths we never touch.
+zstd = { version = "0.13", default-features = false, features = ["arrays"] }
 
 [workspace]
 resolver = "3"

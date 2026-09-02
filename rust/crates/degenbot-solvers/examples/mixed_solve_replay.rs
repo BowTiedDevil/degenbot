@@ -191,10 +191,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(9)
         .max(1);
-    let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        eprintln!("cannot read {path}: {e}");
-        std::process::exit(2);
-    });
+    let content = degenbot_solvers::capture_fixture::read_fixture(&path);
 
     let mut n_paths = 0u64;
     let mut n_golden_ok = 0u64;

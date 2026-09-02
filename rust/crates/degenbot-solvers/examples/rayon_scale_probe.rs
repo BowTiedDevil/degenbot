@@ -410,10 +410,7 @@ fn main() {
         "thread_counts={:?} static_counts={:?} bare_only={} skip_control={}",
         thread_counts, static_counts, bare_only, skip_control
     );
-    let content = std::fs::read_to_string(&fixture).unwrap_or_else(|e| {
-        eprintln!("cannot read {fixture}: {e}");
-        std::process::exit(2);
-    });
+    let content = degenbot_solvers::capture_fixture::read_fixture(&fixture);
     let mut items: Vec<Arc<ResolvedMixedPath>> = Vec::new();
     let mut golden: Vec<Option<u128>> = Vec::new();
     let mut pids: Vec<u64> = Vec::new();

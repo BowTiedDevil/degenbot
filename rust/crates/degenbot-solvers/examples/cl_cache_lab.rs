@@ -126,7 +126,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(6);
 
-    let content = std::fs::read_to_string(&path).expect("capture fixture readable");
+    let content = degenbot_solvers::capture_fixture::read_fixture(&path);
     let mut catalog = strategy_catalog();
     let mut total_mismatches: usize = 0;
     let mut n_paths = 0usize;
