@@ -791,6 +791,9 @@ impl BlockPump {
         // build_with_shutdown thread, whose process::exit aborted tokio
         // workers mid-TLS-teardown).
         let _hotpath_guard = crate::profiling::hotpath_guard("block_pump");
+        // AZZDBI/XXJR3A: apply any fixed DEGENBOT_MIMALLOC_PURGE_DELAY_MS and
+        // arm the block-cadence discovery for the purge-delay control.
+        crate::allocator_ctrl::init_from_env_at_pump_start();
         // S53STH cooperative timed exit: a 500ms tick that polls the shutdown
         // flag inside the parked select, so the loop unwinds through its span
         // guards promptly when the hotpath timer raises the flag. The flag is
@@ -1240,6 +1243,10 @@ impl BlockPump {
                         // [DIAG] newHeads-liveness: HEADER count, gap, and 20s stall
                         // warning → one call on the telemetry seam.
                         telemetry.on_header(number);
+                        // AZZDBI/XXJR3A: block-cadence sample for the runtime
+                        // mimalloc purge-delay control (hysteresis-limited
+                        // option write; no-op unless allocator-ctrl + auto).
+                        crate::allocator_ctrl::on_header_observed();
                         // T2: blocks-observed counter + the header→solved anchor.
                         if let Some(p) = crate::instruments::pipeline() {
                             p.count_block();

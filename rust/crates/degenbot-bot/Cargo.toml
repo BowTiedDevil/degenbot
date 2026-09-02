@@ -68,7 +68,15 @@ opentelemetry-prometheus = { version = "0.32.0", optional = true }
 prometheus = { version = "0.14.0", default-features = false, optional = true }
 tokio-util = { version = "0.7.19", optional = true }
 
+# mimalloc C API for the runtime purge-delay control (see src/allocator_ctrl.rs).
+libmimalloc-sys = { version = "^0.1", optional = true }
+
 [features]
+# Runtime allocator tuning from observed block cadence (epic AZZDBI): lets the
+# engine call mi_option_set on mimalloc's purge delay. Optional + off-by-default:
+# same policy as hotpath/otel, pyproject [tool.maturin] features enable it in
+# dev; release wheels ship without it.
+allocator-ctrl = ["dep:libmimalloc-sys", "libmimalloc-sys/extended"]
 # OpenTelemetry tracer bullet (see src/otel.rs). Enable with --features otel.
 # Unlike the hotpath bullet this feature has no env gate: init_otel_tracing()
 # is an explicit call site (pure-Rust consumers); the Python-driven path
@@ -93,6 +101,11 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 opentelemetry-prometheus = ["dep:opentelemetry-prometheus"]
 prometheus = ["dep:prometheus"]
 tokio-util = ["dep:tokio-util"]
+
+# Solve-executor OS-priority lowering (epic BXUSGL T1): the dedicated CPU
+# runtime's workers nice() down so latency-critical I/O-runtime tasks win.
+[target.'cfg(unix)'.dependencies]
+libc = "^0.2"
 
 [dev-dependencies]
 

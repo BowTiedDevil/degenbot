@@ -108,6 +108,53 @@ async def main() -> None:
 
         threading.Thread(target=mem_reporter, daemon=True, name="tracemalloc").start()
 
+    # ── Gated proc-mem sampler (mimalloc purge-delay capture, epic AZZDBI) ──
+    # With DEGENBOT_PROCMEM_SECS > 0, a daemon thread appends one CSV row every
+    # interval: wall clock, monotonic clock, RSS, VmHWM, and cumulative
+    # minor/major faults from /proc/self. Sibling flag to the tracemalloc probe
+    # above, but deliberately READ-ONLY — no snapshots, no malloc_trim — so it
+    # never perturbs the allocator behavior being measured (fault staircase per
+    # block window is the dependent variable of the purge-delay matrix).
+    pm_interval = float(os.environ.get("DEGENBOT_PROCMEM_SECS", "0"))
+    if pm_interval > 0:
+        import csv
+        import threading
+
+        pm_path = os.environ.get("DEGENBOT_PROCMEM_CSV", "logs/procmem.csv")
+        if os.path.dirname(pm_path):
+            os.makedirs(os.path.dirname(pm_path), exist_ok=True)
+
+        def proc_mem_sampler() -> None:
+            while True:
+                time.sleep(pm_interval)
+                try:
+                    txt = open("/proc/self/stat", "rb").read()
+                    stat = txt.rsplit(b")", 1)[1].split()
+                    min_flt, maj_flt = int(stat[7]), int(stat[9])  # fields 10, 12
+                    rss_pages = int(open("/proc/self/statm", "rb").read().split()[1])
+                    hwm_kb = 0
+                    with open("/proc/self/status", "rb") as vf:
+                        for line in vf:
+                            if line.startswith(b"VmHWM:"):
+                                hwm_kb = int(line.split()[1])
+                                break
+                    with open(pm_path, "a", newline="") as fh:
+                        if fh.tell() == 0:
+                            csv.writer(fh).writerow(["t_epoch", "t_mono", "rss_kb", "hwm_kb", "min_flt", "maj_flt"])
+                        csv.writer(fh).writerow([
+                            round(time.time(), 3),
+                            round(time.perf_counter(), 3),
+                            rss_pages * os.sysconf("SC_PAGE_SIZE") // 1024,
+                            hwm_kb,
+                            min_flt,
+                            maj_flt,
+                        ])
+                except OSError:
+                    return
+
+        threading.Thread(target=proc_mem_sampler, daemon=True, name="proc-mem-sampler").start()
+        bot_logger.info(f"[diag] proc-mem sampler armed: interval={pm_interval}s path={pm_path}")
+
     fh_timeout = float(os.environ.get("DEGENBOT_FAULTHANDLER_TIMEOUT_SECS", "0"))
     if fh_timeout > 0:
         import faulthandler
