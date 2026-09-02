@@ -1457,6 +1457,14 @@ impl HeavyClPathCapture {
             "measured": { "time_us": micros_us, "sims": sims, "pieces": pieces },
             "golden": golden_json,
         });
+        if let Some(parent) = self.out_path.parent() {
+            // The default OUT path lives under logs/solver_capture/ — a
+            // directory that only exists if someone created it. A missing
+            // parent previously failed every append SILENTLY (the in-process
+            // `captured` counter kept advancing), losing the whole run's
+            // corpus.
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
