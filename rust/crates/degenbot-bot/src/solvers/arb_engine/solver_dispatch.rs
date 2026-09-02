@@ -2117,7 +2117,7 @@ mod executor_ab_probe {
     use crate::solvers::arb_engine::solve_executor::SolveExecutor;
     use hashbrown::HashMap;
 
-    fn pct(values: &[f64], q: f64) -> f64 {
+    pub(super) fn pct(values: &[f64], q: f64) -> f64 {
         if values.is_empty() {
             return 0.0;
         }
@@ -2181,7 +2181,7 @@ mod executor_ab_probe {
         })
     }
 
-    fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed::ResolvedMixedPath>> {
+    pub(super) fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed::ResolvedMixedPath>> {
         let path = fixture_path();
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("fixture {}: {e}", path.display()));
@@ -2222,7 +2222,7 @@ mod executor_ab_probe {
         items
     }
 
-    fn probe_ctx() -> Arc<SolveCycleShared> {
+    pub(super) fn probe_ctx() -> Arc<SolveCycleShared> {
         Arc::new(SolveCycleShared {
             solve_block: 0,
             epoch: 0,
@@ -2252,7 +2252,7 @@ mod executor_ab_probe {
 
     /// LPT bins per the production cost fn (empty measured-history = first-cycle
     /// structural cost, exactly like an engine cold bucket).
-    fn prod_lpt_bins(
+    pub(super) fn prod_lpt_bins(
         items: &[Arc<::degenbot_solvers::mixed::ResolvedMixedPath>],
         threads: usize,
     ) -> Vec<Vec<usize>> {
@@ -2349,7 +2349,7 @@ mod executor_ab_probe {
         (t0.elapsed().as_secs_f64() * 1000.0, emits)
     }
 
-    fn raise_nice_for_lane_courtesy() {
+    pub(super) fn raise_nice_for_lane_courtesy() {
         #[cfg(unix)]
         {
             // T4 courtesy: keep this offline probe off the live soak's cores.
@@ -2384,6 +2384,602 @@ mod executor_ab_probe {
                         p50 = pct(&emits, 0.5),
                         p95 = pct(&emits, 0.95),
                     );
+                }
+            }
+        }
+    }
+}
+
+// ----------------- OFFLINE DETACHED-STRATEGY A/B PROBE (epic BXZBWY) -----------------
+// env-driven, `#[ignore]`d - run manually:
+//   cargo test --release -p degenbot-bot --lib executor_detached -- --ignored --nocapture
+//
+// Offline A/B of the detached-merge dispositions on the heavy-CL corpus (156
+// paths, sum CPU ~29ms - deliberately parallel-light so ALL merge overheads are
+// visible). All three arms share the production dispatch shape (`SolveExecutor`
+// per-bin jobs, per-path result sends) and differ ONLY at the drain seam:
+//
+//   hybrid  : all bins solve in-cycle like the production tokio arm; the
+//             in-cycle drain applies results under ONE engine-mutex hold until
+//             a budget of 2x the median per-path solve time expires, then
+//             returns; bins still incomplete at expiry DETACH - their
+//             in-flight solves continue and their results flow through the
+//             sidecar merge (per-result acquisitions). Measures the
+//             budget-expiry overhead plus the eventual delivery times of the
+//             detached tail.
+//   detach  : detach-always. The sidecar drains from t0; the cycle returns at
+//             enqueue end and EVERY result flows through the detached merge
+//             path: result-queue send -> stale-check -> sidecar mutex ->
+//             insert -> streaming emit. Measures the per-result overhead
+//             aggregate (task spawns/joins, mutex acquisitions and waits,
+//             total emit latency) across all paths.
+//   incycle : control = the production in-cycle baseline (one drain, one
+//             engine-mutex hold, apply-at-drain). One acquisition expected.
+//
+// Engine-mutex proxy: a `parking_lot::Mutex` insertion shard held exactly
+// where the production drain holds the engine mutex (whole pre-expiry drain
+// for the hybrid in-cycle phase and the incycle control, per-result on the
+// sidecar). Stale-check = read of a shared (empty in this offline corpus)
+// stale set, counted per apply. Streaming emit = recording the apply
+// timestamp; delivery latency = apply offset minus the per-path solve-done
+// offset, recorded sidecar-only so the hybrid percentiles isolate the
+// detached tail. Standard-library metrics only - no OTel, per probe contract.
+#[cfg(test)]
+#[expect(clippy::print_stderr, clippy::print_stdout)]
+// Offline probe: the CSV is the output and a misapplied result must fail the
+// run loudly. The calibration median drives the hybrid detach budget, so a
+// warm first pass precedes every measured config.
+mod executor_detached_probe {
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use ::degenbot_solvers::mixed::{ResolvedMixedPath, SolvePathResult};
+    use hashbrown::HashMap;
+
+    use super::executor_ab_probe::{
+        load_corpus, pct, probe_ctx, prod_lpt_bins, raise_nice_for_lane_courtesy,
+    };
+    use super::{solve_one_path, SolveCycleShared};
+    use crate::solvers::arb_engine::solve_executor::SolveExecutor;
+
+    /// Wait above this on a shard-lock acquisition counts as a block event
+    /// (standard-metrics proxy for a parked lock wait).
+    const MERGE_MUTEX_BLOCK_NS: u128 = 10_000;
+
+    /// Work-item liveness probe (memory proxy): RAII counter bumped on every
+    /// clone of a work-item handle and decremented on drop; `max` is the peak
+    /// of simultaneously-alive work-item snapshots. Every arm includes the
+    /// same 156-path master-snapshot floor.
+    struct GaugeState {
+        cur: Arc<AtomicUsize>,
+        max: Arc<AtomicUsize>,
+    }
+
+    impl GaugeState {
+        fn new() -> Self {
+            Self {
+                cur: Arc::new(AtomicUsize::new(0)),
+                max: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn bump(&self) {
+            let n = self.cur.fetch_add(1, Ordering::Relaxed) + 1;
+            self.max.fetch_max(n, Ordering::Relaxed);
+        }
+    }
+
+    impl Clone for GaugeState {
+        fn clone(&self) -> Self {
+            self.bump();
+            Self {
+                cur: Arc::clone(&self.cur),
+                max: Arc::clone(&self.max),
+            }
+        }
+    }
+
+    impl Drop for GaugeState {
+        fn drop(&mut self) {
+            self.cur.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    /// One work item (path id + resolved snapshot) whose clones are gauged.
+    struct GaugePath {
+        pid: u64,
+        inner: Arc<ResolvedMixedPath>,
+        gauge: GaugeState,
+    }
+
+    impl Clone for GaugePath {
+        fn clone(&self) -> Self {
+            Self {
+                pid: self.pid,
+                inner: Arc::clone(&self.inner),
+                gauge: self.gauge.clone(),
+            }
+        }
+    }
+
+    /// Build the gauged work-item master (one live snapshot per corpus path).
+    fn gauge_corpus(raw: &[Arc<ResolvedMixedPath>], gauge: &GaugeState) -> Vec<GaugePath> {
+        raw.iter()
+            .enumerate()
+            .map(|(i, item)| GaugePath {
+                pid: i as u64,
+                inner: Arc::clone(item),
+                gauge: gauge.clone(),
+            })
+            .collect()
+    }
+
+    /// Per-cycle counters (standard-metrics only, no `OTel` by contract).
+    #[derive(Default)]
+    struct DepMetrics {
+        spawns: AtomicUsize,
+        bins_done: AtomicUsize,
+        stale_checks: AtomicUsize,
+        acq: AtomicUsize,
+        blocks: AtomicUsize,
+        wait_us: AtomicU64,
+        hold_us: AtomicU64,
+        applied: AtomicUsize,
+        in_cycle_applied: AtomicUsize,
+        detached_applied: AtomicUsize,
+    }
+
+    /// The sidecar merge shard - stands in for the engine result map.
+    #[derive(Default)]
+    struct MergeShard {
+        results: HashMap<u64, Option<SolvePathResult>>,
+    }
+
+    /// Shared merge-side refs (`Rc`-like bundle so the apply/drain signatures
+    /// stay under the arity lint): the stale set, counters, delivery-latency
+    /// samples, and the last-apply clock.
+    struct MergeCtx {
+        stale: parking_lot::RwLock<hashbrown::HashSet<u64>>,
+        /// `Arc` because the per-bin executor jobs (which bump `spawns` and
+        /// `bins_done`) must own their counter copy - they are `'static`.
+        metrics: Arc<DepMetrics>,
+        lats: parking_lot::Mutex<Vec<f64>>,
+        last_apply_ms: parking_lot::Mutex<f64>,
+    }
+
+    /// One streamed result from a bin worker.
+    enum DepMsg {
+        Solved {
+            pid: u64,
+            done_ms: f64,
+            result: Option<SolvePathResult>,
+        },
+        BinDone,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Strategy {
+        Hybrid,
+        Detach,
+        InCycle,
+    }
+
+    impl Strategy {
+        fn name(self) -> &'static str {
+            match self {
+                Strategy::Hybrid => "hybrid",
+                Strategy::Detach => "detach",
+                Strategy::InCycle => "incycle",
+            }
+        }
+    }
+
+    /// Which drain phase an apply rode - names the counter and whether the
+    /// delivery latency is recorded (sidecar-only, per the module docs).
+    #[derive(Clone, Copy)]
+    enum Phase {
+        InCycle,
+        Sidecar,
+    }
+
+    fn elapsed_ms(t0: Instant) -> f64 {
+        t0.elapsed().as_secs_f64() * 1000.0
+    }
+
+    /// Acquire the engine-mutex proxy: count the acquisition, the wait, and
+    /// (above `MERGE_MUTEX_BLOCK_NS`) a block event.
+    fn dep_lock<'a>(
+        shard: &'a parking_lot::Mutex<MergeShard>,
+        ctx: &MergeCtx,
+    ) -> parking_lot::MutexGuard<'a, MergeShard> {
+        let t = Instant::now();
+        let guard = shard.lock();
+        let wait = t.elapsed();
+        ctx.metrics.wait_us.fetch_add(
+            u64::try_from(wait.as_micros()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        if wait.as_nanos() > MERGE_MUTEX_BLOCK_NS {
+            ctx.metrics.blocks.fetch_add(1, Ordering::Relaxed);
+        }
+        ctx.metrics.acq.fetch_add(1, Ordering::Relaxed);
+        guard
+    }
+
+    /// Apply ONE merged result behind the already-held shard guard:
+    /// stale-check, insert, streaming emit (apply timestamp; the sidecar
+    /// phase additionally records the delivery latency).
+    fn apply_one(
+        ctx: &MergeCtx,
+        shard_guard: &mut MergeShard,
+        phase: Phase,
+        pid: u64,
+        done_ms: f64,
+        result: Option<SolvePathResult>,
+        t0: Instant,
+    ) {
+        ctx.metrics.stale_checks.fetch_add(1, Ordering::Relaxed);
+        if ctx.stale.read().contains(&pid) {
+            return; // production stale gate: dropped pre-insert
+        }
+        shard_guard.results.insert(pid, result);
+        ctx.metrics.applied.fetch_add(1, Ordering::Relaxed);
+        match phase {
+            Phase::InCycle => {
+                ctx.metrics.in_cycle_applied.fetch_add(1, Ordering::Relaxed);
+            }
+            Phase::Sidecar => {
+                ctx.metrics.detached_applied.fetch_add(1, Ordering::Relaxed);
+                ctx.lats.lock().push(elapsed_ms(t0) - done_ms);
+            }
+        }
+        *ctx.last_apply_ms.lock() = elapsed_ms(t0);
+    }
+
+    /// Spawn one executor job per LPT bin (production tokio-arm shape:
+    /// per-path sends as each path completes, per-bin `BinDone` sentinel).
+    fn spawn_dep_bins(
+        executor: &SolveExecutor,
+        items: &[GaugePath],
+        bins: &[Vec<usize>],
+        ctx: &Arc<SolveCycleShared>,
+        metrics: &Arc<DepMetrics>,
+        tx: &std::sync::mpsc::Sender<DepMsg>,
+        t0: Instant,
+    ) {
+        for bin in bins {
+            let bin_items: Vec<GaugePath> = bin.iter().map(|&i| items[i].clone()).collect();
+            let tx = tx.clone();
+            let ctx = Arc::clone(ctx);
+            let metrics = Arc::clone(metrics);
+            metrics.spawns.fetch_add(1, Ordering::Relaxed);
+            executor.spawn(move || {
+                for gp in &bin_items {
+                    let outcome = solve_one_path(&ctx, &tracing::Span::none(), gp.pid, &gp.inner);
+                    let done_ms = elapsed_ms(t0);
+                    let _ = tx.send(DepMsg::Solved {
+                        pid: gp.pid,
+                        done_ms,
+                        result: outcome.map(|(_, r)| r),
+                    });
+                }
+                metrics.bins_done.fetch_add(1, Ordering::Relaxed);
+                let _ = tx.send(DepMsg::BinDone);
+            });
+        }
+    }
+
+    /// In-cycle drain: one engine-mutex hold across the whole phase (the
+    /// production drain contract). With a deadline this is the hybrid
+    /// pre-expiry phase (timeout at the budget); without, it is the incycle
+    /// control and ends only at channel close (all bins joined + drained).
+    fn drain_incycle(
+        rx: &std::sync::mpsc::Receiver<DepMsg>,
+        shard: &parking_lot::Mutex<MergeShard>,
+        merge: &MergeCtx,
+        deadline: Option<Instant>,
+        t0: Instant,
+    ) {
+        let hold_start = Instant::now();
+        let mut guard = dep_lock(shard, merge);
+        loop {
+            // No-deadline control: a long timeout degenerates to a blocking
+            // recv that still errors at channel close.
+            let timeout = deadline.map_or_else(
+                || Duration::from_secs(3_600),
+                |d| d.saturating_duration_since(Instant::now()),
+            );
+            let Ok(msg) = rx.recv_timeout(timeout) else {
+                break; // budget expiry (hybrid) or pipe closed
+            };
+            let DepMsg::Solved {
+                pid,
+                done_ms,
+                result,
+            } = msg
+            else {
+                continue; // `BinDone` sentinel (bin join)
+            };
+            apply_one(merge, &mut guard, Phase::InCycle, pid, done_ms, result, t0);
+        }
+        // Per-bin sends precede per-bin `BinDone` on the same pipe, so at
+        // break time any buffered Solved msgs belong in-cycle: catch them.
+        while let Ok(msg) = rx.try_recv() {
+            let DepMsg::Solved {
+                pid,
+                done_ms,
+                result,
+            } = msg
+            else {
+                continue;
+            };
+            apply_one(merge, &mut guard, Phase::InCycle, pid, done_ms, result, t0);
+        }
+        merge.metrics.hold_us.fetch_add(
+            u64::try_from(hold_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Sidecar drain - the detached merge path: per-result engine-mutex
+    /// acquisition (result-queue recv), stale-check, insert, streaming emit.
+    /// Ends at channel close: every bin Sender drops only after its final
+    /// sentinel, and recv drains all buffered msgs before reporting close.
+    fn sidecar_drain(
+        rx: std::sync::mpsc::Receiver<DepMsg>,
+        shard: &parking_lot::Mutex<MergeShard>,
+        merge: &MergeCtx,
+        t0: Instant,
+    ) {
+        for msg in rx {
+            let DepMsg::Solved {
+                pid,
+                done_ms,
+                result,
+            } = msg
+            else {
+                continue; // `BinDone` sentinel (bin join)
+            };
+            let hold_start = Instant::now();
+            let mut guard = dep_lock(shard, merge);
+            apply_one(merge, &mut guard, Phase::Sidecar, pid, done_ms, result, t0);
+            drop(guard);
+            merge.metrics.hold_us.fetch_add(
+                u64::try_from(hold_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+                Ordering::Relaxed,
+            );
+        }
+    }
+
+    /// CSV row for one measured cycle.
+    struct DepRow {
+        strategy: &'static str,
+        threads: usize,
+        items: usize,
+        cycle_ret_ms: f64,
+        makespan_ms: f64,
+        merge_tail_ms: f64,
+        expiry_overhead_us: f64,
+        applied: usize,
+        in_cycle_applied: usize,
+        detached_applied: usize,
+        p50_delivery_ms: f64,
+        p95_delivery_ms: f64,
+        p99_delivery_ms: f64,
+        mutex_acq: usize,
+        mutex_hold_us: u64,
+        mutex_wait_us: u64,
+        mutex_blocks: usize,
+        stale_checks: usize,
+        spawns: usize,
+        bins_done: usize,
+        max_clones: usize,
+        median_solve_us: f64,
+        budget_ms: f64,
+    }
+
+    impl DepRow {
+        fn csv_line(&self, pass: usize) -> String {
+            format!(
+                "{},{},{},{},{cr:.2},{mk:.2},{tail:.2},{oh:.1},{applied},{ic},{det},{p50:.3},{p95:.3},{p99:.3},{acq},{hold},{wait},{blocks},{stale},{spawns},{done},{clones},{median:.1},{budget:.3}",
+                self.strategy,
+                self.threads,
+                pass,
+                self.items,
+                cr = self.cycle_ret_ms,
+                mk = self.makespan_ms,
+                tail = self.merge_tail_ms,
+                oh = self.expiry_overhead_us,
+                applied = self.applied,
+                ic = self.in_cycle_applied,
+                det = self.detached_applied,
+                p50 = self.p50_delivery_ms,
+                p95 = self.p95_delivery_ms,
+                p99 = self.p99_delivery_ms,
+                acq = self.mutex_acq,
+                hold = self.mutex_hold_us,
+                wait = self.mutex_wait_us,
+                blocks = self.mutex_blocks,
+                stale = self.stale_checks,
+                spawns = self.spawns,
+                done = self.bins_done,
+                clones = self.max_clones,
+                median = self.median_solve_us,
+                budget = self.budget_ms,
+            )
+        }
+    }
+
+    /// Calibration-derived hybrid detach budget (recorded with the row).
+    struct Budget {
+        median_solve_us: f64,
+        budget_ms: f64,
+    }
+
+    /// One measured cycle (strategy x threads x pass).
+    fn run_dep_cycle(
+        strategy: Strategy,
+        items: &[GaugePath],
+        bins: &[Vec<usize>],
+        solve_ctx: &Arc<SolveCycleShared>,
+        threads: usize,
+        budget: &Budget,
+        max_clones: &AtomicUsize,
+    ) -> DepRow {
+        let t0 = Instant::now();
+        let merge = MergeCtx {
+            stale: parking_lot::RwLock::new(hashbrown::HashSet::new()),
+            metrics: Arc::new(DepMetrics::default()),
+            lats: parking_lot::Mutex::new(Vec::new()),
+            last_apply_ms: parking_lot::Mutex::new(0.0_f64),
+        };
+        let shard = parking_lot::Mutex::new(MergeShard::default());
+        let (tx, rx) = std::sync::mpsc::channel::<DepMsg>();
+        let executor = SolveExecutor::new("detached-probe-solve", threads);
+
+        let mut expiry_overhead_us = 0.0_f64;
+        let cycle_ret_ms;
+        match strategy {
+            Strategy::Hybrid => {
+                let budget = Duration::from_secs_f64(budget.budget_ms / 1_000.0);
+                spawn_dep_bins(&executor, items, bins, solve_ctx, &merge.metrics, &tx, t0);
+                drop(tx); // close the pipe when the bins finish (drain end)
+                drain_incycle(&rx, &shard, &merge, Some(t0 + budget), t0);
+                cycle_ret_ms = elapsed_ms(t0); // budget-expiry release point
+                let expiry = Instant::now();
+                // Detach: hand the pipe to the sidecar; in-flight bins keep
+                // running and their results take the detached merge path.
+                // The scope ends exactly when the sidecar finishes draining
+                // (channel close = every bin joined), i.e. the merge tail.
+                std::thread::scope(|s| {
+                    s.spawn(|| sidecar_drain(rx, &shard, &merge, t0));
+                    // Spawn-call cost only (thread park + pipe hand-off); the
+                    // scope wait itself runs to full merge completion.
+                    expiry_overhead_us = expiry.elapsed().as_secs_f64() * 1_000_000.0;
+                });
+            }
+            Strategy::Detach => {
+                // Sidecar from t0; the cycle returns at enqueue end and every
+                // result rides the detached merge path. The scope ends when
+                // the sidecar has drained everything (all bins joined).
+                let mut enqueue_end_ms = 0.0_f64;
+                std::thread::scope(|s| {
+                    s.spawn(|| sidecar_drain(rx, &shard, &merge, t0));
+                    spawn_dep_bins(&executor, items, bins, solve_ctx, &merge.metrics, &tx, t0);
+                    drop(tx); // close the pipe when the bins finish
+                    enqueue_end_ms = elapsed_ms(t0); // enqueue end
+                });
+                cycle_ret_ms = enqueue_end_ms;
+                expiry_overhead_us = 0.0;
+            }
+            Strategy::InCycle => {
+                spawn_dep_bins(&executor, items, bins, solve_ctx, &merge.metrics, &tx, t0);
+                drop(tx); // close the pipe when the bins finish
+                drain_incycle(&rx, &shard, &merge, None, t0);
+                cycle_ret_ms = elapsed_ms(t0); // whole cycle in-line
+            }
+        }
+
+        let makespan_ms = *merge.last_apply_ms.lock();
+        let lats_snapshot = merge.lats.lock().clone();
+        DepRow {
+            strategy: strategy.name(),
+            threads,
+            items: items.len(),
+            cycle_ret_ms,
+            makespan_ms,
+            merge_tail_ms: makespan_ms - cycle_ret_ms,
+            expiry_overhead_us,
+            applied: merge.metrics.applied.load(Ordering::Relaxed),
+            in_cycle_applied: merge.metrics.in_cycle_applied.load(Ordering::Relaxed),
+            detached_applied: merge.metrics.detached_applied.load(Ordering::Relaxed),
+            p50_delivery_ms: pct(&lats_snapshot, 0.5),
+            p95_delivery_ms: pct(&lats_snapshot, 0.95),
+            p99_delivery_ms: pct(&lats_snapshot, 0.99),
+            mutex_acq: merge.metrics.acq.load(Ordering::Relaxed),
+            mutex_hold_us: merge.metrics.hold_us.load(Ordering::Relaxed),
+            mutex_wait_us: merge.metrics.wait_us.load(Ordering::Relaxed),
+            mutex_blocks: merge.metrics.blocks.load(Ordering::Relaxed),
+            stale_checks: merge.metrics.stale_checks.load(Ordering::Relaxed),
+            spawns: merge.metrics.spawns.load(Ordering::Relaxed),
+            bins_done: merge.metrics.bins_done.load(Ordering::Relaxed),
+            max_clones: max_clones.load(Ordering::Relaxed),
+            median_solve_us: budget.median_solve_us,
+            budget_ms: budget.budget_ms,
+        }
+    }
+
+    fn median(v: &mut [f64]) -> f64 {
+        if v.is_empty() {
+            return 0.0;
+        }
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    }
+
+    #[test]
+    #[ignore = "offline detached-merge A/B probe; run with --ignored; env: DEGENBOT_PROBE_FIXTURE / \
+        DEGENBOT_PROBE_NS / DEGENBOT_PROBE_PASSES"]
+    fn executor_detached_probe_runs_and_prints_csv() {
+        raise_nice_for_lane_courtesy();
+        let raw = load_corpus();
+        let items_total = raw.len();
+        let solve_ctx = probe_ctx();
+        let threads: Vec<usize> = match std::env::var("DEGENBOT_PROBE_NS") {
+            Ok(s) => s.split(',').filter_map(|t| t.trim().parse().ok()).collect(),
+            Err(_) => vec![4, 8, 16],
+        };
+        let passes: usize = std::env::var("DEGENBOT_PROBE_PASSES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3);
+
+        // Calibration: solo per-path solve times on the shared ctx -> hybrid
+        // budget = 2x the median (detached tail only, per the A/B contract).
+        let calib_span = tracing::Span::none();
+        let mut per_us: Vec<f64> = Vec::with_capacity(items_total);
+        for (i, item) in raw.iter().enumerate() {
+            let t = Instant::now();
+            let _ = solve_one_path(&solve_ctx, &calib_span, i as u64, item);
+            per_us.push(t.elapsed().as_secs_f64() * 1_000_000.0);
+        }
+        let median_solve_us = median(&mut per_us);
+        let budget = Budget {
+            median_solve_us,
+            budget_ms: 2.0 * median_solve_us / 1_000.0,
+        };
+
+        let corpus_paths = items_total;
+        let med = median_solve_us;
+        let bud = budget.budget_ms;
+        eprintln!("corpus paths = {corpus_paths}");
+        eprintln!("median per-path solve = {med:.1}us; hybrid detach budget = {bud:.3}ms");
+        println!(
+            "strategy,threads,pass,items,cycle_ret_ms,makespan_ms,merge_tail_ms,expiry_overhead_us,applied,in_cycle_applied,detached_applied,p50_delivery_ms,p95_delivery_ms,p99_delivery_ms,mutex_acq,mutex_hold_us,mutex_wait_us,mutex_blocks,stale_checks,spawns,bins_done,max_clones,median_solve_us,budget_ms"
+        );
+        for &n in &threads {
+            let bins = prod_lpt_bins(&raw, n);
+            for strategy in [Strategy::Hybrid, Strategy::Detach, Strategy::InCycle] {
+                for pass in 0..passes {
+                    let gauge = GaugeState::new();
+                    let gauge_items = gauge_corpus(&raw, &gauge);
+                    let row = run_dep_cycle(
+                        strategy,
+                        &gauge_items,
+                        &bins,
+                        &solve_ctx,
+                        n,
+                        &budget,
+                        &gauge.max,
+                    );
+                    let applied = row.applied;
+                    assert_eq!(
+                        applied, items_total,
+                        "every path result must be applied before the row is reported"
+                    );
+                    let line = row.csv_line(pass);
+                    println!("{line}");
                 }
             }
         }
