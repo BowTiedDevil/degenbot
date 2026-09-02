@@ -668,7 +668,9 @@ class TestSharedStateTopologyV4:
             currency1=TOKEN1,
             fee=V4_FEE,
             tick_spacing=V4_TICK_SPACING,
-            hook_flags=0,
+            # MTMPQB: the seam takes the real hook address (None = no hook,
+            # derived flag mask 0) instead of pre-computed flags.
+            hook_address=None,
             sqrt_price_x96=V4_SQRT_PRICE,
             liquidity=V4_LIQUIDITY,
             tick=V4_TICK,

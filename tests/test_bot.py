@@ -280,14 +280,18 @@ class TestBuildManagedPoolIdentityReturnSurface:
         # Stub the Rust surface: the resolver returns identity A; build_v4_pool
         # echoes a DIFFERENT currency0 -> parity guard must raise.
         bot._py_bot = SimpleNamespace(  # type: ignore[assignment]
+            # MTMPQB return surface: (currency0, currency1, fee,
+            # tick_spacing, hook_flags, hook_address, state_view_hex). The
+            # hook address defaults to ZERO (flag mask 0); the state view is
+            # the caller override "0x…bb…".
             resolve_v4_identity=lambda **k: (
                 "0x" + "cc" * 20,
                 "0x" + "dd" * 20,
                 5000,
                 1,
                 0,
+                "0x" + "00" * 20,
                 "0x" + "bb" * 20,
-                None,
             ),
             build_v4_pool=lambda **k: (
                 7,
