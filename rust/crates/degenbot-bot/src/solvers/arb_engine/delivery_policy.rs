@@ -238,7 +238,7 @@ impl DeliveryPolicy {
 }
 
 impl DeliveryPolicy {
-    /// T3 (epic BXUSGL): DEGENBOT_STREAMING_DELIVERY — emit ONE above
+    /// T3 (epic BXUSGL): `DEGENBOT_STREAMING_DELIVERY` — emit ONE above
     /// -threshold result as an immediate single-entry batch, advancing the
     /// per-entry diff bookkeeping. Per-entry deltas compose with the regular
     /// debounce sweep (which still owns `expired`/`removed` and the metadata

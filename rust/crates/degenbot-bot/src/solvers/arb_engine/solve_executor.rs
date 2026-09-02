@@ -8,7 +8,7 @@
 //! (per-path solves, seconds at the heavy end). Running CPU jobs on the
 //! I/O runtime — or letting an unprioritized CPU pool contend with it for
 //! cores — is exactly the "same runtime for I/O and CPU" hazard the Tokio
-//! docs warn about. The "InfluxDB IOx" `DedicatedExecutor` pattern (alamb's
+//! docs warn about. The `InfluxDB IOx` `DedicatedExecutor` pattern (alamb's
 //! thenewstack.io article + gist; the same technique behind tpchgen PR
 //! `#34`'s bounded-parallelism choice over Rayon: "I couldn't find any way
 //! [with Rayon] to limit the number of things that were buffered at once")
@@ -89,8 +89,8 @@ impl SolveExecutor {
 }
 
 /// Lower this thread's OS priority so the latency-critical I/O runtime's
-/// tasks (block clock, RPC, the Python bridge) always win the cores. IOx's
-/// DedicatedExecutor does exactly this. Failure is non-fatal (`nice()` may
+/// tasks (block clock, RPC, the Python bridge) always win the cores. `IOx`'s
+/// `DedicatedExecutor` does exactly this. Failure is non-fatal (`nice()` may
 /// be denied under restricted rlimits) — the executor just runs at default
 /// priority, as today.
 fn lower_priority() {

@@ -417,7 +417,7 @@ pub struct ArbitrageEngine {
     /// [`SolveExecutorKind`].
     solve_executor: SolveExecutorKind,
     /// T3 (epic BXUSGL): emit each clamp-passed above-threshold result as
-    /// an IMMEDIATE single-entry ResultBatch during the drain instead of
+    /// an IMMEDIATE single-entry [`ResultBatch`] during the drain instead of
     /// waiting for the pump debounce. Construction-time stance; debounce
     /// batching stays the default path.
     streaming_delivery: bool,

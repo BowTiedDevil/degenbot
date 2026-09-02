@@ -739,7 +739,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[expect(clippy::duration_suboptimal_units)] // std has no min-unit
     async fn abort_all_tasks_cancels_pending() {
         let mut d = Dispatcher::for_block(1);
         d.track_task(async {

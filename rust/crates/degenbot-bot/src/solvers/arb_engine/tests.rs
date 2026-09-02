@@ -5499,10 +5499,10 @@ mod tests {
              barrier order puts the marker first (probe = {observed:?})"
         );
     }
-    /// T2 (epic BXZBWY) acceptance: a slowened solve_dirty holding the engine
+    /// T2 (epic BXZBWY) acceptance: a slowened `solve_dirty` holding the engine
     /// Mutex must NOT starve other tasks on the shared multi-thread runtime
-    /// (the production pump runtime hosts the block clock + WS tasks on the
-    /// same pool). RED before the block_in_place seam: the slowened solve
+    /// (the production pump runtime hosts the block clock + `WS` tasks on the
+    /// same pool). RED before the `block_in_place` seam: the slowened solve
     /// occupied the ONLY worker and the heartbeat task starved.
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn solve_dirty_hold_does_not_starve_runtime_tasks() {
@@ -5603,12 +5603,13 @@ mod tests {
              engine Mutex (T2 seam); heartbeats in 600ms = {beats}"
         );
     }
-    /// T3 (epic BXUSGL) acceptance: with DEGENBOT_STREAMING_DELIVERY the drain
+    /// T3 (epic BXUSGL) acceptance: with `DEGENBOT_STREAMING_DELIVERY` the drain
     /// emits each clamp-passed above-threshold result as an immediate single
     /// -entry batch — a fast path's batch must arrive on the channel while the
     /// slow path is still solving. RED before the per-result emission: the
-    /// debounce path sends nothing until send_result_batch.
+    /// debounce path sends nothing until `send_result_batch`.
     #[test]
+    #[expect(clippy::too_many_lines)] // interleaved stress test; one narrative
     fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
         if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
             eprintln!("skipping: streaming-delivery test requires >=2 cores");

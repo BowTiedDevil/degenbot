@@ -139,8 +139,8 @@ static LPT_PARTITION_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(true);
 static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
 
-/// T3 (epic BXUSGL): DEGENBOT_STREAMING_DELIVERY — emit each clamp-passed
-/// above-threshold result as an immediate single-entry ResultBatch during the
+/// T3 (epic BXUSGL): `DEGENBOT_STREAMING_DELIVERY` — emit each clamp-passed
+/// above-threshold result as an immediate single-entry `ResultBatch` during the
 /// solve drain instead of waiting for the pump debounce. Parsed ONCE at
 /// engine construction ([`install_engine_env_stances`]); engines copy the
 /// parsed static into their construction field.
@@ -2071,6 +2071,17 @@ mod lpt_partition_tests {
 // env-driven, #[ignore]d - see the module docs below; run manually:
 //   cargo test --release -p degenbot-bot --lib executor_ab_probe -- --ignored --nocapture
 #[cfg(test)]
+#[expect(
+    clippy::panic,
+    clippy::print_stderr,
+    clippy::print_stdout,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+// Offline probe: panics/prints ARE the measurement contract (loud failure on
+// misload; CSV is the output). Outer allow/expects at module level are the
+// documented-permitted form for cross-lint bulk suppression.
 mod executor_ab_probe {
     // Offline A/B probe (epic BXUSGL T4): production dispatch emulation, rayon
     // LPT scope vs the dedicated tokio solve executor, on the heavy-CL capture
@@ -2183,12 +2194,12 @@ mod executor_ab_probe {
                 continue;
             };
             let mut hops = Vec::new();
-            for hop in &*hops_v {
+            for hop in hops_v {
                 let Ok(ra) = hop.as_array().ok_or("hop") else {
                     continue;
                 };
                 let mut ranges = Vec::new();
-                for r in &*ra {
+                for r in ra {
                     if let Ok(rh) = range(r) {
                         ranges.push(rh);
                     }
@@ -2318,7 +2329,7 @@ mod executor_ab_probe {
                             });
                         }
                     });
-                })
+                });
             }
             other => unreachable!("unknown arm {other}"),
         }
@@ -2352,9 +2363,10 @@ mod executor_ab_probe {
         raise_nice_for_lane_courtesy();
         let items = load_corpus();
         eprintln!("corpus paths = {}", items.len());
-        let threads: Vec<usize> = std::env::var("DEGENBOT_PROBE_NS")
-            .map(|s| s.split(',').filter_map(|t| t.trim().parse().ok()).collect())
-            .unwrap_or_else(|_| vec![1, 2, 4, 8, 16]);
+        let threads: Vec<usize> = match std::env::var("DEGENBOT_PROBE_NS") {
+            Ok(s) => s.split(',').filter_map(|t| t.trim().parse().ok()).collect(),
+            Err(_) => vec![1, 2, 4, 8, 16],
+        };
         let passes: usize = std::env::var("DEGENBOT_PROBE_PASSES")
             .ok()
             .and_then(|s| s.parse().ok())
