@@ -196,7 +196,7 @@ impl DeliveryPolicy {
             .collect();
 
         // Removed: de-registered since last batch
-        let removed: Vec<u64> = self.deregistered.drain(..).collect();
+        let removed: Vec<u64> = std::mem::take(&mut self.deregistered);
 
         // Advance `delivered` to the above-threshold subset of current
         // `results` (ADR-003: this is what makes reorg `expired` diffs real —
@@ -232,6 +232,52 @@ impl DeliveryPolicy {
             updated,
             expired,
             removed,
+        };
+        self.lifecycle.send_batch(batch);
+    }
+}
+
+impl DeliveryPolicy {
+    /// T3 (epic BXUSGL): DEGENBOT_STREAMING_DELIVERY — emit ONE above
+    /// -threshold result as an immediate single-entry batch, advancing the
+    /// per-entry diff bookkeeping. Per-entry deltas compose with the regular
+    /// debounce sweep (which still owns `expired`/`removed` and the metadata
+    /// -only end-of-cycle batch): a streaming-delivered entry is already in
+    /// `delivered`, so the sweep's fresh/updated filters skip it.
+    /// Semantics mirror [`Self::diff_and_send`]: anchor gate + profit window
+    /// and up-to-date discrimination. No-op without a live channel and
+    /// after engine close (the lifecycle batch contract).
+    pub fn emit_single_result_batch(
+        &mut self,
+        results_block: u64,
+        metadata: &BlockMetadata,
+        path_id: u64,
+        result: &SolvePathResult,
+    ) {
+        let anchored = results_block != 0;
+        let above_threshold = result.profit > self.min_profit && result.profit <= self.max_profit;
+        let mut fresh: Vec<(u64, SolvePathResult)> = Vec::new();
+        let mut updated: Vec<(u64, SolvePathResult)> = Vec::new();
+        if anchored && above_threshold {
+            if !self.delivered.contains_key(&path_id) {
+                fresh.push((path_id, result.clone()));
+                self.delivered.insert(path_id, result.clone());
+            } else if self.delivered.get(&path_id) != Some(result) {
+                updated.push((path_id, result.clone()));
+                self.delivered.insert(path_id, result.clone());
+            }
+        }
+
+        let batch = ResultBatch {
+            solve_block: results_block,
+            timestamp: metadata.timestamp,
+            base_fee_per_gas: metadata.base_fee_per_gas,
+            gas_used: metadata.gas_used,
+            gas_limit: metadata.gas_limit,
+            fresh,
+            updated,
+            expired: Vec::new(),
+            removed: Vec::new(),
         };
         self.lifecycle.send_batch(batch);
     }

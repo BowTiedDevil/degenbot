@@ -52,7 +52,11 @@ static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
 /// LPT pre-balances so no thread gets stuck with an unsplittable giant while
 /// others idle — achieving 7.80/8 (35% wall reduction). Same solver, same
 /// threads, same memory bandwidth.
-fn lpt_partition(n_items: usize, n_bins: usize, cost: impl Fn(usize) -> usize) -> Vec<Vec<usize>> {
+pub(crate) fn lpt_partition(
+    n_items: usize,
+    n_bins: usize,
+    cost: impl Fn(usize) -> usize,
+) -> Vec<Vec<usize>> {
     if n_bins == 0 {
         return Vec::new();
     }
@@ -79,7 +83,7 @@ fn lpt_partition(n_items: usize, n_bins: usize, cost: impl Fn(usize) -> usize) -
 /// Resolve-time cost proxy for LPT binning: the total number of word-boundary
 /// prices across all CL hops. Correlates with walk combinatorics without
 /// requiring a solve, so it is available at to_solve collection time.
-fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
+pub(crate) fn path_cost_proxy(resolved: &ResolvedMixedPath) -> usize {
     resolved
         .hops
         .iter()
@@ -135,6 +139,49 @@ static LPT_PARTITION_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(true);
 static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
 
+/// T3 (epic BXUSGL): DEGENBOT_STREAMING_DELIVERY — emit each clamp-passed
+/// above-threshold result as an immediate single-entry ResultBatch during the
+/// solve drain instead of waiting for the pump debounce. Parsed ONCE at
+/// engine construction ([`install_engine_env_stances`]); engines copy the
+/// parsed static into their construction field.
+pub(crate) static STREAMING_DELIVERY_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// BXUSGL T1: which dispatch drives the solve fan-out — see
+/// [`solve_executor_stance_from_env`]/[`SolveExecutorKind`]. Parsed ONCE at
+/// engine construction ([`install_engine_env_stances`]); the hot path reads
+/// the engine's construction-time field, never this static directly.
+pub(crate) static SOLVE_EXECUTOR_TOKIO: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `DEGENBOT_SOLVE_EXECUTOR` parse: "tokio" routes the solve fan-out through
+/// the dedicated low-priority runtime; "rayon" (and the default/unset, plus
+/// unknown values, which warn) keeps today's rayon-scope path. Pure so the
+/// unit tests can exercise it without env races.
+fn solve_executor_stance_from_env() -> bool {
+    match std::env::var("DEGENBOT_SOLVE_EXECUTOR") {
+        // T4 default flip (epic BXUSGL): the dedicated tokio executor is now
+        // the production default - equal-or-better makespan at every measured
+        // thread count, same-bin join barrier removed, and the lower-priority
+        // runtime isolates the block clock / WS tasks from solve CPU (see the
+        // probe table in logs/t4_executor_ab_matrix.csv + RAYPAR lab).
+        // Opt OUT (any 40-item fixture or A/B anomaly) with
+        // DEGENBOT_SOLVE_EXECUTOR=rayon; the rayon arm stays bit-identical.
+        Err(_) => true,
+        Ok(v) => match v.trim().to_ascii_lowercase().as_str() {
+            "tokio" => true,
+            "rayon" => false,
+            other => {
+                tracing::warn!(
+                    value = %other,
+                    "[solve-executor] unknown DEGENBOT_SOLVE_EXECUTOR - defaulting to tokio"
+                );
+                true
+            }
+        },
+    }
+}
+
 /// Degenerate-path capture config parse (M6776W) — the owner side of the
 /// `DEGENBOT_GATE_CAPTURE*` env family (the gate itself reads no env).
 #[must_use]
@@ -163,6 +210,15 @@ pub fn install_engine_env_stances() {
         }),
         std::sync::atomic::Ordering::Relaxed,
     );
+    SOLVE_EXECUTOR_TOKIO.store(
+        solve_executor_stance_from_env(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    STREAMING_DELIVERY_ENABLED.store(
+        std::env::var("DEGENBOT_STREAMING_DELIVERY").as_deref() == Ok("1"),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
     let min_profit = std::env::var("DEGENBOT_MIN_PROFIT_WEI")
         .ok()
         .and_then(|s| s.parse::<U256>().ok())
@@ -207,7 +263,198 @@ pub fn install_engine_env_stances() {
 /// proper, not just wall time.
 type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
-type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
+pub(crate) type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
+
+/// Per-path solve + diagnostics (epic BXUSGL T1): the former `solve_fn`
+/// closure moved out verbatim so BOTH dispatch arms - the rayon scope and
+/// the dedicated tokio executor - dispatch a path identically. Takes the
+/// shared per-cycle context by reference; workers touch NO engine state
+/// and NO core.lock (engine-then-core lock ordering preserved unchanged),
+/// and the passed span is re-entered per item exactly as the `par_iter`
+/// closure did (MQUKB6-T0: worker threads have no ambient context).
+#[expect(clippy::too_many_lines)] // the moved solve + diagnostics pipeline is one narrative
+pub(crate) fn solve_one_path(
+    ctx: &SolveCycleShared,
+    solve_span: &tracing::Span,
+    pid: u64,
+    resolved: &ResolvedMixedPath,
+) -> Option<(u64, SolvePathResult)> {
+    // Test-only deterministic slowen hook (the streaming-merge test).
+    #[cfg(test)]
+    if let Some(delay) = ctx.test_solve_delay.as_ref() {
+        delay(pid);
+    }
+    // Worker-local view of the cycle gate deps (BXUSGL T1): the Arc-d
+    // memo + owned capture cfg land in the shared ctx per cycle; the
+    // prefix cache is generationed by the block epoch - same semantics
+    // as the old single borrowed GateDeps shared by the scope workers.
+    let gate_deps = ::degenbot_solvers::profit_envelope::GateDeps {
+        epoch: ctx.epoch,
+        prefix_cache: true,
+        capture: ctx.gate_capture.as_ref(),
+        walk_memo: Some(&*ctx.walk_memo),
+    };
+    let _solve_ctx = solve_span.enter();
+    ::degenbot_solvers::profit_envelope::reset_gate_stats();
+    let t0 = std::time::Instant::now();
+    let outcome = ::degenbot_solvers::mixed::solve_path_with_min_profit(
+        resolved,
+        min_profit_floor(),
+        &gate_deps,
+    );
+    let micros = t0.elapsed().as_micros();
+    ctx.solve_cpu_us.fetch_add(
+        u64::try_from(micros).unwrap_or(u64::MAX),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
+    let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
+    if let Some(p) = crate::instruments::pipeline() {
+        #[expect(clippy::cast_precision_loss)]
+        {
+            p.observe_per_path_solve_duration(micros as f64 / 1e6);
+            p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
+        }
+    }
+    ctx.gate_total.lock().merge(&gs);
+    // Walk telemetry OUT the return path (SU7MAE T2): the
+    // outcome carries this path's counters — no TLS
+    // read-back. The Q3 dense one-shot alert is the
+    // CONSUMER's decision.
+    let outcome_stats = &outcome.stats;
+    if outcome_stats.max_dense_words >= ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD
+        && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        tracing::warn!(
+            max_dense_words = outcome_stats.max_dense_words,
+            threshold = ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD,
+            "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
+        );
+    }
+    let ws = *outcome_stats;
+    let (pieces, sims, word_steps, refine_sims, ternary_sims, grid_sims) = (
+        ws.pieces,
+        ws.sims,
+        ws.word_steps,
+        ws.refine_sims,
+        ws.ternary_sims,
+        ws.grid_sims,
+    );
+    // Record this block's measured walk sims for the next
+    // block's LPT cost (loop-12 KUKHMX).
+    ctx.sims_recorder
+        .lock()
+        .insert(pid, u64::try_from(sims).unwrap_or(0));
+    // Loop-18: record measured gate time for the LPT cost too
+    // (gate-heavy paths carry sims≈0 and were bin-packed cheap).
+    ctx.gate_recorder.lock().insert(pid, gate_us);
+    let (gate_derive_us, gate_compose_us, gate_search_us) = (
+        u64::try_from(gs.derive_ns / 1_000).unwrap_or(u64::MAX),
+        u64::try_from(gs.compose_ns / 1_000).unwrap_or(u64::MAX),
+        u64::try_from(gs.search_ns / 1_000).unwrap_or(u64::MAX),
+    );
+    ctx.walk_ternary_total.fetch_add(
+        u64::try_from(ternary_sims).unwrap_or(0),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    ctx.walk_grid_total.fetch_add(
+        u64::try_from(grid_sims).unwrap_or(0),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    ctx.walk_pieces_total.fetch_add(
+        u64::try_from(pieces).unwrap_or(0),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    ctx.walk_sims_total.fetch_add(
+        u64::try_from(sims).unwrap_or(0),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    ctx.walk_word_steps_total.fetch_add(
+        u64::try_from(word_steps).unwrap_or(0),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    ctx.walk_refine_sims_total.fetch_add(
+        u64::try_from(refine_sims).unwrap_or(0),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let mut heap = ctx.path_times.lock();
+    {
+        let worst = heap.peek().map_or(
+            u128::MAX,
+            |std::cmp::Reverse((w, _, _, _, _, _, _, _, _, _))| *w,
+        );
+        if heap.len() < SLOWEST_PATHS_K || micros > worst {
+            heap.push(std::cmp::Reverse((
+                micros,
+                u64::try_from(pieces).unwrap_or(0),
+                u64::try_from(sims).unwrap_or(0),
+                u64::try_from(word_steps).unwrap_or(0),
+                u64::try_from(refine_sims).unwrap_or(0),
+                gate_us,
+                gate_derive_us,
+                gate_compose_us,
+                gate_search_us,
+                pid,
+            )));
+            if heap.len() > SLOWEST_PATHS_K {
+                heap.pop();
+            }
+        }
+    }
+    if let Some(cap) = ctx.capture.as_ref() {
+        cap.maybe_capture(
+            pid,
+            ctx.solve_block,
+            u64::try_from(micros).unwrap_or(u64::MAX),
+            u64::try_from(sims).unwrap_or(0),
+            u64::try_from(pieces).unwrap_or(0),
+            outcome.result.as_ref(),
+            resolved,
+        );
+    }
+    if let Some(cap) = ctx.capture_mixed.as_ref() {
+        cap.maybe_capture(
+            pid,
+            ctx.solve_block,
+            u64::try_from(micros).unwrap_or(u64::MAX),
+            u64::try_from(sims).unwrap_or(0),
+            u64::try_from(pieces).unwrap_or(0),
+            outcome.result.as_ref(),
+            resolved,
+        );
+    }
+    outcome.result.map(|r| (pid, r))
+}
+
+/// Per-cycle shared solve context (epic BXUSGL T1): everything the
+/// per-path dispatch touches besides the resolved snapshot. Bundled once
+/// per cycle so a worker handle is static for the dedicated-executor
+/// arm; the caller retains its own Arc for the drain + tail telemetry.
+pub(crate) struct SolveCycleShared {
+    /// The cycle target block (capture rows) and cache epoch.
+    solve_block: u64,
+    epoch: u64,
+    gate_capture: Option<::degenbot_solvers::profit_envelope::GateCaptureCfg>,
+    walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
+    capture: Option<std::sync::Arc<HeavyClPathCapture>>,
+    capture_mixed: Option<std::sync::Arc<HeavyMixedPathCapture>>,
+    path_times: parking_lot::Mutex<PathTimesHeap>,
+    gate_total: parking_lot::Mutex<::degenbot_solvers::profit_envelope::GateStats>,
+    solve_cpu_us: std::sync::atomic::AtomicU64,
+    walk_pieces_total: std::sync::atomic::AtomicU64,
+    walk_sims_total: std::sync::atomic::AtomicU64,
+    walk_word_steps_total: std::sync::atomic::AtomicU64,
+    walk_refine_sims_total: std::sync::atomic::AtomicU64,
+    walk_ternary_total: std::sync::atomic::AtomicU64,
+    walk_grid_total: std::sync::atomic::AtomicU64,
+    /// Engine-owned per-path measured-sims recorder (Arc-d engine field).
+    sims_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
+    /// Engine-owned per-path gate-us recorder (Arc-d engine field).
+    gate_recorder: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
+    /// Test-only deterministic per-path delay hook (epic test knob).
+    #[cfg(test)]
+    test_solve_delay: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
+}
 
 impl ArbitrageEngine {
     /// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
@@ -242,6 +489,50 @@ impl ArbitrageEngine {
             .ok()
             .and_then(|s| s.parse::<u128>().ok())
             .map_or_else(|| U256::from(1u128), U256::from)
+    }
+
+    /// Merge ONE solved result under the single engine-Mutex hold of the
+    /// solve cycle (epic BXUSGL T1): clamp twins, emit the profitable-
+    /// solve event, insert into the result map, and (test-only) probe-
+    /// record the merge. BOTH dispatch arms funnel here - the tokio arm
+    /// calls it per streamed result (before the slowest path lands),
+    /// the rayon path from the tail loop. Returns the twin-simulation
+    /// count (clamp.twins).
+    fn merge_one_result(
+        &mut self,
+        solve_block: u64,
+        metadata: &BlockMetadata,
+        pid: u64,
+        result: SolvePathResult,
+    ) -> u64 {
+        let mut result = result;
+        let twins = self.clamp_cl_hop_capacity(pid, &mut result);
+        // Telemetry: profitable solves are the signal in the noise -
+        // emit the economics + the concrete hop list on the solve span.
+        tracing::info!(
+            target: "degenbot::solver",
+            block_number = solve_block,
+            path.id = pid,
+            input = %result.optimal_input,
+            profit = %result.profit,
+            path.hops = %self.describe_path_cached(pid),
+            "[path] profitable solve"
+        );
+        // T3 (epic BXUSGL): DEGENBOT_STREAMING_DELIVERY - each above-threshold
+        // merged result is emitted IMMEDIATELY (before the slowest path can
+        // possibly delay it). The per-entry emission composes with the
+        // debounce sweep, which still owns expired/removed + the end-of-cycle
+        // metadata batch.
+        if self.streaming_delivery {
+            self.delivery
+                .emit_single_result_batch(solve_block, metadata, pid, &result);
+        }
+        self.results.insert(pid, result);
+        #[cfg(test)]
+        if let Some(probe) = &self.merge_probe {
+            probe.lock().push(pid);
+        }
+        twins
     }
 
     /// Post-solve, pool-state-aware reconciliation of each CL hop's committed
@@ -521,7 +812,7 @@ impl ArbitrageEngine {
         v3_affected: &HashSet<u64>,
         v4_affected: &HashSet<u64>,
         block_number: u64,
-        _metadata: &BlockMetadata,
+        metadata: &BlockMetadata,
     ) {
         // MQUKB6-T0: rayon worker threads have no ambient tracing context — any
         // span emitted inside a par_iter closure would orphan into a root trace.
@@ -840,221 +1131,175 @@ impl ArbitrageEngine {
         // (time_us, pieces_visited, path_sims, pid) for the K-slowest
         // attribution — lets the completion event name the walk-combinatorial
         // cost driver of the slowest routes, not just their wall time.
+        // -----------------------------------------------------------------
+        // BXUSGL T1: per-cycle shared solve context. The pure solver phase
+        // is a pure function of the resolved snapshots + this context:
+        // workers (rayon scope OR the dedicated tokio executor) hold Arc
+        // CLONES and touch NO engine state, NO core.lock - engine-then-core
+        // lock ordering is preserved unchanged. The SINGLE engine-Mutex hold
+        // still covers the whole cycle (the drain-side merge happens before
+        // this method returns), so cycle atomicity - the results.remove
+        // above, pending_new_paths, results_block stamping - is preserved
+        // by construction with NO epoch guards.
+        // -----------------------------------------------------------------
         let path_times: parking_lot::Mutex<PathTimesHeap> =
-            parking_lot::Mutex::new(std::collections::BinaryHeap::new());
-        // Total CPU µs across all solved paths — dividing by the rayon wall
-        // time yields achieved parallelism (8 workers ⇒ target ≈ 8.0).
+            parking_lot::Mutex::new(PathTimesHeap::new());
         let solve_cpu_us: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        // Walk-combinatorial totals across the solve cycle (Σ pieces visited,
-        // Σ path simulations) — the diagnostic multiplier behind a slow solve.
         let walk_pieces_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let walk_sims_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let walk_word_steps_total: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(0);
         let walk_refine_sims_total: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(0);
-        // J3OU5F follow-up (loop-7 S3GK3S): refine-phase split + envelope
-        // phase splits, explicit counters — impl_type hotpath rows cannot be
-        // trusted for skew-sensitive labels, so the finance event carries
-        // first-class phase sums instead.
         let walk_ternary_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let walk_grid_total: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        // Profit-envelope gate totals: ONE merged GateStats accumulator
-        // (SU7MAE gate deepening — replaces the per-field atomic fan-out;
-        // merge() is per-path, so this mutex is touched once per path).
-        let gate_total: parking_lot::Mutex<::degenbot_solvers::profit_envelope::GateStats> =
-            parking_lot::Mutex::new(::degenbot_solvers::profit_envelope::GateStats::default());
         // Degenerate-path capture config (M6776W): env parsed ONCE per cycle
         // at the owner; the gate itself reads no environment. The prefix-
         // composition cache is generationed by the block epoch inside the
         // gate deps (no public reset to call anymore).
         let gate_capture = gate_capture_from_env();
-        let mut gate_deps = ::degenbot_solvers::profit_envelope::GateDeps::per_block(
-            solve_block,
-            gate_capture.as_ref(),
-        );
-        gate_deps.walk_memo = Some(&self.walk_memo);
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
         let capture = HeavyClPathCapture::from_env();
-        let capture_ref: Option<&HeavyClPathCapture> = capture.as_ref();
         // Optional mixed V2+CL solver capture (same gate): heavy
-        // mixed paths (e.g. path 7042 V2→V3→V3) dispatch to
+        // mixed paths (e.g. path 7042 V2->V3->V3) dispatch to
         // `exact_solve_mixed_path_n_cached`, which the all-CL capture skips.
         // Defaults OUT of the fixtures dir (loop-18: working rows never
         // accrete there; goldens are produced only by cl_capture_gen).
         let capture_mixed = HeavyMixedPathCapture::from_env();
-        let capture_mixed_ref: Option<&HeavyMixedPathCapture> = capture_mixed.as_ref();
-        let sims_recorder: &parking_lot::Mutex<HashMap<u64, u64>> = &self.last_walk_sims;
-        let gate_recorder: &parking_lot::Mutex<HashMap<u64, u64>> = &self.last_gate_us;
-        let solved: Vec<(u64, SolvePathResult)> = hotpath::measure_block!(
-            "arb_solve.rayon_solve",
-            {
-                // Per-path solve + diagnostics closure (shared by the LPT
-                // scoped-thread path and the rayon par_iter fallback).
-                let solve_fn = |pid: u64,
-                                resolved: &ResolvedMixedPath|
-                 -> Option<(u64, SolvePathResult)> {
-                    let _solve_ctx = solve_span.enter();
-                    ::degenbot_solvers::profit_envelope::reset_gate_stats();
-                    let t0 = std::time::Instant::now();
-                    let outcome = ::degenbot_solvers::mixed::solve_path_with_min_profit(
-                        resolved,
-                        min_profit_floor(),
-                        &gate_deps,
-                    );
-                    let micros = t0.elapsed().as_micros();
-                    solve_cpu_us.fetch_add(
-                        u64::try_from(micros).unwrap_or(u64::MAX),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    let gs = ::degenbot_solvers::profit_envelope::take_last_gate_stats();
-                    let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
-                    if let Some(p) = crate::instruments::pipeline() {
-                        #[expect(clippy::cast_precision_loss)]
-                        {
-                            p.observe_per_path_solve_duration(micros as f64 / 1e6);
-                            p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
+        let shared = std::sync::Arc::new(SolveCycleShared {
+            solve_block,
+            epoch: solve_block,
+            gate_capture,
+            walk_memo: std::sync::Arc::clone(&self.walk_memo),
+            capture: capture.map(std::sync::Arc::new),
+            capture_mixed: capture_mixed.map(std::sync::Arc::new),
+            path_times,
+            gate_total: parking_lot::Mutex::new(
+                ::degenbot_solvers::profit_envelope::GateStats::default(),
+            ),
+            solve_cpu_us,
+            walk_pieces_total,
+            walk_sims_total,
+            walk_word_steps_total,
+            walk_refine_sims_total,
+            walk_ternary_total,
+            walk_grid_total,
+            sims_recorder: std::sync::Arc::clone(&self.last_walk_sims),
+            gate_recorder: std::sync::Arc::clone(&self.last_gate_us),
+            #[cfg(test)]
+            test_solve_delay: self.test_solve_delay.clone(),
+        });
+        // The LPT bins need Arc-shared access in the tokio arm; the rayon
+        // arms index through the same deref (byte-identical semantics).
+        let to_solve = std::sync::Arc::new(to_solve);
+
+        // LPT cost + binning shared by the LPT arms (both dispatch modes);
+        // called lazily inside the arms so the rayon-vs-tokio hotpath labels
+        // keep each arm measured span (a few us of bin-pack included, as
+        // before).
+        let compute_bins = || {
+            let n_threads = rayon::current_num_threads().max(1);
+            // Loop-12 KUKHMX: previous-block measured walk sims refine the
+            // LPT cost; snapshot once (single lock) before binning.
+            // Loop-18: measured gate us rides the same snapshot - gate-heavy
+            // paths (dense-CL compose) need the bins to know they are
+            // expensive despite sims~0.
+            let last_sims_snapshot: HashMap<u64, u64> = shared.sims_recorder.lock().clone();
+            let last_gate_snapshot: HashMap<u64, u64> = shared.gate_recorder.lock().clone();
+            let costs: Vec<usize> = to_solve
+                .iter()
+                .map(|(pid, r)| {
+                    sims_aware_cost(
+                        path_cost_proxy(r),
+                        last_sims_snapshot.get(pid).copied(),
+                        last_gate_snapshot.get(pid).copied(),
+                    )
+                })
+                .collect();
+            lpt_partition(to_solve.len(), n_threads, |i| costs[i])
+        };
+
+        let tokio_solve_mode = matches!(
+            self.solve_executor,
+            crate::solvers::arb_engine::SolveExecutorKind::Tokio
+        );
+        let streaming_merge: bool;
+        let mut clamp_twin_count: u64 = 0;
+        let mut solved_count: usize = 0;
+        let mut solved: Vec<(u64, SolvePathResult)> = Vec::new();
+        if tokio_solve_mode {
+            streaming_merge = true;
+            hotpath::measure_block!("arb_solve.tokio_solve", {
+                // BXUSGL T1: the dedicated executor streams PER-PATH
+                // results to the caller result queue - one bin task per
+                // persistent worker (no splitting/stealing: RAYPAR T3),
+                // and this drain merges each path result CLAMP-AND-ALL
+                // as its own solve completes. Fast paths land in
+                // `self.results` while heavy bins still run. The engine
+                // Mutex stays held by THIS cycle, so merging here cannot
+                // overlap the next block cycle; the drain runs on the
+                // calling thread (T2 moves it to spawn_blocking for the
+                // async seam).
+                let executor = crate::solvers::arb_engine::solve_executor::global_solve_executor();
+                let (res_tx, res_rx) = std::sync::mpsc::channel::<Option<(u64, SolvePathResult)>>();
+                let bins = compute_bins();
+                for bin in &bins {
+                    let bin = bin.clone();
+                    let res_tx = res_tx.clone();
+                    let shared_bin = std::sync::Arc::clone(&shared);
+                    let to_solve_bin = std::sync::Arc::clone(&to_solve);
+                    let solve_span_bin = solve_span.clone();
+                    executor.spawn(move || {
+                        for &i in &bin {
+                            let (pid, resolved) = &to_solve_bin[i];
+                            let outcome =
+                                solve_one_path(&shared_bin, &solve_span_bin, *pid, resolved);
+                            // Same profitless filter the rayon arm applies.
+                            let _ = res_tx.send(outcome.filter(|(_, r)| {
+                                !r.optimal_input.is_zero() && !r.profit.is_zero()
+                            }));
                         }
-                    }
-                    gate_total.lock().merge(&gs);
-                    // Walk telemetry OUT the return path (SU7MAE T2): the
-                    // outcome carries this path's counters — no TLS
-                    // read-back. The Q3 dense one-shot alert is the
-                    // CONSUMER's decision.
-                    let outcome_stats = &outcome.stats;
-                    if outcome_stats.max_dense_words
-                        >= ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD
-                        && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        tracing::warn!(
-                                max_dense_words = outcome_stats.max_dense_words,
-                                threshold = ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD,
-                                "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
-                            );
-                    }
-                    let ws = *outcome_stats;
-                    let (pieces, sims, word_steps, refine_sims, ternary_sims, grid_sims) = (
-                        ws.pieces,
-                        ws.sims,
-                        ws.word_steps,
-                        ws.refine_sims,
-                        ws.ternary_sims,
-                        ws.grid_sims,
-                    );
-                    // Record this block's measured walk sims for the next
-                    // block's LPT cost (loop-12 KUKHMX).
-                    sims_recorder
-                        .lock()
-                        .insert(pid, u64::try_from(sims).unwrap_or(0));
-                    // Loop-18: record measured gate time for the LPT cost too
-                    // (gate-heavy paths carry sims≈0 and were bin-packed cheap).
-                    gate_recorder.lock().insert(pid, gate_us);
-                    let (gate_derive_us, gate_compose_us, gate_search_us) = (
-                        u64::try_from(gs.derive_ns / 1_000).unwrap_or(u64::MAX),
-                        u64::try_from(gs.compose_ns / 1_000).unwrap_or(u64::MAX),
-                        u64::try_from(gs.search_ns / 1_000).unwrap_or(u64::MAX),
-                    );
-                    walk_ternary_total.fetch_add(
-                        u64::try_from(ternary_sims).unwrap_or(0),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    walk_grid_total.fetch_add(
-                        u64::try_from(grid_sims).unwrap_or(0),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    walk_pieces_total.fetch_add(
-                        u64::try_from(pieces).unwrap_or(0),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    walk_sims_total.fetch_add(
-                        u64::try_from(sims).unwrap_or(0),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    walk_word_steps_total.fetch_add(
-                        u64::try_from(word_steps).unwrap_or(0),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    walk_refine_sims_total.fetch_add(
-                        u64::try_from(refine_sims).unwrap_or(0),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    let mut heap = path_times.lock();
-                    {
-                        let worst = heap.peek().map_or(
-                            u128::MAX,
-                            |std::cmp::Reverse((w, _, _, _, _, _, _, _, _, _))| *w,
-                        );
-                        if heap.len() < SLOWEST_PATHS_K || micros > worst {
-                            heap.push(std::cmp::Reverse((
-                                micros,
-                                u64::try_from(pieces).unwrap_or(0),
-                                u64::try_from(sims).unwrap_or(0),
-                                u64::try_from(word_steps).unwrap_or(0),
-                                u64::try_from(refine_sims).unwrap_or(0),
-                                gate_us,
-                                gate_derive_us,
-                                gate_compose_us,
-                                gate_search_us,
-                                pid,
-                            )));
-                            if heap.len() > SLOWEST_PATHS_K {
-                                heap.pop();
-                            }
-                        }
-                    }
-                    if let Some(cap) = capture_ref {
-                        cap.maybe_capture(
-                            pid,
-                            solve_block,
-                            u64::try_from(micros).unwrap_or(u64::MAX),
-                            u64::try_from(sims).unwrap_or(0),
-                            u64::try_from(pieces).unwrap_or(0),
-                            outcome.result.as_ref(),
-                            resolved,
+                    });
+                }
+                drop(res_tx);
+                while let Ok(item) = res_rx.recv() {
+                    let Some((pid, solve_result)) = item else {
+                        continue;
+                    };
+                    if !solve_result.solver_pool_states.is_empty() {
+                        tracing::debug!(
+                            "[solver-st] path_id={pid} hops=[{}]",
+                            solve_result.solver_pool_states.join(";")
                         );
                     }
-                    if let Some(cap) = capture_mixed_ref {
-                        cap.maybe_capture(
-                            pid,
-                            solve_block,
-                            u64::try_from(micros).unwrap_or(u64::MAX),
-                            u64::try_from(sims).unwrap_or(0),
-                            u64::try_from(pieces).unwrap_or(0),
-                            outcome.result.as_ref(),
-                            resolved,
-                        );
-                    }
-                    outcome.result.map(|r| (pid, r))
-                };
+                    clamp_twin_count +=
+                        self.merge_one_result(solve_block, metadata, pid, solve_result);
+                    solved_count += 1;
+                }
+            });
+        } else {
+            streaming_merge = false;
+            solved = hotpath::measure_block!("arb_solve.rayon_solve", {
+                // BXUSGL T1: the per-path dispatch moved to the free fn
+                // `solve_one_path`; this closure is the per-item dispatch
+                // for the rayon arms (borrowed locals only). Behavior
+                // identical to the pre-change code: per-bin send, join on
+                // ALL bins, then the tail clamp merge.
+                let solve_fn =
+                    |pid: u64, resolved: &ResolvedMixedPath| -> Option<(u64, SolvePathResult)> {
+                        solve_one_path(&shared, &solve_span, pid, resolved)
+                    };
 
                 if lpt_partition_enabled() {
-                    // RAYPAR T3: LPT-pre-balanced partition on rayon's persistent global
-                    // pool. Each LPT bin is one s.spawn task — exactly n_threads
+                    // RAYPAR T3: LPT-pre-balanced partition on rayon persistent global
+                    // pool. Each LPT bin is one s.spawn task - exactly n_threads
                     // tasks on n_threads persistent workers means no splitting
                     // and no stealing: pure static partition with warm L1/L2 +
                     // allocator arenas across drains (the pool was built once
                     // at import by configure_rayon_solver_pool).
-                    let n_threads = rayon::current_num_threads().max(1);
-                    // Loop-12 KUKHMX: previous-block measured walk sims refine
-                    // the LPT cost; snapshot once (single lock) before binning.
-                    // Loop-18: measured gate µs rides the same snapshot —
-                    // gate-heavy paths (dense-CL compose) need the bins to
-                    // know they are expensive despite sims≈0.
-                    let last_sims_snapshot: HashMap<u64, u64> = sims_recorder.lock().clone();
-                    let last_gate_snapshot: HashMap<u64, u64> = gate_recorder.lock().clone();
-                    let costs: Vec<usize> = to_solve
-                        .iter()
-                        .map(|(pid, r)| {
-                            sims_aware_cost(
-                                path_cost_proxy(r),
-                                last_sims_snapshot.get(pid).copied(),
-                                last_gate_snapshot.get(pid).copied(),
-                            )
-                        })
-                        .collect();
-                    let bins = lpt_partition(to_solve.len(), n_threads, |i| costs[i]);
+                    let bins = compute_bins();
                     let to_solve_ref = &to_solve;
                     let solve_ref = &solve_fn;
                     let (tx, rx) = std::sync::mpsc::channel();
@@ -1103,9 +1348,10 @@ impl ArbitrageEngine {
                         .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
                         .collect()
                 }
-            }
-        );
-        if let Some(c) = capture.as_ref() {
+            });
+            solved_count = solved.len();
+        }
+        if let Some(c) = shared.capture.as_ref() {
             tracing::info!(
                 target: "degenbot::solver",
                 captured = c.count.load(std::sync::atomic::Ordering::Relaxed),
@@ -1114,10 +1360,10 @@ impl ArbitrageEngine {
             );
         }
 
-        // Telemetry: pure solver phase done — name the K slowest paths.
+        // Telemetry: pure solver phase done - name the K slowest paths.
         let memo_stats = self.walk_memo.take_stats();
-        let gate_tots = gate_total.into_inner();
-        let slowest: Vec<String> = path_times.lock().iter()
+        let gate_tots = *shared.gate_total.lock();
+        let slowest: Vec<String> = shared.path_times.lock().iter()
             .map(
                 |std::cmp::Reverse((
                     us,
@@ -1142,13 +1388,13 @@ impl ArbitrageEngine {
             block_number = solve_block,
             paths.solved = to_solve.len(),
             paths.invalid = invalid_count,
-            solve.cpu_us = solve_cpu_us.load(std::sync::atomic::Ordering::Relaxed),
-            walk.pieces = walk_pieces_total.load(std::sync::atomic::Ordering::Relaxed),
-            walk.sims = walk_sims_total.load(std::sync::atomic::Ordering::Relaxed),
-            walk.steps = walk_word_steps_total.load(std::sync::atomic::Ordering::Relaxed),
-            walk.refine_sims = walk_refine_sims_total.load(std::sync::atomic::Ordering::Relaxed),
-            walk.ternary = walk_ternary_total.load(std::sync::atomic::Ordering::Relaxed),
-            walk.grid = walk_grid_total.load(std::sync::atomic::Ordering::Relaxed),
+            solve.cpu_us = shared.solve_cpu_us.load(std::sync::atomic::Ordering::Relaxed),
+            walk.pieces = shared.walk_pieces_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.sims = shared.walk_sims_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.steps = shared.walk_word_steps_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.refine_sims = shared.walk_refine_sims_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.ternary = shared.walk_ternary_total.load(std::sync::atomic::Ordering::Relaxed),
+            walk.grid = shared.walk_grid_total.load(std::sync::atomic::Ordering::Relaxed),
             gate.derive_us = u64::try_from(gate_tots.derive_ns / 1_000).unwrap_or(u64::MAX),
             gate.compose_us = u64::try_from(gate_tots.compose_ns / 1_000).unwrap_or(u64::MAX),
             gate.search_us = u64::try_from(gate_tots.search_ns / 1_000).unwrap_or(u64::MAX),
@@ -1164,7 +1410,7 @@ impl ArbitrageEngine {
             gate.none_degenerate = gate_tots.none_degenerate,
             gate.none_overflow = gate_tots.none_overflow,
             gate.min_profit = %min_profit_floor(),
-            profitable = solved.len(),
+            profitable = solved_count,
             slowest.paths = %slowest.join(","),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
             memo.probes = memo_stats.probes,
@@ -1177,34 +1423,25 @@ impl ArbitrageEngine {
             "[solve-phase] rayon solve complete"
         );
 
-        // Sequential merge — no lock acquisition; workers above owned their
-        // clones. Apply the pool-state-aware CL-hop capacity clamp per path
-        // (reads `core` to reconcile each CL hop's committed input against the
-        // pools twin) BEFORE inserting, so the stored result carries truthful
-        // `consumed_inputs` (a CL hop fed past its max-convertible capacity
-        // would march empty bitmap words on-chain — UO3JM4).
+        // Sequential merge - the RAYON arms only (BXUSGL T1): the tokio arm
+        // already clamp-merged each result during its per-path drain, so the
+        // fast paths never waited for the slowest bin. Apply the pool-state-
+        // aware CL-hop capacity clamp per path (reads `core` to reconcile each
+        // CL hop committed input against the pools twin) BEFORE inserting,
+        // so the stored result carries truthful `consumed_inputs` (a CL hop
+        // fed past its max-convertible capacity would march empty bitmap
+        // words on-chain - UO3JM4).
         let clamp_twins_start = std::time::Instant::now();
-        let mut clamp_twin_count: u64 = 0;
-        let solved_count = solved.len();
-        hotpath::measure_block!("arb_solve.clamp_merge", {
-            for (pid, mut solve_result) in solved {
-                clamp_twin_count += self.clamp_cl_hop_capacity(pid, &mut solve_result);
-                // Telemetry: profitable solves are the signal in the noise — emit
-                // the economics + the concrete hop list on the solve span.
-                tracing::info!(
-                    target: "degenbot::solver",
-                    block_number = solve_block,
-                    path.id = pid,
-                    input = %solve_result.optimal_input,
-                    profit = %solve_result.profit,
-                    path.hops = %self.describe_path_cached(pid),
-                    "[path] profitable solve"
-                );
-                self.results.insert(pid, solve_result);
-            }
-        });
+        if !streaming_merge {
+            hotpath::measure_block!("arb_solve.clamp_merge", {
+                for (pid, solve_result) in solved {
+                    clamp_twin_count +=
+                        self.merge_one_result(solve_block, metadata, pid, solve_result);
+                }
+            });
+        }
 
-        // Telemetry: clamp phase done — the twin simulations are a known
+        // Telemetry: clamp phase done - the twin simulations are a known
         // multi-second contributor on CL-heavy batches, so they get their own
         // line item.
         tracing::info!(
@@ -1827,5 +2064,316 @@ mod lpt_partition_tests {
     fn lpt_zero_bins_returns_empty_vec() {
         let bins = lpt_partition(5, 0, |_| 1);
         assert!(bins.is_empty());
+    }
+}
+
+// ----------------- OFFLINE A/B PROBE (epic BXUSGL T4) -----------------
+// env-driven, #[ignore]d - see the module docs below; run manually:
+//   cargo test --release -p degenbot-bot --lib executor_ab_probe -- --ignored --nocapture
+#[cfg(test)]
+mod executor_ab_probe {
+    // Offline A/B probe (epic BXUSGL T4): production dispatch emulation, rayon
+    // LPT scope vs the dedicated tokio solve executor, on the heavy-CL capture
+    // corpus. NOT part of the normal suite: `#[ignore]`d, env-driven, run
+    // manually with `cargo test --release -p degenbot-bot --lib executor_ab --
+    // --ignored --nocapture`. Uses the crate-internal production components
+    // (`solve_one_path`, `SolveCycleShared`, `SolveExecutor`, `lpt_partition`,
+    // `path_cost_proxy`) so the arms differ ONLY in dispatch mechanics. Fixture
+    // parse replicates rust/crates/degenbot-solvers/examples/rayon_scale_probe.rs.
+    //
+    // Env:
+    //   DEGENBOT_PROBE_FIXTURE  fixture jsonl path (default: the committed
+    //                           heavy_cl_solve_captures.jsonl)
+    //   DEGENBOT_PROBE_NS       comma thread counts (default 1,2,4,8,16)
+    //   DEGENBOT_PROBE_PASSES   measurement passes per config (default 3)
+    //
+    // CSV columns (stdout):
+    //   arm,threads,items,wall_ms,first_emit_ms,p50_emit_ms,p95_emit_ms
+    // `emit` = wall offset when a path's result is AVAILABLE to the merge - the
+    // streaming property. For the `rayon` arm (production semantics: per-BIN
+    // sends + join) every emit lands at cycle end by construction; `rayon-perpath`
+    // is a control that isolates the emit granularity from the executor switch.
+
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use alloy::primitives::U256;
+    use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+    use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles};
+    use serde_json::Value;
+
+    use super::{lpt_partition, path_cost_proxy, solve_one_path, PathTimesHeap, SolveCycleShared};
+    use crate::solvers::arb_engine::solve_executor::SolveExecutor;
+    use hashbrown::HashMap;
+
+    fn pct(values: &[f64], q: f64) -> f64 {
+        if values.is_empty() {
+            return 0.0;
+        }
+        let mut v = values.to_vec();
+        v.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        v[((v.len() as f64) * q).floor() as usize % v.len()]
+    }
+
+    fn fixture_path() -> std::path::PathBuf {
+        if let Ok(p) = std::env::var("DEGENBOT_PROBE_FIXTURE") {
+            return std::path::PathBuf::from(p);
+        }
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../degenbot-solvers/tests/fixtures/heavy_cl_solve_captures.jsonl")
+    }
+
+    fn u256(s: &str) -> Result<U256, String> {
+        s.trim().parse::<U256>().map_err(|e| e.to_string())
+    }
+
+    fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
+        let wbp = v
+            .get("word_boundary_prices")
+            .and_then(Value::as_array)
+            .ok_or("word_boundary_prices")?
+            .iter()
+            .map(|w| w.as_str().ok_or_else(|| "wbp".to_string()).and_then(u256))
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(IntV3TickRangeHop {
+            liquidity: v
+                .get("liquidity")
+                .and_then(Value::as_str)
+                .ok_or("liquidity")?
+                .parse::<u128>()
+                .map_err(|e| e.to_string())?,
+            sqrt_price_x96: u256(
+                v.get("sqrt_price_x96")
+                    .and_then(Value::as_str)
+                    .ok_or("sp")?,
+            )?,
+            sqrt_price_lower_x96: u256(
+                v.get("sqrt_price_lower_x96")
+                    .and_then(Value::as_str)
+                    .ok_or("spl")?,
+            )?,
+            sqrt_price_upper_x96: u256(
+                v.get("sqrt_price_upper_x96")
+                    .and_then(Value::as_str)
+                    .ok_or("spu")?,
+            )?,
+            gamma_numer: v
+                .get("gamma_numer")
+                .and_then(Value::as_u64)
+                .ok_or("gamma")?,
+            fee_denom: v.get("fee_denom").and_then(Value::as_u64).ok_or("fee")?,
+            zero_for_one: v
+                .get("zero_for_one")
+                .and_then(Value::as_bool)
+                .ok_or("zfo")?,
+            word_boundary_prices: wbp,
+        })
+    }
+
+    fn load_corpus() -> Vec<Arc<::degenbot_solvers::mixed::ResolvedMixedPath>> {
+        let path = fixture_path();
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("fixture {}: {e}", path.display()));
+        let mut items = Vec::new();
+        for line in content.lines().filter(|l| !l.trim().is_empty()) {
+            let Ok(doc) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let Ok(hops_v) = doc.get("hops").and_then(Value::as_array).ok_or("hops") else {
+                continue;
+            };
+            let mut hops = Vec::new();
+            for hop in &*hops_v {
+                let Ok(ra) = hop.as_array().ok_or("hop") else {
+                    continue;
+                };
+                let mut ranges = Vec::new();
+                for r in &*ra {
+                    if let Ok(rh) = range(r) {
+                        ranges.push(rh);
+                    }
+                }
+                let seq = IntV3TickRangeSequence { ranges };
+                hops.push(::degenbot_solvers::mixed::ResolvedHop::V3 {
+                    word_profiles: Arc::from(build_cl_word_profiles(&seq)),
+                    crossing_table: Arc::from(build_cl_crossing_table(&seq)),
+                    int_seq: seq,
+                });
+            }
+            items.push(Arc::new(::degenbot_solvers::mixed::ResolvedMixedPath {
+                hops,
+                valid: true,
+                state_nonces: Vec::new(),
+                max_update_block: 0,
+            }));
+        }
+        assert!(!items.is_empty(), "fixture must load at least one path");
+        items
+    }
+
+    fn probe_ctx() -> Arc<SolveCycleShared> {
+        Arc::new(SolveCycleShared {
+            solve_block: 0,
+            epoch: 0,
+            gate_capture: None,
+            walk_memo: Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
+                false, false,
+            )),
+            capture: None,
+            capture_mixed: None,
+            path_times: parking_lot::Mutex::new(PathTimesHeap::new()),
+            gate_total: parking_lot::Mutex::new(
+                ::degenbot_solvers::profit_envelope::GateStats::default(),
+            ),
+            solve_cpu_us: std::sync::atomic::AtomicU64::new(0),
+            walk_pieces_total: std::sync::atomic::AtomicU64::new(0),
+            walk_sims_total: std::sync::atomic::AtomicU64::new(0),
+            walk_word_steps_total: std::sync::atomic::AtomicU64::new(0),
+            walk_refine_sims_total: std::sync::atomic::AtomicU64::new(0),
+            walk_ternary_total: std::sync::atomic::AtomicU64::new(0),
+            walk_grid_total: std::sync::atomic::AtomicU64::new(0),
+            sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            #[cfg(test)]
+            test_solve_delay: None,
+        })
+    }
+
+    /// LPT bins per the production cost fn (empty measured-history = first-cycle
+    /// structural cost, exactly like an engine cold bucket).
+    fn prod_lpt_bins(
+        items: &[Arc<::degenbot_solvers::mixed::ResolvedMixedPath>],
+        threads: usize,
+    ) -> Vec<Vec<usize>> {
+        lpt_partition(items.len(), threads, |i| path_cost_proxy(&items[i]))
+    }
+
+    /// One full cycle over the corpus, per-path `emit` timestamps (offsets from
+    /// cycle start) relative to when the result is AVAILABLE to the merge:
+    ///  - rayon         : per-BIN send + join (production rayon arm)
+    ///  - rayon-perpath : per-PATH send in rayon scope (granularity control)
+    ///  - tokio         : dedicated executor, per-PATH send (T1 arm)
+    fn run_cycle(
+        items: &[Arc<::degenbot_solvers::mixed::ResolvedMixedPath>],
+        threads: usize,
+        arm: &str,
+        ctx: &Arc<SolveCycleShared>,
+    ) -> (f64, Vec<f64>) {
+        let bins = prod_lpt_bins(items, threads);
+        let (tx, rx) = std::sync::mpsc::channel::<f64>();
+        let t0 = Instant::now();
+        match arm {
+            "tokio" => {
+                let executor = SolveExecutor::new("probe-solve-tokio", threads);
+                for bin in &bins {
+                    let bin = bin.clone();
+                    let tx = tx.clone();
+                    let ctx = Arc::clone(ctx);
+                    let items = items.to_vec();
+                    executor.spawn(move || {
+                        for &i in &bin {
+                            let _ =
+                                solve_one_path(&ctx, &tracing::Span::none(), i as u64, &items[i]);
+                            let _ = tx.send(t0.elapsed().as_secs_f64() * 1000.0);
+                        }
+                        // Bin-complete sentinel (NaN): without it, the collector
+                        // sees the channel close as soon as the last bin closure
+                        // ends, and the runtime drop can cancel still-running bins
+                        // mid-solve — an artificially short wall. Production is
+                        // immune (process-lifetime executor singleton).
+                        let _ = tx.send(f64::NAN);
+                    });
+                }
+            }
+            "rayon" | "rayon-perpath" => {
+                // Scoped pool: thread-count fidelity (the global rayon pool is
+                // sized by available parallelism, not by the probe's arm n).
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .thread_name(|i| format!("ab-probe-rayon-{i}"))
+                    .build()
+                    .unwrap_or_else(|e| panic!("probe rayon pool: {e}"));
+                let per_path = arm == "rayon-perpath";
+                pool.install(|| {
+                    rayon::scope(|s| {
+                        for bin in &bins {
+                            let tx = tx.clone();
+                            s.spawn(move |_| {
+                                for &i in &bin[..] {
+                                    solve_one_path(
+                                        ctx,
+                                        &tracing::Span::none(),
+                                        i as u64,
+                                        &items[i],
+                                    );
+                                    if per_path {
+                                        let _ = tx.send(t0.elapsed().as_secs_f64() * 1000.0);
+                                    }
+                                }
+                                // PRODUCTION rayon semantics: the whole bin is
+                                // visible to the merge only at bin completion.
+                                if !per_path {
+                                    let _ = tx.send(t0.elapsed().as_secs_f64() * 1000.0);
+                                }
+                            });
+                        }
+                    });
+                })
+            }
+            other => unreachable!("unknown arm {other}"),
+        }
+        drop(tx);
+        let mut emits: Vec<f64> = Vec::new();
+        let mut completed_bins = 0usize;
+        for v in rx {
+            if v.is_nan() {
+                completed_bins += 1;
+                if completed_bins == bins.len() {
+                    break;
+                }
+            } else {
+                emits.push(v);
+            }
+        }
+        (t0.elapsed().as_secs_f64() * 1000.0, emits)
+    }
+
+    fn raise_nice_for_lane_courtesy() {
+        #[cfg(unix)]
+        {
+            // T4 courtesy: keep this offline probe off the live soak's cores.
+            let _ = unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 15) };
+        }
+    }
+
+    #[test]
+    #[ignore = "offline A/B probe; run with --ignored (T4); env: DEGENBOT_PROBE_FIXTURE/NS/PASSES"]
+    fn executor_ab_probe_runs_and_prints_csv() {
+        raise_nice_for_lane_courtesy();
+        let items = load_corpus();
+        eprintln!("corpus paths = {}", items.len());
+        let threads: Vec<usize> = std::env::var("DEGENBOT_PROBE_NS")
+            .map(|s| s.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+            .unwrap_or_else(|_| vec![1, 2, 4, 8, 16]);
+        let passes: usize = std::env::var("DEGENBOT_PROBE_PASSES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3);
+        println!("arm,threads,items,wall_ms,first_emit_ms,p50_emit_ms,p95_emit_ms");
+        let ctx = probe_ctx();
+        for &n in &threads {
+            for arm in ["tokio", "rayon", "rayon-perpath"] {
+                for _ in 0..passes {
+                    let (wall, emits) = run_cycle(&items, n, arm, &ctx);
+                    println!(
+                        "{arm},{n},{},{wall:.1},{first:.1},{p50:.1},{p95:.1}",
+                        items.len(),
+                        first = emits.iter().copied().fold(f64::INFINITY, f64::min),
+                        p50 = pct(&emits, 0.5),
+                        p95 = pct(&emits, 0.95),
+                    );
+                }
+            }
+        }
     }
 }

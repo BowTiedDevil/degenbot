@@ -5366,4 +5366,363 @@ mod tests {
             "no-op solve must not emit a degenbot.arb.solve span"
         );
     }
+
+    /// Epic BXUSGL T1 acceptance: with the tokio solve executor each path's
+    /// result reaches `self.results` as soon as ITS OWN solve completes —
+    /// the slowest path in the batch may not delay the fast ones' merge.
+    /// RED before the per-path result-queue streaming exists: the batched
+    /// barrier merges everything only AFTER the slowest solve, so the drain
+    /// probe stays empty past the deadline while the slow path still runs.
+    #[test]
+    fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
+        if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
+            eprintln!("skipping: streaming-merge test requires >=2 cores");
+            return;
+        }
+        let probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>> =
+            std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+        let mut engine = ArbitrageEngine::new();
+        engine.set_solve_executor(crate::solvers::arb_engine::SolveExecutorKind::Tokio);
+
+        // Seven independent mispriced V2->V2 pairs -> seven profitable paths
+        // (>=2 cores: LPT puts the slow path FIRST in its bin, so at least
+        // one fast path always lands in a different bin - the streaming
+        // drain merges it long before the slow solve ends).
+        let mut pool_ids = Vec::new();
+        let mut path_ids = Vec::new();
+        for i in 0u8..7 {
+            let fwd = engine.register_v2_pool(
+                Address::from([0x40 + i; 20]),
+                usdc(1_500_000),
+                weth(800),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let back = engine.register_v2_pool(
+                Address::from([0x50 + i; 20]),
+                weth(800),
+                usdc(1_600_000),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            pool_ids.push(fwd);
+            pool_ids.push(back);
+            path_ids.push(
+                engine
+                    .register_path(vec![
+                        PoolHop {
+                            pool_id: fwd,
+                            zero_for_one: true,
+                        },
+                        PoolHop {
+                            pool_id: back,
+                            zero_for_one: true,
+                        },
+                    ])
+                    .unwrap(),
+            );
+        }
+
+        // Slowen path 0; STRUCTURAL interleaving (load-immune): the slow
+        // path's hook parks until at least one fast path is MERGED (observed
+        // via the probe), then stamps a release marker. Under the batched
+        // barrier no fast merge can precede the marker even after the full
+        // wait (a merge happens only after the slowest path returns), so the
+        // ordering assertion catches it - no absolute deadline to flake on.
+        let slow_pid = path_ids[0];
+        let fast_pids: Vec<u64> = path_ids[1..].to_vec();
+        // Pin LPT placement deterministically: a huge MEASURED sims cost on
+        // the slow path sorts it FIRST into its own bin, so the other bins
+        // always host fast paths no matter what order the (HashSet-ordered)
+        // work items land in. Without this, bin position is nondeterministic
+        // (equal structural costs + arbitrary dirty-set iteration order).
+        engine.last_walk_sims.lock().insert(slow_pid, u64::MAX - 1);
+        engine
+            .last_walk_sims
+            .lock()
+            .insert(*fast_pids.first().unwrap_or(&0), u64::MAX / 4);
+        engine
+            .last_walk_sims
+            .lock()
+            .insert(*fast_pids.get(1).unwrap_or(&0), u64::MAX / 8);
+        let hook_probe = probe.clone();
+        let hook_fast = fast_pids.clone();
+        engine.set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
+            if pid == slow_pid {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                while std::time::Instant::now() < deadline {
+                    if hook_probe.lock().iter().any(|p| hook_fast.contains(p)) {
+                        hook_probe.lock().push(u64::MAX); // merge-before-release marker
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                hook_probe.lock().push(u64::MAX); // released WITHOUT a fast merge
+            }
+        }));
+        engine.set_merge_probe(probe.clone());
+
+        let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
+        let joiner = std::thread::spawn(move || {
+            engine.rebuild_and_solve_affected(
+                &pool_set,
+                &HashSet::new(),
+                &HashSet::new(),
+                100,
+                &BlockMetadata::default(),
+            );
+            engine
+        });
+
+        let engine = joiner.join().unwrap();
+        let (results, _block) = engine.latest_results();
+
+        // Structural streaming proof: the first probe entry must be a fast
+        // path MERGE (a fast path merged before the slow solve released its
+        // hook). Under the batched barrier the marker would land first: only
+        // after the slowest path returns can the drain merge anything.
+        let observed = probe.lock().clone();
+        let marker = observed.iter().position(|p| *p == u64::MAX);
+        let first_fast = observed
+            .iter()
+            .position(|p| *p != u64::MAX && fast_pids.contains(p));
+        assert_eq!(results.len(), 7, "all seven paths profitable and merged");
+        let marker =
+            marker.expect("the slow path hook must stamp a release marker (probe = {observed:?})");
+        let first_fast = first_fast.expect(
+            "a fast-path MERGE must happen before the slow path finishes (probe = {observed:?})",
+        );
+        assert!(
+            first_fast < marker,
+            "a fast-path MERGE must precede the slow path release marker; batched \
+             barrier order puts the marker first (probe = {observed:?})"
+        );
+    }
+    /// T2 (epic BXZBWY) acceptance: a slowened solve_dirty holding the engine
+    /// Mutex must NOT starve other tasks on the shared multi-thread runtime
+    /// (the production pump runtime hosts the block clock + WS tasks on the
+    /// same pool). RED before the block_in_place seam: the slowened solve
+    /// occupied the ONLY worker and the heartbeat task starved.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn solve_dirty_hold_does_not_starve_runtime_tasks() {
+        // The Engine trait provides solve_dirty on the handle.
+        use crate::bot_core::engine::Engine;
+        use std::time::Duration;
+
+        let probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>> =
+            std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let mut engine = ArbitrageEngine::new();
+
+        // One profitable V2->V2 pair, plus an injected 600ms delay, so the
+        // solve carries real work and holds the Mutex across that window.
+        let fwd = engine.register_v2_pool(
+            Address::from([0x60u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let back = engine.register_v2_pool(
+            Address::from([0x61u8; 20]),
+            weth(800),
+            usdc(1_600_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: back,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+        // Prod: the subscriber routes pool events into the dirty set; here we
+        // drive it directly so solve_dirty carries real work.
+        engine.dirty_sets.insert(fwd, HopType::V2);
+        engine.dirty_sets.insert(back, HopType::V2);
+        engine.set_solve_delay_hook(std::sync::Arc::new(|_pid: u64| {
+            std::thread::sleep(Duration::from_millis(600));
+        }));
+        engine.set_merge_probe(probe.clone());
+
+        let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
+        let handle = crate::solvers::arb_engine::engine_handle::EngineHandle::new(
+            std::sync::Arc::clone(&engine),
+        );
+
+        // Heartbeat task on the same runtime: with the seam, the scheduler
+        // marks the solve-holding worker blocking and spawns a replacement,
+        // so the heartbeat keeps ticking; RED, the only worker runs the
+        // blocking solve inline and the heartbeat starves.
+        let (beat_tx, beat_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let heartbeats = tokio::spawn(async move {
+            let mut beats = 0usize;
+            loop {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                if beat_tx.send(()).is_err() {
+                    break;
+                }
+                beats += 1;
+            }
+            beats
+        });
+
+        let solve_task = tokio::spawn(async move {
+            let t0 = std::time::Instant::now();
+            handle.solve_dirty(100, &BlockMetadata::default());
+            t0.elapsed()
+        });
+
+        // Let the solve complete its injected delay before closing the
+        // heartbeat channel (early close would under-count beats).
+        let solve_elapsed = solve_task.await.unwrap_or_default();
+        drop(beat_rx);
+        let beats = heartbeats.await.unwrap_or(0);
+
+        let guard = engine.lock();
+        let (results, _block) = guard.latest_results();
+        drop(guard);
+
+        assert!(
+            results.iter().any(|(_, r)| !r.profit.is_zero()),
+            "the solve must have produced a profitable result"
+        );
+        assert!(
+            solve_elapsed >= Duration::from_millis(500),
+            "premise: the injected delay actually ran ({solve_elapsed:?})"
+        );
+        assert!(
+            beats >= 5,
+            "runtime tasks must keep progressing while solve_dirty holds the \
+             engine Mutex (T2 seam); heartbeats in 600ms = {beats}"
+        );
+    }
+    /// T3 (epic BXUSGL) acceptance: with DEGENBOT_STREAMING_DELIVERY the drain
+    /// emits each clamp-passed above-threshold result as an immediate single
+    /// -entry batch — a fast path's batch must arrive on the channel while the
+    /// slow path is still solving. RED before the per-result emission: the
+    /// debounce path sends nothing until send_result_batch.
+    #[test]
+    fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
+        if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
+            eprintln!("skipping: streaming-delivery test requires >=2 cores");
+            return;
+        }
+        let probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>> =
+            std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let mut engine = ArbitrageEngine::new();
+        engine.set_solve_executor(crate::solvers::arb_engine::SolveExecutorKind::Tokio);
+        engine.set_streaming_delivery(true);
+        let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
+        engine.set_result_channel(result_tx);
+
+        let mut pool_ids = Vec::new();
+        let mut path_ids = Vec::new();
+        for i in 0u8..3 {
+            let fwd = engine.register_v2_pool(
+                Address::from([0x70 + i; 20]),
+                usdc(1_500_000),
+                weth(800),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let back = engine.register_v2_pool(
+                Address::from([0x80 + i; 20]),
+                weth(800),
+                usdc(1_600_000),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            pool_ids.push(fwd);
+            pool_ids.push(back);
+            path_ids.push(
+                engine
+                    .register_path(vec![
+                        PoolHop {
+                            pool_id: fwd,
+                            zero_for_one: true,
+                        },
+                        PoolHop {
+                            pool_id: back,
+                            zero_for_one: true,
+                        },
+                    ])
+                    .unwrap(),
+            );
+        }
+
+        // Structural interleave (mirror of the solve-orchestration test): the
+        // slow path's hook parks until the delivery side stamped a flag (set
+        // by the payer loop below when it sees any batch), then releases.
+        let slow_pid = path_ids[0];
+        let fast_pids: Vec<u64> = path_ids[1..].to_vec();
+        let observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hook_observed = observed.clone();
+        engine.set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
+            if pid == slow_pid {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2500);
+                while std::time::Instant::now() < deadline {
+                    if hook_observed.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }));
+        engine.set_merge_probe(probe.clone());
+
+        let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
+        let joiner = std::thread::spawn(move || {
+            engine.rebuild_and_solve_affected(
+                &pool_set,
+                &HashSet::new(),
+                &HashSet::new(),
+                100,
+                &BlockMetadata::default(),
+            );
+            engine
+        });
+
+        // Payer: drain the channel from THIS thread while the solve_THREAD
+        // holds the engine Mutex; declare success as soon as any batch carries
+        // a fast path.
+        let mut saw_fast_batch = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2200);
+        while std::time::Instant::now() < deadline {
+            if observed.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            while let Ok(batch) = result_rx.try_recv() {
+                let has_fast = batch
+                    .fresh
+                    .iter()
+                    .chain(batch.updated.iter())
+                    .any(|(id, _)| fast_pids.contains(id));
+                if has_fast {
+                    saw_fast_batch = true;
+                    break;
+                }
+            }
+            if saw_fast_batch {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        observed.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let engine = joiner.join().unwrap();
+
+        // drained bookkeeping: every path above threshold is in `delivered`.
+        assert_eq!(engine.delivery.delivered.len(), 3, "all paths in delivered");
+        assert!(
+            saw_fast_batch || !result_rx.is_empty(),
+            "a fast path's batch must arrive on the channel while the slow path \\\n             is still solving (flag on); saw_fast_batch = {saw_fast_batch}"
+        );
+    }
 }

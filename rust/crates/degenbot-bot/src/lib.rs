@@ -84,6 +84,8 @@ pub mod instruments {
         /// no-op
         pub fn set_seconds_since_apply(&self, _secs: f64) {}
         /// no-op
+        pub fn observe_mutex_hold_duration(&self, _secs: f64) {}
+        /// no-op
         pub fn observe_solve_duration(&self, _secs: f64) {}
         /// no-op
         pub fn observe_per_path_solve_duration(&self, _secs: f64) {}

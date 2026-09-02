@@ -92,6 +92,15 @@ impl EngineHandle {
     }
 }
 
+/// Is the caller inside an ambient multi-thread tokio runtime (the
+/// production pump uses `degenbot_core::runtime::get_runtime()`, which is
+/// `new_multi_thread`)? `block_in_place` is only valid there; a
+/// current-thread runtime or no runtime means run inline.
+fn is_multi_thread_runtime() -> bool {
+    tokio::runtime::Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+}
+
 impl Engine for EngineHandle {
     /// Hold-time invariant (ergo 3HYYGQ, assessed 2026-06 — no refactor).
     ///
@@ -148,7 +157,25 @@ impl Engine for EngineHandle {
             if let Some(p) = crate::instruments::pipeline() {
                 p.set_registered_paths(u64::try_from(engine.path_count()).unwrap_or(u64::MAX));
             }
-            engine.solve_dirty(block, metadata);
+            // T2 (epic BXZBWY): the solve cycle — including the T1 streaming
+            // drain's std-channel recv on the dedicated solve executor — must
+            // not pin a shared-pump-runtime worker while it runs. The single
+            // Mutex hold stays (the register_path/deregister_path warning
+            // above is honored); block_in_place marks THIS worker blocking so
+            // the multi-thread scheduler spawns/migrates the other tasks
+            // (block clock, WS) off it. In production the caller runs on
+            // `degenbot_core::runtime::get_runtime()` (multi-thread); outside
+            // a runtime or on a current-thread flavor the inline path is the
+            // prior behavior (tests without a runtime).
+            let hold_start = std::time::Instant::now();
+            if is_multi_thread_runtime() {
+                tokio::task::block_in_place(|| engine.solve_dirty(block, metadata));
+            } else {
+                engine.solve_dirty(block, metadata);
+            }
+            if let Some(p) = crate::instruments::pipeline() {
+                p.observe_mutex_hold_duration(hold_start.elapsed().as_secs_f64());
+            }
         }
         if let Some(p) = crate::instruments::pipeline() {
             p.observe_solve_duration(solve_start.elapsed().as_secs_f64());

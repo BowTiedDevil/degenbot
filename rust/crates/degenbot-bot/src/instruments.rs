@@ -71,6 +71,10 @@ pub struct PipelineInstruments {
     pump_seconds_since_header: Gauge<f64>,
     /// Seconds since the newest log applied to state (state-advance liveness).
     pump_seconds_since_apply: Gauge<f64>,
+    /// Engine-`Mutex` HOLD duration for a dirty solve cycle (T2 SLOWEXEC);
+    /// distinct from `solve_duration` only if the hold moves off the calling
+    /// thread — today hold == cycle by design, so this is the hold metric.
+    mutex_hold_duration: Histogram<f64>,
     /// Solve lock-hold duration (dirty solves only — no-op solves are gated
     /// out of the span path and the histogram alike).
     solve_duration: Histogram<f64>,
@@ -205,6 +209,12 @@ impl PipelineInstruments {
                 .with_description(
                     "Seconds since the newest log applied to state (state-advance liveness)",
                 )
+                .build(),
+            mutex_hold_duration: meter
+                .f64_histogram("degenbot.solve.mutex_hold")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description("Engine Mutex hold duration for a dirty solve cycle")
                 .build(),
             solve_duration: meter
                 .f64_histogram("degenbot.solve.duration")
@@ -389,6 +399,11 @@ impl PipelineInstruments {
     /// Age (seconds) of the newest log applied to state; grows on a freeze.
     pub fn set_seconds_since_apply(&self, secs: f64) {
         self.pump_seconds_since_apply.record(secs, &[]);
+    }
+
+    /// Engine-`Mutex` hold duration for a dirty solve cycle (T2 instrument).
+    pub fn observe_mutex_hold_duration(&self, secs: f64) {
+        self.mutex_hold_duration.record(secs, &[]);
     }
 
     /// One dirty-carrying solve cycle's duration.

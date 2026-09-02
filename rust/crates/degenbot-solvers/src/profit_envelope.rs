@@ -1794,7 +1794,7 @@ fn path_profit_bound_inner(
         let mut lo = 0usize;
         let mut hi = hlen;
         while lo < hi {
-            let mid = (lo + hi) >> 1;
+            let mid = usize::midpoint(lo, hi);
             if hull_ref[mid].0 <= *x {
                 ix = mid;
                 lo = mid + 1;

@@ -326,16 +326,15 @@ fn exp_internal(x: I256) -> Result<I256> {
     // for 18-decimal 256-bit; x0+x1 > MAX_NATURAL_EXPONENT so only one of
     // them appears in the decomposition.
     let mut x = x;
-    let first_an: I256;
-    if x >= X0 {
+    let first_an = if x >= X0 {
         x -= X0;
-        first_an = A0;
+        A0
     } else if x >= X1 {
         x -= X1;
-        first_an = A1;
+        A1
     } else {
-        first_an = I256::from_raw(U256::from(1u64));
-    }
+        I256::from_raw(U256::from(1u64))
+    };
 
     // Promote x to 20-decimal fixed point for higher precision on the
     // remaining small terms.

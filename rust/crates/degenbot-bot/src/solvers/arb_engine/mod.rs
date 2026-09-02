@@ -65,6 +65,7 @@ mod lifecycle;
 pub mod path_info;
 mod path_lifecycle;
 pub mod snapshot_verify;
+mod solve_executor;
 mod solver_dispatch;
 #[cfg(test)]
 mod tests;
@@ -290,6 +291,18 @@ pub struct ResultBatch {
 /// [`ArbitrageEngine::with_core`]; `new()` standalone sugar allocates its own)
 /// and reads/writes pool state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
+/// Which dispatch mechanism drives the solve fan-out (epic BXUSGL T1).
+/// `Rayon` is today's `rayon::scope` LPT path, byte-for-byte; `Tokio` routes
+/// the same LPT bins through a private, lower-priority tokio runtime whose
+/// workers stream each path's result into the result queue as it completes.
+/// The stance is resolved ONCE at engine construction from the environment —
+/// never read at call time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SolveExecutorKind {
+    Rayon,
+    Tokio,
+}
+
 pub struct ArbitrageEngine {
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
@@ -389,7 +402,7 @@ pub struct ArbitrageEngine {
     /// Per-path previous-block MEASURED walk sims (recorded by `solve_fn`
     /// after each solve; lock-free-read at bin construction). Refines the
     /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
-    last_walk_sims: parking_lot::Mutex<HashMap<u64, u64>>,
+    last_walk_sims: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
     /// The engine-owned cross-block walk-composition memo (SU7MAE T3, Q12a):
     /// passed into the solve entries by handle; epoch advances at the
     /// block-lifecycle start. Enabled flags come from the owner's config
@@ -399,7 +412,23 @@ pub struct ArbitrageEngine {
     /// lock-free-read at bin construction). Loop-18: gate-heavy paths
     /// (dense-CL envelope compose, sims≈0) were invisible to the LPT cost —
     /// bin-packed as cheap while dominating wall time.
-    last_gate_us: parking_lot::Mutex<HashMap<u64, u64>>,
+    last_gate_us: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
+    /// Which dispatch drives the solve fan-out (epic BXUSGL T1); see
+    /// [`SolveExecutorKind`].
+    solve_executor: SolveExecutorKind,
+    /// T3 (epic BXUSGL): emit each clamp-passed above-threshold result as
+    /// an IMMEDIATE single-entry ResultBatch during the drain instead of
+    /// waiting for the pump debounce. Construction-time stance; debounce
+    /// batching stays the default path.
+    streaming_delivery: bool,
+    /// Test-only: hook invoked at the start of each path solve — lets the
+    /// streaming test slowen one path deterministically.
+    #[cfg(test)]
+    test_solve_delay: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
+    /// Test-only: the drain appends each merged path id here (with the tokio
+    /// executor this happens per-path, before the slowest path completes).
+    #[cfg(test)]
+    merge_probe: Option<std::sync::Arc<parking_lot::Mutex<Vec<u64>>>>,
     /// Reuse-eligibility counter for the current solve cycle (probe only;
     /// reset each `solve_dirty` and surfaced on the resolve event).
     paths_same_state_this_cycle: u64,
@@ -473,8 +502,21 @@ impl ArbitrageEngine {
             path_signatures: HashMap::new(),
             path_description_cache: parking_lot::Mutex::new(HashMap::new()),
             resolved_update_snapshot: HashMap::new(),
-            last_walk_sims: parking_lot::Mutex::new(HashMap::new()),
-            last_gate_us: parking_lot::Mutex::new(HashMap::new()),
+            last_walk_sims: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            last_gate_us: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            solve_executor: if solver_dispatch::SOLVE_EXECUTOR_TOKIO
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                SolveExecutorKind::Tokio
+            } else {
+                SolveExecutorKind::Rayon
+            },
+            streaming_delivery: solver_dispatch::STREAMING_DELIVERY_ENABLED
+                .load(std::sync::atomic::Ordering::Relaxed),
+            #[cfg(test)]
+            test_solve_delay: None,
+            #[cfg(test)]
+            merge_probe: None,
             walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
                 ::degenbot_solvers::runtime::runtime().memo_on,
                 ::degenbot_solvers::runtime::runtime().memo_stats,
@@ -645,5 +687,29 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn dirty_sets_is_empty(&self) -> bool {
         self.dirty_sets.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Epic BXUSGL T1: test-only knobs. Never compiled outside `cargo test` — the
+// streaming-orchestration test needs per-test control of the executor stance,
+// a deterministic per-path delay, and an observation point on the drain.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+impl ArbitrageEngine {
+    pub(crate) fn set_solve_executor(&mut self, kind: SolveExecutorKind) {
+        self.solve_executor = kind;
+    }
+
+    pub(crate) fn set_solve_delay_hook(&mut self, hook: std::sync::Arc<dyn Fn(u64) + Send + Sync>) {
+        self.test_solve_delay = Some(hook);
+    }
+
+    pub(crate) fn set_merge_probe(&mut self, probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>>) {
+        self.merge_probe = Some(probe);
+    }
+
+    pub(crate) fn set_streaming_delivery(&mut self, on: bool) {
+        self.streaming_delivery = on;
     }
 }
