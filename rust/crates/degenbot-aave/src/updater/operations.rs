@@ -372,7 +372,7 @@ impl Operation<'_> {
 /// pre-existing `ev["logIndex"]` access — every log from a real RPC receipt
 /// has one, but the field is `Option` on alloy's `Log`).
 fn log_idx(log: &Log) -> u64 {
-    log.log_index.map_or(0, |i| i)
+    log.log_index.unwrap_or(0)
 }
 /// The Pool-event variant's `log_index` equivalent (Pool events are raw logs
 /// held by reference in `Operation.pool_event`).

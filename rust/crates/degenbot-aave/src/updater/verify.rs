@@ -282,7 +282,10 @@ pub async fn verify_touched_positions_on_conn(
             ));
         }
         let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
-        for (row, chunk) in rows.iter().zip(results.chunks_exact(2)) {
+        // degenbot-aave divergence check: a short final pair carries the
+        // failed multicall's trailing data; the zip drops it by design.
+        let (result_pairs, _remainder) = results.as_chunks::<2>();
+        for (row, chunk) in rows.iter().zip(result_pairs) {
             let actual_balance = result_to_u256(&chunk[0]);
             if actual_balance != row.balance {
                 divergences.push(PositionDivergence {

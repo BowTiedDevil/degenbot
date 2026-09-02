@@ -44,23 +44,23 @@ use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 /// mimalloc v2 `mi_option_purge_delay` enum index (vendored
-/// libmimalloc-sys 0.1.49 builds mimalloc 2.3.02 by default; the Rust
+/// `libmimalloc-sys` 0.1.49 builds mimalloc 2.3.02 by default; the Rust
 /// bindings intentionally omit experimental option constants, so the index
 /// is pinned here against the vendored `mimalloc.h` enum and the version
 /// guard in `supported_version`).
 #[cfg_attr(not(feature = "allocator-ctrl"), allow(dead_code))]
 const MI_OPTION_PURGE_DELAY: i32 = 15;
 /// `mi_option_purge_decommits` — same index (5) in both vendored v2 and v3
-/// headers. Set to 0: purges use MADV_FREE (lazy reclaim) instead of
-/// MADV_DONTNEED, so freed pages stay mapped and measurable-zero-refault
-/// until the kernel actually needs them under memory pressure. Matrix arm
-/// `madv-free` (epic AZZDBI T3): faults/block 5,598 vs 49,612 at default,
-/// best on_drain p95 of all arms, RSS delta fully kernel-reclaimable.
+/// headers. Set to 0: purges use `MADV_FREE` (lazy reclaim) instead of
+/// `MADV_DONTNEED`, so freed pages stay mapped and their zero-refault reuse
+/// is measurable until the kernel actually needs them under memory pressure.
+/// Matrix arm `madv-free` (epic AZZDBI T3): faults/block 5,598 vs 49,612 at
+/// default, best `on_drain` p95 of all arms, RSS delta fully reclaimable.
 const MI_OPTION_PURGE_DECOMMITS: i32 = 5;
 /// Also `mi_option_purge_decommits` (index 5) — same in v2/v3.
 /// The vendored C source ships BOTH mimalloc v2 (2.3.02,
 /// `MI_MALLOC_VERSION 20302`) and v3 sources; the dev `.so` observed live at
-/// `mi_version() == 30302` (v3). Index 15 was verified byte-identical in both
+/// `mi_version() == 30302` (v3). Index `15` was verified byte-identical in both
 /// vendored headers (`mi_option_purge_delay`), so allow the 2.x and 3.x
 /// majors and refuse anything else (v1 or a future major reordering).
 #[cfg_attr(not(feature = "allocator-ctrl"), allow(dead_code))]
@@ -73,7 +73,9 @@ pub const MAX_DELAY_MS: i64 = 600_000;
 const WINDOW: usize = 30;
 const MIN_BLOCKS: usize = 20;
 const DEFAULT_MULT: f64 = 2.0;
-const HYSTERESIS_FRAC: f64 = 0.10;
+// Hysteresis band: 10 percent of the applied value before re-applying,
+// written as integer math in `observe` (`delta * 10 > applied`) to avoid a
+// float cast under the cast-precision lint.
 const MIN_INTERVAL_SECS: f64 = 2.0;
 const MAX_INTERVAL_SECS: f64 = 60.0;
 
@@ -98,7 +100,15 @@ pub fn compute_purge_delay_ms(intervals: &[f64], mult: f64, min_blocks: usize) -
     if intervals.len() < min_blocks {
         return None;
     }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "window length is bounded far below 2^52"
+    )]
     let mean = intervals.iter().sum::<f64>() / intervals.len() as f64;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "delay_ms is clamped to <= 600_000 before the round, i64-safe"
+    )]
     let ms = (mean * 1000.0 * mult).round() as i64;
     Some(clamp_delay_ms(ms))
 }
@@ -112,8 +122,8 @@ pub struct PurgeConfig {
     pub auto: bool,
     /// Multiplier: delay = mult x mean block interval.
     pub mult: f64,
-    /// Purge with MADV_DONTNEED (immediate reclaim, high refault churn)
-    /// instead of MADV_FREE (lazy, kernel-pressure fenced). Default false.
+    /// Purge with `MADV_DONTNEED` (immediate reclaim, high refault churn)
+    /// instead of `MADV_FREE` (lazy, kernel-pressure fenced). Default false.
     pub decommits: bool,
 }
 
@@ -125,7 +135,7 @@ pub fn config_from_env() -> PurgeConfig {
         .ok()
         .and_then(|raw| raw.replace('_', "").parse::<i64>().ok())
         .map(clamp_delay_ms);
-    let auto = std::env::var(ENV_AUTO).map_or(true, |raw| raw != "0");
+    let auto = std::env::var(ENV_AUTO) != Ok(String::from("0"));
     let mult = std::env::var(ENV_MULT)
         .ok()
         .and_then(|raw| raw.parse::<f64>().ok())
@@ -133,8 +143,10 @@ pub fn config_from_env() -> PurgeConfig {
     // Default OFF (MADV_FREE): the T3 matrix arm measured -89 percent
     // refault churn at equal/better solve p95; `=1/true` restores mimalloc's
     // aggressive decommit behavior.
-    let decommits = std::env::var(ENV_PURGE_DECOMMITS)
-        .map_or(false, |raw| matches!(raw.as_str(), "1" | "true"));
+    let decommits = matches!(
+        std::env::var(ENV_PURGE_DECOMMITS).as_deref(),
+        Ok("1" | "true")
+    );
     PurgeConfig {
         fixed_ms,
         auto,
@@ -167,7 +179,8 @@ impl CadenceState {
     /// only when the hysteresis band allows a re-apply.
     fn observe(&mut self, now_ms: u64) -> Option<i64> {
         if let Some(last) = self.last_header_ms {
-            let dt_secs = (now_ms.saturating_sub(last)) as f64 / 1000.0;
+            let dt_secs =
+                f64::from(u32::try_from(now_ms.saturating_sub(last)).unwrap_or(u32::MAX)) / 1000.0;
             if (MIN_INTERVAL_SECS..=MAX_INTERVAL_SECS).contains(&dt_secs) {
                 self.window.push_back(dt_secs);
                 while self.window.len() > WINDOW {
@@ -185,7 +198,8 @@ impl CadenceState {
         // applied value (or nothing was applied yet).
         let changed = match self.applied_ms {
             None => true,
-            Some(prev) => ((target - prev) as f64).abs() > HYSTERESIS_FRAC * prev as f64,
+            // Integer form of the 10 percent band (no float casts).
+            Some(prev) => (target - prev).abs() * 10 > prev,
         };
         if !changed {
             return None;
@@ -269,7 +283,7 @@ static CADENCE: Mutex<Option<CadenceState>> = Mutex::new(None);
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Startup: apply any fixed override immediately; arm auto-discovery.
@@ -280,22 +294,19 @@ pub fn init_from_env_at_pump_start() {
         return; // another pump in this process already configured the seam
     }
     apply_decommits(cfg.decommits);
-    match cfg.fixed_ms {
-        Some(ms) => {
-            AUTO_ENABLED.store(false, Ordering::Relaxed);
-            apply_delay_ms(clamp_delay_ms(ms));
-        }
-        None => {
-            AUTO_ENABLED.store(cfg.auto, Ordering::Relaxed);
-            if cfg.auto {
-                tracing::info!(
-                    mult = cfg.mult,
-                    min_blocks = MIN_BLOCKS,
-                    window = WINDOW,
-                    "[allocator-ctrl] block-cadence purge-delay discovery armed"
-                );
-            }
-        }
+    if let Some(ms) = cfg.fixed_ms {
+        AUTO_ENABLED.store(false, Ordering::Relaxed);
+        apply_delay_ms(clamp_delay_ms(ms));
+        return;
+    }
+    AUTO_ENABLED.store(cfg.auto, Ordering::Relaxed);
+    if cfg.auto {
+        tracing::info!(
+            mult = cfg.mult,
+            min_blocks = MIN_BLOCKS,
+            window = WINDOW,
+            "[allocator-ctrl] block-cadence purge-delay discovery armed"
+        );
     }
 }
 
@@ -406,8 +417,8 @@ mod tests {
         assert_eq!(s.applied_ms, Some(24_000));
         // 13s mean -> target 26_000; 2000 <= 10% of 24_000 -> suppressed
         let mut got = None;
-        for i in 1..=WINDOW as u64 {
-            got = s.observe((MIN_BLOCKS as u64 + i as u64) * 13_000);
+        for n in (MIN_BLOCKS + 1)..=(MIN_BLOCKS + WINDOW) {
+            got = s.observe(u64::try_from(n).unwrap_or(u64::MAX) * 13_000);
         }
         assert_eq!(got, None);
     }
@@ -425,8 +436,8 @@ mod tests {
         // pure-40s target = 40s x 2 = 80_000ms; the applied value must have
         // re-applied at least once past 24_000 and sit within the band.
         let mut last_change: Option<i64> = None;
-        for i in 1..=WINDOW as u64 {
-            if let Some(d) = s.observe((MIN_BLOCKS as u64 + i as u64) * 40_000) {
+        for i in (MIN_BLOCKS + 1)..=(MIN_BLOCKS + WINDOW) {
+            if let Some(d) = s.observe(i as u64 * 40_000) {
                 last_change = Some(d);
             }
         }
@@ -434,13 +445,12 @@ mod tests {
             last_change.is_some(),
             "40s cadence must re-apply past 24_000"
         );
-        let applied = s.applied_ms.expect("applied value tracked");
+        let applied = s.applied_ms.unwrap_or_default();
         let final_target = 80_000i64; // 40s x 2.0
+                                      // Integer form of the same 10 percent band.
         assert!(
-            (final_target - applied) as f64 <= 0.10 * applied as f64,
-            "applied {} must freeze within 10% of target {}",
-            applied,
-            final_target
+            (final_target - applied).abs() * 10 <= applied,
+            "applied {applied} must freeze within 10% of target {final_target}"
         );
     }
 

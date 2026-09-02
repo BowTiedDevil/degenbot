@@ -2399,7 +2399,7 @@ fn is_erc20_transfer_log(log: &Log) -> bool {
 /// Read the `logIndex` of a `Log` as a `u64` (`0` if absent — every RPC-fetched
 /// receipt has one).
 pub(crate) fn log_idx_value(log: &Log) -> u64 {
-    log.log_index.map_or(0, |i| i)
+    log.log_index.unwrap_or(0)
 }
 
 /// Convert an alloy `Address` to the EIP-55 checksummed hex string the

@@ -1985,6 +1985,19 @@ mod tests {
     /// the raw fields, the crossing table's drain, and the per-range oracle's
     /// output at partial inputs, to pin which model diverges from on-chain
     /// computeSwapStep semantics.
+    // Fixture JSON is committed data: a malformed fixture SHOULD panic the
+    // test, so unwrap() is the honest call here.
+    // Fixture JSON is committed data: panicking on a malformed fixture IS
+    // the test behavior, and these fns deliberately stdout-dump their stage
+    // derivations for --nocapture debugging.
+    #[expect(
+        clippy::unwrap_used,
+        reason = "test fixture parsing - panicking is the desired test behavior"
+    )]
+    #[expect(
+        clippy::print_stdout,
+        reason = "stage-by-stage derivation dump for --nocapture debugging"
+    )]
     #[test]
     fn gate_false_skip_93794_tail_range_dump() {
         let raw = include_str!("../tests/fixtures/gate_false_skip_93794.json");
@@ -2072,6 +2085,18 @@ mod tests {
     /// This test walks the derivation stage by stage against an ORACLE built
     /// from production's own per-range step (`int_simulate_v3_swap`, the
     /// compute_swap_step_v3 parity path) and names the failing stage.
+    #[expect(
+        clippy::unwrap_used,
+        reason = "test fixture parsing - panicking is the desired test behavior"
+    )]
+    #[expect(
+        clippy::print_stdout,
+        reason = "stage-by-stage derivation dump for --nocapture debugging"
+    )]
+    #[expect(
+        clippy::panic,
+        reason = "the test asserts an unsupported gate and panics by design"
+    )]
     #[test]
     #[expect(clippy::too_many_lines)]
     fn gate_false_skip_93794_stage_bisect() {
@@ -2119,17 +2144,6 @@ mod tests {
         // (each range via int_simulate_v3_swap; boundary crossings carry the
         // unconsumed remainder to the next range).
         let hop_truth = |seq: &IntV3TickRangeSequence, x: U256| -> U256 { chained_hop_out(seq, x) };
-        // Multi-hop truth: chain outputs.
-        let _path_truth = |x: U256| -> U256 {
-            let mut y = x;
-            for s in &seqs {
-                y = hop_truth(s, y);
-                if y.is_zero() {
-                    break;
-                }
-            }
-            y
-        };
 
         // --- Stage 1: per-hop tangent lines vs the oracle on a grid.
         let mut all_hop_lines: Vec<Vec<Line>> = Vec::new();
@@ -2209,7 +2223,7 @@ mod tests {
             let mut gap = I512::ZERO;
             let mut gap_x = U256::ZERO;
             let n_grid = 256u32;
-            for i in 0..n_grid + 1 {
+            for i in 0..=n_grid {
                 let x = xmax / U256::from(n_grid) * U256::from(i);
                 let mut truth = U256::ZERO;
                 {
@@ -2248,7 +2262,7 @@ mod tests {
                     "gate bound {b} below golden {golden_profit}"
                 );
             }
-            other => panic!("gate unsupported: {other:?}"),
+            other @ Envelope::Unsupported(_) => panic!("gate unsupported: {other:?}"),
         }
     }
 
