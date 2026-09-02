@@ -121,6 +121,12 @@ pub mod instruments {
         pub fn count_error(&self, _kind: &'static str) {}
         /// no-op
         pub fn count_solver_state_check(&self) {}
+        /// no-op
+        pub fn set_detached_in_flight(&self, _count: u64) {}
+        /// no-op
+        pub fn count_detached_stale_dropped(&self) {}
+        /// no-op
+        pub fn count_detached_applied(&self) {}
     }
 
     /// Always `None` — metrics are compiled out of this build.

@@ -119,6 +119,13 @@ pub struct PipelineInstruments {
     /// Solver-state divergence-scan checks performed (one per unique pool
     /// scanned per publish; see `solver_state_tripwire::divergence_scan_stage`).
     solver_state_checks_total: Counter<u64>,
+    /// Epic SRQEK5 T2: outstanding un-merged detached solve results
+    /// (stragglers in the merge pipe; the in-flight backpressure gauge).
+    detached_in_flight: Gauge<f64>,
+    /// Epic SRQEK5 T2: detached stragglers DROPPED by the Q1a stale policy.
+    detached_stale_dropped: Counter<u64>,
+    /// Epic SRQEK5 T2: detached stragglers applied to the results map.
+    detached_applied: Counter<u64>,
 }
 
 impl PipelineInstruments {
@@ -307,6 +314,20 @@ impl PipelineInstruments {
                 .with_description(
                     "Solver-state divergence-scan checks performed (unique pools per publish)",
                 )
+                .build(),
+            detached_in_flight: meter
+                .f64_gauge("degenbot.detached.in_flight")
+                .with_description(
+                    "Outstanding un-merged detached solve results (merge-pipe stragglers)",
+                )
+                .build(),
+            detached_stale_dropped: meter
+                .u64_counter("degenbot.detached.stale_dropped")
+                .with_description("Detached stragglers dropped by the Q1a stale/deregister policy")
+                .build(),
+            detached_applied: meter
+                .u64_counter("degenbot.detached.applied")
+                .with_description("Detached stragglers applied to the results map")
                 .build(),
         }
     }
@@ -503,6 +524,23 @@ impl PipelineInstruments {
     /// One solver-state divergence-scan check (unique pool per publish).
     pub fn count_solver_state_check(&self) {
         self.solver_state_checks_total.add(1, &[]);
+    }
+
+    /// Epic SRQEK5 T2: detached merge-pipe in-flight depth (stragglers sent
+    /// but not yet applied/dropped). Sampled at enqueue + per disposition.
+    pub fn set_detached_in_flight(&self, count: u64) {
+        self.detached_in_flight
+            .record(f64::from(u32::try_from(count).unwrap_or(u32::MAX)), &[]);
+    }
+
+    /// One detached straggler DROPPED by the Q1a stale/deregister gate.
+    pub fn count_detached_stale_dropped(&self) {
+        self.detached_stale_dropped.add(1, &[]);
+    }
+
+    /// One detached straggler applied to the results map.
+    pub fn count_detached_applied(&self) {
+        self.detached_applied.add(1, &[]);
     }
 }
 

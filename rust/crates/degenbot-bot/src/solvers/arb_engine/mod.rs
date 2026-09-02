@@ -303,6 +303,7 @@ pub(crate) enum SolveExecutorKind {
     Tokio,
 }
 
+#[expect(clippy::struct_excessive_bools)] // 4th bool (detached_solving) added by epic SRQEK5 — each bool is a distinct construction-time stance, not flag soup
 pub struct ArbitrageEngine {
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
@@ -418,8 +419,11 @@ pub struct ArbitrageEngine {
     solve_executor: SolveExecutorKind,
     /// T3 (epic BXUSGL): emit each clamp-passed above-threshold result as
     /// an IMMEDIATE single-entry [`ResultBatch`] during the drain instead of
-    /// waiting for the pump debounce. Construction-time stance; debounce
-    /// batching stays the default path.
+    /// waiting for the pump debounce. Construction-time stance; **streaming
+    /// is the shipped default since epic SRQEK5 T3** (detached cycles pair
+    /// with per-path delivery); `DEGENBOT_STREAMING_DELIVERY=0` restores the
+    /// debounce sweep (A/B opt-out), which still owns expired/removed + the
+    /// end-of-cycle metadata batch either way.
     streaming_delivery: bool,
     /// Test-only: hook invoked at the start of each path solve — lets the
     /// streaming test slowen one path deterministically.
@@ -448,6 +452,37 @@ pub struct ArbitrageEngine {
     /// `Arc<Mutex<..>>` so the atomic read is lock-free across the pyo3
     /// wrappers and the pump task.
     phase: std::sync::atomic::AtomicU8,
+    // --- Detached solve cycle (epic SRQEK5, task WV62TX) ------------------
+    /// Construction-time stance: `DEGENBOT_DETACHED_SOLVES=1` (default OFF
+    /// until the T3 soak flips it). When ON, `rebuild_and_solve_affected`
+    /// RETURNS at ENQUEUE end and the solves merge on the sidecar thread.
+    detached_solving: bool,
+    /// Monotonic counter bumped per issued detached cycle (the sidecar's
+    /// straggler-age telemetry reads `detached_issued_seq` against it).
+    detached_seq_ctr: u64,
+    /// The seq of the most recently issued detached cycle.
+    detached_issued_seq: u64,
+    /// Sender half of the UNBOUNDED mpsc merge pipe; `Some` from the first
+    /// detached enqueue until teardown. Each enqueue clones it into the
+    /// per-bin `std::thread`s.
+    detached_merge_tx: Option<std::sync::mpsc::Sender<solver_dispatch::DetachedMergeItem>>,
+    /// Receiver parked until `EngineHandle::solve_dirty` spawns the merge
+    /// sidecar (taken once via `take_detached_merge_rx`). `Mutex`-wrapped so
+    /// the engine stays `Sync` (the parked Receiver behind the worker-only
+    /// guard is touched exactly once, by the spawner thread).
+    detached_merge_rx:
+        parking_lot::Mutex<Option<std::sync::mpsc::Receiver<solver_dispatch::DetachedMergeItem>>>,
+    /// In-flight gauge: detached results SENT but not yet dispositioned.
+    /// `Arc` because the enqueue half's bin threads bump it at send time and
+    /// the sidecar decrements it per terminal disposition. At cycle start a
+    /// count ≥ `DETACHED_INFLIGHT_CAP` degrades that cycle to the in-cycle
+    /// path (backpressure via fallback).
+    detached_outstanding: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Detached straggler outcome counters (applied / stale-dropped /
+    /// deregistered-dropped); T2 wires the `detached.*` metrics from these.
+    detached_applied: std::sync::atomic::AtomicU64,
+    detached_dropped_stale: std::sync::atomic::AtomicU64,
+    detached_dropped_deregistered: std::sync::atomic::AtomicU64,
 }
 
 impl ArbitrageEngine {
@@ -525,6 +560,16 @@ impl ArbitrageEngine {
             delivery: DeliveryPolicy::default(),
             dirty_sets: Arc::new(dirty_sets::DirtySets::new()),
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
+            detached_solving: solver_dispatch::DETACHED_SOLVES_ENABLED
+                .load(std::sync::atomic::Ordering::Relaxed),
+            detached_seq_ctr: 0,
+            detached_issued_seq: 0,
+            detached_merge_tx: None,
+            detached_merge_rx: parking_lot::Mutex::new(None),
+            detached_outstanding: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            detached_applied: std::sync::atomic::AtomicU64::new(0),
+            detached_dropped_stale: std::sync::atomic::AtomicU64::new(0),
+            detached_dropped_deregistered: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -711,5 +756,9 @@ impl ArbitrageEngine {
 
     pub(crate) fn set_streaming_delivery(&mut self, on: bool) {
         self.streaming_delivery = on;
+    }
+
+    pub(crate) fn set_detached_solving(&mut self, on: bool) {
+        self.detached_solving = on;
     }
 }

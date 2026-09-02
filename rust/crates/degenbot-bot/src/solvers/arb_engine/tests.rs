@@ -5726,4 +5726,435 @@ mod tests {
             "a fast path's batch must arrive on the channel while the slow path \\\n             is still solving (flag on); saw_fast_batch = {saw_fast_batch}"
         );
     }
+
+    // -------------------------------------------------------------------
+    // Epic SRQEK5 (WV62TX): detached enqueue + sidecar merge
+    // -------------------------------------------------------------------
+
+    /// Common scaffolding: a 3-path V2→V2 engine (same live-corpus-shaped
+    /// fixtures as the streaming test), with the slow path's hook injectable
+    /// per test.
+    fn detached_fixture(delay_ms: u64) -> (ArbitrageEngine, Vec<u64>, Vec<u64>) {
+        let mut engine = ArbitrageEngine::new();
+        let mut pool_ids = Vec::new();
+        let mut path_ids = Vec::new();
+        for i in 0u8..3 {
+            let fwd = engine.register_v2_pool(
+                Address::from([0x90 + i; 20]),
+                usdc(1_500_000),
+                weth(800),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let back = engine.register_v2_pool(
+                Address::from([0xA0 + i; 20]),
+                weth(800),
+                usdc(1_600_000),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            pool_ids.push(fwd);
+            pool_ids.push(back);
+            path_ids.push(
+                engine
+                    .register_path(vec![
+                        PoolHop {
+                            pool_id: fwd,
+                            zero_for_one: true,
+                        },
+                        PoolHop {
+                            pool_id: back,
+                            zero_for_one: true,
+                        },
+                    ])
+                    .unwrap(),
+            );
+        }
+        // The first registered path's id owns the injected delay.
+        let target = path_ids[0];
+        engine.set_solve_delay_hook(std::sync::Arc::new(move |pid: u64| {
+            if pid == target {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            }
+        }));
+        (engine, pool_ids, path_ids)
+    }
+
+    /// Structural acceptance (red/green): with `detached_solving=ON` and an
+    /// injected 400ms slow path, `rebuild_and_solve_affected` — driven via
+    /// the production `EngineHandle::solve_dirty` seam, which also spawns the
+    /// merge sidecar — RETURNS before the merge lands, and the sidecar
+    /// populates the results within ~500ms of enqueue.
+    #[test]
+    fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
+        use crate::bot_core::engine::Engine as _;
+        if std::thread::available_parallelism().is_ok_and(|n| n.get() < 2) {
+            eprintln!("skipping: detached-cycle structural test requires >=2 cores");
+            return;
+        }
+        let (mut engine, pool_ids, path_ids) = detached_fixture(400);
+        engine.set_detached_solving(true);
+        let slow_pid = path_ids[0];
+        let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
+        for &pool in &pool_ids {
+            engine.lock().insert_dirty(pool);
+        }
+        let handle = crate::solvers::arb_engine::engine_handle::EngineHandle::new(
+            std::sync::Arc::clone(&engine),
+        );
+
+        let t0 = std::time::Instant::now();
+        handle.solve_dirty(100, &BlockMetadata::default());
+        let returned = t0.elapsed();
+
+        // RETURNS before the merge lands: strictly inside the injected 400ms
+        // slow-solve window, and the slow path's result is NOT in the map yet.
+        assert!(
+            returned < std::time::Duration::from_millis(350),
+            "detached cycle must return at enqueue end (before the 400ms slow \
+             solve can merge); took {returned:?}"
+        );
+        {
+            let engine_guard = engine.lock();
+            assert!(
+                !engine_guard.results.contains_key(&slow_pid),
+                "the slow path must NOT be merged at enqueue-end return"
+            );
+        }
+
+        // The sidecar populates the results within ~500ms of enqueue.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while !engine.lock().results.contains_key(&slow_pid) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "sidecar merge did not land within ~500ms of enqueue"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // And every path merged (fast + slow), applied by the sidecar.
+        assert_eq!(
+            engine.lock().results.len(),
+            3,
+            "all three detached stragglers must be applied by the sidecar"
+        );
+        let guard = engine.lock();
+        assert_eq!(
+            guard
+                .detached_applied
+                .load(std::sync::atomic::Ordering::Relaxed),
+            3
+        );
+    }
+
+    /// Structural acceptance, flag OFF (default): the results are merged
+    /// SYNCHRONOUSLY inside the call (pre-epic behaviour) — at return every
+    /// path's result is already in the map, after the injected slow solve.
+    #[test]
+    fn detached_off_merges_synchronously_inside_the_call() {
+        let (mut engine, pool_ids, path_ids) = detached_fixture(400);
+        // Default construction stance (DEGENBOT_DETACHED_SOLVES unset → OFF);
+        // set explicitly to make the stance under test unmistakable.
+        engine.set_detached_solving(false);
+        for &pool in &pool_ids {
+            engine.insert_dirty(pool);
+        }
+        let slow_pid = path_ids[0];
+
+        let t0 = std::time::Instant::now();
+        engine.solve_dirty(100, &BlockMetadata::default());
+        let returned = t0.elapsed();
+
+        // The whole cycle — INCLUDING the 400ms slow solve + clamp merge —
+        // ran inside the call.
+        assert!(
+            returned >= std::time::Duration::from_millis(390),
+            "flag OFF must merge synchronously inside the call (slow solve \
+             included); took {returned:?}"
+        );
+        assert!(
+            engine.results.contains_key(&slow_pid),
+            "flag OFF: the slow path's result is merged before return"
+        );
+        assert_eq!(engine.results.len(), 3);
+        assert_eq!(
+            engine
+                .detached_applied
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "flag OFF: no detached merges may occur"
+        );
+    }
+
+    /// Q1a stale policy (red/green): a straggler whose resolved-update stamp
+    /// is stale (a pool ticked during the solve → its `update_block` moved)
+    /// is DROPPED, not applied. The fresh-stamp twin applies (apply-if-
+    /// unchanged) through the same merge seam.
+    #[test]
+    fn detached_straggler_with_stale_update_stamp_is_dropped() {
+        let (mut engine, pool_ids, path_ids) = detached_fixture(0);
+        for &pool in &pool_ids {
+            engine.insert_dirty(pool);
+        }
+        engine.solve_dirty(100, &BlockMetadata::default());
+        let pid = path_ids[0];
+        assert!(
+            engine.results.contains_key(&pid),
+            "precondition: a fresh result merged in-cycle"
+        );
+        let fresh_stamp = engine.resolved_update_snapshot[&pid].clone();
+        let fresh_result = engine.results.get(&pid).unwrap().clone();
+
+        // A straggler whose pools ALL ticked during the solve.
+        let stale_stamp: Vec<u64> = fresh_stamp.iter().map(|b| b + 1).collect();
+        engine.merge_detached_item(
+            crate::solvers::arb_engine::solver_dispatch::DetachedMergeItem::Solved {
+                cycle_seq: 1,
+                solve_block: 100,
+                metadata: BlockMetadata::default(),
+                pid,
+                update_stamp: stale_stamp,
+                result: fresh_result.clone(),
+            },
+        );
+        assert_eq!(
+            engine
+                .detached_dropped_stale
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the stale straggler must be dropped"
+        );
+        assert_eq!(
+            engine
+                .detached_applied
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+
+        // The unchanged-intake twin APPLIES (apply-if-unchanged).
+        engine.merge_detached_item(
+            crate::solvers::arb_engine::solver_dispatch::DetachedMergeItem::Solved {
+                cycle_seq: 1,
+                solve_block: 100,
+                metadata: BlockMetadata::default(),
+                pid,
+                update_stamp: fresh_stamp,
+                result: fresh_result,
+            },
+        );
+        assert_eq!(
+            engine
+                .detached_applied
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the unchanged straggler must be applied"
+        );
+        assert_eq!(
+            engine
+                .detached_dropped_stale
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+    }
+
+    /// Q1a deregister (red/green): a straggler landing after its path was
+    /// de-registered is DROPPED, never applied (and never re-creates a
+    /// result entry).
+    #[test]
+    fn detached_straggler_after_deregister_is_dropped() {
+        let (mut engine, pool_ids, path_ids) = detached_fixture(0);
+        for &pool in &pool_ids {
+            engine.insert_dirty(pool);
+        }
+        engine.solve_dirty(100, &BlockMetadata::default());
+        let pid = path_ids[0];
+        let fresh_stamp = engine.resolved_update_snapshot[&pid].clone();
+        let fresh_result = engine.results.get(&pid).unwrap().clone();
+
+        assert!(engine.deregister_path(pid), "path must deregister");
+        assert!(!engine.results.contains_key(&pid));
+
+        engine.merge_detached_item(
+            crate::solvers::arb_engine::solver_dispatch::DetachedMergeItem::Solved {
+                cycle_seq: 1,
+                solve_block: 100,
+                metadata: BlockMetadata::default(),
+                pid,
+                update_stamp: fresh_stamp,
+                result: fresh_result,
+            },
+        );
+        assert_eq!(
+            engine
+                .detached_dropped_deregistered
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the deregistered straggler must be dropped"
+        );
+        assert!(!engine.results.contains_key(&pid));
+        assert_eq!(
+            engine
+                .detached_applied
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+    }
+    /// T2 (epic SRQEK5 4QKZE3) ADR-021 targeted test: a detached straggler can
+    /// never bypass the publish verifier. Two directions pinned: (a) a
+    /// straggler that lands AFTER a publish consumed its cycle's change set is
+    /// re-scoped into the NEXT publish's change set (`merge_detached_item`
+    /// re-extends `last_solved_path_ids`); (b) a stale-DROPPED straggler
+    /// contributes NOTHING to the publish path: no result entry, and nothing
+    /// new enters the publish verifier scope.
+    #[test]
+    fn adr021_detached_stragglers_stay_scoped_to_the_publish_verifier() {
+        let (mut engine, pool_ids, path_ids) = detached_fixture(0);
+        for &pool in &pool_ids {
+            engine.insert_dirty(pool);
+        }
+        engine.solve_dirty(100, &BlockMetadata::default());
+        let pid = path_ids[0];
+        assert!(
+            engine.results.contains_key(&pid),
+            "precondition: fresh merge"
+        );
+        let fresh_stamp = engine.resolved_update_snapshot[&pid].clone();
+        let fresh_result = engine.results.get(&pid).unwrap().clone();
+
+        // Publish #1: the cycle's change set names the re-solved path, then
+        // the consume-and-clear contract empties it.
+        let publish_1 = engine.take_solver_path_pool_refs_change_set();
+        assert!(
+            !publish_1.is_empty(),
+            "publish #1 must scope the re-solved path"
+        );
+        assert!(publish_1.iter().any(|refs| refs.len() == 2));
+        assert!(
+            engine.take_solver_path_pool_refs_change_set().is_empty(),
+            "the change set must be consumed by the publish"
+        );
+
+        // (a) An APPLIED straggler that lands AFTER publish #1 is re-scoped:
+        // the next publish's verifier diff covers it — no bypass.
+        engine.merge_detached_item(
+            crate::solvers::arb_engine::solver_dispatch::DetachedMergeItem::Solved {
+                cycle_seq: 1,
+                solve_block: 100,
+                metadata: BlockMetadata::default(),
+                pid,
+                update_stamp: fresh_stamp.clone(),
+                result: fresh_result.clone(),
+            },
+        );
+        let publish_2 = engine.take_solver_path_pool_refs_change_set();
+        assert!(
+            !publish_2.is_empty(),
+            "a late-merged straggler MUST be re-scoped into the next publish's verifier change set (no publish bypass)"
+        );
+        assert!(engine.results.contains_key(&pid));
+
+        // (b) A stale-DROPPED straggler reaches the publish path never: it
+        // acquires no result entry and adds nothing to the change set.
+        let stale_stamp: Vec<u64> = fresh_stamp.iter().map(|b| b + 1).collect();
+        engine.merge_detached_item(
+            crate::solvers::arb_engine::solver_dispatch::DetachedMergeItem::Solved {
+                cycle_seq: 1,
+                solve_block: 100,
+                metadata: BlockMetadata::default(),
+                pid,
+                update_stamp: stale_stamp,
+                result: fresh_result,
+            },
+        );
+        assert_eq!(
+            engine
+                .detached_dropped_stale
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert!(
+            engine.take_solver_path_pool_refs_change_set().is_empty(),
+            "a stale-dropped straggler must not re-enter the publish verifier scope"
+        );
+    }
+
+    /// T2 (epic SRQEK5 4QKZE3) watchdog + cadence acceptance: with detached
+    /// cycles ON through the PRODUCTION drain seam (`SolveCoordinator` inside
+    /// `DispatchOwner` — the shipped `solve_dirty`/`send_result_batch` cadence),
+    /// the drainer keeps COMPLETING work items while stragglers are still
+    /// merging (return is enqueue-end, not apply-end) — so the B3 no-progress frozen-
+    /// drainer detector can never accrue a stall across detached cycles. The
+    /// existing `no_progress_frozen_drainer_aborts_proc` synthetic-freeze pair
+    /// stays in the suite as the abort-side proof (green in the same run);
+    /// this pins the detached-cycles-are-progress half.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn detached_stragglers_do_not_trip_the_frozen_drainer_backstop() {
+        use crate::bot_core::event_dispatch::{DispatchOwner, DrainWork};
+        use crate::bot_core::solve_coordinator::SolveCoordinator;
+
+        let (mut engine, pool_ids, path_ids) = detached_fixture(400);
+        engine.set_detached_solving(true);
+        let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
+        for &pool in &pool_ids {
+            engine.lock().insert_dirty(pool);
+        }
+        let handle = crate::solvers::arb_engine::engine_handle::EngineHandle::new(
+            std::sync::Arc::clone(&engine),
+        );
+        let coordinator = SolveCoordinator::new(vec![std::sync::Arc::new(handle)]);
+        let (verify_tx, _verify_rx) = tokio::sync::watch::channel(None);
+        let owner = DispatchOwner::new(std::sync::Arc::new(coordinator), &Some(verify_tx));
+        let meta = BlockMetadata::default();
+
+        let t0 = std::time::Instant::now();
+        // The detached cycle: the drain item COMPLETES (enqueue-end) while the
+        // 400ms slow solve still runs — no in-cycle multi-second hold.
+        owner.dispatch(DrainWork::Drain {
+            block: 100,
+            metadata: meta,
+        });
+        // The shipped cadence continues UNCHANGED mid-merge: a debounce publish
+        // + further block cycles interleave with the sidecar's merges.
+        owner.dispatch(DrainWork::Publish {
+            open: 100,
+            metadata: meta,
+            change_set: Vec::new(),
+        });
+        owner.dispatch(DrainWork::Drain {
+            block: 101,
+            metadata: meta,
+        });
+        owner.dispatch(DrainWork::Drain {
+            block: 102,
+            metadata: meta,
+        });
+
+        // The drainer completed ALL FOUR items long before the slow straggler
+        // merges (enqueue-return semantics) — a frozen-drainer stall can never
+        // accrue across detached cycles.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while owner.health().processed() < 4 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the drainer must keep completing detached-cycle work items"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(390),
+            "the whole cadence must complete inside the 400ms slow-solve window (enqueue-end, not apply-end)"
+        );
+
+        // The stragglers DID land via the sidecar (cross-cycle merge),
+        // without ever tripping the drain backstop along the way.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while engine.lock().results.len() < 3 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "all detached stragglers must merge via the sidecar"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let guard = engine.lock();
+        assert!(path_ids.iter().all(|p| guard.results.contains_key(p)));
+    }
 }

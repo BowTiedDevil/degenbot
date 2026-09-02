@@ -144,14 +144,29 @@ static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::ne
 /// solve drain instead of waiting for the pump debounce. Parsed ONCE at
 /// engine construction ([`install_engine_env_stances`]); engines copy the
 /// parsed static into their construction field.
+///
+/// **Default flipped ON by epic SRQEK5 T3 (SF3QLP):** with detached cycles the
+/// streaming mode is the intended shipped behaviour — each clamp-passed result
+/// arrives at Python the moment its own solve completes (per-path
+/// micro-batches composed with the end-of-cycle debounce sweep, per the
+/// V6TOMQ coarse proof: 1360 single-candidate batches / 0 errors / 10-min
+/// mainnet). `DEGENBOT_STREAMING_DELIVERY=0` opts out to the debounce sweep
+/// (A/B); any other value (or unset) streams.
 pub(crate) static STREAMING_DELIVERY_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+    std::sync::atomic::AtomicBool::new(true);
 
 /// BXUSGL T1: which dispatch drives the solve fan-out — see
 /// [`solve_executor_stance_from_env`]/[`SolveExecutorKind`]. Parsed ONCE at
 /// engine construction ([`install_engine_env_stances`]); the hot path reads
 /// the engine's construction-time field, never this static directly.
 pub(crate) static SOLVE_EXECUTOR_TOKIO: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Epic SRQEK5 (WV62TX): `DEGENBOT_DETACHED_SOLVES` — the detached solve
+/// cycle (enqueue-and-return + sidecar merge). Default OFF until the T3 soak
+/// flips the streaming/detached pair (construction-time stance like the
+/// executor field — never read at call time).
+pub(crate) static DETACHED_SOLVES_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// `DEGENBOT_SOLVE_EXECUTOR` parse: "tokio" routes the solve fan-out through
@@ -179,6 +194,48 @@ fn solve_executor_stance_from_env() -> bool {
                 true
             }
         },
+    }
+}
+
+/// `DEGENBOT_STREAMING_DELIVERY` parse (epic SRQEK5 T3 default flip): `0`
+/// opts out to the debounce sweep (A/B / opt-out); unset — the shipped
+/// default — and any other value stream. Pure over the env value so the unit
+/// tests exercise the policy matrix without env races.
+fn streaming_delivery_stance_from_env(raw: Option<&str>) -> bool {
+    raw != Some("0")
+}
+
+#[cfg(test)]
+mod streaming_stance_tests {
+    /// Epic SRQEK5 T3 (SF3QLP) policy matrix: unset routes to STREAMING (the
+    /// intended shipped default with detached cycles); `0` opts out to the
+    /// debounce sweep (A/B); explicit `1` and unknown values stream.
+    #[test]
+    fn streaming_delivery_stance_policy_matrix() {
+        assert!(
+            super::streaming_delivery_stance_from_env(None),
+            "unset DEGENBOT_STREAMING_DELIVERY must route to streaming mode"
+        );
+        assert!(
+            !super::streaming_delivery_stance_from_env(Some("0")),
+            "DEGENBOT_STREAMING_DELIVERY=0 must keep the debounce sweep (opt-out)"
+        );
+        assert!(super::streaming_delivery_stance_from_env(Some("1")));
+        assert!(
+            super::streaming_delivery_stance_from_env(Some("true")),
+            "unknown non-zero values stream with the default"
+        );
+        assert!(
+            super::streaming_delivery_stance_from_env(Some("")),
+            "an empty value streams with the default"
+        );
+    }
+
+    /// The static default must agree with the flipped policy (an engine built
+    /// before `install_engine_env_stances` runs loads the static's initial).
+    #[test]
+    fn streaming_delivery_static_default_is_streaming() {
+        assert!(super::STREAMING_DELIVERY_ENABLED.load(std::sync::atomic::Ordering::Relaxed,));
     }
 }
 
@@ -215,7 +272,13 @@ pub fn install_engine_env_stances() {
         std::sync::atomic::Ordering::Relaxed,
     );
     STREAMING_DELIVERY_ENABLED.store(
-        std::env::var("DEGENBOT_STREAMING_DELIVERY").as_deref() == Ok("1"),
+        streaming_delivery_stance_from_env(
+            std::env::var("DEGENBOT_STREAMING_DELIVERY").ok().as_deref(),
+        ),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    DETACHED_SOLVES_ENABLED.store(
+        std::env::var("DEGENBOT_DETACHED_SOLVES").as_deref() == Ok("1"),
         std::sync::atomic::Ordering::Relaxed,
     );
 
@@ -456,6 +519,68 @@ pub(crate) struct SolveCycleShared {
     test_solve_delay: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
 }
 
+// ---------------------------------------------------------------------------
+// DETACHED SOLVE CYCLE (epic SRQEK5, task WV62TX)
+// ---------------------------------------------------------------------------
+// DETACH-ALWAYS (design locked 2026-09-02): under `detached_solving`
+// (`DEGENBOT_DETACHED_SOLVES`, construction-time stance) the whole solve
+// cycle RETURNS at ENQUEUE end — every result then flows through an
+// UNBOUNDED mpsc to the merge sidecar, a plain `std::thread` (see the
+// epic DEADLOCK note: a scoped rayon install JOINS its tasks and can starve
+// against a held `parking_lot` guard; `std::thread` cannot deadlock with
+// rayon) that applies each item under the engine Mutex. The Q1a stale policy
+// (apply-if-unchanged / drop-on-touched) makes the enqueue-time per-hop
+// `update_block` snapshot a complete staleness oracle: a price-neutral
+// liquidity event (V3 Mint/Burn, V4 ModifyLiquidity) advances the pool
+// clock AND re-solves the path, so any stamp mismatch at merge time means
+// the straggler's intake is stale and the result is DROPPED, never applied.
+// The ADR-021 solver-state publish tripwire stays the correctness backstop;
+// this gate is the fast filter in front of it.
+
+/// Design-locked in-flight cap (~8): more than this many un-merged detached
+/// results outstanding degrades the issuing cycle to the pre-epic in-cycle
+/// path (backpressure via fallback — a lagging sidecar must not accumulate
+/// unbounded stragglers). The A/B probe measured healthy detached cycles
+/// draining inside the merge makespan, so the cap is a safety valve, not the
+/// steady-state controller.
+pub(crate) const DETACHED_INFLIGHT_CAP: u64 = 8;
+
+/// One unit of detached-merge work: a solved result that passed the same
+/// profitless filter the in-cycle arms apply. `update_stamp` is the
+/// per-hop `pool_update_block` snapshot taken at the enqueue resolve —
+/// the Q1a staleness oracle compared against the LIVE clocks at merge.
+pub(crate) enum DetachedMergeItem {
+    Solved {
+        /// Issuing cycle's detached sequence (straggler-age telemetry).
+        cycle_seq: u64,
+        /// The solve block the result was computed against.
+        solve_block: u64,
+        /// Cycle metadata for the streaming emission (Copy).
+        metadata: BlockMetadata,
+        pid: u64,
+        /// Per-hop `pool_update_block` snapshot at the enqueue resolve.
+        update_stamp: Vec<u64>,
+        result: SolvePathResult,
+    },
+}
+
+/// The detached-merge SIDECAR thread body (epic SRQEK5 WV62TX): owns the
+/// unbounded mpsc `Receiver` of the merge pipe and applies each item under
+/// the engine Mutex — Q1a stale gate + the SAME merge/emit path as the
+/// in-cycle drain (`merge_one_result`, which carries the streaming
+/// delivery emission). Spawned by `EngineHandle::solve_dirty` at the FIRST
+/// detached enqueue; runs until every `Sender` drops (engine teardown),
+/// so the pipe never strands items across the engine's lifetime.
+pub(crate) fn detached_merge_sidecar(
+    engine: &std::sync::Arc<parking_lot::Mutex<ArbitrageEngine>>,
+    merge_rx: std::sync::mpsc::Receiver<DetachedMergeItem>,
+) {
+    hotpath::measure_block!("arb_solve.detached_merge", {
+        for item in merge_rx {
+            engine.lock().merge_detached_item(item);
+        }
+    });
+}
 impl ArbitrageEngine {
     /// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
     /// before it is committed). VAASFM decision: 1 wei — commit
@@ -533,6 +658,104 @@ impl ArbitrageEngine {
             probe.lock().push(pid);
         }
         twins
+    }
+
+    /// Terminal disposition of ONE detached straggler, under the single
+    /// engine-Mutex acquisition the sidecar makes per item (epic SRQEK5
+    /// WV62TX). Q1a policy: apply-if-unchanged, drop-on-touched — ANY live
+    /// stamp advance since enqueue (swap OR price-neutral liquidity event)
+    /// drops the straggler; a deregistered path drops too. The in-flight
+    /// gauge was bumped at SEND time in the enqueue half and is decremented
+    /// here exactly once per item, so a bin that dies before sending never
+    /// leaks a count.
+    pub(crate) fn merge_detached_item(&mut self, item: DetachedMergeItem) {
+        let outstanding_now = self
+            .detached_outstanding
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
+            .saturating_sub(1);
+        if let Some(p) = crate::instruments::pipeline() {
+            p.set_detached_in_flight(outstanding_now);
+        }
+        let DetachedMergeItem::Solved {
+            cycle_seq,
+            solve_block,
+            metadata,
+            pid,
+            update_stamp,
+            result,
+        } = item;
+        let age_cycles = self.detached_issued_seq.saturating_sub(cycle_seq);
+        // Q1a deregister: nothing to merge into — drop, never re-create.
+        let Some(registered) = self.path_pools.get(&pid) else {
+            self.detached_dropped_deregistered
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Some(p) = crate::instruments::pipeline() {
+                p.count_detached_stale_dropped();
+            }
+            tracing::debug!(
+                target: crate::telemetry::DIAGNOSTIC_TARGET,
+                path_id = pid,
+                detached_seq = cycle_seq,
+                "[detached] straggler dropped (path deregistered)"
+            );
+            return;
+        };
+        // Q1a stale: re-read the LIVE per-hop clocks; any advance since the
+        // enqueue resolve invalidates the straggler's intake.
+        let live_stamp: Vec<u64> = {
+            let core = self.core.read();
+            registered
+                .pools
+                .iter()
+                .map(|pool_ref| core.pool_update_block(pool_ref.pool_key))
+                .collect()
+        };
+        if live_stamp != update_stamp {
+            self.detached_dropped_stale
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Some(p) = crate::instruments::pipeline() {
+                p.count_detached_stale_dropped();
+            }
+            tracing::info!(
+                target: crate::telemetry::DIAGNOSTIC_TARGET,
+                path_id = pid,
+                detached_seq = cycle_seq,
+                detached_age_cycles = age_cycles,
+                "[detached] straggler dropped (stale: pools moved during the solve)"
+            );
+            return;
+        }
+        self.detached_applied
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Some(p) = crate::instruments::pipeline() {
+            p.count_detached_applied();
+        }
+        tracing::debug!(
+            target: crate::telemetry::DIAGNOSTIC_TARGET,
+            path_id = pid,
+            detached_seq = cycle_seq,
+            detached_age_cycles = age_cycles,
+            "[detached] straggler merged (unchanged intake)"
+        );
+        self.merge_one_result(solve_block, &metadata, pid, result);
+        // ADR-021 publish-verifier scoping (epic SRQEK5 T2): a straggler that
+        // lands AFTER a publish consumed its cycle's change set must still be
+        // covered by the NEXT publish's verifier diff — re-add it here, so a
+        // late merge can never bypass the solver-state audit. Q1a-DROPPED
+        // stragglers reach this line never: nothing publishable was applied.
+        self.last_solved_path_ids.insert(pid);
+    }
+
+    /// Hand the parked merge-pipe Receiver to the spawner (epic SRQEK5
+    /// WV62TX): `EngineHandle::solve_dirty` takes it ONCE, at the FIRST
+    /// Hand the parked merge-pipe Receiver to the spawner (epic SRQEK5
+    /// WV62TX): `EngineHandle::solve_dirty` takes it ONCE, at the FIRST
+    /// detached enqueue, and owns it inside the sidecar thread. `None` = the
+    /// sidecar is already running (or no detached cycle ever enqueued).
+    pub(crate) fn take_detached_merge_rx(
+        &mut self,
+    ) -> Option<std::sync::mpsc::Receiver<DetachedMergeItem>> {
+        self.detached_merge_rx.lock().take()
     }
 
     /// Post-solve, pool-state-aware reconciliation of each CL hop's committed
@@ -1220,6 +1443,158 @@ impl ArbitrageEngine {
                 .collect();
             lpt_partition(to_solve.len(), n_threads, |i| costs[i])
         };
+
+        // -----------------------------------------------------------------
+        // DETACHED arm (epic SRQEK5 WV62TX): under `detached_solving` with
+        // in-flight backpressure satisfied (< `DETACHED_INFLIGHT_CAP`
+        // un-merged stragglers), enqueue the SOLVES on a plain std::thread
+        // per LPT bin (DEADLOCK NOTE: no scoped rayon install — a scoped
+        // install JOINS its tasks and can starve against a held parking_lot
+        // guard; std::thread cannot deadlock with rayon) and RETURN at
+        // enqueue end. Every result flows through the unbounded mpsc to the
+        // merge sidecar, which applies the Q1a stale policy under the engine
+        // Mutex. The executor stance (DEGENBOT_SOLVE_EXECUTOR) is an
+        // INDEPENDENT axis: it governs the in-cycle arms below, unchanged.
+        // -----------------------------------------------------------------
+        if self.detached_solving
+            && self
+                .detached_outstanding
+                .load(std::sync::atomic::Ordering::Relaxed)
+                < DETACHED_INFLIGHT_CAP
+        {
+            hotpath::measure_block!("arb_solve.detached_enqueue", {
+                self.detached_seq_ctr += 1;
+                let cycle_seq = self.detached_seq_ctr;
+                self.detached_issued_seq = cycle_seq;
+                if self.detached_merge_tx.is_none() {
+                    // First detached cycle: open the merge pipe. The sidecar
+                    // thread is spawned by EngineHandle::solve_dirty right
+                    // after this enqueue half returns; the Receiver parks in
+                    // the engine until then.
+                    let (merge_tx, merge_rx) = std::sync::mpsc::channel();
+                    self.detached_merge_tx = Some(merge_tx);
+                    *self.detached_merge_rx.lock() = Some(merge_rx);
+                }
+                // Clone the Sender out so the 'static bin threads never
+                // borrow `self` (they outlive the call).
+                let merge_tx = if let Some(existing) = &self.detached_merge_tx {
+                    existing.clone()
+                } else {
+                    // unreachable-by-construction (opened above); a vanished
+                    // pipe would strand every result, so die loudly.
+                    tracing::error!(
+                        target: crate::telemetry::DIAGNOSTIC_TARGET,
+                        "[detached] merge pipe vanished between open and clone — aborting"
+                    );
+                    std::process::abort();
+                };
+                // The Q1a freshness oracle: each item rides the per-hop
+                // `pool_update_block` snapshot stamped by THIS cycle's
+                // resolve phase (above); the sidecar re-reads the live
+                // clocks and drops on ANY mismatch.
+                let enqueue_stamps: std::sync::Arc<HashMap<u64, Vec<u64>>> = std::sync::Arc::new(
+                    to_solve
+                        .iter()
+                        .filter_map(|(pid, _)| {
+                            self.resolved_update_snapshot
+                                .get(pid)
+                                .map(|stamp| (*pid, stamp.clone()))
+                        })
+                        .collect(),
+                );
+                // LPT binning is shared with the in-cycle arms — the
+                // detached arm bins identically (independent of the
+                // executor stance, which governs the in-cycle arms only).
+                let bins = compute_bins();
+                // Copy the cycle metadata out: the 'static bin threads
+                // outlive the caller's &BlockMetadata borrow.
+                let cycle_metadata = *metadata;
+                // The gauge is Arc-shared: bin threads bump it at SEND time
+                // (so a bin that dies before sending NEVER leaks a count);
+                // the sidecar decrements after each terminal disposition.
+                let outstanding_in_bins = std::sync::Arc::clone(&self.detached_outstanding);
+                let n_bins = bins.len();
+                for (bin_idx, bin) in bins.into_iter().enumerate() {
+                    let shared_bin = std::sync::Arc::clone(&shared);
+                    let to_solve_bin = std::sync::Arc::clone(&to_solve);
+                    let stamps_bin = std::sync::Arc::clone(&enqueue_stamps);
+                    let outstanding_bin = std::sync::Arc::clone(&outstanding_in_bins);
+                    let tx = merge_tx.clone();
+                    let solve_span_bin = solve_span.clone();
+                    if let Err(err) = std::thread::Builder::new()
+                        .name(format!("arb-detach-bin-{bin_idx}"))
+                        .spawn(move || {
+                            for &idx in &bin {
+                                let (pid, resolved) = &to_solve_bin[idx];
+                                // Same profitless filter the in-cycle arms
+                                // apply before merging.
+                                let Some((pid, result)) =
+                                    solve_one_path(&shared_bin, &solve_span_bin, *pid, resolved)
+                                        .filter(|(_, r)| {
+                                            !r.optimal_input.is_zero() && !r.profit.is_zero()
+                                        })
+                                else {
+                                    continue;
+                                };
+                                if !result.solver_pool_states.is_empty() {
+                                    tracing::debug!(
+                                        "[solver-st] path_id={pid} hops=[{}]",
+                                        result.solver_pool_states.join(";")
+                                    );
+                                }
+                                let update_stamp =
+                                    stamps_bin.get(&pid).cloned().unwrap_or_default();
+                                if tx
+                                    .send(DetachedMergeItem::Solved {
+                                        cycle_seq,
+                                        solve_block,
+                                        metadata: cycle_metadata,
+                                        pid,
+                                        update_stamp,
+                                        result,
+                                    })
+                                    .is_ok()
+                                {
+                                    outstanding_bin
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                }
+                            }
+                        })
+                    {
+                        // LOUD (loud-failure discipline): a lost bin would
+                        // strand its affected paths' results forever.
+                        tracing::error!(
+                            error = %err,
+                            bin = bin_idx,
+                            "[detached] solve-bin spawn failed — aborting"
+                        );
+                        std::process::abort();
+                    }
+                }
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.set_detached_in_flight(
+                        self.detached_outstanding
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                    );
+                }
+                tracing::info!(
+                    target: "degenbot::solver",
+                    block_number = solve_block,
+                    detached_seq = cycle_seq,
+                    detached_bins = n_bins,
+                    paths.enqueued = to_solve.len(),
+                    paths.invalid = invalid_count,
+                    paths.deferred_future_price = deferred_paths.len(),
+                    phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
+                    "[solve-phase] detached cycle enqueued (merge runs on the sidecar)"
+                );
+            });
+            self.results_block = solve_block;
+            // ENQUEUE-END return semantics (T2 acceptance: "return is
+            // enqueue-end, not apply-end"): the engine Mutex hold ENDS here;
+            // the sidecar re-acquires it per merged straggler.
+            return;
+        }
 
         let tokio_solve_mode = matches!(
             self.solve_executor,
@@ -2384,602 +2759,6 @@ mod executor_ab_probe {
                         p50 = pct(&emits, 0.5),
                         p95 = pct(&emits, 0.95),
                     );
-                }
-            }
-        }
-    }
-}
-
-// ----------------- OFFLINE DETACHED-STRATEGY A/B PROBE (epic BXZBWY) -----------------
-// env-driven, `#[ignore]`d - run manually:
-//   cargo test --release -p degenbot-bot --lib executor_detached -- --ignored --nocapture
-//
-// Offline A/B of the detached-merge dispositions on the heavy-CL corpus (156
-// paths, sum CPU ~29ms - deliberately parallel-light so ALL merge overheads are
-// visible). All three arms share the production dispatch shape (`SolveExecutor`
-// per-bin jobs, per-path result sends) and differ ONLY at the drain seam:
-//
-//   hybrid  : all bins solve in-cycle like the production tokio arm; the
-//             in-cycle drain applies results under ONE engine-mutex hold until
-//             a budget of 2x the median per-path solve time expires, then
-//             returns; bins still incomplete at expiry DETACH - their
-//             in-flight solves continue and their results flow through the
-//             sidecar merge (per-result acquisitions). Measures the
-//             budget-expiry overhead plus the eventual delivery times of the
-//             detached tail.
-//   detach  : detach-always. The sidecar drains from t0; the cycle returns at
-//             enqueue end and EVERY result flows through the detached merge
-//             path: result-queue send -> stale-check -> sidecar mutex ->
-//             insert -> streaming emit. Measures the per-result overhead
-//             aggregate (task spawns/joins, mutex acquisitions and waits,
-//             total emit latency) across all paths.
-//   incycle : control = the production in-cycle baseline (one drain, one
-//             engine-mutex hold, apply-at-drain). One acquisition expected.
-//
-// Engine-mutex proxy: a `parking_lot::Mutex` insertion shard held exactly
-// where the production drain holds the engine mutex (whole pre-expiry drain
-// for the hybrid in-cycle phase and the incycle control, per-result on the
-// sidecar). Stale-check = read of a shared (empty in this offline corpus)
-// stale set, counted per apply. Streaming emit = recording the apply
-// timestamp; delivery latency = apply offset minus the per-path solve-done
-// offset, recorded sidecar-only so the hybrid percentiles isolate the
-// detached tail. Standard-library metrics only - no OTel, per probe contract.
-#[cfg(test)]
-#[expect(clippy::print_stderr, clippy::print_stdout)]
-// Offline probe: the CSV is the output and a misapplied result must fail the
-// run loudly. The calibration median drives the hybrid detach budget, so a
-// warm first pass precedes every measured config.
-mod executor_detached_probe {
-    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
-
-    use ::degenbot_solvers::mixed::{ResolvedMixedPath, SolvePathResult};
-    use hashbrown::HashMap;
-
-    use super::executor_ab_probe::{
-        load_corpus, pct, probe_ctx, prod_lpt_bins, raise_nice_for_lane_courtesy,
-    };
-    use super::{solve_one_path, SolveCycleShared};
-    use crate::solvers::arb_engine::solve_executor::SolveExecutor;
-
-    /// Wait above this on a shard-lock acquisition counts as a block event
-    /// (standard-metrics proxy for a parked lock wait).
-    const MERGE_MUTEX_BLOCK_NS: u128 = 10_000;
-
-    /// Work-item liveness probe (memory proxy): RAII counter bumped on every
-    /// clone of a work-item handle and decremented on drop; `max` is the peak
-    /// of simultaneously-alive work-item snapshots. Every arm includes the
-    /// same 156-path master-snapshot floor.
-    struct GaugeState {
-        cur: Arc<AtomicUsize>,
-        max: Arc<AtomicUsize>,
-    }
-
-    impl GaugeState {
-        fn new() -> Self {
-            Self {
-                cur: Arc::new(AtomicUsize::new(0)),
-                max: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-
-        fn bump(&self) {
-            let n = self.cur.fetch_add(1, Ordering::Relaxed) + 1;
-            self.max.fetch_max(n, Ordering::Relaxed);
-        }
-    }
-
-    impl Clone for GaugeState {
-        fn clone(&self) -> Self {
-            self.bump();
-            Self {
-                cur: Arc::clone(&self.cur),
-                max: Arc::clone(&self.max),
-            }
-        }
-    }
-
-    impl Drop for GaugeState {
-        fn drop(&mut self) {
-            self.cur.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-
-    /// One work item (path id + resolved snapshot) whose clones are gauged.
-    struct GaugePath {
-        pid: u64,
-        inner: Arc<ResolvedMixedPath>,
-        gauge: GaugeState,
-    }
-
-    impl Clone for GaugePath {
-        fn clone(&self) -> Self {
-            Self {
-                pid: self.pid,
-                inner: Arc::clone(&self.inner),
-                gauge: self.gauge.clone(),
-            }
-        }
-    }
-
-    /// Build the gauged work-item master (one live snapshot per corpus path).
-    fn gauge_corpus(raw: &[Arc<ResolvedMixedPath>], gauge: &GaugeState) -> Vec<GaugePath> {
-        raw.iter()
-            .enumerate()
-            .map(|(i, item)| GaugePath {
-                pid: i as u64,
-                inner: Arc::clone(item),
-                gauge: gauge.clone(),
-            })
-            .collect()
-    }
-
-    /// Per-cycle counters (standard-metrics only, no `OTel` by contract).
-    #[derive(Default)]
-    struct DepMetrics {
-        spawns: AtomicUsize,
-        bins_done: AtomicUsize,
-        stale_checks: AtomicUsize,
-        acq: AtomicUsize,
-        blocks: AtomicUsize,
-        wait_us: AtomicU64,
-        hold_us: AtomicU64,
-        applied: AtomicUsize,
-        in_cycle_applied: AtomicUsize,
-        detached_applied: AtomicUsize,
-    }
-
-    /// The sidecar merge shard - stands in for the engine result map.
-    #[derive(Default)]
-    struct MergeShard {
-        results: HashMap<u64, Option<SolvePathResult>>,
-    }
-
-    /// Shared merge-side refs (`Rc`-like bundle so the apply/drain signatures
-    /// stay under the arity lint): the stale set, counters, delivery-latency
-    /// samples, and the last-apply clock.
-    struct MergeCtx {
-        stale: parking_lot::RwLock<hashbrown::HashSet<u64>>,
-        /// `Arc` because the per-bin executor jobs (which bump `spawns` and
-        /// `bins_done`) must own their counter copy - they are `'static`.
-        metrics: Arc<DepMetrics>,
-        lats: parking_lot::Mutex<Vec<f64>>,
-        last_apply_ms: parking_lot::Mutex<f64>,
-    }
-
-    /// One streamed result from a bin worker.
-    enum DepMsg {
-        Solved {
-            pid: u64,
-            done_ms: f64,
-            result: Option<SolvePathResult>,
-        },
-        BinDone,
-    }
-
-    #[derive(Clone, Copy)]
-    enum Strategy {
-        Hybrid,
-        Detach,
-        InCycle,
-    }
-
-    impl Strategy {
-        fn name(self) -> &'static str {
-            match self {
-                Strategy::Hybrid => "hybrid",
-                Strategy::Detach => "detach",
-                Strategy::InCycle => "incycle",
-            }
-        }
-    }
-
-    /// Which drain phase an apply rode - names the counter and whether the
-    /// delivery latency is recorded (sidecar-only, per the module docs).
-    #[derive(Clone, Copy)]
-    enum Phase {
-        InCycle,
-        Sidecar,
-    }
-
-    fn elapsed_ms(t0: Instant) -> f64 {
-        t0.elapsed().as_secs_f64() * 1000.0
-    }
-
-    /// Acquire the engine-mutex proxy: count the acquisition, the wait, and
-    /// (above `MERGE_MUTEX_BLOCK_NS`) a block event.
-    fn dep_lock<'a>(
-        shard: &'a parking_lot::Mutex<MergeShard>,
-        ctx: &MergeCtx,
-    ) -> parking_lot::MutexGuard<'a, MergeShard> {
-        let t = Instant::now();
-        let guard = shard.lock();
-        let wait = t.elapsed();
-        ctx.metrics.wait_us.fetch_add(
-            u64::try_from(wait.as_micros()).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
-        if wait.as_nanos() > MERGE_MUTEX_BLOCK_NS {
-            ctx.metrics.blocks.fetch_add(1, Ordering::Relaxed);
-        }
-        ctx.metrics.acq.fetch_add(1, Ordering::Relaxed);
-        guard
-    }
-
-    /// Apply ONE merged result behind the already-held shard guard:
-    /// stale-check, insert, streaming emit (apply timestamp; the sidecar
-    /// phase additionally records the delivery latency).
-    fn apply_one(
-        ctx: &MergeCtx,
-        shard_guard: &mut MergeShard,
-        phase: Phase,
-        pid: u64,
-        done_ms: f64,
-        result: Option<SolvePathResult>,
-        t0: Instant,
-    ) {
-        ctx.metrics.stale_checks.fetch_add(1, Ordering::Relaxed);
-        if ctx.stale.read().contains(&pid) {
-            return; // production stale gate: dropped pre-insert
-        }
-        shard_guard.results.insert(pid, result);
-        ctx.metrics.applied.fetch_add(1, Ordering::Relaxed);
-        match phase {
-            Phase::InCycle => {
-                ctx.metrics.in_cycle_applied.fetch_add(1, Ordering::Relaxed);
-            }
-            Phase::Sidecar => {
-                ctx.metrics.detached_applied.fetch_add(1, Ordering::Relaxed);
-                ctx.lats.lock().push(elapsed_ms(t0) - done_ms);
-            }
-        }
-        *ctx.last_apply_ms.lock() = elapsed_ms(t0);
-    }
-
-    /// Spawn one executor job per LPT bin (production tokio-arm shape:
-    /// per-path sends as each path completes, per-bin `BinDone` sentinel).
-    fn spawn_dep_bins(
-        executor: &SolveExecutor,
-        items: &[GaugePath],
-        bins: &[Vec<usize>],
-        ctx: &Arc<SolveCycleShared>,
-        metrics: &Arc<DepMetrics>,
-        tx: &std::sync::mpsc::Sender<DepMsg>,
-        t0: Instant,
-    ) {
-        for bin in bins {
-            let bin_items: Vec<GaugePath> = bin.iter().map(|&i| items[i].clone()).collect();
-            let tx = tx.clone();
-            let ctx = Arc::clone(ctx);
-            let metrics = Arc::clone(metrics);
-            metrics.spawns.fetch_add(1, Ordering::Relaxed);
-            executor.spawn(move || {
-                for gp in &bin_items {
-                    let outcome = solve_one_path(&ctx, &tracing::Span::none(), gp.pid, &gp.inner);
-                    let done_ms = elapsed_ms(t0);
-                    let _ = tx.send(DepMsg::Solved {
-                        pid: gp.pid,
-                        done_ms,
-                        result: outcome.map(|(_, r)| r),
-                    });
-                }
-                metrics.bins_done.fetch_add(1, Ordering::Relaxed);
-                let _ = tx.send(DepMsg::BinDone);
-            });
-        }
-    }
-
-    /// In-cycle drain: one engine-mutex hold across the whole phase (the
-    /// production drain contract). With a deadline this is the hybrid
-    /// pre-expiry phase (timeout at the budget); without, it is the incycle
-    /// control and ends only at channel close (all bins joined + drained).
-    fn drain_incycle(
-        rx: &std::sync::mpsc::Receiver<DepMsg>,
-        shard: &parking_lot::Mutex<MergeShard>,
-        merge: &MergeCtx,
-        deadline: Option<Instant>,
-        t0: Instant,
-    ) {
-        let hold_start = Instant::now();
-        let mut guard = dep_lock(shard, merge);
-        loop {
-            // No-deadline control: a long timeout degenerates to a blocking
-            // recv that still errors at channel close.
-            let timeout = deadline.map_or_else(
-                || Duration::from_secs(3_600),
-                |d| d.saturating_duration_since(Instant::now()),
-            );
-            let Ok(msg) = rx.recv_timeout(timeout) else {
-                break; // budget expiry (hybrid) or pipe closed
-            };
-            let DepMsg::Solved {
-                pid,
-                done_ms,
-                result,
-            } = msg
-            else {
-                continue; // `BinDone` sentinel (bin join)
-            };
-            apply_one(merge, &mut guard, Phase::InCycle, pid, done_ms, result, t0);
-        }
-        // Per-bin sends precede per-bin `BinDone` on the same pipe, so at
-        // break time any buffered Solved msgs belong in-cycle: catch them.
-        while let Ok(msg) = rx.try_recv() {
-            let DepMsg::Solved {
-                pid,
-                done_ms,
-                result,
-            } = msg
-            else {
-                continue;
-            };
-            apply_one(merge, &mut guard, Phase::InCycle, pid, done_ms, result, t0);
-        }
-        merge.metrics.hold_us.fetch_add(
-            u64::try_from(hold_start.elapsed().as_micros()).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
-    }
-
-    /// Sidecar drain - the detached merge path: per-result engine-mutex
-    /// acquisition (result-queue recv), stale-check, insert, streaming emit.
-    /// Ends at channel close: every bin Sender drops only after its final
-    /// sentinel, and recv drains all buffered msgs before reporting close.
-    fn sidecar_drain(
-        rx: std::sync::mpsc::Receiver<DepMsg>,
-        shard: &parking_lot::Mutex<MergeShard>,
-        merge: &MergeCtx,
-        t0: Instant,
-    ) {
-        for msg in rx {
-            let DepMsg::Solved {
-                pid,
-                done_ms,
-                result,
-            } = msg
-            else {
-                continue; // `BinDone` sentinel (bin join)
-            };
-            let hold_start = Instant::now();
-            let mut guard = dep_lock(shard, merge);
-            apply_one(merge, &mut guard, Phase::Sidecar, pid, done_ms, result, t0);
-            drop(guard);
-            merge.metrics.hold_us.fetch_add(
-                u64::try_from(hold_start.elapsed().as_micros()).unwrap_or(u64::MAX),
-                Ordering::Relaxed,
-            );
-        }
-    }
-
-    /// CSV row for one measured cycle.
-    struct DepRow {
-        strategy: &'static str,
-        threads: usize,
-        items: usize,
-        cycle_ret_ms: f64,
-        makespan_ms: f64,
-        merge_tail_ms: f64,
-        expiry_overhead_us: f64,
-        applied: usize,
-        in_cycle_applied: usize,
-        detached_applied: usize,
-        p50_delivery_ms: f64,
-        p95_delivery_ms: f64,
-        p99_delivery_ms: f64,
-        mutex_acq: usize,
-        mutex_hold_us: u64,
-        mutex_wait_us: u64,
-        mutex_blocks: usize,
-        stale_checks: usize,
-        spawns: usize,
-        bins_done: usize,
-        max_clones: usize,
-        median_solve_us: f64,
-        budget_ms: f64,
-    }
-
-    impl DepRow {
-        fn csv_line(&self, pass: usize) -> String {
-            format!(
-                "{},{},{},{},{cr:.2},{mk:.2},{tail:.2},{oh:.1},{applied},{ic},{det},{p50:.3},{p95:.3},{p99:.3},{acq},{hold},{wait},{blocks},{stale},{spawns},{done},{clones},{median:.1},{budget:.3}",
-                self.strategy,
-                self.threads,
-                pass,
-                self.items,
-                cr = self.cycle_ret_ms,
-                mk = self.makespan_ms,
-                tail = self.merge_tail_ms,
-                oh = self.expiry_overhead_us,
-                applied = self.applied,
-                ic = self.in_cycle_applied,
-                det = self.detached_applied,
-                p50 = self.p50_delivery_ms,
-                p95 = self.p95_delivery_ms,
-                p99 = self.p99_delivery_ms,
-                acq = self.mutex_acq,
-                hold = self.mutex_hold_us,
-                wait = self.mutex_wait_us,
-                blocks = self.mutex_blocks,
-                stale = self.stale_checks,
-                spawns = self.spawns,
-                done = self.bins_done,
-                clones = self.max_clones,
-                median = self.median_solve_us,
-                budget = self.budget_ms,
-            )
-        }
-    }
-
-    /// Calibration-derived hybrid detach budget (recorded with the row).
-    struct Budget {
-        median_solve_us: f64,
-        budget_ms: f64,
-    }
-
-    /// One measured cycle (strategy x threads x pass).
-    fn run_dep_cycle(
-        strategy: Strategy,
-        items: &[GaugePath],
-        bins: &[Vec<usize>],
-        solve_ctx: &Arc<SolveCycleShared>,
-        threads: usize,
-        budget: &Budget,
-        max_clones: &AtomicUsize,
-    ) -> DepRow {
-        let t0 = Instant::now();
-        let merge = MergeCtx {
-            stale: parking_lot::RwLock::new(hashbrown::HashSet::new()),
-            metrics: Arc::new(DepMetrics::default()),
-            lats: parking_lot::Mutex::new(Vec::new()),
-            last_apply_ms: parking_lot::Mutex::new(0.0_f64),
-        };
-        let shard = parking_lot::Mutex::new(MergeShard::default());
-        let (tx, rx) = std::sync::mpsc::channel::<DepMsg>();
-        let executor = SolveExecutor::new("detached-probe-solve", threads);
-
-        let mut expiry_overhead_us = 0.0_f64;
-        let cycle_ret_ms;
-        match strategy {
-            Strategy::Hybrid => {
-                let budget = Duration::from_secs_f64(budget.budget_ms / 1_000.0);
-                spawn_dep_bins(&executor, items, bins, solve_ctx, &merge.metrics, &tx, t0);
-                drop(tx); // close the pipe when the bins finish (drain end)
-                drain_incycle(&rx, &shard, &merge, Some(t0 + budget), t0);
-                cycle_ret_ms = elapsed_ms(t0); // budget-expiry release point
-                let expiry = Instant::now();
-                // Detach: hand the pipe to the sidecar; in-flight bins keep
-                // running and their results take the detached merge path.
-                // The scope ends exactly when the sidecar finishes draining
-                // (channel close = every bin joined), i.e. the merge tail.
-                std::thread::scope(|s| {
-                    s.spawn(|| sidecar_drain(rx, &shard, &merge, t0));
-                    // Spawn-call cost only (thread park + pipe hand-off); the
-                    // scope wait itself runs to full merge completion.
-                    expiry_overhead_us = expiry.elapsed().as_secs_f64() * 1_000_000.0;
-                });
-            }
-            Strategy::Detach => {
-                // Sidecar from t0; the cycle returns at enqueue end and every
-                // result rides the detached merge path. The scope ends when
-                // the sidecar has drained everything (all bins joined).
-                let mut enqueue_end_ms = 0.0_f64;
-                std::thread::scope(|s| {
-                    s.spawn(|| sidecar_drain(rx, &shard, &merge, t0));
-                    spawn_dep_bins(&executor, items, bins, solve_ctx, &merge.metrics, &tx, t0);
-                    drop(tx); // close the pipe when the bins finish
-                    enqueue_end_ms = elapsed_ms(t0); // enqueue end
-                });
-                cycle_ret_ms = enqueue_end_ms;
-                expiry_overhead_us = 0.0;
-            }
-            Strategy::InCycle => {
-                spawn_dep_bins(&executor, items, bins, solve_ctx, &merge.metrics, &tx, t0);
-                drop(tx); // close the pipe when the bins finish
-                drain_incycle(&rx, &shard, &merge, None, t0);
-                cycle_ret_ms = elapsed_ms(t0); // whole cycle in-line
-            }
-        }
-
-        let makespan_ms = *merge.last_apply_ms.lock();
-        let lats_snapshot = merge.lats.lock().clone();
-        DepRow {
-            strategy: strategy.name(),
-            threads,
-            items: items.len(),
-            cycle_ret_ms,
-            makespan_ms,
-            merge_tail_ms: makespan_ms - cycle_ret_ms,
-            expiry_overhead_us,
-            applied: merge.metrics.applied.load(Ordering::Relaxed),
-            in_cycle_applied: merge.metrics.in_cycle_applied.load(Ordering::Relaxed),
-            detached_applied: merge.metrics.detached_applied.load(Ordering::Relaxed),
-            p50_delivery_ms: pct(&lats_snapshot, 0.5),
-            p95_delivery_ms: pct(&lats_snapshot, 0.95),
-            p99_delivery_ms: pct(&lats_snapshot, 0.99),
-            mutex_acq: merge.metrics.acq.load(Ordering::Relaxed),
-            mutex_hold_us: merge.metrics.hold_us.load(Ordering::Relaxed),
-            mutex_wait_us: merge.metrics.wait_us.load(Ordering::Relaxed),
-            mutex_blocks: merge.metrics.blocks.load(Ordering::Relaxed),
-            stale_checks: merge.metrics.stale_checks.load(Ordering::Relaxed),
-            spawns: merge.metrics.spawns.load(Ordering::Relaxed),
-            bins_done: merge.metrics.bins_done.load(Ordering::Relaxed),
-            max_clones: max_clones.load(Ordering::Relaxed),
-            median_solve_us: budget.median_solve_us,
-            budget_ms: budget.budget_ms,
-        }
-    }
-
-    fn median(v: &mut [f64]) -> f64 {
-        if v.is_empty() {
-            return 0.0;
-        }
-        v.sort_by(f64::total_cmp);
-        v[v.len() / 2]
-    }
-
-    #[test]
-    #[ignore = "offline detached-merge A/B probe; run with --ignored; env: DEGENBOT_PROBE_FIXTURE / \
-        DEGENBOT_PROBE_NS / DEGENBOT_PROBE_PASSES"]
-    fn executor_detached_probe_runs_and_prints_csv() {
-        raise_nice_for_lane_courtesy();
-        let raw = load_corpus();
-        let items_total = raw.len();
-        let solve_ctx = probe_ctx();
-        let threads: Vec<usize> = match std::env::var("DEGENBOT_PROBE_NS") {
-            Ok(s) => s.split(',').filter_map(|t| t.trim().parse().ok()).collect(),
-            Err(_) => vec![4, 8, 16],
-        };
-        let passes: usize = std::env::var("DEGENBOT_PROBE_PASSES")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(3);
-
-        // Calibration: solo per-path solve times on the shared ctx -> hybrid
-        // budget = 2x the median (detached tail only, per the A/B contract).
-        let calib_span = tracing::Span::none();
-        let mut per_us: Vec<f64> = Vec::with_capacity(items_total);
-        for (i, item) in raw.iter().enumerate() {
-            let t = Instant::now();
-            let _ = solve_one_path(&solve_ctx, &calib_span, i as u64, item);
-            per_us.push(t.elapsed().as_secs_f64() * 1_000_000.0);
-        }
-        let median_solve_us = median(&mut per_us);
-        let budget = Budget {
-            median_solve_us,
-            budget_ms: 2.0 * median_solve_us / 1_000.0,
-        };
-
-        let corpus_paths = items_total;
-        let med = median_solve_us;
-        let bud = budget.budget_ms;
-        eprintln!("corpus paths = {corpus_paths}");
-        eprintln!("median per-path solve = {med:.1}us; hybrid detach budget = {bud:.3}ms");
-        println!(
-            "strategy,threads,pass,items,cycle_ret_ms,makespan_ms,merge_tail_ms,expiry_overhead_us,applied,in_cycle_applied,detached_applied,p50_delivery_ms,p95_delivery_ms,p99_delivery_ms,mutex_acq,mutex_hold_us,mutex_wait_us,mutex_blocks,stale_checks,spawns,bins_done,max_clones,median_solve_us,budget_ms"
-        );
-        for &n in &threads {
-            let bins = prod_lpt_bins(&raw, n);
-            for strategy in [Strategy::Hybrid, Strategy::Detach, Strategy::InCycle] {
-                for pass in 0..passes {
-                    let gauge = GaugeState::new();
-                    let gauge_items = gauge_corpus(&raw, &gauge);
-                    let row = run_dep_cycle(
-                        strategy,
-                        &gauge_items,
-                        &bins,
-                        &solve_ctx,
-                        n,
-                        &budget,
-                        &gauge.max,
-                    );
-                    let applied = row.applied;
-                    assert_eq!(
-                        applied, items_total,
-                        "every path result must be applied before the row is reported"
-                    );
-                    let line = row.csv_line(pass);
-                    println!("{line}");
                 }
             }
         }

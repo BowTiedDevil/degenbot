@@ -101,6 +101,37 @@ fn is_multi_thread_runtime() -> bool {
         .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
 }
 
+impl EngineHandle {
+    /// SRQEK5 (WV62TX): if the just-returned `solve_dirty` ENQUEUED the
+    /// FIRST detached cycle, the merge sidecar is
+    /// not running yet — take the parked Receiver and spawn the sidecar now
+    /// (a plain `std::thread`, per the epic DEADLOCK note: a scoped rayon
+    /// install JOINS its tasks and can starve against a held `parking_lot`
+    /// guard; `std::thread` cannot deadlock with rayon). Later detached
+    /// enqueues reuse the running sidecar through the stored
+    /// `detached_merge_tx` — this is a cheap `Option` check for them.
+    /// Spawn failure aborts LOUDLY: a stranded merge pipe would silently
+    /// orphan every detached result (the preferred loud-failure posture).
+    fn spawn_detached_sidecar_if_pending(&self) {
+        let Some(merge_rx) = self.engine.lock().take_detached_merge_rx() else {
+            return;
+        };
+        let engine_arc = Arc::clone(&self.engine);
+        if let Err(err) = std::thread::Builder::new()
+            .name("arb-detached-merge".to_string())
+            .spawn(move || {
+                super::solver_dispatch::detached_merge_sidecar(&engine_arc, merge_rx);
+            })
+        {
+            tracing::error!(
+                error = %err,
+                "detached merge sidecar spawn failed — aborting (stranded merge pipe)"
+            );
+            std::process::abort();
+        }
+    }
+}
+
 impl Engine for EngineHandle {
     /// Hold-time invariant (ergo 3HYYGQ, assessed 2026-06 — no refactor).
     ///
@@ -124,6 +155,19 @@ impl Engine for EngineHandle {
     /// single hold for serialization. `latest_results()` is test/admin-only —
     /// grep-verified absent from the example hot loop, which is
     /// `async for batch in engine_registry.engine:`.
+    ///
+    /// **Detached-cycles exception (epic SRQEK5, task 4QKZE3):** when the
+    /// engine's `detached_solving` stance is ON, this hold collapses to
+    /// ENQUEUE end (~µs — resolve/gate/bookkeeping only): the solves run on
+    /// per-bin threads and each straggler merges on the sidecar thread under
+    /// its own per-item engine-Mutex acquisition. The `register_path`/
+    /// `deregister_path` serialization argument above still holds in detached
+    /// mode — those methods take the SAME engine Mutex the per-item merges
+    /// acquire, so no interleaving hazard is created by the split. The
+    /// `degenbot.solve.mutex_hold` histogram therefore shifts from the
+    /// 5-20ms range to the µs range ONLY while the stance is ON (default
+    /// OFF until epic SRQEK5 T3's soak flip); the historical in-cycle hold
+    /// text above stays true for the default engine.
     #[hotpath::measure(label = "EngineHandle::solve_dirty")]
     fn solve_dirty(&self, block: u64, metadata: &BlockMetadata) {
         // P5FEOI (epic 2LXPPV): the drain-path solve is one Jaeger node
@@ -141,6 +185,7 @@ impl Engine for EngineHandle {
             self.engine.lock().has_dirty_paths()
         }) {
             self.engine.lock().solve_dirty(block, metadata);
+            self.spawn_detached_sidecar_if_pending();
             return;
         }
         let span = tracing::info_span!("degenbot.arb.solve", block.number = block);
@@ -175,6 +220,28 @@ impl Engine for EngineHandle {
             }
             if let Some(p) = crate::instruments::pipeline() {
                 p.observe_mutex_hold_duration(hold_start.elapsed().as_secs_f64());
+            }
+            // SRQEK5 (WV62TX): the detached cycle's enqueue half returned
+            // inside \`engine.solve_dirty\` — if this was the FIRST detached
+            // enqueue the merge sidecar is not running yet. Take the parked
+            // Receiver and spawn it while the rx take + spawn stay atomic;
+            // the fresh thread parks on the engine lock until this hold ends.
+            if let Some(merge_rx) = engine.take_detached_merge_rx() {
+                let engine_arc = Arc::clone(&self.engine);
+                if let Err(err) = std::thread::Builder::new()
+                    .name("arb-detached-merge".to_string())
+                    .spawn(move || {
+                        super::solver_dispatch::detached_merge_sidecar(&engine_arc, merge_rx);
+                    })
+                {
+                    // LOUD abort (loud-failure discipline): a stranded merge
+                    // pipe would orphan every future detached result.
+                    tracing::error!(
+                        error = %err,
+                        "detached merge sidecar spawn failed — aborting (stranded merge pipe)"
+                    );
+                    std::process::abort();
+                }
             }
         }
         if let Some(p) = crate::instruments::pipeline() {
