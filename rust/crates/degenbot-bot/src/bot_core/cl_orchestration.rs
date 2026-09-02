@@ -2156,7 +2156,6 @@ mod registered_v4_fast_path_tests {
     }
 
     #[test]
-    #[expect(clippy::expect_used)]
     fn unknown_key_resolves_none() {
         let mut core = BotState::new();
         let pm = Address::from([0x44u8; 20]);

@@ -18,7 +18,9 @@
     clippy::print_stdout,
     clippy::similar_names,
     clippy::too_many_lines,
-    clippy::uninlined_format_args
+    clippy::cast_precision_loss,
+    clippy::items_after_statements,
+    clippy::vec_init_then_push
 )]
 
 extern crate degenbot_solvers;
@@ -508,10 +510,6 @@ fn run_micro_bench(micro_seqs: Option<Vec<IntV3TickRangeSequence>>) {
     println!(
         "  A crossing partition_point: {:.1} ns/op",
         a_us as f64 * 1e3 / ITERS as f64
-    );
-    (
-        "  A crossing partition_point: {:.1} ns/op",
-        a_us as f64 * 1e3 / ITERS as f64,
     );
     println!(
         "  B compute_swap_step_v3:     {:.1} ns/op",

@@ -315,11 +315,12 @@ fn main() {
             // replay-found profit the gate declined to solve) is surfaced as
             // the false-skip telemetry the gate work tracks.
             if replay_profitable {
-                let (opt, ho) = first.as_ref().unwrap();
-                let prof = ho.last().copied().unwrap_or(U256::ZERO) - *opt;
-                println!(
-                    "path {pid}: GATE-SKIPPED capture — ungated replay profit = {prof} wei (reconciliation telemetry, not a gate failure)"
-                );
+                if let Some((opt, ho)) = first.as_ref() {
+                    let prof = ho.last().copied().unwrap_or(U256::ZERO) - *opt;
+                    println!(
+                        "path {pid}: GATE-SKIPPED capture — ungated replay profit = {prof} wei (reconciliation telemetry, not a gate failure)"
+                    );
+                }
             }
             n_gate_skipped += 1;
             // Fall through to the per-path stat printing but do not fail the

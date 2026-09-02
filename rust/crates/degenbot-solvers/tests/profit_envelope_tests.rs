@@ -10,7 +10,9 @@
     clippy::doc_markdown,
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::print_stderr
+    clippy::print_stderr,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
 )]
 
 use std::sync::LazyLock;
@@ -38,11 +40,11 @@ fn bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
 fn cl_carried<'a>(
     seq: &'a IntV3TickRangeSequence,
     table: &'a Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>,
-) -> Option<HopMath<'a>> {
-    Some(HopMath::Cl(ClHop {
+) -> HopMath<'a> {
+    HopMath::Cl(ClHop {
         seq,
         crossings: Cow::Borrowed(table),
-    }))
+    })
 }
 
 fn p_at_tick(tick: i32) -> U256 {
@@ -426,7 +428,7 @@ fn precomputed_crossings_match_self_derived_bound() {
         let carried: Vec<Option<HopMath<'_>>> = owned_seqs
             .iter()
             .zip(crossing_owned.iter())
-            .map(|(s, t)| cl_carried(s, t))
+            .map(|(s, t)| Some(cl_carried(s, t)))
             .collect();
         let derived_bound = path_profit_bound(&derived, &GateDeps::offline());
         let carried_bound = path_profit_bound(&carried, &GateDeps::offline());
@@ -522,13 +524,13 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         1000,
     );
     let small_views = vec![
-        cl_carried(&seq1, &crossings1),
-        cl_carried(&seq2, &crossings2),
+        Some(cl_carried(&seq1, &crossings1)),
+        Some(cl_carried(&seq2, &crossings2)),
         Some(HopMath::V2(&small_tail)),
     ];
     let large_views = vec![
-        cl_carried(&seq1, &crossings1),
-        cl_carried(&seq2, &crossings2),
+        Some(cl_carried(&seq1, &crossings1)),
+        Some(cl_carried(&seq2, &crossings2)),
         Some(HopMath::V2(&large_tail)),
     ];
 
@@ -549,7 +551,7 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     let mut ranges = Vec::new();
     for i in 0..8i32 {
         ranges.push(mk_range(
-            1_000_000_000_u128 << (i as u32 * 16),
+            1_000_000_000_u128 << (i.cast_unsigned() * 16),
             p_at_tick(i * 10 - 40),
             p_at_tick(i * 10 - 45),
             p_at_tick(i * 10 + 5),
@@ -566,11 +568,11 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         1000,
     );
     let tiny_views = vec![
-        cl_carried(&ladder, &ladder_crossings),
+        Some(cl_carried(&ladder, &ladder_crossings)),
         Some(HopMath::V2(&tiny_tail)),
     ];
     let huge_views = vec![
-        cl_carried(&ladder, &ladder_crossings),
+        Some(cl_carried(&ladder, &ladder_crossings)),
         Some(HopMath::V2(&huge_tail)),
     ];
     let expected_tiny = path_profit_bound(&tiny_views, &GateDeps::offline());
@@ -611,8 +613,8 @@ fn prefix_cache_chains_through_v2_hops() {
     let c2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder2.crossings();
     let views = vec![
         Some(HopMath::V2(&v2)),
-        cl_carried(&ladder1, &c1),
-        cl_carried(&ladder2, &c2),
+        Some(cl_carried(&ladder1, &c1)),
+        Some(cl_carried(&ladder2, &c2)),
     ];
     let expected = path_profit_bound(&views, &GateDeps::offline());
     // The cache is process-global and other tests in this binary hit it
@@ -627,7 +629,6 @@ fn prefix_cache_chains_through_v2_hops() {
             hit_seen = true;
             break;
         }
-        continue;
     }
     assert!(
         hit_seen,

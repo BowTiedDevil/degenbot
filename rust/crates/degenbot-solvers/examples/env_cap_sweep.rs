@@ -1,7 +1,6 @@
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,
-    clippy::unwrap_used,
     clippy::cast_possible_truncation,
     clippy::exit
 )]

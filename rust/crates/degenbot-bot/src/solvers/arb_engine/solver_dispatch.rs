@@ -863,7 +863,7 @@ impl ArbitrageEngine {
         // (SU7MAE gate deepening — replaces the per-field atomic fan-out;
         // merge() is per-path, so this mutex is touched once per path).
         let gate_total: parking_lot::Mutex<::degenbot_solvers::profit_envelope::GateStats> =
-            parking_lot::Mutex::new(Default::default());
+            parking_lot::Mutex::new(::degenbot_solvers::profit_envelope::GateStats::default());
         // Degenerate-path capture config (M6776W): env parsed ONCE per cycle
         // at the owner; the gate itself reads no environment. The prefix-
         // composition cache is generationed by the block epoch inside the
