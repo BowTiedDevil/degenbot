@@ -1294,8 +1294,18 @@ impl BlockPump {
                     // MQUKB6 (epic KDUED5): the per-block beat — one entered
                     // span per observed header. Future solver/submission spans
                     // fired within this arm inherit it as parent for free.
-                    let new_block_span =
-                        tracing::info_span!("degenbot.pump.block", block.number = number);
+                    let new_block_span = tracing::info_span!(
+                        "degenbot.pump.block",
+                        block.number = number,
+                        // pre-solve gap decomposition, recorded at the settle
+                        // point (declared Empty so `record` at settle actually
+                        // lands — undeclared fields are silently dropped by
+                        // the OTel pass-through)
+                        pregap.logs = tracing::field::Empty,
+                        header_to_first_log_us = tracing::field::Empty,
+                        log_burst_us = tracing::field::Empty,
+                        settle_wait_us = tracing::field::Empty,
+                    );
                     // MQUKB6-T0 / JYCTXI: detached-at-creation so each header
                     // span is its own trace ROOT (the detach + its reasoning
                     // live on the telemetry seam). Children (logs, solves,
