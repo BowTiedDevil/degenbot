@@ -2316,6 +2316,182 @@
      "showLineNumbers": false
     }
    }
+  },
+  {
+   "id": 44,
+   "title": "Pre-solve gap decomposition: delivery / burst / settle (p50/p95)",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 34
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.50, sum(rate(degenbot_block_header_to_first_log_seconds_bucket[5m])) by (le))",
+     "legendFormat": "delivery p50",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.95, sum(rate(degenbot_block_header_to_first_log_seconds_bucket[5m])) by (le))",
+     "legendFormat": "delivery p95",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.50, sum(rate(degenbot_block_log_burst_seconds_bucket[5m])) by (le))",
+     "legendFormat": "burst p50",
+     "refId": "C"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.95, sum(rate(degenbot_block_log_burst_seconds_bucket[5m])) by (le))",
+     "legendFormat": "burst p95",
+     "refId": "D"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.50, sum(rate(degenbot_block_settle_wait_seconds_bucket[5m])) by (le))",
+     "legendFormat": "settle p50",
+     "refId": "E"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.95, sum(rate(degenbot_block_settle_wait_seconds_bucket[5m])) by (le))",
+     "legendFormat": "settle p95",
+     "refId": "F"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    },
+    "description": "Decomposition of the block-to-solve gap BEFORE the solver engages (phases recorded at each settle point): header-to-first-log = WS delivery latency; log_burst = diffusion of the block logs across the feed (first-to-last); settle_wait = debounce/quiesce hold after the last log. Jaeger: the same values ride as span fields (header_to_first_log_us, log_burst_us, settle_wait_us) on degenbot.pump.block."
+   }
+  },
+  {
+   "id": 45,
+   "title": "Pre-solve gap means vs header-to-solved (mean dissolve)",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 34
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "sum(rate(degenbot_block_header_to_first_log_seconds_sum[5m])) / sum(rate(degenbot_block_header_to_first_log_seconds_count[5m]))",
+     "legendFormat": "delivery (mean)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "sum(rate(degenbot_block_log_burst_seconds_sum[5m])) / sum(rate(degenbot_block_log_burst_seconds_count[5m]))",
+     "legendFormat": "burst (mean)",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "sum(rate(degenbot_block_settle_wait_seconds_sum[5m])) / sum(rate(degenbot_block_settle_wait_seconds_count[5m]))",
+     "legendFormat": "settle (mean)",
+     "refId": "C"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "sum(rate(degenbot_block_header_to_solved_seconds_sum[5m])) / sum(rate(degenbot_block_header_to_solved_seconds_count[5m]))",
+     "legendFormat": "header-to-solved (mean)",
+     "refId": "D"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    },
+    "description": "Mean phase durations vs the total race number. delivery + burst + settle + solve should approximately equal header-to-solved; a residual means unbudgeted time (queue wait, registration, submit queue)."
+   }
   }
  ],
  "templating": {
