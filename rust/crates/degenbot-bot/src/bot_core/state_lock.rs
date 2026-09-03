@@ -116,7 +116,7 @@ static ACTIVE_WRITES: LazyLock<Mutex<HashMap<usize, HoldRecord>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// A slow-hold finding produced by [`flag_aged_records`].
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlowHold {
     pub seq: u64,
     pub thread: String,
@@ -226,14 +226,56 @@ fn register_write(key: usize, location: &'static Location<'static>) -> u64 {
     seq
 }
 
-fn remove_read(key: usize, seq: u64) {
+/// Remove a read hold's registry entry, returning the removed record so the
+/// guard's `Drop` can report a slow hold that no later acquire flagged
+/// (epic K4ETHF T1: holders that release before the waiter stampede were
+/// invisible — the aged-check only runs on subsequent acquisitions).
+fn remove_read(key: usize, seq: u64) -> Option<HoldRecord> {
     let mut map = ACTIVE_READS.lock();
-    if let Some(records) = map.get_mut(&key) {
-        records.retain(|rec| rec.seq != seq);
-        if records.is_empty() {
-            map.remove(&key);
-        }
+    let records = map.get_mut(&key)?;
+    let idx = records.iter().position(|rec| rec.seq == seq)?;
+    let removed = records.remove(idx);
+    if records.is_empty() {
+        map.remove(&key);
     }
+    Some(removed)
+}
+
+/// Released read holds that exceeded the threshold (ring, oldest evicted).
+/// Complements [`flag_aged_records`]: a hold released before ANY later
+/// acquire (the waiter-stampede shape) is only visible here.
+static SLOW_READ_DROPS: LazyLock<Mutex<Vec<SlowHold>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Ring capacity for released slow-hold reports.
+const SLOW_READ_DROPS_CAP: usize = 128;
+
+/// Record a released read hold that exceeded the threshold: ring entry +
+/// warn (mirrors [`log_slow_holds`]'s message shape).
+fn record_slow_read_drop(hold: SlowHold) {
+    let mut msg = format!(
+        "[state-lock] read guard (drop-report) held {}ms by {} at {}",
+        hold.held_ms, hold.thread, hold.location,
+    );
+    if let Some(bt) = &hold.backtrace {
+        let _ = write!(msg, "\n{bt}");
+    }
+    tracing::warn!("{msg}");
+    let mut ring = SLOW_READ_DROPS.lock();
+    while ring.len() >= SLOW_READ_DROPS_CAP {
+        ring.remove(0);
+    }
+    ring.push(hold);
+}
+
+/// Recent released slow read holds (forensic surface: query + dump).
+#[must_use]
+pub fn recent_slow_read_drops() -> Vec<SlowHold> {
+    SLOW_READ_DROPS.lock().clone()
+}
+
+#[cfg(test)]
+fn clear_recent_slow_read_drops() {
+    SLOW_READ_DROPS.lock().clear();
 }
 
 /// Snapshot the active read holds for `key`: (thread, location, `held_ms`).
@@ -283,6 +325,23 @@ pub fn dump_active_holds() -> String {
             if let Some(bt) = &rec.backtrace {
                 let _ = writeln!(out, "{bt}");
             }
+        }
+    }
+    // Released slow holds (K4ETHF T1): a hold that dropped before any later
+    // acquire fired the aged-check is invisible in the active table — the
+    // drop-time ring is the only record of it.
+    let drops = SLOW_READ_DROPS.lock();
+    if !drops.is_empty() {
+        let _ = writeln!(
+            out,
+            "  recent slow read drops (released before a later acquire could flag them):"
+        );
+        for hold in drops.iter().rev().take(16) {
+            let _ = writeln!(
+                out,
+                "    seq={} held={}ms thread={} at {}",
+                hold.seq, hold.held_ms, hold.thread, hold.location,
+            );
         }
     }
     out
@@ -468,7 +527,24 @@ impl<T> Drop for StateReadGuard<'_, T> {
     fn drop(&mut self) {
         // seq == 0 is the gated-off sentinel (never registered; no removal).
         if self.seq != 0 {
-            remove_read(self.key, self.seq);
+            let removed = remove_read(self.key, self.seq);
+            // Drop-time slow-hold report (epic K4ETHF T1): complements the
+            // aged-check. The observed stall shape is holder-releases-first,
+            // waiter-stampede-second — the aged-check (which only runs on a
+            // later acquire) never saw the long holder. Warn-once: a hold the
+            // aged-check already flagged is not re-reported here.
+            if let Some(rec) = removed {
+                let held = now_ms().saturating_sub(rec.acquired_ms);
+                if !rec.warned && held >= warn_threshold_ms() {
+                    record_slow_read_drop(SlowHold {
+                        seq: rec.seq,
+                        thread: rec.thread,
+                        location: rec.location.to_string(),
+                        held_ms: held,
+                        backtrace: rec.backtrace,
+                    });
+                }
+            }
         }
     }
 }
@@ -751,6 +827,100 @@ mod tests {
         drop(map);
         drop(second);
         drop(holder);
+        set_warn_threshold_ms(500);
+        set_diag_enabled_for_tests(false);
+    }
+
+    // ---- read-hold drop-time forensics (epic K4ETHF T1: the ~3.1s stall) ----
+    //
+    // The soak-observed hole: a read guard that exceeds the threshold and
+    // releases BEFORE any later acquire fires the aged-check leaves the
+    // registry unreported (the holder drops, THEN the waiter stampede
+    // acquires — flag_aged_records never sees it). The drop must report it.
+
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn slow_read_hold_reports_at_drop() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
+        set_warn_threshold_ms(1);
+        clear_recent_slow_read_drops();
+        let lock: StateLock<u8> = StateLock::new(0);
+        let key = lock.key_of();
+        let holder = lock.read();
+        // Age the hold synthetically (no sleeping in tests). Matches the
+        // observed stall shape: holder releases first, waiters arrive after.
+        {
+            let mut map = ACTIVE_READS.lock();
+            let records = map.get_mut(&key).expect("holder registered");
+            records[0].acquired_ms = now_ms().saturating_sub(3_100);
+        }
+        let dump_before = dump_active_holds();
+        assert!(dump_before.contains("state_lock.rs"), "holder still active");
+        drop(holder);
+        {
+            let map = ACTIVE_READS.lock();
+            assert!(map.get(&key).is_none(), "drop removed the hold");
+        }
+        let drops = recent_slow_read_drops();
+        assert_eq!(
+            drops.len(),
+            1,
+            "a hold released slow with no intervening acquire must be reported at drop"
+        );
+        assert!(
+            drops[0].location.contains("state_lock.rs"),
+            "drop report names the acquire site, got {}",
+            drops[0].location
+        );
+        assert!(drops[0].held_ms >= 3_099, "drop report carries the hold ms");
+        // The forensic dump must surface released slow holds too.
+        let dump = dump_active_holds();
+        assert!(
+            dump.contains("recent slow read drops"),
+            "dump lists released slow holds, got {dump}"
+        );
+        set_warn_threshold_ms(500);
+        set_diag_enabled_for_tests(false);
+    }
+
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn fast_read_drop_is_silent_and_warned_hold_not_double_reported() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
+        set_warn_threshold_ms(500);
+        clear_recent_slow_read_drops();
+        let lock: StateLock<u8> = StateLock::new(0);
+        let key = lock.key_of();
+        {
+            let guard = lock.read();
+            let _ = *guard;
+            // held ~0ms — under threshold: silent drop
+        }
+        assert!(
+            recent_slow_read_drops().is_empty(),
+            "fast drop must not be reported"
+        );
+        // A hold already flagged by the aged-check must NOT be re-reported
+        // at drop (warn once, whichever path fires first).
+        set_warn_threshold_ms(1);
+        let holder = lock.read();
+        {
+            let mut map = ACTIVE_READS.lock();
+            let records = map.get_mut(&key).expect("holder registered");
+            records[0].acquired_ms = now_ms().saturating_sub(10_000);
+        }
+        advance_clock_ms(60_000);
+        let second = lock.read(); // aged-check flags + warns the first hold
+        let flagged = recent_slow_read_drops().len();
+        drop(second);
+        drop(holder);
+        assert_eq!(
+            recent_slow_read_drops().len(),
+            flagged,
+            "an already-warned hold must not be re-reported at drop"
+        );
         set_warn_threshold_ms(500);
         set_diag_enabled_for_tests(false);
     }
