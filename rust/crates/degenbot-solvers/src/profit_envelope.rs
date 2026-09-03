@@ -969,6 +969,10 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
         fu: f64,
         idx: usize,
     }
+    gate_tls(|t| {
+        t.prune_calls += 1;
+        t.prune_lines += lines.len() as u64;
+    });
     if lines.len() < 2 {
         return;
     }
@@ -1024,30 +1028,71 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
             }
         })
         .collect();
-    let exact_at_zero = |i: usize| lines[i].eval(&U256::ZERO);
-    let exact_at_upper = |i: usize| lines[i].eval(&upper);
+    // GATE-COMPOSE-1: memoize the exact endpoint evals lazily. The
+    // comparator below re-evaluates BOTH lines on every f64-key tie; each
+    // eval pays a 512-bit ceil_div. Eager precompute of all 2n evals
+    // LOST on this corpus (ties are not that dense), so cache on first
+    // use instead: never-tied lines keep paying nothing, tied lines pay
+    // once. Evals are pure and deterministic, so the memoized values are
+    // byte-identical to the closure form.
+    let mut exact_at_zero_memo: Vec<Option<I512>> = vec![None; lines.len()];
+    let mut exact_at_upper_memo: Vec<Option<I512>> = vec![None; lines.len()];
     indexed.sort_by(|x, y| {
         approx_cmp_ceil(x.f0, y.f0)
-            .then_with(|| exact_at_zero(x.idx).cmp(&exact_at_zero(y.idx)))
+            .then_with(|| {
+                if exact_at_zero_memo[x.idx].is_none() {
+                    exact_at_zero_memo[x.idx] = Some(lines[x.idx].eval(&U256::ZERO));
+                    gate_tls(|t| t.prune_tie_evals += 1);
+                }
+                if exact_at_zero_memo[y.idx].is_none() {
+                    exact_at_zero_memo[y.idx] = Some(lines[y.idx].eval(&U256::ZERO));
+                    gate_tls(|t| t.prune_tie_evals += 1);
+                }
+                exact_at_zero_memo[x.idx].cmp(&exact_at_zero_memo[y.idx])
+            })
             .then(approx_cmp_ceil(x.fu, y.fu))
-            .then_with(|| exact_at_upper(x.idx).cmp(&exact_at_upper(y.idx)))
+            .then_with(|| {
+                if exact_at_upper_memo[x.idx].is_none() {
+                    exact_at_upper_memo[x.idx] = Some(lines[x.idx].eval(&upper));
+                    gate_tls(|t| t.prune_tie_evals += 1);
+                }
+                if exact_at_upper_memo[y.idx].is_none() {
+                    exact_at_upper_memo[y.idx] = Some(lines[y.idx].eval(&upper));
+                    gate_tls(|t| t.prune_tie_evals += 1);
+                }
+                exact_at_upper_memo[x.idx].cmp(&exact_at_upper_memo[y.idx])
+            })
             .then(x.idx.cmp(&y.idx))
     });
     let mut min_f = f64::INFINITY;
     let mut min_idx = usize::MAX;
     let mut min_exact: Option<I512> = None;
-    let mut surv: Vec<Line> = Vec::with_capacity(lines.len() / 4);
+    let mut surv: Vec<Line> = Vec::with_capacity(lines.len());
     for item in &indexed {
         let keep = match approx_cmp_ceil(item.fu, min_f) {
             std::cmp::Ordering::Less => true,
             std::cmp::Ordering::Greater => false,
             std::cmp::Ordering::Equal => {
-                let cand = exact_at_upper(item.idx);
+                let cand = if let Some(v) = exact_at_upper_memo[item.idx] {
+                    v
+                } else {
+                    let v = lines[item.idx].eval(&upper);
+                    exact_at_upper_memo[item.idx] = Some(v);
+                    gate_tls(|t| t.prune_tie_evals += 1);
+                    v
+                };
                 if min_idx == usize::MAX {
                     cand < I512::MAX
                 } else {
-                    let mv = min_exact.get_or_insert_with(|| exact_at_upper(min_idx));
-                    cand < *mv
+                    let mv = if let Some(mv) = min_exact {
+                        mv
+                    } else {
+                        let mv = exact_at_upper_memo[min_idx]
+                            .unwrap_or_else(|| lines[min_idx].eval(&upper));
+                        min_exact = Some(mv);
+                        mv
+                    };
+                    cand < mv
                 }
             }
         };
@@ -1067,6 +1112,7 @@ fn prune(lines: &mut Vec<Line>, upper: U256) {
         surv.push(lines[indexed[0].idx]);
     }
     gate_tls(|t| t.prune_stage1_ns += stage1_t0.elapsed().as_nanos());
+    gate_tls(|t| t.prune_hull_lines += surv.len() as u64);
     if surv.len() < 2 {
         *lines = surv;
         return;
@@ -1213,6 +1259,14 @@ pub struct GateStats {
     pub search_ns: u128,
     /// Affine composition pairs evaluated (diagnostic).
     pub pairs: u64,
+    /// GATE-COMPOSE-1: prune invocations (diagnostic).
+    pub prune_calls: u64,
+    /// GATE-COMPOSE-1: total lines entering prune (diagnostic).
+    pub prune_lines: u64,
+    /// GATE-COMPOSE-1: stage-1 tie evals actually computed (diagnostic).
+    pub prune_tie_evals: u64,
+    /// GATE-COMPOSE-1: stage-2 hull input lines (diagnostic).
+    pub prune_hull_lines: u64,
 }
 
 impl GateStats {
@@ -1235,6 +1289,10 @@ impl GateStats {
         postprune_reduce_ns: 0,
         sample_ns: 0,
         pairs: 0,
+        prune_calls: 0,
+        prune_lines: 0,
+        prune_tie_evals: 0,
+        prune_hull_lines: 0,
     };
 
     /// Aggregate one worker thread's per-path counters into these cycle
@@ -1258,6 +1316,10 @@ impl GateStats {
         self.postprune_reduce_ns += other.postprune_reduce_ns;
         self.sample_ns += other.sample_ns;
         self.pairs += other.pairs;
+        self.prune_calls += other.prune_calls;
+        self.prune_lines += other.prune_lines;
+        self.prune_tie_evals += other.prune_tie_evals;
+        self.prune_hull_lines += other.prune_hull_lines;
     }
 }
 

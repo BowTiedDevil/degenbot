@@ -53,6 +53,19 @@ fn parse_hop(v: &Value) -> Option<IntV3TickRangeSequence> {
 #[test]
 #[expect(clippy::too_many_lines)]
 fn replay_captured_heavy_paths() {
+    #[derive(Default, Clone, Copy)]
+    struct SubPhases {
+        product_us: u64,
+        prune_stage1_us: u64,
+        prune_hull_us: u64,
+        reduce_us: u64,
+        sample_us: u64,
+        boundaries: u64,
+        prune_calls: u64,
+        prune_lines: u64,
+        prune_tie_evals: u64,
+        prune_hull_lines: u64,
+    }
     // Default to the committed heavy-CL corpus (via the .zst-aware fixture
     // reader) so the test is reproducible on CI; DBENCH_CAPTURES still points
     // at a fresh local capture for diagnostic runs.
@@ -69,6 +82,7 @@ fn replay_captured_heavy_paths() {
         .unwrap_or(200);
     let mut n = 0usize;
     let mut rows = Vec::new();
+    let mut sub = SubPhases::default();
     for line in content.lines().filter(|l| !l.trim().is_empty()).take(max) {
         let doc: Value = serde_json::from_str(line).expect("capture JSON");
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
@@ -104,6 +118,16 @@ fn replay_captured_heavy_paths() {
         let gs = degenbot_solvers::profit_envelope::take_last_gate_stats();
         let (d_ns, c_ns, s_ns) = (gs.derive_ns, gs.compose_ns, gs.search_ns);
         let pairs = gs.pairs;
+        sub.product_us += (gs.product_ns / 1_000) as u64;
+        sub.prune_stage1_us += (gs.prune_stage1_ns / 1_000) as u64;
+        sub.prune_hull_us += (gs.prune_hull_ns / 1_000) as u64;
+        sub.reduce_us += (gs.postprune_reduce_ns / 1_000) as u64;
+        sub.sample_us += (gs.sample_ns / 1_000) as u64;
+        sub.boundaries += gs.boundaries_composed;
+        sub.prune_calls += gs.prune_calls;
+        sub.prune_lines += gs.prune_lines;
+        sub.prune_tie_evals += gs.prune_tie_evals;
+        sub.prune_hull_lines += gs.prune_hull_lines;
         let t0 = Instant::now();
         let outcome = degenbot_solvers::mobius_v3_int::solve_cl_derived(&seq_refs);
         let result = outcome.result;
@@ -162,6 +186,11 @@ fn replay_captured_heavy_paths() {
     let tot_c: u128 = rows.iter().map(|r| r.9 as u128).sum();
     let tot_s: u128 = rows.iter().map(|r| r.10 as u128).sum();
     println!("gate totals: wall={tot_gate}us derive={tot_d}us compose={tot_c}us search={tot_s}us");
+    println!(
+        "compose sub-phases: product={}us prune_stage1={}us prune_hull={}us reduce={}us sample={}us boundaries={} prune_calls={} prune_lines={} tie_evals={} hull_lines={} pairs={}",
+        sub.product_us, sub.prune_stage1_us, sub.prune_hull_us, sub.reduce_us, sub.sample_us, sub.boundaries,
+        sub.prune_calls, sub.prune_lines, sub.prune_tie_evals, sub.prune_hull_lines, rows.iter().map(|r| r.11 as u64).sum::<u64>()
+    );
     let tot_sims: usize = rows.iter().map(|r| r.4).sum();
     let wall_us: u128 = rows.iter().map(|r| r.0 as u128).sum();
     println!(
