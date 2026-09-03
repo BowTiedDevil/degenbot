@@ -65,6 +65,9 @@ fn replay_captured_heavy_paths() {
         prune_lines: u64,
         prune_tie_evals: u64,
         prune_hull_lines: u64,
+        merge_selected: u64,
+        merge_enum: u64,
+        merge_fallbacks: u64,
     }
     // Default to the committed heavy-CL corpus (via the .zst-aware fixture
     // reader) so the test is reproducible on CI; DBENCH_CAPTURES still points
@@ -128,6 +131,9 @@ fn replay_captured_heavy_paths() {
         sub.prune_lines += gs.prune_lines;
         sub.prune_tie_evals += gs.prune_tie_evals;
         sub.prune_hull_lines += gs.prune_hull_lines;
+        sub.merge_selected += gs.merge_selected;
+        sub.merge_enum += gs.pairs_enumerated;
+        sub.merge_fallbacks += gs.merge_legacy_fallbacks;
         let t0 = Instant::now();
         let outcome = degenbot_solvers::mobius_v3_int::solve_cl_derived(&seq_refs);
         let result = outcome.result;
@@ -187,9 +193,10 @@ fn replay_captured_heavy_paths() {
     let tot_s: u128 = rows.iter().map(|r| r.10 as u128).sum();
     println!("gate totals: wall={tot_gate}us derive={tot_d}us compose={tot_c}us search={tot_s}us");
     println!(
-        "compose sub-phases: product={}us prune_stage1={}us prune_hull={}us reduce={}us sample={}us boundaries={} prune_calls={} prune_lines={} tie_evals={} hull_lines={} pairs={}",
+        "compose sub-phases: product={}us prune_stage1={}us prune_hull={}us reduce={}us sample={}us boundaries={} prune_calls={} prune_lines={} tie_evals={} hull_lines={} merge_selected={} merge_enum={} merge_fallbacks={}",
         sub.product_us, sub.prune_stage1_us, sub.prune_hull_us, sub.reduce_us, sub.sample_us, sub.boundaries,
-        sub.prune_calls, sub.prune_lines, sub.prune_tie_evals, sub.prune_hull_lines, rows.iter().map(|r| r.11 as u64).sum::<u64>()
+        sub.prune_calls, sub.prune_lines, sub.prune_tie_evals, sub.prune_hull_lines,
+        sub.merge_selected, sub.merge_enum, sub.merge_fallbacks
     );
     let tot_sims: usize = rows.iter().map(|r| r.4).sum();
     let wall_us: u128 = rows.iter().map(|r| r.0 as u128).sum();

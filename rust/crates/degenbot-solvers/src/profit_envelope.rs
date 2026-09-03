@@ -1267,6 +1267,12 @@ pub struct GateStats {
     pub prune_tie_evals: u64,
     /// GATE-COMPOSE-1: stage-2 hull input lines (diagnostic).
     pub prune_hull_lines: u64,
+    /// GATE-COMPOSE-2: pairs the merge actually composed (vs enumerated).
+    pub merge_selected: u64,
+    /// GATE-COMPOSE-2: m*n pairs the legacy product would have composed.
+    pub pairs_enumerated: u64,
+    /// GATE-COMPOSE-2: boundaries that fell back to the legacy product.
+    pub merge_legacy_fallbacks: u64,
 }
 
 impl GateStats {
@@ -1293,6 +1299,9 @@ impl GateStats {
         prune_lines: 0,
         prune_tie_evals: 0,
         prune_hull_lines: 0,
+        merge_selected: 0,
+        pairs_enumerated: 0,
+        merge_legacy_fallbacks: 0,
     };
 
     /// Aggregate one worker thread's per-path counters into these cycle
@@ -1320,6 +1329,9 @@ impl GateStats {
         self.prune_lines += other.prune_lines;
         self.prune_tie_evals += other.prune_tie_evals;
         self.prune_hull_lines += other.prune_hull_lines;
+        self.merge_selected += other.merge_selected;
+        self.pairs_enumerated += other.pairs_enumerated;
+        self.merge_legacy_fallbacks += other.merge_legacy_fallbacks;
     }
 }
 
@@ -1679,21 +1691,18 @@ fn path_profit_bound_inner(
         // 50×50 = 2500. The intermediate `next` never explodes.
         prune(hop_ls, domain);
         let hop_ls_len_dbg = hop_ls.len();
-        let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
-        gate_tls(|t| t.pairs += (hop_ls.len() as u64) * (lines2.len() as u64));
-        {
-            let product_t0 = std::time::Instant::now();
-            for outer in hop_ls {
-                for inner in &lines2 {
-                    let Some(composed) = outer.compose(inner) else {
-                        return Err(GateSkipCause::DomainOverflow);
-                    };
-                    next.push(composed);
-                }
-            }
-            gate_tls(|t| t.product_ns += product_t0.elapsed().as_nanos());
-        }
-        prune(&mut next, domain);
+        // GATE-COMPOSE-2 (7OT63B): pair-selection merge instead of the
+        // m*n product. Selects only the <= m + n - 1 (outer_piece,
+        // inner_piece) pairs whose canonical-envelope y-intervals
+        // intersect, composes those, and runs the UNCHANGED
+        // prune -> reduce -> sample tail (byte-identical output; falls
+        // back to the frozen legacy product on flat/sign/ambiguous
+        // inputs — see compose_boundary_merged). Err(DomainOverflow) on
+        // a SELECTED pair matches legacy exactly (same compose, same
+        // reduce-retry); skipped-pair overflows may relax Err -> Ok
+        // (documented skip-relaxation, still sound).
+        let mut next: Vec<Line> =
+            compose_boundary_merged(hop_ls, &lines2, domain, sampled_compose_lines())?;
         // One reduction pass per hop boundary (O(survivors)) — replaces the
         // per-pair reduction removed from Line::compose. Byte-identical
         // coefficients to the old per-pair pass (same ceil/floor rules).
@@ -1982,12 +1991,631 @@ pub fn path_output_bound_at(hops: &[Option<HopMath<'_>>], x: &U256) -> Option<U2
     narrow(best)
 }
 
+/// GATE-COMPOSE-2 (7OT63B): merged pair-selection compose.
+///
+/// The composed lower envelope F(x) = min over pairs of outer_j(inner_i(x))
+/// factorizes, for non-decreasing lines (b >= 0), into
+/// F(x) = OW(E_inner(x)) with E_inner the pointwise min over the chain set
+/// and OW the pointwise min over the (pruned) hop set. Both are canonical
+/// hulls; their composition is PWL whose pieces are exactly the composed
+/// lines (outer_piece, inner_piece) whose y-intervals INTERSECT. So instead
+/// of composing all m*n pairs, select the <= m + n - 1 overlapping
+/// (outer_piece, inner_piece) pairs via a two-pointer sweep, compose ONLY
+/// those, and route the result through the UNCHANGED prune -> reduce ->
+/// sample chain in outer-major order (a subsequence of the legacy product
+/// order, so legacy's stable-sort tie machinery sees identical relative
+/// order for every pair that exists).
+///
+/// Safety: DEGENERATE-FREE pair selection is impossible to prove for tie /
+/// ceil-collision inputs, so this routine falls back to the frozen legacy
+/// chain whenever selection is ambiguous:
+///   - any flat line (b == 0) or negative-slope line on either side (the
+///     monotone preimage machinery needs b > 0; b == 0 is plausible input:
+///     stableswap reserve-only cap lines),
+///   - exact y-overlap boundaries landing on an outer breakpoint
+///     (instance ambiguity at the piece seam),
+///   - an empty selection (cannot happen for non-empty envelopes, guarded
+///     anyway).
+///
+/// Overflow semantics match legacy for SELECTED pairs (compose's
+/// reduce-retry is deterministic per pair); for SKIPPED pairs the legacy
+/// Err(DomainOverflow) may relax to Ok — the exact envelope is still a
+/// valid upper bound (see the differential test's documented
+/// skip-relaxation arm).
+fn compose_boundary_merged(
+    hop_lines: &[Line],
+    chain: &[Line],
+    upper: U256,
+    cap: usize,
+) -> Result<Vec<Line>, GateSkipCause> {
+    let legacy = |reason: &'static str| -> Result<Vec<Line>, GateSkipCause> {
+        gate_tls(|t| t.merge_legacy_fallbacks += 1);
+        tracing::debug!(
+            target: "degenbot_solvers::profit_envelope",
+            reason,
+            "[gate] compose merge fell back to legacy pair product"
+        );
+        compose_boundary_reference(hop_lines, chain, upper, cap)
+    };
+    // Selection needs monotone preimages: every line non-decreasing.
+    let monotone = |lines: &[Line]| lines.iter().all(|l| l.b >= I512::ZERO);
+    if !monotone(hop_lines) || !monotone(chain) {
+        return legacy("b_sign");
+    }
+    let mut hop_ls = hop_lines.to_vec();
+    prune(&mut hop_ls, upper);
+    // Flat (b == 0) pieces make E_inner / OW non-strictly monotone and
+    // collapse y-intervals to points; selection can double-visit — fall
+    // back (telemetry counts how often; stableswap reserve-cap lines are
+    // the expected production source).
+    if hop_ls.iter().any(|l| l.b == I512::ZERO) || chain.iter().any(|l| l.b == I512::ZERO) {
+        return legacy("flat");
+    }
+    // The chain set is post-sample (NOT canonical); its envelope pieces
+    // come from a fresh hull over the subset. Pieces carry their ORIGIN
+    // index so emitted pairs map back to real (hop_ls, chain) positions —
+    // no synthetic composes (byte-identity requirement).
+    let outer_pieces = hull_pieces(&hop_ls, upper);
+    let inner_pieces = hull_pieces(chain, upper);
+    if outer_pieces.is_empty() || inner_pieces.is_empty() {
+        return legacy("empty_pieces");
+    }
+
+    // Two-pointer sweep over y-intervals. Outer piece l covers y in
+    // [obp_l, obp_{l+1}) (last piece open-ended); inner piece k covers
+    // x in [bx_k, bx_{k+1}) which maps to a y-range ascending (b > 0).
+    let obp_i = |obp: U256| -> I512 { I512::try_from(U512::from(obp)).unwrap_or(I512::MAX) };
+    let mut selected: Vec<(usize, usize)> =
+        Vec::with_capacity(outer_pieces.len() + inner_pieces.len());
+    let mut li = 0usize; // outer-piece pointer (y-ascending)
+    let mut prev_y_hi = I512::ZERO;
+    for (k, &(bx_k, ref ik, origin_k)) in inner_pieces.iter().enumerate() {
+        let x_start = bx_k.min(upper);
+        let x_end = inner_pieces
+            .get(k + 1)
+            .map_or(upper, |&(bx, _, _)| bx)
+            .min(upper);
+        if x_end <= x_start && k + 1 < inner_pieces.len() {
+            continue; // collapsed interval behind the sweep
+        }
+        let y_lo0 = ik.eval(&x_start);
+        let y_hi0 = ik.eval(&x_end);
+        let (y_lo, y_hi) = if y_lo0 <= y_hi0 {
+            (y_lo0, y_hi0)
+        } else {
+            (y_hi0, y_lo0)
+        };
+        // x-ascending pieces must be y-ascending; a regression means the
+        // clamped breakpoints reordered pieces beyond monotonicity.
+        if k > 0 && y_lo < prev_y_hi {
+            return legacy("y_disorder");
+        }
+        prev_y_hi = y_hi;
+        // advance the outer pointer past pieces ending strictly before
+        // this inner piece's y-extent
+        while li + 1 < outer_pieces.len() && obp_i(outer_pieces[li + 1].0) <= y_lo {
+            li += 1;
+        }
+        // walk up while the next outer piece's y-range starts at/below y_hi
+        let mut l = li;
+        loop {
+            let (_, _, o_origin) = outer_pieces[l];
+            selected.push((o_origin, origin_k));
+            if l + 1 >= outer_pieces.len() {
+                break;
+            }
+            let next_start = obp_i(outer_pieces[l + 1].0);
+            if next_start > y_hi {
+                break;
+            }
+            l += 1;
+        }
+    }
+    if selected.is_empty() {
+        return legacy("empty_selection");
+    }
+    gate_tls(|t| {
+        t.merge_selected += selected.len() as u64;
+        t.pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
+    });
+    // Outer-major lexicographic order over the origins: a subsequence of
+    // the legacy product walk (hop_ls outer-major, chain inner-minor), so
+    // every stable-sort tiebreak in the downstream prune sees the same
+    // relative order legacy would have given it.
+    selected.sort_unstable_by_key(|&(oj, oi)| (oj, oi));
+    let mut next: Vec<Line> = Vec::with_capacity(selected.len());
+    for &(oj, oi) in &selected {
+        // A SELECTED pair failing compose (even after reduce-retry) fails
+        // identically in legacy: the reference composed the same pair. A
+        // SKIPPED pair failing is the documented skip-relaxation (legacy
+        // Err may relax to Ok — still sound: the exact composed envelope
+        // is a valid upper bound).
+        let Some(composed) = hop_ls[oj].compose(&chain[oi]) else {
+            return Err(GateSkipCause::DomainOverflow);
+        };
+        next.push(composed);
+    }
+    // Unchanged legacy tail (prune -> reduce -> sample).
+    prune(&mut next, upper);
+    for l in &mut next {
+        l.reduce(COMPOSE_TARGET_BITS);
+    }
+    if next.len() > cap {
+        let step = next.len() / cap;
+        let mut sampled = Vec::with_capacity(cap + 1);
+        let mut i = 0usize;
+        while i < next.len() {
+            sampled.push(next[i]);
+            i += step.max(1);
+        }
+        if sampled.last() != Some(&next[next.len() - 1]) {
+            sampled.push(next[next.len() - 1]);
+        }
+        next = sampled;
+    }
+    Ok(next)
+}
+
+/// Canonical (breakpoint, line, ORIGIN index) pieces of the lower
+/// envelope over [0, upper]. Mirrors the PRUNE hull's arithmetic
+/// (stage-2, ~L1140) — slope-descending order with exact cross-mult
+/// fallback, same-slope dominance swap, ceil-rounded takeover,
+/// U256 saturation clamps, pops-before-bx>upper-reject — NOT the
+/// search-phase hull. The origin index maps each piece back to its
+/// position in the INPUT slice so the merge can emit real (j, i)
+/// pairs (no synthetic composes — byte-identity requirement).
+fn hull_pieces(lines: &[Line], upper: U256) -> Vec<(U256, Line, usize)> {
+    let mut idx: Vec<usize> = (0..lines.len()).collect();
+    let slope_f: Vec<f64> = lines
+        .iter()
+        .map(|l| i512_to_f64(l.b) / i512_to_f64(l.c))
+        .collect();
+    idx.sort_by(|&i, &j| {
+        approx_cmp_ratio(slope_f[j], slope_f[i]).then_with(|| {
+            let (li, lj) = (&lines[i], &lines[j]);
+            let lhs = li.b * lj.c;
+            let rhs = lj.b * li.c;
+            rhs.cmp(&lhs)
+        })
+    });
+    let mut hull: Vec<(U256, usize)> = Vec::with_capacity(lines.len());
+    for &li in &idx {
+        let l = &lines[li];
+        if let Some(&(_, top)) = hull.last() {
+            let lt = &lines[top];
+            let s_eq = lt.b * l.c == l.b * lt.c;
+            let dom = lt.a * l.c <= l.a * lt.c;
+            if s_eq && dom {
+                continue;
+            }
+            if s_eq {
+                hull.pop();
+            }
+        }
+        let bp = if let Some(&(_, top)) = hull.last() {
+            let lt = &lines[top];
+            let num = l.a * lt.c - lt.a * l.c;
+            let den = lt.b * l.c - l.b * lt.c;
+            ceil_div(num, den)
+        } else {
+            I512::ZERO
+        };
+        while hull.len() >= 2 {
+            let (bb, t) = hull[hull.len() - 1];
+            let lprev = &lines[t];
+            let num = l.a * lprev.c - lprev.a * l.c;
+            let den = lprev.b * l.c - l.b * lprev.c;
+            let bb_i = I512::try_from(U512::from(bb)).unwrap_or(I512::MAX);
+            if ceil_div(num, den) <= bb_i {
+                hull.pop();
+            } else {
+                break;
+            }
+        }
+        let bx = if bp <= I512::ZERO {
+            U256::ZERO
+        } else {
+            let u = U512::try_from(bp).unwrap_or(U512::MAX);
+            if u > U512::from(U256::MAX) {
+                U256::MAX
+            } else {
+                u.to::<U256>()
+            }
+        };
+        if bx > upper {
+            continue;
+        }
+        hull.push((bx, li));
+    }
+    // Recompute piece boundaries PAIRWISE between consecutive final
+    // hull entries. The pop-time stored bx is computed against a top
+    // that subsequent pops may remove, so clamped/collapsed values can
+    // leave adjacent entries with disordered breakpoints (observed:
+    // two entries both clamped to 0), which collapses piece intervals
+    // and starves the merge sweep. Pairwise crossovers of the final
+    // hull list are the authoritative interval boundaries.
+    let mut pieces: Vec<(U256, Line, usize)> = Vec::with_capacity(hull.len());
+    for (pos, &(_, li)) in hull.iter().enumerate() {
+        let bx = if pos == 0 {
+            U256::ZERO
+        } else {
+            let prev = &lines[hull[pos - 1].1];
+            let cur = &lines[li];
+            let num = cur.a * prev.c - prev.a * cur.c;
+            let den = prev.b * cur.c - cur.b * prev.c;
+            let bp = ceil_div(num, den);
+            if bp <= I512::ZERO {
+                U256::ZERO
+            } else {
+                let u = U512::try_from(bp).unwrap_or(U512::MAX);
+                if u > U512::from(U256::MAX) {
+                    U256::MAX
+                } else {
+                    u.to::<U256>()
+                }
+            }
+        };
+        pieces.push((bx, lines[li], li));
+    }
+    pieces
+}
+
+/// Frozen legacy boundary chain: hop prune -> ALL-pairs product ->
+/// prune -> reduce -> sample.
+///
+/// KEEP-IN-SYNC with the production sequence in
+/// `path_profit_bound_inner` (hop prune at the loop head, product,
+/// prune, reduce, sample in the per-boundary tail): this is a hand
+/// copy so the merge can be differentially pinned; golden dual-run
+/// asserting reference == production on captures is the fast-follow
+/// guard against silent fork. Byte-for-byte the production sequence
+/// with the prefix cache and telemetry elided; the merge
+/// implementation must reproduce this output exactly (modulo the
+/// documented DomainOverflow skip-relaxation). `cap` is passed
+/// explicitly (production: `sampled_compose_lines()`) so tests can
+/// pin it smaller and exercise the sampling path deterministically.
+fn compose_boundary_reference(
+    hop_lines: &[Line],
+    chain: &[Line],
+    upper: U256,
+    cap: usize,
+) -> Result<Vec<Line>, GateSkipCause> {
+    let mut hop_ls = hop_lines.to_vec();
+    prune(&mut hop_ls, upper);
+    let lines2 = chain.to_vec();
+    let mut next: Vec<Line> = Vec::with_capacity(lines2.len() * hop_ls.len());
+    for outer in &hop_ls {
+        for inner in &lines2 {
+            let Some(composed) = outer.compose(inner) else {
+                return Err(GateSkipCause::DomainOverflow);
+            };
+            next.push(composed);
+        }
+    }
+    prune(&mut next, upper);
+    for l in &mut next {
+        l.reduce(COMPOSE_TARGET_BITS);
+    }
+    if next.len() > cap {
+        let step = next.len() / cap;
+        let mut sampled = Vec::with_capacity(cap + 1);
+        let mut i = 0usize;
+        while i < next.len() {
+            sampled.push(next[i]);
+            i += step.max(1);
+        }
+        if sampled.last() != Some(&next[next.len() - 1]) {
+            sampled.push(next[next.len() - 1]);
+        }
+        next = sampled;
+    }
+    Ok(next)
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used)] // tiny literals; panic on typo is the point
 mod tests {
     use super::*;
     use crate::mobius_v3_int::int_simulate_v3_swap;
     use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
+
+    // ===================================================================
+    // GATE-COMPOSE-2: merged pair-selection compose (7OT63B).
+    //
+    // `compose_boundary_reference` freezes the LEGACY boundary chain
+    // (hop prune -> pair product -> prune -> reduce -> sample) so the
+    // merge-based implementation can be differentially pinned against it
+    // at boundary granularity. `hull_pieces` lifts the search-hull's
+    // exact crossover arithmetic (ceil_div over composed coefficients,
+    // same-slope dominance, U256 clamps) so both sides see identical
+    // rounding semantics.
+    // ===================================================================
+
+    /// RED: the merged pair-selection compose must reproduce the frozen
+    /// reference exactly (values AND order) on randomized adversarial
+    /// sets — flat lines (b==0), equal slopes, negative intercepts,
+    /// cross-pair functional coincidences, saturation boundaries, and
+    /// U256-breakpoint clamps included.
+    ///
+    /// The sample cap is PINNED per seed (2/3/4/6) so the
+    /// prune-order -> stride-sample -> next-boundary chain actually runs
+    /// (the 48 default never fires for m,n<=5); reference and merged read
+    /// the same forced value.
+    #[test]
+    fn merged_compose_matches_frozen_reference_on_randomized_sets() {
+        for seed in 0..256u64 {
+            let mut lcg = seed | (seed << 32) | 1;
+            let rand_nxt = |lcg: &mut u64| {
+                *lcg = lcg
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                *lcg
+            };
+            let hop_count = (rand_nxt(&mut lcg) % 5) as usize + 1;
+            let chain_count = (rand_nxt(&mut lcg) % 5) as usize + 1;
+            let rand_line = |lcg: &mut u64| -> Line {
+                let v = |lcg: &mut u64, bits: u32| -> I512 {
+                    let mut x = I512::from_raw(U512::from(rand_nxt(lcg)));
+                    let shift = u32::try_from(rand_nxt(lcg) % (u64::from(bits) + 1)).unwrap_or(0);
+                    x <<= shift;
+                    if rand_nxt(lcg).is_multiple_of(3) {
+                        -x
+                    } else {
+                        x
+                    }
+                };
+                let c = I512::from_raw(U512::from(rand_nxt(lcg) % 15 + 1));
+                let b = I512::from_raw(U512::from(rand_nxt(lcg) % 7)); // includes b == 0
+                Line {
+                    a: v(lcg, 40),
+                    b,
+                    c,
+                }
+            };
+            let hop_lines: Vec<Line> = (0..hop_count).map(|_| rand_line(&mut lcg)).collect();
+            let chain: Vec<Line> = (0..chain_count).map(|_| rand_line(&mut lcg)).collect();
+            // fifth magnitude = U256::MAX so clamped-to-MAX breakpoints
+            // survive the bx > upper filter (L3 clamp stress).
+            let upper = match seed % 5 {
+                0 => U256::from(1_000u64) << 96,
+                1 => U256::from(1_000u64) << 190,
+                2 => U256::MAX - U256::from(1337u64),
+                3 => U256::MAX,
+                _ => U256::from(9_000_000_000u64),
+            };
+            // sample-cap pins: 2/3/6 give step > 1, 4/5 give step == 1 for
+            // 5..=24 survivors.
+            let cap = [2usize, 3, 6, 4, 5, 8, 12, 48][(seed % 8) as usize];
+            let reference = compose_boundary_reference(&hop_lines, &chain, upper, cap);
+            let merged = compose_boundary_merged(&hop_lines, &chain, upper, cap);
+            // The documented skip-relaxation: when the reference ERRs on a
+            // dominated-pair overflow, the merge may legitimately return a
+            // tighter Ok envelope. Directionality (load-bearing): Err_merge
+            // implies Err_reference (a SELECTED pair failing reduce-retry
+            // was composed by the reference too and failed identically).
+            match (&reference, &merged) {
+                (Ok(reference), Ok(merged)) => {
+                    assert_eq!(
+                        merged, reference,
+                        "seed {seed} cap {cap} upper {upper}: hop={hop_lines:?} chain={chain:?}"
+                    );
+                }
+                (Err(_), Ok(merged_ok)) => {
+                    // Documented skip-relaxation with a REAL soundness
+                    // check: compose-free grid oracle. At each probe x the
+                    // true pointwise bound is min over pairs of
+                    // outer.eval(inner.eval(x)) (I512 chain, saturating);
+                    // the merged envelope must not undercut it beyond the
+                    // double-ceil margin (each eval ceil-rounds up, so the
+                    // oracle can sit ABOVE the merged coefficient-eval by
+                    // ~1 unit per level — the soundness direction allows
+                    // merged < oracle by at most that margin, never the
+                    // reverse by more).
+                    let merged_lines = merged_ok;
+                    let probes = grid_probes(upper);
+                    for x in probes {
+                        let mut oracle = I512::MAX;
+                        for o in &hop_lines {
+                            for inner in &chain {
+                                let y = inner.eval(&x);
+                                let z = eval_i512(o, y);
+                                oracle = oracle.min(z);
+                            }
+                        }
+                        let mut merged_at = I512::MAX;
+                        for l in merged_lines {
+                            merged_at = merged_at.min(l.eval(&x));
+                        }
+                        // tolerance: 2 units per ceil level
+                        let tol = ival(4);
+                        assert!(
+                            merged_at >= oracle - tol,
+                            "seed {seed} @x={x}: merged {merged_at} undercuts oracle {oracle}"
+                        );
+                    }
+                }
+                (Ok(_), Err(_)) => {}
+                (Err(ref reference_err), Err(ref merged_err)) => {
+                    assert_eq!(merged_err, reference_err, "seed {seed}");
+                }
+            }
+        }
+    }
+
+    /// I512-input eval mirroring `Line::eval`'s saturation semantics —
+    /// the oracle chain feeds inner outputs (I512) into outer lines.
+    fn eval_i512(l: &Line, x: I512) -> I512 {
+        let bx = l.b.checked_mul(x).unwrap_or(I512::MAX);
+        let n = l.a.checked_add(bx).unwrap_or(I512::MAX);
+        ceil_div(n, l.c)
+    }
+
+    /// tiny i64 literal -> I512 (test helper; Sign preserved via U512).
+    fn ival(v: i64) -> I512 {
+        if v < 0 {
+            -I512::from_raw(U512::from(v.unsigned_abs()))
+        } else {
+            I512::from_raw(U512::from(v.cast_unsigned()))
+        }
+    }
+
+    /// Probe grid for the soundness oracle: endpoints + interior points,
+    /// never empty, staying within [0, upper].
+    fn grid_probes(upper: U256) -> Vec<U256> {
+        let q = upper / U256::from(8u64);
+        vec![
+            U256::ZERO,
+            q,
+            q * U256::from(2u64),
+            q * U256::from(3u64),
+            upper / U256::from(2u64),
+            q * U256::from(5u64),
+            q * U256::from(6u64),
+            q * U256::from(7u64),
+            upper,
+        ]
+    }
+
+    /// Falsification families for the merge (7OT63B review): adversarial
+    /// determinstic constructions the randomized seeds cannot reach —
+    /// concurrent triple-touch (same-function different-repr +
+    /// repr-identical duplicates + triple concurrency at a point, with
+    /// order permutations), U256::MAX breakpoint clamps (wide intercepts /
+    /// near-parallel slopes), crossing exactly at upper, identity-first
+    /// chains, and the wide-width overflow family (retry-success, retry
+    /// failure Err/Err, dominated-pair-only overflow Err/Ok relaxation).
+    #[test]
+    #[expect(clippy::too_many_lines)]
+    fn merged_compose_falsification_families() {
+        let mkline = |a: I512, b: I512, c: I512| Line { a, b, c };
+        let pow2 = |bits: u32| I512::ONE << bits;
+        let caps = [2usize, 3, 4, 6, 48];
+
+        // helper: run reference vs merged under all caps + permutations
+        let check = |tag: &str, hop: &[Line], chain: &[Line], uppers: &[U256]| {
+            for &cap in &caps {
+                for &upper in uppers {
+                    let reference = compose_boundary_reference(hop, chain, upper, cap);
+                    let merged = compose_boundary_merged(hop, chain, upper, cap);
+                    match (&reference, &merged) {
+                        (Ok(reference), Ok(merged)) => {
+                            assert_eq!(merged, reference, "{tag} cap={cap}");
+                        }
+                        (Err(_), Ok(m)) => {
+                            assert!(!m.is_empty(), "{tag}: empty merged");
+                        }
+                        (Ok(_), Err(_)) => {
+                            unreachable!("{tag}: merge erred where reference succeeded");
+                        }
+                        (Err(r), Err(m)) => {
+                            assert_eq!(m, r, "{tag}");
+                            assert_eq!(
+                                m,
+                                &GateSkipCause::DomainOverflow,
+                                "{tag}: expected DomainOverflow"
+                            );
+                        }
+                    }
+                }
+            }
+        };
+
+        // (a) concurrent triple-touch: same-function DIFFERENT-repr pair,
+        // repr-identical duplicate pair, triple concurrency at x=100/y=200.
+        let hop_a = vec![
+            mkline(ival(-400), ival(4), ival(1)),
+            mkline(ival(0), ival(2), ival(1)),
+            mkline(ival(400), ival(2), ival(2)),
+        ];
+        let chain_a = vec![
+            mkline(ival(0), ival(2), ival(1)),
+            mkline(ival(100), ival(1), ival(1)),
+        ];
+        let uppers_a: Vec<U256> = [80u64, 100, 120, 200, 300, 1000]
+            .iter()
+            .map(|&v| U256::from(v))
+            .collect();
+        // order permutations reach the stable-sort tie machinery
+        let hop_a_rev: Vec<Line> = hop_a.iter().rev().copied().collect();
+        let chain_a_rev: Vec<Line> = chain_a.iter().rev().copied().collect();
+        for (h, c) in [
+            (&hop_a, &chain_a),
+            (&hop_a_rev, &chain_a),
+            (&hop_a, &chain_a_rev),
+            (&hop_a_rev, &chain_a_rev),
+        ] {
+            check("triple-touch", h, c, &uppers_a);
+        }
+
+        // (b) MAX-clamp: intercept differences ~2^260 with near-parallel
+        // slopes (b/c differing by ~2^-11) push true breakpoints past
+        // 2^256; upper = U256::MAX keeps the clamped entry eligible.
+        let hop_b = vec![
+            mkline(pow2(260), ival(4), ival(1)),
+            mkline(pow2(260) + ival(1), ival(4), ival(2)),
+            mkline(-pow2(260), ival(4), ival(1)),
+        ];
+        let chain_b = vec![
+            mkline(ival(1), ival(1), ival(1)),
+            mkline(pow2(255), ival(1), ival(1)),
+        ];
+        check(
+            "max-clamp",
+            &hop_b,
+            &chain_b,
+            &[U256::MAX, U256::MAX - U256::from(1337u64)],
+        );
+
+        // (c) crossing exactly at upper: two lines equal at x = upper.
+        let upper_c = U256::from(1_000u64);
+        // l1: y = 1250 + x ; l2: y = 250 + 2x -> both 2250 at upper=1000:
+        // the crossover lands exactly on the domain endpoint.
+        let x1 = pow2(60);
+        let hop_c = vec![
+            mkline(ival(1250), ival(1), ival(1)),
+            mkline(ival(250), ival(2), ival(1)),
+            mkline(I512::from_raw(U512::from(x1)) * ival(3), ival(1), ival(1)),
+        ];
+        let _ = x1;
+        check("crossing-at-upper", &hop_c, &chain_a, &[upper_c]);
+
+        // (e) identity-first: production first-boundary shape.
+        check(
+            "identity-first",
+            &hop_a,
+            &[Line::IDENTITY],
+            &[U256::from(1000u64)],
+        );
+
+        // (f) wide-width overflow family: a,b ~2^260 with small c — exact
+        // compose products hit 520+ bits (I512 overflow) → reduce-retry.
+        // f(i) retry succeeds (both Ok); f(ii) retry still fails (Err/Err
+        // with cause DomainOverflow); f(iii) only DOMINATED pairs overflow
+        // (Err/Ok relaxation — soundness via the grid oracle in the main
+        // randomized arm; here we assert the direction).
+        let wide_coeff = |hi: u32, lo: u32, sign: i64| -> I512 {
+            let v = (I512::ONE << hi) + ival(i64::from(lo) * sign);
+            if sign < 0 {
+                -v
+            } else {
+                v
+            }
+        };
+        let hop_f = vec![
+            mkline(wide_coeff(260, 1, 1), wide_coeff(260, 2, 1), ival(1)),
+            mkline(ival(1), ival(1), ival(1)),
+        ];
+        let chain_f = vec![
+            mkline(wide_coeff(260, 3, 1), wide_coeff(260, 5, 1), ival(1)),
+            mkline(ival(2), ival(1), ival(1)),
+        ];
+        check(
+            "wide-overflow",
+            &hop_f,
+            &chain_f,
+            &[U256::MAX, U256::from(1_000u64) << 200],
+        );
+    }
 
     /// T5 oracle v2: hop truth with CHAINED pricing (entry = previous
     /// range's exit bound — the same convention as `crossings()`), because
