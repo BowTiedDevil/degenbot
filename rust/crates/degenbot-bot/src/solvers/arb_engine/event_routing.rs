@@ -45,25 +45,39 @@ impl ArbitrageEngine {
         // Expire stale buffered events in the V3/V4 buffers (ADR-003: both
         // now live on BotState).
         //
-        // XC7SWD: these two core.write() calls ran uninstrumented and own a
+        // XC7SWD: these core.write() calls ran uninstrumented and own a
         // ~2.8-3.1s window of every engine mutex hold (solve_duration p95
         // 4.85s vs the rebuild-cycle internal p95 of 0.46s; Jaeger children
-        // sum to <0.5s of a 3.1-3.3s solve span). Split lock WAIT (contention
-        // with the pump apply loop / Python bridge holding core locks) from
-        // expiry COMPUTE, per buffer, so the next run names the culprit.
-        let (v3_lock_wait_us, v3_work_us) =
-            self.expire_buffered_telemetry("v3", |core| core.expire_v3_buffered(block_number));
-        let (v4_lock_wait_us, v4_work_us) =
-            self.expire_buffered_telemetry("v4", |core| core.expire_v4_buffered(block_number));
-        tracing::info!(
-            target: "degenbot::solver",
-            block_number,
-            expire_v3_lock_wait_us = v3_lock_wait_us,
-            expire_v3_work_us = v3_work_us,
-            expire_v4_lock_wait_us = v4_lock_wait_us,
-            expire_v4_work_us = v4_work_us,
-            "[solve-phase] buffered-event expiry (pre-cycle) complete"
-        );
+        // sum to <0.5s of a 3.1-3.3s solve span).
+        //
+        // LPEOBI: with the cockpit default (`max_age=None`) the expiry is a
+        // provable no-op (expire() early-returns: "If `max_age` is `None`",
+        // liquidity_event_buffer.rs) - and each write still bought a ~2.9s
+        // writer-queue slot under the block-apply stream (lock WAIT p90
+        // 2.76-3.03s, work 0us in 4,298/4,298 samples). Skip lock-free when
+        // expiry is not configured.
+        if self.event_buffer_expiry_enabled {
+            let (v3_lock_wait_us, v3_work_us) =
+                self.expire_buffered_telemetry("v3", |core| core.expire_v3_buffered(block_number));
+            let (v4_lock_wait_us, v4_work_us) =
+                self.expire_buffered_telemetry("v4", |core| core.expire_v4_buffered(block_number));
+            tracing::info!(
+                target: "degenbot::solver",
+                block_number,
+                expire_v3_lock_wait_us = v3_lock_wait_us,
+                expire_v3_work_us = v3_work_us,
+                expire_v4_lock_wait_us = v4_lock_wait_us,
+                expire_v4_work_us = v4_work_us,
+                "[solve-phase] buffered-event expiry (pre-cycle) complete"
+            );
+        } else {
+            tracing::info!(
+                target: "degenbot::solver",
+                block_number,
+                expiry_enabled = false,
+                "[solve-phase] buffered-event expiry skipped (max_age unset)"
+            );
+        }
 
         // Snapshot all dirty sets atomically (RAYPAR engine-shard T3).
         let (dirty_v2, dirty_v3, dirty_v4) = self.dirty_sets.take_all();

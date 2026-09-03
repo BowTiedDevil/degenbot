@@ -221,7 +221,12 @@ impl ArbitrageEngine {
 
     /// Set the maximum age for buffered events in the V3/V4 buffers
     /// (ADR-003: both live on `BotState`).
+    ///
+    /// LPEOBI: caches the stance ON the engine - with `None` the expiry is
+    /// a provable no-op and `solve_dirty` skips the core write entirely (each
+    /// write bought a ~2.9s writer-queue slot under the block-apply stream).
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.event_buffer_expiry_enabled = max_age.is_some();
         self.core.write().set_v3_buffer_max_age(max_age);
         self.core.write().set_v4_buffer_max_age(max_age);
     }

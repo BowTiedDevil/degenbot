@@ -462,6 +462,12 @@ pub struct ArbitrageEngine {
     detached_seq_ctr: u64,
     /// The seq of the most recently issued detached cycle.
     detached_issued_seq: u64,
+    /// LPEOBI: does the core hold a configured `max_age` for the V3/V4
+    /// buffered-event expiry? With the cockpit default (`max_age=None`)
+    /// `expire` is a provable no-op, so `solve_dirty` must not take a core
+    /// write for it — each one bought a ~2.9s writer-queue slot under the
+    /// block-apply stream. Flipped by [`Self::set_event_buffer_max_age`].
+    event_buffer_expiry_enabled: bool,
     /// Sender half of the UNBOUNDED mpsc merge pipe; `Some` from the first
     /// detached enqueue until teardown. Each enqueue clones it into the
     /// per-bin `std::thread`s.
@@ -564,6 +570,7 @@ impl ArbitrageEngine {
                 .load(std::sync::atomic::Ordering::Relaxed),
             detached_seq_ctr: 0,
             detached_issued_seq: 0,
+            event_buffer_expiry_enabled: false,
             detached_merge_tx: None,
             detached_merge_rx: parking_lot::Mutex::new(None),
             detached_outstanding: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
