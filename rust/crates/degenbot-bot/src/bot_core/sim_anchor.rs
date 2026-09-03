@@ -47,7 +47,8 @@ impl SimAnchorState {
     /// no V4 reverse-map. The invariant lives in ADR-039: snapshot is an
     /// enumerated surface; adding an anchor slot means an enum entry in the
     /// projection with a test, never an arbitrary-key probe. Callers must
-    /// hold the BotState read guard for the duration ONLY (dispatch.rs:638).
+    /// hold the `BotState` read guard for the duration ONLY (`dispatch.rs:638`):
+    /// the guard must stay a SHORT read.
     #[must_use]
     pub fn snapshot(state: &BotState) -> Self {
         let mut anchor = Self {

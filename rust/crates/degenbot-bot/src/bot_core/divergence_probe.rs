@@ -191,7 +191,7 @@ impl BotState {
     ///
     /// Cost: O(pools) scalars. No tick-map iteration (V3 anchors are slots
     /// 0/4 - O(1) packs); no V4 reverse-map (one direct pass over
-    /// v4_pool_ids, one keccak per pool for the S_state base).
+    /// `v4_pool_ids`, one keccak per pool for the `S_state` base).
     pub(crate) fn project_sim_anchor_scalars(&self) -> Vec<((Address, U256), TrackedSlotProbe)> {
         let mut out = Vec::new();
         for (&address, &pool_id) in &self.pool_addresses {
@@ -224,11 +224,13 @@ impl BotState {
                 }
                 // V4 is (PoolManager, pool_id)-keyed, not address-keyed;
                 // Aerodrome V2-style pools sit at different slots (no probe).
-                Some(PoolEntry::V4(..))
-                | Some(PoolEntry::AerodromeV2(..))
-                | Some(PoolEntry::Curve(..))
-                | Some(PoolEntry::BalancerWeighted(..))
-                | Some(PoolEntry::BalancerStable(..))
+                Some(
+                    PoolEntry::V4(..)
+                    | PoolEntry::AerodromeV2(..)
+                    | PoolEntry::Curve(..)
+                    | PoolEntry::BalancerWeighted(..)
+                    | PoolEntry::BalancerStable(..),
+                )
                 | None => {}
             }
         }

@@ -150,7 +150,7 @@ fn advance_clock_ms(ms: u64) {
 }
 
 /// Epic K4ETHF T2: classify an acquire site into a small closed set for the
-/// degenbot.state_lock wait/hold histograms. Pure on the file string so
+/// `degenbot.state_lock` wait/hold histograms. Pure on the file string so
 /// unit tests can pin the taxonomy; the line is logged raw by the warn
 /// paths above (location strings are unstable - never a metric label).
 pub(crate) fn site_class_for(file: &str) -> &'static str {
@@ -185,7 +185,7 @@ fn record_wait(site: &'static str, mode: &'static str, t0: Instant) {
     }
 }
 
-/// Emit the hold observation at guard drop (see record_wait).
+/// Emit the hold observation at guard drop (see `record_wait`).
 fn record_hold(site: &'static str, mode: &'static str, t0: Instant) {
     if let Some(p) = crate::instruments::pipeline() {
         let secs = t0.elapsed().as_secs_f64();
