@@ -149,6 +149,91 @@ check-no-pyo3-in-cores:
 build-rust-extension:
     cargo build -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
+# ========== Build-Artifact Housekeeping ==========
+
+# Reclaim disk space from the cargo build cache (rust/target). Incremental
+# caches are pure loss and are always removed; deps/examples/build/
+# .fingerprint entries with mtime older than {{age}} days are swept
+# cargo-sweep style - cargo transparently rebuilds anything still referenced
+# on its next use. `target/maturin` is NEVER touched so `uv run maturin
+# develop` stays warm (see the stale-`.so` rule in AGENTS.md before
+# forcing anything colder than that).
+# Default is a PREVIEW: per-subtree reclaimable sizes, deletes nothing. Run
+# the destructive pass explicitly:
+#   just gc-target              # preview (deletes nothing), 14-day horizon
+#   DRY=1 just gc-target        # delete artifacts older than the horizon
+#   AGE=0 DRY=1 just gc-target  # sweep everything except target/maturin
+#   DUPES=1 just gc-target      # preview the stale-variant dedupe too
+#   DUPES=1 DRY=1 just gc-target  # delete stale variants, keep newest per basename
+# DUPES=1 also sweeps duplicate-hash test binaries: cargo hashes metadata into
+# each artifact name, so feature-flag/env churn (extension-module, hotpath,
+# CI parity runs) leaves older variants of the same suite piling up at ~0.5 GiB
+# apiece. Only executables >= 10 MiB are considered, and the newest mtime in
+# each basename group is kept - anything else recompiles on its next use.
+gc-target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    age=${AGE:-14}
+    dupes=${DUPES:-}
+    dry=${DRY:-}
+    roots=(rust/target/debug rust/target/release rust/target/rust-analyzer/debug)
+    subtrees=(deps examples build .fingerprint)
+    total_kb=0
+    for root in "${roots[@]}"; do
+        [ -d "$root" ] || continue
+        inc="$root/incremental"
+        if [ -z "${dry}" ]; then
+            if [ -d "$inc" ]; then
+                kb=$(du -sk "$inc" | cut -f1)
+                total_kb=$((total_kb + kb))
+            fi
+        elif [ -d "$inc" ]; then
+            rm -rf "$inc" 2>/dev/null || echo "WARN: could not fully remove $inc (a build may be writing into it)" >&2
+        fi
+        for sub in "${subtrees[@]}"; do
+            dir="$root/$sub"
+            if [ ! -d "$dir" ]; then continue; fi
+            stale=$(find "$dir" -mindepth 1 -maxdepth 1 -mtime +"${age}" 2>/dev/null || true)
+            if [ -z "$stale" ]; then continue; fi
+            if [ -z "${dry}" ]; then
+                kb=$(du -skc $stale 2>/dev/null | tail -1 | cut -f1)
+                total_kb=$((total_kb + kb))
+            else
+                rm -rf $stale 2>/dev/null || echo "WARN: partial removal in $dir" >&2
+            fi
+        done
+    done
+    # Stale duplicate-hash variants (see dupes=1 in the header comment). Only
+    # extensionless executables >= 10 MiB; the newest mtime per basename wins.
+    if [ -n "${dupes}" ] && [ "${dupes}" != "0" ]; then
+        tmp=$(mktemp)
+        for dir in rust/target/debug/deps rust/target/debug/examples rust/target/release/deps rust/target/release/examples rust/target/rust-analyzer/debug/deps; do
+            if [ ! -d "$dir" ]; then continue; fi
+            find "$dir" -maxdepth 1 -type f -size +10M -printf '%T@ %f\n' \
+                | awk '{ b=$2; sub(/-[0-9a-f]{16}$/, "", b); if (b in newest) { if ($1 > newest[b]) { print path[b]; newest[b]=$1; path[b]=$2 } else print $2 } else { newest[b]=$1; path[b]=$2 } }' > "$tmp"
+            if [ -s "$tmp" ]; then
+                dupes_list=$(awk -v d="$dir" '{ print d "/" $0 }' "$tmp")
+                kb=$(du -skc $dupes_list 2>/dev/null | tail -1 | cut -f1)
+                n=$(wc -l < "$tmp")
+                if [ -n "${dry}" ]; then
+                    rm -f $dupes_list
+                    total_kb=$((total_kb + kb))
+                    echo "deduped: $n stale variants in $dir"
+                else
+                    total_kb=$((total_kb + kb))
+                    echo "dedupe candidate: $n stale variants in $dir ($(( kb / 1024 )) MiB)"
+                fi
+            fi
+        done
+        rm -f "$tmp"
+    fi
+    freed=$(numfmt --to=iec "$((total_kb * 1024))" 2>/dev/null || echo "${total_kb} KiB")
+    if [ -z "${dry}" ]; then
+        echo "PREVIEW: $freed reclaimable at a ${age}-day horizon (+dupes if requested) — pass dry=1 to delete"
+    else
+        echo "swept: ~$freed freed (rust/target now: $(du -sh rust/target | cut -f1))"
+    fi
+
 # ========== Python Development ==========
 
 # Build and install Python extension in development mode
