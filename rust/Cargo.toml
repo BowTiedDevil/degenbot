@@ -201,3 +201,10 @@ codegen-units = 16
 [profile.dev]
 # More codegen units for faster incremental dev builds across all crates.
 opt-level = 1
+# "Relaxed debug-info" (per the comment above, but it was omitted until the
+# 422G rust/target incident): line tables keep `RUST_BACKTRACE`, perf, and
+# flamegraphs resolving to file:line while dropping the variable/type DWARF
+# that bloated every test binary to ~0.5 GiB x hundreds of hash variants.
+# Ad-hoc deep debugging a single suite: RUSTFLAGS="-C debuginfo=2 cargo test ...
+# (Rust >= 1.71 syntax: "line-tables-only"; older spellings: -C debuginfo=1.)
+debug = "line-tables-only"
