@@ -28,9 +28,13 @@
 //! Gamma = 1 - fee = (1_000_000 - fee) / 1_000_000.
 //! We store `gamma_numer = 1_000_000 - fee`, `fee_denom = 1_000_000`.
 
-// The `expect` must disappear under `hotpath`: instrumented builds move hot
-// fn bodies into macro code, so too_many_lines no longer fires there.
-#![cfg_attr(not(feature = "hotpath"), expect(clippy::too_many_lines))]
+// NOTE: a historical file-level `expect(clippy::too_many_lines)` stood here
+// (the hot fn bodies were over clippy's 100-line threshold; instrumented
+// `hotpath` builds moved macro code around so it stopped firing there).
+// The bodies have since been refactored under the threshold, so the
+// expectation is unfulfilled under BOTH feature configs and was removed.
+// If `too_many_lines` ever fires here again, re-add it scoped to the
+// offending function (with `#[expect]`), not file-wide.
 
 use std::sync::Arc;
 
