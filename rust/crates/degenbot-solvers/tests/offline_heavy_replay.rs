@@ -1,6 +1,7 @@
 //! Offline heavy-path replay bench over live captures.
-//! Reads the capture JSONL (env `DBENCH_CAPTURES`; default the capture-run
-//! output in `logs/`) and reports per-path release-mode solve time + walk
+//! Reads the capture JSONL (env `DBENCH_CAPTURES`; default the committed
+//! heavy-CL corpus under `tests/fixtures/`) and reports per-path release-mode
+//! solve time + walk
 //! stats. Diagnostic only — asserts nothing about goldens here.
 #![expect(
     clippy::cast_possible_truncation,
@@ -52,9 +53,16 @@ fn parse_hop(v: &Value) -> Option<IntV3TickRangeSequence> {
 #[test]
 #[expect(clippy::too_many_lines)]
 fn replay_captured_heavy_paths() {
-    let path = std::env::var("DBENCH_CAPTURES")
-        .unwrap_or_else(|_| "/workspaces/degenbot/logs/heavy_cl_captures_1.jsonl".to_string());
-    let content = std::fs::read_to_string(&path).expect("captures readable");
+    // Default to the committed heavy-CL corpus (via the .zst-aware fixture
+    // reader) so the test is reproducible on CI; DBENCH_CAPTURES still points
+    // at a fresh local capture for diagnostic runs.
+    let path = std::env::var("DBENCH_CAPTURES").unwrap_or_else(|_| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/heavy_cl_solve_captures.jsonl")
+            .to_string_lossy()
+            .into_owned()
+    });
+    let content = degenbot_solvers::capture_fixture::read_fixture(&path);
     let max: usize = std::env::var("DBENCH_MAX")
         .ok()
         .and_then(|s| s.parse().ok())
