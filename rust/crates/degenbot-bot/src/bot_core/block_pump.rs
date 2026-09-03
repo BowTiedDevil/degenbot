@@ -1250,6 +1250,17 @@ impl BlockPump {
                         // T2: blocks-observed counter + the header→solved anchor.
                         if let Some(p) = crate::instruments::pipeline() {
                             p.count_block();
+                            // VPD5ZH follow-up: the kernel throttle counters
+                            // that identified the >10s solve p95 belong on the
+                            // dashboard, one sample per block cadence.
+                            if let Some(stats) =
+                                crate::bot_core::cpu_budget::cgroup_throttle_delta()
+                            {
+                                p.observe_cgroup_throttled(
+                                    stats.nr_throttled,
+                                    stats.throttled_usec,
+                                );
+                            }
                         }
                         dispatch.note_header_accepted();
                     }

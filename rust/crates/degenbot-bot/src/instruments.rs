@@ -30,7 +30,7 @@ use opentelemetry::KeyValue;
 /// latency distributions actually separate.
 const LATENCY_BUCKETS_SECONDS: &[f64] = &[
     0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
-    5.0, 10.0,
+    5.0, 10.0, 30.0, 60.0,
 ];
 
 /// Every drain-path instrument, built from one meter.
@@ -96,6 +96,10 @@ pub struct PipelineInstruments {
     /// Distinct failures surfaced through [`crate::telemetry::record_exception`],
     /// labeled by the closed-set `kind` taxonomy.
     errors_total: Counter<u64>,
+    /// CFS throttle events observed on the process cgroup (delta per block)
+    cgroup_throttled: Counter<u64>,
+    /// CPU-time stolen by CFS throttling (cumulative frozen thread time)
+    cgroup_throttle_time: Counter<f64>,
     /// Per-path EVM simulation duration.
     simulate_duration: Histogram<f64>,
     /// Simulation outcomes, labeled by verdict string.
@@ -261,6 +265,15 @@ impl PipelineInstruments {
                 .u64_counter("degenbot.errors")
                 .with_description("Distinct failures by closed-set kind")
                 .build(),
+            cgroup_throttled: meter
+                .u64_counter("degenbot.cgroup.throttled")
+                .with_description("CFS throttle events (nr_throttled delta) on the process cgroup")
+                .build(),
+            cgroup_throttle_time: meter
+                .f64_counter("degenbot.cgroup.throttle_time")
+                .with_unit("s")
+                .with_description("Thread-time frozen by CFS throttling (throttled_usec delta)")
+                .build(),
             simulate_duration: meter
                 .f64_histogram("degenbot.simulate.duration")
                 .with_unit("s")
@@ -390,6 +403,20 @@ impl PipelineInstruments {
     /// One published block handed to the solver-state verifier.
     pub fn count_solver_verify_block(&self) {
         self.solver_verify_blocks.add(1, &[]);
+    }
+
+    /// CFS throttle deltas observed since the previous call. Zero-record
+    /// deltas are skipped: Prometheus-style exporters need no per-block
+    /// sampler noise when the cgroup was not throttled.
+    pub fn observe_cgroup_throttled(&self, events_delta: u64, usecs_delta: u64) {
+        if events_delta == 0 && usecs_delta == 0 {
+            return;
+        }
+        self.cgroup_throttled.add(events_delta, &[]);
+        #[expect(clippy::cast_precision_loss)] // usec -> s over 1e6; float fine
+        {
+            self.cgroup_throttle_time.add(usecs_delta as f64 / 1e6, &[]);
+        }
     }
 
     /// One executed backfill range.
@@ -592,6 +619,48 @@ mod kind_tests {
         ];
         let unique: HashSet<&str> = kinds.iter().copied().collect();
         assert_eq!(unique.len(), kinds.len(), "duplicate failure kind");
+    }
+
+    /// Fix 3 (VPD5ZH follow-up): the 10.0s top bucket collapsed every
+    /// solve over 10s into one cylinder, hiding the 90s outliers that
+    /// motivated the CPU-budget fix. The tail bounds are contract, not
+    /// tuning.
+    #[test]
+    fn latency_histograms_render_post_10s_buckets() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test"));
+        // A 45s sample must land BETWEEN the new tail bounds, not fuse into
+        // the old +inf-only tail: le=30 must separate it from le=60.
+        instruments.observe_solve_duration(45.0);
+        let text = crate::metrics::render(&registry);
+        for bound in ["10", "30", "60"] {
+            assert!(
+                text.contains(&format!("le=\"{bound}\"")),
+                "missing bucket boundary le={bound} in rendered histogram"
+            );
+        }
+    }
+
+    /// Acceptance: `degenbot.cgroup.throttled` is SCRAPEABLE as a monotonic
+    /// counter - the kernel counters that identified the 10s-bucket root
+    /// cause must be visible on the dashboard without shell access.
+    #[test]
+    fn cgroup_throttled_is_scrapeable() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test"));
+        instruments.observe_cgroup_throttled(3, 900_000);
+        instruments.observe_cgroup_throttled(1, 7);
+        let text = crate::metrics::render(&registry);
+        assert!(
+            text.contains("degenbot_cgroup_throttled_total"),
+            "throttle-event counter missing"
+        );
+        assert!(
+            text.contains("degenbot_cgroup_throttle_time_seconds_total"),
+            "throttled-cpu-time counter missing"
+        );
     }
 
     /// Acceptance: `degenbot.errors{kind=...}` is SCRAPEABLE — the counter

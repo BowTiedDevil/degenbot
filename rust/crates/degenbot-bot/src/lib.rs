@@ -76,6 +76,8 @@ pub mod instruments {
         /// no-op
         pub fn count_backfill(&self) {}
         /// no-op
+        pub fn observe_cgroup_throttled(&self, _events_delta: u64, _usecs_delta: u64) {}
+        /// no-op
         pub fn set_drain_queue_depth(&self, _depth: u64) {}
         /// no-op
         pub fn set_state_head_lag(&self, _head_minus_clock: i64) {}

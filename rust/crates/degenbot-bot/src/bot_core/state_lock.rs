@@ -110,6 +110,11 @@ struct HoldRecord {
 static ACTIVE_READS: LazyLock<Mutex<HashMap<usize, Vec<HoldRecord>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Lock-key -> active WRITE hold. Writers serialize, so at most one record
+/// per key; used to name a slow WRITE holder on drop (XC7SWD).
+static ACTIVE_WRITES: LazyLock<Mutex<HashMap<usize, HoldRecord>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// A slow-hold finding produced by [`flag_aged_records`].
 #[derive(Debug, PartialEq, Eq)]
 pub struct SlowHold {
@@ -198,6 +203,26 @@ fn register_read(key: usize, location: &'static Location<'static>) -> u64 {
         warned: false,
         backtrace: trace.then(|| Backtrace::capture().to_string()),
     });
+    seq
+}
+
+fn register_write(key: usize, location: &'static Location<'static>) -> u64 {
+    let seq = HOLD_SEQ.fetch_add(1, Ordering::Relaxed);
+    let trace = *TRACE_BACKTRACES;
+    let mut map = ACTIVE_WRITES.lock();
+    map.insert(
+        key,
+        HoldRecord {
+            seq,
+            thread: std::thread::current()
+                .name()
+                .map_or_else(|| "<unnamed>".to_owned(), str::to_owned),
+            location,
+            acquired_ms: now_ms(),
+            warned: false,
+            backtrace: trace.then(|| Backtrace::capture().to_string()),
+        },
+    );
     seq
 }
 
@@ -355,7 +380,8 @@ impl<T> StateLock<T> {
     }
 
     /// Acquire a write guard. Long blocks WARN with the reader snapshot taken
-    /// immediately after acquisition (the readers we were waiting for).
+    /// immediately after acquisition (the readers we were waiting for); long
+    /// HOLDS warn on drop naming the hold site (XC7SWD).
     #[track_caller]
     pub fn write(&self) -> StateWriteGuard<'_, T> {
         let location = Location::caller();
@@ -370,16 +396,33 @@ impl<T> StateLock<T> {
                  (lock 0x{key:x}); readers still registered after acquire: {holders:?}"
             );
         }
-        StateWriteGuard { inner: guard }
+        let mut seq = 0;
+        if diag_enabled() {
+            seq = register_write(key, location);
+        }
+        StateWriteGuard {
+            inner: guard,
+            key,
+            seq,
+        }
     }
 
     /// Try to acquire a write guard without blocking (`None` when contended).
     /// Mirrors `parking_lot::RwLock::try_write` for callers that only probe.
     #[track_caller]
     pub fn try_write(&self) -> Option<StateWriteGuard<'_, T>> {
-        self.inner
-            .try_write()
-            .map(|guard| StateWriteGuard { inner: guard })
+        self.inner.try_write().map(|guard| {
+            let key = self.key_of();
+            let mut seq = 0;
+            if diag_enabled() {
+                seq = register_write(key, Location::caller());
+            }
+            StateWriteGuard {
+                inner: guard,
+                key,
+                seq,
+            }
+        })
     }
 }
 
@@ -430,10 +473,13 @@ impl<T> Drop for StateReadGuard<'_, T> {
     }
 }
 
-/// Write guard passthrough (writers serialize among themselves; the
-/// interesting diagnostic is the acquisition-time wait report).
+/// Write guard: with diagnostics ON, holds are registered so a slow WRITE
+/// hold is named at guard drop (XC7SWD: a long WRITE hold was invisible —
+/// only waits and read holds had forensics).
 pub struct StateWriteGuard<'a, T> {
     inner: RwLockWriteGuard<'a, T>,
+    key: usize,
+    seq: u64,
 }
 
 impl<T> Deref for StateWriteGuard<'_, T> {
@@ -447,6 +493,37 @@ impl<T> DerefMut for StateWriteGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         self.inner.deref_mut()
     }
+}
+
+impl<T> Drop for StateWriteGuard<'_, T> {
+    fn drop(&mut self) {
+        if self.seq == 0 {
+            return; // gated-off sentinel: never registered
+        }
+        let warned = {
+            let mut map = ACTIVE_WRITES.lock();
+            map.remove(&self.key).and_then(|record| {
+                let held = now_ms().saturating_sub(record.acquired_ms);
+                if write_hold_slow(held) {
+                    Some((record.location.to_string(), held))
+                } else {
+                    None
+                }
+            })
+        };
+        if let Some((loc, held)) = warned {
+            tracing::warn!(
+                "[state-lock] WRITE guard held {held}ms at {loc} (lock 0x{:x})",
+                self.key
+            );
+        }
+    }
+}
+
+/// Pure verdict for a completed WRITE hold: slow when diagnostics are on
+/// and the hold reached the warn threshold.
+fn write_hold_slow(held_ms: u64) -> bool {
+    diag_enabled() && held_ms >= warn_threshold_ms()
 }
 
 #[cfg(test)]
@@ -540,6 +617,63 @@ mod tests {
         }
         let map = ACTIVE_READS.lock();
         assert!(map.get(&key).is_none(), "drop removed the hold");
+        set_diag_enabled_for_tests(false);
+    }
+
+    // ---- write-hold forensics (XC7SWD) ----------------------------------
+
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn write_guard_registers_and_deregisters() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
+        let lock: StateLock<u8> = StateLock::new(0);
+        let key = lock.key_of();
+        {
+            let guard = lock.write();
+            assert_eq!(*guard, 0);
+            let map = ACTIVE_WRITES.lock();
+            let record = map.get(&key).expect("write hold registered");
+            assert!(
+                record.location.to_string().contains("state_lock.rs"),
+                "track_caller site recorded, got {}",
+                record.location
+            );
+        }
+        let map = ACTIVE_WRITES.lock();
+        assert!(
+            map.get(&key).is_none(),
+            "drop removed the write hold record"
+        );
+        set_diag_enabled_for_tests(false);
+    }
+
+    #[test]
+    fn write_hold_drop_reports_slow_hold() {
+        let _serial = test_serial();
+        set_diag_enabled_for_tests(true);
+        advance_clock_ms(0);
+        let lock: StateLock<u8> = StateLock::new(0);
+        let key = lock.key_of();
+        {
+            let guard = lock.write();
+            let _ = *guard;
+            advance_clock_ms(600);
+            // Drop happens here with 600ms held - over the 500ms default.
+        }
+        let map = ACTIVE_WRITES.lock();
+        assert!(map.get(&key).is_none(), "write hold removed on drop");
+        set_diag_enabled_for_tests(false);
+    }
+
+    #[test]
+    fn write_hold_slow_verdict_is_diag_and_threshold_gated() {
+        set_warn_threshold_ms(500);
+        set_diag_enabled_for_tests(false);
+        assert!(!write_hold_slow(600_000));
+        set_diag_enabled_for_tests(true);
+        assert!(write_hold_slow(600_000));
+        assert!(!write_hold_slow(100));
         set_diag_enabled_for_tests(false);
     }
 

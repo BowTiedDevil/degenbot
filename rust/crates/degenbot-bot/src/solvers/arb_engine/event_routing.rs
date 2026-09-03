@@ -44,8 +44,26 @@ impl ArbitrageEngine {
     pub fn solve_dirty(&mut self, block_number: u64, metadata: &BlockMetadata) {
         // Expire stale buffered events in the V3/V4 buffers (ADR-003: both
         // now live on BotState).
-        self.core.write().expire_v3_buffered(block_number);
-        self.core.write().expire_v4_buffered(block_number);
+        //
+        // XC7SWD: these two core.write() calls ran uninstrumented and own a
+        // ~2.8-3.1s window of every engine mutex hold (solve_duration p95
+        // 4.85s vs the rebuild-cycle internal p95 of 0.46s; Jaeger children
+        // sum to <0.5s of a 3.1-3.3s solve span). Split lock WAIT (contention
+        // with the pump apply loop / Python bridge holding core locks) from
+        // expiry COMPUTE, per buffer, so the next run names the culprit.
+        let (v3_lock_wait_us, v3_work_us) =
+            self.expire_buffered_telemetry("v3", |core| core.expire_v3_buffered(block_number));
+        let (v4_lock_wait_us, v4_work_us) =
+            self.expire_buffered_telemetry("v4", |core| core.expire_v4_buffered(block_number));
+        tracing::info!(
+            target: "degenbot::solver",
+            block_number,
+            expire_v3_lock_wait_us = v3_lock_wait_us,
+            expire_v3_work_us = v3_work_us,
+            expire_v4_lock_wait_us = v4_lock_wait_us,
+            expire_v4_work_us = v4_work_us,
+            "[solve-phase] buffered-event expiry (pre-cycle) complete"
+        );
 
         // Snapshot all dirty sets atomically (RAYPAR engine-shard T3).
         let (dirty_v2, dirty_v3, dirty_v4) = self.dirty_sets.take_all();
@@ -55,6 +73,38 @@ impl ArbitrageEngine {
 
         // dirty sets are already cleared by std::mem::take
         self.last_processed_block = Some(block_number);
+    }
+
+    /// One buffered-event expiry round under its own `degenbot.arb.expire`
+    /// span, split into lock-WAIT (time to acquire the core write lock -
+    /// contention with the pump apply loop / Python bridge) vs expiry WORK
+    /// (the expire pass itself under the held lock). Returns microseconds
+    /// for the aggregated pre-cycle event.
+    fn expire_buffered_telemetry(
+        &mut self,
+        kind: &'static str,
+        expire: impl FnOnce(&mut crate::bot_core::BotState),
+    ) -> (u64, u64) {
+        use std::time::Instant;
+        let span = tracing::info_span!(
+            target: "degenbot::solver",
+            "degenbot.arb.expire",
+            kind,
+            lock_wait_us = tracing::field::Empty,
+            expire_work_us = tracing::field::Empty,
+        );
+        let ctx = span.enter();
+        let lock_t0 = Instant::now();
+        let mut core = self.core.write();
+        let lock_wait_us = u64::try_from(lock_t0.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let work_t0 = Instant::now();
+        expire(&mut core);
+        let expire_work_us = u64::try_from(work_t0.elapsed().as_micros()).unwrap_or(u64::MAX);
+        drop(core);
+        drop(ctx);
+        span.record("lock_wait_us", lock_wait_us);
+        span.record("expire_work_us", expire_work_us);
+        (lock_wait_us, expire_work_us)
     }
 
     /// Compute the incremental diff and send a result batch to Python.

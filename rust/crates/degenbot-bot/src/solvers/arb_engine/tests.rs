@@ -5333,6 +5333,75 @@ mod tests {
         );
     }
 
+    /// XC7SWD: the pre-cycle expiry window (core write `expire_v3/v4`) owns
+    /// ~2.8-3.1s of every engine mutex hold yet had NO instrumentation. The
+    /// split must exist: one `degenbot.arb.expire` span per buffer kind with
+    /// lock-wait and expire-work phases as attributes.
+    #[cfg(feature = "otel")]
+    #[test]
+    fn solve_dirty_emits_expire_spans_with_phase_split() {
+        use crate::bot_core::engine::Engine;
+        use crate::otel;
+        use crate::solvers::arb_engine::engine_handle::EngineHandle;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use std::sync::Arc;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
+        engine.lock().dirty_sets.insert(0x0BAD_F00D, HopType::V2);
+        let handle = EngineHandle::new(engine);
+        tracing::subscriber::with_default(subscriber, || {
+            handle.solve_dirty(0x0BAD_F00D, &BlockMetadata::default());
+        });
+
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+
+        let expire_spans: Vec<_> = spans
+            .iter()
+            .filter(|sp| sp.name.as_ref() == "degenbot.arb.expire")
+            .collect();
+        let has_stage = |sp: &&opentelemetry_sdk::trace::SpanData, kind: &str| {
+            sp.attributes.iter().any(|kv| {
+                kv.key == opentelemetry::Key::from_static_str("kind")
+                    && matches!(kv.value, opentelemetry::Value::String(ref v) if v.as_str() == kind)
+            })
+        };
+        let has_phase_field = |sp: &&opentelemetry_sdk::trace::SpanData, field: &str| {
+            sp.attributes.iter().any(|kv| {
+                if field == "lock_wait_us" {
+                    kv.key == opentelemetry::Key::from_static_str("lock_wait_us")
+                } else {
+                    kv.key == opentelemetry::Key::from_static_str("expire_work_us")
+                }
+            })
+        };
+        for kind in ["v3", "v4"] {
+            let matched = expire_spans
+                .iter()
+                .filter(|sp| has_stage(sp, kind))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                matched.len(),
+                1,
+                "expected one degenbot.arb.expire span for kind={kind}; got spans: {:?}",
+                expire_spans
+                    .iter()
+                    .map(|sp| sp.name.as_ref())
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                matched.iter().all(|sp| has_phase_field(sp, "lock_wait_us")
+                    && has_phase_field(sp, "expire_work_us")),
+                "expire span kind={kind} missing lock_wait_us/expire_work_us attributes"
+            );
+        }
+    }
+
     /// T0 no-op gating: a clean engine (no dirty paths) must NOT emit an
     /// `degenbot.arb.solve` span — the 2µs no-op solves were flooding Jaeger's
     /// recent-traces list and drowning the real solves.
