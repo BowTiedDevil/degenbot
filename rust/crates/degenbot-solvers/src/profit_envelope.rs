@@ -1283,6 +1283,8 @@ pub struct GateStats {
     pub merge_fb_empty_selection: u64,
     /// M3 per-reason fallback breakdown (clamped-bp piece reordering).
     pub merge_fb_y_disorder: u64,
+    /// GC-3: saturated boundary arithmetic during the sweep.
+    pub merge_fb_cmp_overflow: u64,
 }
 
 impl GateStats {
@@ -1317,6 +1319,7 @@ impl GateStats {
         merge_fb_empty_pieces: 0,
         merge_fb_empty_selection: 0,
         merge_fb_y_disorder: 0,
+        merge_fb_cmp_overflow: 0,
     };
 
     /// Aggregate one worker thread's per-path counters into these cycle
@@ -1352,6 +1355,7 @@ impl GateStats {
         self.merge_fb_empty_pieces += other.merge_fb_empty_pieces;
         self.merge_fb_empty_selection += other.merge_fb_empty_selection;
         self.merge_fb_y_disorder += other.merge_fb_y_disorder;
+        self.merge_fb_cmp_overflow += other.merge_fb_cmp_overflow;
     }
 }
 
@@ -2030,6 +2034,9 @@ enum MergeFallbackReason {
     /// Clamped-breakpoint reordering collapsed piece y-monotonicity
     /// (seed-32 class).
     YDisorder,
+    /// GC-3: saturated boundary arithmetic during the sweep (checked
+    /// channel; never silently trusted).
+    CmpOverflow,
 }
 
 impl MergeFallbackReason {
@@ -2040,6 +2047,7 @@ impl MergeFallbackReason {
             Self::EmptyPieces => "empty_pieces",
             Self::EmptySelection => "empty_selection",
             Self::YDisorder => "y_disorder",
+            Self::CmpOverflow => "cmp_overflow",
         }
     }
 }
@@ -2091,6 +2099,7 @@ fn compose_boundary_merged(
                 MergeFallbackReason::EmptyPieces => t.merge_fb_empty_pieces += 1,
                 MergeFallbackReason::EmptySelection => t.merge_fb_empty_selection += 1,
                 MergeFallbackReason::YDisorder => t.merge_fb_y_disorder += 1,
+                MergeFallbackReason::CmpOverflow => t.merge_fb_cmp_overflow += 1,
             }
         });
         tracing::debug!(
@@ -2118,47 +2127,72 @@ fn compose_boundary_merged(
     // come from a fresh hull over the subset. Pieces carry their ORIGIN
     // index so emitted pairs map back to real (hop_ls, chain) positions —
     // no synthetic composes (byte-identity requirement).
-    let outer_pieces = hull_pieces(&hop_ls, upper);
-    let inner_pieces = hull_pieces(chain, upper);
+    let outer_pieces = hull_pieces(&hop_ls);
+    let inner_pieces = hull_pieces(chain);
     if outer_pieces.is_empty() || inner_pieces.is_empty() {
         return legacy(MergeFallbackReason::EmptyPieces);
     }
 
-    // Two-pointer sweep over y-intervals. Outer piece l covers y in
-    // [obp_l, obp_{l+1}) (last piece open-ended); inner piece k covers
-    // x in [bx_k, bx_{k+1}) which maps to a y-range ascending (b > 0).
-    let obp_i = |obp: U256| -> I512 { I512::try_from(U512::from(obp)).unwrap_or(I512::MAX) };
+    // Two-pointer sweep over y-intervals (GC-3, reviewer option (i)):
+    // piece boundaries are EXACT I512 crossovers — no U256 clamp in any
+    // comparison. x positions clamp to [0, upper] only at eval time (the
+    // consumption edge); y overlap tests run on raw I512.
+    let upper_i = I512::try_from(U512::from(upper)).unwrap_or(I512::MAX);
+    let x_clamp = |x: I512| -> U256 {
+        let x = if x < I512::ZERO { I512::ZERO } else { x };
+        let x = if x > upper_i { upper_i } else { x };
+        let mag = x.unsigned_abs();
+        if mag > U512::from(U256::MAX) {
+            U256::MAX
+        } else {
+            mag.to::<U256>()
+        }
+    };
+    // overflow guard (reviewer guard 2): a saturated boundary means an
+    // unchecked channel — fall back, never silently trust it.
+    let exact = |bp: I512| -> Option<I512> { (bp != I512::MAX).then_some(bp) };
     let merge_work_t0 = std::time::Instant::now();
     let mut selected: Vec<(usize, usize)> =
         Vec::with_capacity(outer_pieces.len() + inner_pieces.len());
     let mut li = 0usize; // outer-piece pointer (y-ascending)
     let mut prev_y_hi = I512::ZERO;
     for (k, &(bx_k, ref ik, origin_k)) in inner_pieces.iter().enumerate() {
-        let x_start = bx_k.min(upper);
-        let x_end = inner_pieces
+        let x_start_i = bx_k.max(I512::ZERO).min(upper_i);
+        let x_end_i = inner_pieces
             .get(k + 1)
-            .map_or(upper, |&(bx, _, _)| bx)
-            .min(upper);
-        if x_end <= x_start && k + 1 < inner_pieces.len() {
-            continue; // collapsed interval behind the sweep
+            .map_or(upper_i, |&(bx, _, _)| bx)
+            .min(upper_i)
+            .max(I512::ZERO);
+        let x_eval_start = x_clamp(x_start_i);
+        let x_eval_end = x_clamp(x_end_i);
+        if x_eval_end < x_eval_start {
+            return legacy(MergeFallbackReason::YDisorder);
         }
-        let y_lo0 = ik.eval(&x_start);
-        let y_hi0 = ik.eval(&x_end);
+        let y_lo0 = ik.eval(&x_eval_start);
+        let y_hi0 = ik.eval(&x_eval_end);
         let (y_lo, y_hi) = if y_lo0 <= y_hi0 {
             (y_lo0, y_hi0)
         } else {
             (y_hi0, y_lo0)
         };
-        // x-ascending pieces must be y-ascending; a regression means the
-        // clamped breakpoints reordered pieces beyond monotonicity.
+        // exact boundaries ascend strictly within the domain; a regression
+        // means genuinely non-monotone input — the counter is the safety
+        // net (nonzero after this fix escalates to the reviewer).
         if k > 0 && y_lo < prev_y_hi {
             return legacy(MergeFallbackReason::YDisorder);
         }
         prev_y_hi = y_hi;
         // advance the outer pointer past pieces ending strictly before
         // this inner piece's y-extent
-        while li + 1 < outer_pieces.len() && obp_i(outer_pieces[li + 1].0) <= y_lo {
-            li += 1;
+        while li + 1 < outer_pieces.len() {
+            let Some(next_obp) = exact(outer_pieces[li + 1].0) else {
+                return legacy(MergeFallbackReason::CmpOverflow);
+            };
+            if next_obp <= y_lo {
+                li += 1;
+            } else {
+                break;
+            }
         }
         // walk up while the next outer piece's y-range starts at/below y_hi
         let mut l = li;
@@ -2168,7 +2202,9 @@ fn compose_boundary_merged(
             if l + 1 >= outer_pieces.len() {
                 break;
             }
-            let next_start = obp_i(outer_pieces[l + 1].0);
+            let Some(next_start) = exact(outer_pieces[l + 1].0) else {
+                return legacy(MergeFallbackReason::CmpOverflow);
+            };
             if next_start > y_hi {
                 break;
             }
@@ -2233,7 +2269,7 @@ fn compose_boundary_merged(
 /// search-phase hull. The origin index maps each piece back to its
 /// position in the INPUT slice so the merge can emit real (j, i)
 /// pairs (no synthetic composes — byte-identity requirement).
-fn hull_pieces(lines: &[Line], upper: U256) -> Vec<(U256, Line, usize)> {
+fn hull_pieces(lines: &[Line]) -> Vec<(I512, Line, usize)> {
     let mut idx: Vec<usize> = (0..lines.len()).collect();
     let slope_f: Vec<f64> = lines
         .iter()
@@ -2247,7 +2283,7 @@ fn hull_pieces(lines: &[Line], upper: U256) -> Vec<(U256, Line, usize)> {
             rhs.cmp(&lhs)
         })
     });
-    let mut hull: Vec<(U256, usize)> = Vec::with_capacity(lines.len());
+    let mut hull: Vec<(I512, usize)> = Vec::with_capacity(lines.len());
     for &li in &idx {
         let l = &lines[li];
         if let Some(&(_, top)) = hull.last() {
@@ -2274,27 +2310,13 @@ fn hull_pieces(lines: &[Line], upper: U256) -> Vec<(U256, Line, usize)> {
             let lprev = &lines[t];
             let num = l.a * lprev.c - lprev.a * l.c;
             let den = lprev.b * l.c - l.b * lprev.c;
-            let bb_i = I512::try_from(U512::from(bb)).unwrap_or(I512::MAX);
-            if ceil_div(num, den) <= bb_i {
+            if ceil_div(num, den) <= bb {
                 hull.pop();
             } else {
                 break;
             }
         }
-        let bx = if bp <= I512::ZERO {
-            U256::ZERO
-        } else {
-            let u = U512::try_from(bp).unwrap_or(U512::MAX);
-            if u > U512::from(U256::MAX) {
-                U256::MAX
-            } else {
-                u.to::<U256>()
-            }
-        };
-        if bx > upper {
-            continue;
-        }
-        hull.push((bx, li));
+        hull.push((bp, li));
     }
     // Recompute piece boundaries PAIRWISE between consecutive final
     // hull entries. The pop-time stored bx is computed against a top
@@ -2303,26 +2325,21 @@ fn hull_pieces(lines: &[Line], upper: U256) -> Vec<(U256, Line, usize)> {
     // two entries both clamped to 0), which collapses piece intervals
     // and starves the merge sweep. Pairwise crossovers of the final
     // hull list are the authoritative interval boundaries.
-    let mut pieces: Vec<(U256, Line, usize)> = Vec::with_capacity(hull.len());
+    // GC-3 (reviewer option (i)): piece boundaries are EXACT pairwise
+    // crossovers in I512 - no U256 clamping at construction. Clamping
+    // collapsed intervals and reordered adjacent boundaries (both clamped
+    // to the same integer), which starved/disordered the merge sweep;
+    // consumption-edge x clamping happens in the sweep instead.
+    let mut pieces: Vec<(I512, Line, usize)> = Vec::with_capacity(hull.len());
     for (pos, &(_, li)) in hull.iter().enumerate() {
         let bx = if pos == 0 {
-            U256::ZERO
+            I512::ZERO
         } else {
             let prev = &lines[hull[pos - 1].1];
             let cur = &lines[li];
             let num = cur.a * prev.c - prev.a * cur.c;
             let den = prev.b * cur.c - cur.b * prev.c;
-            let bp = ceil_div(num, den);
-            if bp <= I512::ZERO {
-                U256::ZERO
-            } else {
-                let u = U512::try_from(bp).unwrap_or(U512::MAX);
-                if u > U512::from(U256::MAX) {
-                    U256::MAX
-                } else {
-                    u.to::<U256>()
-                }
-            }
+            ceil_div(num, den)
         };
         pieces.push((bx, lines[li], li));
     }
