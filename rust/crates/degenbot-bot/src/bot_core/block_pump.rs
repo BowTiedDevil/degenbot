@@ -1078,6 +1078,14 @@ impl BlockPump {
             last_log: None,
             logs: 0,
         };
+        // Pre-solve gap waterfall spans (Jaeger): `log_wait` fills the
+        // header→first-relevant-log stretch (WS delivery), `apply_stream`
+        // fills first-log→settle (burst + applies + quiesce hold). Both are
+        // created/dropped at their actual boundaries so the Jaeger waterfall
+        // shows WHAT happens between `degenbot.pump.block` and
+        // `degenbot.arb.solve` instead of an empty stretch.
+        let mut log_wait_span: Option<tracing::Span> = None;
+        let mut apply_span: Option<tracing::Span> = None;
         loop {
             // Span lifecycle (TQ7PD6 fix): an enter guard must never outlive a
             // single poll. This task runs on a multi-threaded tokio runtime and
@@ -1259,6 +1267,15 @@ impl BlockPump {
                                         }
                                     }
                                 }
+                                // Waterfall bookkeeping: the settle closes the
+                                // apply-stream child (its duration carries the
+                                // burst + applies + quiesce hold); the solve
+                                // spans that follow sit beside it, parented to
+                                // the same pump.block.
+                                if let Some(ap) = apply_span.take() {
+                                    ap.record("logs.n", pregap.logs);
+                                    drop(ap);
+                                }
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
                                 let _ctx = block_span.as_ref().map(tracing::Span::enter);
                                 dispatch.dispatch(DrainWork::Publish {
@@ -1324,6 +1341,16 @@ impl BlockPump {
                         last_log: None,
                         logs: 0,
                     };
+                    // Waterfall bookkeeping: close any leftover child spans
+                    // (an all-quiet prior block never reached a settle) and
+                    // open the delivery-wait child. its duration IS the
+                    // header→first-log latency in the waterfall.
+                    apply_span = None;
+                    log_wait_span = Some(tracing::info_span!(
+                        parent: new_block_span.clone(),
+                        "degenbot.pump.log_wait",
+                        block.number = number,
+                    ));
                     // Sync-only header-processing scope (TQ7PD6): this enter
                     // guard dies before the first await below, so it can never
                     // leak across a task migration. The backfill future below
@@ -1456,6 +1483,20 @@ impl BlockPump {
                         }
                         pregap.last_log = Some(now);
                         pregap.logs += 1;
+                    }
+                    // Waterfall bookkeeping: the delivery wait is over; open
+                    // the apply-stream child (it runs until the settle point
+                    // and carries the burst + applies + quiesce hold).
+                    if let Some(wait) = log_wait_span.take() {
+                        drop(wait);
+                    }
+                    if apply_span.is_none() {
+                        apply_span = Some(tracing::info_span!(
+                            parent:
+                                block_span.clone().unwrap_or_else(tracing::Span::none),
+                            "degenbot.pump.apply_stream",
+                            block.number = log_block,
+                        ));
                     }
                     // BQ7ZBC — FSM single-writer recovery discard. After an
                     // authoritative eth_getLogs catch-up (`fsm.recovery_anchor`), a
