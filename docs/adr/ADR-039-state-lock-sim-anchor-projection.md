@@ -70,5 +70,21 @@ RATR5A in epic K4ETHF). Latent, same class; not surfaced in this window's tape.
 
 ## Verification
 
-T5 parity + perf tests; T6 soak delta gates pre-registered in logs/state-lock-impact.md
-(drop-report p95 <= 20ms; header_to_solved p95 <= 1.0s; log_burst p50 <= 100ms; zero >1s blocked-WARNs per minute).
+T5 TDD (red perf gate 450ms vs 150ms bound; parity incl. negative half), committed in:
+- a0f941d57 - perf(state-lock): enumerated sim-anchor projection (K4ETHF T5, ADR-039)
+- 296f36163 - lint fixes from pair review
+
+Tests (names as recorded in the tree):
+- bot_core::sim_anchor::tests::snapshot_parity_with_query_semantics - anchor_words byte-identical
+  to the query-interface semantics on per-family valid indices + negative half (out-of-family
+  probes absent, e.g. V3 literal slot 8 / V2 slots 0/4)
+- bot_core::sim_anchor::tests::snapshot_is_enumerated_not_a_scan - heavy fixture
+  (120 V3 pools x 1800 ticks + 200 V4 pools) under the 150ms bound (red measured 450ms pre-fix)
+- bot_core::divergence_probe 13/13 (incl. the :709/:726 live tick-descent probes - untouched by design)
+- bot_core::state_lock 15/15 (drop-time forensics + telemetry taxonomy)
+
+Pair review: adversarial post-landing pass APPROVED (projection scoped at the enumeration level,
+not the query interface; no S_state memo; the fetch-under-write risk split out as task RATR5A).
+
+T6 soak delta gates pre-registered in logs/state-lock-impact.md; met in the 17min interim soak and
+re-confirmed at the full 1h soak (see the impact doc delta tables).
