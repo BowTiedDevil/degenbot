@@ -1,5 +1,16 @@
 //! The dedicated solve executor (epic BXUSGL T1): a private, CPU-bound tokio
-//! runtime running on named, lower-OS-priority threads.
+//! runtime running on named threads sized from the cgroup CPU budget
+//! (`cpu_budget::solve_worker_count`).
+//!
+//! ## No self-nicing (VPD5ZH follow-up)
+//!
+//! Workers run at DEFAULT OS priority. The IOx-style nice(10) was removed:
+//! nice only arbitrates *within* a CPU budget, and under cgroup CFS
+//! throttling - the actual root cause of heavy-cycle stalls - the freeze
+//! hits every thread equally, then requeues niced workers BEHIND the I/O
+//! threads after each unthrottle, stretching steal further. The quota is
+//! respected structurally now (budget minus headroom), so priority games
+//! only cost.
 //!
 //! ## Why a dedicated runtime (not a shared-pool job)
 //!
@@ -12,9 +23,8 @@
 //! thenewstack.io article + gist; the same technique behind tpchgen PR
 //! `#34`'s bounded-parallelism choice over Rayon: "I couldn't find any way
 //! [with Rayon] to limit the number of things that were buffered at once")
-//! hosts CPU tasks on a SEPARATE multi-thread runtime whose worker threads
-//! run at lower OS priority, so latency-critical I/O tasks always win the
-//! cores.
+//! hosts CPU tasks on a SEPARATE multi-thread runtime so latency-critical
+//! I/O tasks never queue behind a CPU burst.
 //!
 //! ## Bounded in-flight parallelism
 //!
@@ -58,7 +68,6 @@ impl SolveExecutor {
                     .enable_all()
                     .thread_name(thread_name)
                     .worker_threads(worker_threads.max(1))
-                    .on_thread_start(lower_priority)
                     .build();
                 let runtime = match runtime {
                     Ok(rt) => rt,
@@ -88,23 +97,6 @@ impl SolveExecutor {
     }
 }
 
-/// Lower this thread's OS priority so the latency-critical I/O runtime's
-/// tasks (block clock, RPC, the Python bridge) always win the cores. `IOx`'s
-/// `DedicatedExecutor` does exactly this. Failure is non-fatal (`nice()` may
-/// be denied under restricted rlimits) — the executor just runs at default
-/// priority, as today.
-fn lower_priority() {
-    #[cfg(unix)]
-    {
-        // SAFETY: a plain setpriority(2) call on the calling thread (0 = our
-        // pid), touching no aliased memory. A denied value is non-fatal.
-        let result = unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 10) };
-        if result != 0 {
-            tracing::debug!("[solve-executor] setpriority denied - running at default priority");
-        }
-    }
-}
-
 static SOLVE_EXECUTOR: std::sync::OnceLock<SolveExecutor> = std::sync::OnceLock::new();
 
 /// The process-wide solve executor, built lazily on the first tokio-stance
@@ -113,10 +105,18 @@ static SOLVE_EXECUTOR: std::sync::OnceLock<SolveExecutor> = std::sync::OnceLock:
 /// allocator arenas across drains).
 pub(crate) fn global_solve_executor() -> &'static SolveExecutor {
     SOLVE_EXECUTOR.get_or_init(|| {
-        // Match the rayon pool width the engine sizes its LPT bins against.
-        // Both default to the same value (available parallelism); the bins
-        // are computed from rayon::current_num_threads() at dispatch time, so
-        // one runtime can never host fewer workers than there are bins.
-        SolveExecutor::new("degenbot-solve-tokio", rayon::current_num_threads())
+        // Match the LPT bin count the engine computes at dispatch time
+        // (cpu_budget::solve_worker_count, quota-derived): one runtime can
+        // never host fewer workers than there are bins. The rayon pool may
+        // be wider; extra rayon threads only serve the rayon dispatch arms.
+        // VPD5ZH: budget from the cgroup quota (not rayon width) - an 8-bin
+        // fleet on a quota-capped container froze the whole process under CFS
+        // throttling whenever solve bursts overlapped I/O. Headroom (default
+        // 2 CPUs) is left for the main runtime, Python, pump, and exporter;
+        // DEGENBOT_SOLVE_CPUS overrides.
+        SolveExecutor::new(
+            "degenbot-solve-tokio",
+            crate::bot_core::cpu_budget::solve_worker_count(),
+        )
     })
 }

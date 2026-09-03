@@ -22,6 +22,7 @@ pub mod bot;
 pub mod cl_orchestration;
 pub mod cl_route;
 pub mod construction_io;
+pub mod cpu_budget;
 pub mod curve_data_provider_impl;
 pub mod curve_state;
 pub mod divergence_probe;
