@@ -634,6 +634,13 @@ pub fn dispatch_profitable_results(
             // transport delay (minutes on a stalled RPC pre-F2). The
             // snapshot is O(pools) scalar words; see
             // `bot_core::SimAnchorState` for the audited surface.
+            //
+            // ADR-039 (K4ETHF): since T5 the snapshot is an ENUMERATED
+            // per-family projection (`project_sim_anchor_scalars`), never an
+            // arbitrary-key probe — this guard scope paid a ~2.7s hold per
+            // block through the V3 tick-descent + V4 O(V^2) keccak paths.
+            // DO NOT re-point the projection at the arbitrary-key probe, and
+            // do not extend this guard across anything below it.
             let anchor = {
                 let guard = arc.read();
                 degenbot_bot::bot_core::SimAnchorState::snapshot(&guard)

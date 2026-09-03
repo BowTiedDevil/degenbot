@@ -182,7 +182,84 @@ impl BotState {
     ///
     /// Pure observation — the caller (`BotStateDb.storage_ref`) compares the
     /// returned word against the RPC value WITHOUT changing what the sim reads.
-    /// Env-gated at the call site; this method is cheap (`None` fast-paths the
+    /// Epic K4ETHF T5 / ADR-039: the ENUMERATED sim-anchor projection -
+    /// the scalar surface the sim consults, projected per pool family using
+    /// the SAME pack helpers as the env-gated probe (single packing source -
+    /// the serving.rs duplication point). Snapshot is an enumerated surface,
+    /// never an arbitrary-key query: a new anchor slot must be added here as
+    /// an enum entry with a test, never serviced through probe.
+    ///
+    /// Cost: O(pools) scalars. No tick-map iteration (V3 anchors are slots
+    /// 0/4 - O(1) packs); no V4 reverse-map (one direct pass over
+    /// v4_pool_ids, one keccak per pool for the S_state base).
+    pub(crate) fn project_sim_anchor_scalars(&self) -> Vec<((Address, U256), TrackedSlotProbe)> {
+        let mut out = Vec::new();
+        for (&address, &pool_id) in &self.pool_addresses {
+            match self.pools.get(&pool_id) {
+                Some(PoolEntry::V2(_, state)) => out.push((
+                    (address, U256::from(8u64)),
+                    TrackedSlotProbe {
+                        kind: TrackedSlotKind::V2Reserves,
+                        engine_word: pack_v2_reserves_word(state.reserve0, state.reserve1),
+                        update_block: state.update_block,
+                    },
+                )),
+                Some(PoolEntry::V3(_, state)) => {
+                    out.push((
+                        (address, U256::ZERO),
+                        TrackedSlotProbe {
+                            kind: TrackedSlotKind::V3Slot0,
+                            engine_word: pack_cl_slot0_word(state.sqrt_price_x96, state.tick),
+                            update_block: state.update_block,
+                        },
+                    ));
+                    out.push((
+                        (address, U256::from(4u64)),
+                        TrackedSlotProbe {
+                            kind: TrackedSlotKind::V3Liquidity,
+                            engine_word: pack_cl_liquidity_word(state.liquidity),
+                            update_block: state.update_block,
+                        },
+                    ));
+                }
+                // V4 is (PoolManager, pool_id)-keyed, not address-keyed;
+                // Aerodrome V2-style pools sit at different slots (no probe).
+                Some(PoolEntry::V4(..))
+                | Some(PoolEntry::AerodromeV2(..))
+                | Some(PoolEntry::Curve(..))
+                | Some(PoolEntry::BalancerWeighted(..))
+                | Some(PoolEntry::BalancerStable(..))
+                | None => {}
+            }
+        }
+        for ((pm, pool_id_bytes), internal_pool_id) in &self.v4_pool_ids {
+            if let Some(PoolEntry::V4(_, state)) = self.pools.get(internal_pool_id) {
+                let s_state = derive_v4_pool_state_base(pool_id_bytes);
+                out.push((
+                    (*pm, s_state),
+                    TrackedSlotProbe {
+                        kind: TrackedSlotKind::V4Slot0,
+                        engine_word: pack_cl_slot0_word(state.sqrt_price_x96, state.tick),
+                        update_block: state.update_block,
+                    },
+                ));
+                out.push((
+                    (
+                        *pm,
+                        s_state.checked_add(U256::from(3u64)).unwrap_or(U256::MAX),
+                    ),
+                    TrackedSlotProbe {
+                        kind: TrackedSlotKind::V4Liquidity,
+                        engine_word: pack_cl_liquidity_word(state.liquidity),
+                        update_block: state.update_block,
+                    },
+                ));
+            }
+        }
+        out
+    }
+
+    /// Env-gated at the call site; this method is cheap (None fast-paths the
     /// non-pool addresses via the O(1) `pool_addresses` map; V4 pays
     /// O(v4-pools-under-PM) `keccak256` only on a `PoolManager` SLOAD).
     #[must_use]
