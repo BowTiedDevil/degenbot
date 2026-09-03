@@ -52,6 +52,12 @@ pub mod instruments {
         /// no-op
         pub fn observe_header_to_solved(&self, _secs: f64) {}
         /// no-op
+        pub fn observe_header_to_first_log(&self, _secs: f64) {}
+        /// no-op
+        pub fn observe_log_burst(&self, _secs: f64) {}
+        /// no-op
+        pub fn observe_settle_wait(&self, _secs: f64) {}
+        /// no-op
         pub fn observe_drain_queue_wait(&self, _secs: f64) {}
         /// no-op
         pub fn observe_log_decode(&self, _secs: f64) {}

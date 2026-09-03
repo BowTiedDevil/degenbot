@@ -140,6 +140,24 @@ pub enum WsEvent {
     Log(Log),
 }
 
+/// Microseconds -> seconds with a 32-bit guard (mirrors `ms_to_secs` in
+/// `event_dispatch`; the cast lint is the point - overflow callers get a
+/// saturated bucket, never a precision-lost value).
+fn us_to_secs(us: u64) -> f64 {
+    f64::from(u32::try_from(us).unwrap_or(u32::MAX)) / 1_000_000.0
+}
+
+/// Per-header pre-solve gap marks, tracked by the pump loop (the
+/// `pregap` local): marks the header accept, the first relevant log,
+/// and the last relevant log; the settle point compares the settle
+/// decision time against `last_log` to decompose the block-to-solve gap.
+struct PreSolveGapTrack {
+    header_at: std::time::Instant,
+    first_log: Option<std::time::Instant>,
+    last_log: Option<std::time::Instant>,
+    logs: u64,
+}
+
 /// The unified pump that drives `Bot`'s drain sink.
 ///
 /// Supports a two-phase lifecycle:
@@ -1046,6 +1064,20 @@ impl BlockPump {
 
         // MQUKB6-T0: the current block's span, replaced by each accepted header.
         let mut block_span: Option<tracing::Span> = None;
+
+        // Pre-solve gap decomposition (GC? tracking epilogue to the pump/`
+        // solve-gap investigation): per-block marks so the gap between the
+        // `degenbot.pump.block` span start (header accepted) and the solve
+        // dispatch decomposes into WS delivery (header → first relevant
+        // log), burst jitter (first → last log), and the settle wait (last
+        // log → settle decision). Reset on every accepted header; recorded
+        // onto the block span + the three instruments at the settle point.
+        let mut pregap = PreSolveGapTrack {
+            header_at: std::time::Instant::now(),
+            first_log: None,
+            last_log: None,
+            logs: 0,
+        };
         loop {
             // Span lifecycle (TQ7PD6 fix): an enter guard must never outlive a
             // single poll. This task runs on a multi-threaded tokio runtime and
@@ -1176,6 +1208,57 @@ impl BlockPump {
                                 // parks behind the Python GIL). The anchor is
                                 // `open`, the LOG-DRIVEN quiesced block, NOT the
                                 // racing header.
+                                // Pre-solve gap decomposition (Jaeger span
+                                // fields + pregap histograms): delivery, burst
+                                // jitter, and the settle wait each own a
+                                // measured slice of the block-to-solve gap so
+                                // the opaque pump.span stretch stops hiding
+                                // the WS-delivery and debounce components.
+                                {
+                                    let now = std::time::Instant::now();
+                                    let (header_us, burst_us, settle_us, logs) =
+                                        match (pregap.first_log, pregap.last_log) {
+                                            (Some(f), Some(last)) => (
+                                                Some(
+                                                    f.saturating_duration_since(pregap.header_at)
+                                                        .as_micros()
+                                                        as u64,
+                                                ),
+                                                Some(last.saturating_duration_since(f).as_micros()
+                                                    as u64),
+                                                Some(
+                                                    now.saturating_duration_since(last).as_micros()
+                                                        as u64,
+                                                ),
+                                                pregap.logs,
+                                            ),
+                                            _ => (None, None, None, pregap.logs),
+                                        };
+                                    if let Some(span_ref) = block_span.as_ref() {
+                                        span_ref.record("pregap.logs", logs);
+                                        if let Some(us) = header_us {
+                                            span_ref.record("header_to_first_log_us", us);
+                                        }
+                                        if let Some(us) = burst_us {
+                                            span_ref.record("log_burst_us", us);
+                                        }
+                                        if let Some(us) = settle_us {
+                                            span_ref.record("settle_wait_us", us);
+                                        }
+                                    }
+                                    if let Some(p) = crate::instruments::pipeline() {
+                                        if let Some(us) = header_us {
+                                            p.observe_header_to_first_log(us_to_secs(us));
+                                            // ok: us is small
+                                        }
+                                        if let Some(us) = burst_us {
+                                            p.observe_log_burst(us_to_secs(us));
+                                        }
+                                        if let Some(us) = settle_us {
+                                            p.observe_settle_wait(us_to_secs(us));
+                                        }
+                                    }
+                                }
                                 let change_set = self.sink.take_solver_path_pool_refs_change_set();
                                 let _ctx = block_span.as_ref().map(tracing::Span::enter);
                                 dispatch.dispatch(DrainWork::Publish {
@@ -1213,27 +1296,24 @@ impl BlockPump {
                     // fired within this arm inherit it as parent for free.
                     let new_block_span =
                         tracing::info_span!("degenbot.pump.block", block.number = number);
-                    // JYCTXI: detach from the ambient context so each header
-                    // span is its own trace ROOT. Without this, the new span
-                    // is created while the PREVIOUS block span is still entered
-                    // (the loop-context guard below), chaining every block of a
-                    // session into one ever-growing mega-trace. Children (logs,
-                    // solves, dispatch) still nest under it via the loop-context
-                    // guard — only the parent linkage at creation changes.
-                    #[cfg(feature = "otel")]
-                    {
-                        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-                        // Detaching cannot fail; the Result is informational.
-                        drop(new_block_span.set_parent(opentelemetry::context::Context::new()));
-                    }
-                    #[cfg(not(feature = "otel"))]
-                    {
-                        let _ = &new_block_span; // no OTel layer: nothing to detach
-                    }
+                    // MQUKB6-T0 / JYCTXI: detached-at-creation so each header
+                    // span is its own trace ROOT (the detach + its reasoning
+                    // live on the telemetry seam). Children (logs, solves,
+                    // dispatch) nest under it via the loop-context below; only
+                    // the parent linkage at creation changes.
+                    crate::telemetry::make_trace_root(&new_block_span);
                     // MQUKB6-T0: this span becomes the loop's per-block context —
                     // subsequent iterations (logs, settle decisions) nest under it
                     // until the next header replaces it.
                     block_span = Some(new_block_span.clone());
+                    // Pre-solve gap marks: this header is the clock anchor
+                    // for the new block's gap decomposition.
+                    pregap = PreSolveGapTrack {
+                        header_at: std::time::Instant::now(),
+                        first_log: None,
+                        last_log: None,
+                        logs: 0,
+                    };
                     // Sync-only header-processing scope (TQ7PD6): this enter
                     // guard dies before the first await below, so it can never
                     // leak across a task migration. The backfill future below
@@ -1356,6 +1436,17 @@ impl BlockPump {
                     }
 
                     let log_block = log.block_number.unwrap_or(fsm.current_block());
+                    // Pre-solve gap marks: a relevant delivered log. First-log
+                    // marks the WS delivery latency phase; last-log feeds the
+                    // settle wait at the settle point.
+                    {
+                        let now = std::time::Instant::now();
+                        if pregap.first_log.is_none() {
+                            pregap.first_log = Some(now);
+                        }
+                        pregap.last_log = Some(now);
+                        pregap.logs += 1;
+                    }
                     // BQ7ZBC — FSM single-writer recovery discard. After an
                     // authoritative eth_getLogs catch-up (`fsm.recovery_anchor`), a
                     // stalled WS that recovers flushes buffered forward logs for

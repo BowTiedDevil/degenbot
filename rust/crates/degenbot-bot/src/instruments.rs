@@ -37,6 +37,15 @@ const LATENCY_BUCKETS_SECONDS: &[f64] = &[
 pub struct PipelineInstruments {
     /// Header accepted → solve completed (the race number).
     header_to_solved: Histogram<f64>,
+    /// Header accepted → first RELEVANT log delivered (WS-feed latency —
+    /// the delivery side of the pre-solve gap).
+    header_to_first_log: Histogram<f64>,
+    /// First → last relevant log (the in-network burst width for the
+    /// block's own logs — delivery jitter inside the gap).
+    log_burst: Histogram<f64>,
+    /// Last relevant log → settle decision fires (debounce/quiesce wait —
+    /// the pump-side hold before the drainer is engaged).
+    settle_wait: Histogram<f64>,
     /// Time a `DrainWork` item spent queued before the drainer picked it up.
     drain_queue_wait: Histogram<f64>,
     /// Log decode phase duration.
@@ -144,6 +153,28 @@ impl PipelineInstruments {
                 .with_unit("s")
                 .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Header accepted to solve completed")
+                .build(),
+            header_to_first_log: meter
+                .f64_histogram("degenbot.block.header_to_first_log")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description(
+                    "Header accepted to first relevant log delivered (WS delivery latency)",
+                )
+                .build(),
+            log_burst: meter
+                .f64_histogram("degenbot.block.log_burst")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description(
+                    "First to last relevant log delivery (burst jitter inside the pre-solve gap)",
+                )
+                .build(),
+            settle_wait: meter
+                .f64_histogram("degenbot.block.settle_wait")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description("Last relevant log to settle decision (debounce/quiesce wait)")
                 .build(),
             drain_queue_wait: meter
                 .f64_histogram("degenbot.drain.queue_wait")
@@ -348,6 +379,21 @@ impl PipelineInstruments {
     /// Header accepted → solve completed.
     pub fn observe_header_to_solved(&self, secs: f64) {
         self.header_to_solved.record(secs, &[]);
+    }
+
+    /// Header accepted → first relevant log delivered (pre-solve gap phase 1).
+    pub fn observe_header_to_first_log(&self, secs: f64) {
+        self.header_to_first_log.record(secs, &[]);
+    }
+
+    /// First → last relevant log delivered (pre-solve gap phase 2).
+    pub fn observe_log_burst(&self, secs: f64) {
+        self.log_burst.record(secs, &[]);
+    }
+
+    /// Last relevant log → settle decision (pre-solve gap phase 3).
+    pub fn observe_settle_wait(&self, secs: f64) {
+        self.settle_wait.record(secs, &[]);
     }
 
     /// Queue time of one drained work item.

@@ -92,6 +92,24 @@ pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
     );
 }
 
+/// Detach a span from the ambient `OTel` context so it becomes its own trace
+/// ROOT (JYCTXI / MQUKB6): a span created while another is still current —
+/// e.g. the pump's per-block beat when the previous block's loop-context
+/// span is still entered under a backfill `.instrument()` future — would
+/// otherwise chain every block of a session into one ever-growing
+/// mega-trace. Children still nest under the span afterwards (callers keep
+/// it as their loop context); only the parent linkage at creation changes.
+#[cfg(feature = "otel")]
+pub(crate) fn make_trace_root(span: &tracing::Span) {
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    // Detaching cannot fail; the Result is informational.
+    drop(span.set_parent(opentelemetry::context::Context::new()));
+}
+
+/// No-`otel`-feature twin: nothing to detach (compiles zero `OTel` code).
+#[cfg(not(feature = "otel"))]
+pub(crate) fn make_trace_root(_span: &tracing::Span) {}
+
 /// No-op without the `otel` feature (nothing to flush).
 #[cfg(not(feature = "otel"))]
 pub fn flush_before_exit() {}
@@ -198,6 +216,38 @@ mod otel_tests {
         assert!(
             attr_value("exception_message").is_some_and(|m| m.contains("+13 wei")),
             "exception.message must carry the error detail"
+        );
+    }
+
+    /// JYCTXI: `make_trace_root` detaches from the ambient context so the span
+    /// exports as its own trace ROOT (zero sentinel parent), even though it was
+    /// created while another span is entered (the default parent lookup would
+    /// otherwise chain).
+    #[test]
+    fn make_trace_root_detaches_to_own_trace() {
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+        tracing::subscriber::with_default(subscriber, || {
+            // Ambient parent: an entered span, so default parent lookup chains.
+            let parent = tracing::info_span!("test.ambient.parent").entered();
+            let root = tracing::info_span!("test.trace.root");
+            crate::telemetry::make_trace_root(&root);
+            // End + close while the parent is still current: exports the span,
+            // exercising the detach-at-creation contract.
+            drop(root);
+            drop(parent);
+        });
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+        let root = spans
+            .iter()
+            .find(|sp| sp.name.as_ref() == "test.trace.root")
+            .expect("root span exported");
+        assert_eq!(
+            root.parent_span_id,
+            opentelemetry::trace::SpanId::INVALID,
+            "make_trace_root must detach: span must be its own trace root"
         );
     }
 }
