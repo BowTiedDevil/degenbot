@@ -83,6 +83,10 @@ pub mod instruments {
         pub fn count_backfill(&self) {}
         /// no-op
         pub fn observe_cgroup_throttled(&self, _events_delta: u64, _usecs_delta: u64) {}
+        /// no-op (K4ETHF T2)
+        pub fn observe_state_lock_wait(&self, _site: &str, _mode: &str, _secs: f64) {}
+        /// no-op (K4ETHF T2)
+        pub fn observe_state_lock_hold(&self, _site: &str, _mode: &str, _secs: f64) {}
         /// no-op
         pub fn set_drain_queue_depth(&self, _depth: u64) {}
         /// no-op

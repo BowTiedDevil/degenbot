@@ -139,6 +139,12 @@ pub struct PipelineInstruments {
     detached_stale_dropped: Counter<u64>,
     /// Epic SRQEK5 T2: detached stragglers applied to the results map.
     detached_applied: Counter<u64>,
+    /// Epic K4ETHF T2: time an acquisition waited for the core BotState
+    /// lock, labeled by `site` (closed set from
+    /// `bot_core::state_lock::site_class_for`) + `mode` (read|write).
+    state_lock_wait: Histogram<f64>,
+    /// Epic K4ETHF T2: time a guard was held after acquisition, same labels.
+    state_lock_hold: Histogram<f64>,
 }
 
 impl PipelineInstruments {
@@ -372,6 +378,20 @@ impl PipelineInstruments {
             detached_applied: meter
                 .u64_counter("degenbot.detached.applied")
                 .with_description("Detached stragglers applied to the results map")
+                .build(),
+            state_lock_wait: meter
+                .f64_histogram("degenbot.state_lock.wait")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description(
+                    "Time an acquisition waited for the core BotState lock (per site, mode)",
+                )
+                .build(),
+            state_lock_hold: meter
+                .f64_histogram("degenbot.state_lock.hold")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description("Time a guard was held after acquisition (per site, mode)")
                 .build(),
         }
     }
@@ -614,6 +634,30 @@ impl PipelineInstruments {
     /// One detached straggler applied to the results map.
     pub fn count_detached_applied(&self) {
         self.detached_applied.add(1, &[]);
+    }
+
+    /// Epic K4ETHF T2: one state-lock acquisition wait. `site` is a small
+    /// closed set (see `bot_core::state_lock::site_class_for`); `mode` is
+    /// `read` | `write`.
+    pub fn observe_state_lock_wait(&self, site: &str, mode: &str, secs: f64) {
+        self.state_lock_wait.record(
+            secs,
+            &[
+                KeyValue::new("site", site.to_owned()),
+                KeyValue::new("mode", mode.to_owned()),
+            ],
+        );
+    }
+
+    /// Epic K4ETHF T2: one post-acquisition guard hold (same labels).
+    pub fn observe_state_lock_hold(&self, site: &str, mode: &str, secs: f64) {
+        self.state_lock_hold.record(
+            secs,
+            &[
+                KeyValue::new("site", site.to_owned()),
+                KeyValue::new("mode", mode.to_owned()),
+            ],
+        );
     }
 }
 

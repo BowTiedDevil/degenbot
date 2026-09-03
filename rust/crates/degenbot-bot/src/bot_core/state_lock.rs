@@ -149,6 +149,50 @@ fn advance_clock_ms(ms: u64) {
     CLOCK_OFFSET_MS.fetch_add(ms, Ordering::Relaxed);
 }
 
+/// Epic K4ETHF T2: classify an acquire site into a small closed set for the
+/// degenbot.state_lock wait/hold histograms. Pure on the file string so
+/// unit tests can pin the taxonomy; the line is logged raw by the warn
+/// paths above (location strings are unstable - never a metric label).
+pub(crate) fn site_class_for(file: &str) -> &'static str {
+    if file.contains("bot/mod.rs") {
+        "python"
+    } else if file.contains("block_pump.rs") {
+        "pump"
+    } else if file.contains("registration_lifecycle.rs") || file.contains("cl_orchestration.rs") {
+        "reg"
+    } else if file.contains("solver_dispatch.rs") || file.contains("engine_handle.rs") {
+        // BEFORE the dispatch.rs branch: solver_dispatch.rs contains it.
+        "solver"
+    } else if file.contains("dispatch.rs") {
+        "sim"
+    } else if file.contains("state_lock.rs") {
+        "core"
+    } else {
+        "other"
+    }
+}
+
+fn site_class(loc: &Location) -> &'static str {
+    site_class_for(loc.file())
+}
+
+/// Emit the wait observation if the metrics pipeline is up (K4ETHF T2;
+/// seconds - the instruments' unit). Cheap one-Option-branch per acquire.
+fn record_wait(site: &'static str, mode: &'static str, t0: Instant) {
+    if let Some(p) = crate::instruments::pipeline() {
+        let secs = t0.elapsed().as_secs_f64();
+        p.observe_state_lock_wait(site, mode, secs);
+    }
+}
+
+/// Emit the hold observation at guard drop (see record_wait).
+fn record_hold(site: &'static str, mode: &'static str, t0: Instant) {
+    if let Some(p) = crate::instruments::pipeline() {
+        let secs = t0.elapsed().as_secs_f64();
+        p.observe_state_lock_hold(site, mode, secs);
+    }
+}
+
 fn now_ms() -> u64 {
     let base = u64::try_from(START.elapsed().as_millis()).unwrap_or(u64::MAX);
     #[cfg(test)]
@@ -392,6 +436,8 @@ impl<T> StateLock<T> {
     pub fn read(&self) -> StateReadGuard<'_, T> {
         let t0 = Instant::now();
         let guard = self.inner.read();
+        let site = site_class(Location::caller());
+        record_wait(site, "read", t0);
         if !diag_enabled() {
             // Gated-off steady state: no registry traffic, no allocation.
             // Keep the blocked-wait warning (rare; no per-hold bookkeeping
@@ -408,6 +454,8 @@ impl<T> StateLock<T> {
                 inner: guard,
                 key: 0, // sentinel: Drop skips removal when seq == 0
                 seq: 0,
+                site,
+                acquired: t0,
             };
         }
         let location = Location::caller();
@@ -435,6 +483,8 @@ impl<T> StateLock<T> {
             inner: guard,
             key,
             seq,
+            site,
+            acquired: t0,
         }
     }
 
@@ -448,6 +498,8 @@ impl<T> StateLock<T> {
         let guard = self.inner.write();
         let waited = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
         let key = self.key_of();
+        let site = site_class(location);
+        record_wait(site, "write", t0);
         if waited >= warn_threshold_ms() {
             let holders = snapshot_holds(key);
             tracing::warn!(
@@ -463,6 +515,8 @@ impl<T> StateLock<T> {
             inner: guard,
             key,
             seq,
+            site,
+            acquired: t0,
         }
     }
 
@@ -480,6 +534,8 @@ impl<T> StateLock<T> {
                 inner: guard,
                 key,
                 seq,
+                site: site_class(Location::caller()),
+                acquired: Instant::now(),
             }
         })
     }
@@ -514,6 +570,10 @@ pub struct StateReadGuard<'a, T> {
     inner: RwLockReadGuard<'a, T>,
     key: usize,
     seq: u64,
+    /// K4ETHF T2: closed-set acquire-site class + acquire instant for the
+    /// hold histogram (recorded at drop regardless of the diag gate).
+    site: &'static str,
+    acquired: Instant,
 }
 
 impl<T> Deref for StateReadGuard<'_, T> {
@@ -525,6 +585,8 @@ impl<T> Deref for StateReadGuard<'_, T> {
 
 impl<T> Drop for StateReadGuard<'_, T> {
     fn drop(&mut self) {
+        // Hold telemetry rides the guard in both diag modes (K4ETHF T2).
+        record_hold(self.site, "read", self.acquired);
         // seq == 0 is the gated-off sentinel (never registered; no removal).
         if self.seq != 0 {
             let removed = remove_read(self.key, self.seq);
@@ -556,6 +618,10 @@ pub struct StateWriteGuard<'a, T> {
     inner: RwLockWriteGuard<'a, T>,
     key: usize,
     seq: u64,
+    /// K4ETHF T2: closed-set acquire-site class + acquire instant for the
+    /// hold histogram (recorded at drop).
+    site: &'static str,
+    acquired: Instant,
 }
 
 impl<T> Deref for StateWriteGuard<'_, T> {
@@ -573,6 +639,8 @@ impl<T> DerefMut for StateWriteGuard<'_, T> {
 
 impl<T> Drop for StateWriteGuard<'_, T> {
     fn drop(&mut self) {
+        // Hold telemetry rides the guard in both diag modes (K4ETHF T2).
+        record_hold(self.site, "write", self.acquired);
         if self.seq == 0 {
             return; // gated-off sentinel: never registered
         }
@@ -655,6 +723,29 @@ mod tests {
         assert_eq!(flagged[0].location, loc1.to_string());
         // Second pass must be silent (warn-once).
         assert!(flag_aged_records(&mut records, 6_000, 500).is_empty());
+    }
+
+    // ---- K4ETHF T2 telemetry taxonomy --------------------------------------
+
+    #[test]
+    fn site_class_taxonomy_is_pinned() {
+        assert_eq!(
+            site_class_for("x/src/degenbot-python/src/bot/mod.rs"),
+            "python"
+        );
+        assert_eq!(site_class_for("x/bot_core/block_pump.rs"), "pump");
+        assert_eq!(
+            site_class_for("x/bot_core/registration_lifecycle.rs"),
+            "reg"
+        );
+        assert_eq!(site_class_for("x/bot_core/cl_orchestration.rs"), "reg");
+        assert_eq!(
+            site_class_for("x/degenbot-arbitrage/src/dispatch.rs"),
+            "sim"
+        );
+        assert_eq!(site_class_for("x/arb_engine/solver_dispatch.rs"), "solver");
+        assert_eq!(site_class_for("x/arb_engine/engine_handle.rs"), "solver");
+        assert_eq!(site_class_for("x/anything/else.rs"), "other");
     }
 
     #[test]
