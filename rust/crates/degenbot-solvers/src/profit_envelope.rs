@@ -2134,9 +2134,21 @@ fn compose_boundary_merged(
     }
 
     // Two-pointer sweep over y-intervals (GC-3, reviewer option (i)):
-    // piece boundaries are EXACT I512 crossovers — no U256 clamp in any
+    // piece boundaries are EXACT I512 crossovers - no U256 clamp in any
     // comparison. x positions clamp to [0, upper] only at eval time (the
     // consumption edge); y overlap tests run on raw I512.
+    //
+    // SEAM OVERHANG (live finding, 2026-09-03): adjacent inner pieces
+    // evaluate the SHARED crossover through different quantized
+    // coefficients, and the ceil-rounded takeover lets the previous
+    // piece's value sit above the next piece's start by up to
+    // |delta-slope| units at the seam - the y_lo sequence is therefore
+    // NOT monotone in general, and no cheap y-ordering invariant exists.
+    // Selection is per-piece partition_point (start at the first outer
+    // piece whose breakpoint is < y_lo, walk while it starts at or below
+    // y_hi); overlaps at seams simply select a couple more pairs, which
+    // the unchanged prune drops or resolves exactly as legacy would.
+    let merge_work_t0 = std::time::Instant::now();
     let upper_i = I512::try_from(U512::from(upper)).unwrap_or(I512::MAX);
     let x_clamp = |x: I512| -> U256 {
         let x = if x < I512::ZERO { I512::ZERO } else { x };
@@ -2149,25 +2161,30 @@ fn compose_boundary_merged(
         }
     };
     // overflow guard (reviewer guard 2): a saturated boundary means an
-    // unchecked channel — fall back, never silently trust it.
+    // unchecked channel - fall back, never silently trust it.
     let exact = |bp: I512| -> Option<I512> { (bp != I512::MAX).then_some(bp) };
-    let merge_work_t0 = std::time::Instant::now();
     let mut selected: Vec<(usize, usize)> =
         Vec::with_capacity(outer_pieces.len() + inner_pieces.len());
-    let mut li = 0usize; // outer-piece pointer (y-ascending)
-    let mut prev_y_hi = I512::ZERO;
+    let mut prev_bx = I512::ZERO;
     for (k, &(bx_k, ref ik, origin_k)) in inner_pieces.iter().enumerate() {
+        // exact crossovers of a canonical hull ascend; a descent is
+        // mathematically impossible here - if it ever fires, escalate
+        // (contradicts the hull construction, per reviewer L1/L2).
+        if k > 0 && bx_k < prev_bx {
+            return legacy(MergeFallbackReason::YDisorder);
+        }
+        prev_bx = bx_k;
         let x_start_i = bx_k.max(I512::ZERO).min(upper_i);
         let x_end_i = inner_pieces
             .get(k + 1)
             .map_or(upper_i, |&(bx, _, _)| bx)
             .min(upper_i)
             .max(I512::ZERO);
+        if x_end_i <= x_start_i {
+            continue; // degenerate-width piece inside the domain
+        }
         let x_eval_start = x_clamp(x_start_i);
         let x_eval_end = x_clamp(x_end_i);
-        if x_eval_end < x_eval_start {
-            return legacy(MergeFallbackReason::YDisorder);
-        }
         let y_lo0 = ik.eval(&x_eval_start);
         let y_hi0 = ik.eval(&x_eval_end);
         let (y_lo, y_hi) = if y_lo0 <= y_hi0 {
@@ -2175,37 +2192,35 @@ fn compose_boundary_merged(
         } else {
             (y_hi0, y_lo0)
         };
-        // exact boundaries ascend strictly within the domain; a regression
-        // means genuinely non-monotone input — the counter is the safety
-        // net (nonzero after this fix escalates to the reviewer).
-        if k > 0 && y_lo < prev_y_hi {
-            return legacy(MergeFallbackReason::YDisorder);
-        }
-        prev_y_hi = y_hi;
-        // advance the outer pointer past pieces ending strictly before
-        // this inner piece's y-extent
-        while li + 1 < outer_pieces.len() {
-            let Some(next_obp) = exact(outer_pieces[li + 1].0) else {
-                return legacy(MergeFallbackReason::CmpOverflow);
-            };
-            if next_obp <= y_lo {
-                li += 1;
+        // first outer piece whose breakpoint starts within reach of the
+        // piece's y-extent (one before the partition point covers seams
+        // where the previous piece's span touches y_lo)
+        let first = outer_pieces.partition_point(|&(obp, _, _)| obp < y_lo);
+        let start_l = first.saturating_sub(1);
+        let mut l = start_l;
+        loop {
+            let (obp, _, o_origin) = outer_pieces[l];
+            if obp <= y_hi {
+                let span_end = match outer_pieces
+                    .get(l + 1)
+                    .map(|&(next_obp, _, _)| exact(next_obp))
+                {
+                    None => I512::MAX, // last piece: open-ended span
+                    Some(Some(v)) => v,
+                    Some(None) => {
+                        return legacy(MergeFallbackReason::CmpOverflow);
+                    }
+                };
+                if span_end >= y_lo {
+                    selected.push((o_origin, origin_k));
+                }
             } else {
                 break;
             }
-        }
-        // walk up while the next outer piece's y-range starts at/below y_hi
-        let mut l = li;
-        loop {
-            let (_, _, o_origin) = outer_pieces[l];
-            selected.push((o_origin, origin_k));
             if l + 1 >= outer_pieces.len() {
                 break;
             }
-            let Some(next_start) = exact(outer_pieces[l + 1].0) else {
-                return legacy(MergeFallbackReason::CmpOverflow);
-            };
-            if next_start > y_hi {
+            if obp > y_hi {
                 break;
             }
             l += 1;
@@ -2217,10 +2232,23 @@ fn compose_boundary_merged(
     gate_tls(|t| {
         t.merge_selected += selected.len() as u64;
         t.pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
+        t.pairs += selected.len() as u64;
+    });
+    if selected.is_empty() {
+        return legacy(MergeFallbackReason::EmptySelection);
+    }
+    gate_tls(|t| {
+        t.merge_selected += selected.len() as u64;
+        t.pairs_enumerated += (hop_ls.len() as u64) * (chain.len() as u64);
         // S1: pairs/product_ns regain writers on the merged path (pairs =
         // composes actually evaluated; product_ns = selection + compose
         // work, i.e. what the legacy pair product paid).
         t.pairs += selected.len() as u64;
+        t.product_ns += merge_work_t0.elapsed().as_nanos();
+    });
+    gate_tls(|t| {
+        // S1: pairs/product_ns writers on the merged path (pairs = composes
+        // actually evaluated; product_ns = selection + compose work).
         t.product_ns += merge_work_t0.elapsed().as_nanos();
     });
     // Outer-major lexicographic order over the origins: a subsequence of
