@@ -334,7 +334,9 @@ pub(crate) type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<P
 /// shared per-cycle context by reference; workers touch NO engine state
 /// and NO core.lock (engine-then-core lock ordering preserved unchanged),
 /// and the passed span is re-entered per item exactly as the `par_iter`
-/// closure did (MQUKB6-T0: worker threads have no ambient context).
+/// closure did (MQUKB6-T0: worker threads have no ambient context). Each
+/// item also emits a `degenbot.arb.path` DEBUG child span parented under
+/// that re-entered cycle span (MQUKB6-T2: per-path latency as attributes).
 #[expect(clippy::too_many_lines)] // the moved solve + diagnostics pipeline is one narrative
 pub(crate) fn solve_one_path(
     ctx: &SolveCycleShared,
@@ -358,6 +360,25 @@ pub(crate) fn solve_one_path(
         walk_memo: Some(&*ctx.walk_memo),
     };
     let _solve_ctx = solve_span.enter();
+    // MQUKB6-T2: per-path child span. Created BEFORE the walk (the exported
+    // duration is the real solve wall) and recorded after; the walk counters
+    // ride span ATTRIBUTES on this `degenbot.arb.path` node instead of
+    // events on the cycle span, making per-path latency a Jaeger query
+    // rather than a log grep. DEBUG level is the volume guard: production
+    // INFO runs keep one node per CYCLE (a 200-path solve must not fan out
+    // 200 Jaeger nodes by default); `RUST_LOG=degenbot::solver=debug` opts
+    // into per-path nodes.
+    let path_span = tracing::debug_span!(
+        target: "degenbot::solver",
+        "degenbot.arb.path",
+        path.id = pid,
+        path.us = tracing::field::Empty,
+        path.sims = tracing::field::Empty,
+        path.pieces = tracing::field::Empty,
+        gate.us = tracing::field::Empty,
+        path.profit = tracing::field::Empty,
+    );
+    let _path_ctx = path_span.enter();
     ::degenbot_solvers::profit_envelope::reset_gate_stats();
     let t0 = std::time::Instant::now();
     let outcome = ::degenbot_solvers::mixed::solve_path_with_min_profit(
@@ -440,6 +461,16 @@ pub(crate) fn solve_one_path(
         u64::try_from(refine_sims).unwrap_or(0),
         std::sync::atomic::Ordering::Relaxed,
     );
+    // MQUKB6-T2: seal the per-path span - walk counters become attributes
+    // on the `degenbot.arb.path` node (guard drops at fn end, so the
+    // recorded values are inside the exported duration).
+    path_span.record("path.us", u64::try_from(micros).unwrap_or(u64::MAX));
+    path_span.record("path.sims", u64::try_from(sims).unwrap_or(u64::MAX));
+    path_span.record("path.pieces", u64::try_from(pieces).unwrap_or(u64::MAX));
+    path_span.record("gate.us", gate_us);
+    if let Some(r) = outcome.result.as_ref() {
+        path_span.record("path.profit", tracing::field::display(r.profit));
+    }
     let mut heap = ctx.path_times.lock();
     {
         let worst = heap.peek().map_or(
@@ -561,6 +592,13 @@ pub(crate) enum DetachedMergeItem {
         /// Per-hop `pool_update_block` snapshot at the enqueue resolve.
         update_stamp: Vec<u64>,
         result: SolvePathResult,
+        /// The solve-cycle span at ENQUEUE time (MQUKB6-T2). The sidecar
+        /// std-thread has NO ambient tracing context, so the item carries
+        /// the issuing `degenbot.arb.solve` span and the merge enters it
+        /// per item - merge-time events and the Q1a drop/apply decisions
+        /// parent under the issuing cycle instead of orphaning into Jaeger
+        /// roots. `Span::none()` in unit tests is an inert no-op.
+        solve_span: tracing::Span,
     },
 }
 
@@ -683,7 +721,12 @@ impl ArbitrageEngine {
             pid,
             update_stamp,
             result,
+            solve_span,
         } = item;
+        // MQUKB6-T2: re-enter the enqueue-time cycle span for the whole
+        // merge (Q1a drop/apply events + any profit emit parent there).
+        // Inert without a subscriber or for `Span::none()` test items.
+        let _merge_ctx = solve_span.enter();
         let age_cycles = self.detached_issued_seq.saturating_sub(cycle_seq);
         // Q1a deregister: nothing to merge into — drop, never re-create.
         let Some(registered) = self.path_pools.get(&pid) else {
@@ -1037,10 +1080,14 @@ impl ArbitrageEngine {
         block_number: u64,
         metadata: &BlockMetadata,
     ) {
-        // MQUKB6-T0: rayon worker threads have no ambient tracing context — any
-        // span emitted inside a par_iter closure would orphan into a root trace.
-        // Capture the caller's span (the drainer's `degenbot.arb.solve`) once
-        // and re-enter it per work item below.
+        // MQUKB6-T0: worker threads (rayon-scope tasks, the dedicated tokio
+        // solve executor's workers, AND the detached solve-bin std-threads)
+        // have no ambient tracing context — any span emitted inside a
+        // dispatch closure would orphan into a root trace. Capture the
+        // caller's span (the drainer's `degenbot.arb.solve`) once and
+        // re-enter it per work item; the detached arm additionally carries
+        // it into `DetachedMergeItem` so the sidecar's merges inherit it
+        // (MQUKB6-T2).
         let solve_span = tracing::Span::current();
         // D63GSE visibility: phase timing so a multi-second solve EXPLAINS
         // itself — fan-out / resolve / par-solve / clamp are separate events,
@@ -1142,6 +1189,17 @@ impl ArbitrageEngine {
         // with its concrete hop list — a Jaeger trace now answers "which pools
         // are in this path" without cross-referencing Python state. Runs under
         // the drainer's `degenbot.arb.solve` span, so the events parent there.
+        // MQUKB6-T2: phase span - the fan-out activation telemetry gets its
+        // own Jaeger node under the cycle span (matches `arb_solve.*`
+        // hotpath labels 1:1); the aggregate rides span attributes, so even
+        // the phase-summary EVENT below can no longer orphan phase data.
+        let fanout_ctx = tracing::info_span!(
+            target: "degenbot::solver",
+            "degenbot.arb.fanout",
+            block.number = solve_block,
+            paths.affected = affected_path_ids.len(),
+        )
+        .entered();
         hotpath::measure_block!("arb_solve.fanout_activate_telemetry", {
             // Per-path activation events are debug-level now (N225ET): the
             // per-event span plumbing dominated the fan-out phase; the
@@ -1175,6 +1233,7 @@ impl ArbitrageEngine {
             phase_us = fanout_us,
             "[solve-phase] fanned out to affected paths"
         );
+        drop(fanout_ctx);
 
         // Re-resolve and solve only affected paths — update results in-place
         // without cloning unchanged entries.
@@ -1207,6 +1266,15 @@ impl ArbitrageEngine {
         // vs ...). Emitted on the resolve phase event.
         let mut invalid_reasons: HashMap<String, u64> = HashMap::new();
         self.paths_same_state_this_cycle = 0;
+        // MQUKB6-T2: phase span for the core-lock re-derive window (the
+        // summary event after the block stays on the same node).
+        let resolve_ctx = tracing::info_span!(
+            target: "degenbot::solver",
+            "degenbot.arb.resolve",
+            block.number = solve_block,
+            paths.affected = affected_path_ids.len(),
+        )
+        .entered();
         hotpath::measure_block!("arb_solve.resolve", {
             let core = self.core.read();
             for &path_id in &affected_path_ids {
@@ -1291,6 +1359,7 @@ impl ArbitrageEngine {
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
             "[solve-phase] resolved hop snapshots"
         );
+        drop(resolve_ctx);
 
         // Remove old results for affected paths (they'll be re-solved below).
         // A deferred path's result is dropped too: it is excluded from this
@@ -1423,6 +1492,14 @@ impl ArbitrageEngine {
         // keep each arm measured span (a few us of bin-pack included, as
         // before).
         let compute_bins = || {
+            // MQUKB6-T2: phase span for the LPT bin-pack (shared by both
+            // dispatch arms - and the detached arm's identical binning).
+            let _lpt_ctx = tracing::info_span!(
+                target: "degenbot::solver",
+                "degenbot.arb.lpt",
+                paths = to_solve.len(),
+            )
+            .entered();
             let n_threads = rayon::current_num_threads().max(1);
             // Loop-12 KUKHMX: previous-block measured walk sims refine the
             // LPT cost; snapshot once (single lock) before binning.
@@ -1552,6 +1629,7 @@ impl ArbitrageEngine {
                                         pid,
                                         update_stamp,
                                         result,
+                                        solve_span: solve_span_bin.clone(),
                                     })
                                     .is_ok()
                                 {
@@ -1639,6 +1717,17 @@ impl ArbitrageEngine {
                     });
                 }
                 drop(res_tx);
+                // MQUKB6-T2: the drain-side merge is its own phase node
+                // under the cycle span - fast paths merge here WHILE the
+                // executor workers still solve, and `merge.paths` records
+                // on completion (handle dropped at scope end, so the node
+                // closes with the drain).
+                let merge_span = tracing::info_span!(
+                    target: "degenbot::solver",
+                    "degenbot.arb.merge",
+                    merge.paths = tracing::field::Empty,
+                );
+                let merge_ctx = merge_span.enter();
                 while let Ok(item) = res_rx.recv() {
                     let Some((pid, solve_result)) = item else {
                         continue;
@@ -1653,6 +1742,8 @@ impl ArbitrageEngine {
                         self.merge_one_result(solve_block, metadata, pid, solve_result);
                     solved_count += 1;
                 }
+                drop(merge_ctx);
+                merge_span.record("merge.paths", solved_count);
             });
         } else {
             streaming_merge = false;
@@ -1808,6 +1899,14 @@ impl ArbitrageEngine {
         // words on-chain - UO3JM4).
         let clamp_twins_start = std::time::Instant::now();
         if !streaming_merge {
+            // MQUKB6-T2: same phase node as the tokio arm's streaming drain,
+            // so both arms produce an identical trace shape.
+            let merge_span = tracing::info_span!(
+                target: "degenbot::solver",
+                "degenbot.arb.merge",
+                merge.paths = solved_count,
+            );
+            let _merge_ctx = merge_span.enter();
             hotpath::measure_block!("arb_solve.clamp_merge", {
                 for (pid, solve_result) in solved {
                     clamp_twin_count +=
@@ -2439,6 +2538,71 @@ mod lpt_partition_tests {
     fn lpt_zero_bins_returns_empty_vec() {
         let bins = lpt_partition(5, 0, |_| 1);
         assert!(bins.is_empty());
+    }
+}
+
+// ----------------- PER-PATH SPAN TELEMETRY (MQUKB6-T2) -----------------
+#[cfg(all(test, feature = "otel"))]
+#[expect(clippy::expect_used)] // otel tests assert loudly, per telemetry.rs otel_tests
+mod solve_path_span_tests {
+    use super::*;
+    use crate::otel;
+    use degenbot_solvers::mixed::ResolvedMixedPath;
+    use opentelemetry_sdk::trace::InMemorySpanExporter;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// `solve_one_path` emits one `degenbot.arb.path` child span parented
+    /// under the (re-entered) cycle span, carrying `path.id`. Scoped LOCAL
+    /// subscriber (`with_default`): no global-slot mutation, no leakage
+    /// from other suites' spans into this exporter.
+    #[test]
+    fn solve_one_path_emits_child_path_span_under_the_cycle_span() {
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        let ctx = super::executor_ab_probe::probe_ctx();
+        let resolved = ResolvedMixedPath {
+            hops: Vec::new(),
+            valid: true,
+            state_nonces: Vec::new(),
+            max_update_block: 0,
+        };
+        tracing::subscriber::with_default(subscriber, || {
+            let solve = tracing::info_span!("degenbot.arb.solve", block.number = 7u64);
+            let _guard = solve.enter();
+            let _ = solve_one_path(&ctx, &tracing::Span::current(), 77, &resolved);
+        });
+
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+
+        let solve_id = spans
+            .iter()
+            .find(|sp| sp.name.as_ref() == "degenbot.arb.solve")
+            .map(|sp| sp.span_context.span_id())
+            .expect("solve span must be exported");
+        let paths: Vec<_> = spans
+            .iter()
+            .filter(|sp| sp.name.as_ref() == "degenbot.arb.path")
+            .collect();
+        assert_eq!(
+            paths.len(),
+            1,
+            "exactly one per-path span; got: {:?}",
+            spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            paths[0].parent_span_id, solve_id,
+            "degenbot.arb.path must parent under the re-entered cycle span"
+        );
+        assert!(
+            paths[0]
+                .attributes
+                .iter()
+                .any(|kv| kv.key == opentelemetry::Key::from_static_str("path.id")),
+            "path.id must ride as a span attribute"
+        );
     }
 }
 

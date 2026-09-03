@@ -216,14 +216,20 @@ where
     // exporter (which returns a future — the OTLP/HTTP client needs a tokio
     // reactor) from a bare std thread and panics with "there is no reactor
     // running".
-    // Span-event cap removed (incident: traces a8c1bf/81d006): the SDK
-    // default max_events_per_span is 128 — our per-path activation events hit
-    // exactly that on every busy solve, silently dropping the phase events
-    // emitted AFTER them (fan-out/resolve/rayon/clamp). The SDK has no true
-    // unlimited mode (0 would drop ALL events), so u32::MAX is the uncapped
-    // setting. Solve spans emit ~130 events; memory is not a concern.
+    // Span-event cap — BOUNDED (MQUKB6-T2 revisits incident a8c1bf/81d006):
+    // the incident was the SDK default 128 truncating a busy solve span,
+    // silently dropping the phase events emitted AFTER the per-path
+    // activation flood. The u32::MAX emergency fix is now retired because
+    // the data it protected moved OFF events: per-path economics ride
+    // `degenbot.arb.path` child-span ATTRIBUTES and the phase aggregates
+    // ride `degenbot.arb.{fanout,resolve,lpt,merge}` span attributes, so
+    // event truncation can no longer lose phase data. 1024 bounds the only
+    // remaining known pack — `[path] activated by dirty pool` events at
+    // `RUST_LOG=degenbot::engine=debug` (hundreds of activations per busy
+    // cycle) — without the unbounded-memory exposure of u32::MAX.
     let span_limits = opentelemetry_sdk::trace::SpanLimits {
-        max_events_per_span: u32::MAX,
+        // See the incident note above: bounded headroom, not the u32::MAX fix.
+        max_events_per_span: 1024,
         ..opentelemetry_sdk::trace::SpanLimits::default()
     };
     let provider = SdkTracerProvider::builder()

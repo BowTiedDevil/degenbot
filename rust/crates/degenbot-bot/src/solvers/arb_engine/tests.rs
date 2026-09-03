@@ -5914,6 +5914,7 @@ mod tests {
                 pid,
                 update_stamp: stale_stamp,
                 result: fresh_result.clone(),
+                solve_span: tracing::Span::none(),
             },
         );
         assert_eq!(
@@ -5939,6 +5940,7 @@ mod tests {
                 pid,
                 update_stamp: fresh_stamp,
                 result: fresh_result,
+                solve_span: tracing::Span::none(),
             },
         );
         assert_eq!(
@@ -5981,6 +5983,7 @@ mod tests {
                 pid,
                 update_stamp: fresh_stamp,
                 result: fresh_result,
+                solve_span: tracing::Span::none(),
             },
         );
         assert_eq!(
@@ -5998,6 +6001,90 @@ mod tests {
             0
         );
     }
+    /// MQUKB6-T2: the detached-merge sidecar thread has NO ambient span
+    /// context, so every `DetachedMergeItem` carries the enqueue-time
+    /// solve span — the merge-time event (here: the Q1a deregister drop)
+    /// must land on the carried span rather than orphaning into a Jaeger
+    /// root. Uses the deregister drop path (unknown pid): deterministic,
+    /// no registration and no core lock needed. Scoped LOCAL subscriber.
+    #[cfg(feature = "otel")]
+    #[test]
+    fn detached_merge_event_parents_under_the_carried_solve_span() {
+        use crate::solvers::arb_engine::solver_dispatch::{
+            detached_merge_sidecar, DetachedMergeItem,
+        };
+        use crate::{otel, solvers::arb_engine::ArbitrageEngine};
+        use alloy::primitives::U256;
+        use degenbot_solvers::mixed::SolvePathResult;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use std::sync::Arc;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
+        let (tx, rx) = std::sync::mpsc::channel::<DetachedMergeItem>();
+
+        // tracing::Span binds to the thread-local subscriber at CREATION, so
+        // the whole span lifecycle (create → capture → sidecar merge → drop)
+        // runs inside one `with_default` scope.
+        tracing::subscriber::with_default(subscriber, || {
+            let solve_span = tracing::info_span!("degenbot.arb.solve", block.number = 42u64);
+            {
+                let _guard = solve_span.enter();
+                tx.send(DetachedMergeItem::Solved {
+                    cycle_seq: 1,
+                    solve_block: 42,
+                    metadata: BlockMetadata::default(),
+                    pid: 0xDEAD,
+                    update_stamp: Vec::new(),
+                    result: SolvePathResult {
+                        optimal_input: U256::ZERO,
+                        profit: U256::ZERO,
+                        hop_outputs: Vec::new(),
+                        consumed_inputs: Vec::new(),
+                        state_nonces: Vec::new(),
+                        solver_pool_states: Vec::new(),
+                    },
+                    solve_span: tracing::Span::current(),
+                })
+                .expect("sidecar rx is alive");
+            }
+            drop(tx);
+            // Inline sidecar run (this thread): the merge enters the item's
+            // carried span — exactly what the real std-thread would see.
+            detached_merge_sidecar(&engine, rx);
+            // This outer handle is the LAST reference to the solve span —
+            // dropping it closes (exports) the span.
+            drop(solve_span);
+        });
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+
+        let solve_spans: Vec<_> = spans
+            .iter()
+            .filter(|sp| sp.name.as_ref() == "degenbot.arb.solve")
+            .collect();
+        assert_eq!(
+            solve_spans.len(),
+            1,
+            "exactly one solve span; got: {:?}",
+            spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
+        );
+        let merged_event = solve_spans[0]
+            .events
+            .events
+            .iter()
+            .any(|e| e.name == "[detached] straggler dropped (path deregistered)");
+        assert!(
+            merged_event,
+            "the sidecar merge-time event must parent under the carried solve span; events: {:?}",
+            solve_spans[0].events.events
+        );
+    }
+
     /// T2 (epic SRQEK5 4QKZE3) ADR-021 targeted test: a detached straggler can
     /// never bypass the publish verifier. Two directions pinned: (a) a
     /// straggler that lands AFTER a publish consumed its cycle's change set is
@@ -6043,6 +6130,7 @@ mod tests {
                 pid,
                 update_stamp: fresh_stamp.clone(),
                 result: fresh_result.clone(),
+                solve_span: tracing::Span::none(),
             },
         );
         let publish_2 = engine.take_solver_path_pool_refs_change_set();
@@ -6063,6 +6151,7 @@ mod tests {
                 pid,
                 update_stamp: stale_stamp,
                 result: fresh_result,
+                solve_span: tracing::Span::none(),
             },
         );
         assert_eq!(
