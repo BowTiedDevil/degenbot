@@ -453,6 +453,24 @@
      "expr": "rate(degenbot_logs_received_total[1m]) - rate(degenbot_logs_applied_total[1m])",
      "legendFormat": "apply-miss/s",
      "refId": "C"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_logs_undecoded_total[1m])",
+     "legendFormat": "undecoded/s",
+     "refId": "D"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_ws_logs_seen_total[1m])",
+     "legendFormat": "ws logs seen/s",
+     "refId": "E"
     }
    ],
    "fieldConfig": {
@@ -1980,6 +1998,322 @@
     "tooltip": {
      "mode": "multi",
      "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 38,
+   "title": "Solve execution (tokio executor + detached cycles)",
+   "type": "row",
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 111
+   },
+   "panels": []
+  },
+  {
+   "id": 39,
+   "title": "Engine-Mutex hold per dirty solve (p50/p90/p99)",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 112
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.50, sum(rate(degenbot_solve_mutex_hold_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p50",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.90, sum(rate(degenbot_solve_mutex_hold_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p90",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "histogram_quantile(0.99, sum(rate(degenbot_solve_mutex_hold_seconds_bucket[5m])) by (le))",
+     "legendFormat": "p99",
+     "refId": "C"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 40,
+   "title": "Detached cycle: stragglers in flight + applied vs stale-dropped",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 112
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "degenbot_detached_in_flight",
+     "legendFormat": "in-flight stragglers",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_detached_applied_total[1m])",
+     "legendFormat": "applied/s",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_detached_stale_dropped_total[1m])",
+     "legendFormat": "stale dropped/s",
+     "refId": "C"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 41,
+   "title": "Solver audit: clamps / verify blocks / publish state checks",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 120
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_solver_clamps_total[1m])",
+     "legendFormat": "clamps/s",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_solver_verify_blocks_total[1m])",
+     "legendFormat": "verify blocks/s",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_solver_state_checks_total[1m])",
+     "legendFormat": "state checks/s",
+     "refId": "C"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 42,
+   "title": "Dispatch economics: mean gross / net (wei) + gas",
+   "type": "timeseries",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 120
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_dispatch_gross_profit_sum[5m]) / rate(degenbot_dispatch_gross_profit_count[5m])",
+     "legendFormat": "mean gross wei",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_dispatch_net_profit_sum[5m]) / rate(degenbot_dispatch_net_profit_count[5m])",
+     "legendFormat": "mean net wei",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${DS_PROMETHEUS}"
+     },
+     "expr": "rate(degenbot_dispatch_gas_used_sum[5m]) / rate(degenbot_dispatch_gas_used_count[5m])",
+     "legendFormat": "mean gas",
+     "refId": "C"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 1,
+      "fillOpacity": 8
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "showLegend": true,
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 43,
+   "title": "Trace view: how to read the solve span tree",
+   "type": "text",
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 128
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${DS_PROMETHEUS}"
+   },
+   "targets": [],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "mode": "markdown",
+    "content": "## Jaeger drill-down - span tree (MQUKB6-T2 shape)\n\n    degenbot.pump.block\n    \u2514\u2500 degenbot.arb.solve              (T0 gate + wall clock + block.number)\n       \u251c\u2500 degenbot.arb.fanout            (paths.affected)\n       \u251c\u2500 degenbot.arb.resolve            (core-lock re-derive)\n       \u251c\u2500 degenbot.arb.lpt                (bin-pack)\n       \u251c\u2500 degenbot.arb.path xN  [DEBUG]   (path.id, path.us, path.sims, gate.us, path.profit)\n       \u2514\u2500 degenbot.arb.merge              (streaming drain; merge.paths)\n\n**Jaeger queries** (service `degenbot-bot`, host `host.docker.internal:16686`):\n\n- Solve cycles: `operation=degenbot.arb.solve&limit=20&lookback=1h`\n- Phase attribution: the `fanout` / `resolve` / `lpt` / `merge` children of a solve trace\n- Per-path attribution: `operation=degenbot.arb.path` (needs `RUST_LOG=degenbot::solver=debug`)\n\nThe **Engine-Mutex hold** panel is the metric-level view of this tree: under\n`DEGENBOT_DETACHED_SOLVES=1` the hold collapses from the in-cycle 5-20ms band to\nenqueue cost (\u00b5s) while solves continue on the dedicated `degenbot-solve-tokio`\nworkers - a step change in that panel means the stance flipped, not a regression.\nThe **Detached cycle** panel is the sidecar-merge health (Q1a): in-flight is the\nun-merged-straggler backpressure gauge (cap 8), and stale-dropped stragglers are\nEXPECTED under pool churn - a sustained drop rate with zero applied means the\nsidecar pipe is wedged.",
+    "code": {
+     "language": "plaintext",
+     "showLineNumbers": false
     }
    }
   }
