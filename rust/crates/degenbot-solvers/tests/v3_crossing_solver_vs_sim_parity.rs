@@ -107,7 +107,7 @@ fn build_multi_tick_v3_state(
 ) -> V3PoolState {
     let sp_0 = U256::from(1u128) << 96;
     let liq_gross = U256::from(base_liquidity).to::<U128>();
-    let net_pos = I256::try_from(i128::try_from(base_liquidity).unwrap()).unwrap();
+    let net_pos = i128::try_from(base_liquidity).unwrap();
     let net_neg = -net_pos;
 
     let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
@@ -370,7 +370,7 @@ fn build_sparse_tick_v3_state(
 ) -> V3PoolState {
     let sp_0 = U256::from(1u128) << 96;
     let liq_gross = U256::from(base_liquidity).to::<U128>();
-    let net_pos = I256::try_from(i128::try_from(base_liquidity).unwrap()).unwrap();
+    let net_pos = i128::try_from(base_liquidity).unwrap();
     let net_neg = -net_pos;
 
     let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
@@ -558,7 +558,7 @@ fn build_real_position_v3_state(base_liquidity: u128, tick_spacing: i32, fee: u3
     let sp = (U256::from(sq_t) + U256::from(sq_n)) / U256::from(2u64);
 
     let liq_gross = U256::from(base_liquidity).to::<U128>();
-    let net_pos = I256::try_from(i128::try_from(base_liquidity).unwrap()).unwrap();
+    let net_pos = i128::try_from(base_liquidity).unwrap();
     let net_neg = -net_pos;
     let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
     for sig in [-1i32, 1] {

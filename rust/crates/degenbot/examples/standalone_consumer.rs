@@ -468,7 +468,7 @@ fn registration_lifecycle_standalone_slice() {
         60,
         TickInfo {
             liquidity_gross: U128::from(100),
-            liquidity_net: I256::try_from(100i128).unwrap(),
+            liquidity_net: 100i128,
             block: 0,
         },
     );

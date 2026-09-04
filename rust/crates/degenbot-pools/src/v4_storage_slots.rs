@@ -243,7 +243,7 @@ fn write_uint24_padded(slot: &mut [u8], value: u32) {
 // Tests — mainnet-pinned (cast storage) + cast-keccak/abi-encode oracles.
 // ─────────────────────────────────────────────────────────────────────────
 
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,10 +419,10 @@ mod tests {
     /// V4 `TickInfo` packing is identical to V3 (gross LOW 128, net HIGH 128).
     #[test]
     fn v4_tick_info_slot_delegates_to_v3_layout() {
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let tick_info = crate::TickInfo {
             liquidity_gross: U128::from(7u128),
-            liquidity_net: I256::try_from(-1i64).unwrap(),
+            liquidity_net: -1i128,
             block: 0,
         };
         let word = encode_v4_tick_info_slot(&tick_info);

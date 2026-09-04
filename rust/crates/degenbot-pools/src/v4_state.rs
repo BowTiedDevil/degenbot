@@ -998,9 +998,7 @@ pub fn v4_simulate_swap(
             }
             if initialized {
                 if let Some(info) = state.tick_data.get(&tick_next) {
-                    let liquidity_net_i256 = info.liquidity_net;
-                    let liquidity_net: i128 = i128::try_from(liquidity_net_i256)
-                        .map_err(|_| SimulateSwapError::NotComputable)?;
+                    let liquidity_net = info.liquidity_net;
                     let net = if zero_for_one {
                         -liquidity_net
                     } else {
@@ -1100,7 +1098,7 @@ mod apply_inherent_tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(liq).unwrap_or(0),
                 block: 0,
             },
         );
@@ -1108,7 +1106,7 @@ mod apply_inherent_tests {
             60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: -i128::try_from(liq).unwrap_or(0),
                 block: 0,
             },
         );
@@ -1193,7 +1191,7 @@ mod apply_inherent_tests {
 
         let new_tick_info = TickInfo {
             liquidity_gross: U256::from(500u64).to::<U128>(),
-            liquidity_net: I256::try_from(500i128).unwrap(),
+            liquidity_net: 500i128,
             block: 7,
         };
         let tick_priors = vec![(100, new_tick_info.clone())];
@@ -1242,7 +1240,7 @@ mod apply_inherent_tests {
                     420,
                     TickInfo {
                         liquidity_gross: U256::from(500u64).to::<U128>(),
-                        liquidity_net: I256::try_from(500i128).unwrap(),
+                        liquidity_net: 500i128,
                         block: 9,
                     },
                 );
@@ -1259,7 +1257,7 @@ mod apply_inherent_tests {
             state.tick_data.get(&420),
             Some(&TickInfo {
                 liquidity_gross: U256::from(500u64).to::<U128>(),
-                liquidity_net: I256::try_from(500i128).unwrap(),
+                liquidity_net: 500i128,
                 block: 9,
             }),
             "fetched tick landed in tick_data"
@@ -1315,14 +1313,8 @@ mod apply_inherent_tests {
             after_upper.liquidity_gross,
             prior_upper.liquidity_gross + U256::from(u128::try_from(delta).unwrap()).to::<U128>()
         );
-        assert_eq!(
-            after_lower.liquidity_net,
-            prior_lower.liquidity_net + I256::try_from(delta).unwrap()
-        );
-        assert_eq!(
-            after_upper.liquidity_net,
-            prior_upper.liquidity_net - I256::try_from(delta).unwrap()
-        );
+        assert_eq!(after_lower.liquidity_net, prior_lower.liquidity_net + delta);
+        assert_eq!(after_upper.liquidity_net, prior_upper.liquidity_net - delta);
         // OB7UNY: out-of-range → only the LIQUIDITY clock advances.
         assert_eq!(state.tick_data_block, 9);
         assert_eq!(state.update_block, 0);
@@ -1444,7 +1436,7 @@ mod apply_inherent_tests {
             120,
             TickInfo {
                 liquidity_gross: U256::from(7u64).to::<U128>(),
-                liquidity_net: I256::try_from(7i128).unwrap(),
+                liquidity_net: 7i128,
                 block: 5,
             },
         );
@@ -1529,7 +1521,7 @@ mod apply_inherent_tests {
         let mut state = state_with_position(liq);
         let new_tick = TickInfo {
             liquidity_gross: U256::from(500u64).to::<U128>(),
-            liquidity_net: I256::try_from(500i128).unwrap(),
+            liquidity_net: 500i128,
             block: 7,
         };
         let new_sqrt = U256::from(2u128) << 96;

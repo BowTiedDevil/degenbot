@@ -1497,7 +1497,7 @@ mod tests {
                 0_i32,
                 degenbot_pools::TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(FIXTURE_LIQUIDITY),
-                    liquidity_net: I256::ZERO,
+                    liquidity_net: 0,
                     block: 0,
                 },
             );

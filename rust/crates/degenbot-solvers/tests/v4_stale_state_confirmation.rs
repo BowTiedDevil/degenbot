@@ -75,7 +75,7 @@ fn onchain_v4_state_at_block_25635461(protocol_fee: u32) -> V4PoolState {
     let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
     let mk = |gross: u128, net: i128| TickInfo {
         liquidity_gross: U256::from(gross).to::<U128>(),
-        liquidity_net: I256::try_from(net).unwrap(),
+        liquidity_net: net,
         block: 0,
     };
     tick_data.insert(216_420, mk(347_841_283_144, -347_841_283_144));

@@ -50,8 +50,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: alloy::primitives::I256::try_from(150i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -59,8 +58,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -166,8 +164,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: alloy::primitives::I256::try_from(150i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -175,8 +172,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -1418,8 +1414,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
-                liquidity_net: alloy::primitives::I256::try_from(5_000_000_000_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 5_000_000_000_000_000i128,
                 block: 0,
             },
         );
@@ -1427,8 +1422,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
-                liquidity_net: alloy::primitives::I256::try_from(-5_000_000_000_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -5_000_000_000_000_000i128,
                 block: 0,
             },
         );
@@ -1462,8 +1456,7 @@ mod tests {
             0,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
-                liquidity_net: alloy::primitives::I256::try_from(5_000_000_000_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 5_000_000_000_000_000i128,
                 block: 0,
             },
         );
@@ -1471,8 +1464,7 @@ mod tests {
             -120,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
-                liquidity_net: alloy::primitives::I256::try_from(-5_000_000_000_000_000i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -5_000_000_000_000_000i128,
                 block: 0,
             },
         );
@@ -1532,8 +1524,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: alloy::primitives::I256::try_from(150i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -1541,8 +1532,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -1633,8 +1623,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: alloy::primitives::I256::try_from(150i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -1642,8 +1631,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -1718,8 +1706,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: alloy::primitives::I256::try_from(150i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -1727,8 +1714,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -2150,7 +2136,7 @@ mod tests {
     fn clamp_cl_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
         use crate::bot_core::TickInfo;
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use alloy::primitives::I256;
+
         use degenbot_math::v2::IntHopState;
 
         let mut engine = ArbitrageEngine::new();
@@ -2173,7 +2159,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -2181,7 +2167,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -2309,7 +2295,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -2317,7 +2303,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -2455,7 +2441,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -2463,7 +2449,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -2559,7 +2545,6 @@ mod tests {
     fn clamp_cl_hop_capacity_noop_within_capacity() {
         use crate::bot_core::TickInfo;
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use alloy::primitives::I256;
 
         let mut engine = ArbitrageEngine::new();
 
@@ -2568,7 +2553,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: I256::try_from(150i128).unwrap_or(I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -2576,7 +2561,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: I256::try_from(-100i128).unwrap_or(I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -2651,8 +2636,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: alloy::primitives::I256::try_from(150i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -2660,8 +2644,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(200),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -2793,8 +2776,7 @@ mod tests {
                 -60,
                 crate::bot_core::TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(100),
-                    liquidity_net: alloy::primitives::I256::try_from(100i128)
-                        .unwrap_or(alloy::primitives::I256::ZERO),
+                    liquidity_net: 100i128,
                     block: 0,
                 },
             );
@@ -2802,8 +2784,7 @@ mod tests {
                 60,
                 crate::bot_core::TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(100),
-                    liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                        .unwrap_or(alloy::primitives::I256::ZERO),
+                    liquidity_net: -100i128,
                     block: 0,
                 },
             );
@@ -2934,8 +2915,7 @@ mod tests {
             -60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(100),
-                liquidity_net: alloy::primitives::I256::try_from(100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -2943,8 +2923,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(100),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: -100i128,
                 block: 0,
             },
         );
@@ -3218,7 +3197,7 @@ mod tests {
         // scalar_priors: Some so the bump rolls back too.
         use crate::bot_core::TickInfo;
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
 
         let engine = ArbitrageEngine::new();
         let pool_addr = Address::from([0x55u8; 20]);
@@ -3230,7 +3209,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );

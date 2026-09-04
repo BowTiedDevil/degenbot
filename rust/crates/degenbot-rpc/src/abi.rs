@@ -549,7 +549,7 @@ pub fn encode_tick_data(tick: i32) -> Vec<u8> {
 ///
 /// Returns [`ProviderError::DecodingError`] if `bytes` is shorter than 64
 /// bytes or the sign-extension decoding fails.
-pub fn decode_tick_data(bytes: &[u8]) -> ProviderResult<(U128, I256)> {
+pub fn decode_tick_data(bytes: &[u8]) -> ProviderResult<(U128, i128)> {
     if bytes.len() < 64 {
         return Err(ProviderError::DecodingError {
             message: "ticks result < 64 bytes".into(),
@@ -557,11 +557,15 @@ pub fn decode_tick_data(bytes: &[u8]) -> ProviderResult<(U128, I256)> {
     }
     // Word 0: liquidity_gross (uint128, right-aligned in 32-byte word).
     let gross = U128::from_be_slice(&bytes[16..32]);
-    // Word 1: liquidity_net (int128, sign-extended in 32-byte word).
-    let net =
-        I256::try_from_be_slice(&bytes[32..64]).ok_or_else(|| ProviderError::DecodingError {
+    // Word 1: liquidity_net (int128, sign-extended in 32-byte word). The
+    // value is the LOW 16 bytes two's-complement (the high 16 are pure sign
+    // extension) — decode straight to the on-chain width (HTPKLX LIBQKE).
+    let low: [u8; 16] = bytes[48..64]
+        .try_into()
+        .map_err(|_| ProviderError::DecodingError {
             message: "invalid ticks(int24) int128 decode".into(),
         })?;
+    let net = i128::from_be_bytes(low);
     Ok((gross, net))
 }
 
@@ -596,7 +600,7 @@ pub async fn fetch_tick_data(
     pool: &Address,
     tick: i32,
     block: Option<u64>,
-) -> ProviderResult<(U128, I256)> {
+) -> ProviderResult<(U128, i128)> {
     let calldata = Bytes::from(encode_tick_data(tick));
     let bytes = provider.eth_call(pool, calldata, block).await?;
     decode_tick_data(&bytes)
@@ -658,7 +662,7 @@ pub fn decode_v4_tick_bitmap(bytes: &[u8]) -> ProviderResult<U256> {
 ///
 /// Returns [`ProviderError::DecodingError`] if `bytes` is shorter than 64
 /// bytes or the decode fails.
-pub fn decode_v4_tick_data(bytes: &[u8]) -> ProviderResult<(U128, I256)> {
+pub fn decode_v4_tick_data(bytes: &[u8]) -> ProviderResult<(U128, i128)> {
     decode_tick_data(bytes)
 }
 
@@ -694,7 +698,7 @@ pub async fn fetch_v4_tick_data(
     pool_id: &[u8; 32],
     tick: i32,
     block: Option<u64>,
-) -> ProviderResult<(U128, I256)> {
+) -> ProviderResult<(U128, i128)> {
     let calldata = Bytes::from(encode_v4_tick_data(pool_id, tick));
     let bytes = provider.eth_call(state_view, calldata, block).await?;
     decode_v4_tick_data(&bytes)
@@ -1341,7 +1345,7 @@ mod tests {
         let payload = encode_ticks_return_ref(500, -100);
         let (gross, net) = decode_tick_data(&payload).expect("decode");
         assert_eq!(gross, U128::from(500u64));
-        assert_eq!(net, I256::try_from(-100i64).unwrap());
+        assert_eq!(net, -100i128);
     }
 
     #[test]
@@ -1350,7 +1354,7 @@ mod tests {
         let payload = encode_ticks_return_ref(0, 0);
         let (gross, net) = decode_tick_data(&payload).expect("decode");
         assert_eq!(gross, U128::ZERO);
-        assert_eq!(net, I256::ZERO);
+        assert_eq!(net, 0);
     }
 
     #[test]
@@ -1381,7 +1385,7 @@ mod tests {
         let payload = encode_ticks_return_ref(7, -7);
         let (gross, net) = decode_v4_tick_data(&payload).expect("decode");
         assert_eq!(gross, U128::from(7u64));
-        assert_eq!(net, I256::try_from(-7i64).unwrap());
+        assert_eq!(net, -7i128);
     }
 
     #[test]

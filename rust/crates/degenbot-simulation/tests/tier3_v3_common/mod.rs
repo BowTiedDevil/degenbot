@@ -351,25 +351,19 @@ pub fn dense_state(liq: u128, spacing: i32, k_positions: i32, current_tick: i32)
         // (net is +liq, so a zfo down-cross subtracts it).
         let entry = tick_data.entry(lower).or_insert_with(|| TickInfo {
             liquidity_gross: U128::ZERO,
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         });
         entry.liquidity_gross = U128::from(entry.liquidity_gross.to::<u128>() + liq);
-        entry.liquidity_net = I256::try_from(
-            i128::try_from(entry.liquidity_net).unwrap() + i128::try_from(liq).unwrap(),
-        )
-        .unwrap();
+        entry.liquidity_net += liq as i128;
         // Upper boundary: crossing upward adds this position's liq (net -liq).
         let entry = tick_data.entry(upper).or_insert_with(|| TickInfo {
             liquidity_gross: U128::ZERO,
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         });
         entry.liquidity_gross = U128::from(entry.liquidity_gross.to::<u128>() + liq);
-        entry.liquidity_net = I256::try_from(
-            i128::try_from(entry.liquidity_net).unwrap() - i128::try_from(liq).unwrap(),
-        )
-        .unwrap();
+        entry.liquidity_net -= liq as i128;
     }
     V3PoolState {
         sqrt_price_x96: sp,
@@ -471,30 +465,20 @@ pub fn build_arbitrary_v3_state(
         }
         let lo = tick_data.entry(lower).or_insert_with(|| TickInfo {
             liquidity_gross: U128::ZERO,
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         });
         lo.liquidity_gross =
             U128::from(lo.liquidity_gross.to::<u128>().saturating_add(p.liquidity));
-        lo.liquidity_net = I256::try_from(
-            i128::try_from(lo.liquidity_net)
-                .unwrap()
-                .saturating_add(i128::try_from(p.liquidity).unwrap()),
-        )
-        .unwrap();
+        lo.liquidity_net = lo.liquidity_net.saturating_add(p.liquidity as i128);
         let hi = tick_data.entry(upper).or_insert_with(|| TickInfo {
             liquidity_gross: U128::ZERO,
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         });
         hi.liquidity_gross =
             U128::from(hi.liquidity_gross.to::<u128>().saturating_add(p.liquidity));
-        hi.liquidity_net = I256::try_from(
-            i128::try_from(hi.liquidity_net)
-                .unwrap()
-                .saturating_sub(i128::try_from(p.liquidity).unwrap()),
-        )
-        .unwrap();
+        hi.liquidity_net = hi.liquidity_net.saturating_sub(p.liquidity as i128);
     }
     V3PoolState {
         sqrt_price_x96: sp,
@@ -532,24 +516,18 @@ pub fn sparse_state(liq: u128, spacing: i32, current_tick: i32) -> V3PoolState {
     ] {
         let entry = tick_data.entry(lower).or_insert_with(|| TickInfo {
             liquidity_gross: U128::ZERO,
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         });
         entry.liquidity_gross = U128::from(entry.liquidity_gross.to::<u128>() + amount);
-        entry.liquidity_net = I256::try_from(
-            i128::try_from(entry.liquidity_net).unwrap() + i128::try_from(amount).unwrap(),
-        )
-        .unwrap();
+        entry.liquidity_net += amount as i128;
         let entry = tick_data.entry(upper).or_insert_with(|| TickInfo {
             liquidity_gross: U128::ZERO,
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         });
         entry.liquidity_gross = U128::from(entry.liquidity_gross.to::<u128>() + amount);
-        entry.liquidity_net = I256::try_from(
-            i128::try_from(entry.liquidity_net).unwrap() - i128::try_from(amount).unwrap(),
-        )
-        .unwrap();
+        entry.liquidity_net -= amount as i128;
     }
     V3PoolState {
         sqrt_price_x96: sp,

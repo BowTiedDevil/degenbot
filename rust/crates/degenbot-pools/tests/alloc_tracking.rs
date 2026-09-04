@@ -21,7 +21,7 @@ use degenbot_pools::TickInfo;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use alloy::primitives::{I256, U128, U256};
+use alloy::primitives::{U128, U256};
 use hashbrown::HashMap as HB;
 
 struct Tracking;
@@ -80,7 +80,7 @@ fn seeded_tick_map(initialized_ticks: usize) -> HB<i32, TickInfo> {
                 tick,
                 TickInfo {
                     liquidity_gross: U128::from(1_000_000u64 + i as u64),
-                    liquidity_net: I256::try_from(1_000i64).unwrap_or(I256::ONE), // 1,000 < I256::MAX — always Some
+                    liquidity_net: 1_000,
                     block: 0,
                 },
             )

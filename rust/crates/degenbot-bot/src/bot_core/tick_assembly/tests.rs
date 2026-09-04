@@ -58,7 +58,7 @@ fn make_state_view() -> Address {
 fn sample_tick_info(tick: i32) -> TickInfo {
     TickInfo {
         liquidity_gross: U128::from(1_000_000u64 * u64::from(tick.unsigned_abs()) + 1),
-        liquidity_net: I256::try_from(i64::from(tick) * 1_000).unwrap(),
+        liquidity_net: i128::from(tick) * 1_000,
         block: 0,
     }
 }
@@ -151,7 +151,7 @@ fn seed_v3_ticks(db: &DegenbotDb, pool_id: i64, ticks: &[i32], spacing: i32) {
             tick,
             ApplyLiquidityAtTick {
                 liquidity_gross: info.liquidity_gross,
-                liquidity_net: info.liquidity_net,
+                liquidity_net: I256::try_from(info.liquidity_net).unwrap(),
                 block: 0,
             },
         );
@@ -183,7 +183,7 @@ fn seed_v4_ticks(db: &DegenbotDb, managed_pool_id: i64, ticks: &[i32], spacing: 
             tick,
             ApplyLiquidityAtTick {
                 liquidity_gross: info.liquidity_gross,
-                liquidity_net: info.liquidity_net,
+                liquidity_net: I256::try_from(info.liquidity_net).unwrap(),
                 block: 0,
             },
         );
@@ -453,7 +453,7 @@ impl TickBootstrapRpc for FakeChainRpc {
 fn chain_tick_info(tick: i32) -> TickInfo {
     TickInfo {
         liquidity_gross: U128::from(7_000u64 * u64::from(tick.unsigned_abs()) + 1),
-        liquidity_net: I256::try_from(i64::from(tick) * 700).unwrap(),
+        liquidity_net: i128::from(tick) * 700,
         block: 0,
     }
 }
@@ -705,7 +705,7 @@ fn v3_tracked_db_consistent_snapshot_accepted() {
         ticks.get(&10),
         Some(&TickInfo {
             liquidity_gross: U128::from(1_000_000u128),
-            liquidity_net: I256::try_from(1_000_000i64).unwrap(),
+            liquidity_net: 1_000_000i128,
             block: 0,
         })
     );

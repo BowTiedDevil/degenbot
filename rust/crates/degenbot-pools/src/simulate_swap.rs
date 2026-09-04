@@ -54,6 +54,12 @@ const CURVE_FEE_DENOMINATOR: u64 = 10_000_000_000;
 /// pool's walk enters an unfetched tick-bitmap word (the caller fetches +
 /// retries), or [`SimulateSwapError::NotComputable`] on arithmetic overflow /
 /// invariant violation / non-positive amount.
+#[expect(
+    clippy::too_many_lines,
+    reason = "ADR-014/KO3SBO boxing adds one binding line per family arm; \
+     the arms stay deliberately uniform (p.0/p.1 destructure) over rustic \
+     compression"
+)]
 pub fn simulate_swap(
     entry: &PoolEntry,
     zero_for_one: bool,

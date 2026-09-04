@@ -80,7 +80,7 @@ fn build_sparse_v4_state(base_liquidity: u128, ticks: &[(i32, i128)]) -> V4PoolS
             tick,
             TickInfo {
                 liquidity_gross: liq_gross,
-                liquidity_net: I256::try_from(net).unwrap(),
+                liquidity_net: net,
                 block: 0,
             },
         );

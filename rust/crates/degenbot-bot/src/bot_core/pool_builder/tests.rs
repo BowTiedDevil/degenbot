@@ -498,7 +498,7 @@ async fn fetch_tick_data_decodes() {
         .await
         .unwrap();
     assert_eq!(gross.to_string(), "111");
-    assert_eq!(net, I256::try_from(-25i128).unwrap());
+    assert_eq!(net, -25i128);
 }
 
 #[tokio::test]
@@ -537,7 +537,7 @@ async fn fetch_v4_tick_data_decodes() {
         .await
         .unwrap();
     assert_eq!(gross.to_string(), "7");
-    assert_eq!(net, I256::try_from(3i128).unwrap());
+    assert_eq!(net, 3i128);
 }
 
 // ── PoolBuilder: probe → variant-resolution → build_v2 (task 3FVZF4) ──
@@ -915,7 +915,7 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
                 60,
                 LiquidityAtTick {
                     liquidity_gross: U256::from(100u64),
-                    liquidity_net: I256::try_from(100i128).unwrap(),
+                    liquidity_net: 100i128,
                 },
             )]),
         },
@@ -928,10 +928,7 @@ async fn build_v3_db_hit_yields_tracked_without_chain() {
     assert_eq!(params.coverage, PoolTickCoverage::Tracked);
     assert_eq!(params.tick_data.len(), 1);
     assert_eq!(params.tick_data[&60].liquidity_gross, U128::from(100u64));
-    assert_eq!(
-        params.tick_data[&60].liquidity_net,
-        I256::try_from(100i128).unwrap()
-    );
+    assert_eq!(params.tick_data[&60].liquidity_net, 100i128);
 }
 
 /// Task 4TWM7C/B1 — a DB-seeded (`Tracked`) pool's LIQUIDITY clock
@@ -989,7 +986,7 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
                 60,
                 LiquidityAtTick {
                     liquidity_gross: U256::from(100u64),
-                    liquidity_net: I256::try_from(100i128).unwrap(),
+                    liquidity_net: 100i128,
                 },
             )]),
         },

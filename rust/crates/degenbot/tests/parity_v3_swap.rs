@@ -147,7 +147,7 @@ fn standalone_rust_consumer_v3_swap_matches_recorded_constant() {
         fx.fixture.tick,
         TickInfo {
             liquidity_gross: alloy::primitives::U128::from(liquidity),
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         },
     );

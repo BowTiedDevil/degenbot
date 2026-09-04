@@ -1057,7 +1057,7 @@ mod tests {
             201_020,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(SEED_201020),
-                liquidity_net: alloy::primitives::I256::try_from(0).unwrap(),
+                liquidity_net: 0,
                 block: 0,
             },
         );
@@ -1065,7 +1065,7 @@ mod tests {
             203_350,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(SEED_203350),
-                liquidity_net: alloy::primitives::I256::try_from(0).unwrap(),
+                liquidity_net: 0,
                 block: 0,
             },
         );

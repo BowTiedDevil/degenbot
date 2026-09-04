@@ -154,8 +154,10 @@ pub struct TickInfo {
     /// The total liquidity that references this tick.
     pub liquidity_gross: alloy::primitives::U128,
     /// The liquidity delta for ticks entered from left to right.
-    /// Positive for lower ticks, negative for upper ticks.
-    pub liquidity_net: alloy::primitives::I256,
+    /// Positive for lower ticks, negative for upper ticks. Stored at the
+    /// on-chain width (`ticks(tick).liquidityNet` is `int128`) — the HTPKLX
+    /// LIBQKE narrowing from the previous `alloy::primitives::I256`.
+    pub liquidity_net: i128,
     /// The block at which this tick was last mutated (Mint/Burn event block,
     /// or the pool's registration block for genesis-seeded ticks). Mirrors the
     /// Python ``LiquidityAtTick.block`` field; preserved through the FFI
@@ -166,82 +168,40 @@ pub struct TickInfo {
 }
 
 impl TickInfo {
-    /// The `liquidity_net` value as a plain `i128`: the LOW 16 big-endian
-    /// bytes of the 256-bit two's-complement — exactly the width of the
-    /// on-chain `ticks(tick).liquidityNet` `int128` field.
+    /// The `liquidity_net` value as a plain `i128`. The field is stored at
+    /// the on-chain width (LIBQKE narrowing), so this is now the identity
+    /// projection; kept as the read seam for all consumers that used to
+    /// route through the low-16-byte extraction of the old `I256` field.
     ///
-    /// Documents the real trap this extraction guards (the path-13827 1-wei
+    /// The trap this seam historically guarded (the path-13827 1-wei
     /// over-prediction incident, `docs/fixtures/v2_v3_v3_solver_divergence_
-    /// 25641093.md`): a naive `i128::try_from(I256)` on a net whose high 128
-    /// bits carry sign extension yields a different (or failing) value than
-    /// the stored int128; the low-16-byte projection is the canonical
-    /// on-chain width. All consumers of a stored `liquidity_net` as `i128`
-    /// route through this helper.
+    /// 25641093.md`) is structurally retired: there is no wider
+    /// representation left to mis-project.
     #[must_use]
     pub fn liquidity_net_i128(&self) -> i128 {
-        let bytes = self.liquidity_net.to_be_bytes::<32>();
-        let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-        i128::from_be_bytes(low)
+        self.liquidity_net
     }
 }
 
 #[cfg(test)]
 mod tick_info_tests {
-    #![expect(clippy::unwrap_used)]
     use super::TickInfo;
-    use alloy::primitives::{I256, U128, U256};
+    use alloy::primitives::U128;
 
     fn tick_info(net: i128) -> TickInfo {
         TickInfo {
             liquidity_gross: U128::from(7u128),
-            liquidity_net: I256::try_from(net).unwrap(),
+            liquidity_net: net,
             block: 0,
         }
     }
 
-    /// The shared helper's output equals the per-site 16-byte extraction
-    /// (the idiom being consolidated) for the trap-relevant boundary set,
-    /// including negative nets whose high 128 bits carry sign extension.
+    /// LIBQKE: the stored field IS the on-chain int128 width; the legacy
+    /// low-16-byte projection of the old I256 field is now the identity.
     #[test]
-    fn liquidity_net_i128_matches_low16_extraction() {
-        for net in [
-            -1i128,
-            0i128,
-            1i128,
-            -5_000,
-            5_000,
-            i128::MAX,
-            i128::MIN,
-            -1 << 60,
-            1 << 61,
-        ] {
-            let info = tick_info(net);
-            // The reference extraction each site performs today.
-            let bytes = info.liquidity_net.to_be_bytes::<32>();
-            let low: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-            assert_eq!(
-                info.liquidity_net_i128(),
-                i128::from_be_bytes(low),
-                "net={net}"
-            );
-        }
-    }
-
-    /// The convergence the sweep depends on: `divergence_probe`'s packed
-    /// slot word (low 16 bytes re-unsigned into the HIGH 128 of the packed
-    /// word) is byte-identical when derived through the helper's
-    /// `i128 as u128` bit-pattern reinterpretation.
-    #[test]
-    fn liquidity_net_i128_covers_probe_packed_word() {
-        let gross = U256::from(7u128);
-        for net in [-1i128, 0i128, 42, -5_000, i128::MIN, i128::MAX] {
-            let info = tick_info(net);
-            let legacy = {
-                let b = info.liquidity_net.to_be_bytes::<32>();
-                gross | (U256::from_be_slice(&b[16..32]) << 128)
-            };
-            let via_helper = gross | (U256::from(info.liquidity_net_i128().cast_unsigned()) << 128);
-            assert_eq!(legacy, via_helper, "net={net}");
+    fn liquidity_net_i128_is_identity() {
+        for net in [i128::MIN, -1, 0, 1, -5_000, 5_000, i128::MAX] {
+            assert_eq!(tick_info(net).liquidity_net_i128(), net);
         }
     }
 }

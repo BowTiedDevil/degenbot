@@ -3895,7 +3895,7 @@ mod tests {
                 t,
                 TickInfo {
                     liquidity_gross: U128::from(10_000_000_000_000u128),
-                    liquidity_net: I256::try_from(net).unwrap(),
+                    liquidity_net: net,
                     block: 0,
                 },
             );
@@ -5362,7 +5362,7 @@ mod tests {
     #[test]
     #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
     fn block_25641093_pool_feed_hop2_predicts_revm_output() {
-        use alloy::primitives::{Address, B256, I256, U128, U512};
+        use alloy::primitives::{Address, B256, U128, U512};
         use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
         use degenbot_pools::TickInfo;
         use hashbrown::HashMap;
@@ -5421,7 +5421,7 @@ mod tests {
                 tick,
                 TickInfo {
                     liquidity_gross: U128::from(gross),
-                    liquidity_net: I256::try_from(net).expect("signed net"),
+                    liquidity_net: net,
                     block: 25_641_093,
                 },
             );

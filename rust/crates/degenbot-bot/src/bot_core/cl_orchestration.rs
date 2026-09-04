@@ -421,14 +421,7 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let Some(state) = self
-            .pools
-            .get_mut(&pool_id)
-            .and_then(PoolEntry::v3_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
         Some(pool_id)
     }
@@ -474,14 +467,7 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(state) = self
-            .pools
-            .get_mut(&pool_id)
-            .and_then(PoolEntry::v3_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
         Some(pool_id)
     }
@@ -897,14 +883,7 @@ impl BotState {
     #[must_use]
     pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(state) = self
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::v3)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get(&pool_id).and_then(PoolEntry::v3)?;
         state.snapshot_seed.as_ref()
     }
 
@@ -915,14 +894,7 @@ impl BotState {
     /// pools or if already taken.
     pub fn take_v3_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(state) = self
-            .pools
-            .get_mut(&pool_id)
-            .and_then(PoolEntry::v3_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.snapshot_seed.take()
     }
 
@@ -1085,14 +1057,7 @@ impl BotState {
         address: Address,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(state) = self
-            .pools
-            .get_mut(&pool_id)
-            .and_then(PoolEntry::v3_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
         state.post_drain_snapshot.take()
     }
 
@@ -1598,14 +1563,7 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let Some(state) = self
-            .pools
-            .get_mut(&pool_id)
-            .and_then(PoolEntry::v4_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v4_mut)?;
         state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
         Some(pool_id)
     }
@@ -1625,14 +1583,7 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(state) = self
-            .pools
-            .get_mut(&pool_id)
-            .and_then(PoolEntry::v4_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pool_id).and_then(PoolEntry::v4_mut)?;
         state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
         Some(pool_id)
     }
@@ -2123,9 +2074,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<&HashMap<i32, TickInfo>> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let Some(state) = self.pools.get(&pid).and_then(PoolEntry::v4).map(|(_, s)| s) else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get(&pid).and_then(PoolEntry::v4)?;
         state.snapshot_seed.as_ref()
     }
 
@@ -2137,14 +2086,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<HashMap<i32, TickInfo>> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let Some(state) = self
-            .pools
-            .get_mut(&pid)
-            .and_then(PoolEntry::v4_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
         state.snapshot_seed.take()
     }
 
@@ -2259,14 +2201,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let Some(state) = self
-            .pools
-            .get_mut(&pid)
-            .and_then(PoolEntry::v4_mut)
-            .map(|(_, s)| s)
-        else {
-            return None;
-        };
+        let (_identity, state) = self.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
         state.post_drain_snapshot.take()
     }
 

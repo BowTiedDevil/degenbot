@@ -21,7 +21,7 @@
 
 #![expect(clippy::doc_markdown)]
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, U256};
 use degenbot::bot_core::BotState;
 use degenbot::PoolEntry;
 use degenbot::RegisterV3PoolParams;
@@ -96,7 +96,7 @@ fn standalone_rust_consumer_pool_builder_identity_state_matches_fixture() {
         fx.fixture.tick,
         TickInfo {
             liquidity_gross: alloy::primitives::U128::from(liquidity),
-            liquidity_net: I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         },
     );

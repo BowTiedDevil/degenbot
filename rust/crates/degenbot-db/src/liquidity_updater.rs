@@ -36,7 +36,6 @@
 //! `v3_`/`v4_` variants so each mirrors its Python callsite's exact key + table.
 
 use hashbrown::HashMap;
-use std::str::FromStr;
 
 use alloy::primitives::{I256, U128, U256};
 use degenbot_math::cl::liquidity_mapping::{
@@ -45,7 +44,7 @@ use degenbot_math::cl::liquidity_mapping::{
 
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
-use crate::rows::decode::{decode_u256, encode_u256};
+use crate::rows::decode::{decode_i128_net, decode_u256, encode_u256};
 use crate::schema::table::v2_v3_subclass_table;
 use crate::schema::table::{
     INITIALIZATION_MAPS, LIQUIDITY_POSITIONS, MANAGED_POOLS, MANAGED_POOL_INITIALIZATION_MAPS,
@@ -359,7 +358,8 @@ impl DegenbotDb {
                     tick,
                     LiquidityAtTick {
                         liquidity_gross: u256_to_u128(&decode_u256(&gross_str)?),
-                        liquidity_net: decode_i256(&net_str)?,
+                        liquidity_net: I256::try_from(decode_i128_net(&net_str)?)
+                            .map_err(|e| DbError::Decode(format!("net decode: {e}")))?,
                         block: 0,
                     },
                 );
@@ -431,7 +431,8 @@ impl DegenbotDb {
                     tick,
                     LiquidityAtTick {
                         liquidity_gross: u256_to_u128(&decode_u256(&gross_str)?),
-                        liquidity_net: decode_i256(&net_str)?,
+                        liquidity_net: I256::try_from(decode_i128_net(&net_str)?)
+                            .map_err(|e| DbError::Decode(format!("net decode: {e}")))?,
                         block: 0,
                     },
                 );
@@ -975,7 +976,7 @@ impl DegenbotDb {
                     (
                         pool_id,
                         *tick,
-                        encode_i256(&lat.liquidity_net),
+                        lat.liquidity_net.to_string(),
                         encode_u256(&u128_to_u256(lat.liquidity_gross)),
                     )
                 })
@@ -1055,7 +1056,7 @@ impl DegenbotDb {
                     (
                         managed_pool_id,
                         *tick,
-                        encode_i256(&lat.liquidity_net),
+                        lat.liquidity_net.to_string(),
                         encode_u256(&u128_to_u256(lat.liquidity_gross)),
                     )
                 })
@@ -1368,14 +1369,16 @@ fn sql_placeholders_for(n: usize) -> String {
 /// # Errors
 ///
 /// Returns [`DbError::Decode`] if the value is not a valid signed decimal.
+#[cfg(test)]
 fn decode_i256(s: &str) -> Result<I256, DbError> {
-    I256::from_str(s.trim()).map_err(|e| DbError::Decode(format!("i256 parse of {s:?}: {e}")))
+    I256::from_dec_str(s.trim()).map_err(|e| DbError::Decode(format!("i256 parse of {s:?}: {e}")))
 }
 
 /// Re-encode an [`I256`] to its `VARCHAR(78)` signed-decimal form (the inverse
 /// of [`decode_i256`]); mirrors the Python `IntMappedToString.process_bind_param`'s
 /// `str(value)` (which prepends `-` for negatives).
 #[must_use]
+#[cfg(test)]
 fn encode_i256(v: &I256) -> String {
     v.to_string()
 }

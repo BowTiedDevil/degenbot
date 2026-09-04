@@ -580,8 +580,7 @@ mod tests {
             60,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
-                liquidity_net: alloy::primitives::I256::try_from(150i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 150i128,
                 block: 0,
             },
         );
@@ -608,8 +607,7 @@ mod tests {
             10,
             crate::bot_core::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(400),
-                liquidity_net: alloy::primitives::I256::try_from(200i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
+                liquidity_net: 200i128,
                 block: 0,
             },
         );

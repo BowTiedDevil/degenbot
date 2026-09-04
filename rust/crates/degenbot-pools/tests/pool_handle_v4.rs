@@ -1,6 +1,6 @@
 //! Prototype test: shared Pool handle for Uniswap V4.
 
-#![expect(clippy::unwrap_used, clippy::expect_used)]
+#![expect(clippy::expect_used)]
 use alloy::primitives::{Address, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::registry::PoolEntry;
@@ -12,8 +12,7 @@ use hashbrown::HashMap;
 
 fn make_v4_pool(liquidity: u128) -> PoolEntry {
     let liq_u128 = alloy::primitives::U128::from(liquidity);
-    let liquidity_net =
-        alloy::primitives::I256::try_from(i128::try_from(liquidity).unwrap()).unwrap();
+    let liquidity_net = i128::try_from(liquidity).unwrap_or(0);
     let mut tick_data = HashMap::new();
     tick_data.insert(
         -60,

@@ -671,7 +671,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
                 tick_index,
                 TickBefore {
                     liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
                 },
             ));
             self.tick_data.insert(tick_index, new_info.clone());
@@ -751,7 +751,7 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
                 tick_idx,
                 TickBefore {
                     liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
                 },
             ));
         }
@@ -875,7 +875,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
                 tick_index,
                 TickBefore {
                     liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
                 },
             ));
             self.tick_data.insert(tick_index, new_info.clone());
@@ -948,7 +948,7 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
                 tick_idx,
                 TickBefore {
                     liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
-                    liquidity_net_before: prior.as_ref().map_or(I256::ZERO, |p| p.liquidity_net),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
                 },
             ));
         }

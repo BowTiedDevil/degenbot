@@ -984,7 +984,7 @@ impl PyBotIo {
         Ok((
             crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
                 .unbind(),
-            crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
+            pyo3::types::PyInt::new(py, net).into_any().unbind(),
         ))
     }
 
@@ -1084,7 +1084,7 @@ impl PyBotIo {
         Ok((
             crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(gross))?
                 .unbind(),
-            crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
+            pyo3::types::PyInt::new(py, net).into_any().unbind(),
         ))
     }
 

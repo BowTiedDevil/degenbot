@@ -22,9 +22,19 @@ pub(crate) fn decode_u256(s: &str) -> Result<U256, DbError> {
 /// `liquidity_net` (upper ticks carry a negative net). The DB stores it as a
 /// signed decimal string (Python `str(int)`), so `U256::from_str_radix`
 /// rejects the leading `-`; `I256::from_dec_str` accepts it.
-pub(crate) fn decode_i256(s: &str) -> Result<alloy::primitives::I256, DbError> {
-    alloy::primitives::I256::from_dec_str(s.trim())
-        .map_err(|e| DbError::Decode(format!("i256 parse of {s:?}: {e}")))
+/// Decode a signed-decimal `liquidity_net` TEXT value to `i128` (the on-chain
+/// int128 width, HTPKLX LIBQKE). Byte-identical round-trip versus the old I256
+/// codec: both emit `str(value)` signed decimal; any out-of-i128-range row is
+/// a decode error rather than a silent wraparound.
+///
+/// # Errors
+///
+/// Returns [`DbError::Decode`] if the value is not a valid signed decimal
+/// or falls outside the int128 range.
+pub(crate) fn decode_i128_net(s: &str) -> Result<i128, DbError> {
+    s.trim()
+        .parse::<i128>()
+        .map_err(|e| DbError::Decode(format!("i128 parse of {s:?}: {e}")))
 }
 
 /// Decode a nullable `VARCHAR(78)` column value to `Option<U256>`.

@@ -1340,12 +1340,9 @@ pub fn v3_simulate_swap(
             // Reached the next tick — cross it if initialized.
             if initialized {
                 if let Some(info) = state.tick_data.get(&tick_next) {
-                    let liquidity_net_i256 = info.liquidity_net;
-                    // Crossing direction: zfo crosses from above (subtract net);
-                    // ofz crosses from below (add net). Matches V3's
-                    // `liquidity = liquidity - liquidityNet` (zfo) branch.
-                    let liquidity_net: i128 = i128::try_from(liquidity_net_i256)
-                        .map_err(|_| SimulateSwapError::NotComputable)?;
+                    // The net is the on-chain int128 (LIBQKE) — no narrowing
+                    // conversion needed at the crossing site anymore.
+                    let liquidity_net = info.liquidity_net;
                     let net = if zero_for_one {
                         -liquidity_net
                     } else {
@@ -1452,7 +1449,7 @@ mod apply_inherent_tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(liq).unwrap_or(0),
                 block: 0,
             },
         );
@@ -1460,7 +1457,7 @@ mod apply_inherent_tests {
             60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: -i128::try_from(liq).unwrap_or(0),
                 block: 0,
             },
         );
@@ -1564,7 +1561,7 @@ mod apply_inherent_tests {
                 60 * i,
                 TickInfo {
                     liquidity_gross: U128::from(200_000_000_000u128),
-                    liquidity_net: I256::try_from(net).unwrap(),
+                    liquidity_net: net,
                     block: 0,
                 },
             );
@@ -1605,7 +1602,7 @@ mod apply_inherent_tests {
         // be recorded as "did not exist" (gross_before: None, net_before: 0).
         let new_tick_info = TickInfo {
             liquidity_gross: U256::from(500u64).to::<U128>(),
-            liquidity_net: I256::try_from(500i128).unwrap(),
+            liquidity_net: 500i128,
             block: 7,
         };
         let tick_priors = vec![(100, new_tick_info.clone())];
@@ -1739,14 +1736,8 @@ mod apply_inherent_tests {
             prior_upper.liquidity_gross + U256::from(u128::try_from(delta).unwrap()).to::<U128>()
         );
         // net += at lower, net -= at upper.
-        assert_eq!(
-            after_lower.liquidity_net,
-            prior_lower.liquidity_net + I256::try_from(delta).unwrap()
-        );
-        assert_eq!(
-            after_upper.liquidity_net,
-            prior_upper.liquidity_net - I256::try_from(delta).unwrap()
-        );
+        assert_eq!(after_lower.liquidity_net, prior_lower.liquidity_net + delta);
+        assert_eq!(after_upper.liquidity_net, prior_upper.liquidity_net - delta);
         // The mutating helper advances the tick's `block` field too.
         assert_eq!(after_lower.block, 9);
         assert_eq!(after_upper.block, 9);
@@ -1899,7 +1890,7 @@ mod apply_inherent_tests {
             120,
             TickInfo {
                 liquidity_gross: U256::from(7u64).to::<U128>(),
-                liquidity_net: I256::try_from(7i128).unwrap(),
+                liquidity_net: 7i128,
                 block: 5,
             },
         );
@@ -2018,7 +2009,7 @@ mod apply_inherent_tests {
         let mut state = state_with_position(liq);
         let new_tick = TickInfo {
             liquidity_gross: U256::from(500u64).to::<U128>(),
-            liquidity_net: I256::try_from(500i128).unwrap(),
+            liquidity_net: 500i128,
             block: 7,
         };
         let new_sqrt = U256::from(2u128) << 96;
@@ -2128,7 +2119,7 @@ mod apply_inherent_tests {
                 t,
                 TickInfo {
                     liquidity_gross: U256::from(gross).to::<U128>(),
-                    liquidity_net: I256::try_from(net).unwrap(),
+                    liquidity_net: net,
                     block: 0,
                 },
             );
@@ -2235,7 +2226,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(liq).unwrap_or(0),
                 block: 0,
             },
         );
@@ -2243,7 +2234,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: -i128::try_from(liq).unwrap_or(0),
                 block: 0,
             },
         );
@@ -2348,7 +2339,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: liq,
-                liquidity_net: I256::try_from(1_000_000i128).unwrap(),
+                liquidity_net: 1_000_000i128,
                 block: 0,
             },
         );
@@ -2356,7 +2347,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: liq,
-                liquidity_net: I256::try_from(-1_000_000i128).unwrap(),
+                liquidity_net: -1_000_000i128,
                 block: 0,
             },
         );

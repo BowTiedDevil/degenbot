@@ -129,7 +129,7 @@ pub trait TickBootstrapRpc: Send + Sync + std::fmt::Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{I256, U128};
+    use alloy::primitives::U128;
 
     /// Fake `TickBootstrapRpc` impl mirroring the pattern of
     /// `degenbot-bot::bot_core::mod::tests::FakeFetcher` — exercises the trait
@@ -177,7 +177,7 @@ mod tests {
                         active_tick,
                         TickInfo {
                             liquidity_gross: U128::from(self.gross),
-                            liquidity_net: I256::try_from(self.net).unwrap_or(I256::ZERO),
+                            liquidity_net: self.net,
                             block,
                         },
                     );
@@ -220,7 +220,7 @@ mod tests {
         assert!(fetched.ticks.contains_key(&3));
         let tick_info = &fetched.ticks[&1];
         assert_eq!(tick_info.liquidity_gross, U128::from(1_000u64));
-        assert_eq!(tick_info.liquidity_net, I256::try_from(-500i64).unwrap());
+        assert_eq!(tick_info.liquidity_net, -500i128);
         assert_eq!(tick_info.block, 100);
     }
 

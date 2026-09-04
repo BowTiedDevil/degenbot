@@ -311,7 +311,7 @@ pub(crate) fn cooldowns() -> &'static CooldownRegistry {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used)]
+    #![expect(clippy::expect_used)]
 
     use super::*;
 

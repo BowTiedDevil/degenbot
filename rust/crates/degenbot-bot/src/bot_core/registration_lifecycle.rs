@@ -397,7 +397,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::bot_core::state_lock::StateLock;
-    use alloy::primitives::{Address, I256, U128, U256};
+    use alloy::primitives::{Address, U128, U256};
 
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::v4_state::V4PoolKey;
@@ -419,7 +419,7 @@ mod tests {
                 60,
                 TickInfo {
                     liquidity_gross: U128::from(100),
-                    liquidity_net: I256::try_from(100i128).unwrap(),
+                    liquidity_net: 100i128,
                     block: 0,
                 },
             );
@@ -451,7 +451,7 @@ mod tests {
                 60,
                 TickInfo {
                     liquidity_gross: U128::from(100),
-                    liquidity_net: I256::try_from(100i128).unwrap(),
+                    liquidity_net: 100i128,
                     block: 0,
                 },
             );
@@ -601,7 +601,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 100,
             },
         );

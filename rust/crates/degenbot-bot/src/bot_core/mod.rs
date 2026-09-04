@@ -1572,7 +1572,7 @@ mod tests {
     }
 
     /// ADR-040 / PJGMPK: the quarantine seam is idempotent, counts depth,
-    /// and bumps the pool's state_nonce (dirties the pool) on BOTH transitions
+    /// and bumps the pool's `state_nonce` (dirties the pool) on BOTH transitions
     /// so cached projections and in-flight solver snapshots invalidate.
     #[test]
     fn quarantine_pool_seam_is_idempotent_and_dirties_nonce() {
@@ -1752,7 +1752,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -1811,7 +1811,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -2091,7 +2091,7 @@ mod tests {
         // map is empty — kept for parity with sibling V4 tests.
         let _ = TickInfo {
             liquidity_gross: U128::ZERO,
-            liquidity_net: alloy::primitives::I256::ZERO,
+            liquidity_net: 0,
             block: 0,
         };
 
@@ -2409,7 +2409,7 @@ mod tests {
                 100,
                 TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(500),
-                    liquidity_net: alloy::primitives::I256::try_from(500i64).unwrap(),
+                    liquidity_net: 500i128,
                     block: 0,
                 },
             )],
@@ -2490,13 +2490,13 @@ mod tests {
     fn register_v3_on_core(core: &mut BotState, pool_addr: Address, update_block: u64) -> u64 {
         use crate::bot_core::{RegisterV3PoolParams, TickInfo};
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let mut tick_data = HashMap::new();
         tick_data.insert(
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -2567,15 +2567,11 @@ mod tests {
             );
             let t60 = s.tick_data.get(&60).expect("tick 60 present");
             assert_eq!(t60.liquidity_gross, alloy::primitives::U128::from(600));
-            assert_eq!(
-                t60.liquidity_net,
-                alloy::primitives::I256::try_from(600i128).unwrap()
-            );
+            assert_eq!(t60.liquidity_net, 600i128);
             let t120 = s.tick_data.get(&120).expect("tick 120 newly initialized");
             assert_eq!(t120.liquidity_gross, alloy::primitives::U128::from(500));
             assert_eq!(
-                t120.liquidity_net,
-                alloy::primitives::I256::try_from(-500i128).unwrap(),
+                t120.liquidity_net, -500i128,
                 "upper tick net -= delta (V3/`apply_liquidity_to_tick_range` convention)"
             );
         }
@@ -2590,10 +2586,7 @@ mod tests {
             alloy::primitives::U128::from(100),
             "tick 60 reverts to registration snapshot (gross 100) on rollback"
         );
-        assert_eq!(
-            t60.liquidity_net,
-            alloy::primitives::I256::try_from(100i128).unwrap()
-        );
+        assert_eq!(t60.liquidity_net, 100i128);
         assert!(
             !s.tick_data.contains_key(&120),
             "newly-initialized tick 120 removed on rollback"
@@ -2690,7 +2683,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -2796,7 +2789,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -2834,7 +2827,7 @@ mod tests {
     fn fresh_pool_lifecycle_is_coverage_aware() {
         use crate::bot_core::{RegisterV3PoolParams, RegisterV4PoolParams, TickInfo, V4PoolKey};
         use crate::solvers::arb_engine::PoolTickCoverage;
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let mut core = BotState::new();
 
         // Tracked V4 → Quarantined (register_v4_on_core uses Tracked).
@@ -2859,7 +2852,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -2900,7 +2893,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -2957,7 +2950,7 @@ mod tests {
     /// non-CL pools are untouched.
     #[test]
     fn release_all_quarantined_flushes_and_marks_live() {
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let mut core = BotState::new();
         // Two Tracked pools — both register Quarantined under DFQYM5.
         let tracked_v3 = register_v3_on_core(&mut core, Address::from([0x55u8; 20]), 0);
@@ -2967,7 +2960,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -3668,7 +3661,7 @@ mod tests {
                     0_i32,
                     TickInfo {
                         liquidity_gross: alloy::primitives::U128::from(1_000_000u64),
-                        liquidity_net: I256::ZERO,
+                        liquidity_net: 0,
                         block: 0,
                     },
                 )]),
@@ -4093,7 +4086,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -4289,7 +4282,7 @@ mod tests {
             60,
             TickInfo {
                 liquidity_gross: U128::from(100),
-                liquidity_net: I256::try_from(100i128).unwrap(),
+                liquidity_net: 100i128,
                 block: 0,
             },
         );
@@ -4715,7 +4708,7 @@ mod tests {
     /// and never mutated by `apply_v3_liquidity_update`.
     #[test]
     fn v3_snapshot_seed_survives_pump_liquidity_update() {
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let mut core = BotState::new();
         let v3_addr = make_pool_addr();
 
@@ -4727,7 +4720,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(liq).unwrap(),
                 block: 0,
             },
         );
@@ -4806,7 +4799,7 @@ mod tests {
     /// block=25396790`). The pin is taken once (step-2 verify) then freed.
     #[test]
     fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let mut core = BotState::new();
         let v3_addr = make_pool_addr();
 
@@ -4817,7 +4810,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(liq).unwrap(),
                 block: 0,
             },
         );
@@ -4933,7 +4926,7 @@ mod tests {
     /// tick data actually matches at — NOT `verify_backfill_block`.
     #[test]
     fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let mut core = BotState::new();
         let v3_addr = make_pool_addr();
 
@@ -4953,7 +4946,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(seed_liq).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(seed_liq).unwrap(),
                 block: 0,
             },
         );
@@ -5044,7 +5037,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(gross).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(gross).unwrap(),
                 block: 0,
             },
         );
@@ -5147,7 +5140,7 @@ mod tests {
             -60,
             TickInfo {
                 liquidity_gross: liq_u128,
-                liquidity_net: I256::try_from(i128::try_from(gross).unwrap()).unwrap(),
+                liquidity_net: i128::try_from(gross).unwrap(),
                 block: 0,
             },
         );
@@ -5363,8 +5356,7 @@ mod tests {
                                 60,
                                 TickInfo {
                                     liquidity_gross: alloy::primitives::U128::from(100u128),
-                                    liquidity_net: ::alloy::primitives::I256::try_from(100i128)
-                                        .unwrap(),
+                                    liquidity_net: 100i128,
                                     block: 99,
                                 },
                             )]),
@@ -5505,7 +5497,7 @@ mod tests {
     fn ensure_word_known_merges_ticks_and_marks_word_known() {
         use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
         use ::degenbot_pools::TickInfo;
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
 
         #[derive(Debug)]
         struct WordFetcher;
@@ -5522,7 +5514,7 @@ mod tests {
                         60,
                         TickInfo {
                             liquidity_gross: U128::from(100u128),
-                            liquidity_net: I256::try_from(100i128).unwrap(),
+                            liquidity_net: 100i128,
                             block: 99,
                         },
                     )]),

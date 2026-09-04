@@ -13,7 +13,7 @@
 
 use hashbrown::HashMap;
 
-use alloy::primitives::{I256, U128, U256};
+use alloy::primitives::{U128, U256};
 
 use degenbot_math::cl::functions::tick_position;
 use degenbot_math::cl::tick_math::{MAX_TICK, MIN_TICK};
@@ -648,7 +648,7 @@ pub fn update_tick_liquidity<S: std::hash::BuildHasher>(
 ) {
     let entry = tick_data.entry(tick).or_insert(TickInfo {
         liquidity_gross: U128::ZERO,
-        liquidity_net: I256::ZERO,
+        liquidity_net: 0,
         block,
     });
     // Update the per-tick block to the event block — mirrors the Python
@@ -668,12 +668,13 @@ pub fn update_tick_liquidity<S: std::hash::BuildHasher>(
     entry.liquidity_gross = new_gross;
 
     // Update liquidity_net: += delta for lower tick, -= delta for upper tick
-    let delta_i256 = I256::try_from(delta).unwrap_or(I256::ZERO);
+    // (i128 native arithmetic at the on-chain width; a checked overflow
+    // clamps to zero, matching the previous I256 checked-unwrap_or contract).
     let current_net = entry.liquidity_net;
     entry.liquidity_net = if is_lower_tick {
-        current_net.checked_add(delta_i256).unwrap_or(I256::ZERO)
+        current_net.checked_add(delta).unwrap_or(0)
     } else {
-        current_net.checked_sub(delta_i256).unwrap_or(I256::ZERO)
+        current_net.checked_sub(delta).unwrap_or(0)
     };
 }
 
@@ -725,12 +726,12 @@ pub fn apply_liquidity_to_tick_range<S: std::hash::BuildHasher>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{I256, U128};
+    use alloy::primitives::U128;
 
     fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> TickInfo {
         TickInfo {
             liquidity_gross: U128::from(liquidity_gross),
-            liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
+            liquidity_net,
             block: 0,
         }
     }

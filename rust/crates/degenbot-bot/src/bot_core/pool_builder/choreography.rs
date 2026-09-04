@@ -378,7 +378,7 @@ pub async fn fetch_tick_data(
     address: Address,
     tick: i32,
     block: Option<u64>,
-) -> Result<(U128, I256), ProviderError> {
+) -> Result<(U128, i128), ProviderError> {
     let bytes = eth_call(io, address, abi::encode_tick_data(tick), block).await?;
     abi::decode_tick_data(&bytes)
 }
@@ -417,7 +417,7 @@ pub async fn fetch_v4_tick_data(
     pool_id: [u8; 32],
     tick: i32,
     block: Option<u64>,
-) -> Result<(U128, I256), ProviderError> {
+) -> Result<(U128, i128), ProviderError> {
     let bytes = eth_call(
         io,
         state_view,

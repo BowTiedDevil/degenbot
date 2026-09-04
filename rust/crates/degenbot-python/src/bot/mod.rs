@@ -1808,8 +1808,7 @@ impl PyBot {
                                 tick,
                                 degenbot_bot::bot_core::TickInfo {
                                     liquidity_gross: alloy::primitives::U128::from(gross),
-                                    liquidity_net: alloy::primitives::I256::try_from(net)
-                                        .unwrap_or(alloy::primitives::I256::ZERO),
+                                    liquidity_net: net,
                                     block: blk,
                                 },
                             )
@@ -1959,8 +1958,7 @@ impl PyBot {
                                 tick,
                                 degenbot_bot::bot_core::TickInfo {
                                     liquidity_gross: alloy::primitives::U128::from(gross),
-                                    liquidity_net: alloy::primitives::I256::try_from(net)
-                                        .unwrap_or(alloy::primitives::I256::ZERO),
+                                    liquidity_net: net,
                                     block: blk,
                                 },
                             )
@@ -2840,7 +2838,7 @@ fn build_tick_rows_py<'py>(
             .to::<u128>()
             .into_pyobject(py)?
             .into_any();
-        let py_net = crate::conversion::alloy::i256_to_py(py, &info.liquidity_net)?;
+        let py_net: Bound<'py, PyAny> = info.liquidity_net.into_pyobject(py)?.into_any();
         let py_block: Bound<'py, PyAny> = info.block.into_pyobject(py)?.into_any();
         let tup = pyo3::types::PyTuple::new(py, [py_gross, py_net, py_block])?;
         dict.set_item(tick, tup)?;
@@ -3152,7 +3150,7 @@ mod tests {
                 10,
                 ApplyLiquidityAtTick {
                     liquidity_gross: U128::from(1_000_000u64),
-                    liquidity_net: I256::try_from(500i64).unwrap(),
+                    liquidity_net: I256::try_from(500i128).unwrap(),
                     block: 0,
                 },
             );
@@ -3261,7 +3259,7 @@ mod tests {
                 10,
                 ApplyLiquidityAtTick {
                     liquidity_gross: U128::from(1_000_000u64),
-                    liquidity_net: I256::try_from(500i64).unwrap(),
+                    liquidity_net: I256::try_from(500i128).unwrap(),
                     block: 0,
                 },
             );

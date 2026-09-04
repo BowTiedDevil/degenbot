@@ -74,9 +74,9 @@ fn pool_entry_size_pinned() {
 fn tick_info_size_pinned() {
     assert_eq!(
         size_of::<TickInfo>(),
-        56,
-        "TickInfo drift: if this change is an intentional optimization from \
-         the HTPKLX epilogue (e.g. the I256->i128 net task), update the pin \
-         and cite the task; otherwise the struct grew silently"
+        48,
+        "TickInfo drift: the LIBQKE narrowing pinned 48 B (16 gross + 16 i128 \
+         net + 8 block, pad-to-16). Update this pin citing the task if the \
+         change is intentional; otherwise the struct grew silently"
     );
 }

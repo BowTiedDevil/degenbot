@@ -252,11 +252,10 @@ pub fn encode_v3_liquidity_slot(liquidity: u128) -> U256 {
 #[must_use]
 pub fn encode_v3_tick_info_slot(tick_info: &TickInfo) -> U256 {
     let gross = U256::from(tick_info.liquidity_gross.to::<u128>());
-    // `I256::into_raw()` yields the full 256-bit two's-complement bit pattern
-    // (negative values have the high 128 bits set). Mask to the LOW 128 bits —
-    // the `int128` field width — then shift into the HIGH half so the low-128
-    // `gross` field is not corrupted by a negative net's sign extension.
-    let net_high128 = (tick_info.liquidity_net.into_raw() & MASK_128) << 128;
+    // The field is the on-chain int128 (LIBQKE); its two's-complement bit
+    // pattern shifts into the HIGH half so the low-128 `gross` field is not
+    // corrupted by a negative net's sign extension.
+    let net_high128 = U256::from(tick_info.liquidity_net.cast_unsigned()) << 128;
     gross | net_high128
 }
 
@@ -596,10 +595,10 @@ mod tests {
     }
 
     fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> TickInfo {
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         TickInfo {
             liquidity_gross: U128::from(liquidity_gross),
-            liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
+            liquidity_net,
             block: 0,
         }
     }

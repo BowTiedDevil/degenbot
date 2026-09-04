@@ -4780,6 +4780,8 @@ mod tests {
                     {
                         eprintln!("[SOLVER-STATE] QUARANTINE: ADR-040 reaction verified");
                     }
+                    // AV42C7: the desync probe self-aborts so the PARENT test observes the marker.
+                    #[expect(clippy::exit)]
                     std::process::exit(0);
                 }
                 unreachable!("the solver-state gate MUST trip on the mismatched reserves (AV42C7)");
@@ -4814,7 +4816,7 @@ mod tests {
     /// Tick spacing 1 so tick 7 is a valid tick.
     fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<Bot>, Address) {
         use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
-        use alloy::primitives::{I256, U128};
+        use alloy::primitives::U128;
         let pool_addr = Address::from([0x34u8; 20]);
         let bot = Arc::new(Bot::new(1));
         let mut tick_data = hashbrown::HashMap::new();
@@ -4822,7 +4824,7 @@ mod tests {
             7,
             TickInfo {
                 liquidity_gross: U128::from(seed_gross),
-                liquidity_net: I256::try_from(seed_gross.cast_signed()).unwrap(),
+                liquidity_net: seed_gross.cast_signed(),
                 block: 0,
             },
         );
@@ -4948,20 +4950,20 @@ mod tests {
             let mut core = state.write();
             let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
             if let Some(crate::bot_core::PoolEntry::V3(p)) = core.pools.get_mut(&pool_id) {
+                use alloy::primitives::U128;
                 let pool = &mut p.1;
-                use alloy::primitives::{I256, U128};
                 pool.tick_data
                     .entry(6)
                     .or_insert(crate::bot_core::TickInfo {
                         liquidity_gross: U128::from(21_446_194_157_938_844u128),
-                        liquidity_net: I256::try_from(21_446_194_157_938_844i128).unwrap(),
+                        liquidity_net: 21_446_194_157_938_844i128,
                         block: 0,
                     });
                 pool.tick_data
                     .entry(8)
                     .or_insert(crate::bot_core::TickInfo {
                         liquidity_gross: U128::from(18_506_953_544_795_537u128),
-                        liquidity_net: I256::try_from(-18_506_953_544_795_537i128).unwrap(),
+                        liquidity_net: -18_506_953_544_795_537i128,
                         block: 0,
                     });
             }
@@ -5001,11 +5003,8 @@ mod tests {
         // The helper seeds tick-7 net = +seed_gross.
         assert_eq!(
             tick_data.get(&7).unwrap().liquidity_net,
-            alloy::primitives::I256::try_from(
-                i128::try_from(seed_gross).unwrap() - i128::try_from(amt_lower).unwrap()
-                    + i128::try_from(amt_upper).unwrap()
-            )
-            .unwrap(),
+            i128::try_from(seed_gross).unwrap() - i128::try_from(amt_lower).unwrap()
+                + i128::try_from(amt_upper).unwrap(),
             "scenario C: tick-7 net reflects both Mints (upper: -amt_lower, lower: +amt_upper)"
         );
     }
@@ -5124,10 +5123,7 @@ mod tests {
                         t,
                         crate::bot_core::TickInfo {
                             liquidity_gross: alloy::primitives::U128::from(FUZZ_SEED_GROSS),
-                            liquidity_net: alloy::primitives::I256::try_from(
-                                i128::try_from(FUZZ_SEED_GROSS).unwrap(),
-                            )
-                            .unwrap(),
+                            liquidity_net: i128::try_from(FUZZ_SEED_GROSS).unwrap(),
                             block: 0,
                         },
                     );
@@ -5251,10 +5247,7 @@ mod tests {
                         t,
                         crate::bot_core::TickInfo {
                             liquidity_gross: alloy::primitives::U128::from(FUZZ_SEED_GROSS),
-                            liquidity_net: alloy::primitives::I256::try_from(
-                                i128::try_from(FUZZ_SEED_GROSS).unwrap(),
-                            )
-                            .unwrap(),
+                            liquidity_net: i128::try_from(FUZZ_SEED_GROSS).unwrap(),
                             block: 0,
                         },
                     );
@@ -5293,12 +5286,10 @@ mod tests {
                 let pool_id = *core.pool_addresses.get(addr).unwrap();
                 let pool = core.get_v3_pool(pool_id).unwrap();
                 for &t in &FUZZ_TICKS {
-                    let actual = pool.tick_data.get(&t).map(|x| {
-                        (
-                            x.liquidity_gross.to::<u128>(),
-                            i128::try_from(x.liquidity_net).unwrap_or(i128::MAX).abs(),
-                        )
-                    });
+                    let actual = pool
+                        .tick_data
+                        .get(&t)
+                        .map(|x| (x.liquidity_gross.to::<u128>(), x.liquidity_net.abs()));
                     let want = oracle[i].get(&t).copied().unwrap_or((0, 0));
                     let actual_gross = actual.map_or(want.0, |a| a.0);
                     assert_eq!(
@@ -5356,10 +5347,7 @@ mod tests {
                 7,
                 TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(SEED_GROSS),
-                    liquidity_net: alloy::primitives::I256::try_from(
-                        i128::try_from(SEED_GROSS).unwrap(),
-                    )
-                    .unwrap(),
+                    liquidity_net: i128::try_from(SEED_GROSS).unwrap(),
                     block: 0,
                 },
             );

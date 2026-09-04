@@ -128,7 +128,6 @@ mod tests {
 
     #[expect(
         clippy::expect_used,
-        clippy::unwrap_used,
         clippy::cast_possible_truncation,
         clippy::cast_possible_wrap
     )]
@@ -173,7 +172,7 @@ mod tests {
                     (t as i32) - (v3_ticks as i32) / 2,
                     TickInfo {
                         liquidity_gross: alloy::primitives::U128::from(1_000u64 + t as u64),
-                        liquidity_net: alloy::primitives::I256::try_from(500 - (t as i64)).unwrap(),
+                        liquidity_net: 500 - (t as i128),
                         block: 0,
                     },
                 );

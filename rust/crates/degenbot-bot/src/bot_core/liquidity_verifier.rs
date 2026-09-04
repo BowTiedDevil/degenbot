@@ -656,7 +656,7 @@ fn decode_v3_ticks_result(
             ),
         })
     })?;
-    Ok((gross.to(), net.try_into().unwrap_or_default()))
+    Ok((gross.to(), net))
 }
 
 /// Decode a `StateView.getTickBitmap(poolId, word)` Multicall3 sub-call result
@@ -713,7 +713,7 @@ fn decode_v4_tick_liquidity_result(
             ),
         })
     })?;
-    Ok((gross.to(), net.try_into().unwrap_or_default()))
+    Ok((gross.to(), net))
 }
 
 // ---------------------------------------------------------------------------
@@ -1030,15 +1030,7 @@ fn stored_tick_map<S: std::hash::BuildHasher>(
 ) -> HashMap<i32, (u128, i128)> {
     tick_data
         .iter()
-        .map(|(&t, info)| {
-            (
-                t,
-                (
-                    info.liquidity_gross.to::<u128>(),
-                    info.liquidity_net.try_into().unwrap_or_default(),
-                ),
-            )
-        })
+        .map(|(&t, info)| (t, (info.liquidity_gross.to::<u128>(), info.liquidity_net)))
         .collect()
 }
 
@@ -1455,7 +1447,7 @@ mod tests {
     fn tick_info(gross: u128, net: i128) -> TickInfo {
         TickInfo {
             liquidity_gross: alloy::primitives::U128::from(gross),
-            liquidity_net: alloy::primitives::I256::unchecked_from(net),
+            liquidity_net: net,
             block: 0,
         }
     }

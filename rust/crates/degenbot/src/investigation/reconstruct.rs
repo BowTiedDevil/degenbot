@@ -8,7 +8,7 @@
 
 use hashbrown::HashMap;
 
-use alloy::primitives::{aliases::U112, Address, B256, I256, U256};
+use alloy::primitives::{aliases::U112, Address, B256, U256};
 
 use crate::bot_core::BotState;
 use crate::decoders::v4_swap_decoder::V4PoolId;
@@ -30,8 +30,7 @@ pub fn tick_map(data: &HashMap<String, TickJson>) -> HashMap<i32, TickInfo> {
                     liquidity_gross: alloy::primitives::U128::from(
                         v.liquidity_gross.parse::<u128>().unwrap(),
                     ),
-                    liquidity_net: I256::try_from(v.liquidity_net.parse::<i128>().unwrap())
-                        .unwrap(),
+                    liquidity_net: v.liquidity_net.parse::<i128>().unwrap(),
                     block: 0,
                 },
             )

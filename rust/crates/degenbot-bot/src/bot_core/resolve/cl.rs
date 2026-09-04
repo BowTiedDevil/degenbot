@@ -138,7 +138,7 @@ mod tests {
         BotState, RegisterV3PoolParams, RegisterV4PoolParams, TickInfo, V4PoolKey,
     };
     use crate::solvers::arb_engine::PoolTickCoverage;
-    use alloy::primitives::{Address, I256, U128, U256};
+    use alloy::primitives::{Address, U128, U256};
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop};
 
     /// Projection stand-in for tests: the word-profile table is built fresh per
@@ -181,7 +181,7 @@ mod tests {
             120,
             TickInfo {
                 liquidity_gross: U128::from(10_000),
-                liquidity_net: I256::try_from(5_000i128).unwrap(),
+                liquidity_net: 5_000i128,
                 block: 0,
             },
         );
@@ -189,7 +189,7 @@ mod tests {
             -120,
             TickInfo {
                 liquidity_gross: U128::from(8_000),
-                liquidity_net: I256::try_from(-4_000i128).unwrap(),
+                liquidity_net: -4_000i128,
                 block: 0,
             },
         );

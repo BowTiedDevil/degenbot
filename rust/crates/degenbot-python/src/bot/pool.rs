@@ -115,8 +115,7 @@ impl degenbot_pools::tick_fetch::TickWordFetcher for PyTickWordFetcher {
                         tick,
                         TickInfo {
                             liquidity_gross: alloy::primitives::U128::from(gross),
-                            liquidity_net: alloy::primitives::I256::try_from(net)
-                                .unwrap_or(alloy::primitives::I256::ZERO),
+                            liquidity_net: net,
                             block: blk,
                         },
                     )
@@ -2236,8 +2235,7 @@ impl PyLiquidityPool {
                 tick,
                 TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(gross),
-                    liquidity_net: alloy::primitives::I256::try_from(net)
-                        .unwrap_or(alloy::primitives::I256::ZERO),
+                    liquidity_net: net,
                     block: tick_block,
                 },
             );
@@ -3624,8 +3622,7 @@ fn extract_tick_data(
                 tick,
                 degenbot_bot::bot_core::TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(gross),
-                    liquidity_net: alloy::primitives::I256::try_from(net)
-                        .unwrap_or(alloy::primitives::I256::ZERO),
+                    liquidity_net: net,
                     block: blk,
                 },
             )

@@ -339,7 +339,7 @@ pub(crate) fn resolve_hops(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    #![expect(clippy::expect_used, clippy::panic)]
 
     use hashbrown::HashMap;
     use std::sync::Arc;
@@ -350,7 +350,7 @@ mod tests {
         RegisterV4PoolParams, TickInfo, V4PoolKey,
     };
     use alloy::primitives::aliases::U112;
-    use alloy::primitives::{Address, I256, U128, U256};
+    use alloy::primitives::{Address, U128, U256};
     use degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
     use degenbot_solvers::mobius_v3_int::{IntTickRangeCrossing, V3WordProfile};
 
@@ -368,7 +368,7 @@ mod tests {
             120,
             TickInfo {
                 liquidity_gross: U128::from(10_000),
-                liquidity_net: I256::try_from(5_000i128).unwrap(),
+                liquidity_net: 5_000i128,
                 block: 0,
             },
         );
@@ -376,7 +376,7 @@ mod tests {
             -120,
             TickInfo {
                 liquidity_gross: U128::from(8_000),
-                liquidity_net: I256::try_from(-4_000i128).unwrap(),
+                liquidity_net: -4_000i128,
                 block: 0,
             },
         );
@@ -433,7 +433,7 @@ mod tests {
     /// ADR-040 / PJGMPK: a quarantined pool is INVISIBLE to solve resolution.
     /// The gate sits BEFORE the projection memo read, so a cached valid hop can
     /// never serve a quarantined pool, and the quarantine + release transitions
-    /// bump the pool's state_nonce so in-flight candidates (solver nonce
+    /// bump the pool's `state_nonce` so in-flight candidates (solver nonce
     /// snapshots) drop at the sim seam. Release restores projection even with
     /// the memo holding a stale entry.
     #[test]
@@ -614,7 +614,7 @@ mod tests {
             6_000,
             TickInfo {
                 liquidity_gross: U128::from(20_000_u128),
-                liquidity_net: I256::try_from(10_000_i128).unwrap(),
+                liquidity_net: 10_000_i128,
                 block: 0,
             },
         );
@@ -622,7 +622,7 @@ mod tests {
             -6_000,
             TickInfo {
                 liquidity_gross: U128::from(16_000_u128),
-                liquidity_net: I256::try_from(-8_000_i128).unwrap(),
+                liquidity_net: -8_000_i128,
                 block: 0,
             },
         );
@@ -654,7 +654,7 @@ mod tests {
             6_000,
             TickInfo {
                 liquidity_gross: U128::from(20_000_u128),
-                liquidity_net: I256::try_from(10_000_i128).unwrap(),
+                liquidity_net: 10_000_i128,
                 block: 0,
             },
         );
@@ -662,7 +662,7 @@ mod tests {
             -6_000,
             TickInfo {
                 liquidity_gross: U128::from(16_000_u128),
-                liquidity_net: I256::try_from(-8_000_i128).unwrap(),
+                liquidity_net: -8_000_i128,
                 block: 0,
             },
         );

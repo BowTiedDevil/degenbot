@@ -30,7 +30,7 @@ use degenbot_db::{DegenbotDb, ExchangeFamily, SchemaState};
 
 /// Local alias for the streamed result accumulator (mirrors the private
 /// `TickMap`). Keeps clippy's `type_complexity` lint quiet in the parity tests.
-type StreamedMap = HashMap<i32, (U256, alloy::primitives::I256)>;
+type StreamedMap = HashMap<i32, (U256, i128)>;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
@@ -101,8 +101,10 @@ fn parse_u256(s: &str) -> U256 {
     U256::from_str_radix(s, 10).unwrap_or_else(|e| panic!("u256 parse {s}: {e}"))
 }
 
-fn parse_i256(s: &str) -> alloy::primitives::I256 {
-    alloy::primitives::I256::from_dec_str(s).unwrap_or_else(|e| panic!("i256 parse {s}: {e}"))
+fn parse_i256(s: &str) -> i128 {
+    s.trim()
+        .parse::<i128>()
+        .unwrap_or_else(|e| panic!("i256 parse {s}: {e}"))
 }
 
 fn parse_tick(s: &str) -> i32 {
@@ -203,7 +205,7 @@ fn fetch_liquidity_map_v3_matches_python_oracle() {
     }
 
     // tick_data
-    let mut rd: HashMap<i32, (U256, alloy::primitives::I256)> = HashMap::new();
+    let mut rd: HashMap<i32, (U256, i128)> = HashMap::new();
     for (ts, v) in &expected.tick_data {
         rd.insert(
             parse_tick(ts),
@@ -243,7 +245,7 @@ fn fetch_liquidity_map_v4_matches_python_oracle() {
         );
     }
 
-    let mut rd: HashMap<i32, (U256, alloy::primitives::I256)> = HashMap::new();
+    let mut rd: HashMap<i32, (U256, i128)> = HashMap::new();
     for (ts, v) in &expected.tick_data {
         rd.insert(
             parse_tick(ts),

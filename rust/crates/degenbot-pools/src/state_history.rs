@@ -310,7 +310,9 @@ pub struct TickBefore {
     /// `None` means the tick was not initialized — on rollback, delete it.
     pub liquidity_gross_before: Option<alloy::primitives::U128>,
     /// Liquidity net at this tick *before* the modification.
-    pub liquidity_net_before: alloy::primitives::I256,
+    /// Stored at the on-chain int128 width (HTPKLX LIBQKE); the DB TEXT
+    /// codec round-trips signed-decimal byte-identically at this width.
+    pub liquidity_net_before: i128,
 }
 
 /// Result of restoring a V3 journal to before a target block.
@@ -1169,11 +1171,10 @@ mod tests {
 // V3 delta scalar_priors tests (ADR-004)
 // ---------------------------------------------------------------------------
 
-#[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod v3_delta_priors_tests {
     use super::*;
-    use alloy::primitives::{I256, U128, U256};
+    use alloy::primitives::{U128, U256};
 
     /// Helper: construct a `V3BlockDelta` with explicit `scalar_priors` + empty
     /// `tick_priors`. Anchors the new `Option<ScalarPriors>` shape (ADR-004).
@@ -1192,7 +1193,7 @@ mod v3_delta_priors_tests {
     fn newly_initialized_tick() -> TickBefore {
         TickBefore {
             liquidity_gross_before: None,
-            liquidity_net_before: I256::ZERO,
+            liquidity_net_before: 0,
         }
     }
 
@@ -1548,7 +1549,7 @@ mod v3_delta_priors_tests {
                 60,
                 TickBefore {
                     liquidity_gross_before: Some(U128::from(100)),
-                    liquidity_net_before: I256::try_from(100i128).unwrap(),
+                    liquidity_net_before: 100,
                 },
             )],
         };
@@ -1568,14 +1569,14 @@ mod v3_delta_priors_tests {
                     60,
                     TickBefore {
                         liquidity_gross_before: Some(U128::from(500)),
-                        liquidity_net_before: I256::try_from(500i128).unwrap(),
+                        liquidity_net_before: 500,
                     },
                 ),
                 (
                     120,
                     TickBefore {
                         liquidity_gross_before: None,
-                        liquidity_net_before: I256::ZERO,
+                        liquidity_net_before: 0,
                     },
                 ),
             ],

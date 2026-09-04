@@ -773,7 +773,7 @@ mod tests {
             tick,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(gross),
-                liquidity_net: alloy::primitives::I256::try_from(net).unwrap(),
+                liquidity_net: net,
                 block: 0,
             },
         );
@@ -830,7 +830,7 @@ mod tests {
             -50,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(7_000u64),
-                liquidity_net: alloy::primitives::I256::try_from(-250i64).unwrap(),
+                liquidity_net: -250i128,
                 block: 0,
             },
         );
@@ -882,14 +882,11 @@ mod tests {
         // extension lands here.
         let info = TickInfo {
             liquidity_gross: alloy::primitives::U128::from(123u128),
-            liquidity_net: alloy::primitives::I256::try_from(-456i64).unwrap(),
+            liquidity_net: -456i128,
             block: 0,
         };
         let gross = U256::from(info.liquidity_gross.to::<u128>());
         assert_eq!(gross, U256::from(123u64));
-        assert_eq!(
-            info.liquidity_net,
-            alloy::primitives::I256::try_from(-456i64).unwrap()
-        );
+        assert_eq!(info.liquidity_net, -456i128);
     }
 }

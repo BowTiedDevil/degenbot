@@ -86,7 +86,7 @@ pub enum LiquidityDivergence {
 /// divergence — V3 `ticks()` never reverts for a valid int24, it returns
 /// zeros, so a `None` here is genuine RPC/contract trouble surfaced as a
 /// divergence).
-fn decode_ticks_result(r: &MulticallResult) -> Option<(U128, I256)> {
+fn decode_ticks_result(r: &MulticallResult) -> Option<(U128, i128)> {
     if r.success {
         decode_tick_data(r.return_data.as_ref()).ok()
     } else {
@@ -109,9 +109,13 @@ fn decode_bitmap_result(r: &MulticallResult) -> Option<U256> {
 fn compare_tick(
     tick: i32,
     expected: &ApplyLiquidityAtTick,
-    actual: Option<(U128, I256)>,
+    actual: Option<(U128, i128)>,
 ) -> Vec<LiquidityDivergence> {
-    let Some((gross, net)) = actual else {
+    // The math-crate comparison input (`ApplyLiquidityAtTick`) keeps the wide
+    // I256 intermediate by design; the on-chain decode arrives at the native
+    // int128 width (LIBQKE) — widen losslessly for the comparison.
+    let widened = actual.map(|(g, n)| (g, I256::try_from(n).unwrap_or(I256::ZERO)));
+    let Some((gross, net)) = widened else {
         return vec![LiquidityDivergence::TickCallReverted { tick }];
     };
     let mut out = Vec::new();
@@ -281,20 +285,18 @@ fn nested_mapping_slot(key: i32, base: U256) -> B256 {
 /// storage slot: gross in the low 128 bits (bytes [16..32]), net in the high
 /// 128 bits (bytes [0..16]) as an `int128` that must be sign-extended to the
 /// `I256` the in-memory map carries.
-fn decode_tick_from_slot(word: B256) -> (U128, I256) {
+fn decode_tick_from_slot(word: B256) -> (U128, i128) {
     let bytes: &[u8; 32] = word.as_ref();
     // gross = low 128 bits (bytes [16..32]); fixed-length slice → array copy is
     // infallible — no `try_into().expect` needed.
     let mut gross_low = [0u8; 16];
     gross_low.copy_from_slice(&bytes[16..32]);
     let gross = U128::from_be_bytes(gross_low);
-    // net = high 128 bits (bytes [0..16]) as an int128, sign-extended to I256.
-    let mut net_buf = [0u8; 32];
-    net_buf[16..32].copy_from_slice(&bytes[0..16]); // int128 value → low 128 of I256
-    if bytes[0] & 0x80 != 0 {
-        net_buf[0..16].fill(0xff); // sign-extend the high 128 bits
-    }
-    let net = I256::from_be_bytes::<32>(net_buf);
+    // net = high 128 bits (bytes [0..16]) as the on-chain int128 (LIBQKE:
+    // TickInfo stores the native width, so the I256 sign extension is gone).
+    let mut net_buf = [0u8; 16];
+    net_buf.copy_from_slice(&bytes[0..16]);
+    let net = i128::from_be_bytes(net_buf);
     (gross, net)
 }
 
@@ -619,7 +621,7 @@ fn encode_uint256_return_ref(word: U256) -> Vec<u8> {
 mod tests {
     use super::*;
     use alloy::primitives::hex_literal::hex;
-    use alloy::primitives::{I256, U128, U256};
+    use alloy::primitives::{U128, U256};
     use degenbot_db::ApplyBitmapAtWord as BitmapAtWord;
     use hashbrown::HashMap;
 
@@ -636,12 +638,7 @@ mod tests {
     #[test]
     fn compare_tick_match_is_empty() {
         let expected = tick(500, -100);
-        assert!(compare_tick(
-            7,
-            &expected,
-            Some((U128::from(500u64), I256::try_from(-100i64).unwrap()))
-        )
-        .is_empty());
+        assert!(compare_tick(7, &expected, Some((U128::from(500u64), -100i128))).is_empty());
     }
 
     #[test]
@@ -649,7 +646,7 @@ mod tests {
         // The 6SRJRL corruption shape: in-memory gross 500, on-chain drained
         // (gross 0) → TickGross with actual == 0.
         let expected = tick(500, 0);
-        let d = compare_tick(12345, &expected, Some((U128::ZERO, I256::ZERO)));
+        let d = compare_tick(12345, &expected, Some((U128::ZERO, 0)));
         assert_eq!(
             d,
             vec![LiquidityDivergence::TickGross {
@@ -915,7 +912,7 @@ mod tests {
         let word = B256::from(word_bytes);
         let (gross, net) = decode_tick_from_slot(word);
         assert_eq!(gross, U128::from(500u64));
-        assert_eq!(net, I256::try_from(-100i64).unwrap());
+        assert_eq!(net, -100i128);
     }
 
     #[test]

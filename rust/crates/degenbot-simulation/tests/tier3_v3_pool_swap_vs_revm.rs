@@ -407,7 +407,10 @@ fn v3_pool_reads_back_seeded_state_byte_exact() {
     w.copy_from_slice(&tk_out.as_ref()[0..32]);
     let on_gross = U256::from_be_bytes(w) & tier3_v3_common::MASK_128;
     w.copy_from_slice(&tk_out.as_ref()[32..64]);
-    let on_net = I256::from_raw(U256::from_be_bytes(w));
+    // on-chain net is the int128 field: the LOW 16 bytes of the word (LIBQKE)
+    let mut net_low = [0u8; 16];
+    net_low.copy_from_slice(&w[16..32]);
+    let on_net = i128::from_be_bytes(net_low);
     assert_eq!(
         on_gross.to::<u128>(),
         state.tick_data[&-tick_spacing].liquidity_gross.to::<u128>(),
@@ -429,7 +432,7 @@ fn state_at_tick_zero(liq: u128, tick_spacing: i32) -> V3PoolState {
         -tick_spacing,
         TickInfo {
             liquidity_gross: U128::from(liq),
-            liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+            liquidity_net: liq as i128,
             block: 0,
         },
     );
@@ -437,7 +440,7 @@ fn state_at_tick_zero(liq: u128, tick_spacing: i32) -> V3PoolState {
         tick_spacing,
         TickInfo {
             liquidity_gross: U128::from(liq),
-            liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+            liquidity_net: -(liq as i128),
             block: 0,
         },
     );

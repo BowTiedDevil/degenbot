@@ -198,10 +198,10 @@ pub(crate) fn make_tick_info(
     liquidity_gross: u128,
     liquidity_net: i128,
 ) -> degenbot_bot::bot_core::TickInfo {
-    use alloy::primitives::{I256, U128};
+    use alloy::primitives::U128;
     degenbot_bot::bot_core::TickInfo {
         liquidity_gross: U128::from(liquidity_gross),
-        liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
+        liquidity_net: liquidity_net,
         block: 0,
     }
 }

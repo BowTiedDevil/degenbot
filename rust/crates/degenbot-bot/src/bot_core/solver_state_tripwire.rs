@@ -2772,7 +2772,7 @@ mod tests {
     fn tick_info(gross: u128, net: i128) -> degenbot_pools::TickInfo {
         degenbot_pools::TickInfo {
             liquidity_gross: alloy::primitives::U128::from(gross),
-            liquidity_net: I256::unchecked_from(net),
+            liquidity_net: net,
             block: 0,
         }
     }

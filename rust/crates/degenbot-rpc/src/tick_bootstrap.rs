@@ -220,11 +220,11 @@ fn map_provider_err(err: degenbot_core::errors::ProviderError) -> BootstrapTickE
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::offline::OfflineProvider;
-    use alloy::primitives::{address, I256, U128, U256};
+    use alloy::primitives::{address, U128, U256};
     use serde_json::json;
 
     /// The V3 pool address used in the recorded-call fixtures.
@@ -341,12 +341,12 @@ mod tests {
 
         let tick_10 = &fetched.ticks[&10];
         assert_eq!(tick_10.liquidity_gross, U128::from(1_000u64));
-        assert_eq!(tick_10.liquidity_net, I256::try_from(-500i64).unwrap());
+        assert_eq!(tick_10.liquidity_net, -500i128);
         assert_eq!(tick_10.block, 100);
 
         let tick_20 = &fetched.ticks[&20];
         assert_eq!(tick_20.liquidity_gross, U128::from(2_000u64));
-        assert_eq!(tick_20.liquidity_net, I256::try_from(750i64).unwrap());
+        assert_eq!(tick_20.liquidity_net, 750i128);
         assert_eq!(tick_20.block, 100);
     }
 
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(fetched.ticks.len(), 1);
         let tick_info = &fetched.ticks[&10];
         assert_eq!(tick_info.liquidity_gross, U128::from(42u64));
-        assert_eq!(tick_info.liquidity_net, I256::try_from(-7i64).unwrap());
+        assert_eq!(tick_info.liquidity_net, -7i128);
         assert_eq!(tick_info.block, 9_999);
     }
 
