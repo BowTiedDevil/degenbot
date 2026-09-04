@@ -77,7 +77,7 @@ fn now_ms() -> u64 {
 /// Cheap: one relaxed atomic store. Safe to call from any thread holding
 /// the GIL (the example's main loop) — no allocation, no I/O.
 /// The effective reaction for a failure bucket (ADR-040): the closed
-/// failure_policy matrix resolved against boot-time `[failure_policy]`
+/// `failure_policy` matrix resolved against boot-time `[failure_policy]`
 /// overrides. Returns `observe` | `event` | `quarantine` | `exit`.
 ///
 /// Single source of truth for the Python driver's reaction behavior (the

@@ -767,13 +767,12 @@ impl BlockPump {
         // aborts mid-match; the dump must predate it). The dump root is the
         // bot CWD's logs/desync (overridable by DEGENBOT_DESYNC_DUMP_DIR for
         // test isolation). I/O failure degrades to a log - never blocks.
-        if let Some(dump_path) = d
-            .snapshot
-            .write(&std::env::var_os("DEGENBOT_DESYNC_DUMP_DIR").map_or_else(
-                || std::path::PathBuf::from("logs/desync"),
-                std::path::PathBuf::from,
-            ))
-            .ok()
+        if let Ok(dump_path) =
+            d.snapshot
+                .write(&std::env::var_os("DEGENBOT_DESYNC_DUMP_DIR").map_or_else(
+                    || std::path::PathBuf::from("logs/desync"),
+                    std::path::PathBuf::from,
+                ))
         {
             tracing::info!(dump = %dump_path.display(), "desync repro artifact written");
         } else {

@@ -299,7 +299,6 @@ pub(crate) fn resolve_metrics_addr(env_raw: Option<&str>, config_file: Option<&P
 /// rule); an INVALID key/action (a table that parses but names an unknown
 /// bucket or action) is a boot error — the bail path panics loudly at the
 /// mgr call site after logging.
-#[must_use]
 pub(crate) fn read_failure_policy_overrides(
     config_file: Option<&std::path::Path>,
 ) -> Result<Vec<(String, String)>, String> {
@@ -319,10 +318,26 @@ pub(crate) fn read_failure_policy_overrides(
             };
             let mut out = Vec::new();
             for (k, v) in entries {
-                let Some(a) = v.as_str() else {
-                    return Err(format!("[failure_policy].{k} must be a string action"));
-                };
-                out.push((k.clone(), a.to_owned()));
+                if let Some(a) = v.as_str() {
+                    // flat form: kind = "action" (or a quoted "kind.reason" key)
+                    out.push((k.clone(), a.to_owned()));
+                    continue;
+                }
+                if let Some(sub) = v.as_table() {
+                    // nested form: kind = { reason = "action" } or
+                    // [failure_policy.kind] reason = "action" - flatten one
+                    // level so the reason sub-taxonomies read naturally.
+                    for (k2, v2) in sub {
+                        let Some(a) = v2.as_str() else {
+                            return Err(format!(
+                                "[failure_policy].{k}.{k2} must be a string action"
+                            ));
+                        };
+                        out.push((format!("{k}.{k2}"), a.to_owned()));
+                    }
+                    continue;
+                }
+                return Err(format!("[failure_policy].{k} must be a string action"));
             }
             Ok(out)
         }

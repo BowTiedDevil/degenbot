@@ -156,6 +156,15 @@ depth gauge (`degenbot.engine.quarantined_pools`) so containment itself is
 chartable: "the bot quarantined 3 pools today" is a first-class dashboarding
 fact, not a log-line rumor.
 
+
+## Operator reference
+
+The rendered table above is operationalized in
+[docs/failure-policy.md](../failure-policy.md) - the config.toml
+[failure_policy] knob (per-bucket action overrides, closed keys,
+boot validation), the action vocabulary, and the guidance for
+choosing stances.
+
 ## Consequences
 
 - **Availability:** a strict-gate desync no longer ends the session. The bot

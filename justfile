@@ -158,13 +158,11 @@ build-rust-extension:
 # on its next use. `target/maturin` is NEVER touched so `uv run maturin
 # develop` stays warm (see the stale-`.so` rule in AGENTS.md before
 # forcing anything colder than that).
-# Default is a PREVIEW: per-subtree reclaimable sizes, deletes nothing. Run
-# the destructive pass explicitly:
-#   just gc-target              # preview (deletes nothing), 14-day horizon
-#   DRY=1 just gc-target        # delete artifacts older than the horizon
-#   AGE=0 DRY=1 just gc-target  # sweep everything except target/maturin
-#   DUPES=1 just gc-target      # preview the stale-variant dedupe too
-#   DUPES=1 DRY=1 just gc-target  # delete stale variants, keep newest per basename
+# Running the recipe applies the defaults and frees the space immediately - no
+# preview/dry-run mode:
+#   just gc-target            # sweep artifacts older than the 14-day horizon
+#   AGE=0 just gc-target      # sweep everything except target/maturin
+#   DUPES=1 just gc-target    # also sweep stale duplicate-hash variants, keep newest per basename
 # DUPES=1 also sweeps duplicate-hash test binaries: cargo hashes metadata into
 # each artifact name, so feature-flag/env churn (extension-module, hotpath,
 # CI parity runs) leaves older variants of the same suite piling up at ~0.5 GiB
@@ -175,19 +173,15 @@ gc-target:
     set -euo pipefail
     age=${AGE:-14}
     dupes=${DUPES:-}
-    dry=${DRY:-}
     roots=(rust/target/debug rust/target/release rust/target/rust-analyzer/debug)
     subtrees=(deps examples build .fingerprint)
     total_kb=0
     for root in "${roots[@]}"; do
         [ -d "$root" ] || continue
         inc="$root/incremental"
-        if [ -z "${dry}" ]; then
-            if [ -d "$inc" ]; then
-                kb=$(du -sk "$inc" | cut -f1)
-                total_kb=$((total_kb + kb))
-            fi
-        elif [ -d "$inc" ]; then
+        if [ -d "$inc" ]; then
+            kb=$(du -sk "$inc" | cut -f1)
+            total_kb=$((total_kb + kb))
             rm -rf "$inc" 2>/dev/null || echo "WARN: could not fully remove $inc (a build may be writing into it)" >&2
         fi
         for sub in "${subtrees[@]}"; do
@@ -195,12 +189,9 @@ gc-target:
             if [ ! -d "$dir" ]; then continue; fi
             stale=$(find "$dir" -mindepth 1 -maxdepth 1 -mtime +"${age}" 2>/dev/null || true)
             if [ -z "$stale" ]; then continue; fi
-            if [ -z "${dry}" ]; then
-                kb=$(du -skc $stale 2>/dev/null | tail -1 | cut -f1)
-                total_kb=$((total_kb + kb))
-            else
-                rm -rf $stale 2>/dev/null || echo "WARN: partial removal in $dir" >&2
-            fi
+            kb=$(du -skc $stale 2>/dev/null | tail -1 | cut -f1)
+            total_kb=$((total_kb + kb))
+            rm -rf $stale 2>/dev/null || echo "WARN: partial removal in $dir" >&2
         done
     done
     # Stale duplicate-hash variants (see dupes=1 in the header comment). Only
@@ -215,24 +206,16 @@ gc-target:
                 dupes_list=$(awk -v d="$dir" '{ print d "/" $0 }' "$tmp")
                 kb=$(du -skc $dupes_list 2>/dev/null | tail -1 | cut -f1)
                 n=$(wc -l < "$tmp")
-                if [ -n "${dry}" ]; then
-                    rm -f $dupes_list
-                    total_kb=$((total_kb + kb))
-                    echo "deduped: $n stale variants in $dir"
-                else
-                    total_kb=$((total_kb + kb))
-                    echo "dedupe candidate: $n stale variants in $dir ($(( kb / 1024 )) MiB)"
-                fi
+                rm -f $dupes_list
+                total_kb=$((total_kb + kb))
+                echo "deduped: $n stale variants in $dir"
             fi
         done
         rm -f "$tmp"
     fi
     freed=$(numfmt --to=iec "$((total_kb * 1024))" 2>/dev/null || echo "${total_kb} KiB")
-    if [ -z "${dry}" ]; then
-        echo "PREVIEW: $freed reclaimable at a ${age}-day horizon (+dupes if requested) — pass dry=1 to delete"
-    else
-        echo "swept: ~$freed freed (rust/target now: $(du -sh rust/target | cut -f1))"
-    fi
+    now=$(du -sh rust/target 2>/dev/null | cut -f1 || true)
+    echo "swept: ~$freed freed at a ${age}-day horizon (+dupes if requested) (rust/target now: ${now:-n/a})"
 
 # ========== Python Development ==========
 

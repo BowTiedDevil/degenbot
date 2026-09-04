@@ -175,7 +175,7 @@ pub struct TripReorgWindow {
 pub struct DesyncStateSnapshot {
     /// The judged anchor block (the judged solve block).
     pub anchor_block: u64,
-    /// Class reason sub-key (the telemetry error_reason spelling).
+    /// Class reason sub-key (the `telemetry::error_reason` spelling).
     pub reason: &'static str,
     /// The failing path index.
     pub path_idx: usize,
@@ -205,8 +205,11 @@ impl DesyncStateSnapshot {
         .unwrap_or_else(|_| String::new())
     }
 
-    /// Write the artifact under `dir` (created on demand); I/O failures
-    /// are the CALLER degrade (a dump must never block the reaction).
+    /// Write the artifact under `dir` (created on demand); a dump must never
+    /// block the reaction, so I/O failure degrades to the caller.
+    ///
+    /// # Errors
+    /// Propagates the underlying `std::io` error (dir create / file write).
     pub fn write(&self, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
         std::fs::create_dir_all(dir)?;
         let file = dir.join(format!(

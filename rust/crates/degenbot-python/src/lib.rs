@@ -215,11 +215,31 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
                 .map(|(k, a)| (k.as_str(), a.as_str()))
                 .collect();
             if let Err(e) = degenbot_bot::failure_policy::install_overrides(refs) {
-                eprintln!("[failure_policy] invalid override - boot refused: {e}");
+                // DELIBERATE fail-loud import seam: module init has no
+                // subscriber yet and no trading surface is up, so a refused
+                // policy exits the process before any boot can proceed on a
+                // half-read containment stance. Both lints are suppressed for
+                // this one seam (the same predicates block_pump.rs grants its
+                // pre-abort stderr marker).
+                #[expect(clippy::print_stderr)]
+                {
+                    eprintln!("[failure_policy] invalid override - boot refused: {e}");
+                }
+                #[expect(clippy::exit)]
                 std::process::exit(2);
             }
+            // ADR-040 D3 loudness: a softened tainted bucket must be visible
+            // as an operator DECISION on the boot surface, not a silent count.
+            // (Softening = any kind whose default is quarantine/exit set to a
+            // weaker action; the pair list makes it greppable.)
+            let pairs = overrides
+                .iter()
+                .map(|(k, a)| format!("{k}={a}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             tracing::info!(
                 count = overrides.len(),
+                overrides = %pairs,
                 "failure_policy overrides installed"
             );
         }
@@ -227,7 +247,12 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
         // A malformed [failure_policy] VALUES table is a boot error (ADR-040
         // D3): the operator asked for a containment stance; refuse loudly.
         Err(e) => {
-            eprintln!("[failure_policy] invalid override table - boot refused: {e}");
+            // DELIBERATE fail-loud import seam (see the Ok arm above).
+            #[expect(clippy::print_stderr)]
+            {
+                eprintln!("[failure_policy] invalid override table - boot refused: {e}");
+            }
+            #[expect(clippy::exit)]
             std::process::exit(2);
         }
     }
