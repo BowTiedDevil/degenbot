@@ -16,8 +16,6 @@
 //! Python, the pump, and the `OTel` exporter share the quota and must not
 //! starve during bursts), overridable with `DEGENBOT_SOLVE_CPUS`.
 
-#![allow(dead_code)] // v1 helpers are exercised by tests; some hosts never hit them
-
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 

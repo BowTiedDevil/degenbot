@@ -446,9 +446,10 @@ pub struct PyLiquidityPool {
 
 impl PyLiquidityPool {
     /// RATR5A/CXRHW3 probe (mechanical lock-freedom invariant, pair-review
-    /// condition 1): the caller thread holds the GIL; the BotState WRITE is
-    /// required free. try_write is instant and non-blocking - safe at any
+    /// condition 1): the caller thread holds the GIL; the `BotState` WRITE is
+    /// required free. `try_write` is instant and non-blocking - safe at any
     /// depth (it never parks).
+    #[must_use]
     pub fn state_write_is_free(&self) -> bool {
         self.core.try_write().is_some()
     }
@@ -670,27 +671,36 @@ impl PyLiquidityPool {
         // RATR5A/CXRHW3: stage missing words OUTSIDE the read lock (bounded
         // passes) - the sim runs with miss recovery disarmed so no fetch can
         // execute under the caller read guard.
-        for _pass in 0..3u8 {
-            let Some((fetcher, missing)) = self.with_state(py, |core| {
-                let fetcher = core.stored_fetcher_for_pool(self.pool_id)?;
+        for _ in 0..3u8 {
+            // A None stored fetcher only aborts when there is something to
+            // stage — a complete hypothetical (no misses) must still sim.
+            let staged = self.with_state(py, |core| {
+                let fetcher = core.stored_fetcher_for_pool(self.pool_id);
                 let missing = core.override_missing_words(&over);
                 missing.map(|missing| (fetcher, missing))
-            }) else {
+            });
+            let Some((fetcher, missing)) = staged else {
                 return Ok(None);
             };
             if missing.is_empty() {
                 break;
             }
+            let Some(fetcher) = fetcher else {
+                // Misses exist but no fetcher is stored: the hypothetical
+                // cannot be backfilled (RATR5A staged pass), fail as None
+                // exactly like the disarmed sim's FetchExhausted arm.
+                return Ok(None);
+            };
             // Fetches: GIL-attached (we hold it), NO state lock held.
-            let mut fetched = Vec::new();
+            let mut staged_words = Vec::new();
             for word in &missing {
                 match fetcher.fetch_missing_tick_word(self.pool_id, *word, block) {
-                    Ok(f) => fetched.push(f),
+                    Ok(f) => staged_words.push(f),
                     Err(_) => return Ok(None),
                 }
             }
             // Merge fetched ticks into the caller-owned override map.
-            for f in &fetched {
+            for f in &staged_words {
                 for (tick, info) in &f.ticks {
                     over.tick_data.insert(*tick, info.clone());
                 }
@@ -2092,8 +2102,8 @@ impl PyLiquidityPool {
     /// Backfill an unknown tick-bitmap word for this pool (T2 FBJTUM — the
     /// write-path gate's fetch seam).
     ///
-    /// RATR5A: STAGED fetch — the multi-second fetch (Python::attach + the
-    /// companion's serial web3 RPC) runs with the BotState write guard
+    /// RATR5A: STAGED fetch — the multi-second fetch (`Python::attach` + the
+    /// companion's serial web3 RPC) runs with the `BotState` write guard
     /// RELEASED; the fetcher re-acquires the GIL via `Python::attach` and
     /// the pump applies events to other pools through the whole window.
     /// Choreography per attempt: (1) short write — stage (fetcher + tick
@@ -2127,7 +2137,7 @@ impl PyLiquidityPool {
             match outcome {
                 InstallWordOutcome::Merged => return Ok(true),
                 InstallWordOutcome::Failed => return Ok(false),
-                InstallWordOutcome::Raced => continue,
+                InstallWordOutcome::Raced => {}
             }
         }
         Ok(false)

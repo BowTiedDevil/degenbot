@@ -5214,7 +5214,7 @@ mod tests {
     // --- T2 (FBJTUM): write-path sparse backfill — ensure_word_known ---
 
     #[test]
-    #[expect(clippy::expect_used, clippy::indexing_slicing)]
+    #[expect(clippy::expect_used, clippy::too_many_lines)]
     fn staged_word_fetch_install_races_on_interleaved_pool_write() {
         use crate::bot_core::InstallWordOutcome;
         use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};

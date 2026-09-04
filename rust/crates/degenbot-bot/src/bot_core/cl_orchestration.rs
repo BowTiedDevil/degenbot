@@ -52,6 +52,10 @@ impl StagedWordFetch {
     /// re-enters Python (`Python::attach` + the companion's web3 RPC), so
     /// this call is the multi-second window the fetch-under-write defect
     /// parked the whole pump inside (RATR5A).
+    ///
+    /// # Errors
+    /// Propagates the stored fetcher's [`FetchTickWordError`] (RPC/transport
+    /// or tick-word decode); the caller owns retry semantics, nothing panics.
     pub fn fetch(
         &self,
     ) -> Result<
@@ -1096,7 +1100,7 @@ impl BotState {
 
     /// RATR5A stage half of the word backfill: clone the stored fetcher +
     /// capture the pool's tick fingerprint UNDER a short write, and release
-    /// the caller's guard before the (multi-second, Python::attach + web3
+    /// the caller's guard before the (multi-second, `Python::attach` + web3
     /// RPC) fetch runs. The old single-hold path fetched while the write
     /// guard was alive, parking the pump’s apply/solve pipeline behind the
     /// RPC. Pair with [`Self::install_word_fetch`].

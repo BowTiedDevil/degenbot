@@ -150,7 +150,7 @@ pub struct PipelineInstruments {
     /// the registry, and a container OOM-kill presents as an overnight
     /// availability failure, not a solver symptom).
     ///
-    /// PROMETHEUS NAME COUPLING (pair-review flag, 2026-09-04): the OTel
+    /// PROMETHEUS NAME COUPLING (pair-review flag, 2026-09-04): the `OTel`
     /// name-mapping renders this gauge (dots->underscores + `By` unit
     /// suffix) as `degenbot_process_rss_bytes`, and the Grafana panel
     /// "Process RSS - registry drift watch" queries that string verbatim —
@@ -688,7 +688,7 @@ impl PipelineInstruments {
 
 /// Read the process resident set size in bytes from `/proc/self/statm`
 /// (second field: resident pages; page size classically 4096 — the runs
-/// this gauges are Linux x86_64). `None` when statm is unavailable or
+/// this gauges are Linux `x86_64`). `None` when statm is unavailable or
 /// unexpected (Windows/CI sandboxes) — callers must no-op on None.
 #[must_use]
 pub(crate) fn read_process_rss_bytes() -> Option<u64> {
@@ -709,6 +709,7 @@ mod tests {
     use super::parse_statm_resident;
 
     #[test]
+    #[expect(clippy::expect_used)]
     fn statm_parser_reads_resident_pages() {
         // /proc/self/statm: size resident shared text lib data dt (pages)
         let rss = parse_statm_resident("54321 21000 1234 100 0 7000 0", 4096)

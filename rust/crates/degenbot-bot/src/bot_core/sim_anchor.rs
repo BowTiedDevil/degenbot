@@ -109,21 +109,29 @@ mod tests {
         anchor
             .anchor_words
             .get(key)
-            .map(|p| (p.kind.clone(), p.engine_word.into(), p.update_block))
+            .map(|p| (p.kind, p.engine_word.into(), p.update_block))
     }
 
     const V4_TEST_PM: Address = Address::new([0x44; 20]);
 
+    #[expect(clippy::cast_possible_truncation)] // fixture: i < 2 pools
     fn v3_addr(i: usize) -> Address {
         let mut a = [0x33u8; 20];
         a[0] = (i as u8) + 1;
         Address::new(a)
     }
 
+    #[expect(clippy::cast_possible_truncation)] // fixture: i, j < 2 pools
     fn v4_id(i: usize) -> [u8; 32] {
         std::array::from_fn(|j| (i as u8).wrapping_add(j as u8))
     }
 
+    #[expect(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap
+    )]
     fn heavy_state(v3_pools: usize, v3_ticks: usize, v4_pools: usize) -> BotState {
         let mut core = BotState::new();
         core.register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
@@ -200,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::expect_used, clippy::too_many_lines)]
+    #[expect(clippy::unwrap_used, clippy::panic, clippy::type_complexity)]
     fn snapshot_parity_with_query_semantics() {
         // Fixture: one pool of each family (Aerodrome/Curve/Balancer families
         // contribute no anchor words by probe semantics — pass-through None).
@@ -219,10 +227,7 @@ mod tests {
             (V4_TEST_PM, s_state.checked_add(U256::from(3u64)).unwrap()),
         ] {
             if let Some(p) = core.probe_tracked_storage_slot(addr, idx) {
-                expected.push((
-                    (addr, idx),
-                    (p.kind.clone(), p.engine_word.into(), p.update_block),
-                ));
+                expected.push(((addr, idx), (p.kind, p.engine_word.into(), p.update_block)));
             }
         }
         assert!(
@@ -264,7 +269,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines)]
     fn snapshot_is_enumerated_not_a_scan() {
         // The ADR-039 perf gate: the projection enumerates per-family scalars
         // and NEVER iterates tick maps (V3 arbitrary-index fallthrough) or the

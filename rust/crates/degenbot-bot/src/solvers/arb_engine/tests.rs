@@ -5276,13 +5276,16 @@ mod tests {
     }
     /// A minimal tracing capture layer: records (name, span id, parent id)
     /// for every span created under the subscriber. Deliberately NOT the
-    /// OTel exporter - span-PARENTING is not an OTel concern, so this
+    /// `OTel` exporter - span-PARENTING is not an `OTel` concern, so this
     /// invariant test runs in the DEFAULT test gate (the otel-gated
-    /// InMemorySpanExporter harness stays for the attribute-level tests).
+    /// `InMemorySpanExporter` harness stays for the attribute-level tests).
     #[derive(Clone, Default)]
     struct SpanParentCapture {
-        spans: std::sync::Arc<std::sync::Mutex<Vec<(String, u64, Option<u64>)>>>,
+        spans: std::sync::Arc<std::sync::Mutex<Vec<SpanRecord>>>,
     }
+
+    /// One captured span: (name, span id, parent id).
+    type SpanRecord = (String, u64, Option<u64>);
 
     thread_local! {
         /// Current-span stack mirror: on_enter/on_exit maintain it so
@@ -5330,7 +5333,7 @@ mod tests {
     /// two-acquisition gate let a concurrent dirty marker land BETWEEN the
     /// probe and the take - the solve then did real work (1518 affected
     /// paths) through the no-span branch, orphaning its phase spans under
-    /// pump.block and escaping the solve_duration histogram. The gate and
+    /// `pump.block` and escaping the `solve_duration` histogram. The gate and
     /// the work now share ONE mutex acquisition (dirt marking needs the same
     /// mutex, so probe and take cannot disagree). Invariant under test:
     /// every fanout span's parent is an arb.solve span (a fanout implies
@@ -5339,7 +5342,7 @@ mod tests {
     /// DEFAULT-GATE VISIBLE (no otel cfg) - reviewer flag on 2f22fa575: the
     /// race class must not live behind an optional feature.
     ///
-    /// The metrics half of the harm (solve_duration sample + solves_executed
+    /// The metrics half of the harm (`solve_duration` sample + `solves_executed`
     /// count) is structural now: counting happens on the same span-branch as
     /// parenting, so there is no code path that does work without either.
     #[test]

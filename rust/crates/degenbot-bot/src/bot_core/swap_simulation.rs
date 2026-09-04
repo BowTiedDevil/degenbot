@@ -34,10 +34,12 @@ use ::degenbot_pools::registry::PoolEntry;
 use ::degenbot_pools::simulate_swap::simulate_swap;
 use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};
 use ::degenbot_pools::v3_state::{
-    v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
-    V3SwapOutcome,
+    v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolIdentity,
+    V3PoolState, V3SwapOutcome,
 };
-use ::degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolState};
+use ::degenbot_pools::v4_state::{
+    v4_simulate_swap, RegisterV4PoolParams, V4PoolIdentity, V4PoolState,
+};
 
 use super::BotState;
 
@@ -394,7 +396,7 @@ struct OverrideSim<'a> {
     fetcher: Option<Arc<dyn TickWordFetcher>>,
     pool_id: u64,
     /// RATR5A/CXRHW3: miss recovery DISARMED - a fresh missing word
-    /// surfaces as FetchExhausted (typed contract) instead of an inline
+    /// surfaces as `FetchExhausted` (typed contract) instead of an inline
     /// fetch under the caller read guard.
     disarm_fetch: bool,
 }
@@ -583,33 +585,7 @@ impl BotState {
             | PoolEntry::AerodromeV2(..) => Some(Vec::new()),
             PoolEntry::V3(identity, st) => {
                 let mut missing = Vec::new();
-                let mut transient = TransientCl {
-                    family: TransientFamily::V3(identity.fee, identity.tick_spacing),
-                    inner: TransientInner::V3(Box::new(
-                        V3PoolState::from_params(
-                            RegisterV3PoolParams {
-                                address: identity.address,
-                                token0: identity.token0,
-                                token1: identity.token1,
-                                fee: identity.fee,
-                                tick_spacing: identity.tick_spacing,
-                                factory: identity.factory,
-                                deployer: identity.deployer,
-                                init_hash: identity.init_hash,
-                                sqrt_price_x96: st.sqrt_price_x96,
-                                liquidity: st.liquidity,
-                                tick: st.tick,
-                                tick_data: st.tick_data.clone(),
-                                update_block: st.update_block,
-                                coverage: PoolTickCoverage::Sparse,
-                                fetcher: None,
-                                ..Default::default()
-                            },
-                            self.journal_depth,
-                        )
-                        .1,
-                    )),
-                };
+                let mut transient = self.v3_discovery_transient(identity, st);
                 let spec =
                     engine_amount_specified(request.amount_specified, EngineFamily::V3Engine);
                 let limit = request
@@ -626,33 +602,7 @@ impl BotState {
             }
             PoolEntry::V4(identity, st) => {
                 let mut missing = Vec::new();
-                let mut transient = TransientCl {
-                    family: TransientFamily::V4(
-                        identity.pool_key.fee,
-                        identity.pool_key.tick_spacing,
-                    ),
-                    inner: TransientInner::V4(Box::new(
-                        V4PoolState::from_params(
-                            RegisterV4PoolParams {
-                                pool_manager: identity.pool_manager,
-                                pool_id: identity.pool_id,
-                                pool_key: identity.pool_key.clone(),
-                                hook_flags: 0,
-                                protocol_fee: 0,
-                                sqrt_price_x96: st.sqrt_price_x96,
-                                liquidity: st.liquidity,
-                                tick: st.tick,
-                                tick_data: st.tick_data.clone(),
-                                update_block: st.update_block,
-                                tick_data_block: None,
-                                coverage: PoolTickCoverage::Sparse,
-                                fetcher: None,
-                            },
-                            self.journal_depth,
-                        )
-                        .1,
-                    )),
-                };
+                let mut transient = self.v4_discovery_transient(identity, st);
                 let spec =
                     engine_amount_specified(request.amount_specified, EngineFamily::V4Engine);
                 let limit = request
@@ -668,6 +618,75 @@ impl BotState {
                 );
                 Some(missing)
             }
+        }
+    }
+
+    /// Build the V3 discovery transient for a registered pool: it mirrors
+    /// the REGISTERED pool's coverage (a Tracked pool never raises
+    /// `MissingTickWord`, so the staging walk must not invent fetch work
+    /// for one) AND its checked-word set (T1 3WTDFK: `from_params` seeds
+    /// known words from tick ROWS only — a caller-CHECKED empty word has no
+    /// rows yet must never become a fetch target).
+    fn v3_discovery_transient(&self, identity: &V3PoolIdentity, st: &V3PoolState) -> TransientCl {
+        let mut v3_transient = V3PoolState::from_params(
+            RegisterV3PoolParams {
+                address: identity.address,
+                token0: identity.token0,
+                token1: identity.token1,
+                fee: identity.fee,
+                tick_spacing: identity.tick_spacing,
+                factory: identity.factory,
+                deployer: identity.deployer,
+                init_hash: identity.init_hash,
+                sqrt_price_x96: st.sqrt_price_x96,
+                liquidity: st.liquidity,
+                tick: st.tick,
+                tick_data: st.tick_data.clone(),
+                update_block: st.update_block,
+                coverage: st.coverage,
+                fetcher: None,
+                ..Default::default()
+            },
+            self.journal_depth,
+        )
+        .1;
+        v3_transient
+            .known_bitmap_words
+            .extend(st.known_bitmap_words.iter().copied());
+        TransientCl {
+            family: TransientFamily::V3(identity.fee, identity.tick_spacing),
+            inner: TransientInner::V3(Box::new(v3_transient)),
+        }
+    }
+
+    /// V4 twin of [`Self::v3_discovery_transient`] — the same coverage +
+    /// checked-word mirroring discipline (see that doc).
+    fn v4_discovery_transient(&self, identity: &V4PoolIdentity, st: &V4PoolState) -> TransientCl {
+        let mut v4_transient = V4PoolState::from_params(
+            RegisterV4PoolParams {
+                pool_manager: identity.pool_manager,
+                pool_id: identity.pool_id,
+                pool_key: identity.pool_key.clone(),
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: st.sqrt_price_x96,
+                liquidity: st.liquidity,
+                tick: st.tick,
+                tick_data: st.tick_data.clone(),
+                update_block: st.update_block,
+                tick_data_block: None,
+                coverage: st.coverage,
+                fetcher: None,
+            },
+            self.journal_depth,
+        )
+        .1;
+        v4_transient
+            .known_bitmap_words
+            .extend(st.known_bitmap_words.iter().copied());
+        TransientCl {
+            family: TransientFamily::V4(identity.pool_key.fee, identity.pool_key.tick_spacing),
+            inner: TransientInner::V4(Box::new(v4_transient)),
         }
     }
 
@@ -731,7 +750,7 @@ impl BotState {
     /// RATR5A/CXRHW3: the override sim with miss recovery DISARMED - a
     /// missing word surfaces as None (the legacy Option contract) instead of
     /// an inline fetch under the caller read guard. The pooled caller
-    /// pre-stages through [Self::override_missing_words] + the lock-free
+    /// pre-stages through [`Self::override_missing_words`] + the lock-free
     /// fetch choreography before entering.
     pub fn simulate_override_disarmed(
         &self,
@@ -745,7 +764,7 @@ impl BotState {
     /// listed by a collect-only walk over a transient built from the
     /// override scalars + the caller tick data (no fetch, no registered
     /// mutation). Pair with the lock-free fetch choreography in pool.rs
-    /// (ensure_override_missing_staged).
+    /// (`ensure_override_missing_staged`).
     #[must_use]
     pub fn override_missing_words(&self, over: &OverrideSwap) -> Option<Vec<i32>> {
         if over.request.amount_specified.is_zero() {
@@ -843,6 +862,7 @@ impl BotState {
         }
     }
 
+    #[must_use]
     pub fn simulate_override(&self, over: &OverrideSwap, block: u64) -> Option<V3SwapOutcome> {
         self.simulate_override_ext(over, block, false)
     }
@@ -960,17 +980,13 @@ impl BotState {
     ///
     /// `block` is the fetch context threaded into the tick-word fetcher on
     /// sparse-miss recovery; it does not affect pure computation.
-    // TODO(X4EU3J follow-up): extract the per-family arms once the hook
-    // caveat plumbing settles; the body is 101 lines against a 100-line
-    // clippy::too_many_lines budget.
-    #[expect(clippy::too_many_lines)]
     pub fn swap_simulation(&mut self, block: u64, pool_id: u64, request: SwapRequest) -> SwapRead {
         self.swap_simulation_ext(block, pool_id, &request, false)
     }
 
     /// RATR5A/CXRHW3: the swap with miss recovery DISARMED — a residual
     /// missing word after the staged pre-pass surfaces as the typed
-    /// FetchExhausted contract (additive, ADR-037) instead of fetching under
+    /// `FetchExhausted` contract (additive, ADR-037) instead of fetching under
     /// the caller write guard. Identical arithmetic otherwise (the caller
     /// must have staged the missing words via the lock-free pre-pass).
     pub fn swap_simulation_disarmed(
@@ -982,6 +998,10 @@ impl BotState {
         self.swap_simulation_ext(block, pool_id, request, true)
     }
 
+    // TODO(X4EU3J follow-up): extract the per-family arms once the hook
+    // caveat plumbing settles; the body is 114 lines against a 100-line
+    // clippy::too_many_lines budget.
+    #[expect(clippy::too_many_lines)]
     fn swap_simulation_ext(
         &mut self,
         block: u64,
@@ -1078,7 +1098,7 @@ impl BotState {
                     block,
                     SwapOutcomeFamily::V3,
                     coverage,
-                    request.clone(),
+                    *request,
                     Caveats::default(),
                 )
             }
@@ -1108,7 +1128,7 @@ impl BotState {
                     block,
                     SwapOutcomeFamily::V4,
                     coverage,
-                    request.clone(),
+                    *request,
                     extra_caveats,
                 )
             }
@@ -1148,7 +1168,12 @@ fn finish_cl(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::panic, clippy::unwrap_used, clippy::used_underscore_binding)]
+    #![expect(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::used_underscore_binding
+    )]
 
     use super::*;
     use hashbrown::HashMap;
@@ -1160,7 +1185,6 @@ mod tests {
 
     /// Registered sparse pool whose stored fetcher counts every call.
     fn counting_fetcher_setup(calls: Arc<AtomicUsize>) -> (BotState, u64) {
-        let mut core = BotState::new();
         #[derive(Debug)]
         struct CountingFetcher(Arc<AtomicUsize>);
         impl ::degenbot_pools::tick_fetch::TickWordFetcher for CountingFetcher {
@@ -1180,6 +1204,7 @@ mod tests {
                 })
             }
         }
+        let mut core = BotState::new();
         let pool_id = core
             .register_v3_pool(&RegisterV3PoolParams {
                 address: alloy::primitives::Address::ZERO,
