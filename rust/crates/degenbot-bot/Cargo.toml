@@ -121,5 +121,8 @@ degenbot-rpc = { workspace = true, features = ["test-utils"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "testing"] }
 
 # Captures alloy/tungstenite tracing for the `ws_getlogs_large_filter_diagnostic`
-# ignored test (reconnect-cycle investigation, 2026-07-12).
-tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
+# ignored test (reconnect-cycle investigation, 2026-07-12). "registry" is
+# required by the otel-independent span-capture layer used by the
+# solve_dirty span-gate regression test (K4ETHF follow-up O3Z5MD) so that
+# span-parenting invariants run in the DEFAULT test gate, not just --features otel.
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter", "registry"] }

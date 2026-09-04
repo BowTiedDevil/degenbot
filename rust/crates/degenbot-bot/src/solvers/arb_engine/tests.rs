@@ -5274,6 +5274,58 @@ mod tests {
             "Curve + CL must not solve"
         );
     }
+    /// A minimal tracing capture layer: records (name, span id, parent id)
+    /// for every span created under the subscriber. Deliberately NOT the
+    /// OTel exporter - span-PARENTING is not an OTel concern, so this
+    /// invariant test runs in the DEFAULT test gate (the otel-gated
+    /// InMemorySpanExporter harness stays for the attribute-level tests).
+    #[derive(Clone, Default)]
+    struct SpanParentCapture {
+        spans: std::sync::Arc<std::sync::Mutex<Vec<(String, u64, Option<u64>)>>>,
+    }
+
+    thread_local! {
+        /// Current-span stack mirror: on_enter/on_exit maintain it so
+        /// contextually-created children resolve their parent the way
+        /// tracing's dispatcher does.
+        static SPAN_STACK: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for SpanParentCapture {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            id: &tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let parent = SPAN_STACK.with(|st| st.borrow().last().copied());
+            let spans = std::sync::Arc::clone(&self.spans);
+            let name = attrs.metadata().name().to_string();
+            spans
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((name, id.into_u64(), parent));
+        }
+
+        fn on_enter(
+            &self,
+            id: &tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            SPAN_STACK.with(|st| st.borrow_mut().push(id.into_u64()));
+        }
+
+        fn on_exit(
+            &self,
+            _id: &tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            SPAN_STACK.with(|st| {
+                st.borrow_mut().pop();
+            });
+        }
+    }
+
     /// K4ETHF follow-up (trace f06ea422 / block 25900244): the old
     /// two-acquisition gate let a concurrent dirty marker land BETWEEN the
     /// probe and the take - the solve then did real work (1518 affected
@@ -5283,21 +5335,25 @@ mod tests {
     /// mutex, so probe and take cannot disagree). Invariant under test:
     /// every fanout span's parent is an arb.solve span (a fanout implies
     /// real affected paths; real work must have taken the span branch).
-    #[cfg(feature = "otel")]
+    ///
+    /// DEFAULT-GATE VISIBLE (no otel cfg) - reviewer flag on 2f22fa575: the
+    /// race class must not live behind an optional feature.
+    ///
+    /// The metrics half of the harm (solve_duration sample + solves_executed
+    /// count) is structural now: counting happens on the same span-branch as
+    /// parenting, so there is no code path that does work without either.
     #[test]
     #[expect(clippy::expect_used)]
     fn solve_dirty_race_marks_dirty_work_with_solve_span() {
         use crate::bot_core::engine::Engine;
-        use crate::otel;
         use crate::solvers::arb_engine::engine_handle::EngineHandle;
-        use opentelemetry_sdk::trace::InMemorySpanExporter;
         use std::collections::HashSet;
         use std::sync::Arc;
         use tracing_subscriber::layer::SubscriberExt;
 
-        let exporter = InMemorySpanExporter::default();
-        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
-        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+        let capture = SpanParentCapture::default();
+        let log = std::sync::Arc::clone(&capture.spans);
+        let subscriber = tracing_subscriber::registry().with(capture);
 
         // Real registered paths (mirrors the 3780 concurrency fixture) so a
         // dirty marker produces genuine fan-out phase work.
@@ -5375,24 +5431,26 @@ mod tests {
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         marker.join().expect("marker thread");
 
-        provider.force_flush().expect("flush");
-        let spans = exporter.get_finished_spans().expect("spans");
+        let spans = log
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let solve_ids: HashSet<u64> = spans
+            .iter()
+            .filter(|(name, _, _)| name == "degenbot.arb.solve")
+            .map(|(_, id, _)| *id)
+            .collect();
         let fanouts: Vec<_> = spans
             .iter()
-            .filter(|sp| sp.name.as_ref() == "degenbot.arb.fanout")
+            .filter(|(name, _, _)| name == "degenbot.arb.fanout")
             .collect();
         assert!(
             !fanouts.is_empty(),
             "fixture must produce phase spans (marker thread keeps the engine dirty)"
         );
-        let solve_ids: HashSet<String> = spans
-            .iter()
-            .filter(|sp| sp.name.as_ref() == "degenbot.arb.solve")
-            .map(|sp| sp.span_context.span_id().to_string())
-            .collect();
         let orphaned: Vec<_> = fanouts
             .iter()
-            .filter(|sp| !solve_ids.contains(&sp.parent_span_id.to_string()))
+            .filter(|(_, _, parent)| parent.is_none_or(|p| !solve_ids.contains(&p)))
             .collect();
         assert!(
             orphaned.is_empty(),
@@ -5402,6 +5460,7 @@ mod tests {
         );
     }
 
+    // P5FEOI (epic 2LXPPV): original span test, otel-gated like its harness.
     #[cfg(feature = "otel")]
     #[test]
     #[expect(clippy::expect_used)]

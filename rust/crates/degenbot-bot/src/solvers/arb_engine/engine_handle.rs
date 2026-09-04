@@ -196,6 +196,8 @@ impl Engine for EngineHandle {
             self.engine.lock()
         });
         if !engine.has_dirty_paths() {
+            // Kept for inner bookkeeping parity (last_processed_block et al);
+            // provably cannot consume dirt under this continuous hold.
             engine.solve_dirty(block, metadata);
             drop(engine);
             self.spawn_detached_sidecar_if_pending();
