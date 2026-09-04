@@ -91,6 +91,7 @@ time):
 | Rust 1.96   | `rust`, `cargo`, `rustfmt`, `clippy`      | No rustup — Fedora's packaged rustc matches stable. Tradeoff: no toolchain switching / `rustup target add`. |
 | Node 24 LTS | `nodejs24`                                | Active LTS (EOL 2028-04). Provides node + npm in one package; satisfies pi's `>=22.19.0` floor. |
 | `just`      | `just`                                    |                                                  |
+| `direnv`    | `direnv`                                  | Hooked into `/etc/bashrc` at build time. The repo `.envrc` is a deliberate no-op inside the container (guarded on `/run/.containerenv`; `containerEnv` owns those vars) — it exists for the host side of the bind mount. |
 | `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
 | mold, lld   | `mold`, `lld`                             | Faster cargo linkers (dev-only perf; see `rust/PERF_RESULTS.md`). mold is the default via the user-level `~/.cargo/config.toml` baked in the Dockerfile; lld is installed as a fallback. Scoped to the devcontainer (NOT committed as `rust/.cargo/config.toml`) so CI and non-devcontainer cloners keep using the default system linker. |
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |

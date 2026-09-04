@@ -208,6 +208,9 @@ logs/*
 tests/standalone_anvil/cache/
 tests/standalone_anvil/out/build-info/
 
+# direnv per-directory env (machine-local paths; see .envrc for the host-only guard)
+.envrc
+
 # Architectural reviews
 **/architecture-review*
 # Local crates.io publish token (S7R5K4); CI uses the CRATES_IO_TOKEN secret.

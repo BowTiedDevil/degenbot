@@ -21,6 +21,7 @@ RUN dnf install -y \
         glibc-langpack-en \
         hostname \
         bash-completion \
+        direnv \
         xdg-utils \
     && dnf clean all
 
@@ -61,6 +62,13 @@ COPY --chown=root:root tmux.conf /etc/tmux.conf
 # so the prompt reads `[dev degenbot]$` instead. Runs for both login and
 # non-login interactive shells (tmux sessions, `podman exec`).
 RUN printf '\nPS1="${PS1//@\\\\h/}"\n' >> /etc/bashrc
+
+# Hook direnv into every interactive shell (all users). Loading the repo
+# .envrc is a deliberate no-op inside the container (it is guarded on
+# /run/.containerenv and containerEnv in devcontainer.json owns those vars
+# here); the hook exists so the bind-mounted .envrc is safe to load from
+# either side of the boundary.
+RUN printf '\neval "$(direnv hook bash)"\n' >> /etc/bashrc
 
 USER ${USERNAME}
 ENV HOME=/home/${USERNAME}
