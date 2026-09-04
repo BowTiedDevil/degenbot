@@ -5219,10 +5219,38 @@ mod tests {
         use crate::bot_core::InstallWordOutcome;
         use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};
 
+        // Scripted fetcher (RATR5A Finding-1 red shape): attempt 1 -> empty
+        // word (checked-empty, RACED); attempt 2 -> the stale tick-60 value
+        // (block 99) the retried context returns.
         #[derive(Debug)]
-        struct EmptyWordFetcher;
-
-        impl TickWordFetcher for EmptyWordFetcher {
+        struct ScriptedWordFetcher {
+            script: std::sync::Mutex<std::collections::VecDeque<FetchedTickWord>>,
+        }
+        impl ScriptedWordFetcher {
+            fn new_scripted() -> Self {
+                Self {
+                    script: std::sync::Mutex::new(std::collections::VecDeque::from([
+                        FetchedTickWord {
+                            word: 0,
+                            ticks: HashMap::new(),
+                        },
+                        FetchedTickWord {
+                            word: 0,
+                            ticks: HashMap::from_iter([(
+                                60,
+                                TickInfo {
+                                    liquidity_gross: alloy::primitives::U128::from(100u128),
+                                    liquidity_net: ::alloy::primitives::I256::try_from(100i128)
+                                        .unwrap(),
+                                    block: 99,
+                                },
+                            )]),
+                        },
+                    ])),
+                }
+            }
+        }
+        impl TickWordFetcher for ScriptedWordFetcher {
             fn fetch_missing_tick_word(
                 &self,
                 _pool_id: u64,
@@ -5230,10 +5258,15 @@ mod tests {
                 _block: u64,
             ) -> Result<FetchedTickWord, ::degenbot_pools::tick_fetch::FetchTickWordError>
             {
-                Ok(FetchedTickWord {
-                    word,
-                    ticks: HashMap::new(),
-                })
+                self.script
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pop_front()
+                    .map(|mut w| {
+                        w.word = word;
+                        w
+                    })
+                    .ok_or(::degenbot_pools::tick_fetch::FetchTickWordError::FetchFailed)
             }
         }
 
@@ -5253,7 +5286,7 @@ mod tests {
                 update_block: 0,
                 tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
-                fetcher: Some(std::sync::Arc::new(EmptyWordFetcher)),
+                fetcher: Some(std::sync::Arc::new(ScriptedWordFetcher::new_scripted())),
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
@@ -5261,7 +5294,7 @@ mod tests {
         // Stage under the (simulated) short write, then a pump event for the
         // SAME pool lands during the fetch window (the RATR5A race shape).
         let staged = core
-            .stage_word_fetch_by_pool_id(pool_id, 0, 99)
+            .stage_word_fetch_by_pool_id(pool_id, 0, 99, false)
             .expect("sparse pool stores a fetcher");
         core.apply_v3_liquidity_update_by_pool_id(pool_id, -60, 60, 1_000, 100);
         let fetched = staged.fetch().expect("empty-word fetch");
@@ -5271,16 +5304,40 @@ mod tests {
             "an interleaved pool write must force a retry, never a clobbering overlay"
         );
 
-        // Retry shape: fresh stage; this time NO interleave (the pump is
-        // quiet) -> the install merges the checked-empty word as known.
+        // Retry shape (RATR5A Finding 1): the stage re-derives the fetch
+        // context from the pool clock - the companion block passed above is
+        // deliberately bogus (9_999) so a failed re-derivation is loud - and
+        // the scripted second fetch returns the stale tick-60 value (block
+        // 99). The stamp guard (Finding-1(a)) must keep the event values
+        // (gross 1_000 @ block 100).
         let staged = core
-            .stage_word_fetch_by_pool_id(pool_id, 0, 99)
+            .stage_word_fetch_by_pool_id(pool_id, 0, 9_999, true)
             .expect("sparse pool stores a fetcher");
-        let fetched = staged.fetch().expect("empty-word fetch");
         assert_eq!(
-            core.install_word_fetch(&staged, &fetched),
-            crate::bot_core::InstallWordOutcome::Merged
+            staged.block, 99,
+            "retry fetch context re-derives from the pool clock (update_block - 1)"
         );
+        let fetched = staged.fetch().expect("scripted stale fetch");
+        let outcome = core.install_word_fetch(&staged, &fetched);
+        assert_eq!(
+            outcome,
+            InstallWordOutcome::Merged,
+            "quiet retry merges (fingerprint unchanged since restage)"
+        );
+        match core.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => {
+                let tick = state
+                    .tick_data
+                    .get(&60)
+                    .expect("merged word carries tick 60 after the retry");
+                assert_eq!(
+                    (tick.liquidity_gross.to::<u128>(), tick.block),
+                    (u128::from(1_000u64), 100),
+                    "the event-applied tick must NOT be regressed by the stale overlay"
+                );
+            }
+            _ => panic!("test setup: V3 pool missing"),
+        }
         let known: Vec<i32> = match core.pools.get(&pool_id) {
             Some(PoolEntry::V3(_, state)) => state.known_bitmap_words().iter().copied().collect(),
             _ => panic!("test setup: V3 pool missing"),

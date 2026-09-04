@@ -1986,9 +1986,11 @@ impl PyLiquidityPool {
         // Bounded retries: each retry refetches (the RPC is the slow part);
         // a race requires a same-pool event to land inside the multi-second
         // fetch window, so three attempts exhaust only pathological bursts.
-        for _ in 0..3 {
+        // The retry attempt re-derives the fetch context from the pool clock
+        // (RATR5A Finding-1(b)), not from the caller's stale block.
+        for attempt in 0..3u8 {
             let Some(staged) = self.with_state_mut(py, |s| {
-                s.stage_word_fetch_by_pool_id(self.pool_id, word_i32, block)
+                s.stage_word_fetch_by_pool_id(self.pool_id, word_i32, block, attempt > 0)
             }) else {
                 return Ok(false);
             };

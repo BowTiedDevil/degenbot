@@ -610,9 +610,21 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         true
     }
 
+    // RATR5A Finding-1(a): the fetched word can predate an event the pump
+    // applied while its staged fetch was in flight (the word re-fetches at
+    // its context block after a Raced retry). A fetched tick with an OLDER
+    // stamp than a resident tick must never regress the resident value -
+    // the OB7UNY two-stamp discipline, enforced at the insert.
     fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool {
         for (tick, info) in &fetched.ticks {
-            self.tick_data.insert(*tick, info.clone());
+            match self.tick_data.get(tick) {
+                // Resident is fresher: keep it (the fetched word is a B-1
+                // snapshot; a newer stamped entry is a later event truth).
+                Some(resident) if resident.block > info.block => {}
+                _ => {
+                    self.tick_data.insert(*tick, info.clone());
+                }
+            }
         }
         self.known_bitmap_words.insert(fetched.word);
         self.invalidate_tick_range_cache();
@@ -810,7 +822,12 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
 
     fn merge_tick_word(&mut self, fetched: &crate::tick_fetch::FetchedTickWord) -> bool {
         for (tick, info) in &fetched.ticks {
-            self.tick_data.insert(*tick, info.clone());
+            match self.tick_data.get(tick) {
+                Some(resident) if resident.block > info.block => {}
+                _ => {
+                    self.tick_data.insert(*tick, info.clone());
+                }
+            }
         }
         self.known_bitmap_words.insert(fetched.word);
         self.state_nonce = self.state_nonce.wrapping_add(1);

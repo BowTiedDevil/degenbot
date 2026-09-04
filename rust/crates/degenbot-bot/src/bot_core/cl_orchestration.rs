@@ -1105,17 +1105,41 @@ impl BotState {
         pool_id: u64,
         word: i32,
         block: u64,
+        retried: bool,
     ) -> Option<StagedWordFetch> {
         let fetcher = match self.pools.get(&pool_id) {
             Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
             Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
             _ => None,
         }?;
+        // RATR5A Finding-1(b): the fetch context must reflect the CURRENT
+        // pool clock on a retry, not the (stale) companion block — a fetch
+        // at the original context after an interleaved event snapshots the
+        // word pre-event, and even the stamp guard cannot help a tick the
+        // event added (the guard preserves resident stamps; the word would
+        // otherwise go known-minus-missing-ticks alongside the event's own
+        // later application). First attempt honors the companion context.
+        let fetch_context = if retried {
+            match self.pools.get(&pool_id).map(|entry| match entry {
+                PoolEntry::V3(_, s) => s.update_block,
+                PoolEntry::V4(_, s) => s.update_block,
+                PoolEntry::AerodromeV2(..)
+                | PoolEntry::Curve(..)
+                | PoolEntry::BalancerWeighted(..)
+                | PoolEntry::BalancerStable(..)
+                | PoolEntry::V2(..) => 0,
+            }) {
+                Some(clock) => clock.saturating_sub(1),
+                None => 0,
+            }
+        } else {
+            block
+        };
         let fingerprint = self.tick_fingerprint(pool_id)?;
         Some(StagedWordFetch {
             pool_id,
             word,
-            block,
+            block: fetch_context,
             fetcher,
             fingerprint,
         })
