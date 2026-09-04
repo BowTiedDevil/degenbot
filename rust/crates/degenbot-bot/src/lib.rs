@@ -143,6 +143,13 @@ pub mod instruments {
         pub fn count_detached_applied(&self) {}
     }
 
+    /// Epic FRKBGP close-out: resident set bytes (drift-watch). Default
+    /// builds return None — the otel twin reads /proc/self/statm.
+    #[must_use]
+    pub fn read_process_rss_bytes() -> Option<u64> {
+        None
+    }
+
     /// Always `None` — metrics are compiled out of this build.
     #[must_use]
     pub fn pipeline() -> Option<&'static PipelineInstruments> {

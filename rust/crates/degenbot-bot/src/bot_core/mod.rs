@@ -71,7 +71,7 @@ pub use balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
 pub use block_clock_pipe::BlockNotification;
-pub use cl_orchestration::RegisteredV4;
+pub use cl_orchestration::{InstallWordOutcome, RegisteredV4, StagedWordFetch};
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
 use degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
@@ -5212,6 +5212,84 @@ mod tests {
     }
 
     // --- T2 (FBJTUM): write-path sparse backfill — ensure_word_known ---
+
+    #[test]
+    #[expect(clippy::expect_used, clippy::indexing_slicing)]
+    fn staged_word_fetch_install_races_on_interleaved_pool_write() {
+        use crate::bot_core::InstallWordOutcome;
+        use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};
+
+        #[derive(Debug)]
+        struct EmptyWordFetcher;
+
+        impl TickWordFetcher for EmptyWordFetcher {
+            fn fetch_missing_tick_word(
+                &self,
+                _pool_id: u64,
+                word: i32,
+                _block: u64,
+            ) -> Result<FetchedTickWord, ::degenbot_pools::tick_fetch::FetchTickWordError>
+            {
+                Ok(FetchedTickWord {
+                    word,
+                    ticks: HashMap::new(),
+                })
+            }
+        }
+
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: Some(std::sync::Arc::new(EmptyWordFetcher)),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+
+        // Stage under the (simulated) short write, then a pump event for the
+        // SAME pool lands during the fetch window (the RATR5A race shape).
+        let staged = core
+            .stage_word_fetch_by_pool_id(pool_id, 0, 99)
+            .expect("sparse pool stores a fetcher");
+        core.apply_v3_liquidity_update_by_pool_id(pool_id, -60, 60, 1_000, 100);
+        let fetched = staged.fetch().expect("empty-word fetch");
+        assert_eq!(
+            core.install_word_fetch(&staged, &fetched),
+            InstallWordOutcome::Raced,
+            "an interleaved pool write must force a retry, never a clobbering overlay"
+        );
+
+        // Retry shape: fresh stage; this time NO interleave (the pump is
+        // quiet) -> the install merges the checked-empty word as known.
+        let staged = core
+            .stage_word_fetch_by_pool_id(pool_id, 0, 99)
+            .expect("sparse pool stores a fetcher");
+        let fetched = staged.fetch().expect("empty-word fetch");
+        assert_eq!(
+            core.install_word_fetch(&staged, &fetched),
+            crate::bot_core::InstallWordOutcome::Merged
+        );
+        let known: Vec<i32> = match core.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => state.known_bitmap_words().iter().copied().collect(),
+            _ => panic!("test setup: V3 pool missing"),
+        };
+        assert!(
+            known.contains(&0),
+            "the retry's install marks the word known (T2 FBJTUM parity)"
+        );
+    }
 
     #[test]
     fn ensure_word_known_no_fetcher_returns_false() {

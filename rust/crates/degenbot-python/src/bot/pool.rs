@@ -10,6 +10,7 @@
 use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
 use alloy::primitives::{I256, U256};
+use degenbot_bot::bot_core::InstallWordOutcome;
 use hashbrown::HashMap;
 use std::sync::Arc;
 
@@ -1966,20 +1967,43 @@ impl PyLiquidityPool {
     /// Backfill an unknown tick-bitmap word for this pool (T2 FBJTUM — the
     /// write-path gate's fetch seam).
     ///
-    /// Calls the state's stored tick-word fetcher for `word` at `block` (the
-    /// companion passes `state_block - 1`) and, on success, merges the word's
-    /// ticks into the pool state via the core merge routine the sim loop
-    /// uses and marks the word known (a checked-empty fetch marks it known
-    /// with no ticks). Returns `False` when no fetcher is stored OR the
-    /// fetch failed — the caller RAISES rather than applying the event over
+    /// RATR5A: STAGED fetch — the multi-second fetch (Python::attach + the
+    /// companion's serial web3 RPC) runs with the BotState write guard
+    /// RELEASED; the fetcher re-acquires the GIL via `Python::attach` and
+    /// the pump applies events to other pools through the whole window.
+    /// Choreography per attempt: (1) short write — stage (fetcher + tick
+    /// fingerprint), (2) fetch — no lock held, (3) short write — install,
+    /// merging only if the pool was not mutated during the fetch. A race
+    /// (the pump applied an event for THIS pool mid-fetch) retries the
+    /// stage+fetch bounded times rather than applying the overlay clobber.
+    /// Returns `False` when no fetcher is stored OR the fetch failed/exhausted
+    /// its retries — the caller RAISES rather than applying the event over
     /// an unknown word.
+    #[pyo3(signature = (word, block))]
     fn ensure_word_known(&self, py: Python<'_>, word: i64, block: u64) -> PyResult<bool> {
         let word_i32 = i32::try_from(word)
             .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("word must fit in i32"))?;
-        let ok = self.with_state_mut(py, |s| {
-            s.ensure_word_known_by_pool_id(self.pool_id, word_i32, block)
-        });
-        Ok(ok)
+        // Bounded retries: each retry refetches (the RPC is the slow part);
+        // a race requires a same-pool event to land inside the multi-second
+        // fetch window, so three attempts exhaust only pathological bursts.
+        for _ in 0..3 {
+            let Some(staged) = self.with_state_mut(py, |s| {
+                s.stage_word_fetch_by_pool_id(self.pool_id, word_i32, block)
+            }) else {
+                return Ok(false);
+            };
+            // RATR5A: NO state lock held across this fetch.
+            let Ok(fetched) = staged.fetch() else {
+                return Ok(false);
+            };
+            let outcome = self.with_state_mut(py, |s| s.install_word_fetch(&staged, &fetched));
+            match outcome {
+                InstallWordOutcome::Merged => return Ok(true),
+                InstallWordOutcome::Failed => return Ok(false),
+                InstallWordOutcome::Raced => continue,
+            }
+        }
+        Ok(false)
     }
 
     /// The pool's tick-map coverage (T2 FBJTUM): `"sparse"` or `"tracked"`

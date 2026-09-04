@@ -35,6 +35,48 @@ use super::{
     V4PoolIdentity, V4PoolState, V4SwapUpdate,
 };
 
+/// RATR5A: the staged fetch plan captured under a SHORT write — pool, word,
+/// fetch context, the stored fetcher Arc, and the pool's tick-mutation
+/// fingerprint the install re-validates.
+#[derive(Debug)]
+pub struct StagedWordFetch {
+    pub pool_id: u64,
+    pub word: i32,
+    pub block: u64,
+    fetcher: std::sync::Arc<dyn degenbot_pools::tick_fetch::TickWordFetcher>,
+    fingerprint: (u64, usize, u64),
+}
+
+impl StagedWordFetch {
+    /// Run the fetch WITHOUT any state lock held. The stored fetcher
+    /// re-enters Python (`Python::attach` + the companion's web3 RPC), so
+    /// this call is the multi-second window the fetch-under-write defect
+    /// parked the whole pump inside (RATR5A).
+    pub fn fetch(
+        &self,
+    ) -> Result<
+        ::degenbot_pools::tick_fetch::FetchedTickWord,
+        ::degenbot_pools::tick_fetch::FetchTickWordError,
+    > {
+        self.fetcher
+            .fetch_missing_tick_word(self.pool_id, self.word, self.block)
+    }
+}
+
+/// RATR5A install outcome: see [`BotState::install_word_fetch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallWordOutcome {
+    /// The word merged (checked-empty included) — the fetch window saw no
+    /// concurrent pool write.
+    Merged,
+    /// The pool was mutated during the fetch — the caller retries
+    /// stage+fetch (bounded) rather than applying the overlay clobber.
+    Raced,
+    /// Pool gone or merge refused — the T2 FBJTUM failure contract (the
+    /// companion gate raises).
+    Failed,
+}
+
 impl BotState {
     /// Register a V3 pool by contract address.
     ///
@@ -1030,6 +1072,79 @@ impl BotState {
         state.update_block = update_block;
         state.tick_data_block = update_block;
         state.invalidate_tick_range_cache();
+    }
+
+    /// RATR5A: per-pool tick-mutation fingerprint for the staged word-fetch
+    /// install check. Any `tick_data` mutation moves `update_block` and/or
+    /// the tick population; the stamp-sum term kills same-block net-zero
+    /// churn that len alone would miss. `None` = pool gone.
+    pub(crate) fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => Some((
+                state.update_block,
+                state.tick_data.len(),
+                state.tick_data.values().map(|t| t.block).sum(),
+            )),
+            Some(PoolEntry::V4(_, state)) => Some((
+                state.update_block,
+                state.tick_data.len(),
+                state.tick_data.values().map(|t| t.block).sum(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// RATR5A stage half of the word backfill: clone the stored fetcher +
+    /// capture the pool's tick fingerprint UNDER a short write, and release
+    /// the caller's guard before the (multi-second, Python::attach + web3
+    /// RPC) fetch runs. The old single-hold path fetched while the write
+    /// guard was alive, parking the pump’s apply/solve pipeline behind the
+    /// RPC. Pair with [`Self::install_word_fetch`].
+    pub fn stage_word_fetch_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        word: i32,
+        block: u64,
+    ) -> Option<StagedWordFetch> {
+        let fetcher = match self.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
+            Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
+            _ => None,
+        }?;
+        let fingerprint = self.tick_fingerprint(pool_id)?;
+        Some(StagedWordFetch {
+            pool_id,
+            word,
+            block,
+            fetcher,
+            fingerprint,
+        })
+    }
+
+    /// RATR5A install half: merges the fetched word only if the pool was NOT
+    /// mutated while the fetch ran (fingerprint re-check). A mutation means
+    /// the pump applied an event for this pool during the fetch window —
+    /// the staged overlay would then clobber fresher tick writes, so the
+    /// caller RETRIES the stage+fetch (bounded) instead of applying a lost
+    /// update. [`InstallWordOutcome::Failed`] keeps the T2 FBJTUM contract
+    /// (fetch failed / pool gone → the companion gate raises).
+    pub fn install_word_fetch(
+        &mut self,
+        staged: &StagedWordFetch,
+        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
+    ) -> InstallWordOutcome {
+        use InstallWordOutcome::{Failed, Merged, Raced};
+        match self.tick_fingerprint(staged.pool_id) {
+            None => Failed,
+            Some(fp) if fp == staged.fingerprint => {
+                if self.merge_tick_word(staged.pool_id, fetched) {
+                    Merged
+                } else {
+                    Failed
+                }
+            }
+            Some(_) => Raced,
+        }
     }
 
     /// Backfill an unknown tick-bitmap word for a registered V3/V4 pool
