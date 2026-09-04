@@ -139,7 +139,7 @@ pub struct PipelineInstruments {
     detached_stale_dropped: Counter<u64>,
     /// Epic SRQEK5 T2: detached stragglers applied to the results map.
     detached_applied: Counter<u64>,
-    /// Epic K4ETHF T2: time an acquisition waited for the core BotState
+    /// Epic K4ETHF T2: time an acquisition waited for the core `BotState`
     /// lock, labeled by `site` (closed set from
     /// `bot_core::state_lock::site_class_for`) + `mode` (read|write).
     state_lock_wait: Histogram<f64>,

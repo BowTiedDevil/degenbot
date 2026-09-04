@@ -5274,14 +5274,137 @@ mod tests {
             "Curve + CL must not solve"
         );
     }
-    /// P5FEOI (epic 2LXPPV): `solve_dirty` emits an entered `degenbot.arb.solve`
-    /// span carrying `block.number`, captured through the `OTel` layer over the
-    /// `InMemorySpanExporter`. Scoped LOCAL subscriber (sync closure, one thread): it does not consume the
-    /// once-per-process global subscriber slot (the MQUKB6 pump test owns that - see
-    /// `header_arms_per_block_span_with_number_and_parent`) and cannot let other
-    /// tests' spans leak into this exporter.
+    /// K4ETHF follow-up (trace f06ea422 / block 25900244): the old
+    /// two-acquisition gate let a concurrent dirty marker land BETWEEN the
+    /// probe and the take - the solve then did real work (1518 affected
+    /// paths) through the no-span branch, orphaning its phase spans under
+    /// pump.block and escaping the solve_duration histogram. The gate and
+    /// the work now share ONE mutex acquisition (dirt marking needs the same
+    /// mutex, so probe and take cannot disagree). Invariant under test:
+    /// every fanout span's parent is an arb.solve span (a fanout implies
+    /// real affected paths; real work must have taken the span branch).
     #[cfg(feature = "otel")]
     #[test]
+    #[expect(clippy::expect_used)]
+    fn solve_dirty_race_marks_dirty_work_with_solve_span() {
+        use crate::bot_core::engine::Engine;
+        use crate::otel;
+        use crate::solvers::arb_engine::engine_handle::EngineHandle;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use std::collections::HashSet;
+        use std::sync::Arc;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        // Real registered paths (mirrors the 3780 concurrency fixture) so a
+        // dirty marker produces genuine fan-out phase work.
+        let core = Arc::new(crate::bot_core::state_lock::StateLock::new(
+            crate::bot_core::BotState::new(),
+        ));
+        let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
+        let mut pool_ids = Vec::new();
+        for i in 0u8..8 {
+            let addr_a = Address::from([0x10_u8 + i; 20]);
+            let a = engine.register_v2_pool(
+                addr_a,
+                usdc(1_500_000),
+                weth(800 + u64::from(i) * 10),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let addr_b = Address::from([0x20_u8 + i; 20]);
+            let b = engine.register_v2_pool(
+                addr_b,
+                weth(800 + u64::from(i) * 10),
+                usdc(2_000_000),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let _ = engine
+                .register_path(vec![
+                    PoolHop {
+                        pool_id: a,
+                        zero_for_one: true,
+                    },
+                    PoolHop {
+                        pool_id: b,
+                        zero_for_one: true,
+                    },
+                ])
+                .expect("path registration should succeed");
+            pool_ids.push(a);
+        }
+        let engine = Arc::new(parking_lot::Mutex::new(engine));
+
+        // Marker thread: continuously re-marks a tracked V2 pool dirty -
+        // under the old gate these landings are exactly the probe<->take
+        // window; under the single-acquisition gate they can only be seen by
+        // the take itself.
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let starter = Arc::new(std::sync::Barrier::new(2));
+        let marker_engine = Arc::clone(&engine);
+        let marker_stop = Arc::clone(&stop);
+        let bar0 = Arc::clone(&starter);
+        let marker = std::thread::spawn(move || {
+            bar0.wait();
+            let mut rot = 0usize;
+            while !marker_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                marker_engine
+                    .lock()
+                    .dirty_sets
+                    .insert(pool_ids[rot % 8], HopType::V2);
+                rot = rot.wrapping_add(1);
+                // Bounded pace: enough iterations to hit any probe<->take
+                // window the old gate exposed, without spinning hot and
+                // perturbing the timing-sensitive detached-cycle neighbors.
+                std::thread::sleep(std::time::Duration::from_micros(50));
+            }
+        });
+
+        let handle = EngineHandle::new(std::sync::Arc::clone(&engine));
+        starter.wait();
+        let block = 5000u64;
+        tracing::subscriber::with_default(subscriber, || {
+            for i in 0..200 {
+                handle.solve_dirty(block + i, &BlockMetadata::default());
+            }
+        });
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        marker.join().expect("marker thread");
+
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+        let fanouts: Vec<_> = spans
+            .iter()
+            .filter(|sp| sp.name.as_ref() == "degenbot.arb.fanout")
+            .collect();
+        assert!(
+            !fanouts.is_empty(),
+            "fixture must produce phase spans (marker thread keeps the engine dirty)"
+        );
+        let solve_ids: HashSet<String> = spans
+            .iter()
+            .filter(|sp| sp.name.as_ref() == "degenbot.arb.solve")
+            .map(|sp| sp.span_context.span_id().to_string())
+            .collect();
+        let orphaned: Vec<_> = fanouts
+            .iter()
+            .filter(|sp| !solve_ids.contains(&sp.parent_span_id.to_string()))
+            .collect();
+        assert!(
+            orphaned.is_empty(),
+            "fanout spans orphaned outside an arb.solve parent: {} of {}",
+            orphaned.len(),
+            fanouts.len()
+        );
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    #[expect(clippy::expect_used)]
     fn solve_dirty_emits_arb_solve_span_with_block_number() {
         use crate::bot_core::engine::Engine;
         use crate::otel;

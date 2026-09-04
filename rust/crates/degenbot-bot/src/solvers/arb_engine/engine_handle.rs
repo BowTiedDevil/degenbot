@@ -179,12 +179,25 @@ impl Engine for EngineHandle {
         // T0 no-op gating: most per-block solves find nothing dirty (a ~2µs
         // lock-and-return) and their spans flooded Jaeger's recent-traces list,
         // drowning the real solves. Emit the span only when there is dirty
-        // work. Behavior is unchanged — solve_dirty re-derives the dirty set
-        // under its own lock; this gate only decides whether the span exists.
-        if !hotpath::measure_block!("EngineHandle::solve_dirty.probe_lock", {
-            self.engine.lock().has_dirty_paths()
-        }) {
-            self.engine.lock().solve_dirty(block, metadata);
+        // work.
+        //
+        // K4ETHF follow-up (block 25900244 / trace f06ea422): the probe and
+        // the work previously ran under TWO separate lock acquisitions, so a
+        // log burst applied by the pump thread between them landed in
+        // dirty_sets after the probe — the solve then did REAL work (1518
+        // affected paths) through the no-span branch and its phase spans
+        // orphaned into the drainer's pump.block context. That also dropped
+        // the solve_duration histogram sample + solves_executed count. The
+        // gate and the work now share ONE mutex acquisition — dirt marking
+        // requires the same mutex, so probe and take cannot disagree. The
+        // no-dirty path still emits no span (T0) and is idempotent under
+        // the held guard.
+        let mut engine = hotpath::measure_block!("EngineHandle::solve_dirty.probe_lock", {
+            self.engine.lock()
+        });
+        if !engine.has_dirty_paths() {
+            engine.solve_dirty(block, metadata);
+            drop(engine);
             self.spawn_detached_sidecar_if_pending();
             return;
         }
@@ -194,11 +207,9 @@ impl Engine for EngineHandle {
         // no-op path above returns before this).
         let solve_start = std::time::Instant::now();
         {
-            // Acquire wait is its own label: loop-5 accounting found the
-            // mutex handover could mask the real in-engine wall.
-            let mut engine = hotpath::measure_block!("EngineHandle::solve_dirty.acquire_lock", {
-                self.engine.lock()
-            });
+            // The mutex is ALREADY held (probe acquisition above) — the
+            // former second acquire (and its TOCTOU window) is gone. The
+            // hold window measured below covers the in-engine solve only.
             if let Some(p) = crate::instruments::pipeline() {
                 p.set_registered_paths(u64::try_from(engine.path_count()).unwrap_or(u64::MAX));
             }
