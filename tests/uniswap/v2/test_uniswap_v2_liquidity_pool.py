@@ -695,6 +695,20 @@ def test_swap_for_all(
     with pytest.raises(LiquidityPoolError):
         lp.calculate_tokens_out_from_tokens_in(lp.token0, 2**256 - 1)
 
+    # cdbc03bb/banded: 2**250 fits the I256 input conversion (2**250 < 2**255)
+    # but overflows the constant-product mul (amount * 997 >= 2**256).
+    # The disarm conversion (RATR5A/CXRHW3 review finding) collapsed
+    # NotComputable (this math-overflow class) into the U256::ZERO miss class,
+    # breaking on-chain parity. The NotComputable => ValueError raise is
+    # restored in pool.rs; this test Guards the raise survives the disarm.
+    # Two DISTINCT error classes, two test cases: the 2**256-1 pair above
+    # exercises input conversion (I256::try_from fails), this 2**250 pair
+    # exercises the math overflow (SwapRead::NotComputable => raise).
+    with pytest.raises(LiquidityPoolError):
+        lp.calculate_tokens_out_from_tokens_in(lp.token1, 2**250)
+    with pytest.raises(LiquidityPoolError):
+        lp.calculate_tokens_out_from_tokens_in(lp.token0, 2**250)
+
     with pytest.raises(LiquidityPoolError):
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.calculate_tokens_in_from_tokens_out(
             token_out=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.token0,

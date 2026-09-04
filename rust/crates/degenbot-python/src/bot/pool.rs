@@ -741,15 +741,10 @@ impl PyLiquidityPool {
             )
         })?;
         // RATR5A: DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
-        // cdbc03bb (RATR5A Finding on ae2c4124f): the two error classes are DISTINCT.
+        // cdbc03bb (RATR5A Finding on ae2c4124f): two DISTINCT error classes:
         // - FetchExhausted/Failed (miss recovery) → U256::ZERO per the no-raise contract.
         // - NotComputable (V2 mul overflow >= 2^256) → ValueError raise (on-chain parity).
-        // The disarm conversion collapsed them; this restores the distinction.
-        // RATR5A: DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
-        // cdbc03bb (RATR5A Finding on ae2c4124f): two DISTINCT error classes:
-        // - FetchExhausted/Failed (miss recovery) → U256::ZERO per no-raise.
-        // - NotComputable (V2 mul overflow) → ValueError raise (on-chain parity).
-        // The disarm conversion collapsed them; restore the distinction by
+        // The disarm conversion collapsed them; this restores the distinction by
         // keeping the SwapRead return and matching outside.
         let result = self.with_state_mut(py, |core| {
             core.swap_simulation_disarmed(

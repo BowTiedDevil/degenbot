@@ -99,3 +99,23 @@ with the web3 fetcher by construction, making them active fetch-under-write path
   for the plain seams: the disarmed contract maps ALL non-computed misses to
   U256::ZERO (the V2 overflow raise is impossible through the disarmed path).
 - The census command was corrected: no head pipe, all hits enumerated.
+
+### cdbc03bb correction (post-census, pair-review finding on ae2c4124f)
+
+The correction above conflated two DISTINCT error classes. Restored in
+bc3a1c708:
+
+- **Miss class** (FetchExhausted/Failed — sparse-map miss recovery):
+  disarmed, maps to U256::ZERO. The no-raise-on-miss contract holds
+  (calculate_tokens_out pool.rs:743, calculate_tokens_in pool.rs:799).
+- **Math-overflow class** (SwapRead::NotComputable — constant-product mul
+  >= 2^256, on-chain getAmountOut SafeMath revert): raised as Python
+  ValueError on plain calculate_tokens_out (on-chain parity; the V2
+  companion translates to domain LiquidityPoolError). calculate_tokens_in
+  keeps the documented silent-0 legacy for this class.
+
+Guard: tests/uniswap/v2/test_uniswap_v2_liquidity_pool.py::test_swap_for_all
+gained a banded 2**250 case pair — fits I256 input conversion (2**250 <
+2**255) but overflows the mul, exercising the NotComputable raise. The
+existing 2**256-1 pair exercises the input-conversion site instead, so the
+two classes are separately pinned: re-collapsing the match now goes red.
