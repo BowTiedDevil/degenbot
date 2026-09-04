@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import tomllib
 from pathlib import Path
 
@@ -10,12 +11,15 @@ try:
     _proj = tomllib.loads((_repo_root / "pyproject.toml").read_text())
     project = _proj["project"]["name"]
     author = ", ".join(_proj["project"]["authors"].get(i, {}).get("name", "") for i in range(3)) or "degenbot contributors"
+    # release = the full stored version; version = short major.minor for the
+    # sidebar. pyproject is canonical (ADR-009 single-source-of-truth).
+    release = _proj["project"]["version"]
+    version = ".".join(release.split(".")[:2])
 except Exception:
     project, author = "degenbot", "degenbot contributors"
+    version = release = "unknown"
 
-copyright = "2025, degenbot contributors"
-version = "0.6"
-release = version
+copyright = f"{datetime.date.today().year}, degenbot contributors"
 
 # -- General configuration ---------------------------------------------------
 
