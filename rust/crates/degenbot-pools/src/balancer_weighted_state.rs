@@ -127,11 +127,13 @@ pub struct BalancerWeightedPoolIdentity {
     /// 32-byte pool identifier (Balancer invariant; unique per pool).
     pub pool_id: [u8; 32],
     /// The pool's ERC-20 tokens (2 or more), in canonical Vault order.
-    pub tokens: Vec<Address>,
+    /// `Box<[Address]>`: immutable after registration — drops the `Vec`
+    /// capacity field for the pool's process-lifetime identity.
+    pub tokens: Box<[Address]>,
     /// Normalized weights (18-decimal), one per token.
-    pub weights: Vec<U256>,
+    pub weights: Box<[U256]>,
     /// Scaling factors (18-decimal), one per token.
-    pub scaling_factors: Vec<U256>,
+    pub scaling_factors: Box<[U256]>,
     /// Swap fee as a fraction of `FEE_DENOMINATOR = 1e18`.
     pub swap_fee: u128,
     /// `PowVersion` discriminator (V1=1 / V2=2; opaque to this sub-slice).
@@ -151,8 +153,11 @@ pub struct BalancerWeightedPoolIdentity {
 #[derive(Clone, Debug)]
 pub struct BalancerWeightedPoolState {
     // --- Mutable state (authoritative) ---
-    /// Current balances (one per token).
-    pub balances: Vec<U256>,
+    /// Current balances (one per token). Stored as `Box<[U256]>` (Boxed
+    /// slice, never grown in place): updates replace the whole value via
+    /// [`BalanceVectorPoolState::apply_balance_update`], so the fixed-size
+    /// slice drops the unused `Vec` capacity field for the pool's lifetime.
+    pub balances: Box<[U256]>,
     /// Block number of the last balance update.
     pub update_block: u64,
     /// Per-mutation nonce — see [`V3PoolState::state_nonce`].
@@ -192,14 +197,14 @@ impl BalancerWeightedPoolState {
             address: params.address,
             vault: params.vault,
             pool_id: params.pool_id,
-            tokens: params.tokens,
-            weights: params.weights,
-            scaling_factors: params.scaling_factors,
+            tokens: params.tokens.into(),
+            weights: params.weights.into(),
+            scaling_factors: params.scaling_factors.into(),
             swap_fee: params.swap_fee,
             pow_version: params.pow_version,
         };
         let state = BalancerWeightedPoolState {
-            balances: params.balances,
+            balances: params.balances.into(),
             update_block: params.update_block,
             state_nonce: 0,
             journal,
@@ -217,7 +222,7 @@ impl BalancerWeightedPoolState {
 impl ReorgPoolState for BalancerWeightedPoolState {
     fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError> {
         let (balances, landed_block) = self.journal.restore_before_block(block)?;
-        self.balances.clone_from(&balances);
+        self.balances = balances.into();
         self.update_block = landed_block;
         self.state_nonce = self.state_nonce.wrapping_add(1);
         Ok(())
@@ -248,10 +253,10 @@ impl BalanceVectorPoolState for BalancerWeightedPoolState {
         );
         self.journal.push_delta(BalancesBlockDelta {
             block: block_number,
-            balances_before: self.balances.clone(),
+            balances_before: self.balances.to_vec(),
             balances_after: balances.clone(),
         });
-        self.balances = balances;
+        self.balances = balances.into();
         self.update_block = block_number;
         self.state_nonce = self.state_nonce.wrapping_add(1);
     }

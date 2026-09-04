@@ -170,12 +170,14 @@ pub struct BalancerStablePoolIdentity {
     pub pool_id: [u8; 32],
     /// The pool's ERC-20 tokens (2 or more), in canonical Vault order.
     /// Includes BPT at `bpt_idx` for `ComposableStablePools`.
-    pub tokens: Vec<Address>,
+    /// `Box<[Address]>`: immutable after registration — drops the `Vec`
+    /// capacity field for the pool's process-lifetime identity.
+    pub tokens: Box<[Address]>,
     /// Amplification coefficient `amp` (immutable after registration in
     /// this plan).
     pub amp: u128,
     /// Scaling factors (rate-multiplied), one per token.
-    pub scaling_factors: Vec<U256>,
+    pub scaling_factors: Box<[U256]>,
     /// Swap fee as a fraction of `FEE_DENOMINATOR = 1e18`.
     pub swap_fee: u128,
     /// BPT token index (`Some(i)` for Composable, `None` for `MetaStable`).
@@ -199,7 +201,11 @@ pub struct BalancerStablePoolIdentity {
 pub struct BalancerStablePoolState {
     // --- Mutable state (authoritative) ---
     /// Current balances (one per token, including BPT for Composable).
-    pub balances: Vec<U256>,
+    /// Stored as `Box<[U256]>` (Boxed slice, never grown in place): updates
+    /// replace the whole value via
+    /// [`BalanceVectorPoolState::apply_balance_update`], so the fixed-size
+    /// slice drops the unused `Vec` capacity field for the pool's lifetime.
+    pub balances: Box<[U256]>,
     /// Block number of the last balance update.
     pub update_block: u64,
     /// Per-mutation nonce — see [`V3PoolState::state_nonce`].
@@ -247,15 +253,15 @@ impl BalancerStablePoolState {
             address: params.address,
             vault: params.vault,
             pool_id: params.pool_id,
-            tokens: params.tokens,
+            tokens: params.tokens.into(),
             amp: params.amp,
-            scaling_factors: params.scaling_factors,
+            scaling_factors: params.scaling_factors.into(),
             swap_fee: params.swap_fee,
             bpt_idx: params.bpt_idx,
             invariant_version: params.invariant_version,
         };
         let state = BalancerStablePoolState {
-            balances: params.balances,
+            balances: params.balances.into(),
             update_block: params.update_block,
             state_nonce: 0,
             journal,
@@ -274,7 +280,7 @@ impl BalancerStablePoolState {
 impl ReorgPoolState for BalancerStablePoolState {
     fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError> {
         let (balances, landed_block) = self.journal.restore_before_block(block)?;
-        self.balances.clone_from(&balances);
+        self.balances = balances.into();
         self.update_block = landed_block;
         self.state_nonce = self.state_nonce.wrapping_add(1);
         Ok(())
@@ -305,10 +311,10 @@ impl BalanceVectorPoolState for BalancerStablePoolState {
         );
         self.journal.push_delta(BalancesBlockDelta {
             block: block_number,
-            balances_before: self.balances.clone(),
+            balances_before: self.balances.to_vec(),
             balances_after: balances.clone(),
         });
-        self.balances = balances;
+        self.balances = balances.into();
         self.update_block = block_number;
         self.state_nonce = self.state_nonce.wrapping_add(1);
     }

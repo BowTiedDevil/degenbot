@@ -228,7 +228,10 @@ pub struct V3SwapUpdate {
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
     pub tick: i32,
-    pub tick_priors: Vec<(i32, TickInfo)>,
+    /// Stored as `Box<[(i32, TickInfo)]>` (read-only once applied): `apply_swap`
+    /// takes `&[(i32, TickInfo)]`, so the boxed slice drops the unused `Vec`
+    /// capacity field.
+    pub tick_priors: Box<[(i32, TickInfo)]>,
 }
 
 // ---------------------------------------------------------------------------

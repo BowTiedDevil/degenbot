@@ -68,7 +68,7 @@ mod tests {
             .expect("curve pool identity registered");
         assert_eq!(id.n_coins(), 3);
         assert_eq!(
-            s.balances,
+            s.balances.to_vec(),
             vec![U256::from(1_000), U256::from(2_000), U256::from(3_000)]
         );
         assert_eq!(s.update_block, 10);
@@ -88,7 +88,7 @@ mod tests {
         assert_eq!(affected, Some(pool_id));
         let s = core.get_curve_pool(pool_id).expect("curve pool registered");
         assert_eq!(
-            s.balances,
+            s.balances.to_vec(),
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)]
         );
         assert_eq!(s.update_block, 12);
@@ -144,7 +144,7 @@ mod tests {
         // Current mutable state was written back.
         let s = core.get_curve_pool(pool_id).expect("curve pool registered");
         assert_eq!(
-            s.balances,
+            s.balances.to_vec(),
             vec![U256::from(1_000), U256::from(2_000), U256::from(3_000)]
         );
         assert_eq!(s.update_block, 10);
@@ -225,9 +225,9 @@ mod tests {
         assert_eq!(id.gamma, Some(7_000_000_000));
         // LP token + lending + precision.
         assert_eq!(id.lp_token, Some(lp));
-        assert_eq!(id.use_lending, vec![true, false]);
+        assert_eq!(id.use_lending.to_vec(), vec![true, false]);
         assert_eq!(
-            id.precision_multipliers,
+            id.precision_multipliers.to_vec(),
             vec![U256::from(1u64), U256::from(100u64)]
         );
     }

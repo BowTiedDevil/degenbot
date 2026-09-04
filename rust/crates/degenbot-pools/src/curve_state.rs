@@ -183,7 +183,9 @@ pub struct CurvePoolIdentity {
     /// Pool contract address.
     pub address: Address,
     /// The pool's ERC-20 tokens (2 or more), in canonical Curve coin order.
-    pub tokens: Vec<Address>,
+    /// `Box<[Address]>`: immutable after registration — drops the `Vec`
+    /// capacity field for the pool's process-lifetime identity.
+    pub tokens: Box<[Address]>,
     /// Amplification coefficient `A` (raw).
     pub a_coefficient: u128,
     /// A precision divisor (`A_PRECISION`, typically 100).
@@ -192,8 +194,9 @@ pub struct CurvePoolIdentity {
     pub fee: u64,
     /// Admin fee share (in `FEE_DENOMINATOR` units).
     pub admin_fee: u64,
-    /// Rate multipliers (precision-adjusted), one per token.
-    pub rate_multipliers: Vec<U256>,
+    /// Rate multipliers (precision-adjusted), one per token. `Box<[U256]>`:
+    /// immutable after registration — drops the `Vec` capacity field.
+    pub rate_multipliers: Box<[U256]>,
     // --- Variant strategy enums (opaque to Rust; carried so the future
     //     Rust get_dy can dispatch on them) ---
     /// `swap_style` discriminator (standard / `live_admin` / crypto / ...).
@@ -235,13 +238,15 @@ pub struct CurvePoolIdentity {
     // --- LP token + lending flags + precision multipliers (immutable). ---
     /// Dedicated LP token address (`None` ⇔ the pool token IS the LP).
     pub lp_token: Option<Address>,
-    /// Per-token `use_lending` flags.
-    pub use_lending: Vec<bool>,
-    /// Per-token `precision_multipliers`.
-    pub precision_multipliers: Vec<U256>,
+    /// Per-token `use_lending` flags. `Box<[bool]>`: immutable after
+    /// registration — drops the `Vec` capacity field.
+    pub use_lending: Box<[bool]>,
+    /// Per-token `precision_multipliers`. `Box<[U256]>`: immutable after
+    /// registration — drops the `Vec` capacity field.
+    pub precision_multipliers: Box<[U256]>,
     // --- Metapool underlying-token addresses (immutable). ---
     /// Underlying ERC20 coin addresses for a metapool (`None` for plain).
-    pub tokens_underlying: Option<Vec<Address>>,
+    pub tokens_underlying: Option<Box<[Address]>>,
     // --- Metapool strategy discriminants (immutable). ---
     /// `metapool_rate_style` discriminant.
     pub metapool_rate_style: u8,
@@ -261,8 +266,11 @@ pub struct CurvePoolIdentity {
 #[derive(Clone, Debug)]
 pub struct CurvePoolState {
     // --- Mutable state (authoritative) ---
-    /// Current balances (one per token).
-    pub balances: Vec<U256>,
+    /// Current balances (one per token). Stored as `Box<[U256]>` (Boxed
+    /// slice, never grown in place): updates replace the whole value via
+    /// [`BalanceVectorPoolState::apply_balance_update`], so the fixed-size
+    /// slice drops the unused `Vec` capacity field for the pool's lifetime.
+    pub balances: Box<[U256]>,
     /// Block number of the last balance update.
     pub update_block: u64,
     /// Per-mutation nonce — see [`V3PoolState::state_nonce`].
@@ -306,12 +314,12 @@ impl CurvePoolState {
         });
         let identity = CurvePoolIdentity {
             address: params.address,
-            tokens: params.tokens,
+            tokens: params.tokens.into(),
             a_coefficient: params.a_coefficient,
             a_precision: params.a_precision,
             fee: params.fee,
             admin_fee: params.admin_fee,
-            rate_multipliers: params.rate_multipliers,
+            rate_multipliers: params.rate_multipliers.into(),
             swap_style: params.swap_style,
             lending_rate_style: params.lending_rate_style,
             d_variant: params.d_variant,
@@ -329,14 +337,14 @@ impl CurvePoolState {
             out_fee: params.out_fee,
             gamma: params.gamma,
             lp_token: params.lp_token,
-            use_lending: params.use_lending,
-            precision_multipliers: params.precision_multipliers,
-            tokens_underlying: params.tokens_underlying,
+            use_lending: params.use_lending.into(),
+            precision_multipliers: params.precision_multipliers.into(),
+            tokens_underlying: params.tokens_underlying.map(Into::into),
             metapool_rate_style: params.metapool_rate_style,
             metapool_underlying_style: params.metapool_underlying_style,
         };
         let state = CurvePoolState {
-            balances: params.balances,
+            balances: params.balances.into(),
             update_block: params.update_block,
             state_nonce: 0,
             journal,
@@ -355,7 +363,7 @@ impl CurvePoolState {
 impl ReorgPoolState for CurvePoolState {
     fn restore_before_block(&mut self, block: u64) -> Result<(), JournalError> {
         let (balances, landed_block) = self.journal.restore_before_block(block)?;
-        self.balances.clone_from(&balances);
+        self.balances = balances.into();
         self.update_block = landed_block;
         self.state_nonce = self.state_nonce.wrapping_add(1);
         Ok(())
@@ -390,10 +398,10 @@ impl BalanceVectorPoolState for CurvePoolState {
         );
         self.journal.push_delta(BalancesBlockDelta {
             block: block_number,
-            balances_before: self.balances.clone(),
+            balances_before: self.balances.to_vec(),
             balances_after: balances.clone(),
         });
-        self.balances = balances;
+        self.balances = balances.into();
         self.update_block = block_number;
         self.state_nonce = self.state_nonce.wrapping_add(1);
     }

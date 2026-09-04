@@ -3026,7 +3026,7 @@ mod tests {
                 sqrt_price_x96: U256::from(2u128) << 96,
                 liquidity: 2_000_000,
                 tick: 1,
-                tick_priors: vec![],
+                tick_priors: Box::default(),
             },
             11,
         );
@@ -3129,7 +3129,7 @@ mod tests {
                 sqrt_price_x96: U256::from(2u128) << 96,
                 liquidity: 2_000_000,
                 tick: 1,
-                tick_priors: vec![],
+                tick_priors: Box::default(),
             },
             11,
         );
@@ -3187,7 +3187,7 @@ mod tests {
                 sqrt_price_x96: U256::from(2u128) << 96,
                 liquidity: 2_000_000,
                 tick: 1,
-                tick_priors: vec![],
+                tick_priors: Box::default(),
             },
             11,
         );
@@ -3454,7 +3454,7 @@ mod tests {
                 sqrt_price_x96: U256::from(2u128) << 96,
                 liquidity: 2_000_000,
                 tick: 1,
-                tick_priors: vec![],
+                tick_priors: Box::default(),
             },
             11,
         );
@@ -3521,7 +3521,7 @@ mod tests {
                 sqrt_price_x96: U256::from(3u128) << 96,
                 liquidity: 3_000_000,
                 tick: 2,
-                tick_priors: vec![],
+                tick_priors: Box::default(),
             },
             11,
         );
@@ -4035,7 +4035,7 @@ mod tests {
                 sqrt_price_x96: U256::from(2u128) << 96,
                 liquidity: 2_000_000,
                 tick: -100,
-                tick_priors: Vec::new(),
+                tick_priors: Box::default(),
             },
             block_b,
         );
@@ -4230,7 +4230,7 @@ mod tests {
                 sqrt_price_x96: U256::from(3u128) << 96,
                 liquidity: 9_000_000,
                 tick: -240,
-                tick_priors: Vec::new(),
+                tick_priors: Box::default(),
             },
             block_b,
         );

@@ -45,7 +45,10 @@ mod tests {
             .get_balancer_weighted_identity(pool_id)
             .expect("balancer weighted identity registered");
         assert_eq!(id.n_tokens(), 2);
-        assert_eq!(s.balances, vec![U256::from(1_000), U256::from(2_000)]);
+        assert_eq!(
+            s.balances.to_vec(),
+            vec![U256::from(1_000), U256::from(2_000)]
+        );
         assert_eq!(s.update_block, 10);
         // Genesis anchor pushed.
         assert_eq!(core.pool_journal_len(pool_id), Some(1));
@@ -64,7 +67,10 @@ mod tests {
         let s = core
             .get_balancer_weighted_pool(pool_id)
             .expect("balancer weighted pool registered");
-        assert_eq!(s.balances, vec![U256::from(1_500), U256::from(2_500)]);
+        assert_eq!(
+            s.balances.to_vec(),
+            vec![U256::from(1_500), U256::from(2_500)]
+        );
         assert_eq!(s.update_block, 12);
         // Genesis + the new transition delta.
         assert_eq!(core.pool_journal_len(pool_id), Some(2));
@@ -116,7 +122,10 @@ mod tests {
         let s = core
             .get_balancer_weighted_pool(pool_id)
             .expect("balancer weighted pool registered");
-        assert_eq!(s.balances, vec![U256::from(1_000), U256::from(2_000)]);
+        assert_eq!(
+            s.balances.to_vec(),
+            vec![U256::from(1_000), U256::from(2_000)]
+        );
         assert_eq!(s.update_block, 10);
     }
 

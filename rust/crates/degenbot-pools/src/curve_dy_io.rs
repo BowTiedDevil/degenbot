@@ -82,7 +82,7 @@ fn resolve_rates(
     block_number: u64,
 ) -> Result<Vec<U256>, CurveInputsError> {
     if identity.lending_rate_style == LENDING_NONE {
-        Ok(identity.rate_multipliers.clone())
+        Ok(identity.rate_multipliers.to_vec())
     } else {
         let p = provider.ok_or(CurveInputsError::NoProvider("lending_rate"))?;
         p.lending_rates(block_number)
@@ -151,8 +151,8 @@ pub fn resolve_dy_inputs(
         fee: U256::from(identity.fee),
         n_coins: pool_balances.len(),
         balances: pool_balances.to_vec(),
-        rate_multipliers: identity.rate_multipliers.clone(),
-        precision_multipliers: identity.precision_multipliers.clone(),
+        rate_multipliers: identity.rate_multipliers.to_vec(),
+        precision_multipliers: identity.precision_multipliers.to_vec(),
         offpeg_fee_multiplier: U256::from(identity.offpeg_fee_multiplier.unwrap_or_default()),
         fee_gamma: U256::from(identity.fee_gamma.unwrap_or_default()),
         mid_fee: U256::from(identity.mid_fee.unwrap_or_default()),

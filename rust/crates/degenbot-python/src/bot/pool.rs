@@ -777,11 +777,9 @@ impl PyLiquidityPool {
                 let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
                 Ok(bound.unbind())
             }
-            SwapRead::NotComputable => {
-                Err(pyo3::exceptions::PyValueError::new_err(
-                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                ))
-            }
+            SwapRead::NotComputable => Err(pyo3::exceptions::PyValueError::new_err(
+                "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+            )),
             SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => {
                 let bound = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
                 Ok(bound.unbind())
@@ -1777,7 +1775,7 @@ impl PyLiquidityPool {
     fn balancer_weights(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let weights: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
             s.get_balancer_weighted_identity(self.pool_id)
-                .map(|i| i.weights.clone())
+                .map(|i| i.weights.to_vec())
                 .unwrap_or_default()
         });
         let py_w: Vec<Py<PyAny>> = weights
@@ -1793,7 +1791,7 @@ impl PyLiquidityPool {
     fn balancer_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let sf: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
             s.get_balancer_weighted_identity(self.pool_id)
-                .map(|i| i.scaling_factors.clone())
+                .map(|i| i.scaling_factors.to_vec())
                 .unwrap_or_default()
         });
         let py_sf: Vec<Py<PyAny>> = sf
@@ -2533,7 +2531,7 @@ impl PyLiquidityPool {
             let Some(s) = core.get_curve_pool(self.pool_id) else {
                 return Err(());
             };
-            Ok(s.balances.clone())
+            Ok(s.balances.to_vec())
         }) {
             Err(()) => return Ok(pyo3::types::PyList::empty(py).into_any().unbind()),
             Ok(b) => b,
@@ -2554,7 +2552,7 @@ impl PyLiquidityPool {
         // Read guard inside py.detach (GIL/BotState inversion fix, 2026-08-21 run-9).
         let snap: Option<(Vec<alloy::primitives::U256>, u64)> = self.with_state(py, |core| {
             let s = core.get_curve_pool(self.pool_id)?;
-            Some((s.balances.clone(), s.update_block))
+            Some((s.balances.to_vec(), s.update_block))
         });
         let Some(snap) = snap else {
             return Ok(None);
@@ -2653,7 +2651,7 @@ impl PyLiquidityPool {
     #[getter]
     fn curve_use_lending(&self, py: Python<'_>) -> Vec<bool> {
         self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
-            Some(i) => i.use_lending.clone(),
+            Some(i) => i.use_lending.to_vec(),
             None => Vec::new(),
         })
     }
@@ -2664,7 +2662,7 @@ impl PyLiquidityPool {
     fn curve_precision_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let pms: Vec<alloy::primitives::U256> =
             self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
-                Some(i) => i.precision_multipliers.clone(),
+                Some(i) => i.precision_multipliers.to_vec(),
                 None => Vec::new(),
             });
         let py_pms: Vec<Py<PyAny>> = pms
@@ -2718,7 +2716,7 @@ impl PyLiquidityPool {
     fn curve_rate_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rms: Vec<alloy::primitives::U256> =
             self.with_state(py, |core| match core.get_curve_identity(self.pool_id) {
-                Some(i) => i.rate_multipliers.clone(),
+                Some(i) => i.rate_multipliers.to_vec(),
                 None => Vec::new(),
             });
         let py_rms: Vec<Py<PyAny>> = rms
@@ -3251,7 +3249,7 @@ impl PyLiquidityPool {
             let Some(s) = core.get_balancer_weighted_pool(self.pool_id) else {
                 return Err(());
             };
-            Ok(s.balances.clone())
+            Ok(s.balances.to_vec())
         }) {
             Err(()) => return Ok(pyo3::types::PyList::empty(py).into_any().unbind()),
             Ok(b) => b,
@@ -3273,7 +3271,7 @@ impl PyLiquidityPool {
         // Read guard inside py.detach (GIL/BotState inversion fix, 2026-08-21 run-9).
         let snap: Option<(Vec<alloy::primitives::U256>, u64)> = self.with_state(py, |core| {
             let s = core.get_balancer_weighted_pool(self.pool_id)?;
-            Some((s.balances.clone(), s.update_block))
+            Some((s.balances.to_vec(), s.update_block))
         });
         let Some(snap) = snap else {
             return Ok(None);
@@ -3348,7 +3346,7 @@ impl PyLiquidityPool {
             let Some(s) = core.get_balancer_stable_pool(self.pool_id) else {
                 return Err(());
             };
-            Ok(s.balances.clone())
+            Ok(s.balances.to_vec())
         }) {
             Err(()) => return Ok(pyo3::types::PyList::empty(py).into_any().unbind()),
             Ok(b) => b,
@@ -3410,7 +3408,7 @@ impl PyLiquidityPool {
         // Read guard inside py.detach (GIL/BotState inversion fix, 2026-08-21 run-9).
         let snap: Option<(Vec<alloy::primitives::U256>, u64)> = self.with_state(py, |core| {
             let s = core.get_balancer_stable_pool(self.pool_id)?;
-            Some((s.balances.clone(), s.update_block))
+            Some((s.balances.to_vec(), s.update_block))
         });
         let Some(snap) = snap else {
             return Ok(None);
@@ -3496,7 +3494,7 @@ impl PyLiquidityPool {
     fn balancer_stable_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let sfs: Vec<alloy::primitives::U256> = self.with_state(py, |core| {
             match core.get_balancer_stable_identity(self.pool_id) {
-                Some(i) => i.scaling_factors.clone(),
+                Some(i) => i.scaling_factors.to_vec(),
                 None => Vec::new(),
             }
         });

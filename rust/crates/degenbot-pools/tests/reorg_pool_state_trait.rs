@@ -82,7 +82,7 @@ impl BalanceVectorPostSwap {
             balances_after: self.after.clone(),
         });
         CurvePoolState {
-            balances: self.after.clone(),
+            balances: self.after.clone().into(),
             update_block: SWAP_BLOCK,
             journal,
             data_provider: None,
@@ -103,7 +103,7 @@ impl BalanceVectorPostSwap {
             balances_after: self.after.clone(),
         });
         BalancerWeightedPoolState {
-            balances: self.after.clone(),
+            balances: self.after.clone().into(),
             update_block: SWAP_BLOCK,
             journal,
             state_nonce: 0,
@@ -123,7 +123,7 @@ impl BalanceVectorPostSwap {
             balances_after: self.after.clone(),
         });
         BalancerStablePoolState {
-            balances: self.after.clone(),
+            balances: self.after.clone().into(),
             update_block: SWAP_BLOCK,
             journal,
             rate_provider: None,
@@ -141,7 +141,7 @@ impl BalanceVectorPostSwap {
             balances_after: self.genesis.clone(),
         });
         CurvePoolState {
-            balances: self.genesis.clone(),
+            balances: self.genesis.clone().into(),
             update_block: GENESIS_BLOCK,
             journal,
             data_provider: None,
@@ -157,7 +157,7 @@ impl BalanceVectorPostSwap {
             balances_after: self.genesis.clone(),
         });
         BalancerWeightedPoolState {
-            balances: self.genesis.clone(),
+            balances: self.genesis.clone().into(),
             update_block: GENESIS_BLOCK,
             journal,
             state_nonce: 0,
@@ -173,7 +173,7 @@ impl BalanceVectorPostSwap {
 fn curve_restore_before_block_returns_unit_and_writes_landed_at_fields() {
     let fixture = BalanceVectorPostSwap::new();
     let mut state = fixture.build_curve();
-    assert_eq!(state.balances, fixture.after);
+    assert_eq!(state.balances.as_ref(), fixture.after.as_slice());
     assert_eq!(state.update_block, SWAP_BLOCK);
     assert_eq!(state.journal_len(), 2);
 
@@ -181,7 +181,8 @@ fn curve_restore_before_block_returns_unit_and_writes_landed_at_fields() {
 
     assert!(result.is_ok());
     assert_eq!(
-        state.balances, fixture.genesis,
+        state.balances.as_ref(),
+        fixture.genesis.as_slice(),
         "balances roll back to genesis"
     );
     assert_eq!(state.update_block, GENESIS_BLOCK, "update_block rolls back");
@@ -197,7 +198,8 @@ fn curve_restore_before_block_no_op_when_newest_before_target() {
 
     assert!(result.is_ok());
     assert_eq!(
-        state.balances, fixture.after,
+        state.balances.as_ref(),
+        fixture.after.as_slice(),
         "post-swap state survives no-op"
     );
     assert_eq!(state.update_block, SWAP_BLOCK);
@@ -216,7 +218,8 @@ fn curve_restore_before_block_at_genesis_is_hard_error() {
         "target == genesis block is a hard error"
     );
     assert_eq!(
-        state.balances, fixture.genesis,
+        state.balances.as_ref(),
+        fixture.genesis.as_slice(),
         "genesis state untouched on error"
     );
 }
@@ -231,7 +234,8 @@ fn curve_discard_before_block_returns_unit_and_drops_old_deltas() {
     assert!(result.is_ok());
     assert_eq!(state.journal_len(), 1, "genesis delta discarded");
     assert_eq!(
-        state.balances, fixture.after,
+        state.balances.as_ref(),
+        fixture.after.as_slice(),
         "discard does not mutate live state"
     );
     assert_eq!(
@@ -248,14 +252,14 @@ fn curve_discard_before_block_returns_unit_and_drops_old_deltas() {
 fn balancer_weighted_restore_before_block_returns_unit_and_writes_landed_at_fields() {
     let fixture = BalanceVectorPostSwap::new();
     let mut state = fixture.build_weighted();
-    assert_eq!(state.balances, fixture.after);
+    assert_eq!(state.balances.as_ref(), fixture.after.as_slice());
     assert_eq!(state.update_block, SWAP_BLOCK);
     assert_eq!(state.journal_len(), 2);
 
     let result: Result<(), JournalError> = state.restore_before_block(GENESIS_BLOCK + 1);
 
     assert!(result.is_ok());
-    assert_eq!(state.balances, fixture.genesis);
+    assert_eq!(state.balances.as_ref(), fixture.genesis.as_slice());
     assert_eq!(state.update_block, GENESIS_BLOCK);
     assert_eq!(state.journal_len(), 1, "swap delta was popped");
 }
@@ -269,7 +273,8 @@ fn balancer_weighted_restore_before_block_no_op_when_newest_before_target() {
 
     assert!(result.is_ok());
     assert_eq!(
-        state.balances, fixture.after,
+        state.balances.as_ref(),
+        fixture.after.as_slice(),
         "post-swap state survives no-op"
     );
     assert_eq!(state.update_block, SWAP_BLOCK);
@@ -288,7 +293,8 @@ fn balancer_weighted_restore_before_block_at_genesis_is_hard_error() {
         "target == genesis block is a hard error"
     );
     assert_eq!(
-        state.balances, fixture.genesis,
+        state.balances.as_ref(),
+        fixture.genesis.as_slice(),
         "genesis state untouched on error"
     );
 }
@@ -303,7 +309,8 @@ fn balancer_weighted_discard_before_block_returns_unit_and_drops_old_deltas() {
     assert!(result.is_ok());
     assert_eq!(state.journal_len(), 1, "genesis delta discarded");
     assert_eq!(
-        state.balances, fixture.after,
+        state.balances.as_ref(),
+        fixture.after.as_slice(),
         "discard does not mutate live state"
     );
     assert_eq!(state.update_block, SWAP_BLOCK);
@@ -319,14 +326,14 @@ fn balancer_weighted_discard_before_block_returns_unit_and_drops_old_deltas() {
 fn balancer_stable_restore_before_block_returns_unit_and_writes_landed_at_fields() {
     let fixture = BalanceVectorPostSwap::new();
     let mut state = fixture.build_stable();
-    assert_eq!(state.balances, fixture.after);
+    assert_eq!(state.balances.as_ref(), fixture.after.as_slice());
     assert_eq!(state.update_block, SWAP_BLOCK);
     assert_eq!(state.journal_len(), 2);
 
     let result: Result<(), JournalError> = state.restore_before_block(GENESIS_BLOCK + 1);
 
     assert!(result.is_ok());
-    assert_eq!(state.balances, fixture.genesis);
+    assert_eq!(state.balances.as_ref(), fixture.genesis.as_slice());
     assert_eq!(state.update_block, GENESIS_BLOCK);
     assert_eq!(state.journal_len(), 1, "swap delta was popped");
 }
@@ -340,7 +347,8 @@ fn balancer_stable_restore_before_block_no_op_when_newest_before_target() {
 
     assert!(result.is_ok());
     assert_eq!(
-        state.balances, fixture.after,
+        state.balances.as_ref(),
+        fixture.after.as_slice(),
         "post-swap state survives no-op"
     );
     assert_eq!(state.update_block, SWAP_BLOCK);
@@ -377,7 +385,8 @@ fn balancer_stable_restore_before_block_at_genesis_is_hard_error() {
         "target == genesis block is a hard error"
     );
     assert_eq!(
-        state.balances, fixture.genesis,
+        state.balances.as_ref(),
+        fixture.genesis.as_slice(),
         "genesis state untouched on error"
     );
 }
@@ -392,7 +401,8 @@ fn balancer_stable_discard_before_block_returns_unit_and_drops_old_deltas() {
     assert!(result.is_ok());
     assert_eq!(state.journal_len(), 1, "genesis delta discarded");
     assert_eq!(
-        state.balances, fixture.after,
+        state.balances.as_ref(),
+        fixture.after.as_slice(),
         "discard does not mutate live state"
     );
     assert_eq!(state.update_block, SWAP_BLOCK);

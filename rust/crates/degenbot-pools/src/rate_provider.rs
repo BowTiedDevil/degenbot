@@ -78,20 +78,26 @@ pub trait BalancerRateProvider: Send + Sync + std::fmt::Debug {
 /// Replaces the Python `_StaticRateProvider` for the no-I/O fallback path.
 #[derive(Clone, Debug)]
 pub struct StaticRateProvider {
-    rates: Vec<U256>,
+    /// Stored as `Box<[U256]>` (never grown after construction): drops the
+    /// 8-byte `Vec` capacity field and any heap over-allocation. Per-pool
+    /// instances live behind `Option<Arc<dyn BalancerRateProvider>>` for the
+    /// process lifetime, so the per-field saving is permanent.
+    rates: Box<[U256]>,
 }
 
 impl StaticRateProvider {
     /// Construct a static provider holding `rates` (length == token count).
     #[must_use]
     pub fn new(rates: Vec<U256>) -> Self {
-        Self { rates }
+        Self {
+            rates: rates.into_boxed_slice(),
+        }
     }
 }
 
 impl BalancerRateProvider for StaticRateProvider {
     fn get_rates(&self, _block_identifier: Option<u64>) -> Result<Vec<U256>, RateProviderError> {
-        Ok(self.rates.clone())
+        Ok(self.rates.to_vec())
     }
 
     fn is_static(&self) -> bool {

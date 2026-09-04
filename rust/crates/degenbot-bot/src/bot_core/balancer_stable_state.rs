@@ -61,7 +61,7 @@ mod tests {
             .expect("balancer stable identity registered");
         assert_eq!(id.n_tokens(), 3);
         assert_eq!(
-            s.balances,
+            s.balances.to_vec(),
             vec![U256::from(1_000), U256::from(2_000), U256::from(3_000)]
         );
         assert_eq!(s.update_block, 10);
@@ -110,7 +110,7 @@ mod tests {
             .get_balancer_stable_pool(pool_id)
             .expect("balancer stable pool registered");
         assert_eq!(
-            s.balances,
+            s.balances.to_vec(),
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)]
         );
         assert_eq!(s.update_block, 12);
@@ -170,7 +170,7 @@ mod tests {
             .get_balancer_stable_pool(pool_id)
             .expect("balancer stable pool registered");
         assert_eq!(
-            s.balances,
+            s.balances.to_vec(),
             vec![U256::from(1_000), U256::from(2_000), U256::from(3_000)]
         );
         assert_eq!(s.update_block, 10);
