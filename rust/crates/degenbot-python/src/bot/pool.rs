@@ -740,8 +740,19 @@ impl PyLiquidityPool {
                 "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
             )
         })?;
+        // RATR5A: DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
+        // cdbc03bb (RATR5A Finding on ae2c4124f): the two error classes are DISTINCT.
+        // - FetchExhausted/Failed (miss recovery) → U256::ZERO per the no-raise contract.
+        // - NotComputable (V2 mul overflow >= 2^256) → ValueError raise (on-chain parity).
+        // The disarm conversion collapsed them; this restores the distinction.
+        // RATR5A: DISARMED — miss recovery cannot run (no-raise-on-miss: sparse => 0).
+        // cdbc03bb (RATR5A Finding on ae2c4124f): two DISTINCT error classes:
+        // - FetchExhausted/Failed (miss recovery) → U256::ZERO per no-raise.
+        // - NotComputable (V2 mul overflow) → ValueError raise (on-chain parity).
+        // The disarm conversion collapsed them; restore the distinction by
+        // keeping the SwapRead return and matching outside.
         let result = self.with_state_mut(py, |core| {
-            match core.swap_simulation_disarmed(
+            core.swap_simulation_disarmed(
                 0,
                 self.pool_id,
                 &degenbot_bot::bot_core::swap_simulation::SwapRequest {
@@ -749,23 +760,28 @@ impl PyLiquidityPool {
                     amount_specified,
                     sqrt_price_limit: None,
                 },
-            ) {
-                SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
-                _ => U256::ZERO,
-            }
+            )
         });
-        // cdbc03bb: V2/V3/V4 swap math reverts on `uint256` overflow (mirrors
-        // on-chain `getAmountOut` SafeMath revert). The plain
-        // `calculate_tokens_out` surfaces that revert as a Python `ValueError`
-        // (the V2 companion translates it to a domain `LiquidityPoolError`,
-        // mirroring `calculate_tokens_in_from_tokens_out`'s overdraw-sentinel
-        // translation). An unrecovered V3/V4 sparse-map miss stays mapped to 0
-        // so callers that don't opt into `calculate_tokens_out_with_fetch`
-        // keep the legacy no-raise-on-miss contract documented on ADR-037's
-        // typed failure modes.
-        let out = result;
-        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
-        Ok(bound.unbind())
+        // cdbc03bb: MATHEMATICS-OVERFLOW (amount * gamma >= 2^256), NOT a
+        // sparse-map miss (FetchExhausted/Failed => 0 by the no-raise
+        // contract). The two classes are distinct: different consumer
+        // contract (companion LiquidityPoolError, on-chain parity).
+        match &result {
+            SwapRead::Computed(outcome) => {
+                let out = outcome.delivered_unsigned();
+                let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
+                Ok(bound.unbind())
+            }
+            SwapRead::NotComputable => {
+                Err(pyo3::exceptions::PyValueError::new_err(
+                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
+                ))
+            }
+            SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => {
+                let bound = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
+                Ok(bound.unbind())
+            }
+        }
     }
 
     /// Calculate the required input token amount for a given output amount.
@@ -788,6 +804,9 @@ impl PyLiquidityPool {
             })?,
             sqrt_price_limit: None,
         };
+        // RATR5A: DISARMED — miss recovery cannot run (no-raise-on-miss).
+        // NotComputable (V2 mul overflow) is a distinct class, NOT a miss:
+        // documented legacy contract (silent-0 preserved per ADR-037).
         let result = self.with_state_mut(py, |core| {
             match core.swap_simulation_disarmed(0, self.pool_id, &request) {
                 SwapRead::Computed(outcome) => (-match &outcome {
