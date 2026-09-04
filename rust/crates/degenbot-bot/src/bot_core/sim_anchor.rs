@@ -51,14 +51,10 @@ impl SimAnchorState {
     /// the guard must stay a SHORT read.
     #[must_use]
     pub fn snapshot(state: &BotState) -> Self {
-        let mut anchor = Self {
+        Self {
             tracked_pools: state.pool_addresses.clone(),
-            anchor_words: HashMap::new(),
-        };
-        for (key, probe) in state.project_sim_anchor_scalars() {
-            anchor.anchor_words.insert(key, probe);
+            anchor_words: state.project_sim_anchor_scalars().into_iter().collect(),
         }
-        anchor
     }
 
     /// The tracked-pool lookup (the `basic_ref` code-less tripwire).

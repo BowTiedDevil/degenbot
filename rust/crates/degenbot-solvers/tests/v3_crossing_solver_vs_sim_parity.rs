@@ -110,29 +110,30 @@ fn build_multi_tick_v3_state(
     let net_pos = i128::try_from(base_liquidity).unwrap();
     let net_neg = -net_pos;
 
-    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
     // Place initialized ticks at ±tick_spacing·i for i in 1..=tick_count.
     // Alternate the net so active liquidity toggles L ↔ 2L across ranges
     // (zfo crossing applies `liquidity -= net`: net=-L raises L→2L, net=+L
     // lowers 2L→L). Odd i gets -L, even i gets +L — strictly non-zero
     // liquidity in every range (avoids the degenerate zero-liquidity walk
     // that falsely flagged a divergence and is unreachable on real pools).
-    for i in 1..=tick_count {
-        let tick = if zero_for_one {
-            -tick_spacing * i as i32
-        } else {
-            tick_spacing * i as i32
-        };
-        let net = if i % 2 == 1 { net_neg } else { net_pos };
-        tick_data.insert(
-            tick,
-            TickInfo {
-                liquidity_gross: liq_gross,
-                liquidity_net: net,
-                block: 0,
-            },
-        );
-    }
+    let tick_data: HashMap<i32, TickInfo> = (1..=tick_count)
+        .map(|i| {
+            let tick = if zero_for_one {
+                -tick_spacing * i as i32
+            } else {
+                tick_spacing * i as i32
+            };
+            let net = if i % 2 == 1 { net_neg } else { net_pos };
+            (
+                tick,
+                TickInfo {
+                    liquidity_gross: liq_gross,
+                    liquidity_net: net,
+                    block: 0,
+                },
+            )
+        })
+        .collect();
 
     let params = RegisterV3PoolParams {
         address: alloy::primitives::Address::ZERO,
@@ -373,24 +374,26 @@ fn build_sparse_tick_v3_state(
     let net_pos = i128::try_from(base_liquidity).unwrap();
     let net_neg = -net_pos;
 
-    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
     // Place initialized ticks every `words_apart` bitmap words. One bitmap
     // word covers 256·tick_spacing ticks, so the tick index is
     // `±(words_apart·256·tick_spacing)·i`. Liquidity toggles L↔2L across the
     // sparse initialized ticks (odd -L, even +L).
-    for i in 1..=tick_count {
-        let tick = (words_apart * 256 * u32::try_from(tick_spacing).unwrap() as usize * i) as i32;
-        let tick = if zero_for_one { -tick } else { tick };
-        let net = if i % 2 == 1 { net_neg } else { net_pos };
-        tick_data.insert(
-            tick,
-            TickInfo {
-                liquidity_gross: liq_gross,
-                liquidity_net: net,
-                block: 0,
-            },
-        );
-    }
+    let tick_data: HashMap<i32, TickInfo> = (1..=tick_count)
+        .map(|i| {
+            let tick =
+                (words_apart * 256 * u32::try_from(tick_spacing).unwrap() as usize * i) as i32;
+            let tick = if zero_for_one { -tick } else { tick };
+            let net = if i % 2 == 1 { net_neg } else { net_pos };
+            (
+                tick,
+                TickInfo {
+                    liquidity_gross: liq_gross,
+                    liquidity_net: net,
+                    block: 0,
+                },
+            )
+        })
+        .collect();
 
     let params = RegisterV3PoolParams {
         address: alloy::primitives::Address::ZERO,

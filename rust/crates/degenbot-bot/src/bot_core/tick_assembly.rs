@@ -406,18 +406,19 @@ pub(crate) fn verify_tracked_tick_map(
 /// identical to `convert_tick_map` in `bot_core::mod.rs`; a `gross > U128::MAX`
 /// row would be corrupt on-chain data, not a parse failure.
 fn convert_liquidity_at_tick(tick_data: HashMap<i32, LiquidityAtTick>) -> HashMap<i32, TickInfo> {
-    let mut out = HashMap::with_capacity(tick_data.len());
-    for (tick, lat) in tick_data {
-        out.insert(
-            tick,
-            TickInfo {
-                liquidity_gross: lat.liquidity_gross.to::<alloy::primitives::U128>(),
-                liquidity_net: lat.liquidity_net,
-                block: 0,
-            },
-        );
-    }
-    out
+    tick_data
+        .into_iter()
+        .map(|(tick, lat)| {
+            (
+                tick,
+                TickInfo {
+                    liquidity_gross: lat.liquidity_gross.to::<alloy::primitives::U128>(),
+                    liquidity_net: lat.liquidity_net,
+                    block: 0,
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

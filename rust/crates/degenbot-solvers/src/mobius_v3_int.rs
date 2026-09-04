@@ -3889,17 +3889,19 @@ mod tests {
         active_liquidity: u128,
         ticks: &[(i32, i128)],
     ) -> (V3PoolState, i32, u32) {
-        let mut tick_data = HashMap::new();
-        for &(t, net) in ticks {
-            tick_data.insert(
-                t,
-                TickInfo {
-                    liquidity_gross: U128::from(10_000_000_000_000u128),
-                    liquidity_net: net,
-                    block: 0,
-                },
-            );
-        }
+        let tick_data: HashMap<_, _> = ticks
+            .iter()
+            .map(|&(t, net)| {
+                (
+                    t,
+                    TickInfo {
+                        liquidity_gross: U128::from(10_000_000_000_000u128),
+                        liquidity_net: net,
+                        block: 0,
+                    },
+                )
+            })
+            .collect();
         let state = V3PoolState {
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: active_liquidity,

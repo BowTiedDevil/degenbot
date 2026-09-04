@@ -82,25 +82,26 @@ fn build_multi_tick_v4_state(
     let net_pos = i128::try_from(base_liquidity).unwrap();
     let net_neg = -net_pos;
 
-    let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
     // Place initialized ticks at ±60·i for i in 1..=tick_count.
     // Alternate the net so liquidity toggles L ↔ 2L across ranges.
-    for i in 1..=tick_count {
-        let tick = if zero_for_one {
-            -60 * i as i32
-        } else {
-            60 * i as i32
-        };
-        let net = if i % 2 == 1 { net_pos } else { net_neg };
-        tick_data.insert(
-            tick,
-            TickInfo {
-                liquidity_gross: liq_gross,
-                liquidity_net: net,
-                block: 0,
-            },
-        );
-    }
+    let tick_data: HashMap<i32, TickInfo> = (1..=tick_count)
+        .map(|i| {
+            let tick = if zero_for_one {
+                -60 * i as i32
+            } else {
+                60 * i as i32
+            };
+            let net = if i % 2 == 1 { net_pos } else { net_neg };
+            (
+                tick,
+                TickInfo {
+                    liquidity_gross: liq_gross,
+                    liquidity_net: net,
+                    block: 0,
+                },
+            )
+        })
+        .collect();
 
     let params = RegisterV4PoolParams {
         pool_manager: alloy::primitives::Address::ZERO,
