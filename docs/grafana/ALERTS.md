@@ -1,7 +1,8 @@
 # degenbot alerts (T5, epic RMH23E)
 
-**Install:** a ready-to-load rules file ships alongside this doc -
-[`degenbot-alerts.yml`](degenbot-alerts.yml). Add it to `prometheus.yml`:
+**Install:** a ready-to-load rules file previously shipped alongside this doc
+(`degenbot-alerts.yml`, since removed — regenerate rules from the Prometheus
+stanza below). Add them to `prometheus.yml`:
 
     rule_files:
       - /path/to/degenbot-alerts.yml

@@ -157,7 +157,7 @@ to scalar-state repair.
 - [ADR-020](ADR-020-tier3-onchain-accuracy-oracle.md) — the accuracy-oracle /
   fail-fast posture this ADR aligns with (a divergence is a defect, not a
   messy input).
-- [`docs/exploration-live-debug-session.md`](../exploration-live-debug-session.md)
+- `docs/exploration-live-debug-session.md` (file since removed)
   — the 2026-08-02 slow-connected-WS failure class and the "open discriminator"
   gap this ADR's D2 closes.
 - `rust/crates/degenbot-bot/src/bot_core/solver_state_tripwire.rs` (renamed from

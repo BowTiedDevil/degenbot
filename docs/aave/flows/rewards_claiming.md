@@ -7,7 +7,7 @@ End-to-end execution flow for claiming rewards from Aave V3 RewardsController.
 | Aspect | Details |
 |--------|---------|
 | **Entry Points** | `claimRewards`, `claimRewardsOnBehalf`, `claimRewardsToSelf`, `claimAllRewards`, `claimAllRewardsOnBehalf`, `claimAllRewardsToSelf` |
-| **Key Transformations** | [Reward Index Updates](../transformations/index.md#reward-index-calculation) |
+| **Key Transformations** | `Reward Index Updates` |
 | **State Changes** | `_assets[asset].rewards[reward].usersData[user].accrued -= amount` |
 | **Events Emitted** | `RewardsClaimed` |
 

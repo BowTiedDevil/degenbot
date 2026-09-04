@@ -355,9 +355,9 @@ event ExchangeRateChanged(
 
 ## Related Flows
 
-- [Redeem Flow](./stk_aave_redeem.md) - Unstaking stkAAVE to receive AAVE
-- [Cooldown Flow](./stk_aave_cooldown.md) - Initiating the unstaking cooldown period
-- [Rewards Claim Flow](./stk_aave_claim_rewards.md) - Claiming staking rewards
+- [Redeem Flow](./stk_aave_unstaking.md) - Unstaking stkAAVE to receive AAVE
+- [Cooldown Flow](./stk_aave_unstaking.md) - Initiating the unstaking cooldown period
+- [Rewards Claim Flow](./rewards_claiming.md) - Claiming staking rewards
 - [Slashing Flow](./stk_aave_slashing.md) - Emergency slashing mechanism
 
 ---

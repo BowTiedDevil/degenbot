@@ -404,7 +404,7 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 
 ## Dependencies
 
-- **Database**: SQLAlchemy ORM (see [`src/degenbot/database/models/aave.py`](../../src/degenbot/database/models/aave.py))
+- **Database**: SQLAlchemy ORM (see `src/degenbot/database/models/aave.py`)
 - **Blockchain**: Web3.py for RPC calls
 - **Math**: Rust `degenbot-aave::wad_ray_math` for scaled balance calculations with rounding mode support (the former Python `aave/libraries/` package was retired)
 - **Logging**: Click for CLI output, tqdm for progress bars
@@ -412,7 +412,7 @@ The command uses Web3 connections from the degenbot config file. Each active cha
 
 ## Solidity Reference
 
-The CLI interacts with Aave V3 contracts. Key implementation details in [`rust/crates/degenbot-aave/src/updater/`](../../rust/crates/degenbot-aave/src/updater/) + [`degenbot-aave::wad_ray_math`](../../rust/crates/degenbot-aave/src/wad_ray_math.rs):
+The CLI interacts with Aave V3 contracts. Key implementation details in `rust/crates/degenbot-aave/src/updater/` + `degenbot-aave::wad_ray_math`:
 
 ### Scaled Balance Pattern
 

@@ -520,7 +520,7 @@ event IsolationModeTotalDebtUpdated(
 
 - [Repay Flow](./repay.md) - Debt repayment
 - [Liquidation Flow](./liquidation.md) - When health factor drops too low
-- [Rate Swap Flow](./rate_swap.md) - Switching between stable and variable rates
+- Rate-swap flow — switching between stable and variable rates (flow doc not yet written)
 
 ---
 

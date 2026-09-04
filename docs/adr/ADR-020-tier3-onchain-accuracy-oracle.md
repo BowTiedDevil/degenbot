@@ -204,7 +204,7 @@ Two fixture shapes, in that order:
   — in-process revm as the sole simulation executor; Tier 3 reuses the same
   revm `CacheDB` seeding stack offline (D2: `CacheDB` insertion is the sole
   state-override mechanism).
-- [`docs/architecture/in_process_sim_served_slots.md`](../architecture/in_process_sim_served_slots.md)
+- `docs/architecture/in_process_sim_served_slots.md` (file since removed)
   — the V3/V4 storage-slot layout reference the encoders mirror.
 - AGENTS.md "Dual-Path Coverage Tests" — the Tier 0/1/2 definitions this ADR
   extends with Tier 3; the mechanical-enforcement update is task `BQ43DK`.

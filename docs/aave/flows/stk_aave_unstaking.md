@@ -361,7 +361,7 @@ event Redeem(
 ## Related Flows
 
 - [stkAAVE Staking Flow](./stk_aave_staking.md) - Staking AAVE to receive stkAAVE
-- [Rewards Claim Flow](./stk_aave_claim_rewards.md) - Claiming staking rewards
+- [Rewards Claim Flow](./rewards_claiming.md) - Claiming staking rewards
 - [Slashing Flow](./stk_aave_slashing.md) - Emergency slashing mechanism
 
 ---

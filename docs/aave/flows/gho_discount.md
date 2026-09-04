@@ -9,7 +9,7 @@ End-to-end execution flow for stkAAVE holders receiving discounts on GHO borrowi
 | Aspect | Details |
 |--------|---------|
 | **Entry Point** | `stkAAVE.transfer()` → `GhoVariableDebtToken.updateDiscountDistribution()` |
-| **Key Transformations** | [Discount Rate Calculation](../transformations/index.md#discount-calculations) |
+| **Key Transformations** | `Discount Rate Calculation` |
 | **State Changes** | `_ghoUserState[user].discountPercent`, `_ghoUserState[user].accumulatedDebtInterest` |
 | **Events Emitted** | `DiscountPercentUpdated`, `Mint`, `Burn`, `Transfer` |
 

@@ -72,6 +72,7 @@ logging
 failure-policy
 execution-strategy
 telemetry-latency-playbook
+grafana/ALERTS
 aave/README
 aave/flows/*
 aave/transformations/*

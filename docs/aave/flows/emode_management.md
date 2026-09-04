@@ -7,7 +7,7 @@ End-to-end execution flow for setting a user's Efficiency Mode (eMode) category 
 | Aspect | Details |
 |--------|---------|
 | **Entry Point** | `Pool.setUserEMode(categoryId)` or `Pool.setUserEModeOnBehalfOf(categoryId, onBehalfOf)` |
-| **Key Transformations** | [Health Factor Calculation](../transformations/index.md#health-factor-calculations) |
+| **Key Transformations** | [Liquidation & health-factor calculations](../transformations/index.md#liquidation-calculations) |
 | **State Changes** | `_usersEModeCategory[user] = categoryId` |
 | **Events Emitted** | `UserEModeSet` |
 

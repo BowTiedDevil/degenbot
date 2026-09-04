@@ -43,14 +43,14 @@ The database contains multiple tables organized by domain:
 - **Exchanges**: `ExchangeTable` for tracking active DEX deployments
 - **Pool managers**: `PoolManagerTable` for Uniswap V4 pool managers
 
-All database models are defined in [`src/degenbot/database/models/`](../../src/degenbot/database/models/).
+All database models are defined in `src/degenbot/database/models/`.
 
 ### Alembic Migrations
 
 Database schema changes are managed through **Alembic migrations**:
 
 - **Version tracking**: `alembic_version` table stores current schema revision
-- **Migration scripts**: Located in [`src/degenbot/migrations/versions/`](../../src/degenbot/migrations/versions/)
+- **Migration scripts**: Located in `src/degenbot/migrations/versions/`
 - **Upgrade path**: Migrations can be applied incrementally to the latest version
 - **Head revision**: Latest migration marked as `head`
 
