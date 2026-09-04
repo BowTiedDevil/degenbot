@@ -9,8 +9,8 @@ the Pydantic barrier — the ``_ffi`` seam is private to ``__init__.py`` files).
 
 from degenbot._ffi import diagnostics as _diagnostics
 
-failure_mode = _diagnostics.failure_mode
+failure_action = _diagnostics.failure_action
 mark_progress = _diagnostics.mark_progress
 start_gil_probe = _diagnostics.start_gil_probe
 
-__all__ = ["failure_mode", "mark_progress", "start_gil_probe"]
+__all__ = ["failure_action", "mark_progress", "start_gil_probe"]

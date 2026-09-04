@@ -43,6 +43,15 @@ the forbidden auto-heal.
 
 ### D1 — State-accuracy verification is a tripwire: detect, classify, stop loudly, never heal.
 
+> **Partially superseded (2026-09-04) by
+> [ADR-040](ADR-040-per-bucket-failure-reactions.md):** the *reaction* is no
+> longer uniformly a clean loud stop. The strict gate now reacts per the
+> closed failure-bucket matrix — tainted classes (`MissedLog`,
+> `UnhandledReorg`, `StorageMutated`, `Unclassified`) **quarantine the
+> divergent pool** (solver never consumes a divergent hop) and keep the
+> session alive; `DeliveryLag` stays report-only per Part B; process-scope
+> fatals still exit loudly. D2 (classes) and D4 (never-heal) are unchanged.
+
 The solver-state accuracy check is a **fail-fast, loud, discriminating
 tripwire** whose only job is to surface a defect so it gets root-caused. It must
 not re-sync pools, must not apply missed swaps, and must not treat staleness as

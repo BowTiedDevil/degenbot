@@ -707,71 +707,6 @@
       }
     },
     {
-      "id": 12,
-      "title": "Apply-miss rate (5m)",
-      "type": "stat",
-      "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 21
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(rate(degenbot_logs_received_total[5m])) - sum(rate(degenbot_logs_applied_total[5m]))",
-          "legendFormat": "__auto",
-          "refId": "A",
-          "instant": true,
-          "range": false
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 10
-              },
-              {
-                "color": "red",
-                "value": 50
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "background",
-        "graphMode": "area"
-      }
-    },
-    {
       "id": 13,
       "type": "row",
       "title": "Latency - the race",
@@ -2309,7 +2244,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "## Jaeger drill-down - span tree (MQUKB6-T2 shape)\n\n    degenbot.pump.block\n    \u2514\u2500 degenbot.arb.solve              (T0 gate + wall clock + block.number)\n       \u251c\u2500 degenbot.arb.fanout            (paths.affected)\n       \u251c\u2500 degenbot.arb.resolve            (core-lock re-derive)\n       \u251c\u2500 degenbot.arb.lpt                (bin-pack)\n       \u251c\u2500 degenbot.arb.path xN  [DEBUG]   (path.id, path.us, path.sims, gate.us, path.profit)\n       \u2514\u2500 degenbot.arb.merge              (streaming drain; merge.paths)\n\n**Jaeger queries** (service `degenbot-bot`, host `host.docker.internal:16686`):\n\n- Solve cycles: `operation=degenbot.arb.solve&limit=20&lookback=1h`\n- Phase attribution: the `fanout` / `resolve` / `lpt` / `merge` children of a solve trace\n- Per-path attribution: `operation=degenbot.arb.path` (needs `RUST_LOG=degenbot::solver=debug`)\n\nThe **Engine-Mutex hold** panel is the metric-level view of this tree: under\n`DEGENBOT_DETACHED_SOLVES=1` the hold collapses from the in-cycle 5-20ms band to\nenqueue cost (\u00b5s) while solves continue on the dedicated `degenbot-solve-tokio`\nworkers - a step change in that panel means the stance flipped, not a regression.\nThe **Detached cycle** panel is the sidecar-merge health (Q1a): in-flight is the\nun-merged-straggler backpressure gauge (cap 8), and stale-dropped stragglers are\nEXPECTED under pool churn - a sustained drop rate with zero applied means the\nsidecar pipe is wedged.",
+        "content": "## Jaeger drill-down - span tree (MQUKB6-T2 shape)\n\n    degenbot.pump.block\n    └─ degenbot.arb.solve              (T0 gate + wall clock + block.number)\n       ├─ degenbot.arb.fanout            (paths.affected)\n       ├─ degenbot.arb.resolve            (core-lock re-derive)\n       ├─ degenbot.arb.lpt                (bin-pack)\n       ├─ degenbot.arb.path xN  [DEBUG]   (path.id, path.us, path.sims, gate.us, path.profit)\n       └─ degenbot.arb.merge              (streaming drain; merge.paths)\n\n**Jaeger queries** (service `degenbot-bot`, host `host.docker.internal:16686`):\n\n- Solve cycles: `operation=degenbot.arb.solve&limit=20&lookback=1h`\n- Phase attribution: the `fanout` / `resolve` / `lpt` / `merge` children of a solve trace\n- Per-path attribution: `operation=degenbot.arb.path` (needs `RUST_LOG=degenbot::solver=debug`)\n\nThe **Engine-Mutex hold** panel is the metric-level view of this tree: under\n`DEGENBOT_DETACHED_SOLVES=1` the hold collapses from the in-cycle 5-20ms band to\nenqueue cost (µs) while solves continue on the dedicated `degenbot-solve-tokio`\nworkers - a step change in that panel means the stance flipped, not a regression.\nThe **Detached cycle** panel is the sidecar-merge health (Q1a): in-flight is the\nun-merged-straggler backpressure gauge (cap 8), and stale-dropped stragglers are\nEXPECTED under pool churn - a sustained drop rate with zero applied means the\nsidecar pipe is wedged.",
         "code": {
           "language": "plaintext",
           "showLineNumbers": false
@@ -2510,7 +2445,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "DS_PROMETHEUS"
+            "uid": "${DS_PROMETHEUS}"
           },
           "expr": "histogram_quantile(0.95, sum by (le, site) (rate(degenbot_state_lock_wait_seconds_bucket[$__rate_interval])))",
           "legendFormat": "wait p95 {{site}}",
@@ -2519,7 +2454,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "DS_PROMETHEUS"
+            "uid": "${DS_PROMETHEUS}"
           },
           "expr": "histogram_quantile(0.95, sum by (le, site) (rate(degenbot_state_lock_hold_seconds_bucket[$__rate_interval])))",
           "legendFormat": "hold p95 {{site}}",
@@ -2528,7 +2463,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "DS_PROMETHEUS"
+            "uid": "${DS_PROMETHEUS}"
           },
           "expr": "histogram_quantile(0.50, sum by (le, site) (rate(degenbot_state_lock_hold_seconds_bucket[$__rate_interval])))",
           "legendFormat": "hold p50 {{site}}",
@@ -2563,13 +2498,13 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "DS_PROMETHEUS"
+        "uid": "${DS_PROMETHEUS}"
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "DS_PROMETHEUS"
+            "uid": "${DS_PROMETHEUS}"
           },
           "expr": "degenbot_process_rss_bytes / 1073741824",
           "legendFormat": "RSS (GiB)",
@@ -2591,6 +2526,181 @@
             "max"
           ]
         }
+      }
+    },
+    {
+      "id": 49,
+      "title": "Solver-state desyncs (30m, post-quarantine)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(increase(degenbot_errors_total{kind=\"solver_state_desync\"}[30m]))",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "description": "ADR-040: verified desyncs quarantined in the last 30m. The bot keeps trading its other paths; the repro dump is logs/desync/*.json."
+    },
+    {
+      "id": 50,
+      "title": "Quarantined pools (solve-invisible)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "degenbot_engine_quarantined_pools",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "description": "ADR-040: pools currently quarantine-excluded from solve resolution. PROMETHEUS NAME COUPLING with instruments.rs (degenbot.engine.quarantined_pools)."
+    },
+    {
+      "id": 48,
+      "title": "Alerts (Grafana-managed, ADR-040)",
+      "type": "alertlist",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 21
+      },
+      "options": {
+        "stateFilter": {
+          "firing": true,
+          "pending": true,
+          "noData": true,
+          "error": true,
+          "normal": false,
+          "recovering": false
+        },
+        "maxItems": 10,
+        "sortOrder": 5,
+        "groupMode": "default",
+        "groupBy": [
+          "severity"
+        ],
+        "alertName": "",
+        "alertInstanceLabelFilter": "",
+        "showInstances": true,
+        "showInactiveAlerts": false,
+        "dashboardAlerts": false,
+        "folder": {
+          "uid": "",
+          "title": ""
+        },
+        "datasource": "",
+        "viewMode": "list",
+        "statColorMode": "background",
+        "statThresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "color": "green",
+              "value": null
+            },
+            {
+              "color": "red",
+              "value": 80
+            }
+          ]
+        },
+        "statValueMappings": []
       }
     }
   ],

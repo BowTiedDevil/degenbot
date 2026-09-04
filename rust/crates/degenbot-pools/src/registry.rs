@@ -200,6 +200,25 @@ impl PoolEntry {
         some_cl_mut(self)
     }
 
+    /// Bump the state nonce WITHOUT a semantic state change — the external
+    /// invalidation seam (ADR-040): quarantine/release transitions bump the
+    /// nonce so cached hop projections invalidate and in-flight solver
+    /// snapshots (solve-time nonce vs sim-time re-read) drop their stale
+    /// candidates. Deliberately does NOT touch `update_block`: a quarantine
+    /// is not a chain event, and fishing `update_block` would corrupt the
+    /// tripwire's anchor model.
+    pub fn bump_state_nonce(&mut self) {
+        match self {
+            PoolEntry::V2(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+            PoolEntry::V3(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+            PoolEntry::V4(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+            PoolEntry::Curve(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+            PoolEntry::BalancerWeighted(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+            PoolEntry::BalancerStable(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+            PoolEntry::AerodromeV2(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+        }
+    }
+
     /// The pool's per-mutation state nonce (AV42C7). Bumped on every state
     /// change (`apply_swap`, `apply_liquidity_update`, `replace_tick_data`,
     /// `merge_tick_word`, `apply_sync`, `apply_balance_update`,

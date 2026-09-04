@@ -187,6 +187,13 @@ pub struct BotState {
     /// never by imported DB-row stamps — so it corroborates (or refutes) a
     /// pin's freshness claim independently of the seed. Keyed like the
     /// family buffers: address for V3, `(pool_manager, pool_id)` for V4.
+    /// ADR-040 quarantine set: pool ids currently EXCLUDED from solve
+    /// resolution (tainted-by-desync surfaces). Family-agnostic — spans
+    /// V2/V3/V4 and every other family because the gate sits in the
+    /// projection dispatcher, not per state type. Each transition bumps the
+    /// pool's `state_nonce` (dirties it) so cached hop projections and
+    /// in-flight candidates invalidate.
+    quarantined_pools: hashbrown::HashSet<u64>,
     v3_event_horizons: HashMap<Address, u64>,
     v4_event_horizons: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
 }
@@ -634,6 +641,56 @@ impl BotState {
         self.pools.get(&pool_id).map_or(0, PoolEntry::update_block)
     }
 
+    /// ADR-040 quarantine seam: exclude the pool from solve resolution
+    /// (tainted surface containment). Idempotent; first transition bumps the
+    /// pool's `state_nonce` so every cached projection + in-flight solver
+    /// snapshot invalidates. Returns `true` when this call CHANGED the state
+    /// (a `false` return is a no-op or an unknown pool id — callers log).
+    /// Maintains the `degenbot.engine.quarantined_pools` scrape gauge.
+    pub fn quarantine_pool(&mut self, pool_id: u64) -> bool {
+        if !self.pools.contains_key(&pool_id) {
+            return false;
+        }
+        if !self.quarantined_pools.insert(pool_id) {
+            return false;
+        }
+        if let Some(entry) = self.pools.get_mut(&pool_id) {
+            entry.bump_state_nonce();
+        }
+        if let Some(p) = crate::instruments::pipeline() {
+            p.set_quarantined_pools(self.quarantined_pools.len());
+        }
+        true
+    }
+
+    /// ADR-040 quarantine release: re-admit the pool to solve resolution and
+    /// dirty its nonce so stale `Invalid(Quarantined)` cache entries cannot
+    /// stick. Returns `true` when this call CHANGED the state.
+    pub fn release_pool(&mut self, pool_id: u64) -> bool {
+        if !self.quarantined_pools.remove(&pool_id) {
+            return false;
+        }
+        if let Some(entry) = self.pools.get_mut(&pool_id) {
+            entry.bump_state_nonce();
+        }
+        if let Some(p) = crate::instruments::pipeline() {
+            p.set_quarantined_pools(self.quarantined_pools.len());
+        }
+        true
+    }
+
+    /// ADR-040: is the pool currently quarantined (excluded from solve)?
+    #[must_use]
+    pub fn is_pool_quarantined(&self, pool_id: u64) -> bool {
+        self.quarantined_pools.contains(&pool_id)
+    }
+
+    /// ADR-040: current quarantine depth (the scrape gauge's backing count).
+    #[must_use]
+    pub fn quarantined_pool_count(&self) -> usize {
+        self.quarantined_pools.len()
+    }
+
     /// The pool-state **price clock head**: the maximum `update_block` across
     /// every registered pool (V2/V3/V4), `0` when none are registered.
     ///
@@ -683,6 +740,7 @@ impl BotState {
             snapshot_seed_block: None,
             pump_complete_cutoff: 0,
             v3_event_horizons: HashMap::new(),
+            quarantined_pools: hashbrown::HashSet::new(),
             v4_event_horizons: HashMap::new(),
         }
     }
@@ -1507,6 +1565,46 @@ mod tests {
             fee_denominator: None,
             ..Default::default()
         }
+    }
+
+    /// ADR-040 / PJGMPK: the quarantine seam is idempotent, counts depth,
+    /// and bumps the pool's state_nonce (dirties the pool) on BOTH transitions
+    /// so cached projections and in-flight solver snapshots invalidate.
+    #[test]
+    fn quarantine_pool_seam_is_idempotent_and_dirties_nonce() {
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
+            .expect("test setup: V2 registration");
+
+        assert!(
+            !core.quarantine_pool(999_999),
+            "an unknown pool_id cannot quarantine"
+        );
+        assert!(!core.is_pool_quarantined(999_999));
+
+        let nonce_before = core.pool_state_nonce(pool_id);
+        assert!(core.quarantine_pool(pool_id));
+        assert!(core.is_pool_quarantined(pool_id));
+        assert_eq!(core.quarantined_pool_count(), 1);
+
+        assert!(!core.quarantine_pool(pool_id), "re-quarantine is a no-op");
+        assert_eq!(core.quarantined_pool_count(), 1);
+        assert_ne!(
+            core.pool_state_nonce(pool_id),
+            nonce_before,
+            "quarantine dirties the nonce"
+        );
+
+        assert!(core.release_pool(pool_id));
+        assert!(!core.is_pool_quarantined(pool_id));
+        assert_eq!(core.quarantined_pool_count(), 0);
+        assert_ne!(
+            core.pool_state_nonce(pool_id),
+            nonce_before,
+            "release also dirties the nonce (stale Invalid cache entries cannot stick)"
+        );
+        assert!(!core.release_pool(pool_id), "double release is a no-op");
     }
 
     #[test]

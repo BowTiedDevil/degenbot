@@ -136,6 +136,21 @@ pub enum TripwireClass {
     Unclassified,
 }
 
+impl TripwireClass {
+    /// ADR-040 reason sub-key for the `failure_policy` matrix (the
+    /// `solver_state_desync.<reason>` bucket identity).
+    #[must_use]
+    pub const fn reason_key(&self) -> &'static str {
+        match self {
+            Self::MissedLog => crate::telemetry::error_reason::MISSED_LOG,
+            Self::UnhandledReorg => crate::telemetry::error_reason::UNHANDLED_REORG,
+            Self::StorageMutated => crate::telemetry::error_reason::STORAGE_MUTATED,
+            Self::DeliveryLag { .. } => crate::telemetry::error_reason::DELIVERY_LAG,
+            Self::Unclassified => crate::telemetry::error_reason::UNCLASSIFIED,
+        }
+    }
+}
+
 /// One reorg window as observed by the pump (FSM
 /// `EnterReorg`/`ContinueReorg`/`CloseReorg`) — the ADR-021 D2 Part A
 /// evidence record the pump passes to [`judge`]. A rollback to
@@ -153,6 +168,56 @@ pub struct TripReorgWindow {
     pub closed_at: Option<u64>,
 }
 
+/// ADR-040 / 52I5SV: the reproduction payload captured at trip time - the
+/// judged anchor, the verdict identity, and the per-hop state diagnostic
+/// so a deterministic follow-up test can be written from the artifact alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesyncStateSnapshot {
+    /// The judged anchor block (the judged solve block).
+    pub anchor_block: u64,
+    /// Class reason sub-key (the telemetry error_reason spelling).
+    pub reason: &'static str,
+    /// The failing path index.
+    pub path_idx: usize,
+    /// The failing hop index (within the path).
+    pub hop_idx: usize,
+    /// The full grep-able breadcrumb (embeds the stored-vs-chain scalar
+    /// diff text the strict gate produced).
+    pub breadcrumb: String,
+    /// Per-hop state diagnostic as JSON; `Value::Null` when unavailable
+    /// (the delivery-lag trip arm carries the aggregate instead).
+    pub hops: serde_json::Value,
+}
+
+impl DesyncStateSnapshot {
+    /// Serialize to the offline JSON artifact (pretty).
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "degenbot-desync-dump/1",
+            "anchor_block": self.anchor_block,
+            "reason": self.reason,
+            "path_idx": self.path_idx,
+            "hop_idx": self.hop_idx,
+            "breadcrumb": self.breadcrumb,
+            "hops": self.hops,
+        }))
+        .unwrap_or_else(|_| String::new())
+    }
+
+    /// Write the artifact under `dir` (created on demand); I/O failures
+    /// are the CALLER degrade (a dump must never block the reaction).
+    pub fn write(&self, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        std::fs::create_dir_all(dir)?;
+        let file = dir.join(format!(
+            "desync-{}-p{}h{}-{}.json",
+            self.anchor_block, self.path_idx, self.hop_idx, self.reason
+        ));
+        std::fs::write(&file, self.to_json())?;
+        Ok(file)
+    }
+}
+
 /// Cap on the reorg windows retained as trip evidence (bounded memory under
 /// reorg traffic; the oldest window evicts past this).
 pub const TRIP_REORG_WINDOW_CAP: usize = 16;
@@ -167,6 +232,8 @@ pub struct TripwireDivergence {
     /// prefix kept byte-identical to the pre-extraction message, with the
     /// class appended. The caller prints it, then aborts.
     pub breadcrumb: String,
+    /// ADR-040 / 52I5SV: reproduction payload written by the reacting seam.
+    pub snapshot: DesyncStateSnapshot,
 }
 
 /// The verdict of one published-block judgement.
@@ -254,6 +321,14 @@ pub async fn judge(
                     l.update_block,
                     limit
                 ),
+                snapshot: DesyncStateSnapshot {
+                    anchor_block: block,
+                    reason: TripwireClass::DeliveryLag { blocks: l.stale_by }.reason_key(),
+                    path_idx: 0,
+                    hop_idx: 0,
+                    breadcrumb: String::new(),
+                    hops: serde_json::Value::Null,
+                },
             });
         }
     }
@@ -522,18 +597,48 @@ fn breadcrumb_divergence(
             )
         })
         .collect();
+    let breadcrumb = format!(
+        "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block {block} \
+             (path_idx={path_idx}, class={:?}, hops: {}) {}. Do NOT reuse desynced state or \
+             silence this (UO3JM4).",
+        f.class,
+        hops_diag.join(", "),
+        f.message,
+    );
     TripwireDivergence {
         class: f.class,
         path_idx,
         hop_idx: f.hop_idx,
-        breadcrumb: format!(
-            "[SOLVER-STATE] ABORT: solver used desynced pool state at solve block {block} \
-             (path_idx={path_idx}, class={:?}, hops: {}) {}. Do NOT reuse desynced state or \
-             silence this (UO3JM4).",
-            f.class,
-            hops_diag.join(", "),
-            f.message,
-        ),
+        breadcrumb: breadcrumb.clone(),
+        snapshot: DesyncStateSnapshot {
+            anchor_block: block,
+            reason: f.class.reason_key(),
+            path_idx,
+            hop_idx: f.hop_idx,
+            breadcrumb: breadcrumb.clone(),
+            hops: serde_json::Value::Array(
+                hop_states
+                    .iter()
+                    .map(|h| {
+                        serde_json::json!({
+                            "hop_type": format!("{:?}", h.hop_type),
+                            "update_block": h.update_block,
+                            "tick_data_block": h.tick_data_block,
+                            "v2": h.v2.as_ref().map(|(a, r0, r1)| {
+                                serde_json::json!({"pair": format!("{a}"), "reserve0": r0.to_string(), "reserve1": r1.to_string()})
+                            }),
+                            "v3": h.v3.as_ref().map(|(a, sq, liq, tick)| {
+                                serde_json::json!({"pool": format!("{a}"), "sqrt_price_x96": sq.to_string(), "liquidity": liq, "tick": tick})
+                            }),
+                            "v4": h.v4.as_ref().map(|(pm, pid, sv, sq, liq, tick)| {
+                                serde_json::json!({"pool_manager": format!("{pm}"), "pool_id": alloy::primitives::hex::encode(pid), "state_view": format!("{sv}"), "sqrt_price_x96": sq.to_string(), "liquidity": liq, "tick": tick})
+                            }),
+                            "cl_meta": h.cl_meta.as_ref().map(|(c, l)| serde_json::json!({"coverage": c, "lifecycle": l})),
+                        })
+                    })
+                    .collect(),
+            ),
+        },
     }
 }
 
@@ -1895,6 +2000,42 @@ mod tests {
 
     /// (i) A V2 hop honest at its own anchor is `Ok` — one strict-gate read,
     /// nothing else.
+    /// ADR-040 / 52I5SV: the divergence snapshot embeds the scalar diff
+    /// (breadcrumb) AND the structured per-hop state; the JSON artifact is
+    /// parseable and round-trips through `write` into a file whose content
+    /// is sufficient to reproduce the divergence (the mocked on-chain
+    /// reserve 777 vs stored 1000 appears in the dump).
+    #[tokio::test]
+    async fn divergence_snapshot_round_trips_to_a_json_dump() {
+        let hop = v2_hop(1_000, 2_000, 190);
+        let provider = mock_provider(vec![v2_reserves_response(777, 888)]);
+        let v = judge(
+            &provider,
+            &TripwireConfig::enabled_only(),
+            &[vec![hop]],
+            crate::bot_core::solve_anchor::SolveAnchor::for_head(200, 0),
+            &[],
+        )
+        .await;
+        let GateVerdict::Divergent(d) = v else {
+            panic!("mismatch must trip");
+        };
+        let json = d.snapshot.to_json();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("dump must be valid JSON");
+        assert_eq!(parsed["schema"], "degenbot-desync-dump/1");
+        assert_eq!(parsed["anchor_block"], 200);
+        assert!(
+            json.contains("777"),
+            "the chain scalar must appear in the dump: {json}"
+        );
+        let dir = std::env::temp_dir().join(format!("degenbot-dump-test-{}", std::process::id()));
+        let path = d.snapshot.write(&dir).expect("dump write");
+        let body = std::fs::read_to_string(&path).expect("dump readable");
+        assert!(body.contains("777"), "written dump carries the diff");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn judge_honest_v2_at_anchor_is_ok() {
         let hop = v2_hop(1000, 2000, 190);

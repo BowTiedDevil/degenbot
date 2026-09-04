@@ -134,6 +134,10 @@ pub(crate) enum MissingHopReason {
     SequenceUnavailable,
     /// The balancer-stable invariant calculation errored.
     InvariantError,
+    /// ADR-040: the pool is quarantine-excluded from solve resolution
+    /// (tainted surface). Clearable — `release_pool` re-admits it — so this
+    /// is deliberately NOT in `is_structurally_unroutable`.
+    Quarantined,
     /// The pool cannot host a swap in this direction at its current state
     /// (directional viability gate — ported from the archived Python
     /// `swap_is_viable`; O(1), checked BEFORE any tick-range walk).
@@ -165,6 +169,7 @@ impl std::fmt::Display for MissingHopReason {
             Self::SequenceUnavailable => "integer tick-range sequence unavailable",
             Self::InvariantError => "stable invariant calculation failed",
             Self::NotViable => "pool not viable in the swap direction",
+            Self::Quarantined => "pool quarantined (tainted surface, ADR-040)",
             Self::HookedPool => "pool carries an amount-modifying V4 hook",
         };
         f.write_str(s)
@@ -245,6 +250,19 @@ pub(crate) fn resolve_hops(
     let mut deficits: Vec<HopDeficit> = Vec::new();
 
     for (hop_index, pool_ref) in pool_refs.iter().enumerate() {
+        // ADR-040 quarantine gate: a quarantined pool is invisible to solve
+        // resolution. Checked BEFORE the memo read so a cached valid hop can
+        // never serve a tainted pool, and NOT written into the cache so no
+        // `Invalid(Quarantined)` entry can shadow the release path.
+        if core.is_pool_quarantined(pool_ref.pool_key) {
+            log_invalidation(pool_ref, hop_index, MissingHopReason::Quarantined);
+            deficits.push(HopDeficit {
+                hop_type: pool_ref.hop_type,
+                pool_key: pool_ref.pool_key,
+                reason: MissingHopReason::Quarantined,
+            });
+            continue;
+        }
         // Capture the max price-clock `update_block` across all hops.
         resolved.max_update_block = resolved
             .max_update_block
@@ -410,6 +428,79 @@ mod tests {
             },
             (CachedProjection::Invalid(_), _) => panic!("expected a cached hop, got invalid"),
         }
+    }
+
+    /// ADR-040 / PJGMPK: a quarantined pool is INVISIBLE to solve resolution.
+    /// The gate sits BEFORE the projection memo read, so a cached valid hop can
+    /// never serve a quarantined pool, and the quarantine + release transitions
+    /// bump the pool's state_nonce so in-flight candidates (solver nonce
+    /// snapshots) drop at the sim seam. Release restores projection even with
+    /// the memo holding a stale entry.
+    #[test]
+    fn quarantine_pool_blocks_resolution_until_released() {
+        let mut core = BotState::new();
+        let p = register_v3(&mut core, [0xc3u8; 20]);
+        let q = register_v3(&mut core, [0xd4u8; 20]);
+        let refs = [ref_v3(p), ref_v3(q)];
+        let mut cache = HopProjectionCache::new();
+
+        let mut r = ResolvedMixedPath::default();
+        assert!(
+            resolve_hops(&core, &refs, &mut r, &mut cache, None, true).is_empty(),
+            "baseline: both pools project"
+        );
+        assert!(r.valid);
+
+        // Quarantine P: the hop deficit names P with the quarantine reason,
+        // the path is invalid, and the transition dirtied P's nonce.
+        let nonce_before = core.pool_state_nonce(p);
+        assert_eq!(core.quarantined_pool_count(), 0);
+        assert!(core.quarantine_pool(p), "first quarantine transitions");
+        assert!(core.is_pool_quarantined(p));
+        assert_eq!(core.quarantined_pool_count(), 1);
+        assert_ne!(
+            core.pool_state_nonce(p),
+            nonce_before,
+            "quarantine dirties the pool (cached hops + in-flight candidates invalidated)"
+        );
+
+        let mut r2 = ResolvedMixedPath::default();
+        let deficits = resolve_hops(
+            &core,
+            &[ref_v3(p), ref_v3(q)],
+            &mut r2,
+            &mut cache,
+            None,
+            true,
+        );
+        assert!(!r2.valid, "path with a quarantined hop is invalid");
+        assert_eq!(
+            deficits,
+            vec![HopDeficit {
+                hop_type: HopType::V3,
+                pool_key: p,
+                reason: MissingHopReason::Quarantined,
+            }],
+            "exactly the quarantined pool is responsible"
+        );
+        // Idempotence: re-quarantining is a no-op.
+        assert!(!core.quarantine_pool(p), "second quarantine is a no-op");
+        assert_eq!(core.quarantined_pool_count(), 1);
+
+        // Release restores projection even with memo entries stale from before.
+        assert!(core.release_pool(p));
+        assert!(!core.is_pool_quarantined(p));
+        assert_eq!(core.quarantined_pool_count(), 0);
+        assert!(!core.release_pool(p), "second release is a no-op");
+        let mut r3 = ResolvedMixedPath::default();
+        assert!(
+            resolve_hops(&core, &refs, &mut r3, &mut cache, None, true).is_empty(),
+            "released pool projects again"
+        );
+        assert!(r3.valid);
+
+        // Unknown pool ids are rejected loudly by the seam.
+        assert!(!core.quarantine_pool(999_999), "unknown pool id");
     }
 
     /// Hop-projection memoization invariant: a liquidity event on one pool

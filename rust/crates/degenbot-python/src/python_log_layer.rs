@@ -16,7 +16,6 @@
 //! remaining records. The Python driver should call this before interpreter
 //! finalization (e.g. in `__aexit__` or via Python `atexit`).
 
-#[cfg(feature = "otel")]
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -180,8 +179,7 @@ where
 /// the original target if found.
 /// The user config file (`~/.config/degenbot/config.toml`). Separate helper
 /// so tests can point it at a fixture.
-#[cfg(feature = "otel")]
-fn user_config_path() -> Option<PathBuf> {
+pub(crate) fn user_config_path() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| Path::new(&home).join(".config/degenbot/config.toml"))
 }
 
@@ -293,6 +291,50 @@ pub(crate) fn resolve_metrics_addr(env_raw: Option<&str>, config_file: Option<&P
     }
     otel_config_str(config_file, "metrics_addr")
         .unwrap_or_else(|| degenbot_bot::metrics::DEFAULT_METRICS_ADDR.to_owned())
+}
+
+/// Read the `[failure_policy]` override table from the user config file
+/// (ADR-040 D3): `kind` or `kind.reason` → action string. Malformed FILE →
+/// no overrides (warn + continue, matching the config helpers' fail-open
+/// rule); an INVALID key/action (a table that parses but names an unknown
+/// bucket or action) is a boot error — the bail path panics loudly at the
+/// mgr call site after logging.
+#[must_use]
+pub(crate) fn read_failure_policy_overrides(
+    config_file: Option<&std::path::Path>,
+) -> Result<Vec<(String, String)>, String> {
+    let Some(path) = config_file else {
+        return Ok(Vec::new());
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(Vec::new());
+    };
+    match text.parse::<toml::Table>() {
+        Ok(table) => {
+            let Some(policy) = table.get("failure_policy") else {
+                return Ok(Vec::new());
+            };
+            let Some(entries) = policy.as_table() else {
+                return Err("[failure_policy] must be a table of bucket = action".to_owned());
+            };
+            let mut out = Vec::new();
+            for (k, v) in entries {
+                let Some(a) = v.as_str() else {
+                    return Err(format!("[failure_policy].{k} must be a string action"));
+                };
+                out.push((k.clone(), a.to_owned()));
+            }
+            Ok(out)
+        }
+        Err(e) => {
+            tracing::warn!(
+                %e,
+                path = %path.display(),
+                "user config.toml failed to parse - failure_policy ignored"
+            );
+            Ok(Vec::new())
+        }
+    }
 }
 
 fn extract_log_target(event: &tracing::Event) -> Option<String> {

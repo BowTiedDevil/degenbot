@@ -38,6 +38,25 @@ pub mod error_kind {
     pub const DRAIN_DEAD: &str = "drain_dead";
 }
 
+/// Closed REASON taxonomy for kinds that discriminate a sub-cause. Values
+/// are the ADR-040 bucket-table reason keys ("kind.reason"). Compile-time
+/// closed like [`error_kind`]; the `failure_policy` matrix maps every pair.
+pub mod error_reason {
+    /// Solver-state tripwire classes (ADR-021 D2) — the reason sub-keys of
+    /// `solver_state_desync`.
+    pub const MISSED_LOG: &str = "missed_log";
+    pub const UNHANDLED_REORG: &str = "unhandled_reorg";
+    pub const STORAGE_MUTATED: &str = "storage_mutated";
+    pub const DELIVERY_LAG: &str = "delivery_lag";
+    pub const UNCLASSIFIED: &str = "unclassified";
+
+    /// `sim_failure` reason split (ADR-040): the encode/revert distinction.
+    pub const SIM_PRE_ENCODE: &str = "pre_encode";
+    pub const SIM_REVERT_POOL_STATE: &str = "revert_pool_state";
+    pub const SIM_REVERT_ECONOMICS: &str = "revert_economics";
+    pub const SIM_RPC: &str = "rpc";
+}
+
 /// `EnvFilter` directive capping [`DIAGNOSTIC_TARGET`] at warn on console sinks.
 pub const DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE: &str = "degenbot::diag=warn";
 
@@ -130,7 +149,7 @@ pub fn record_exception_keyed(
     block: u64,
     err: impl std::fmt::Display,
 ) -> bool {
-    use crate::failure_policy::{cooldowns, failure_mode};
+    use crate::failure_policy::cooldowns;
 
     let admitted = cooldowns().admit(kind, primary_id, block);
     if admitted {
@@ -146,7 +165,6 @@ pub fn record_exception_keyed(
             "[error] repeat suppressed by cooldown"
         );
     }
-    let _ = failure_mode(); // resolve once; mode decisions live at the seams
     admitted
 }
 

@@ -88,3 +88,57 @@ shared instruments.
 - Traces: Jaeger UI, service `degenbot-bot`. Per-block traces root at
   `degenbot.pump.block`; solves nest via the drain-pipe span propagation
   (`DrainWork` carries the dispatch-time span).
+
+
+
+## Alerting surface (ADR-040, DO5Q5E/UI7QNH) - CUTOVER COMPLETE 2026-09-04
+
+All alert rules now run as **Grafana-managed unified alerting**, evaluated by
+Grafana 13 itself and visible in **Alerting > Alert rules** (folder Degenbot):
+[provisioning/alerting/degenbot-grafana-rules.yml](provisioning/alerting/degenbot-grafana-rules.yml)
+is the declarative copy (datasource UID inlined; deploy = POST the rule groups via the
+/api/v1/provisioning/alert-rules API or mount the file into provisioning/alerting/).
+
+degenbot-alerts.yml in this directory has been DELETED - do not re-add a
+rule_files entry for it (running both surfaces concurrently double-fires
+every alert). If a running Prometheus still references it, remove the entry
+and reload Prometheus at the operator convenience.
+
+Rule inventory (10 rules, 2 groups, 60s evaluation):
+
+### Critical (page immediately - money or liveness at risk)
+
+- **DegenbotProcessDown** (NEW - the abort blind spot):
+      expr: sum(up{job="degenbot"} == bool 1) < bool 1   # noDataState=Alerting
+      for: 2m
+  Covers ANY bot death, including ADR-040 exit-stance desync aborts and fatal
+  buckets. The OLD header-stall alert deliberately ignored down targets; this
+  one owns them. State semantics normalized with the bool comparison so a
+  healthy bot reads Normal, not NoData.
+
+- **DegenbotHeaderStall**: rate(blocks)==0 while target up. Healthy-state
+  normalized: every comparison rule ends `or vector(0)` so Grafana reads
+  Normal instead of NoData.
+- **DegenbotDrainerStall** (drain_queue_depth >= 2 for 5m).
+- **DegenbotStateHeadDivergence** (abs(state_head_lag) >= 3 for 1m).
+
+### Warning (degraded but not bleeding money)
+
+- **DegenbotErrorRate** - any recorded failure kind in 5m. solver_state_desync
+  now means a QUARANTINE fired (ADR-040 default): open the newest
+  logs/desync/desync-*.json for the reproduction state; the bot is still
+  trading its other paths.
+- **DegenbotDesyncQuarantine** (NEW) - dedicated quarantine signal
+  (degenbot_quarantine_events_total + the errors-kind), so a containment is
+  visible as its OWN event, not buried in the any-error rate.
+- **DegenbotSubmitFailures**, **DegenbotMonitorExpirySpike** (>50% expired
+  15m), **DegenbotProfitEfficiencyDrop** (>80% left on table),
+  **DegenbotSimulateErrorRate** (>10% error outcomes 10m) - severity
+  semantics unchanged from the Prometheus file.
+
+### Removed
+
+- **Apply-miss rate** - there was never an alert on it; the panel was removed
+  with the dashboard rework (benign classes dominated the signal).
+- **DegenbotHeaderStall job matcher**: guards up{job="degenbot"} == 1 so a
+  stopped bot does NOT fire it - DegenbotProcessDown owns absence.

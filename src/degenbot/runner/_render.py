@@ -360,18 +360,17 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
 
             _dump_failure_fixture(first, path_infos.get(first["path_id"]), current_block)
 
-            # D63GSE (NNYZAU): the failure POLICY decides what happens next —
-            # `exit` keeps today's fail-fast; `harden`/`continue` log loudly and
-            # keep the main loop alive so the failure surfaces through OTel and
-            # iteration continues. Single source of truth is the Rust core's
-            # DEGENBOT_FAILURE_MODE resolution (`degenbot.diagnostics.failure_mode`).
-            from degenbot.diagnostics import failure_mode as _policy
+            # ADR-040: the PER-BUCKET policy decides what happens next — the
+            # Rust core owns the closed bucket matrix (single source of truth);
+            # Python only consults it. A sim failure's effective action is the
+            # `sim_failure` bucket's (reason sub-split lands at the sim seam).
+            from degenbot.diagnostics import failure_action as _policy
 
-            mode = _policy()
-            if mode == "exit":
+            action = _policy("sim_failure", None)
+            if action == "exit":
                 bot_logger.error(
                     f"[sim-trap] exiting on first sim failure at block={current_block} "
-                    f"(DEGENBOT_FAILURE_MODE=exit / DEGENBOT_SIM_EXIT_ON_FAIL=1) "
+                    f"(failure_policy sim_failure bucket action=exit) "
                     f"— see [sim-fixture] above",
                 )
 
@@ -382,7 +381,7 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
             else:
                 bot_logger.error(
                     f"[sim-trap] {len(trap_failures)} sim failure(s) at block={current_block} "
-                    f"(DEGENBOT_FAILURE_MODE={mode}) — continuing; failures surface via OTel "
+                    f"(failure_policy sim_failure action={action}) — continuing; failures surface via OTel "
                     f"(degenbot.errors{{kind=sim_failure}}). See [sim-fixture] above.",
                 )
 

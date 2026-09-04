@@ -959,6 +959,10 @@ where
 struct SimSpanVerdict {
     span: tracing::Span,
     verdict: &'static str,
+    /// ADR-040: the closed `telemetry::error_reason` classification for an
+    /// error-verdict sim (`None` until an error seam stamps it). Recorded on
+    /// the span and tallied via `degenbot.sim.error_reason{reason}`.
+    error_reason: Option<&'static str>,
     profit: Option<i64>,
     /// T3: wall-clock anchor for the per-path simulate duration histogram.
     started: std::time::Instant,
@@ -974,6 +978,18 @@ impl Drop for SimSpanVerdict {
         if let Some(p) = degenbot_bot::instruments::pipeline() {
             p.count_simulate_verdict(self.verdict);
             p.observe_simulate_duration(self.started.elapsed().as_secs_f64());
+            // ADR-040: error-outcome sims tally by closed reason (the bucket
+            // table keys the reaction; the label set stays closed).
+            if self.verdict == "error" {
+                if let Some(reason) = self.error_reason {
+                    p.count_sim_error_reason(reason);
+                }
+            }
+        }
+        if self.verdict == "error" {
+            if let Some(reason) = self.error_reason {
+                self.span.record("simulate.error_reason", reason);
+            }
         }
     }
 }
@@ -1022,6 +1038,7 @@ where
     let _enter = span.enter();
     let mut guard = SimSpanVerdict {
         span: span.clone(),
+        error_reason: None,
         verdict: "not_profitable",
         started: std::time::Instant::now(),
         profit: None,
@@ -1098,6 +1115,7 @@ where
     // assert) — a money-losing production path now reverts on-chain.
     let execute_config = config_for_options(path.opts, U256::ZERO).map_err(|e| {
         guard.verdict = "error";
+        guard.error_reason = Some(degenbot_bot::telemetry::error_reason::SIM_PRE_ENCODE);
         ProviderError::RpcError {
             code: -32603,
             message: format!("config_for_options failed: {e}"),
@@ -1106,6 +1124,7 @@ where
     let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config)
         .map_err(|e| {
             guard.verdict = "error";
+            guard.error_reason = Some(degenbot_bot::telemetry::error_reason::SIM_PRE_ENCODE);
             ProviderError::RpcError {
                 code: -32603,
                 message: format!("execute() ABI encode failed: {e}"),

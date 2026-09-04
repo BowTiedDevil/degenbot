@@ -1,0 +1,273 @@
+# degenbot Grafana-managed alert rules (ADR-040 epic DO5Q5E, task UI7QNH).
+#
+# SUPERSEDES degenbot-alerts.yml (Prometheus-managed) AFTER the operator
+# mounts this file via Grafana file provisioning:
+#
+#   placement (docker): <grafana-cfg-dir>/provisioning/alerting/degenbot-grafana-rules.yml
+#   grafana.ini: [unified_alerting] enabled = true (default in Grafana >= 9.4)
+#
+# The rules evaluate the SAME expressions against the SAME Prometheus
+# datasource; the datasource UID below must match the operator's Prometheus
+# datasource (the dashboard's DS_PROMETHEUS variable default). Edit
+# GATE-POWERED DATASOURCE UID once below (or sed it at deploy time), then
+# reload. After provisioning is verified in the Alerting UI, delete
+# degenbot-alerts.yml (the hard cutover - do not run both surfaces at once,
+# every alert would double-fire).
+
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: degenbot-critical
+    folder: degenbot
+    interval: 30s
+    rules:
+      - uid: degenbot-process-down
+        title: DegenbotProcessDown
+        condition: C
+        for: 2m
+        annotations:
+          summary: degenbot process DOWN - desync abort or crash
+          description: >-
+            The degenbot scrape target stopped answering (or its series
+            vanished) for 2m. Covers the desync abort (ADR-040 exit stance /
+            fatal buckets) and any crash - the signal that had NO owner before
+            (DegenbotHeaderStall deliberately ignores down targets).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 5m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: 'count(up{job="degenbot"} == 1) == 0 or absent(degenbot_blocks_observed_total)'
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+      - uid: degenbot-header-stall
+        title: DegenbotHeaderStall
+        condition: C
+        for: 2m
+        annotations:
+          summary: degenbot header stall - bot is blind
+          description: >-
+            No blocks observed for 2m while the scrape target is UP - the WS
+            feed or the pump is dead while the chain advances.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 5m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: 'rate(degenbot_blocks_observed_total{init!="true"}[1m]) == 0 and on() up{job="degenbot"} == 1'
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+      - uid: degenbot-drainer-stall
+        title: DegenbotDrainerStall
+        condition: C
+        for: 5m
+        annotations:
+          summary: degenbot drainer stall
+        data:
+          - refId: A
+            relativeTimeRange: { from: 5m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: 'degenbot_drain_queue_depth{init!="true"} >= 2'
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+      - uid: degenbot-state-head-divergence
+        title: DegenbotStateHeadDivergence
+        condition: C
+        for: 1m
+        annotations:
+          summary: degenbot state head divergence (freeze signature)
+        data:
+          - refId: A
+            relativeTimeRange: { from: 5m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: 'abs(degenbot_state_head_lag_blocks{init!="true"}) >= 3'
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+  - orgId: 1
+    name: degenbot-warning
+    folder: degenbot
+    interval: 1m
+    rules:
+      - uid: degenbot-errors-any
+        title: DegenbotErrorRate
+        condition: C
+        for: 0m
+        annotations:
+          summary: degenbot recorded failures (any kind)
+          description: >-
+            At least one failure recorded in 5m. Per ADR-040 a
+            solver_state_desync kind means a QUARANTINE fired - open the
+            logs/desync/ JSON dump from the event for reproduction state.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 15m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: 'sum(rate(degenbot_errors_total[5m])) > 0'
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+      - uid: degenbot-desync-quarantine
+        title: DegenbotDesyncQuarantine
+        condition: C
+        for: 0m
+        annotations:
+          summary: solver-state desync quarantined a pool
+          description: >-
+            A verified desync quarantined a pool (ADR-040 default reaction).
+            Urgent root-cause work: the repro dump (logs/desync/*.json) has the
+            full state. The bot keeps trading its other paths.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 15m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: >-
+                sum(increase(degenbot_errors_total{kind="solver_state_desync"}[30m])) > 0
+                or increase(degenbot_quarantine_events_total[30m]) > 0
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+      - uid: degenbot-submit-failures
+        title: DegenbotSubmitFailures
+        condition: C
+        for: 0m
+        annotations:
+          summary: degenbot submit failures
+        data:
+          - refId: A
+            relativeTimeRange: { from: 30m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: 'sum(rate(degenbot_submit_outcomes_total{outcome="skipped_broadcast_failed"}[10m])) > 0'
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+      - uid: degenbot-monitor-expiry-spike
+        title: DegenbotMonitorExpirySpike
+        condition: C
+        for: 5m
+        annotations:
+          summary: degenbot monitor expiry spike
+        data:
+          - refId: A
+            relativeTimeRange: { from: 45m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: >-
+                sum(rate(degenbot_monitor_outcomes_total{outcome="expired"}[15m]))
+                / clamp_min(sum(rate(degenbot_monitor_outcomes_total[15m])), 0.001) > 0.5
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [1.0005] }
+      - uid: degenbot-profit-efficiency-drop
+        title: DegenbotProfitEfficiencyDrop
+        condition: C
+        for: 10m
+        annotations:
+          summary: degenbot profit efficiency drop
+        data:
+          - refId: A
+            relativeTimeRange: { from: 30m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: >-
+                degenbot_profit_missed_total
+                / clamp_min(degenbot_profit_realized_total + degenbot_profit_missed_total, 1) > 0.8
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [1.0005] }
+      - uid: degenbot-simulate-error-rate
+        title: DegenbotSimulateErrorRate
+        condition: C
+        for: 5m
+        annotations:
+          summary: degenbot simulate error rate high
+        data:
+          - refId: A
+            relativeTimeRange: { from: 30m, to: 0s }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expression: >-
+                sum(rate(degenbot_simulate_verdicts_total{outcome="error"}[10m]))
+                / clamp_min(sum(rate(degenbot_simulate_verdicts_total[10m])), 0.001) > 0.1
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [1.0005] }

@@ -64,7 +64,7 @@ If the span's fields answer the question, interpret and move on. If not, add ins
 
 Two traps while interpreting:
 
-- **Registration stalls are usually real signals.** The direction-fail fail-stop aborts loudly on a path-invariant breach by design; treat any firing as urgent root-cause work, never as noise to suppress. The pool-id namespace fix (V4 ids offset by `1<<32`) closed the known cause.
+- **Tripwire / invariant firings are always real signals.** Since ADR-040 the reaction is per-bucket: tainted classes (`MissedLog`, `UnhandledReorg`, `StorageMutated`) **quarantine the divergent pool** (recorded via `degenbot.quarantine.events`) and the session keeps running; fatal classes (`ws_completeness`, drain watchdogs) still exit loudly. Treat any firing or quarantine as urgent root-cause work with a repro dump under `logs/desync/` — never as noise to suppress. The pool-id namespace fix (V4 ids offset by `1<<32`) closed the historical cause.
 - **Correlate across sinks by timestamp.** Jaeger traces, Prometheus samples, and `/tmp/bot_run*.log` lines each carry partial context; line up timestamps before drawing a conclusion from any single sink.
 
 ## Step 4: Add telemetry following the house pattern

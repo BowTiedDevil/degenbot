@@ -202,6 +202,36 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // batches events and flushes to Python `logging` via one `Python::attach`
     // per batch. Stays in the module init (not `c_api::register`) because it
     // is module-lifecycle setup, not symbol registration.
+    // ADR-040 D3: per-bucket failure-policy overrides, boot-validated. An
+    // invalid bucket/action is a boot ERROR (process exits) — the operator
+    // asked for a specific containment stance; silently ignoring it would
+    // trade on a policy the process does not actually have.
+    match python_log_layer::read_failure_policy_overrides(
+        python_log_layer::user_config_path().as_deref(),
+    ) {
+        Ok(overrides) if !overrides.is_empty() => {
+            let refs: Vec<(&str, &str)> = overrides
+                .iter()
+                .map(|(k, a)| (k.as_str(), a.as_str()))
+                .collect();
+            if let Err(e) = degenbot_bot::failure_policy::install_overrides(refs) {
+                eprintln!("[failure_policy] invalid override - boot refused: {e}");
+                std::process::exit(2);
+            }
+            tracing::info!(
+                count = overrides.len(),
+                "failure_policy overrides installed"
+            );
+        }
+        Ok(_) => {}
+        // A malformed [failure_policy] VALUES table is a boot error (ADR-040
+        // D3): the operator asked for a containment stance; refuse loudly.
+        Err(e) => {
+            eprintln!("[failure_policy] invalid override table - boot refused: {e}");
+            std::process::exit(2);
+        }
+    }
+
     python_log_layer::init_logging_subscriber();
 
     // GOQWCL (incident 2026-08-21): bind pyo3-async-runtimes to the shared

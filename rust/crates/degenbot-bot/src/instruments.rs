@@ -157,6 +157,20 @@ pub struct PipelineInstruments {
     /// the match is by convention, not checked. If you rename here or drop
     /// the unit attribute, update the panel expression in the same commit.
     process_rss_bytes: Gauge<f64>,
+
+    /// ADR-040: quarantine containment events by cause + scope.
+    quarantine_events: Counter<u64>,
+    /// ADR-040: per-error-reason tally for error-outcome simulations. The
+    /// `reason` label is the closed `telemetry::error_reason` set.
+    sim_error_reasons: Counter<u64>,
+    /// ADR-040: pools currently quarantine-excluded from solve resolution.
+    /// Maintained by `BotState::quarantine_pool`/`release_pool`.
+    ///
+    /// PROMETHEUS NAME COUPLING (ADR-040): the `OTel` name-mapping renders this
+    /// gauge as `degenbot_engine_quarantined_pools`; the Grafana panel added
+    /// with epic DO5Q5E queries that string verbatim. Rename here and the
+    /// panel together.
+    quarantined_pools: Gauge<f64>,
 }
 
 impl PipelineInstruments {
@@ -404,6 +418,20 @@ impl PipelineInstruments {
                 .with_unit("s")
                 .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Time a guard was held after acquisition (per site, mode)")
+                .build(),
+            quarantine_events: meter
+                .u64_counter("degenbot.quarantine.events")
+                .with_description("Quarantine containment events (scope x cause, ADR-040)")
+                .build(),
+            sim_error_reasons: meter
+                .u64_counter("degenbot.sim.error_reason")
+                .with_description("Sim-attributed failures by closed error_reason")
+                .build(),
+            quarantined_pools: meter
+                .f64_gauge("degenbot.engine.quarantined_pools")
+                .with_description(
+                    "Pools currently quarantine-excluded from solve resolution (ADR-040)",
+                )
                 .build(),
             process_rss_bytes: meter
                 .f64_gauge("degenbot.process.rss")
@@ -679,6 +707,30 @@ impl PipelineInstruments {
         );
     }
 
+    /// ADR-040: one quarantine containment event (scope = Pool|Path|Process,
+    /// cause = the closed failure kind that triggered it).
+    pub fn count_quarantine_event(&self, cause: &str, scope: &str) {
+        self.quarantine_events.add(
+            1,
+            &[
+                KeyValue::new("cause", cause.to_owned()),
+                KeyValue::new("scope", scope.to_owned()),
+            ],
+        );
+    }
+
+    /// ADR-040: one error-outcome sim tallied by its closed reason.
+    pub fn count_sim_error_reason(&self, reason: &str) {
+        self.sim_error_reasons
+            .add(1, &[KeyValue::new("reason", reason.to_owned())]);
+    }
+
+    /// ADR-040: quarantine depth after a quarantine/release transition.
+    #[expect(clippy::cast_precision_loss)]
+    pub fn set_quarantined_pools(&self, count: usize) {
+        self.quarantined_pools.record(count as f64, &[]);
+    }
+
     /// Epic FRKBGP close-out: current resident set bytes (drift-watch).
     #[expect(clippy::cast_precision_loss)]
     pub fn set_process_rss_bytes(&self, bytes: u64) {
@@ -815,6 +867,22 @@ mod kind_tests {
             text.contains("degenbot_cgroup_throttle_time_seconds_total"),
             "throttled-cpu-time counter missing"
         );
+    }
+
+    /// ADR-040: the quarantine depth gauge renders under its coupled
+    /// Prometheus name (see the field's PROMETHEUS NAME COUPLING note).
+    #[test]
+    fn quarantined_pools_gauge_is_scrapeable() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test"));
+        instruments.set_quarantined_pools(3);
+        let text = crate::metrics::render(&registry);
+        assert!(
+            text.contains("degenbot_engine_quarantined_pools"),
+            "quarantined-pools gauge missing from exposition: {text}"
+        );
+        drop(provider);
     }
 
     /// Acceptance: `degenbot.errors{kind=...}` is SCRAPEABLE — the counter

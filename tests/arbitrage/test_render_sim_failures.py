@@ -204,21 +204,24 @@ def test_reverting_frame_surfaces_deep_attribution(caplog: pytest.LogCaptureFixt
 # ── Tripwire bucket-fatal semantics (fail hard + loud, no default mask) ──
 
 
-def test_unconfigured_tripwire_trips_on_empty_bucket(
+def test_sim_failures_continue_by_default(
     caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The tripwire must FAIL HARD AND LOUD on ANY failure bucket by default
-    (ADR-021 / ergo W2UWZO — detect/classify/stop loudly, never mask). With the
-    ignore env UNSET, even the `empty` (execution-Halt) bucket is fatal: it is
-    treated as a real issue to chase, not silently skipped.
+    """ADR-040: the default ``sim_failure`` bucket action is ``event`` - the
+    renderer logs the keyed loud event and the bot KEEPS RUNNING. The
+    D63GSE-era fail-fast-by-default is retired; exit is now an explicit
+    per-bucket operator override (``[failure_policy]`` in config.toml), not an
+    implicit default.
     """
     monkeypatch.setenv("DEGENBOT_SIM_EXIT_ON_FAIL", "1")
     monkeypatch.delenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", raising=False)
     failures = [{"path_id": 1, "bucket": "empty", "fail_index": 3, "revert_data": "0x"}]
-    with pytest.raises(SystemExit) as ei, caplog.at_level("INFO", logger="degenbot"):
+    with caplog.at_level("INFO", logger="degenbot"):
         _render_sim_failures(_outcome(failures), current_block=100)
-    assert ei.value.code == 3
-    assert any("[sim-trap]" in r.message for r in caplog.records)
+    # No exit: the trap logs the loud continuing event instead.
+    traps = [r.message for r in caplog.records if "[sim-trap]" in r.message]
+    assert any("continuing" in m for m in traps), "default must continue, not exit"
+    assert any("[sim-fail]" in r.message for r in caplog.records)
 
 
 def test_explicitly_ignoring_a_bucket_opts_out(
@@ -239,12 +242,19 @@ def test_explicitly_ignoring_a_bucket_opts_out(
     assert not any("[sim-trap]" in r.message for r in caplog.records)
 
 
-def test_accuracy_bucket_still_trips_the_failfast_trap(
+def test_operator_exit_override_still_traps(
     caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A solver-accuracy bucket (e.g. the Error(string) overdraw) still trips
-    the fail-fast trap by default — not masked.
+    """The exit path survives ADR-040: when the operator's per-bucket policy
+    says ``exit`` for ``sim_failure`` (a ``[failure_policy]`` override), the
+    trap fires (``SystemExit(3)``) after the fixture dump. This test stubs the
+    policy consult - the real resolution is boot-validated Rust-side; here we
+    deterministically test the EXIT WIRING without mutating process-global
+    Rust state.
     """
+    import degenbot.diagnostics as diag
+
+    monkeypatch.setattr(diag, "failure_action", lambda kind, reason=None: "exit")
     monkeypatch.setenv("DEGENBOT_SIM_EXIT_ON_FAIL", "1")
     monkeypatch.delenv("DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", raising=False)
     failures = [

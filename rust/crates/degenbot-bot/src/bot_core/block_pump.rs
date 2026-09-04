@@ -726,7 +726,19 @@ impl BlockPump {
             .instrument(verify_span)
             .await
             {
-                Self::trip_and_exit(&d);
+                // ADR-040: per-bucket reaction. The responsible hop's pool is
+                // resolved from the judged path refs (path_idx/hop_idx align
+                // with the extract that produced them by construction); a
+                // missing index is a programming error and keeps the old
+                // fail-loud contract verbatim.
+                let hop_pool_key = path_refs
+                    .get(d.path_idx)
+                    .and_then(|hops| hops.get(d.hop_idx))
+                    .map(|hop_ref| hop_ref.pool_key);
+                match hop_pool_key {
+                    Some(pool_key) => Self::react_to_desync(&bot, &d, pool_key, block),
+                    None => Self::trip_and_exit(&d),
+                }
             }
         }
     }
@@ -737,6 +749,117 @@ impl BlockPump {
     /// stderr) after the structured `tracing::error!`, then aborts the PROCESS
     /// — no task unwind, no wedge, no teardown hang (see the tripwire module
     /// docs for the panic/shutdown-wedge history; UO3JM4).
+    /// ADR-040: the per-bucket desync reaction. The `failure_policy` matrix
+    /// decides: the default stance QUARANTINES the divergent pool (excluded
+    /// from solve resolution by `BotState::quarantine_pool` + the resolve
+    /// gate) with a keyed loud event, and the session keeps running; the
+    /// operator's `exit` override (or the fatal buckets) keeps the byte-
+    /// identical loud abort. The grep-able breadcrumb prints in BOTH cases.
+    fn react_to_desync(bot: &Bot, d: &TripwireDivergence, pool_key: u64, block: u64) {
+        use crate::failure_policy::Action;
+        let reason = d.class.reason_key();
+        let action = crate::failure_policy::action(
+            crate::telemetry::error_kind::SOLVER_STATE_DESYNC,
+            Some(reason),
+        );
+        // ADR-040 / 52I5SV: the reproduction artifact. Written for every
+        // non-observe stance BEFORE the action executes (the exit stance
+        // aborts mid-match; the dump must predate it). The dump root is the
+        // bot CWD's logs/desync (overridable by DEGENBOT_DESYNC_DUMP_DIR for
+        // test isolation). I/O failure degrades to a log - never blocks.
+        if let Some(dump_path) = d
+            .snapshot
+            .write(&std::env::var_os("DEGENBOT_DESYNC_DUMP_DIR").map_or_else(
+                || std::path::PathBuf::from("logs/desync"),
+                std::path::PathBuf::from,
+            ))
+            .ok()
+        {
+            tracing::info!(dump = %dump_path.display(), "desync repro artifact written");
+        } else {
+            tracing::warn!("desync repro dump failed (reaction proceeds)");
+        }
+        // The structured trace span (52I5SV): one `degenbot.desync.trip` span
+        // carrying class/pool/path/hop + anchor, child of the verify span.
+        let trip_span = tracing::info_span!(
+            "degenbot.desync.trip",
+            class = ?d.class,
+            pool_key,
+            path_idx = d.path_idx,
+            hop_idx = d.hop_idx,
+            anchor_block = d.snapshot.anchor_block,
+        );
+        let _trip_guard = trip_span.enter();
+        match action {
+            Action::Exit => Self::trip_and_exit(d),
+            Action::Quarantine => {
+                let surfaced = crate::telemetry::record_exception_keyed(
+                    crate::telemetry::error_kind::SOLVER_STATE_DESYNC,
+                    &format!("pool:{pool_key}"),
+                    block,
+                    format_args!(
+                        "{:?} path_idx={} hop_idx={} pool_key={}",
+                        d.class, d.path_idx, d.hop_idx, pool_key
+                    ),
+                );
+                if surfaced {
+                    tracing::error!(
+                        class = ?d.class,
+                        path_idx = d.path_idx,
+                        hop_idx = d.hop_idx,
+                        pool_key,
+                        "DEGENBOT_ASSERT_SOLVER_STATE: verified desync — QUARANTINE (pool excluded from solve; ADR-040)"
+                    );
+                    #[expect(clippy::print_stderr)] // grep-able diagnostic (ADR-040 keeps loudness)
+                    {
+                        eprintln!("[SOLVER-STATE] QUARANTINE: {}", d.breadcrumb);
+                    }
+                }
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_quarantine_event(
+                        crate::telemetry::error_kind::SOLVER_STATE_DESYNC,
+                        "pool",
+                    );
+                }
+                let state = bot.state_arc();
+                let mut core = state.write();
+                let changed = core.quarantine_pool(pool_key);
+                drop(core);
+                if changed {
+                    tracing::warn!(
+                        pool_key,
+                        "desync quarantine applied (pool now solve-invisible)"
+                    );
+                }
+            }
+            Action::Event => {
+                let _ = crate::telemetry::record_exception_keyed(
+                    crate::telemetry::error_kind::SOLVER_STATE_DESYNC,
+                    &format!("pool:{pool_key}"),
+                    block,
+                    format_args!(
+                        "{:?} path_idx={} hop_idx={} pool_key={}",
+                        d.class, d.path_idx, d.hop_idx, pool_key
+                    ),
+                );
+                tracing::error!(
+                    class = ?d.class,
+                    path_idx = d.path_idx,
+                    hop_idx = d.hop_idx,
+                    pool_key,
+                    "DEGENBOT_ASSERT_SOLVER_STATE: verified desync — operator override disabled quarantine (ADR-040 [failure_policy])"
+                );
+            }
+            Action::Observe => {
+                tracing::info!(
+                    class = ?d.class,
+                    pool_key,
+                    "solver-state divergence observed (policy=observe)"
+                );
+            }
+        }
+    }
+
     fn trip_and_exit(d: &TripwireDivergence) -> ! {
         crate::telemetry::record_exception(
             crate::telemetry::error_kind::SOLVER_STATE_DESYNC,
@@ -768,8 +891,10 @@ impl BlockPump {
     ///
     /// # Panics
     ///
-    /// Hard-aborts the process (never unwinds a half-alive pump) on any
-    /// verified solver-state desync (ADR-021 `DEGENBOT_ASSERT_SOLVER_STATE`),
+    /// Hard-aborts the process (never unwinds a half-alive pump) on the fatal
+    /// failure buckets and on operator-exit desync overrides — the ADR-040
+    /// DEFAULT verified-desync reaction QUARANTINES the divergent pool and
+    /// keeps the session (see `react_to_desync`),
     /// a live-websocket log drop (`DEGENBOT_WS_COMPLETENESS`), or a dead or
     /// stalled background drainer (a send into a closed channel, or
     /// `NO_PROGRESS_STRIKE_LIMIT` consecutive no-progress pushes). Also shuts
@@ -4488,42 +4613,38 @@ mod tests {
     /// dies on the spot. `abort()` can't be tested in-process (it SIGABRTs
     /// the test binary), so this parent test spawns itself as a subprocess
     /// driving the gate through the desync and asserts the child died by
-    /// SIGABRT AND printed the loud grep-able `[SOLVER-STATE] ABORT` marker.
+    /// ADR-040 (subset of UO3JM4, kept loud): with the operator `exit`
+    /// override installed, a verified solver-state desync must STILL
+    /// `abort()` the whole process — byte-identical to the pre-ADR-040
+    /// fail-fast (marker, SIGABRT). Subprocess test (`abort()` SIGABRTs the
+    /// test binary); the core suppression wrapper (`ulimit -c 0`) is kept.
     #[test]
-    fn solver_state_desync_aborts_process() {
+    fn solver_state_desync_operator_exit_stance_aborts() {
         let exe = std::env::current_exe().expect("current test exe");
-        // The child is EXPECTED to SIGABRT here (UO3JM4) — that is the point
-        // of the test, not a leak. But the kernel's default core-dump path
-        // (kernel.core_pattern -> systemd-coredump/ABRT) makes GNOME's
-        // "Problem Reporting" log a spurious "application crashed" entry for
-        // every `cargo test` run of this crate. Suppress the core for the
-        // subprocess: run it via `sh -c 'ulimit -c 0; exec "$@"'` so it
-        // inherits RLIMIT_CORE=0 across the `exec`. SIGABRT and its exit
-        // signal are still raised normally, so the assertions below are
-        // unaffected — we only stop the OS from writing a core/report for
-        // this intentional, expected abort.
+        // The child is EXPECTED to SIGABRT here — the point of the test, not
+        // a leak. Run via `sh -c 'ulimit -c 0; exec "$@"'` so the core-dump
+        // suppression crosses the exec (kernel.core_pattern → GNOME/ABRT
+        // spurious crash-report history, UO3JM4).
         let out = std::process::Command::new("sh")
             .arg("-c")
             .arg("ulimit -c 0; exec \"$@\"")
             .arg("sh") // $0; the test binary + args follow as $1.. and become `$@`
             .arg(&exe)
             .arg("solver_state_desync_aborts_self")
-            // --nocapture: the child is a test-harness run whose stderr is
-            // captured by default; without it the eprintln! marker never
-            // reaches the pipe the parent reads.
             .arg("--nocapture")
             .env("DEGENBOT_SELF_ABORT_TEST", "1")
+            .env("DEGENBOT_DESYNC_TEST_STANCE", "exit")
             .output()
             .expect("spawn desync subprocess");
         let status = out.status;
         assert!(
             !status.success(),
-            "a verified solver-state desync must kill the process, got {status:?}"
+            "the operator exit stance must kill the process, got {status:?}"
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             stderr.contains("[SOLVER-STATE] ABORT"),
-            "desync must print the loud grep-able marker to stderr; got: {stderr}"
+            "exit stance must print the loud grep-able marker to stderr; got: {stderr}"
         );
         #[cfg(unix)]
         {
@@ -4534,6 +4655,34 @@ mod tests {
                 "expected the child killed by SIGABRT, got {status:?}"
             );
         }
+    }
+
+    /// ADR-040: the DEFAULT reaction to a verified desync is quarantine + a
+    /// keyed loud event, and the session SURVIVES. Subprocess self-test: the
+    /// child drives the gate over a mocked desynced V2 pool, asserts the pool
+    /// is quarantined solve-invisible, and exits 0 with the grep-able marker.
+    #[test]
+    fn solver_state_desync_default_quarantines_and_survives() {
+        let exe = std::env::current_exe().expect("current test exe");
+        let out = std::process::Command::new(&exe)
+            .arg("solver_state_desync_aborts_self")
+            .arg("--nocapture")
+            .env("DEGENBOT_SELF_ABORT_TEST", "1")
+            .env("DEGENBOT_DESYNC_TEST_STANCE", "quarantine")
+            .output()
+            .expect("spawn desync subprocess");
+        let status = out.status;
+        assert!(
+            status.success(),
+            "the default reaction must QUARANTINE and keep the process up, got {status:?}\nstderr: {}\nstdout: {}",
+            String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("[SOLVER-STATE] QUARANTINE:"),
+            "quarantine reaction must print the grep-able breadcrumb; got: {stderr}"
+        );
     }
 
     /// UO3JM4 child half: no-op unless spawned by
@@ -4615,12 +4764,36 @@ mod tests {
             &reorg_evidence,
         )
         .await;
-        // The reaction (the whole executor-side surface) is trip + exit:
-        // eprintln the loud marker, then abort the process.
-        if let GateVerdict::Divergent(d) = verdict {
-            BlockPump::trip_and_exit(&d);
+        // ADR-040: the reaction is stance-selected by the parent test.
+        let stance = std::env::var("DEGENBOT_DESYNC_TEST_STANCE").unwrap_or_default();
+        match stance.as_str() {
+            "quarantine" => {
+                if let GateVerdict::Divergent(d) = verdict {
+                    // The default matrix reaction: quarantine + loud event.
+                    BlockPump::react_to_desync(&pump.bot, &d, pool_id, 200);
+                    let quarantined = pump.bot.state_arc().read().is_pool_quarantined(pool_id);
+                    assert!(
+                        quarantined,
+                        "the divergent pool must be quarantined (solve-invisible)"
+                    );
+                    #[expect(clippy::print_stderr)] // parent-asserted marker
+                    {
+                        eprintln!("[SOLVER-STATE] QUARANTINE: ADR-040 reaction verified");
+                    }
+                    std::process::exit(0);
+                }
+                unreachable!("the solver-state gate MUST trip on the mismatched reserves (AV42C7)");
+            }
+            "exit" => {
+                crate::failure_policy::install_overrides([("solver_state_desync", "exit")])
+                    .expect("operator exit override installs");
+                if let GateVerdict::Divergent(d) = verdict {
+                    BlockPump::react_to_desync(&pump.bot, &d, pool_id, 200);
+                }
+                unreachable!("the exit stance MUST abort before returning (byte-identical UO3JM4)");
+            }
+            other => unreachable!("unknown DEGENBOT_DESYNC_TEST_STANCE {other:?}"),
         }
-        unreachable!("the solver-state gate MUST abort the process on a verified desync (UO3JM4)");
     }
 
     // -----------------------------------------------------------------
