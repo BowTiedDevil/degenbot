@@ -54,6 +54,22 @@ fn report_pool_state_sizes() {
 // initialized tick per live V3/V4 pool, stored in `HashMap<i32, TickInfo>`.
 // 56 = 16 (U128 gross) + 32 (I256 net — over-wide vs the on-chain int128)
 // + 8 (u64 block).
+// --- PoolEntry pin (2026-09-04, post-KO3SBO boxing) -----------------------
+// Every variant now carries the (identity, state) pair behind a `Box`, so
+// the registry slot is the pointer+tag minimum: 8 + 8. The pre-boxing slot
+// was 512 B (pinned by the largest variant, V4PoolState at 384 B + identity
+// fields), inflating the whole HashMap's cache footprint 32x per entry.
+#[test]
+fn pool_entry_size_pinned() {
+    assert_eq!(
+        size_of::<PoolEntry>(),
+        16,
+        "PoolEntry drift: the slot must stay at the pointer+tag minimum. If a \
+         family was added inline, re-measure the registry cache footprint and \
+         cite the task; the KO3SBO boxing shrank this from 512 B"
+    );
+}
+
 #[test]
 fn tick_info_size_pinned() {
     assert_eq!(

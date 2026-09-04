@@ -61,7 +61,8 @@ impl BotState {
         // `V2PoolState::from_params`).
         let (identity, state) = V2PoolState::from_params(params, self.journal_depth);
 
-        self.pools.insert(pool_id, PoolEntry::V2(identity, state));
+        self.pools
+            .insert(pool_id, PoolEntry::V2(Box::new((identity, state))));
         self.pool_addresses.insert(params.address, pool_id);
 
         Ok(pool_id)
@@ -216,7 +217,7 @@ impl BotState {
         self.next_pool_id += 1;
         let (identity, state) = AerodromeV2PoolState::from_params(params, self.journal_depth);
         self.pools
-            .insert(pool_id, PoolEntry::AerodromeV2(identity, state));
+            .insert(pool_id, PoolEntry::AerodromeV2(Box::new((identity, state))));
         self.pool_addresses.insert(params.address, pool_id);
         pool_id
     }

@@ -125,17 +125,17 @@ impl<'a> Pool<'a> {
     #[must_use]
     pub fn identity(&self) -> Identity {
         match self.entry {
-            PoolEntry::V2(id, _) => Identity::ReservePair {
+            PoolEntry::V2(p) => Identity::ReservePair {
                 variant: ReservePairVariant::UniswapV2,
-                dex: resolve_dex_name(self.chain_id, id.factory),
+                dex: resolve_dex_name(self.chain_id, p.0.factory),
             },
-            PoolEntry::AerodromeV2(id, _) => Identity::ReservePair {
-                variant: ReservePairVariant::AerodromeV2 { stable: id.stable },
-                dex: resolve_dex_name(self.chain_id, id.factory),
+            PoolEntry::AerodromeV2(p) => Identity::ReservePair {
+                variant: ReservePairVariant::AerodromeV2 { stable: p.0.stable },
+                dex: resolve_dex_name(self.chain_id, p.0.factory),
             },
-            PoolEntry::V3(id, _) => Identity::ConcentratedLiquidity {
+            PoolEntry::V3(p) => Identity::ConcentratedLiquidity {
                 variant: ConcentratedLiquidityVariant::UniswapV3,
-                dex: resolve_dex_name(self.chain_id, id.factory),
+                dex: resolve_dex_name(self.chain_id, p.0.factory),
             },
             PoolEntry::V4(..) => Identity::ConcentratedLiquidity {
                 variant: ConcentratedLiquidityVariant::UniswapV4,
@@ -163,8 +163,8 @@ impl<'a> Pool<'a> {
     #[must_use]
     pub fn reserve_pair(&self) -> Option<ReservePairView<'a>> {
         match self.entry {
-            PoolEntry::V2(id, state) => Some(ReservePairView::V2(id, state)),
-            PoolEntry::AerodromeV2(id, state) => Some(ReservePairView::Aerodrome(id, state)),
+            PoolEntry::V2(p) => Some(ReservePairView::V2(&p.0, &p.1)),
+            PoolEntry::AerodromeV2(p) => Some(ReservePairView::Aerodrome(&p.0, &p.1)),
             _ => None,
         }
     }
@@ -172,8 +172,8 @@ impl<'a> Pool<'a> {
     #[must_use]
     pub fn concentrated_liquidity(&self) -> Option<ConcentratedLiquidityView<'a>> {
         match self.entry {
-            PoolEntry::V3(id, state) => Some(ConcentratedLiquidityView::V3(id, state)),
-            PoolEntry::V4(id, state) => Some(ConcentratedLiquidityView::V4(id, state)),
+            PoolEntry::V3(p) => Some(ConcentratedLiquidityView::V3(&p.0, &p.1)),
+            PoolEntry::V4(p) => Some(ConcentratedLiquidityView::V4(&p.0, &p.1)),
             _ => None,
         }
     }
@@ -181,13 +181,9 @@ impl<'a> Pool<'a> {
     #[must_use]
     pub fn balance_vector(&self) -> Option<BalanceVectorView<'a>> {
         match self.entry {
-            PoolEntry::Curve(id, state) => Some(BalanceVectorView::Curve(id, state)),
-            PoolEntry::BalancerWeighted(id, state) => {
-                Some(BalanceVectorView::BalancerWeighted(id, state))
-            }
-            PoolEntry::BalancerStable(id, state) => {
-                Some(BalanceVectorView::BalancerStable(id, state))
-            }
+            PoolEntry::Curve(p) => Some(BalanceVectorView::Curve(&p.0, &p.1)),
+            PoolEntry::BalancerWeighted(p) => Some(BalanceVectorView::BalancerWeighted(&p.0, &p.1)),
+            PoolEntry::BalancerStable(p) => Some(BalanceVectorView::BalancerStable(&p.0, &p.1)),
             _ => None,
         }
     }

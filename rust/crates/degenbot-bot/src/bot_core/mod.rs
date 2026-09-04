@@ -822,8 +822,8 @@ impl BotState {
     #[must_use]
     pub fn get_v3_or_v4_pool(&self, pool_id: u64) -> Option<&dyn ConcentratedLiquidityPool> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::V3(_, state) => Some(state),
-            PoolEntry::V4(_, state) => Some(state),
+            PoolEntry::V3(p) => Some(&p.1),
+            PoolEntry::V4(p) => Some(&p.1),
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
@@ -1066,38 +1066,43 @@ impl BotState {
             return true;
         };
         match entry {
-            PoolEntry::V2(_, state) => state
-                .journal
-                .earliest_block()
-                .is_some_and(|earliest| earliest < block),
+            PoolEntry::V2(p) => {
+                p.1.journal
+                    .earliest_block()
+                    .is_some_and(|earliest| earliest < block)
+            }
             // No genesis anchor — empty journal is the only too-deep case.
-            PoolEntry::V3(_, state) => !state.journal.is_empty(),
-            PoolEntry::V4(_, state) => !state.journal.is_empty(),
+            PoolEntry::V3(p) => !p.1.journal.is_empty(),
+            PoolEntry::V4(p) => !p.1.journal.is_empty(),
             // Curve carries a genesis delta (mirror of V2) — a target at/before
             // the genesis block is too-deep: `earliest < block`.
-            PoolEntry::Curve(_, state) => state
-                .journal
-                .earliest_block()
-                .is_some_and(|earliest| earliest < block),
+            PoolEntry::Curve(p) => {
+                p.1.journal
+                    .earliest_block()
+                    .is_some_and(|earliest| earliest < block)
+            }
             // Balancer weighted carries a genesis delta (mirror of V2/Curve) —
             // ADR-005 slice 12a. Same predicate: `earliest < block`.
-            PoolEntry::BalancerWeighted(_, state) => state
-                .journal
-                .earliest_block()
-                .is_some_and(|earliest| earliest < block),
+            PoolEntry::BalancerWeighted(p) => {
+                p.1.journal
+                    .earliest_block()
+                    .is_some_and(|earliest| earliest < block)
+            }
             // Balancer stable carries a genesis delta (mirror of
             // V2/Curve/BalancerWeighted) — ADR-005 slice 12c. Same predicate:
             // `earliest < block`.
-            PoolEntry::BalancerStable(_, state) => state
-                .journal
-                .earliest_block()
-                .is_some_and(|earliest| earliest < block),
+            PoolEntry::BalancerStable(p) => {
+                p.1.journal
+                    .earliest_block()
+                    .is_some_and(|earliest| earliest < block)
+            }
             // Aerodrome carries a genesis delta (mirror of V2/Curve/Balancer)
             // — ADR-005 Aerodrome slice. Same predicate: `earliest < block`.
-            PoolEntry::AerodromeV2(_, state) => state
-                .journal
-                .earliest_block()
-                .is_some_and(|earliest| earliest < block),
+            PoolEntry::AerodromeV2(p) => {
+                p.1.journal
+                    .earliest_block()
+                    .is_some_and(|earliest| earliest < block)
+            }
         }
     }
 
@@ -1117,9 +1122,8 @@ impl BotState {
     ) -> Option<EncodedCall> {
         let entry = self.pools.get(&pool_id)?;
         match entry {
-            PoolEntry::V2(identity, _) => {
-                let call =
-                    encode_v2_swap(identity.address, zero_for_one, amount_out, recipient).ok()?;
+            PoolEntry::V2(p) => {
+                let call = encode_v2_swap(p.0.address, zero_for_one, amount_out, recipient).ok()?;
                 Some(call)
             }
             // V3 encoding is not yet implemented
@@ -1187,12 +1191,12 @@ impl BotState {
     /// `tick_data_block`. V2/unregistered → `None`.
     pub fn seed_genesis_by_pool_id(&mut self, pool_id: u64, block: u64) -> Option<u64> {
         match self.pools.get_mut(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => {
-                state.seed_genesis(block);
+            Some(PoolEntry::V3(p)) => {
+                p.1.seed_genesis(block);
                 Some(pool_id)
             }
-            Some(PoolEntry::V4(_, state)) => {
-                state.seed_genesis(block);
+            Some(PoolEntry::V4(p)) => {
+                p.1.seed_genesis(block);
                 Some(pool_id)
             }
             _ => None,
@@ -1706,7 +1710,8 @@ mod tests {
         // without touching the tick map (direct poke — the two-stamp mutators
         // keep them in lockstep, which is exactly why this class only arises
         // from a bug / non-CL-advancing path).
-        if let Some(crate::bot_core::PoolEntry::V3(_, state)) = core.pools.get_mut(&pool_id) {
+        if let Some(crate::bot_core::PoolEntry::V3(p)) = core.pools.get_mut(&pool_id) {
+            let state = &mut p.1;
             state.update_block = 200;
         }
         assert_eq!(core.pool_update_block(pool_id), 200, "price clock advanced");
@@ -2321,7 +2326,12 @@ mod tests {
         let pool_id = register_v3(&mut core, 5); // seed block 5, liq 0, tick 0 (Sparse -> Live)
                                                  // Post-seed in-range Mint (tick 0 in [-60,60), block 6 > seed 5):
         core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 123_456_i128, 6);
-        let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
+        let Some(state) = core
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v3)
+            .map(|(_, s)| s)
+        else {
             panic!("pool missing")
         };
         assert_eq!(
@@ -2350,7 +2360,12 @@ mod tests {
         let pool_id = register_v3(&mut core, 5); // seed block 5
                                                  // Pre-seed in-range Mint (block 4 <= seed 5):
         core.buffer_backfill_v3_liquidity_update(make_pool_addr(), -60, 60, 250_000_i128, 4);
-        let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
+        let Some(state) = core
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v3)
+            .map(|(_, s)| s)
+        else {
             panic!("pool missing")
         };
         assert_eq!(
@@ -2407,7 +2422,12 @@ mod tests {
         let landed_update_block;
         let tick_present;
         {
-            let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
+            let Some(state) = core
+                .pools
+                .get(&pool_id)
+                .and_then(PoolEntry::v3)
+                .map(|(_, s)| s)
+            else {
                 panic!("pool missing");
             };
             landed_sqrt = state.sqrt_price_x96;
@@ -2435,7 +2455,12 @@ mod tests {
         );
 
         // The landed-at state must survive unchanged.
-        let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
+        let Some(state) = core
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v3)
+            .map(|(_, s)| s)
+        else {
             panic!("pool missing post-restore");
         };
         assert_eq!(
@@ -5423,7 +5448,8 @@ mod tests {
             "quiet retry merges (fingerprint unchanged since restage)"
         );
         match core.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => {
+            Some(PoolEntry::V3(p)) => {
+                let state = &p.1;
                 let tick = state
                     .tick_data
                     .get(&60)
@@ -5437,7 +5463,7 @@ mod tests {
             _ => panic!("test setup: V3 pool missing"),
         }
         let known: Vec<i32> = match core.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => state.known_bitmap_words().iter().copied().collect(),
+            Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
             _ => panic!("test setup: V3 pool missing"),
         };
         assert!(
@@ -5529,7 +5555,7 @@ mod tests {
         assert!(ok, "a successful fetch must return True");
 
         let tick_data: HashMap<i32, TickInfo> = match core.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => state.tick_data().clone(),
+            Some(PoolEntry::V3(p)) => p.1.tick_data().clone(),
             _ => panic!("test setup: V3 pool missing"),
         };
         assert!(
@@ -5537,7 +5563,7 @@ mod tests {
             "the fetched word's ticks must land in tick_data (core merge reused)"
         );
         let known: Vec<i32> = match core.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => state.known_bitmap_words().iter().copied().collect(),
+            Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
             _ => panic!("test setup: V3 pool missing"),
         };
         assert!(known.contains(&0), "the fetched word must be marked known");
@@ -5586,7 +5612,8 @@ mod tests {
             "a fetch failure must return False (the Python gate RAISES, never applies)"
         );
         let (len, known) = match core.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => {
+            Some(PoolEntry::V3(p)) => {
+                let state = &p.1;
                 (state.tick_data().len(), state.known_bitmap_words().len())
             }
             _ => panic!("test setup: V3 pool missing"),
@@ -5640,7 +5667,7 @@ mod tests {
             "a checked-empty fetch is a success: the word is known (T1 semantics)"
         );
         let known: Vec<i32> = match core.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => state.known_bitmap_words().iter().copied().collect(),
+            Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
             _ => panic!("test setup: V3 pool missing"),
         };
         assert!(known.contains(&3), "checked-empty word 3 must be known");

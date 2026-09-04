@@ -4588,7 +4588,8 @@ mod tests {
         let state = bot.state_arc();
         let core = state.read();
         let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
-        if let Some(crate::bot_core::PoolEntry::V2(_, pool)) = core.pools.get(&pool_id) {
+        if let Some(crate::bot_core::PoolEntry::V2(p)) = core.pools.get(&pool_id) {
+            let pool = &p.1;
             assert_eq!(
                 pool.reserve0.to::<u128>(),
                 2_600,
@@ -4946,7 +4947,8 @@ mod tests {
             let state = bot.state_arc();
             let mut core = state.write();
             let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
-            if let Some(crate::bot_core::PoolEntry::V3(_, pool)) = core.pools.get_mut(&pool_id) {
+            if let Some(crate::bot_core::PoolEntry::V3(p)) = core.pools.get_mut(&pool_id) {
+                let pool = &mut p.1;
                 use alloy::primitives::{I256, U128};
                 pool.tick_data
                     .entry(6)

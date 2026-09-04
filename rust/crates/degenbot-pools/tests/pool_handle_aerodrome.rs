@@ -23,7 +23,7 @@ fn make_aerodrome_v2_pool(reserve0: u128, reserve1: u128, stable: bool) -> PoolE
         update_block: 100,
     };
     let (identity, state) = AerodromeV2PoolState::from_params(&params, 8);
-    PoolEntry::AerodromeV2(identity, state)
+    PoolEntry::AerodromeV2(Box::new((identity, state)))
 }
 
 #[test]

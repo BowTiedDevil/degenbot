@@ -48,7 +48,7 @@ fn make_v3_pool(factory: Address, liquidity: u128) -> PoolEntry {
         init_hash: B256::default(),
     };
     let (identity, state) = V3PoolState::from_params(params, 8);
-    PoolEntry::V3(identity, state)
+    PoolEntry::V3(Box::new((identity, state)))
 }
 
 #[test]

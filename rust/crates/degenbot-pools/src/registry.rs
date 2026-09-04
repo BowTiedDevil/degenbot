@@ -19,13 +19,13 @@ use hashbrown::{HashMap, HashSet};
 /// A single pool's state. Pool-type-specific fields are in the enum variants.
 #[derive(Clone, Debug)]
 pub enum PoolEntry {
-    V2(V2PoolIdentity, V2PoolState),
-    V3(V3PoolIdentity, V3PoolState),
-    V4(V4PoolIdentity, V4PoolState),
-    Curve(CurvePoolIdentity, CurvePoolState),
-    BalancerWeighted(BalancerWeightedPoolIdentity, BalancerWeightedPoolState),
-    BalancerStable(BalancerStablePoolIdentity, BalancerStablePoolState),
-    AerodromeV2(AerodromeV2PoolIdentity, AerodromeV2PoolState),
+    V2(Box<(V2PoolIdentity, V2PoolState)>),
+    V3(Box<(V3PoolIdentity, V3PoolState)>),
+    V4(Box<(V4PoolIdentity, V4PoolState)>),
+    Curve(Box<(CurvePoolIdentity, CurvePoolState)>),
+    BalancerWeighted(Box<(BalancerWeightedPoolIdentity, BalancerWeightedPoolState)>),
+    BalancerStable(Box<(BalancerStablePoolIdentity, BalancerStablePoolState)>),
+    AerodromeV2(Box<(AerodromeV2PoolIdentity, AerodromeV2PoolState)>),
 }
 
 /// Per-variant projection methods for [`PoolEntry`] (ADR-014 D5).
@@ -43,8 +43,8 @@ impl PoolEntry {
     /// V2 `(identity, state)` borrow, or `None` for a different family.
     #[must_use]
     pub fn v2(&self) -> Option<(&V2PoolIdentity, &V2PoolState)> {
-        if let Self::V2(i, s) = self {
-            Some((i, s))
+        if let Self::V2(p) = self {
+            Some((&p.0, &p.1))
         } else {
             None
         }
@@ -52,8 +52,8 @@ impl PoolEntry {
     /// V2 `(identity, state)` mutable borrow, or `None` for a different family.
     #[must_use]
     pub fn v2_mut(&mut self) -> Option<(&mut V2PoolIdentity, &mut V2PoolState)> {
-        if let Self::V2(i, s) = self {
-            Some((i, s))
+        if let Self::V2(p) = self {
+            Some((&mut p.0, &mut p.1))
         } else {
             None
         }
@@ -62,8 +62,8 @@ impl PoolEntry {
     /// V3 `(identity, state)` borrow, or `None` for a different family.
     #[must_use]
     pub fn v3(&self) -> Option<(&V3PoolIdentity, &V3PoolState)> {
-        if let Self::V3(i, s) = self {
-            Some((i, s))
+        if let Self::V3(p) = self {
+            Some((&p.0, &p.1))
         } else {
             None
         }
@@ -71,8 +71,8 @@ impl PoolEntry {
     /// V3 `(identity, state)` mutable borrow, or `None` for a different family.
     #[must_use]
     pub fn v3_mut(&mut self) -> Option<(&mut V3PoolIdentity, &mut V3PoolState)> {
-        if let Self::V3(i, s) = self {
-            Some((i, s))
+        if let Self::V3(p) = self {
+            Some((&mut p.0, &mut p.1))
         } else {
             None
         }
@@ -81,8 +81,8 @@ impl PoolEntry {
     /// V4 `(identity, state)` borrow, or `None` for a different family.
     #[must_use]
     pub fn v4(&self) -> Option<(&V4PoolIdentity, &V4PoolState)> {
-        if let Self::V4(i, s) = self {
-            Some((i, s))
+        if let Self::V4(p) = self {
+            Some((&p.0, &p.1))
         } else {
             None
         }
@@ -90,8 +90,8 @@ impl PoolEntry {
     /// V4 `(identity, state)` mutable borrow, or `None` for a different family.
     #[must_use]
     pub fn v4_mut(&mut self) -> Option<(&mut V4PoolIdentity, &mut V4PoolState)> {
-        if let Self::V4(i, s) = self {
-            Some((i, s))
+        if let Self::V4(p) = self {
+            Some((&mut p.0, &mut p.1))
         } else {
             None
         }
@@ -100,8 +100,8 @@ impl PoolEntry {
     /// Curve `(identity, state)` borrow, or `None` for a different family.
     #[must_use]
     pub fn curve(&self) -> Option<(&CurvePoolIdentity, &CurvePoolState)> {
-        if let Self::Curve(i, s) = self {
-            Some((i, s))
+        if let Self::Curve(p) = self {
+            Some((&p.0, &p.1))
         } else {
             None
         }
@@ -109,8 +109,8 @@ impl PoolEntry {
     /// Curve `(identity, state)` mutable borrow, or `None` for a different family.
     #[must_use]
     pub fn curve_mut(&mut self) -> Option<(&mut CurvePoolIdentity, &mut CurvePoolState)> {
-        if let Self::Curve(i, s) = self {
-            Some((i, s))
+        if let Self::Curve(p) = self {
+            Some((&mut p.0, &mut p.1))
         } else {
             None
         }
@@ -121,8 +121,8 @@ impl PoolEntry {
     pub fn balancer_weighted(
         &self,
     ) -> Option<(&BalancerWeightedPoolIdentity, &BalancerWeightedPoolState)> {
-        if let Self::BalancerWeighted(i, s) = self {
-            Some((i, s))
+        if let Self::BalancerWeighted(p) = self {
+            Some((&p.0, &p.1))
         } else {
             None
         }
@@ -135,8 +135,8 @@ impl PoolEntry {
         &mut BalancerWeightedPoolIdentity,
         &mut BalancerWeightedPoolState,
     )> {
-        if let Self::BalancerWeighted(i, s) = self {
-            Some((i, s))
+        if let Self::BalancerWeighted(p) = self {
+            Some((&mut p.0, &mut p.1))
         } else {
             None
         }
@@ -147,8 +147,8 @@ impl PoolEntry {
     pub fn balancer_stable(
         &self,
     ) -> Option<(&BalancerStablePoolIdentity, &BalancerStablePoolState)> {
-        if let Self::BalancerStable(i, s) = self {
-            Some((i, s))
+        if let Self::BalancerStable(p) = self {
+            Some((&p.0, &p.1))
         } else {
             None
         }
@@ -161,8 +161,8 @@ impl PoolEntry {
         &mut BalancerStablePoolIdentity,
         &mut BalancerStablePoolState,
     )> {
-        if let Self::BalancerStable(i, s) = self {
-            Some((i, s))
+        if let Self::BalancerStable(p) = self {
+            Some((&mut p.0, &mut p.1))
         } else {
             None
         }
@@ -171,8 +171,8 @@ impl PoolEntry {
     /// Aerodrome V2 `(identity, state)` borrow, or `None` for a different family.
     #[must_use]
     pub fn aerodrome_v2(&self) -> Option<(&AerodromeV2PoolIdentity, &AerodromeV2PoolState)> {
-        if let Self::AerodromeV2(i, s) = self {
-            Some((i, s))
+        if let Self::AerodromeV2(p) = self {
+            Some((&p.0, &p.1))
         } else {
             None
         }
@@ -182,8 +182,8 @@ impl PoolEntry {
     pub fn aerodrome_v2_mut(
         &mut self,
     ) -> Option<(&mut AerodromeV2PoolIdentity, &mut AerodromeV2PoolState)> {
-        if let Self::AerodromeV2(i, s) = self {
-            Some((i, s))
+        if let Self::AerodromeV2(p) = self {
+            Some((&mut p.0, &mut p.1))
         } else {
             None
         }
@@ -209,13 +209,13 @@ impl PoolEntry {
     /// tripwire's anchor model.
     pub fn bump_state_nonce(&mut self) {
         match self {
-            PoolEntry::V2(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
-            PoolEntry::V3(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
-            PoolEntry::V4(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
-            PoolEntry::Curve(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
-            PoolEntry::BalancerWeighted(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
-            PoolEntry::BalancerStable(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
-            PoolEntry::AerodromeV2(_, s) => s.state_nonce = s.state_nonce.wrapping_add(1),
+            PoolEntry::V2(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::V3(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::V4(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::Curve(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::BalancerWeighted(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::BalancerStable(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::AerodromeV2(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
         }
     }
 
@@ -231,13 +231,13 @@ impl PoolEntry {
     #[must_use]
     pub fn state_nonce(&self) -> u64 {
         match self {
-            PoolEntry::V2(_, s) => s.state_nonce,
-            PoolEntry::V3(_, s) => s.state_nonce,
-            PoolEntry::V4(_, s) => s.state_nonce,
-            PoolEntry::Curve(_, s) => s.state_nonce,
-            PoolEntry::BalancerWeighted(_, s) => s.state_nonce,
-            PoolEntry::BalancerStable(_, s) => s.state_nonce,
-            PoolEntry::AerodromeV2(_, s) => s.state_nonce,
+            PoolEntry::V2(p) => p.1.state_nonce,
+            PoolEntry::V3(p) => p.1.state_nonce,
+            PoolEntry::V4(p) => p.1.state_nonce,
+            PoolEntry::Curve(p) => p.1.state_nonce,
+            PoolEntry::BalancerWeighted(p) => p.1.state_nonce,
+            PoolEntry::BalancerStable(p) => p.1.state_nonce,
+            PoolEntry::AerodromeV2(p) => p.1.state_nonce,
         }
     }
 
@@ -250,13 +250,13 @@ impl PoolEntry {
     #[must_use]
     pub fn update_block(&self) -> u64 {
         match self {
-            PoolEntry::V2(_, s) => s.update_block,
-            PoolEntry::V3(_, s) => s.update_block,
-            PoolEntry::V4(_, s) => s.update_block,
-            PoolEntry::Curve(_, s) => s.update_block,
-            PoolEntry::BalancerWeighted(_, s) => s.update_block,
-            PoolEntry::BalancerStable(_, s) => s.update_block,
-            PoolEntry::AerodromeV2(_, s) => s.update_block,
+            PoolEntry::V2(p) => p.1.update_block,
+            PoolEntry::V3(p) => p.1.update_block,
+            PoolEntry::V4(p) => p.1.update_block,
+            PoolEntry::Curve(p) => p.1.update_block,
+            PoolEntry::BalancerWeighted(p) => p.1.update_block,
+            PoolEntry::BalancerStable(p) => p.1.update_block,
+            PoolEntry::AerodromeV2(p) => p.1.update_block,
         }
     }
 
@@ -270,15 +270,15 @@ impl PoolEntry {
     #[must_use]
     pub fn tick_data_block(&self) -> u64 {
         match self {
-            PoolEntry::V3(_, s) => s.tick_data_block,
-            PoolEntry::V4(_, s) => s.tick_data_block,
+            PoolEntry::V3(p) => p.1.tick_data_block,
+            PoolEntry::V4(p) => p.1.tick_data_block,
             // No tick-data clock on these families — fall back to the price
             // clock so the accessor is total.
-            PoolEntry::V2(_, s) => s.update_block,
-            PoolEntry::Curve(_, s) => s.update_block,
-            PoolEntry::BalancerWeighted(_, s) => s.update_block,
-            PoolEntry::BalancerStable(_, s) => s.update_block,
-            PoolEntry::AerodromeV2(_, s) => s.update_block,
+            PoolEntry::V2(p) => p.1.update_block,
+            PoolEntry::Curve(p) => p.1.update_block,
+            PoolEntry::BalancerWeighted(p) => p.1.update_block,
+            PoolEntry::BalancerStable(p) => p.1.update_block,
+            PoolEntry::AerodromeV2(p) => p.1.update_block,
         }
     }
 
@@ -290,13 +290,13 @@ impl PoolEntry {
     #[must_use]
     pub fn as_reorg_state(&self) -> Option<&dyn crate::state_history::ReorgPoolState> {
         Some(match self {
-            PoolEntry::V2(_, s) => s,
-            PoolEntry::V3(_, s) => s,
-            PoolEntry::V4(_, s) => s,
-            PoolEntry::Curve(_, s) => s,
-            PoolEntry::BalancerWeighted(_, s) => s,
-            PoolEntry::BalancerStable(_, s) => s,
-            PoolEntry::AerodromeV2(_, s) => s,
+            PoolEntry::V2(p) => &p.1,
+            PoolEntry::V3(p) => &p.1,
+            PoolEntry::V4(p) => &p.1,
+            PoolEntry::Curve(p) => &p.1,
+            PoolEntry::BalancerWeighted(p) => &p.1,
+            PoolEntry::BalancerStable(p) => &p.1,
+            PoolEntry::AerodromeV2(p) => &p.1,
         })
     }
 
@@ -305,13 +305,13 @@ impl PoolEntry {
     #[must_use]
     pub fn as_reorg_state_mut(&mut self) -> Option<&mut dyn crate::state_history::ReorgPoolState> {
         Some(match self {
-            PoolEntry::V2(_, s) => s,
-            PoolEntry::V3(_, s) => s,
-            PoolEntry::V4(_, s) => s,
-            PoolEntry::Curve(_, s) => s,
-            PoolEntry::BalancerWeighted(_, s) => s,
-            PoolEntry::BalancerStable(_, s) => s,
-            PoolEntry::AerodromeV2(_, s) => s,
+            PoolEntry::V2(p) => &mut p.1,
+            PoolEntry::V3(p) => &mut p.1,
+            PoolEntry::V4(p) => &mut p.1,
+            PoolEntry::Curve(p) => &mut p.1,
+            PoolEntry::BalancerWeighted(p) => &mut p.1,
+            PoolEntry::BalancerStable(p) => &mut p.1,
+            PoolEntry::AerodromeV2(p) => &mut p.1,
         })
     }
 
@@ -324,9 +324,9 @@ impl PoolEntry {
     #[must_use]
     pub fn as_balance_vector_mut(&mut self) -> Option<&mut dyn BalanceVectorPoolState> {
         match self {
-            PoolEntry::Curve(_, s) => Some(s),
-            PoolEntry::BalancerWeighted(_, s) => Some(s),
-            PoolEntry::BalancerStable(_, s) => Some(s),
+            PoolEntry::Curve(p) => Some(&mut p.1),
+            PoolEntry::BalancerWeighted(p) => Some(&mut p.1),
+            PoolEntry::BalancerStable(p) => Some(&mut p.1),
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
@@ -342,8 +342,8 @@ impl PoolEntry {
     #[must_use]
     pub fn as_reserve_pair_mut(&mut self) -> Option<&mut dyn ReservePairPoolState> {
         match self {
-            PoolEntry::V2(_, s) => Some(s),
-            PoolEntry::AerodromeV2(_, s) => Some(s),
+            PoolEntry::V2(p) => Some(&mut p.1),
+            PoolEntry::AerodromeV2(p) => Some(&mut p.1),
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
@@ -358,8 +358,8 @@ impl PoolEntry {
 /// shape). Returns `None` for the five non-CL families.
 fn some_cl_mut(entry: &mut PoolEntry) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
     match entry {
-        PoolEntry::V3(_, s) => Some(s),
-        PoolEntry::V4(_, s) => Some(s),
+        PoolEntry::V3(p) => Some(&mut p.1),
+        PoolEntry::V4(p) => Some(&mut p.1),
         PoolEntry::V2(..)
         | PoolEntry::Curve(..)
         | PoolEntry::BalancerWeighted(..)
@@ -1034,7 +1034,7 @@ mod projection_tests {
 
     fn v3_entry() -> PoolEntry {
         let (identity, state) = V3PoolState::from_params(RegisterV3PoolParams::default(), 8);
-        PoolEntry::V3(identity, state)
+        PoolEntry::V3(Box::new((identity, state)))
     }
 
     #[test]

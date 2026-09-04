@@ -54,7 +54,7 @@ fn make_v4_pool(liquidity: u128) -> PoolEntry {
         fetcher: None,
     };
     let (identity, state) = V4PoolState::from_params(params, 8);
-    PoolEntry::V4(identity, state)
+    PoolEntry::V4(Box::new((identity, state)))
 }
 
 #[test]

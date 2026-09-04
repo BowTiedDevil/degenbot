@@ -60,7 +60,8 @@ pub fn simulate_swap(
     amount_in: U256,
 ) -> Result<U256, SimulateSwapError> {
     match entry {
-        PoolEntry::V2(identity, state) => {
+        PoolEntry::V2(p) => {
+            let (identity, state) = (&p.0, &p.1);
             if amount_in.is_zero() {
                 return Ok(U256::ZERO);
             }
@@ -86,7 +87,8 @@ pub fn simulate_swap(
         // V3 concentrated-liquidity math. Exact-input swap: amount_specified
         // > 0 (V3 convention). Output is token1 for zfo, token0 for ofz
         // (matches the V3 Swap callback: zfo pays token0, receives token1).
-        PoolEntry::V3(identity, state) => {
+        PoolEntry::V3(p) => {
+            let (identity, state) = (&p.0, &p.1);
             if amount_in.is_zero() {
                 return Ok(U256::ZERO);
             }
@@ -111,7 +113,8 @@ pub fn simulate_swap(
         // convention: V4 exact-input is `amountSpecified < 0` (negative),
         // opposite to V3. The caller flips so the simulator sees the
         // V4-native sign.
-        PoolEntry::V4(identity, state) => {
+        PoolEntry::V4(p) => {
+            let (identity, state) = (&p.0, &p.1);
             if amount_in.is_zero() {
                 return Ok(U256::ZERO);
             }
@@ -132,7 +135,8 @@ pub fn simulate_swap(
                 outcome.amount0
             })
         }
-        PoolEntry::AerodromeV2(id, state) => {
+        PoolEntry::AerodromeV2(p) => {
+            let (id, state) = (&p.0, &p.1);
             if amount_in.is_zero() {
                 return Ok(U256::ZERO);
             }
@@ -157,10 +161,12 @@ pub fn simulate_swap(
             // via `calc_exact_in_stable_solidly` (decimals carried on identity).
             simulate_aerodrome_stable_swap(id, state, zero_for_one, amount_in)
         }
-        PoolEntry::BalancerWeighted(id, state) => {
+        PoolEntry::BalancerWeighted(p) => {
+            let (id, state) = (&p.0, &p.1);
             simulate_balancer_weighted_swap(id, state, zero_for_one, amount_in)
         }
-        PoolEntry::BalancerStable(id, state) => {
+        PoolEntry::BalancerStable(p) => {
+            let (id, state) = (&p.0, &p.1);
             simulate_balancer_stable_swap(id, state, zero_for_one, amount_in)
         }
         // Curve (11a): the stableswap pure math (`stableswap_get_y`) is ported
@@ -169,7 +175,8 @@ pub fn simulate_swap(
         // split — is non-trivial enough that the Python companion keeps doing
         // its own math via `swap_fn` until the dedicated wiring slice lands. This
         // Rust core path returns the not-yet-Rust-side sentinel.
-        PoolEntry::Curve(id, state) => {
+        PoolEntry::Curve(p) => {
+            let (id, state) = (&p.0, &p.1);
             simulate_curve_stableswap_swap(id, state, zero_for_one, amount_in)
         }
     }

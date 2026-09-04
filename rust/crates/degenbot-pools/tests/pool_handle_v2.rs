@@ -29,7 +29,7 @@ fn make_v2_pool(factory: Address, reserve0: u128, reserve1: u128) -> PoolEntry {
         state_nonce: 0,
         journal: ReorgJournal::<V2BlockDelta>::new(8),
     };
-    PoolEntry::V2(identity, state)
+    PoolEntry::V2(Box::new((identity, state)))
 }
 
 #[test]

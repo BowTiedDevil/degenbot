@@ -121,7 +121,7 @@ fn engine_weighted_out(case: &WeightedCase, zfo: bool, amount_in: U256) -> Optio
         },
         8,
     );
-    let entry = PoolEntry::BalancerWeighted(identity, state);
+    let entry = PoolEntry::BalancerWeighted(Box::new((identity, state)));
     simulate_swap(&entry, zfo, amount_in).ok()
 }
 
@@ -145,7 +145,7 @@ fn engine_stable_out(case: &StableCase, zfo: bool, amount_in: U256) -> Option<U2
         },
         8,
     );
-    let entry = PoolEntry::BalancerStable(identity, state);
+    let entry = PoolEntry::BalancerStable(Box::new((identity, state)));
     simulate_swap(&entry, zfo, amount_in).ok()
 }
 
@@ -347,7 +347,7 @@ fn engine_stable_v2_out(case: &StableCase, zfo: bool, amount_in: U256) -> Option
         },
         8,
     );
-    let entry = PoolEntry::BalancerStable(identity, state);
+    let entry = PoolEntry::BalancerStable(Box::new((identity, state)));
     simulate_swap(&entry, zfo, amount_in).ok()
 }
 

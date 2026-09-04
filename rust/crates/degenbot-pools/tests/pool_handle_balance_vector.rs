@@ -64,7 +64,7 @@ fn make_curve_pool() -> PoolEntry {
         data_provider: None,
     };
     let (identity, state) = CurvePoolState::from_params(params, 8);
-    PoolEntry::Curve(identity, state)
+    PoolEntry::Curve(Box::new((identity, state)))
 }
 
 fn make_balancer_weighted_pool() -> PoolEntry {
@@ -87,7 +87,7 @@ fn make_balancer_weighted_pool() -> PoolEntry {
         update_block: 100,
     };
     let (identity, state) = BalancerWeightedPoolState::from_params(params, 8);
-    PoolEntry::BalancerWeighted(identity, state)
+    PoolEntry::BalancerWeighted(Box::new((identity, state)))
 }
 
 fn make_balancer_stable_pool() -> PoolEntry {
@@ -114,7 +114,7 @@ fn make_balancer_stable_pool() -> PoolEntry {
         rate_provider: None,
     };
     let (identity, state) = BalancerStablePoolState::from_params(params, 8);
-    PoolEntry::BalancerStable(identity, state)
+    PoolEntry::BalancerStable(Box::new((identity, state)))
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn make_standard_curve_pool() -> PoolEntry {
         data_provider: None,
     };
     let (identity, state) = CurvePoolState::from_params(params, 8);
-    PoolEntry::Curve(identity, state)
+    PoolEntry::Curve(Box::new((identity, state)))
 }
 
 /// Curve standard-stableswap output for the equal-balances fixture (A=100,

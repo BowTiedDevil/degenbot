@@ -280,7 +280,8 @@ pub(crate) fn cl_payload(
 /// `(reserve_in, reserve_out)` for a V2 swap direction, widened to U256.
 fn v2_reserves(entry: &PoolEntry, zero_for_one: bool) -> Option<(U256, U256)> {
     match entry {
-        PoolEntry::V2(_, state) => {
+        PoolEntry::V2(p) => {
+            let state = &p.1;
             let r0 = state.reserve0.to::<U256>();
             let r1 = state.reserve1.to::<U256>();
             Some(if zero_for_one { (r0, r1) } else { (r1, r0) })
@@ -511,18 +512,18 @@ impl ComputeMerge for RegisteredClSim<'_> {
             return Err(SimulateSwapError::NotComputable);
         };
         match entry {
-            PoolEntry::V3(identity, st) => v3_simulate_swap(
-                st,
-                identity.fee,
-                identity.tick_spacing,
+            PoolEntry::V3(p) => v3_simulate_swap(
+                &p.1,
+                p.0.fee,
+                p.0.tick_spacing,
                 self.zero_for_one,
                 self.spec,
                 self.limit,
             ),
-            PoolEntry::V4(identity, st) => v4_simulate_swap(
-                st,
-                identity.pool_key.fee,
-                identity.pool_key.tick_spacing,
+            PoolEntry::V4(p) => v4_simulate_swap(
+                &p.1,
+                p.0.pool_key.fee,
+                p.0.pool_key.tick_spacing,
                 self.zero_for_one,
                 self.spec,
                 self.limit,
@@ -546,8 +547,8 @@ impl ComputeMerge for RegisteredClSim<'_> {
         // mutation (avoids the self-referential borrow hazard the legacy
         // loops documented at bot_core/mod.rs:811).
         let fetcher: Option<Arc<dyn TickWordFetcher>> = match self.state.pools.get(&self.pool_id) {
-            Some(PoolEntry::V3(_, st)) => st.fetcher.clone(),
-            Some(PoolEntry::V4(_, st)) => st.fetcher.clone(),
+            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
+            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
         };
         let Some(fetcher) = fetcher else {
@@ -583,7 +584,8 @@ impl BotState {
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..)
             | PoolEntry::AerodromeV2(..) => Some(Vec::new()),
-            PoolEntry::V3(identity, st) => {
+            PoolEntry::V3(p) => {
+                let (identity, st) = (&p.0, &p.1);
                 let mut missing = Vec::new();
                 let mut transient = self.v3_discovery_transient(identity, st);
                 let spec =
@@ -600,7 +602,8 @@ impl BotState {
                 );
                 Some(missing)
             }
-            PoolEntry::V4(identity, st) => {
+            PoolEntry::V4(p) => {
+                let (identity, st) = (&p.0, &p.1);
                 let mut missing = Vec::new();
                 let mut transient = self.v4_discovery_transient(identity, st);
                 let spec =
@@ -695,8 +698,8 @@ impl BotState {
     #[must_use]
     pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordFetcher>> {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, st)) => st.fetcher.clone(),
-            Some(PoolEntry::V4(_, st)) => st.fetcher.clone(),
+            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
+            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
         }
     }
@@ -772,7 +775,8 @@ impl BotState {
         }
         let entry = self.pools.get(&over.pool_id)?;
         match entry {
-            PoolEntry::V3(identity, state) => {
+            PoolEntry::V3(p) => {
+                let (identity, state) = (&p.0, &p.1);
                 let mut missing = Vec::new();
                 let mut transient = TransientCl {
                     family: TransientFamily::V3(identity.fee, identity.tick_spacing),
@@ -815,7 +819,8 @@ impl BotState {
                 );
                 Some(missing)
             }
-            PoolEntry::V4(identity, state) => {
+            PoolEntry::V4(p) => {
+                let (identity, state) = (&p.0, &p.1);
                 let mut missing = Vec::new();
                 let mut transient = TransientCl {
                     family: TransientFamily::V4(
@@ -881,8 +886,8 @@ impl BotState {
         // Clone the stored fetcher off the registered state (the override
         // state is a transient copy — the fetcher itself is shared via Arc).
         let fetcher: Option<Arc<dyn TickWordFetcher>> = match entry {
-            PoolEntry::V3(_, st) => st.fetcher.clone(),
-            PoolEntry::V4(_, st) => st.fetcher.clone(),
+            PoolEntry::V3(p) => p.1.fetcher.clone(),
+            PoolEntry::V4(p) => p.1.fetcher.clone(),
             _ => None,
         };
         let limit = over
@@ -902,7 +907,8 @@ impl BotState {
         // Registered pools passed the hook/dynamic-fee admission gate, so
         // zeroing hook_flags on the transient copy is safe by construction.
         let mut target = match entry {
-            PoolEntry::V3(identity, state) => {
+            PoolEntry::V3(p) => {
+                let (identity, state) = (&p.0, &p.1);
                 let params = RegisterV3PoolParams {
                     address: identity.address,
                     token0: identity.token0,
@@ -927,7 +933,8 @@ impl BotState {
                     inner: TransientInner::V3(Box::new(st)),
                 }
             }
-            PoolEntry::V4(identity, state) => {
+            PoolEntry::V4(p) => {
+                let (identity, state) = (&p.0, &p.1);
                 let params = RegisterV4PoolParams {
                     pool_manager: identity.pool_manager,
                     pool_id: identity.pool_id,
@@ -1050,7 +1057,8 @@ impl BotState {
                 // `constant_product_calc_exact_out` (formerly buried in
                 // `calculate_tokens_in`). Overdraw (amount_out >= reserve_out)
                 // is NotComputable — the legacy ZERO sentinel becomes typed.
-                (true, PoolEntry::V2(identity, _state)) => {
+                (true, PoolEntry::V2(p)) => {
+                    let identity = &p.0;
                     let Some((reserve_in, reserve_out)) = v2_reserves(entry, request.zero_for_one)
                     else {
                         return SwapRead::NotComputable;
@@ -1079,7 +1087,8 @@ impl BotState {
                 // calculate_tokens_in arm); NotComputable as before.
                 (true, _) => SwapRead::NotComputable,
             },
-            PoolEntry::V3(_, v3_state) => {
+            PoolEntry::V3(p) => {
+                let (_, v3_state) = (&p.0, &p.1);
                 let coverage = v3_state.coverage;
                 let family = EngineFamily::V3Engine;
                 let limit = request
@@ -1102,7 +1111,8 @@ impl BotState {
                     Caveats::default(),
                 )
             }
-            PoolEntry::V4(identity, v4_state) => {
+            PoolEntry::V4(p) => {
+                let (identity, v4_state) = (&p.0, &p.1);
                 let coverage = v4_state.coverage;
                 let family = EngineFamily::V4Engine;
                 let hooked =

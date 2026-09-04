@@ -140,7 +140,7 @@ fn engine_curve_out(case: &CurveCase, zfo: bool, amount_in: U256) -> Option<U256
         },
         8,
     );
-    let entry = PoolEntry::Curve(identity, state);
+    let entry = PoolEntry::Curve(Box::new((identity, state)));
     simulate_swap(&entry, zfo, amount_in).ok()
 }
 

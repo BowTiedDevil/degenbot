@@ -143,7 +143,8 @@ impl BotState {
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
         let (identity, state) = V3PoolState::from_params(params, self.journal_depth);
-        self.pools.insert(pool_id, PoolEntry::V3(identity, state));
+        self.pools
+            .insert(pool_id, PoolEntry::V3(Box::new((identity, state))));
         self.pool_addresses.insert(address, pool_id);
 
         Ok(pool_id)
@@ -169,7 +170,12 @@ impl BotState {
             return;
         };
 
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, s)| s)
+        else {
             return;
         };
 
@@ -239,7 +245,7 @@ impl BotState {
             self.pool_addresses
                 .get(pool_address)
                 .and_then(|&id| match self.pools.get(&id) {
-                    Some(PoolEntry::V3(_, s)) => Some(s.registration_lifecycle),
+                    Some(PoolEntry::V3(p)) => Some(p.1.registration_lifecycle),
                     _ => None,
                 });
         PoolPresence::from_lifecycle(lifecycle)
@@ -415,7 +421,12 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
@@ -463,7 +474,12 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
@@ -499,11 +515,11 @@ impl BotState {
             // arm only reads its identity's `tick_spacing` (V3 carries it
             // directly, V4 nests it in `pool_key`) and delegates. The
             // `_ => false` arm is the single non-CL / unregistered no-op.
-            PoolEntry::V3(identity, state) => {
-                state.replace_tick_data(tick_data, update_block, identity.tick_spacing)
+            PoolEntry::V3(p) => {
+                p.1.replace_tick_data(tick_data, update_block, p.0.tick_spacing)
             }
-            PoolEntry::V4(identity, state) => {
-                state.replace_tick_data(tick_data, update_block, identity.pool_key.tick_spacing)
+            PoolEntry::V4(p) => {
+                p.1.replace_tick_data(tick_data, update_block, p.0.pool_key.tick_spacing)
             }
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
@@ -529,12 +545,12 @@ impl BotState {
             return false;
         };
         match entry {
-            PoolEntry::V3(_, state) => {
-                state.mark_bitmap_words_known(words);
+            PoolEntry::V3(p) => {
+                p.1.mark_bitmap_words_known(words);
                 true
             }
-            PoolEntry::V4(_, state) => {
-                state.mark_bitmap_words_known(words);
+            PoolEntry::V4(p) => {
+                p.1.mark_bitmap_words_known(words);
                 true
             }
             PoolEntry::V2(..)
@@ -558,7 +574,12 @@ impl BotState {
         block_number: u64,
     ) {
         if let Some(&key) = self.pool_addresses.get(&pool_address) {
-            if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
+            if let Some(state) = self
+                .pools
+                .get_mut(&key)
+                .and_then(PoolEntry::v3_mut)
+                .map(|(_, s)| s)
+            {
                 // 6N7XVR: a `Quarantined` pool defers ALL live/backfill events
                 // to the buffer so the pin's `update_block` cannot outrun
                 // `last_complete_block`. `Live` pools apply directly (the
@@ -661,7 +682,12 @@ impl BotState {
                     }
                 }
             }
-            if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
+            if let Some(state) = self
+                .pools
+                .get_mut(&key)
+                .and_then(PoolEntry::v3_mut)
+                .map(|(_, s)| s)
+            {
                 let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
                 if dbg && state.update_block < ub_before {
@@ -731,7 +757,12 @@ impl BotState {
                     ),
                 }
             }
-            if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
+            if let Some(state) = self
+                .pools
+                .get_mut(&key)
+                .and_then(PoolEntry::v3_mut)
+                .map(|(_, s)| s)
+            {
                 let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
                 if dbg && state.update_block < ub_before {
@@ -830,7 +861,7 @@ impl BotState {
         self.pools
             .iter()
             .filter_map(|(id, e)| match e {
-                PoolEntry::V3(identity, state) => Some((*id, (*identity, state.clone()))),
+                PoolEntry::V3(p) => Some((*id, (p.0, p.1.clone()))),
                 PoolEntry::V2(..)
                 | PoolEntry::V4(..)
                 | PoolEntry::Curve(..)
@@ -866,7 +897,12 @@ impl BotState {
     #[must_use]
     pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(PoolEntry::V3(_, state)) = self.pools.get(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get(&pool_id)
+            .and_then(PoolEntry::v3)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.snapshot_seed.as_ref()
@@ -879,7 +915,12 @@ impl BotState {
     /// pools or if already taken.
     pub fn take_v3_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.snapshot_seed.take()
@@ -913,7 +954,12 @@ impl BotState {
             let Some(&pool_id) = self.pool_addresses.get(&address) else {
                 return;
             };
-            let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
+            let Some(state) = self
+                .pools
+                .get_mut(&pool_id)
+                .and_then(PoolEntry::v3_mut)
+                .map(|(_, s)| s)
+            else {
                 return;
             };
             if state.coverage == PoolTickCoverage::Tracked {
@@ -1039,7 +1085,12 @@ impl BotState {
         address: Address,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.post_drain_snapshot.take()
@@ -1061,7 +1112,12 @@ impl BotState {
         let Some(&key) = self.pool_addresses.get(&pool_address) else {
             return;
         };
-        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&key)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, s)| s)
+        else {
             return;
         };
         state.sqrt_price_x96 = sqrt_price_x96;
@@ -1084,15 +1140,15 @@ impl BotState {
     /// churn that len alone would miss. `None` = pool gone.
     pub(crate) fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => Some((
-                state.update_block,
-                state.tick_data.len(),
-                state.tick_data.values().map(|t| t.block).sum(),
+            Some(PoolEntry::V3(p)) => Some((
+                p.1.update_block,
+                p.1.tick_data.len(),
+                p.1.tick_data.values().map(|t| t.block).sum(),
             )),
-            Some(PoolEntry::V4(_, state)) => Some((
-                state.update_block,
-                state.tick_data.len(),
-                state.tick_data.values().map(|t| t.block).sum(),
+            Some(PoolEntry::V4(p)) => Some((
+                p.1.update_block,
+                p.1.tick_data.len(),
+                p.1.tick_data.values().map(|t| t.block).sum(),
             )),
             _ => None,
         }
@@ -1112,8 +1168,8 @@ impl BotState {
         retried: bool,
     ) -> Option<StagedWordFetch> {
         let fetcher = match self.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
-            Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
+            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
+            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
         }?;
         // RATR5A Finding-1(b): the fetch context must reflect the CURRENT
@@ -1125,8 +1181,8 @@ impl BotState {
         // later application). First attempt honors the companion context.
         let fetch_context = if retried {
             match self.pools.get(&pool_id).map(|entry| match entry {
-                PoolEntry::V3(_, s) => s.update_block,
-                PoolEntry::V4(_, s) => s.update_block,
+                PoolEntry::V3(p) => p.1.update_block,
+                PoolEntry::V4(p) => p.1.update_block,
                 PoolEntry::AerodromeV2(..)
                 | PoolEntry::Curve(..)
                 | PoolEntry::BalancerWeighted(..)
@@ -1193,8 +1249,8 @@ impl BotState {
         // Clone the stored fetcher off the state first: the fetch call must
         // not hold the pool borrow, and `merge_tick_word` re-borrows `self`.
         let fetcher = match self.pools.get(&pool_id) {
-            Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
-            Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
+            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
+            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
             _ => None,
         };
         let Some(fetcher) = fetcher else {
@@ -1335,7 +1391,8 @@ impl BotState {
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
         let (identity, state) = V4PoolState::from_params(params, self.journal_depth);
-        self.pools.insert(pool_id, PoolEntry::V4(identity, state));
+        self.pools
+            .insert(pool_id, PoolEntry::V4(Box::new((identity, state))));
         self.v4_pool_ids.insert(key, pool_id);
 
         Ok(pool_id)
@@ -1350,7 +1407,7 @@ impl BotState {
             .v4_pool_ids
             .get(key)
             .and_then(|&id| match self.pools.get(&id) {
-                Some(PoolEntry::V4(_, s)) => Some(s.registration_lifecycle),
+                Some(PoolEntry::V4(p)) => Some(p.1.registration_lifecycle),
                 _ => None,
             });
         PoolPresence::from_lifecycle(lifecycle)
@@ -1541,7 +1598,12 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v4_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
@@ -1563,7 +1625,12 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pool_id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v4_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
@@ -1582,7 +1649,12 @@ impl BotState {
     ) {
         let key = (pool_manager, pool_id);
         if let Some(&id) = self.v4_pool_ids.get(&key) {
-            if let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) {
+            if let Some(state) = self
+                .pools
+                .get_mut(&id)
+                .and_then(PoolEntry::v4_mut)
+                .map(|(_, s)| s)
+            {
                 // 6N7XVR: a `Quarantined` pool defers ALL live/backfill events
                 // to the buffer so the pin's `update_block` cannot outrun
                 // `last_complete_block`. `Live` pools apply directly (the
@@ -1638,7 +1710,12 @@ impl BotState {
             return;
         };
         for update in buffered {
-            let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) else {
+            let Some(state) = self
+                .pools
+                .get_mut(&id)
+                .and_then(PoolEntry::v4_mut)
+                .map(|(_, s)| s)
+            else {
                 continue;
             };
             Self::apply_buffered_v4_event(state, update);
@@ -1670,7 +1747,12 @@ impl BotState {
             return;
         };
         for update in buffered {
-            let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) else {
+            let Some(state) = self
+                .pools
+                .get_mut(&id)
+                .and_then(PoolEntry::v4_mut)
+                .map(|(_, s)| s)
+            else {
                 continue;
             };
             Self::apply_buffered_v4_event(state, update);
@@ -1731,7 +1813,7 @@ impl BotState {
     pub fn v3_pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
         let &pool_id = self.pool_addresses.get(&address)?;
         match self.pools.get(&pool_id)? {
-            PoolEntry::V3(_, state) => Some(state.coverage),
+            PoolEntry::V3(p) => Some(p.1.coverage),
             _ => None,
         }
     }
@@ -1748,14 +1830,19 @@ impl BotState {
     ) -> Option<PoolTickCoverage> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
         match self.pools.get(&pid)? {
-            PoolEntry::V4(_, state) => Some(state.coverage),
+            PoolEntry::V4(p) => Some(p.1.coverage),
             _ => None,
         }
     }
 
     pub fn set_v3_pool_quarantined(&mut self, address: Address) {
         if let Some(&id) = self.pool_addresses.get(&address) {
-            if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&id) {
+            if let Some(state) = self
+                .pools
+                .get_mut(&id)
+                .and_then(PoolEntry::v3_mut)
+                .map(|(_, s)| s)
+            {
                 if state.coverage == PoolTickCoverage::Tracked {
                     state.registration_lifecycle = RegistrationLifecycle::Quarantined;
                 }
@@ -1774,7 +1861,12 @@ impl BotState {
     ) {
         let key = (pool_manager, pool_id);
         if let Some(&id) = self.v4_pool_ids.get(&key) {
-            if let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) {
+            if let Some(state) = self
+                .pools
+                .get_mut(&id)
+                .and_then(PoolEntry::v4_mut)
+                .map(|(_, s)| s)
+            {
                 if state.coverage == PoolTickCoverage::Tracked {
                     state.registration_lifecycle = RegistrationLifecycle::Quarantined;
                 }
@@ -1818,12 +1910,22 @@ impl BotState {
                 );
             }
             for event in buffered {
-                if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&id) {
+                if let Some(state) = self
+                    .pools
+                    .get_mut(&id)
+                    .and_then(PoolEntry::v3_mut)
+                    .map(|(_, s)| s)
+                {
                     Self::apply_buffered_v3_event(state, event);
                 }
             }
         }
-        if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&id) {
+        if let Some(state) = self
+            .pools
+            .get_mut(&id)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, s)| s)
+        {
             state.registration_lifecycle = RegistrationLifecycle::Live;
         }
     }
@@ -1862,12 +1964,22 @@ impl BotState {
                 );
             }
             for event in buffered {
-                if let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) {
+                if let Some(state) = self
+                    .pools
+                    .get_mut(&id)
+                    .and_then(PoolEntry::v4_mut)
+                    .map(|(_, s)| s)
+                {
                     Self::apply_buffered_v4_event(state, event);
                 }
             }
         }
-        if let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) {
+        if let Some(state) = self
+            .pools
+            .get_mut(&id)
+            .and_then(PoolEntry::v4_mut)
+            .map(|(_, s)| s)
+        {
             state.registration_lifecycle = RegistrationLifecycle::Live;
         }
     }
@@ -1892,11 +2004,11 @@ impl BotState {
             .pools
             .iter()
             .filter_map(|(&id, e)| match e {
-                PoolEntry::V3(_, s)
-                    if s.registration_lifecycle == RegistrationLifecycle::Quarantined =>
+                PoolEntry::V3(p)
+                    if p.1.registration_lifecycle == RegistrationLifecycle::Quarantined =>
                 {
-                    if let PoolEntry::V3(i, _) = &self.pools[&id] {
-                        Some(i.address)
+                    if let PoolEntry::V3(q) = &self.pools[&id] {
+                        Some(q.0.address)
                     } else {
                         None
                     }
@@ -1908,11 +2020,11 @@ impl BotState {
             .pools
             .iter()
             .filter_map(|(&id, e)| match e {
-                PoolEntry::V4(_, s)
-                    if s.registration_lifecycle == RegistrationLifecycle::Quarantined =>
+                PoolEntry::V4(p)
+                    if p.1.registration_lifecycle == RegistrationLifecycle::Quarantined =>
                 {
-                    if let PoolEntry::V4(i, _) = &self.pools[&id] {
-                        Some((i.pool_manager, i.pool_id))
+                    if let PoolEntry::V4(q) = &self.pools[&id] {
+                        Some((q.0.pool_manager, q.0.pool_id))
                     } else {
                         None
                     }
@@ -2011,7 +2123,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<&HashMap<i32, TickInfo>> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let Some(PoolEntry::V4(_, state)) = self.pools.get(&pid) else {
+        let Some(state) = self.pools.get(&pid).and_then(PoolEntry::v4).map(|(_, s)| s) else {
             return None;
         };
         state.snapshot_seed.as_ref()
@@ -2025,7 +2137,12 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<HashMap<i32, TickInfo>> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pid) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pid)
+            .and_then(PoolEntry::v4_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.snapshot_seed.take()
@@ -2059,7 +2176,12 @@ impl BotState {
             let Some(pid) = self.v4_pool_id_by_key(pool_manager, pool_id) else {
                 return;
             };
-            let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pid) else {
+            let Some(state) = self
+                .pools
+                .get_mut(&pid)
+                .and_then(PoolEntry::v4_mut)
+                .map(|(_, s)| s)
+            else {
                 return;
             };
             if state.coverage == PoolTickCoverage::Tracked {
@@ -2137,7 +2259,12 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&pid) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&pid)
+            .and_then(PoolEntry::v4_mut)
+            .map(|(_, s)| s)
+        else {
             return None;
         };
         state.post_drain_snapshot.take()
@@ -2166,7 +2293,7 @@ impl BotState {
         self.pools
             .iter()
             .filter_map(|(id, e)| match e {
-                PoolEntry::V4(identity, state) => Some((*id, (identity.clone(), state.clone()))),
+                PoolEntry::V4(p) => Some((*id, (p.0.clone(), p.1.clone()))),
                 PoolEntry::V2(..)
                 | PoolEntry::V3(..)
                 | PoolEntry::Curve(..)
@@ -2187,7 +2314,12 @@ impl BotState {
         let Some(&id) = self.v4_pool_ids.get(&(pool_manager, pool_id)) else {
             return;
         };
-        let Some(PoolEntry::V4(_, state)) = self.pools.get_mut(&id) else {
+        let Some(state) = self
+            .pools
+            .get_mut(&id)
+            .and_then(PoolEntry::v4_mut)
+            .map(|(_, s)| s)
+        else {
             return;
         };
         state.sqrt_price_x96 = update.sqrt_price_x96;

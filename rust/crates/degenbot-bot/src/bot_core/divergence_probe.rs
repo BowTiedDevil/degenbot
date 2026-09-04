@@ -196,15 +196,16 @@ impl BotState {
         let mut out = Vec::new();
         for (&address, &pool_id) in &self.pool_addresses {
             match self.pools.get(&pool_id) {
-                Some(PoolEntry::V2(_, state)) => out.push((
+                Some(PoolEntry::V2(p)) => out.push((
                     (address, U256::from(8u64)),
                     TrackedSlotProbe {
                         kind: TrackedSlotKind::V2Reserves,
-                        engine_word: pack_v2_reserves_word(state.reserve0, state.reserve1),
-                        update_block: state.update_block,
+                        engine_word: pack_v2_reserves_word(p.1.reserve0, p.1.reserve1),
+                        update_block: p.1.update_block,
                     },
                 )),
-                Some(PoolEntry::V3(_, state)) => {
+                Some(PoolEntry::V3(p)) => {
+                    let state = &p.1;
                     out.push((
                         (address, U256::ZERO),
                         TrackedSlotProbe {
@@ -235,7 +236,8 @@ impl BotState {
             }
         }
         for ((pm, pool_id_bytes), internal_pool_id) in &self.v4_pool_ids {
-            if let Some(PoolEntry::V4(_, state)) = self.pools.get(internal_pool_id) {
+            if let Some(PoolEntry::V4(p)) = self.pools.get(internal_pool_id) {
+                let state = &p.1;
                 let s_state = derive_v4_pool_state_base(pool_id_bytes);
                 out.push((
                     (*pm, s_state),
@@ -273,7 +275,8 @@ impl BotState {
         // V2/V3 path: address is the pool contract; O(1) address→pool_id.
         if let Some(pool_id) = self.pool_id_by_address(&address) {
             return match self.pools.get(&pool_id)? {
-                PoolEntry::V2(_, state) => {
+                PoolEntry::V2(p) => {
+                    let state = &p.1;
                     // V2 reserves slot = 8.
                     if index == U256::from(8u64) {
                         Some(TrackedSlotProbe {
@@ -285,7 +288,8 @@ impl BotState {
                         None
                     }
                 }
-                PoolEntry::V3(_, state) => {
+                PoolEntry::V3(p) => {
+                    let state = &p.1;
                     // V3 slot0 = 0; liquidity = 4; ticks base = 5.
                     if index.is_zero() {
                         return Some(TrackedSlotProbe {
@@ -332,9 +336,10 @@ impl BotState {
             if *pm != address {
                 continue;
             }
-            let PoolEntry::V4(_identity, state) = self.pools.get(internal_pool_id)? else {
+            let PoolEntry::V4(p) = self.pools.get(internal_pool_id)? else {
                 continue;
             };
+            let state = &p.1;
             let s_state = derive_v4_pool_state_base(pool_id_bytes);
             if index == s_state {
                 return Some(TrackedSlotProbe {

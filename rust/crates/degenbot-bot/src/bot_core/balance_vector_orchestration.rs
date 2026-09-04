@@ -136,7 +136,7 @@ impl BotState {
 
         let (identity, state) = CurvePoolState::from_params(params.clone(), self.journal_depth);
         self.pools
-            .insert(pool_id, PoolEntry::Curve(identity, state));
+            .insert(pool_id, PoolEntry::Curve(Box::new((identity, state))));
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
@@ -454,8 +454,10 @@ impl BotState {
 
         let (identity, state) =
             BalancerWeightedPoolState::from_params(params.clone(), self.journal_depth);
-        self.pools
-            .insert(pool_id, PoolEntry::BalancerWeighted(identity, state));
+        self.pools.insert(
+            pool_id,
+            PoolEntry::BalancerWeighted(Box::new((identity, state))),
+        );
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
@@ -536,8 +538,10 @@ impl BotState {
 
         let (identity, state) =
             BalancerStablePoolState::from_params(params.clone(), self.journal_depth);
-        self.pools
-            .insert(pool_id, PoolEntry::BalancerStable(identity, state));
+        self.pools.insert(
+            pool_id,
+            PoolEntry::BalancerStable(Box::new((identity, state))),
+        );
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
