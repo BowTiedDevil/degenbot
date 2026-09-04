@@ -145,6 +145,11 @@ pub struct PipelineInstruments {
     state_lock_wait: Histogram<f64>,
     /// Epic K4ETHF T2: time a guard was held after acquisition, same labels.
     state_lock_hold: Histogram<f64>,
+    /// Epic FRKBGP close-out: resident set bytes of the bot process (the
+    /// drift-watch signal — tick maps + revm working set grow linearly with
+    /// the registry, and a container OOM-kill presents as an overnight
+    /// availability failure, not a solver symptom).
+    process_rss_bytes: Gauge<f64>,
 }
 
 impl PipelineInstruments {
@@ -392,6 +397,13 @@ impl PipelineInstruments {
                 .with_unit("s")
                 .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Time a guard was held after acquisition (per site, mode)")
+                .build(),
+            process_rss_bytes: meter
+                .f64_gauge("degenbot.process.rss_bytes")
+                .with_unit("By")
+                .with_description(
+                    "Resident set bytes of the bot process (drift-watch, FRKBGP close-out)",
+                )
                 .build(),
         }
     }
@@ -658,6 +670,50 @@ impl PipelineInstruments {
                 KeyValue::new("mode", mode.to_owned()),
             ],
         );
+    }
+
+    /// Epic FRKBGP close-out: current resident set bytes (drift-watch).
+    #[expect(clippy::cast_precision_loss)]
+    pub fn set_process_rss_bytes(&self, bytes: u64) {
+        self.process_rss_bytes.record(bytes as f64, &[]);
+    }
+}
+
+/// Read the process resident set size in bytes from `/proc/self/statm`
+/// (second field: resident pages; page size classically 4096 — the runs
+/// this gauges are Linux x86_64). `None` when statm is unavailable or
+/// unexpected (Windows/CI sandboxes) — callers must no-op on None.
+#[must_use]
+pub(crate) fn read_process_rss_bytes() -> Option<u64> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    parse_statm_resident(&statm, 4096)
+}
+
+/// Pure parser for the statm encoding (testable without /proc).
+#[must_use]
+pub(crate) fn parse_statm_resident(statm: &str, page_bytes: u64) -> Option<u64> {
+    let resident_pages = statm.split_whitespace().nth(1)?;
+    let pages: u64 = resident_pages.parse().ok()?;
+    Some(pages.saturating_mul(page_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_statm_resident;
+
+    #[test]
+    fn statm_parser_reads_resident_pages() {
+        // /proc/self/statm: size resident shared text lib data dt (pages)
+        let rss = parse_statm_resident("54321 21000 1234 100 0 7000 0", 4096)
+            .expect("two-page-statm parses");
+        assert_eq!(rss, 21_000 * 4096);
+    }
+
+    #[test]
+    fn statm_parser_is_none_on_garbage() {
+        assert!(parse_statm_resident("", 4096).is_none());
+        assert!(parse_statm_resident("only", 4096).is_none());
+        assert!(parse_statm_resident("12 abc 3", 4096).is_none());
     }
 }
 

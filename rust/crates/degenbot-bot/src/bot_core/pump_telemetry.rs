@@ -131,6 +131,13 @@ impl PumpTelemetry {
             // state_head_lag goes more negative - not a single-number level.
             p.set_seconds_since_header(self.last_header_at.elapsed().as_secs_f64());
             p.set_seconds_since_apply(self.last_apply_at.elapsed().as_secs_f64());
+            // FRKBGP close-out drift-watch: RSS creeps linearly with the
+            // registry (tick maps + revm working set) and a container
+            // OOM-kill presents as an overnight availability failure, not a
+            // solver symptom - sample it on the same periodic heartbeat.
+            if let Some(bytes) = crate::instruments::read_process_rss_bytes() {
+                p.set_process_rss_bytes(bytes);
+            }
         }
         let last_header_secs = self.last_header_at.elapsed().as_secs();
         tracing::info!(

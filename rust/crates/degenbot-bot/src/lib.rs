@@ -87,6 +87,8 @@ pub mod instruments {
         pub fn observe_state_lock_wait(&self, _site: &str, _mode: &str, _secs: f64) {}
         /// no-op (K4ETHF T2)
         pub fn observe_state_lock_hold(&self, _site: &str, _mode: &str, _secs: f64) {}
+        /// no-op (FRKBGP)
+        pub fn set_process_rss_bytes(&self, _bytes: u64) {}
         /// no-op
         pub fn set_drain_queue_depth(&self, _depth: u64) {}
         /// no-op
