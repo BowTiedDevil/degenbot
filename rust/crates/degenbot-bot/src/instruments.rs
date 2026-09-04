@@ -149,6 +149,13 @@ pub struct PipelineInstruments {
     /// drift-watch signal — tick maps + revm working set grow linearly with
     /// the registry, and a container OOM-kill presents as an overnight
     /// availability failure, not a solver symptom).
+    ///
+    /// PROMETHEUS NAME COUPLING (pair-review flag, 2026-09-04): the OTel
+    /// name-mapping renders this gauge (dots->underscores + `By` unit
+    /// suffix) as `degenbot_process_rss_bytes`, and the Grafana panel
+    /// "Process RSS - registry drift watch" queries that string verbatim —
+    /// the match is by convention, not checked. If you rename here or drop
+    /// the unit attribute, update the panel expression in the same commit.
     process_rss_bytes: Gauge<f64>,
 }
 
