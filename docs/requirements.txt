@@ -2,3 +2,4 @@ sphinx>=8.1
 myst-parser>=4.0
 furo>=2024.8.6
 sphinx-copybutton>=0.5.2
+sphinx-autoapi>=3.6

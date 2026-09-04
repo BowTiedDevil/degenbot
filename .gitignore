@@ -221,3 +221,6 @@ tests/fixtures/heavy_cl_solve_captures.jsonl
 
 # runtime capture/diagnostic output; too large (100s of MB) for git hosting
 logs/
+
+# sphinx-autoapi generated source (recreated each build; autoapi_keep_files=False)
+docs/autoapi/

@@ -37,6 +37,8 @@ Start with {doc}`getting-started` — or open {doc}`adr/index` if you want the d
 :hidden:
 
 getting-started
+api
+autoapi/degenbot/index
 ```
 
 ```{toctree}
