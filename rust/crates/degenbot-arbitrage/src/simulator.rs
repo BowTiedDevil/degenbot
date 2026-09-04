@@ -62,6 +62,7 @@ use crate::calldata::{
     encode_balance_of_calldata, encode_erc6909_balance_of_calldata,
     encode_get_eth_balance_calldata, wrap_execute_calldata,
 };
+use crate::dispatch::SolveStep;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Constants (ports the Python oracle's module-level literals)
@@ -824,17 +825,14 @@ pub struct SimulatePath {
     pub path_id: u64,
     /// The arb's optimal input (`optimal_input`).
     pub optimal_input: u128,
-    /// The per-hop solver outputs (`hop_outputs`).
-    pub hop_outputs: Vec<u128>,
-    /// The per-hop executable inputs fed into each pool (the solver's
-    /// CL-hop clamp) — the clamped forward used by `encode_cmd_stream`.
-    pub consumed_inputs: Vec<u128>,
+    /// Per-hop rows (output / executable input / solve-time nonce) — one
+    /// allocation instead of the former three parallel `Vec`s (HTPKLX
+    /// 4JLQNS).
+    pub steps: Box<[SolveStep]>,
     /// The path info (the ordered hops — consumed by `encode_cmd_stream`).
     pub path_info: PathInfo,
     /// The block the solver produced the result on.
     pub solve_block: u64,
-    /// Per-hop state nonces captured at solve time (AV42C7 staleness gate).
-    pub state_nonces: Vec<u64>,
     /// The encode options (the `erc6909_profit` / `use_v4_batch` knobs the
     /// Python seam exposes).
     pub opts: EncodeOptions,
@@ -847,16 +845,35 @@ impl SimulatePath {
         self.path_info.hops.len()
     }
 
+    /// The solver's per-hop expected outputs as a flat `Vec` for the
+    /// failure-telemetry intake (`FailBuckets::record` takes `Vec<u128>`); a
+    /// failure-path-only view of the merged rows.
+    #[must_use]
+    pub fn expected_outputs_vec(&self) -> Vec<u128> {
+        self.steps.iter().map(|s| s.output).collect()
+    }
+
     /// The ADR-033 encode intake for this path — the strategy's per-path
     /// projection that owns the amount-triple invariants (the CL overfeed
-    /// clamp lands on `consumed_inputs` before this point).
+    /// clamp lands on `consumed_inputs` before this point). The encoder keeps
+    /// its two-slice intake (the plan-path clamp rewrites consumed values),
+    /// so this cold-path projection materializes the two views from the
+    /// merged rows.
     #[must_use]
     pub fn encode_request(&self) -> EncodeRequest {
+        let (hop_outputs, consumed_inputs) =
+            self.steps
+                .iter()
+                .fold((Vec::new(), Vec::new()), |mut acc, s| {
+                    acc.0.push(s.output);
+                    acc.1.push(s.consumed_input);
+                    acc
+                });
         EncodeRequest::new(
             self.path_info.clone(),
             self.optimal_input,
-            self.hop_outputs.clone(),
-            self.consumed_inputs.clone(),
+            hop_outputs,
+            consumed_inputs,
             self.opts,
         )
     }
@@ -1046,9 +1063,7 @@ where
     // C3 — int128 check (mirrors the oracle's guard). The amount fed into each
     // V4 hop is `consumed_inputs[i]` (the CL-hop clamp's executable forward),
     // so the guard checks the clamped input, not hop_outputs[i-1].
-    if path.hop_outputs.len() != path.path_info.hops.len()
-        || path.consumed_inputs.len() != path.path_info.hops.len()
-    {
+    if path.steps.len() != path.path_info.hops.len() {
         return Ok(None);
     }
     for (i, hop) in path.path_info.hops.iter().enumerate() {
@@ -1056,9 +1071,9 @@ where
             let amount_specified = if i == 0 {
                 path.optimal_input
             } else {
-                path.consumed_inputs[i]
+                path.steps[i].consumed_input
             };
-            let output_amount = path.hop_outputs[i];
+            let output_amount = path.steps[i].output;
             if !fits_int128(amount_specified) || !fits_int128(output_amount) {
                 fail_buckets.record(
                     path.path_id,
@@ -1066,7 +1081,7 @@ where
                     None,
                     alloy::primitives::Bytes::new(),
                     path.optimal_input,
-                    path.hop_outputs.clone(),
+                    path.expected_outputs_vec(),
                 );
                 return Ok(None);
             }
@@ -1102,7 +1117,7 @@ where
             None,
             alloy::primitives::Bytes::new(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
         );
         return Ok(None);
     };
@@ -1200,7 +1215,7 @@ where
                 Some(idx),
                 alloy::primitives::Bytes::new(),
                 path.optimal_input,
-                path.hop_outputs.clone(),
+                path.expected_outputs_vec(),
             );
             return Ok(None);
         };
@@ -1237,7 +1252,7 @@ where
             path.path_id,
             &reverted_swaps,
             &path.path_info.hops,
-            &path.hop_outputs,
+            path.expected_outputs_vec().as_slice(),
         );
         let revert_data = results[fail_idx]
             .output()
@@ -1312,7 +1327,7 @@ where
                 },
                 captured_swaps.clone(),
                 path.optimal_input,
-                path.hop_outputs.clone(),
+                path.expected_outputs_vec(),
             );
         } else {
             fail_buckets.record(
@@ -1321,7 +1336,7 @@ where
                 Some(fail_idx),
                 revert_data,
                 path.optimal_input,
-                path.hop_outputs.clone(),
+                path.expected_outputs_vec(),
             );
         }
         return Ok(None);
@@ -1337,7 +1352,7 @@ where
             Some(0),
             alloy::primitives::Bytes::new(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
         );
         return Ok(None);
     };
@@ -1348,7 +1363,7 @@ where
             Some(1),
             alloy::primitives::Bytes::new(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
         );
         return Ok(None);
     };
@@ -1359,7 +1374,7 @@ where
             Some(2),
             alloy::primitives::Bytes::new(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
         );
         return Ok(None);
     };
@@ -1370,7 +1385,7 @@ where
             Some(4),
             alloy::primitives::Bytes::new(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
         );
         return Ok(None);
     };
@@ -1381,7 +1396,7 @@ where
             Some(5),
             alloy::primitives::Bytes::new(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
         );
         return Ok(None);
     };
@@ -1392,7 +1407,7 @@ where
             Some(6),
             alloy::primitives::Bytes::new(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
         );
         return Ok(None);
     };
@@ -1440,7 +1455,7 @@ where
             reverted_swaps.clone(),
             swap_events_handle.log_full_count(),
             path.optimal_input,
-            path.hop_outputs.clone(),
+            path.expected_outputs_vec(),
             call_trace,
             u128::try_from(weth_before).unwrap_or_default(),
             u128::try_from(weth_after).unwrap_or_default(),
@@ -2151,8 +2166,18 @@ mod tests {
         SimulatePath {
             path_id,
             optimal_input: 1_000_000_000_000_000_000u128,
-            hop_outputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
-            consumed_inputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
+            steps: Box::new([
+                SolveStep {
+                    output: 1_100_000_000_000_000_000u128,
+                    consumed_input: 1_100_000_000_000_000_000u128,
+                    state_nonce: 0,
+                },
+                SolveStep {
+                    output: 1_210_000_000_000_000_000u128,
+                    consumed_input: 1_210_000_000_000_000_000u128,
+                    state_nonce: 0,
+                },
+            ]),
             path_info: PathInfo::new(vec![
                 HopInfo::V2(V2HopInfo {
                     pool_address: address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
@@ -2175,7 +2200,6 @@ mod tests {
                 use_v4_batch: false,
                 ..Default::default()
             },
-            state_nonces: vec![],
         }
     }
 
@@ -2798,17 +2822,24 @@ mod tests {
             path_id: 5000,
             optimal_input: 1_000_000_000_000_000_000u128,
             // V2 out = 2e9, V4 out = 2_001e15, V3 out = 2_001e6.
-            hop_outputs: vec![
-                2_000_000_000u128,
-                2_001_000_000_000_000_000u128,
-                2_001_000_000u128,
-            ],
             // The CL clamp: V4 (idx 1) swap-in is ONE BELOW its forward.
-            consumed_inputs: vec![
-                1_000_000_000_000_000_000u128,
-                1_999_999_999u128,
-                2_001_000_000u128,
-            ],
+            steps: Box::new([
+                SolveStep {
+                    output: 2_000_000_000u128,
+                    consumed_input: 1_000_000_000_000_000_000u128,
+                    state_nonce: 0,
+                },
+                SolveStep {
+                    output: 2_001_000_000_000_000_000u128,
+                    consumed_input: 1_999_999_999u128,
+                    state_nonce: 0,
+                },
+                SolveStep {
+                    output: 2_001_000_000u128,
+                    consumed_input: 2_001_000_000u128,
+                    state_nonce: 0,
+                },
+            ]),
             path_info: PathInfo::new(vec![
                 HopInfo::V2(V2HopInfo {
                     pool_address: address!("1111111111111111111111111111111111111111"),
@@ -2838,7 +2869,6 @@ mod tests {
                 }),
             ]),
             solve_block: 22_562_100,
-            state_nonces: vec![],
             opts: EncodeOptions {
                 erc6909_profit: false,
                 use_v4_batch: false,

@@ -201,6 +201,22 @@ pub fn filter_thin_margin_results(
 /// the `PathInfo` from `engine_registry.paths.get(path_id)`; this leaf takes
 /// it pre-resolved (the registry lookup is the caller's concern — the
 /// `degenbot` umbrella's `Bot` owns the engine registry).
+/// One per-hop row of a candidate (Cloudflare fewer-lists pattern — HTPKLX
+/// 4JLQNS continuation): the solver's output, the executable input, and the
+/// solve-time state nonce, contiguous per hop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SolveStep {
+    /// The solver's output after this hop (the former `hop_outputs[i]`).
+    pub output: u128,
+    /// The executable input fed into this hop's pool (the solver's CL-hop
+    /// clamp) — the former `consumed_inputs[i]`. For V3/V4 hops this may be
+    /// less than `output` of the prior hop when the range boundary is hit;
+    /// the encoder must feed the clamped forward, not the full prior output.
+    pub consumed_input: u128,
+    /// Per-hop state nonce captured at solve time (AV42C7 staleness gate).
+    pub state_nonce: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct DispatchCandidate {
     /// `path_id` — the unique arb path identifier.
@@ -211,20 +227,11 @@ pub struct DispatchCandidate {
     /// and the thin-margin filter; NOT the on-chain gross — that's
     /// [`SimResult::gross_profit`]).
     pub engine_profit: u128,
-    /// `hop_outputs` — the per-hop solver outputs.
-    pub hop_outputs: Vec<u128>,
-    /// `consumed_inputs` — the per-hop executable inputs fed into each pool
-    /// (the solver's CL-hop clamp). For V3/V4 hops this may be less than
-    /// `hop_outputs[i-1]` when the range boundary is hit; the encoder must
-    /// feed the clamped forward, not the full prior output.
-    pub consumed_inputs: Vec<u128>,
+    /// Per-hop rows (one allocation instead of the former three parallel
+    /// `Vec`s).
+    pub steps: Box<[SolveStep]>,
     /// `solve_block` — the block the solver produced the result on.
     pub solve_block: u64,
-    /// Per-hop state nonces captured at solve time (AV42C7 staleness gate).
-    /// The dispatch seam re-reads each hop's current nonce from `BotState`
-    /// and skips candidates whose nonce has advanced — the solver computed
-    /// against state the pump has since superseded.
-    pub state_nonces: Vec<u64>,
     /// `path_info` — the resolved path hops (consumed by `encode_cmd_stream`).
     pub path_info: PathInfo,
     /// `opts` — the encode options (`erc6909_profit` / `use_v4_batch`).
@@ -232,17 +239,23 @@ pub struct DispatchCandidate {
 }
 
 impl DispatchCandidate {
+    /// The solver's per-hop expected outputs as a flat `Vec` for the
+    /// failure-telemetry intake (`FailBuckets::record` takes `Vec<u128>`);
+    /// a failure-path-only view of the merged rows.
+    #[must_use]
+    pub fn expected_outputs_vec(&self) -> Vec<u128> {
+        self.steps.iter().map(|s| s.output).collect()
+    }
+
     /// Build the [`SimulatePath`] the fan-out hands to [`simulate_path_on_evm`].
     #[must_use]
     fn to_simulate_path(&self) -> SimulatePath {
         SimulatePath {
             path_id: self.path_id,
             optimal_input: self.optimal_input,
-            hop_outputs: self.hop_outputs.clone(),
-            consumed_inputs: self.consumed_inputs.clone(),
+            steps: self.steps.clone(),
             path_info: self.path_info.clone(),
             solve_block: self.solve_block,
-            state_nonces: self.state_nonces.clone(),
             opts: self.opts,
         }
     }
@@ -715,7 +728,7 @@ pub fn dispatch_profitable_results(
                             None,
                             alloy::primitives::Bytes::new(),
                             c.optimal_input,
-                            c.hop_outputs.clone(),
+                            c.expected_outputs_vec(),
                         );
                         (c.path_id, buckets, Ok(None))
                     })
@@ -907,9 +920,10 @@ pub fn dispatch_profitable_results(
 fn candidate_is_stale(core: &BotState, candidate: &DispatchCandidate) -> bool {
     use degenbot_executor::composers::HopInfo;
     for (i, hop) in candidate.path_info.hops.iter().enumerate() {
-        let Some(&snapshot_nonce) = candidate.state_nonces.get(i) else {
+        let Some(step) = candidate.steps.get(i) else {
             return false; // Mismatched lengths — let the sim path handle it.
         };
+        let snapshot_nonce = step.state_nonce;
         let current_nonce = match hop {
             HopInfo::V2(h) => core
                 .pool_id_by_address(&h.pool_address)
@@ -1026,8 +1040,11 @@ mod tests {
             path_id,
             optimal_input: 1_000_000_000_000_000_000u128,
             engine_profit: 1_000,
-            hop_outputs: vec![1_100_000_000_000_000_000u128],
-            consumed_inputs: vec![1_100_000_000_000_000_000u128],
+            steps: Box::new([SolveStep {
+                output: 1_100_000_000_000_000_000u128,
+                consumed_input: 1_100_000_000_000_000_000u128,
+                state_nonce: 0,
+            }]),
             solve_block: 100,
             path_info: single_v2_hop(pool),
             opts: EncodeOptions {
@@ -1035,7 +1052,6 @@ mod tests {
                 use_v4_batch: false,
                 ..Default::default()
             },
-            state_nonces: vec![],
         }
     }
 
@@ -1044,8 +1060,18 @@ mod tests {
             path_id,
             optimal_input: opt_input,
             engine_profit: profit,
-            hop_outputs: vec![opt_input * 11 / 10, opt_input * 121 / 100],
-            consumed_inputs: vec![opt_input, opt_input * 11 / 10],
+            steps: Box::new([
+                SolveStep {
+                    output: opt_input * 11 / 10,
+                    consumed_input: opt_input,
+                    state_nonce: 0,
+                },
+                SolveStep {
+                    output: opt_input * 121 / 100,
+                    consumed_input: opt_input * 11 / 10,
+                    state_nonce: 0,
+                },
+            ]),
             solve_block: 100,
             path_info: two_v2_hops(),
             opts: EncodeOptions {
@@ -1053,7 +1079,6 @@ mod tests {
                 use_v4_batch: false,
                 ..Default::default()
             },
-            state_nonces: vec![],
         }
     }
 
@@ -1095,15 +1120,24 @@ mod tests {
             path_id: 42,
             optimal_input: 1_000_000_000_000_000_000u128,
             engine_profit: 1_000,
-            hop_outputs: vec![1_100_000_000_000_000_000u128, 1_300_000_000_000_000_000u128],
-            consumed_inputs: vec![1_000_000_000_000_000_000u128, 1_100_000_000_000_000_000u128],
+            steps: Box::new([
+                SolveStep {
+                    output: 1_100_000_000_000_000_000u128,
+                    consumed_input: 1_000_000_000_000_000_000u128,
+                    state_nonce: 0,
+                },
+                SolveStep {
+                    output: 1_300_000_000_000_000_000u128,
+                    consumed_input: 1_100_000_000_000_000_000u128,
+                    state_nonce: 0,
+                },
+            ]),
             solve_block: 100,
             path_info: two_v2_hops(),
             opts: EncodeOptions {
                 erc6909_profit: true,
                 ..Default::default()
             },
-            state_nonces: vec![],
         };
         let path = cand.to_simulate_path();
         // kwarg → SimulatePath.opts (unchanged across the ADR-033 reshape):
@@ -1502,8 +1536,7 @@ mod tests {
             path_id: id,
             optimal_input: 0,
             engine_profit: profit,
-            hop_outputs: vec![],
-            consumed_inputs: vec![],
+            steps: Box::new([]),
             solve_block: 100,
             path_info: path.clone(),
             opts: EncodeOptions {
@@ -1511,7 +1544,6 @@ mod tests {
                 use_v4_batch: false,
                 ..Default::default()
             },
-            state_nonces: vec![],
         };
         // Deliberately passed in a non-sorted order, with a profit tie (100).
         let mut cands = vec![mk(10, 100), mk(5, 500), mk(9, 100), mk(20, 300)];

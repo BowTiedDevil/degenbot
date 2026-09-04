@@ -28,7 +28,7 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
+    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
 };
 use degenbot::bot_core::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
@@ -604,8 +604,18 @@ fn in_process_sim_standalone_slice() {
     let path = SimulatePath {
         path_id: 42,
         optimal_input: 1_000_000_000_000_000_000u128,
-        hop_outputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
-        consumed_inputs: vec![1_100_000_000_000_000_000u128, 1_210_000_000_000_000_000u128],
+        steps: Box::new([
+            SolveStep {
+                output: 1_100_000_000_000_000_000u128,
+                consumed_input: 1_100_000_000_000_000_000u128,
+                state_nonce: 0,
+            },
+            SolveStep {
+                output: 1_210_000_000_000_000_000u128,
+                consumed_input: 1_210_000_000_000_000_000u128,
+                state_nonce: 0,
+            },
+        ]),
         path_info: PathInfo::new(vec![
             HopInfo::V2(V2HopInfo {
                 pool_address: POOL_B,
@@ -628,7 +638,6 @@ fn in_process_sim_standalone_slice() {
             use_v4_batch: false,
             ..Default::default()
         },
-        state_nonces: vec![],
     };
     let mut buckets = FailBuckets::new();
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets)

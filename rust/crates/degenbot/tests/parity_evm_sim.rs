@@ -53,7 +53,7 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
+    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
 };
 use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot::cmd_executor::compute_simulation_warmup_slots;
@@ -200,8 +200,18 @@ fn evm_sim_success_path_dual_driver_parity() {
     let path = SimulatePath {
         path_id: fx.fixture.path_id,
         optimal_input: SMOKE_OPTIMAL_INPUT,
-        hop_outputs: vec![SMOKE_HOP_OUT_0, SMOKE_HOP_OUT_1],
-        consumed_inputs: vec![SMOKE_HOP_OUT_0, SMOKE_HOP_OUT_1],
+        steps: Box::new([
+            SolveStep {
+                output: SMOKE_HOP_OUT_0,
+                consumed_input: SMOKE_HOP_OUT_0,
+                state_nonce: 0,
+            },
+            SolveStep {
+                output: SMOKE_HOP_OUT_1,
+                consumed_input: SMOKE_HOP_OUT_1,
+                state_nonce: 0,
+            },
+        ]),
         path_info: PathInfo::new(vec![
             HopInfo::V2(V2HopInfo {
                 pool_address: SMOKE_POOL_B,
@@ -224,7 +234,6 @@ fn evm_sim_success_path_dual_driver_parity() {
             use_v4_batch: false,
             ..Default::default()
         },
-        state_nonces: vec![],
     };
 
     let mut buckets = FailBuckets::new();

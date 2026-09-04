@@ -45,7 +45,7 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
 use degenbot::arbitrage::{
-    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath,
+    simulate_in_process_with_db, FailBuckets, SimulateContext, SimulatePath, SolveStep,
 };
 use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopInfo};
 use degenbot::cmd_executor::{compute_simulation_warmup_slots, WarmupSlots};
@@ -150,8 +150,18 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
     SimulatePath {
         path_id,
         optimal_input: SMOKE_OPTIMAL_INPUT,
-        hop_outputs: vec![SMOKE_HOP_OUT_0, SMOKE_HOP_OUT_1],
-        consumed_inputs: vec![SMOKE_HOP_OUT_0, SMOKE_HOP_OUT_1],
+        steps: Box::new([
+            SolveStep {
+                output: SMOKE_HOP_OUT_0,
+                consumed_input: SMOKE_HOP_OUT_0,
+                state_nonce: 0,
+            },
+            SolveStep {
+                output: SMOKE_HOP_OUT_1,
+                consumed_input: SMOKE_HOP_OUT_1,
+                state_nonce: 0,
+            },
+        ]),
         path_info: PathInfo::new(vec![
             HopInfo::V2(V2HopInfo {
                 pool_address: SMOKE_POOL_B,
@@ -174,7 +184,6 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
             use_v4_batch: false,
             ..Default::default()
         },
-        state_nonces: vec![],
     }
 }
 

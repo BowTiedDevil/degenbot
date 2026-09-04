@@ -71,7 +71,7 @@ pub use calldata::{
 pub use degenbot_rpc::BlockPriorityFees;
 pub use dispatch::{
     dispatch_profitable_results, filter_thin_margin_results, DispatchCandidate, DispatchOutcome,
-    BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
+    SolveStep, BPS_DENOM, MAX_SIMULATE_CONCURRENT, MIN_PROFIT_NET,
 };
 pub use fot_registry::{
     fot_suspected_token, fot_suspected_token_from_reverting_frame,

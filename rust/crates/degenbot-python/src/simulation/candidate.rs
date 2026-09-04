@@ -128,15 +128,30 @@ impl PyDispatchCandidate {
             use_v4_batch,
             ..Default::default()
         };
+        // Merged per-hop rows (HTPKLX 4JLQNS continuation): the Python seam
+        // keeps its three-list API (adapted accessors, per the epic guardrail);
+        // the core candidate stores one row per hop.
+        let steps: Vec<degenbot_arbitrage::SolveStep> = hop_outputs
+            .into_iter()
+            .zip(consumed_inputs)
+            .scan(
+                state_nonces.into_iter(),
+                |nonces, (output, consumed_input)| {
+                    Some(degenbot_arbitrage::SolveStep {
+                        output,
+                        consumed_input,
+                        state_nonce: nonces.next().unwrap_or(0),
+                    })
+                },
+            )
+            .collect();
         Ok(Self {
             inner: DispatchCandidate {
                 path_id,
                 optimal_input,
                 engine_profit,
-                hop_outputs,
-                consumed_inputs,
+                steps: steps.into(),
                 solve_block,
-                state_nonces,
                 path_info: rust_path,
                 opts,
             },

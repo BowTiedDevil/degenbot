@@ -314,11 +314,10 @@ mod tests {
         ];
         let result = int_simulate_path(U256::ZERO, &hops).unwrap();
         assert!(result.final_output.is_zero());
-        // Per-hop rows stay aligned with the path even in the zero case: the
-        // zero-input early-out zeroes the outputs of the hops it skipped
-        // (their `consumed_input` is the (zero) input they received).
-        assert_eq!(result.steps.len(), 2);
-        assert!(result.steps.iter().all(|s| s.output.is_zero()));
+        // Merged rows preserve the original partial-hop semantics: zero
+        // input at the first hop yields no rows (the zero-input early-out
+        // returns only the hops completed so far).
+        assert!(result.steps.is_empty());
     }
 
     #[test]
@@ -328,14 +327,17 @@ mod tests {
             IntHopState::new(u256(2_000_000), u256(1_000_000), 997, 1000),
         ];
         let result = int_simulate_path(u256(1000), &hops).unwrap();
-        // Two hops, both consume full input.
+        // Per-hop consumed input is the amount actually fed into that hop
+        // (hop 0: the flash input 1000; hop 1: hop 0's output 1992). The
+        // pre-merge array was `vec![x; n]` — a constant of the flash input —
+        // which no consumer read; the merged row records the honest value.
         assert_eq!(
             result
                 .steps
                 .iter()
                 .map(|s| s.consumed_input)
                 .collect::<Vec<_>>(),
-            vec![u256(1000), u256(1000)]
+            vec![u256(1000), u256(1992)]
         );
         assert_eq!(result.steps.len(), 2);
         assert_eq!(
