@@ -741,15 +741,18 @@ impl PyLiquidityPool {
             )
         })?;
         let result = self.with_state_mut(py, |core| {
-            core.swap_simulation(
+            match core.swap_simulation_disarmed(
                 0,
                 self.pool_id,
-                degenbot_bot::bot_core::swap_simulation::SwapRequest {
+                &degenbot_bot::bot_core::swap_simulation::SwapRequest {
                     zero_for_one,
                     amount_specified,
                     sqrt_price_limit: None,
                 },
-            )
+            ) {
+                SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
+                _ => U256::ZERO,
+            }
         });
         // cdbc03bb: V2/V3/V4 swap math reverts on `uint256` overflow (mirrors
         // on-chain `getAmountOut` SafeMath revert). The plain
@@ -760,15 +763,7 @@ impl PyLiquidityPool {
         // so callers that don't opt into `calculate_tokens_out_with_fetch`
         // keep the legacy no-raise-on-miss contract documented on ADR-037's
         // typed failure modes.
-        let out = match result {
-            SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
-            SwapRead::FetchFailed { .. } | SwapRead::FetchExhausted { .. } => U256::ZERO,
-            SwapRead::NotComputable => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
-                ));
-            }
-        };
+        let out = result;
         let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
         Ok(bound.unbind())
     }
@@ -794,7 +789,7 @@ impl PyLiquidityPool {
             sqrt_price_limit: None,
         };
         let result = self.with_state_mut(py, |core| {
-            match core.swap_simulation(0, self.pool_id, request) {
+            match core.swap_simulation_disarmed(0, self.pool_id, &request) {
                 SwapRead::Computed(outcome) => (-match &outcome {
                     SwapOutcome::V2(o) => o.consumed,
                     SwapOutcome::V3(o) | SwapOutcome::V4(o) => o.consumed,
