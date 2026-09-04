@@ -44,7 +44,7 @@ use alloy::primitives::U256;
 #[cfg(test)]
 use alloy::primitives::U512;
 
-use degenbot_math::v2::{IntHopState, SimulationResult};
+use degenbot_math::v2::{IntHopState, SimulationResult, StepOutcome};
 
 // ---------------------------------------------------------------------------
 // Integer V3 Tick Range Hop
@@ -640,42 +640,44 @@ fn int_simulate_cl_path_n(
     if n_hops == 0 || amount_in.is_zero() {
         return SimulationResult {
             final_output: U256::ZERO,
-            hop_outputs: Vec::new(),
-            consumed_inputs: vec![U256::ZERO; n_hops],
+            steps: Box::new([]),
         };
     }
 
-    let mut hop_outputs = Vec::with_capacity(n_hops);
-    let mut consumed_inputs = Vec::with_capacity(n_hops);
+    let mut steps: Vec<StepOutcome> = Vec::with_capacity(n_hops);
     let mut current_input = amount_in;
 
     for i in 0..n_hops {
         if current_input.is_zero() {
             // Fill remaining with zeros
             for _ in i..n_hops {
-                hop_outputs.push(U256::ZERO);
-                consumed_inputs.push(U256::ZERO);
+                steps.push(StepOutcome {
+                    output: U256::ZERO,
+                    consumed_input: U256::ZERO,
+                });
             }
             return SimulationResult {
                 final_output: U256::ZERO,
-                hop_outputs,
-                consumed_inputs,
+                steps: steps.into(),
             };
         }
 
         let (consumed, output) = if let Some(crossing) = crossings[i].as_ref() {
             if current_input < crossing.crossing_gross_input {
                 // Can't reach this crossing — path exhausted
-                hop_outputs.push(current_input);
-                consumed_inputs.push(current_input);
+                steps.push(StepOutcome {
+                    output: current_input,
+                    consumed_input: current_input,
+                });
                 for _ in (i + 1)..n_hops {
-                    hop_outputs.push(U256::ZERO);
-                    consumed_inputs.push(U256::ZERO);
+                    steps.push(StepOutcome {
+                        output: U256::ZERO,
+                        consumed_input: U256::ZERO,
+                    });
                 }
                 return SimulationResult {
                     final_output: U256::ZERO,
-                    hop_outputs,
-                    consumed_inputs,
+                    steps: steps.into(),
                 };
             }
             let remaining = current_input - crossing.crossing_gross_input;
@@ -690,16 +692,17 @@ fn int_simulate_cl_path_n(
             (result.consumed_input, result.output)
         };
 
-        hop_outputs.push(output);
-        consumed_inputs.push(consumed);
+        steps.push(StepOutcome {
+            output,
+            consumed_input: consumed,
+        });
         current_input = output;
     }
 
-    let final_output = hop_outputs.last().copied().unwrap_or(U256::ZERO);
+    let final_output = steps.last().map_or(U256::ZERO, |s| s.output);
     SimulationResult {
         final_output,
-        hop_outputs,
-        consumed_inputs,
+        steps: steps.into(),
     }
 }
 
@@ -733,8 +736,7 @@ fn int_simulate_v3_v3_path(
     if amount_in.is_zero() {
         return SimulationResult {
             final_output: U256::ZERO,
-            hop_outputs: Vec::new(),
-            consumed_inputs: vec![U256::ZERO, U256::ZERO],
+            steps: Box::new([]),
         };
     }
 
@@ -743,8 +745,7 @@ fn int_simulate_v3_v3_path(
         if amount_in < c1.crossing_gross_input {
             return SimulationResult {
                 final_output: U256::ZERO,
-                hop_outputs: Vec::new(),
-                consumed_inputs: vec![U256::ZERO, U256::ZERO],
+                steps: Box::new([]),
             };
         }
         let remaining = amount_in - c1.crossing_gross_input;
@@ -765,8 +766,16 @@ fn int_simulate_v3_v3_path(
         if output1 < c2.crossing_gross_input {
             return SimulationResult {
                 final_output: U256::ZERO,
-                hop_outputs: vec![output1],
-                consumed_inputs: vec![consumed1, U256::ZERO],
+                steps: Box::new([
+                    StepOutcome {
+                        output: output1,
+                        consumed_input: U256::ZERO,
+                    },
+                    StepOutcome {
+                        output: U256::ZERO,
+                        consumed_input: consumed1,
+                    },
+                ]),
             };
         }
         let remaining = output1 - c2.crossing_gross_input;
@@ -783,8 +792,16 @@ fn int_simulate_v3_v3_path(
 
     SimulationResult {
         final_output: output2,
-        hop_outputs: vec![output1, output2],
-        consumed_inputs: vec![consumed1, consumed2],
+        steps: Box::new([
+            StepOutcome {
+                output: output1,
+                consumed_input: consumed1,
+            },
+            StepOutcome {
+                output: output2,
+                consumed_input: consumed2,
+            },
+        ]),
     }
 }
 
@@ -2589,6 +2606,10 @@ pub fn exact_solve_mixed_v2_v3_sequence(
 // Retained for the test module's uncapped-enumeration reference and
 // N-hop parity nets.
 #[cfg_attr(not(test), expect(dead_code))]
+#[expect(
+    clippy::too_many_lines,
+    reason = "validation-only oracle retained for the test module"
+)]
 fn int_simulate_mixed_path_n(
     amount_in: U256,
     v2_hops: &[Option<IntHopState>],
@@ -2600,25 +2621,24 @@ fn int_simulate_mixed_path_n(
     if n_hops == 0 || amount_in.is_zero() {
         return SimulationResult {
             final_output: U256::ZERO,
-            hop_outputs: Vec::new(),
-            consumed_inputs: vec![U256::ZERO; n_hops],
+            steps: Box::new([]),
         };
     }
 
-    let mut hop_outputs = Vec::with_capacity(n_hops);
-    let mut consumed_inputs = Vec::with_capacity(n_hops);
+    let mut steps: Vec<StepOutcome> = Vec::with_capacity(n_hops);
     let mut current_input = amount_in;
 
     for i in 0..n_hops {
         if current_input.is_zero() {
             for _ in i..n_hops {
-                hop_outputs.push(U256::ZERO);
-                consumed_inputs.push(U256::ZERO);
+                steps.push(StepOutcome {
+                    output: U256::ZERO,
+                    consumed_input: U256::ZERO,
+                });
             }
             return SimulationResult {
                 final_output: U256::ZERO,
-                hop_outputs,
-                consumed_inputs,
+                steps: steps.into(),
             };
         }
 
@@ -2627,46 +2647,53 @@ fn int_simulate_mixed_path_n(
             let Some(hop) = v2_hops[i].as_ref() else {
                 // Missing V2 hop data
                 for _ in i..n_hops {
-                    hop_outputs.push(U256::ZERO);
-                    consumed_inputs.push(U256::ZERO);
+                    steps.push(StepOutcome {
+                        output: U256::ZERO,
+                        consumed_input: U256::ZERO,
+                    });
                 }
                 return SimulationResult {
                     final_output: U256::ZERO,
-                    hop_outputs,
-                    consumed_inputs,
+                    steps: steps.into(),
                 };
             };
             let Ok(output) = hop.swap(current_input) else {
                 // V2 hop overflow-reverts on-chain (uint256 intermediate) —
                 // the multi-hop path reverts; mirror the exhaustion shape.
                 for _ in i..n_hops {
-                    hop_outputs.push(U256::ZERO);
-                    consumed_inputs.push(U256::ZERO);
+                    steps.push(StepOutcome {
+                        output: U256::ZERO,
+                        consumed_input: U256::ZERO,
+                    });
                 }
                 return SimulationResult {
                     final_output: U256::ZERO,
-                    hop_outputs,
-                    consumed_inputs,
+                    steps: steps.into(),
                 };
             };
-            hop_outputs.push(output);
-            consumed_inputs.push(current_input);
+            steps.push(StepOutcome {
+                output,
+                consumed_input: current_input,
+            });
             current_input = output;
         } else {
             // CL hop — may have crossing
             let (consumed, output) = if let Some(crossing) = cl_crossings[i].as_ref() {
                 if current_input < crossing.crossing_gross_input {
                     // Can't reach crossing — path exhausted
-                    hop_outputs.push(U256::ZERO);
-                    consumed_inputs.push(current_input);
+                    steps.push(StepOutcome {
+                        output: U256::ZERO,
+                        consumed_input: current_input,
+                    });
                     for _ in (i + 1)..n_hops {
-                        hop_outputs.push(U256::ZERO);
-                        consumed_inputs.push(U256::ZERO);
+                        steps.push(StepOutcome {
+                            output: U256::ZERO,
+                            consumed_input: U256::ZERO,
+                        });
                     }
                     return SimulationResult {
                         final_output: U256::ZERO,
-                        hop_outputs,
-                        consumed_inputs,
+                        steps: steps.into(),
                     };
                 }
                 let remaining = current_input - crossing.crossing_gross_input;
@@ -2680,29 +2707,31 @@ fn int_simulate_mixed_path_n(
                 let Some(base_range) = cl_base_ranges[i].as_ref() else {
                     // Missing CL base range data
                     for _ in i..n_hops {
-                        hop_outputs.push(U256::ZERO);
-                        consumed_inputs.push(U256::ZERO);
+                        steps.push(StepOutcome {
+                            output: U256::ZERO,
+                            consumed_input: U256::ZERO,
+                        });
                     }
                     return SimulationResult {
                         final_output: U256::ZERO,
-                        hop_outputs,
-                        consumed_inputs,
+                        steps: steps.into(),
                     };
                 };
                 let result = int_simulate_v3_swap(current_input, base_range);
                 (result.consumed_input, result.output)
             };
-            hop_outputs.push(output);
-            consumed_inputs.push(consumed);
+            steps.push(StepOutcome {
+                output,
+                consumed_input: consumed,
+            });
             current_input = output;
         }
     }
 
-    let final_output = hop_outputs.last().copied().unwrap_or(U256::ZERO);
+    let final_output = steps.last().map_or(U256::ZERO, |s| s.output);
     SimulationResult {
         final_output,
-        hop_outputs,
-        consumed_inputs,
+        steps: steps.into(),
     }
 }
 
@@ -3291,14 +3320,17 @@ mod tests {
         let result = int_simulate_v3_v3_path(U256::from(1_000_000u64), None, None, &hop1, &hop2);
 
         // 2 hops → 2 hop_outputs
-        assert_eq!(result.hop_outputs.len(), 2);
+        assert_eq!(result.steps.len(), 2);
         // Invariant: final_output == hop_outputs.last()
-        assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
+        assert_eq!(
+            result.final_output,
+            result.steps.last().map(|s| s.output).unwrap()
+        );
         // Invariant: hop_outputs[1] is the output after hop 2 using hop 1's output as input
         let expected_hop1 = int_simulate_v3_swap(U256::from(1_000_000u64), &hop1);
-        assert_eq!(result.hop_outputs[0], expected_hop1.output);
+        assert_eq!(result.steps[0].output, expected_hop1.output);
         let expected_hop2 = int_simulate_v3_swap(expected_hop1.output, &hop2);
-        assert_eq!(result.hop_outputs[1], expected_hop2.output);
+        assert_eq!(result.steps[1].output, expected_hop2.output);
         assert_eq!(result.final_output, expected_hop2.output);
     }
 
@@ -3309,7 +3341,7 @@ mod tests {
 
         let result = int_simulate_v3_v3_path(U256::ZERO, None, None, &hop1, &hop2);
         assert_eq!(result.final_output, U256::ZERO);
-        assert!(result.hop_outputs.is_empty());
+        assert!(result.steps.is_empty());
     }
 
     // ── N-hop CL solver tests ────────────────────────────────────
@@ -3331,14 +3363,14 @@ mod tests {
         );
 
         // 3 hops → 3 hop_outputs
-        assert_eq!(result.hop_outputs.len(), 3);
+        assert_eq!(result.steps.len(), 3);
         // Verify chain: output1 feeds into hop2, output2 feeds into hop3
         let expected1 = int_simulate_v3_swap(amount_in, &hop1);
-        assert_eq!(result.hop_outputs[0], expected1.output);
+        assert_eq!(result.steps[0].output, expected1.output);
         let expected2 = int_simulate_v3_swap(expected1.output, &hop2);
-        assert_eq!(result.hop_outputs[1], expected2.output);
+        assert_eq!(result.steps[1].output, expected2.output);
         let expected3 = int_simulate_v3_swap(expected2.output, &hop3);
-        assert_eq!(result.hop_outputs[2], expected3.output);
+        assert_eq!(result.steps[2].output, expected3.output);
         assert_eq!(result.final_output, expected3.output);
     }
 
@@ -3351,7 +3383,7 @@ mod tests {
 
         let result = int_simulate_cl_path_n(U256::ZERO, &crossings, &base_ranges);
         assert_eq!(result.final_output, U256::ZERO);
-        assert!(result.hop_outputs.is_empty());
+        assert!(result.steps.is_empty());
     }
 
     #[test]
@@ -3368,8 +3400,11 @@ mod tests {
         let result_v3v3 = int_simulate_v3_v3_path(amount_in, None, None, &hop1, &hop2);
 
         assert_eq!(result_n.final_output, result_v3v3.final_output);
-        assert_eq!(result_n.hop_outputs, result_v3v3.hop_outputs);
-        assert_eq!(result_n.consumed_inputs, result_v3v3.consumed_inputs);
+        let view = |r: &SimulationResult| r.steps.iter().map(|s| s.output).collect::<Vec<_>>();
+        assert_eq!(view(&result_n), view(&result_v3v3));
+        let consumed_view =
+            |r: &SimulationResult| r.steps.iter().map(|s| s.consumed_input).collect::<Vec<_>>();
+        assert_eq!(consumed_view(&result_n), consumed_view(&result_v3v3));
     }
 
     #[test]
@@ -3759,21 +3794,21 @@ mod tests {
         );
 
         // Should produce 3 hop_outputs
-        assert_eq!(result.hop_outputs.len(), 3);
+        assert_eq!(result.steps.len(), 3);
 
         // Verify chain manually
         // Hop 1 (V2): swap 1000 in pool (1M, 2M)
         let expected_out1 = v2_hop1.swap(amount_in).unwrap();
-        assert_eq!(result.hop_outputs[0], expected_out1);
-        assert_eq!(result.consumed_inputs[0], amount_in);
+        assert_eq!(result.steps[0].output, expected_out1);
+        assert_eq!(result.steps[0].consumed_input, amount_in);
 
         // Hop 2 (CL): swap output through V3
         let expected_out2 = int_simulate_v3_swap(expected_out1, &cl_hop);
-        assert_eq!(result.hop_outputs[1], expected_out2.output);
+        assert_eq!(result.steps[1].output, expected_out2.output);
 
         // Hop 3 (V2): swap output through V2 pool 2
         let expected_out3 = v2_hop2.swap(expected_out2.output).unwrap();
-        assert_eq!(result.hop_outputs[2], expected_out3);
+        assert_eq!(result.steps[2].output, expected_out3);
 
         assert_eq!(result.final_output, expected_out3);
     }
@@ -4640,7 +4675,8 @@ mod tests {
                             if profit > best_profit {
                                 best_profit = profit;
                                 best_x = candidate;
-                                best_hop_outputs = sim.hop_outputs;
+                                best_hop_outputs =
+                                    sim.steps.iter().map(|s| s.output).collect::<Vec<_>>();
                             }
                         }
                     }
@@ -4770,7 +4806,8 @@ mod tests {
                                 if profit > best_profit {
                                     best_profit = profit;
                                     best_x = candidate;
-                                    best_hop_outputs = sim.hop_outputs;
+                                    best_hop_outputs =
+                                        sim.steps.iter().map(|s| s.output).collect::<Vec<_>>();
                                 }
                             }
                         }

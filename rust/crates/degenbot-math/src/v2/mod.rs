@@ -46,7 +46,7 @@
 use alloy::primitives::U256;
 
 pub mod hop_state;
-pub use hop_state::{int_simulate_path, HopSwapError, IntHopState, SimulationResult};
+pub use hop_state::{int_simulate_path, HopSwapError, IntHopState, SimulationResult, StepOutcome};
 
 /// V2 (pure constant-product) exact-in — the on-chain `getAmountOut`:
 /// `y = (fee_denom - fee_numer) * reserve_out * amount_in / (fee_denom * reserve_in + (fee_denom - fee_numer) * amount_in)`,

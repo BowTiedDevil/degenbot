@@ -4,7 +4,7 @@
 //! Same method as degenbot-pools/tests/alloc_tracking.rs.
 
 use alloy::primitives::U256;
-use degenbot_math::v2::hop_state::SimulationResult;
+use degenbot_math::v2::hop_state::{SimulationResult, StepOutcome};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -65,16 +65,33 @@ fn solve_result_alloc_report() {
         measure(&format!("simulation_result_build_hops{hops}"), || {
             SimulationResult {
                 final_output: U256::from(1_000u64),
-                hop_outputs: (1..=hops).map(|i| U256::from(i as u64 * 100)).collect(),
-                consumed_inputs: (1..=hops).map(|i| U256::from(i as u64 * 90)).collect(),
+                steps: (1..=hops)
+                    .map(|i| StepOutcome {
+                        output: U256::from(i as u64 * 100),
+                        consumed_input: U256::from(i as u64 * 90),
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
             }
         });
     }
 
     let three = SimulationResult {
         final_output: U256::from(1_000u64),
-        hop_outputs: vec![U256::from(300u64), U256::from(600u64), U256::from(1_000u64)],
-        consumed_inputs: vec![U256::from(280u64), U256::from(550u64), U256::from(900u64)],
+        steps: Box::new([
+            StepOutcome {
+                output: U256::from(300u64),
+                consumed_input: U256::from(280u64),
+            },
+            StepOutcome {
+                output: U256::from(600u64),
+                consumed_input: U256::from(550u64),
+            },
+            StepOutcome {
+                output: U256::from(1_000u64),
+                consumed_input: U256::from(900u64),
+            },
+        ]),
     };
     measure("simulation_result_clone_hops3", || three.clone());
 }

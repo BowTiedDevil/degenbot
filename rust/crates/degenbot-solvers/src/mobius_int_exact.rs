@@ -138,7 +138,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
                     profit: sim.final_output - U256::from(1u64),
                     is_profitable: true,
                     used_closed_form: false,
-                    hop_outputs: sim.hop_outputs,
+                    hop_outputs: sim.steps.iter().map(|s| s.output).collect::<Vec<_>>(),
                 });
             }
         }
@@ -178,7 +178,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             if profit > best_profit {
                 best_profit = profit;
                 best_x = candidate;
-                best_hop_outputs = sim.hop_outputs;
+                best_hop_outputs = sim.steps.iter().map(|s| s.output).collect::<Vec<_>>();
             }
         }
     }

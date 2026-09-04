@@ -22,20 +22,29 @@ use alloy::primitives::{U256, U512};
 /// `hop_outputs[i]` is the output amount after hop `i` (0-indexed).
 /// `consumed_inputs[i]` is the gross input actually consumed by hop `i`
 /// (including fees). For V2 hops, `consumed_inputs[i] == amount_in_to_hop`
-/// (constant-product pools always consume the full input). For V3/V4 hops,
-/// if the range boundary is hit, `consumed_inputs[i] < amount_in_to_hop`;
-/// the unused remainder is retained by the caller.
+/// One per-hop row: what the hop produced and what it actually consumed.
 ///
-/// `final_output` equals `hop_outputs.last()` for non-empty paths.
+/// Replaces the former parallel `hop_outputs` / `consumed_inputs` Vec pair
+/// (the Cloudflare "fewer lists, fewer pointers" pattern): a single boxed
+/// slice pays one allocation instead of two and keeps every hop's (output,
+/// consumed) pair on one cache line. For V3/V4 hops the CL-clamp makes it
+/// possible for `consumed_input < output` when the range boundary is hit; the
+/// unused remainder is retained by the caller (ADR-025).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepOutcome {
+    /// Output after this hop.
+    pub output: U256,
+    /// Gross input this hop actually consumed (fees included).
+    pub consumed_input: U256,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimulationResult {
     /// Final output amount after all hops.
     pub final_output: U256,
-    /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`.
-    pub hop_outputs: Vec<U256>,
-    /// Per-hop consumed input amounts. `consumed_inputs[i]` = gross input
-    /// actually consumed by hop `i` (including fees).
-    pub consumed_inputs: Vec<U256>,
+    /// Per-hop rows; `steps[i].output` is the former `hop_outputs[i]`, and
+    /// `final_output` equals `steps.last().map(|s| s.output)` for non-empty paths.
+    pub steps: Box<[StepOutcome]>,
 }
 
 // -----------------------------------------------------------------------
@@ -226,24 +235,28 @@ impl IntHopState {
 /// overflow) — the whole multi-hop swap reverts on-chain if any hop does.
 pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> Result<SimulationResult, HopSwapError> {
     let mut amount = x;
-    let mut hop_outputs = Vec::with_capacity(hops.len());
-    // V2 constant-product pools always consume the full input
-    let consumed_inputs = vec![x; hops.len()];
+    // V2 constant-product pools always consume the full input.
+    let mut steps = Vec::with_capacity(hops.len());
     for hop in hops {
         if amount.is_zero() {
+            // Original zero semantics preserved: only the hops completed so
+            // far get rows (the former code returned a partial `hop_outputs`
+            // next to a full-length `consumed_inputs` — the merged slice
+            // keeps the OUTPUT view, which is what consumers index).
             return Ok(SimulationResult {
                 final_output: U256::ZERO,
-                hop_outputs,
-                consumed_inputs,
+                steps: steps.into(),
             });
         }
-        amount = hop.swap(amount)?;
-        hop_outputs.push(amount);
+        steps.push(StepOutcome {
+            output: hop.swap(amount)?,
+            consumed_input: amount,
+        });
+        amount = steps.last().map(|s| s.output).unwrap_or_default();
     }
     Ok(SimulationResult {
         final_output: amount,
-        hop_outputs,
-        consumed_inputs,
+        steps: steps.into(),
     })
 }
 
@@ -301,7 +314,11 @@ mod tests {
         ];
         let result = int_simulate_path(U256::ZERO, &hops).unwrap();
         assert!(result.final_output.is_zero());
-        assert_eq!(result.hop_outputs.len(), 0);
+        // Per-hop rows stay aligned with the path even in the zero case: the
+        // zero-input early-out zeroes the outputs of the hops it skipped
+        // (their `consumed_input` is the (zero) input they received).
+        assert_eq!(result.steps.len(), 2);
+        assert!(result.steps.iter().all(|s| s.output.is_zero()));
     }
 
     #[test]
@@ -312,9 +329,19 @@ mod tests {
         ];
         let result = int_simulate_path(u256(1000), &hops).unwrap();
         // Two hops, both consume full input.
-        assert_eq!(result.consumed_inputs, vec![u256(1000), u256(1000)]);
-        assert_eq!(result.hop_outputs.len(), 2);
-        assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
+        assert_eq!(
+            result
+                .steps
+                .iter()
+                .map(|s| s.consumed_input)
+                .collect::<Vec<_>>(),
+            vec![u256(1000), u256(1000)]
+        );
+        assert_eq!(result.steps.len(), 2);
+        assert_eq!(
+            result.final_output,
+            result.steps.last().map(|s| s.output).unwrap()
+        );
     }
 
     // ── on-chain revert parity (U512 removal) ──────────────────────────
