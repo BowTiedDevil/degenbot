@@ -393,6 +393,10 @@ struct OverrideSim<'a> {
     limit: U256,
     fetcher: Option<Arc<dyn TickWordFetcher>>,
     pool_id: u64,
+    /// RATR5A/CXRHW3: miss recovery DISARMED - a fresh missing word
+    /// surfaces as FetchExhausted (typed contract) instead of an inline
+    /// fetch under the caller read guard.
+    disarm_fetch: bool,
 }
 
 impl ComputeMerge for OverrideSim<'_> {
@@ -404,6 +408,9 @@ impl ComputeMerge for OverrideSim<'_> {
         self.target.merge_word(fetched);
     }
     fn fetch_word(&self, word: i32, block: u64) -> Result<FetchedTickWord, FetchFailure> {
+        if self.disarm_fetch {
+            return Err(FetchFailure::NoFetcher);
+        }
         let Some(fetcher) = &self.fetcher else {
             return Err(FetchFailure::NoFetcher);
         };
@@ -721,7 +728,131 @@ impl BotState {
     /// to keep the `PyO3` seam byte-stable; the typed outcome arrives when the
     /// driver layer adopts it.
     #[must_use]
+    /// RATR5A/CXRHW3: the override sim with miss recovery DISARMED - a
+    /// missing word surfaces as None (the legacy Option contract) instead of
+    /// an inline fetch under the caller read guard. The pooled caller
+    /// pre-stages through [Self::override_missing_words] + the lock-free
+    /// fetch choreography before entering.
+    pub fn simulate_override_disarmed(
+        &self,
+        over: &OverrideSwap,
+        block: u64,
+    ) -> Option<V3SwapOutcome> {
+        self.simulate_override_ext(over, block, true)
+    }
+
+    /// RATR5A/CXRHW3: the missing bitmap words the OVERLAY sim would fetch,
+    /// listed by a collect-only walk over a transient built from the
+    /// override scalars + the caller tick data (no fetch, no registered
+    /// mutation). Pair with the lock-free fetch choreography in pool.rs
+    /// (ensure_override_missing_staged).
+    #[must_use]
+    pub fn override_missing_words(&self, over: &OverrideSwap) -> Option<Vec<i32>> {
+        if over.request.amount_specified.is_zero() {
+            return Some(Vec::new());
+        }
+        let entry = self.pools.get(&over.pool_id)?;
+        match entry {
+            PoolEntry::V3(identity, state) => {
+                let mut missing = Vec::new();
+                let mut transient = TransientCl {
+                    family: TransientFamily::V3(identity.fee, identity.tick_spacing),
+                    inner: TransientInner::V3(Box::new(
+                        V3PoolState::from_params(
+                            RegisterV3PoolParams {
+                                address: identity.address,
+                                token0: identity.token0,
+                                token1: identity.token1,
+                                fee: identity.fee,
+                                tick_spacing: identity.tick_spacing,
+                                factory: identity.factory,
+                                deployer: identity.deployer,
+                                init_hash: identity.init_hash,
+                                sqrt_price_x96: over.sqrt_price_x96,
+                                liquidity: over.liquidity,
+                                tick: over.tick,
+                                tick_data: over.tick_data.clone(),
+                                update_block: state.update_block,
+                                coverage: PoolTickCoverage::Sparse,
+                                fetcher: None,
+                                ..Default::default()
+                            },
+                            self.journal_depth,
+                        )
+                        .1,
+                    )),
+                };
+                let spec =
+                    engine_amount_specified(over.request.amount_specified, EngineFamily::V3Engine);
+                let limit = over.request.sqrt_price_limit.unwrap_or_else(|| {
+                    V3PoolState::default_sqrt_price_limit(over.request.zero_for_one)
+                });
+                Self::drive_missing(
+                    &mut transient,
+                    over.request.zero_for_one,
+                    spec,
+                    limit,
+                    &mut missing,
+                );
+                Some(missing)
+            }
+            PoolEntry::V4(identity, state) => {
+                let mut missing = Vec::new();
+                let mut transient = TransientCl {
+                    family: TransientFamily::V4(
+                        identity.pool_key.fee,
+                        identity.pool_key.tick_spacing,
+                    ),
+                    inner: TransientInner::V4(Box::new(
+                        V4PoolState::from_params(
+                            RegisterV4PoolParams {
+                                pool_manager: identity.pool_manager,
+                                pool_id: identity.pool_id,
+                                pool_key: identity.pool_key.clone(),
+                                hook_flags: 0,
+                                protocol_fee: 0,
+                                sqrt_price_x96: over.sqrt_price_x96,
+                                liquidity: over.liquidity,
+                                tick: over.tick,
+                                tick_data: over.tick_data.clone(),
+                                update_block: state.update_block,
+                                tick_data_block: None,
+                                coverage: PoolTickCoverage::Sparse,
+                                fetcher: None,
+                            },
+                            self.journal_depth,
+                        )
+                        .1,
+                    )),
+                };
+                let spec =
+                    engine_amount_specified(over.request.amount_specified, EngineFamily::V4Engine);
+                let limit = over.request.sqrt_price_limit.unwrap_or_else(|| {
+                    V3PoolState::default_sqrt_price_limit(over.request.zero_for_one)
+                });
+                Self::drive_missing(
+                    &mut transient,
+                    over.request.zero_for_one,
+                    spec,
+                    limit,
+                    &mut missing,
+                );
+                Some(missing)
+            }
+            _ => Some(Vec::new()),
+        }
+    }
+
     pub fn simulate_override(&self, over: &OverrideSwap, block: u64) -> Option<V3SwapOutcome> {
+        self.simulate_override_ext(over, block, false)
+    }
+
+    fn simulate_override_ext(
+        &self,
+        over: &OverrideSwap,
+        block: u64,
+        disarm_fetch: bool,
+    ) -> Option<V3SwapOutcome> {
         if over.request.amount_specified.is_zero() {
             return None;
         }
@@ -811,6 +942,7 @@ impl BotState {
             limit,
             fetcher,
             pool_id: over.pool_id,
+            disarm_fetch,
         };
         match drive(&mut sim, block) {
             PolicyAttempt::Computed(outcome, _) => Some(outcome),
