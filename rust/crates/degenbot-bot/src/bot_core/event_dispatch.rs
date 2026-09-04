@@ -205,25 +205,49 @@ impl StallWatch {
         if !stalled(depth, since_healthy, BACKLOG_FLOOR, window) {
             return;
         }
-        crate::telemetry::record_exception(
-            crate::telemetry::error_kind::DRAIN_STALL,
-            format_args!("backlog {depth} with no completion for {window} ms"),
-        );
-        crate::telemetry::flush_before_exit();
-        tracing::error!(
-            since_healthy_ms = since_healthy,
-            depth,
-            "[B3] drainer stalled: backlog with no completion for {window} ms — ABORT"
-        );
-        #[expect(clippy::print_stderr)] // fatal diagnostic before abort
+        // ADR-040: the drain-stall process-scope bucket defaults to exit;
+        // the matrix lookup keeps the operator override path honest (an
+        // `event` stance records the stall + restarts the healthy window
+        // instead of aborting).
+        if crate::failure_policy::action(crate::telemetry::error_kind::DRAIN_STALL, None)
+            == crate::failure_policy::Action::Exit
         {
-            eprintln!(
-                "[B3] ABORT: background drainer made no progress for {window} ms \
-                 with {depth} queued — solve/dispatch/publish is not advancing. \
-                 Fail loud, never half-alive."
+            crate::telemetry::record_exception(
+                crate::telemetry::error_kind::DRAIN_STALL,
+                format_args!("backlog {depth} with no completion for {window} ms"),
+            );
+            crate::telemetry::flush_before_exit();
+            tracing::error!(
+                since_healthy_ms = since_healthy,
+                depth,
+                "[B3] drainer stalled: backlog with no completion for {window} ms — ABORT"
+            );
+            #[expect(clippy::print_stderr)] // fatal diagnostic before abort
+            {
+                eprintln!(
+                    "[B3] ABORT: background drainer made no progress for {window} ms \
+                         with {depth} queued — solve/dispatch/publish is not advancing. \
+                         Fail loud, never half-alive."
+                );
+            }
+            std::process::abort();
+        } else {
+            // soft stances: loud keyed event (deduped), keep the watchdog
+            // alive by re-anchoring the healthy clock - a degraded drainer
+            // re-arms the window instead of killing the session.
+            let _ = crate::telemetry::record_exception_keyed(
+                crate::telemetry::error_kind::DRAIN_STALL,
+                "drain-watchdog",
+                now_millis() / 1000,
+                format_args!("backlog {depth} with no completion for {window} ms"),
+            );
+            self.last_healthy_ms.store(now_millis(), Ordering::Relaxed);
+            tracing::warn!(
+                since_healthy_ms = since_healthy,
+                depth,
+                "[B3] drainer stalled — operator override keeps the process up (ADR-040)"
             );
         }
-        std::process::abort();
     }
 }
 

@@ -36,10 +36,10 @@ Closed set, one row per bucket (from `telemetry::error_kind` + reason):
 | `sim_failure.revert_pool_state` | `event` (pool, escalate on tripwire corroboration) | yes |
 | `sim_failure.revert_economics` | `observe` (benign economics) | yes |
 | `sim_failure.rpc` | `event` | yes |
-| `ws_completeness` | `exit` | yes — set `"event"` to keep-alive through WS drops (NOT advisable) |
+| `ws_completeness` | `exit` | yes — `"event"` records the drop and keeps running; the resulting state gap surfaces via the desync/quarantine path, and `DegenbotProcessDown` covers real death |
 | `submit_failure` / `monitor_failure` | `event` | yes |
 | `verify_mismatch` | `quarantine` (deny admission) | yes |
-| `drain_stall` / `drain_dead` | `exit` | yes — `"event"` keeps alive but the drainer wedges buy you nothing |
+| `drain_stall` | `exit` | yes — `"event"` records + re-arms the watchdog (WARNING: continuing past a stalled drainer means pricing on a frozen clock; intended for bisecting only) |
 
 Undeclared buckets (new kinds from an upgrade before you override them) follow
 the conservative **degraded** floor and log a warning — they are never fatal
