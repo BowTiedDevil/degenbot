@@ -41,7 +41,12 @@ intersphinx_mapping = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "handoffs/*", "tasks/*", "gate-viz/*", "grafana/*"]
+exclude_patterns = [
+    "_build", "Thumbs.db", ".DS_Store",
+    "handoffs/*", "tasks/*", "gate-viz/*", "grafana/*",
+    # untitled ergo-task artifacts; releases/ carries the site copy
+    "release-notes/*",
+]
 
 # -- Options for HTML output -------------------------------------------------
 
