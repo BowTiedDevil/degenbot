@@ -172,3 +172,66 @@ Executor encode path intentionally NOT merged: EncodeRequest is built per submis
 - clippy -p degenbot-bot --all-targets clean; the workspace gate's residual
   allocator_ctrl allow_attributes lints are pre-existing (exposed from
   behind the HTPKLX-era libs; file untouched by this task).
+
+# HTPKLX — consolidated before/after memory report (TZSWOP, 2026-09-04)
+
+## Static sizes (per registered entity)
+
+| Struct | Before | After | Delta |
+|---|---|---|---|
+| PoolEntry (per registry slot, 18k fleet) | 512 B | 16 B | **-496 B/slot (~-97%)** |
+| TickInfo (per initialized tick) | 56 B | 48 B | -8 B/tick (-14%) |
+| SimulationResult (built path) | per-hop heap allocs x3 (Vec families) | 1 Box<[StepOutcome]> | -2 allocs + 48 B headers/path |
+| SimulatePath + DispatchCandidate | 3 parallel Vecs per candidate | 1 Box<[SolveStep]> | -2 allocs per candidate + headers |
+| TickBefore / V3 delta priors | I256 nets (32 B) | i128 (16 B) | -16 B per recorded delta row |
+
+Harness evidence (DEGENBOT_ALLOC_TRACK=1, post-epilogue):
+- simulation_result_build_hops2/3/5 = 1 alloc each (128/192/320 B) — was
+  3 allocs + headers per family Vec.
+- v3_register_128_ticks = 4 allocs / 34465 B; v3_state_clone_128_ticks =
+  1 alloc / 16656 B; v2_register_journal8 = 1 alloc; tick_map_build_128 =
+  1 alloc — matching the KKNVVS baseline (no per-op regressions).
+- Simulation-path merge (4JLQNS/TQBBCO): simulated-path construction
+  2 allocs -> 1 at hops=2/3/5; byte-for-byte SolveStep rows replace the
+  three parallel Vecs (4JLQNS+TQBBCO commits). The executor's encode path
+  keeps its double-slice shape on purpose (grammar_shape plan-time clamp
+  re-borrows consumed_inputs; per-submission, not hot).
+- PoolEntry boxing (KO3SBO): slot 512 -> 16 B, ~**4.8 MB** of hot map bytes
+  dropped at 10k live reserve-pair entries (fleet doc cites 18k pools);
+  map probe op-count unchanged (+1 deref behind the map hop); solver
+  digest bench flat-to-better (156 -> 151 us solve_curve_path).
+- TickInfo narrowing (LIBQKE): 56 -> 48 B/tick; at 50k live initialized
+  ticks that is ~400 KB off the tick maps, plus doubled cache density on
+  the solver's dominant O(ticks) walk. Note: 8 B above the naive 40 B
+  estimate — U128 alignment pads the struct to 16 B multiples.
+
+## Latency (solver digest bench, post-slices vs pre-epic run)
+- solve_curve_path: 156 -> 151 us; digest_curve_xp/2coin 65 -> 60 ns,
+  /4coin 122 -> 116 ns; solve_balancer_stable_path 87 -> 87 us; CL digest
+  vectors 1.04/1.28/1.58 us — all within noise; no accepted regression.
+
+## Consciously NOT taken (with reason)
+- Transient per-call structs (IntV3 transient pool rebuild per override
+  hop): the harness shows the transient's box is 1 alloc/site, not hot.
+- BalancesBlockDelta journal Vecs: touched only on reorg, tracked cost
+  unchanged by the epilogue measurements.
+- deployments.rs static config: read-once at startup, zero per-op effect.
+- Wire-format caching: the executor encode path is per-submission (cold)
+  and grammar_shape's plan-time clamp depends on the two-slice shape.
+- Keeping V3/V4 PoolEntry pairs inline (article's 'common stays inline'):
+  measured slot math still favors boxing — inline V3 width (368 B state +
+  identity) exceeds the boxed 16 B slot + one allocation, and uniformity
+  keeps the registry layout family-agnostic.
+
+## Broad gates
+- cargo check --workspace --all-targets: PASS (0 errors).
+- cargo test: full workspace + touched-crate suites — **2774 passed /
+  0 failed** across 131 suites (incl. tier3 V2/V3/V4/Curve/Balancer
+  swap-vs-revm parity, tick parity, updater/writer DB parity).
+- cargo clippy (touched crates per the harness task's convention):
+  -p degenbot-bot --all-targets clean; -p degenbot-pools (serde/fmt
+  exception expectations updated where the narrowing retired unwraps).
+  Pre-existing workspace-only allocator_ctrl allow_attributes lints are
+  excluded per the task's convention (untouched file; latent from a
+  HEAD gate that never compiled past the earlier failing lib).
+- Solvers benches recorded vs baseline (section above).
