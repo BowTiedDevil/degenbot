@@ -96,6 +96,13 @@ class DegenbotConfig(BaseSettings):
     # OpenTelemetry settings (epic RMH23E T5). Optional so existing config
     # files without an [otel] section keep loading unchanged.
     otel: OtelSettings = OtelSettings()
+    # Per-bucket failure-reaction overrides (ADR-040 D3; docs/failure-policy.md).
+    # Flat form: bucket or quoted "kind.reason" -> action string; nested form:
+    # kind = { reason = "action" }. Bucket/action *name* validation is the Rust
+    # core's boot-time job (unknown bucket/action exits 2); this model only
+    # carries the table so a config file the Rust side accepts also loads in
+    # Python (the RPC cascade reads this file via load_config_from_file).
+    failure_policy: dict[str, str | dict[str, str]] = {}
 
     @field_validator("rpc", mode="after")
     def validate_paths(

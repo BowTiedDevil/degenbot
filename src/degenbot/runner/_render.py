@@ -381,8 +381,9 @@ def _render_sim_failures(outcome: DispatchOutcome, *, current_block: int) -> Non
             else:
                 bot_logger.error(
                     f"[sim-trap] {len(trap_failures)} sim failure(s) at block={current_block} "
-                    f"(failure_policy sim_failure action={action}) — continuing; failures surface via OTel "
-                    f"(degenbot.errors{{kind=sim_failure}}). See [sim-fixture] above.",
+                    f"(failure_policy sim_failure action={action}) — continuing; "
+                    f"failures surface via OTel (degenbot.errors{{kind=sim_failure}}). "
+                    f"See [sim-fixture] above.",
                 )
 
     overflow = len(failures) - cap

@@ -2384,7 +2384,7 @@ impl PyLiquidityPool {
             Ok(s.tick_data()
                 .iter()
                 .map(|(tick, info)| {
-                    let net: i128 = i128::try_from(info.liquidity_net).unwrap_or(0);
+                    let net: i128 = info.liquidity_net;
                     let gross: u128 = info.liquidity_gross.to::<u128>();
                     (*tick, (gross, net, info.block))
                 })

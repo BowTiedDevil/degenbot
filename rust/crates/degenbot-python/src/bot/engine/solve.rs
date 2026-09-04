@@ -302,7 +302,7 @@ impl PyArbitrageEngine {
         let dict = pyo3::types::PyDict::new(py);
         for (&tick_idx, info) in &tick_data {
             let lg = info.liquidity_gross.to::<u128>();
-            let ln: i128 = info.liquidity_net.try_into().unwrap_or(0i128);
+            let ln: i128 = info.liquidity_net;
             dict.set_item(tick_idx, (lg, ln))?;
         }
         Ok(Some(dict))
