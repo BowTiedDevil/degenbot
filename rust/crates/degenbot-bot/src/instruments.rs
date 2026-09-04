@@ -399,7 +399,7 @@ impl PipelineInstruments {
                 .with_description("Time a guard was held after acquisition (per site, mode)")
                 .build(),
             process_rss_bytes: meter
-                .f64_gauge("degenbot.process.rss_bytes")
+                .f64_gauge("degenbot.process.rss")
                 .with_unit("By")
                 .with_description(
                     "Resident set bytes of the bot process (drift-watch, FRKBGP close-out)",
