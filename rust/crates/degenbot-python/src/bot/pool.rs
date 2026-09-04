@@ -445,6 +445,76 @@ pub struct PyLiquidityPool {
 }
 
 impl PyLiquidityPool {
+    /// RATR5A/CXRHW3 probe (mechanical lock-freedom invariant, pair-review
+    /// condition 1): the caller thread holds the GIL; the BotState WRITE is
+    /// required free. try_write is instant and non-blocking - safe at any
+    /// depth (it never parks).
+    pub fn state_write_is_free(&self) -> bool {
+        self.core.try_write().is_some()
+    }
+
+    /// RATR5A/CXRHW3 pre-pass: discover the missing bitmap words for
+    /// the request (a collect-only transient walk), fetch them LOCK-FREE
+    /// through the pool stored fetcher, and install them under SHORT
+    /// writes with the fingerprint re-check. Bounded 3 passes; returns
+    /// true when the sim body can run with miss recovery disarmed.
+    fn ensure_missing_words_staged(
+        &self,
+        py: Python<'_>,
+        block: u64,
+        request: &degenbot_bot::bot_core::swap_simulation::SwapRequest,
+    ) -> bool {
+        for pass in 0..3u8 {
+            // no fetcher stored: non-CL or a Tracked pool - the sim body's
+            // disarm contract never fetches; nothing to stage.
+            let Some(missing) = self.with_state(py, |core| {
+                core.swap_missing_words(block, self.pool_id, request)
+            }) else {
+                return false;
+            };
+            if missing.is_empty() {
+                return true;
+            }
+            // Stage the whole batch under ONE short write (the per-word
+            // fingerprints gate the installs individually), then fetch
+            // lock-free, then install with the fingerprint re-check.
+            let Some(staged) = self.with_state_mut(py, |core| {
+                missing
+                    .iter()
+                    .map(|word| {
+                        core.stage_word_fetch_by_pool_id(self.pool_id, *word, block, pass > 0)
+                    })
+                    .collect::<Option<Vec<_>>>()
+            }) else {
+                return false;
+            };
+            // Fetches: GIL-attached (we hold it), NO state lock held.
+            let mut fetched = Vec::new();
+            for staged_word in &staged {
+                match staged_word.fetch() {
+                    Ok(f) => fetched.push(f),
+                    Err(_) => return false,
+                }
+            }
+            // Installs: short writes, fingerprint-gated. Any Raced means
+            // the pump wrote this pool mid-batch: retry the whole pass.
+            let raced = self.with_state_mut(py, |core| {
+                staged
+                    .iter()
+                    .zip(fetched.iter())
+                    .any(|(staged_word, fetched_word)| {
+                        matches!(
+                            core.install_word_fetch(staged_word, fetched_word),
+                            InstallWordOutcome::Raced
+                        )
+                    })
+            });
+            if !raced {
+                return true;
+            }
+        }
+        false
+    }
     /// Create a new thin pool handle.
     pub(crate) const fn new(core: Arc<StateLock<BotState>>, pool_id: u64) -> Self {
         Self { core, pool_id }
@@ -745,9 +815,14 @@ impl PyLiquidityPool {
             sqrt_price_limit: None,
         };
         // ADR-037: the fetch-retry policy lives behind the gate; unrecovered
-        // misses keep this seam's legacy silent-`0` contract.
+        // core write lock (bounded passes); the sim runs with miss recovery
+        // disarmed so no fetch can execute under the caller write guard.
+        if !self.ensure_missing_words_staged(py, block, &request) {
+            let zero = crate::conversion::alloy::u256_to_py(py, &U256::ZERO)?;
+            return Ok(zero.unbind());
+        }
         let result = self.with_state_mut(py, |core| {
-            match core.swap_simulation(block, self.pool_id, request) {
+            match core.swap_simulation_disarmed(block, self.pool_id, &request) {
                 SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
                 _ => U256::ZERO,
             }
@@ -784,8 +859,14 @@ impl PyLiquidityPool {
             amount_specified,
             sqrt_price_limit,
         };
+        // RATR5A/CXRHW3: stage missing words OUTSIDE the write lock (bounded
+        // passes) - the sim below runs with miss recovery disarmed so no
+        // fetch can execute under the caller write guard.
+        if !self.ensure_missing_words_staged(py, block, &request) {
+            return Ok(None);
+        }
         let read = self.with_state_mut(py, |core| {
-            core.swap_simulation(block, self.pool_id, request)
+            core.swap_simulation_disarmed(block, self.pool_id, &request)
         });
         let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);
@@ -850,8 +931,14 @@ impl PyLiquidityPool {
             amount_specified,
             sqrt_price_limit,
         };
+        // RATR5A/CXRHW3: stage missing words OUTSIDE the write lock (bounded
+        // passes) - the sim below runs with miss recovery disarmed so no
+        // fetch can execute under the caller write guard.
+        if !self.ensure_missing_words_staged(py, block, &request) {
+            return Ok(None);
+        }
         let read = self.with_state_mut(py, |core| {
-            core.swap_simulation(block, self.pool_id, request)
+            core.swap_simulation_disarmed(block, self.pool_id, &request)
         });
         let SwapRead::Computed(SwapOutcome::V3(payload) | SwapOutcome::V4(payload)) = read else {
             return Ok(None);

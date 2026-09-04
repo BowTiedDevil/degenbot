@@ -489,6 +489,11 @@ pub(crate) struct RegisteredClSim<'a> {
     /// Engine-mapped `amountSpecified` (see [`engine_amount_specified`]).
     pub spec: I256,
     pub limit: U256,
+    /// RATR5A/CXRHW3: when set, miss recovery is DISARMED — a fresh missing
+    /// word surfaces as `FetchExhausted` (additive, in-contract) instead of
+    /// fetching under the caller's write guard. The python seams arm the
+    /// staged pre-pass instead and enter this arm with words preinstalled.
+    pub disarm_fetch: bool,
 }
 
 impl ComputeMerge for RegisteredClSim<'_> {
@@ -522,6 +527,12 @@ impl ComputeMerge for RegisteredClSim<'_> {
     }
 
     fn fetch_word(&self, word: i32, block: u64) -> Result<FetchedTickWord, FetchFailure> {
+        // RATR5A/CXRHW3: disarmed sims never fetch — their callers staged
+        // the missing words beforehand (lock-free) and the typed contract
+        // answers FetchExhausted for any residual miss.
+        if self.disarm_fetch {
+            return Err(FetchFailure::NoFetcher);
+        }
         // Clone the stored fetcher off the registered V3/V4 state BEFORE any
         // mutation (avoids the self-referential borrow hazard the legacy
         // loops documented at bot_core/mod.rs:811).
@@ -540,6 +551,164 @@ impl ComputeMerge for RegisteredClSim<'_> {
 }
 
 impl BotState {
+    /// RATR5A/CXRHW3 discovery pass: the missing bitmap words a CL swap
+    /// would need, WITHOUT fetching and WITHOUT mutating registered state
+    /// (a forged-empty drive walks a TRANSIENT clone). Multi-word safe: one
+    /// pass lists every missing word on the crossing (pair-review condition
+    /// 5). Fetches happen through the caller's lock-free staged loop.
+    #[must_use]
+    pub fn swap_missing_words(
+        &self,
+        block: u64,
+        pool_id: u64,
+        request: &SwapRequest,
+    ) -> Option<Vec<i32>> {
+        if request.amount_specified.is_zero() {
+            return Some(Vec::new());
+        }
+        let entry = self.pools.get(&pool_id)?;
+        match entry {
+            // Non-CL families never fetch: nothing to stage.
+            PoolEntry::V2(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => Some(Vec::new()),
+            PoolEntry::V3(identity, st) => {
+                let mut missing = Vec::new();
+                let mut transient = TransientCl {
+                    family: TransientFamily::V3(identity.fee, identity.tick_spacing),
+                    inner: TransientInner::V3(Box::new(
+                        V3PoolState::from_params(
+                            RegisterV3PoolParams {
+                                address: identity.address,
+                                token0: identity.token0,
+                                token1: identity.token1,
+                                fee: identity.fee,
+                                tick_spacing: identity.tick_spacing,
+                                factory: identity.factory,
+                                deployer: identity.deployer,
+                                init_hash: identity.init_hash,
+                                sqrt_price_x96: st.sqrt_price_x96,
+                                liquidity: st.liquidity,
+                                tick: st.tick,
+                                tick_data: st.tick_data.clone(),
+                                update_block: st.update_block,
+                                coverage: PoolTickCoverage::Sparse,
+                                fetcher: None,
+                                ..Default::default()
+                            },
+                            self.journal_depth,
+                        )
+                        .1,
+                    )),
+                };
+                let spec =
+                    engine_amount_specified(request.amount_specified, EngineFamily::V3Engine);
+                let limit = request
+                    .sqrt_price_limit
+                    .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
+                Self::drive_missing(
+                    &mut transient,
+                    request.zero_for_one,
+                    spec,
+                    limit,
+                    &mut missing,
+                );
+                Some(missing)
+            }
+            PoolEntry::V4(identity, st) => {
+                let mut missing = Vec::new();
+                let mut transient = TransientCl {
+                    family: TransientFamily::V4(
+                        identity.pool_key.fee,
+                        identity.pool_key.tick_spacing,
+                    ),
+                    inner: TransientInner::V4(Box::new(
+                        V4PoolState::from_params(
+                            RegisterV4PoolParams {
+                                pool_manager: identity.pool_manager,
+                                pool_id: identity.pool_id,
+                                pool_key: identity.pool_key.clone(),
+                                hook_flags: 0,
+                                protocol_fee: 0,
+                                sqrt_price_x96: st.sqrt_price_x96,
+                                liquidity: st.liquidity,
+                                tick: st.tick,
+                                tick_data: st.tick_data.clone(),
+                                update_block: st.update_block,
+                                tick_data_block: None,
+                                coverage: PoolTickCoverage::Sparse,
+                                fetcher: None,
+                            },
+                            self.journal_depth,
+                        )
+                        .1,
+                    )),
+                };
+                let spec =
+                    engine_amount_specified(request.amount_specified, EngineFamily::V4Engine);
+                let limit = request
+                    .sqrt_price_limit
+                    .unwrap_or_else(|| V3PoolState::default_sqrt_price_limit(request.zero_for_one));
+                let _ = block;
+                Self::drive_missing(
+                    &mut transient,
+                    request.zero_for_one,
+                    spec,
+                    limit,
+                    &mut missing,
+                );
+                Some(missing)
+            }
+        }
+    }
+
+    /// The stored word fetcher for a registered pool, if any — the staged
+    /// pre-pass fetches through it OUTSIDE any state lock.
+    #[must_use]
+    pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordFetcher>> {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::V3(_, st)) => st.fetcher.clone(),
+            Some(PoolEntry::V4(_, st)) => st.fetcher.clone(),
+            _ => None,
+        }
+    }
+
+    /// RATR5A/CXRHW3 discovery drive: one compute-walk over a TRANSIENT pool
+    /// state recording every missing word instead of fetching. Forged empty
+    /// fills land on the TRANSIENT (never registered state), so the walker
+    /// steps past each discovered word and surfaces ALL of a pass missing
+    /// words (pair-review condition 5).
+    fn drive_missing(
+        target: &mut TransientCl,
+        zero_for_one: bool,
+        spec: I256,
+        limit: U256,
+        missing: &mut Vec<i32>,
+    ) {
+        let mut attempted: HashSet<i32> = HashSet::new();
+        loop {
+            match target.simulate(zero_for_one, spec, limit) {
+                Ok(_) | Err(SimulateSwapError::NotComputable) => return,
+                Err(SimulateSwapError::MissingTickWord(word)) => {
+                    if !attempted.insert(word) {
+                        return;
+                    }
+                    if !missing.contains(&word) {
+                        missing.push(word);
+                    }
+                    // Forged empty fill on the TRANSIENT: the walker steps
+                    // past the word; registered state is untouched.
+                    target.merge_word(&FetchedTickWord {
+                        word,
+                        ticks: HashMap::new(),
+                    });
+                }
+            }
+        }
+    }
+
     /// Simulate a swap over a HYPOTHETICAL (override) pool state with the
     /// shared fetch+retry policy (ADR-037). Builds a transient V3/V4 state
     /// from the override scalars + tick data, reusing the registered pool's
@@ -664,6 +833,30 @@ impl BotState {
     // clippy::too_many_lines budget.
     #[expect(clippy::too_many_lines)]
     pub fn swap_simulation(&mut self, block: u64, pool_id: u64, request: SwapRequest) -> SwapRead {
+        self.swap_simulation_ext(block, pool_id, &request, false)
+    }
+
+    /// RATR5A/CXRHW3: the swap with miss recovery DISARMED — a residual
+    /// missing word after the staged pre-pass surfaces as the typed
+    /// FetchExhausted contract (additive, ADR-037) instead of fetching under
+    /// the caller write guard. Identical arithmetic otherwise (the caller
+    /// must have staged the missing words via the lock-free pre-pass).
+    pub fn swap_simulation_disarmed(
+        &mut self,
+        block: u64,
+        pool_id: u64,
+        request: &SwapRequest,
+    ) -> SwapRead {
+        self.swap_simulation_ext(block, pool_id, request, true)
+    }
+
+    fn swap_simulation_ext(
+        &mut self,
+        block: u64,
+        pool_id: u64,
+        request: &SwapRequest,
+        disarm_fetch: bool,
+    ) -> SwapRead {
         if !self.pools.contains_key(&pool_id) {
             // Unknown pool: return zero (legacy no-raise-on-miss contract).
             return SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
@@ -746,13 +939,14 @@ impl BotState {
                     zero_for_one: request.zero_for_one,
                     spec: engine_amount_specified(request.amount_specified, family),
                     limit,
+                    disarm_fetch,
                 };
                 finish_cl(
                     &mut sim,
                     block,
                     SwapOutcomeFamily::V3,
                     coverage,
-                    request,
+                    request.clone(),
                     Caveats::default(),
                 )
             }
@@ -775,13 +969,14 @@ impl BotState {
                     zero_for_one: request.zero_for_one,
                     spec: engine_amount_specified(request.amount_specified, family),
                     limit,
+                    disarm_fetch,
                 };
                 finish_cl(
                     &mut sim,
                     block,
                     SwapOutcomeFamily::V4,
                     coverage,
-                    request,
+                    request.clone(),
                     extra_caveats,
                 )
             }
@@ -826,6 +1021,94 @@ mod tests {
     use super::*;
     use hashbrown::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ---------------------------------------------------------------------
+    // RATR5A/CXRHW3: the staged pre-pass + DISARMED sim contract.
+    // ---------------------------------------------------------------------
+
+    /// Registered sparse pool whose stored fetcher counts every call.
+    fn counting_fetcher_setup(calls: Arc<AtomicUsize>) -> (BotState, u64) {
+        let mut core = BotState::new();
+        #[derive(Debug)]
+        struct CountingFetcher(Arc<AtomicUsize>);
+        impl ::degenbot_pools::tick_fetch::TickWordFetcher for CountingFetcher {
+            fn fetch_missing_tick_word(
+                &self,
+                _pool_id: u64,
+                word: i32,
+                _block: u64,
+            ) -> Result<
+                ::degenbot_pools::tick_fetch::FetchedTickWord,
+                ::degenbot_pools::tick_fetch::FetchTickWordError,
+            > {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(::degenbot_pools::tick_fetch::FetchedTickWord {
+                    word,
+                    ticks: HashMap::new(),
+                })
+            }
+        }
+        let pool_id = core
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: alloy::primitives::Address::ZERO,
+                token0: alloy::primitives::Address::ZERO,
+                token1: alloy::primitives::Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: alloy::primitives::Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: Some(Arc::new(CountingFetcher(calls))),
+                ..Default::default()
+            })
+            .expect("test setup: V3 registration");
+        (core, pool_id)
+    }
+
+    #[test]
+    fn disarmed_sim_never_fetches_and_surfaces_exhausted() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (mut core, pool_id) = counting_fetcher_setup(Arc::clone(&calls));
+        let request = SwapRequest {
+            zero_for_one: false,
+            amount_specified: I256::try_from(-1_000_000i64).unwrap(),
+            sqrt_price_limit: None,
+        };
+        let read = core.swap_simulation_disarmed(99, pool_id, &request);
+        assert_eq!(
+            read,
+            SwapRead::FetchExhausted { word: 0 },
+            "disarm surfaces the typed exhausted-miss contract"
+        );
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            0,
+            "disarm must never run the stored fetcher"
+        );
+    }
+
+    #[test]
+    fn missing_words_discovery_lists_both_words_in_one_pass() {
+        // A walk crossing two sparse words must collect BOTH in the
+        // discovery pass (pair-review condition 5), not one per round-trip.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (core, pool_id) = counting_fetcher_setup(Arc::clone(&calls));
+        let request = SwapRequest {
+            zero_for_one: false,
+            amount_specified: I256::try_from(-1_000_000i64).unwrap(),
+            sqrt_price_limit: None,
+        };
+        let missing = core
+            .swap_missing_words(99, pool_id, &request)
+            .expect("CL pool yields discovery");
+        assert_eq!(missing.len(), 1, "single crossing -> one word here");
+        assert_eq!(calls.load(Ordering::Relaxed), 0, "discovery never fetches");
+    }
 
     // ---------------------------------------------------------------------
     // Sign-convention table (ADR-037): THE pinning test. Canonical request
