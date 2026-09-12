@@ -19,7 +19,7 @@
 #![expect(clippy::doc_markdown)]
 
 use degenbot_core::diag;
-use degenbot_core::{op_info, op_warn};
+use degenbot_core::op_warn;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
@@ -706,10 +706,11 @@ impl LogDispatcher {
         }
         match outcome {
             ApplyOutcome::Applied(pool_id) => {
-                // Telemetry: ALWAYS-ON structured outcome events. This is the
-                // "pool event processed + state updated" node in every Jaeger
-                // trace: concrete pool identity AND engine pool_id.
-                op_info!(domain = ingest, block = log.block_number,
+                // Structured outcome event: the "pool event processed +
+                // state updated" node in every Jaeger trace, carrying concrete
+                // pool identity AND engine pool_id. DEMOTED to the state DEBUG
+                // stream (ADR-043 §2: per-entity cardinality).
+                diag!(domain = state, block = log.block_number,
                     log.index = ?log.log_index,
                     tx.index = ?log.transaction_index,
                     pool.id = pool_id,

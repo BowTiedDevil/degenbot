@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use alloy::primitives::{aliases::U112, Address};
-use degenbot_core::op_info;
+use degenbot_core::diag;
 
 #[cfg(test)]
 use crate::bot_core::{V3SwapUpdate, V4SwapUpdate};
@@ -77,7 +77,7 @@ impl ArbitrageEngine {
                 self.expire_buffered_telemetry("v3", |core| core.expire_v3_buffered(block_number));
             let (v4_lock_wait_us, v4_work_us) =
                 self.expire_buffered_telemetry("v4", |core| core.expire_v4_buffered(block_number));
-            op_info!(
+            diag!(
                 domain = solver,
                 block_number,
                 expire_v3_lock_wait_us = v3_lock_wait_us,
@@ -87,7 +87,7 @@ impl ArbitrageEngine {
                 "[solve-phase] buffered-event expiry (pre-cycle) complete"
             );
         } else {
-            op_info!(
+            diag!(
                 domain = solver,
                 block_number,
                 expiry_enabled = false,
@@ -201,7 +201,7 @@ impl ArbitrageEngine {
                     ));
                 }
             }
-            op_info!(domain = solver, block_number = block,
+            diag!(domain = solver, block_number = block,
                 apply.block_us = apply_us.iter().sum::<u128>() / 1_000,
                 apply.families = %parts.join(","),
                 "[apply-telemetry] block family split"

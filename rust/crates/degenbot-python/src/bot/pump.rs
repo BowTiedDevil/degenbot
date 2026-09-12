@@ -457,7 +457,7 @@ impl PumpState {
             .instrument(lifecycle_span)
             .await;
             if result.is_ok() {
-                op_info!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
+                diag!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
             } else {
                 op_warn!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
             }
@@ -520,7 +520,7 @@ impl PumpState {
             .instrument(lifecycle_span)
             .await;
             if result.is_ok() {
-                op_info!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
+                diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
             } else {
                 op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
             }
@@ -578,7 +578,7 @@ impl PumpState {
             .instrument(lifecycle_span),
         );
         if result.is_ok() {
-            op_info!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
+            diag!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
         } else {
             op_warn!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
         }
@@ -641,7 +641,7 @@ impl PumpState {
             .instrument(lifecycle_span),
         );
         if result.is_ok() {
-            op_info!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
+            diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
         } else {
             op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
         }

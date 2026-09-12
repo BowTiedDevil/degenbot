@@ -30,7 +30,7 @@
 // WETH9, PoolManager, Multicall3, balanceOf, getEthBalance, ERC6909, etc.) are
 // ubiquitous here — match the degenbot-simulation convention.
 #![expect(clippy::doc_markdown)]
-use degenbot_core::op_info;
+use degenbot_core::{diag, op_info};
 
 use std::collections::BTreeMap;
 
@@ -1848,7 +1848,7 @@ fn log_reverted_swaps_vs_hop_outputs(
         let hop_str = m
             .hop_index
             .map_or_else(|| "unmatched".into(), |i| i.to_string());
-        op_info!(domain = sim, path_id,
+        diag!(domain = sim, path_id,
             hop = %hop_str,
             emit = m.emit_index,
             family = ?m.family,

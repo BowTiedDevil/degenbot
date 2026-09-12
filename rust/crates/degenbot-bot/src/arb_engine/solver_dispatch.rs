@@ -1122,7 +1122,7 @@ impl ArbitrageEngine {
         // M2 probe: per-result events cross the Python log bridge (GIL) -
         // size that cost vs the map/delivery work (hotpath-attributed).
         hotpath::measure_block!("merge.telemetry_event", {
-            op_info!(domain = solver, block_number = solve_block,
+            diag!(domain = path, block_number = solve_block,
                 path.id = pid,
                 input = %result.optimal_input,
                 profit = %result.profit,
@@ -2131,7 +2131,7 @@ impl ArbitrageEngine {
         // Telemetry: fan-out summary (activations above can be hundreds of
         // events; this one line carries the aggregate).
         let fanout_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX);
-        op_info!(
+        diag!(
             domain = solver,
             block_number = solve_block,
             paths.affected = affected_path_ids.len(),
@@ -2431,7 +2431,7 @@ impl ArbitrageEngine {
             hotpath::gauge!(format!("resolve_invalid_{reason}"))
                 .set(f64::from(u32::try_from(*count).unwrap_or(u32::MAX)));
         }
-        op_info!(domain = solver, block_number = solve_block,
+        diag!(domain = solver, block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
             paths.same_state = self.paths_same_state_this_cycle,
             hop.projections = self.hop_projection_count,
@@ -2818,7 +2818,7 @@ impl ArbitrageEngine {
                 }
             }
             self.detached_cycle.publish_gauge();
-            op_info!(
+            diag!(
                 domain = solver,
                 block_number = solve_block,
                 detached_seq = cycle_seq,
