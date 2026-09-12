@@ -115,10 +115,15 @@ The standard is being migrated in five phases (ergo epic `RAYW7I`). Until a
 phase lands, its knob is not yet live; the tables above describe the target
 contract and this section tracks the gap.
 
-- Phase 1 (docs + ADR) — this document.
-- Phase 2 — telemetry facade, compile-time enforcement, engine-span guard,
-  panic hook.
-- Phase 3 — per-crate demotion of per-entity INFO to DEBUG and flag removal.
+- **Phase 1** (docs + ADR) — landed.
+- **Phase 2** — telemetry facade + closed domain targets landed.
+- **Phase 3** — landed. Every verbosity key in ADR-043 §5 is retired; the
+  probes are unconditional DEBUG (or TRACE for the forensic dumps) events on
+  their domain, and the per-entity INFO firehose is demoted. Two keys were
+  reclassified from the §5 retire table into the behavior-flag list:
+  `state_lock.trace` and `state_lock.diag` gate diagnostic *collection* cost,
+  not log emission, so they keep their boolean config (the ADR table is
+  corrected accordingly).
 - Phase 4 — `telemetry.log_level` / `telemetry.diag` / `telemetry.forensic`,
   the single non-blocking console writer, and retired-flag detection.
 - Phase 5 — golden snapshots, metric gates, naming normalization.
