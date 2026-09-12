@@ -1004,7 +1004,7 @@ composition root, not the cycle owner).
   SHALLOW: no resolve, no solve, no deps beyond solver value types. The hot
   cycle holds a SHARED borrow (cycles never mutate path identity);
   registration is the only `&mut` caller. See
-  [ADR-044](docs/adr/ADR-044-solve-cycle-extraction.md).
+  [ADR-045](docs/adr/ADR-045-solve-cycle-extraction.md).
 
 ## The worker fleet (FF-T5 glossary - epic OFQ2UW)
 

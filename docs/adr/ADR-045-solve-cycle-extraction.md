@@ -1,4 +1,4 @@
-# ADR-044: The solve cycle as a deep module — ArbEngine regroups into registry + cycle + config
+# ADR-045: The solve cycle as a deep module — ArbEngine regroups into registry + cycle + config
 
 **Status: accepted** (2026-09-12; architecture review candidate #1, grilling rounds 1–3).
 Landing tracked by ergo epic below (recorded at cutover into each task body).
