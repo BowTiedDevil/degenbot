@@ -128,6 +128,7 @@ use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
 
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
+use crate::arb_engine::fleet_wake;
 use degenbot_workers::budget::FleetBudget;
 use degenbot_workers::dispatcher::{
     BootError, EnqueueError, FleetBoot, FleetHost, Grant, GrantKind, Unit,
@@ -182,7 +183,13 @@ pub(crate) struct SeatRoleDesc {
 /// needs no per-role arm.
 pub(crate) enum HostMsg {
     Enqueue(Unit),
-    SeatDone { seat: u64 },
+    SeatDone {
+        seat: u64,
+    },
+    /// An untrusted posture-transition hint (T3): it carries NO value — the
+    /// pump that follows re-reads the live owner, so a spurious, lost, or
+    /// coalesced edge is benign. It can only cause an earlier wake.
+    PostureEdge,
 }
 
 /// The complete, constructible input tuple of the admission predicate
@@ -640,6 +647,9 @@ impl HostPump<'_> {
                     mirror.store(self.host.queue_len(self.role), Ordering::Relaxed);
                 }
             }
+            // T3: an untrusted posture hint. No value is read — the pump
+            // that follows re-reads the live owner.
+            HostMsg::PostureEdge => {}
         }
     }
 
@@ -711,6 +721,8 @@ impl HostPump<'_> {
 pub(crate) struct SeatHost {
     desc: &'static SeatRoleDesc,
     tx: mpsc::Sender<HostMsg>,
+    /// The waker-fan-out token (T3): deregistered on drop.
+    waker: u64,
     unit_seq: AtomicU64,
     /// The resolved lane-to-thread binding (FF-T4 — test-facing
     /// assertions; the host itself moved into the host thread).
@@ -719,6 +731,12 @@ pub(crate) struct SeatHost {
     /// Test-facing seat count (the role's budget slot cap).
     #[cfg(test)]
     seats: usize,
+}
+
+impl Drop for SeatHost {
+    fn drop(&mut self) {
+        fleet_wake::deregister(self.waker);
+    }
 }
 
 impl SeatHost {
@@ -803,6 +821,7 @@ impl SeatHost {
         }
         Self {
             desc,
+            waker: fleet_wake::register(&tx),
             tx,
             unit_seq: AtomicU64::new(0),
             #[cfg(test)]
@@ -858,6 +877,7 @@ impl SeatHost {
         }
         Self {
             desc,
+            waker: fleet_wake::register(&tx),
             tx,
             unit_seq: AtomicU64::new(0),
             #[cfg(test)]
@@ -2204,5 +2224,132 @@ mod tests {
                 "an Idle host must not arm the backstop (no busy-spin parked empty)"
             );
         });
+    }
+
+    /// T3: an untrusted `PostureEdge` hint wakes a parked backlog far sooner
+    /// than a deliberately huge backstop — the hint can only cause an
+    /// EARLIER wake, and the pump re-reads the live owner.
+    #[test]
+    fn posture_edge_wakes_a_parked_backlog_earlier_than_the_backstop() {
+        let owner = hermetic_owner();
+        force_cordoned(owner);
+        let recorder = Recorder::new();
+        let backstop = Duration::from_secs(5);
+        std::thread::scope(|scope| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mut backlog = VecDeque::new();
+            let mut host = FleetHost::boot(hermetic_fleet_boot(owner)).expect("hermetic boot");
+            let sink = RecordingSink {
+                recorder: Arc::clone(&recorder),
+            };
+            let discipline = RecordingDiscipline {
+                recorder: Arc::clone(&recorder),
+            };
+            scope.spawn(move || {
+                HostPump {
+                    host: &mut host,
+                    backlog: &mut backlog,
+                    role: WorkerRole::PoolStateUpdater,
+                    grants: GrantContract::Single(GrantKind::PoolStateUpdate),
+                    sink: &sink,
+                    mirror: None,
+                    discipline: &discipline,
+                    backstop,
+                    ticks: None,
+                }
+                .run(rx);
+            });
+            tx.send(HostMsg::Enqueue(Unit::new(
+                1,
+                WorkerRole::PoolStateUpdater,
+                None,
+                false,
+                Box::new(|_ctx| {}),
+            )))
+            .expect("submit");
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                !recorder
+                    .snapshot()
+                    .iter()
+                    .any(|o| matches!(o, Outcome::Seated { .. })),
+                "held under the cordon"
+            );
+            lift_cordon(owner);
+            // The only wake in this test: an untrusted hint.
+            tx.send(HostMsg::PostureEdge).expect("hint");
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            loop {
+                if recorder
+                    .snapshot()
+                    .iter()
+                    .any(|o| matches!(o, Outcome::Seated { unit: 1, .. }))
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the PostureEdge hint did not wake the parked backlog (backstop was 5s)"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+    }
+
+    /// T3: a `PostureEdge` on an Idle host changes nothing (no backlog, no
+    /// seat, still Idle) — the hint is inert without held work.
+    #[test]
+    fn posture_edge_is_inert_without_a_backlog() {
+        let mut driven = DrivenHost::boot(HostKind::Pooled);
+        driven.apply_and_pump(HostMsg::PostureEdge);
+        assert!(driven.seated_units().is_empty());
+        assert!(driven.backlog.is_empty());
+        assert_eq!(driven.pump_handle().progress(), ProgressState::Idle);
+    }
+
+    /// T3: hint spam never duplicates or drops held units. Several hints
+    /// while held leave the backlog untouched; after the lift each unit is
+    /// granted exactly once.
+    #[test]
+    fn posture_edge_never_duplicates_or_drops_held_units() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        for _ in 0..2 {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        for _ in 0..5 {
+            driven.apply_and_pump(HostMsg::PostureEdge);
+        }
+        assert_eq!(driven.backlog.len(), 2, "hints are inert while held");
+        assert!(driven.seated_units().is_empty());
+        lift_cordon(owner);
+        for _ in 0..5 {
+            driven.apply_and_pump(HostMsg::PostureEdge);
+        }
+        driven.run_to_quiescence();
+        let mut seated = driven.seated_units();
+        seated.sort_unstable();
+        assert_eq!(seated, vec![1, 2], "each unit granted exactly once");
+        assert!(driven.backlog.is_empty());
+    }
+
+    /// T3: the hint is untrusted and never a posture value — a `PostureEdge`
+    /// on the solve host is a no-op (posture-invariant admission).
+    #[test]
+    fn posture_edge_does_not_change_the_solve_host() {
+        let owner = hermetic_owner();
+        let mut solve = DrivenHost::boot_with(HostKind::Solve, owner);
+        force_cordoned(owner);
+        let unit = solve.next_unit();
+        solve.apply_and_pump(HostMsg::Enqueue(unit));
+        // Solve admission is posture-invariant: the unit is seated even
+        // with the cordon up, and a PostureEdge neither duplicates nor
+        // revokes it (the arm reads no value at all).
+        assert_eq!(solve.seated_units(), vec![1]);
+        solve.apply_and_pump(HostMsg::PostureEdge);
+        assert_eq!(solve.seated_units(), vec![1]);
+        assert!(solve.backlog.is_empty());
     }
 }

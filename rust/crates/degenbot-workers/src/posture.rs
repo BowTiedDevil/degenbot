@@ -630,6 +630,13 @@ impl PostureOwner {
     /// Feed one throttle-poll delta. Publishes to the feed ONLY on a real
     /// transition (`Held` ticks are silent — a subscriber never sees a
     /// spurious edge).
+    ///
+    /// # Feeder-site contract (TB4QGX T3)
+    /// A BOT-side caller of this method MUST also wake the fleet hosts on a
+    /// non-`Held` change (the degenbot-bot host waker). This crate cannot
+    /// know about host channels (layering), so the wake is the caller's
+    /// obligation. The resulting hint is untrusted: hosts re-read the live
+    /// owner.
     pub fn observe_throttle(&self, now_ms: u64, sample: ThrottleSample) -> PostureChange {
         let (change, posture) = {
             let mut machine = self.machine.lock();
@@ -646,6 +653,10 @@ impl PostureOwner {
     /// the feed on a real transition like [`Self::observe_throttle`]
     /// (an idempotent hold-upgrade returns `Held` and stays silent —
     /// the detection site owns the loud lane-death log).
+    ///
+    /// # Feeder-site contract (TB4QGX T3)
+    /// A BOT-side caller of this method MUST also wake the fleet hosts on a
+    /// non-`Held` change; see [`Self::observe_throttle`].
     pub fn observe_cause(&self, cause: PostureCause) -> PostureChange {
         let (change, posture) = {
             let mut machine = self.machine.lock();

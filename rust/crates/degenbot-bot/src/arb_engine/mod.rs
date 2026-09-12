@@ -96,6 +96,7 @@ mod path_lifecycle;
 // registration) — the executors are thin role descriptors over it; the
 // solve executor's exclusion (per-seat channel model + posture-invariant
 // typed-submit admission) is documented in the module doc.
+pub(crate) mod fleet_wake;
 mod seat_host;
 mod snapshot_verify;
 mod solver_dispatch;

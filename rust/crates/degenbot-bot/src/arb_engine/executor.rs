@@ -233,14 +233,17 @@ pub(crate) fn drain_death_response(
             }
         }
     }
-    match owner {
-        Some(owner) => {
-            owner.observe_cause(degenbot_workers::posture::PostureCause::LaneDeath);
-        }
-        None => {
-            degenbot_workers::posture::process()
-                .observe_cause(degenbot_workers::posture::PostureCause::LaneDeath);
-        }
+    let lane_death_change = match owner {
+        Some(owner) => owner.observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
+        None => degenbot_workers::posture::process()
+            .observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
+    };
+    // Feeder-site contract (T3): wake the fleet hosts on a real transition.
+    if !matches!(
+        lane_death_change,
+        degenbot_workers::posture::PostureChange::Held
+    ) {
+        crate::arb_engine::fleet_wake::wake_hosts();
     }
     let occurrence = DRAIN_DEATH_LOGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if occurrence == 1 || occurrence.is_multiple_of(DRAIN_DEATH_LOG_EVERY) {
@@ -383,14 +386,17 @@ pub(crate) fn lane_death_response(
     for pid in unemitted {
         lane.failed(pid, LaneFailure::LaneDeath { unit, seat });
     }
-    match owner {
-        Some(owner) => {
-            owner.observe_cause(degenbot_workers::posture::PostureCause::LaneDeath);
-        }
-        None => {
-            degenbot_workers::posture::process()
-                .observe_cause(degenbot_workers::posture::PostureCause::LaneDeath);
-        }
+    let lane_death_change = match owner {
+        Some(owner) => owner.observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
+        None => degenbot_workers::posture::process()
+            .observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
+    };
+    // Feeder-site contract (T3): wake the fleet hosts on a real transition.
+    if !matches!(
+        lane_death_change,
+        degenbot_workers::posture::PostureChange::Held
+    ) {
+        crate::arb_engine::fleet_wake::wake_hosts();
     }
     tracing::error!(
         target: "degenbot::fleet",

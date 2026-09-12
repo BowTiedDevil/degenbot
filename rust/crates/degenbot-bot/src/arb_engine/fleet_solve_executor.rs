@@ -96,6 +96,8 @@ struct SeatJob {
 /// allocator arenas across cycles).
 pub(crate) struct FleetSolveExecutor {
     tx: mpsc::Sender<HostMsg>,
+    /// The waker-fan-out token (T3): deregistered on drop.
+    waker: u64,
     unit_seq: AtomicU64,
     /// The BOUNDED role-queue length at the LAST stamp (spill or
     /// `SeatDone`) — NOT the backlog depth (6HE6RF comment fix; the
@@ -128,6 +130,12 @@ impl crate::arb_engine::executor::Executor for FleetSolveExecutor {
         degenbot_workers::dispatcher::SubmitError,
     > {
         self.submit_solve_bin(bin, work)
+    }
+}
+
+impl Drop for FleetSolveExecutor {
+    fn drop(&mut self) {
+        crate::arb_engine::fleet_wake::deregister(self.waker);
     }
 }
 
@@ -244,6 +252,7 @@ impl FleetSolveExecutor {
             abort_executor("fleet host thread spawn", &format!("{err:?}"));
         }
         Self {
+            waker: crate::arb_engine::fleet_wake::register(&tx),
             tx,
             unit_seq: AtomicU64::new(0),
             solver_seats,
