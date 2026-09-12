@@ -18,6 +18,9 @@ use std::time::Duration;
 
 use pyo3::prelude::*;
 
+use crate::bot::engine::intake_faulted;
+use degenbot_bot::fleet_intake::IntakeFaultWatch;
+
 /// The seat→waiter outcome (`Send` because `Py<T>` and `PyErr` are).
 type IntakeOutcome = Result<Py<PyAny>, PyErr>;
 
@@ -37,6 +40,57 @@ pub struct PyIntakeReceipt {
     /// Set by the seat right after the outcome lands — a cheap probe for
     /// the driver (no parked waiter thread per unit).
     done: Arc<AtomicBool>,
+    /// TB4QGX T6 (spike S2): this executor's fault watch. When the sticky
+    /// lane-death latch faults the intake, `wait`/`result` resolve terminally
+    /// instead of parking forever.
+    fault: Option<Arc<IntakeFaultWatch>>,
+}
+
+/// Block until the unit completes, the intake faults, or `timeout` elapses.
+/// The fault is polled in short slices because `std::sync::mpsc::Receiver`
+/// is not selectable (the fault is rare, so the 20 ms slice is negligible).
+fn join_signals(
+    signal_rx: &std::sync::Mutex<Receiver<()>>,
+    done: &AtomicBool,
+    fault: Option<&IntakeFaultWatch>,
+    timeout: Option<Duration>,
+) -> Result<(), PyErr> {
+    use std::sync::mpsc::RecvTimeoutError;
+    let timeout_secs = timeout.map(|d| d.as_secs_f64());
+    let deadline = timeout.map(|d| std::time::Instant::now() + d);
+    loop {
+        if done.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if let Some(fault) = fault.and_then(IntakeFaultWatch::snapshot) {
+            return Err(intake_faulted(fault));
+        }
+        let slice = match deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(pyo3::exceptions::PyTimeoutError::new_err(format!(
+                        "intake unit did not complete in {}s",
+                        timeout_secs.unwrap_or_default()
+                    )));
+                }
+                remaining.min(Duration::from_millis(20))
+            }
+            None => Duration::from_millis(20),
+        };
+        let guard = signal_rx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match guard.recv_timeout(slice) {
+            Ok(()) => return Ok(()),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "intake executor dropped the receipt channel",
+                ));
+            }
+        }
+    }
 }
 
 impl PyIntakeReceipt {
@@ -68,9 +122,12 @@ impl PyIntakeReceipt {
         match &*guard {
             Some(Ok(value)) => Ok(value.clone_ref(py)),
             Some(Err(err)) => Err(err.clone_ref(py)),
-            None => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "intake unit has not completed yet (poll done() first)",
-            )),
+            None => match self.fault.as_ref().and_then(|watch| watch.snapshot()) {
+                Some(fault) => Err(intake_faulted(fault)),
+                None => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "intake unit has not completed yet (poll done() first)",
+                )),
+            },
         }
     }
 
@@ -83,28 +140,11 @@ impl PyIntakeReceipt {
     /// callable's own exception on build failure.
     #[pyo3(signature = (timeout=None))]
     fn wait(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<Py<PyAny>> {
-        let outcome = py.detach(|| {
-            let signal_rx = self
-                .signal_rx
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match timeout {
-                Some(secs) => {
-                    let dur = Duration::try_from_secs_f64(secs.max(0.0))
-                        .unwrap_or(Duration::from_secs(1));
-                    signal_rx.recv_timeout(dur).map_err(|recv_err| {
-                        pyo3::exceptions::PyTimeoutError::new_err(format!(
-                            "intake unit did not complete in {secs}s: {recv_err}"
-                        ))
-                    })
-                }
-                None => signal_rx.recv().map_err(|recv_err| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "intake executor dropped the receipt channel: {recv_err}"
-                    ))
-                }),
-            }
+        let dur = timeout.map(|secs| {
+            Duration::try_from_secs_f64(secs.max(0.0)).unwrap_or(Duration::from_secs(1))
         });
+        let outcome =
+            py.detach(|| join_signals(&self.signal_rx, &self.done, self.fault.as_deref(), dur));
         outcome?;
         self.result(py)
     }
@@ -118,24 +158,18 @@ impl PyIntakeReceipt {
     /// (executor died); the callable's own exception on build failure.
     fn wait_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let signal_rx = Arc::clone(&self.signal_rx);
+        let done = Arc::clone(&self.done);
+        let fault = self.fault.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let delivery = tokio::task::spawn_blocking(move || {
-                let guard = signal_rx
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                guard.recv()
+            tokio::task::spawn_blocking(move || {
+                join_signals(&signal_rx, &done, fault.as_deref(), None)
             })
             .await
             .map_err(|join_err| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "intake receipt join failed: {join_err}"
                 ))
-            })?;
-            delivery.map_err(|recv_err| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "intake executor dropped the receipt channel: {recv_err}"
-                ))
-            })
+            })?
         })
     }
 
@@ -168,6 +202,7 @@ pub fn submit(fn_work: Py<PyAny>) -> PyResult<PyIntakeReceipt> {
         outcome: Arc::new(Mutex::new(None)),
         signal_rx: Arc::new(Mutex::new(sig_rx)),
         done: Arc::new(AtomicBool::new(false)),
+        fault: degenbot_bot::fleet_intake::registration_fault_watch(),
     };
     let done = Arc::clone(&receipt.done);
     let outcome_slot = Arc::clone(&receipt.outcome);

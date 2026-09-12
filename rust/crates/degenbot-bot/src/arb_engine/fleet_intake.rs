@@ -13,7 +13,80 @@
 //! hand-outs, one honest `Result` arm (the library never aborts on the
 //! boot-refusal arm).
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use degenbot_workers::dispatcher::BootError;
+use parking_lot::{Condvar, Mutex};
+
+/// The typed terminal record for a Faulted intake (TB4QGX T6, spike S2):
+/// the host drained held work because the lane-death latch is sticky, so no
+/// later admit can ever respect it. `held` is the number of queued/backlogged
+/// units resolved by the drain — they ran ZERO times (resolution != execution),
+/// so at-most-once holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntakeFault {
+    /// The typed cause (today always `"lane-death"`).
+    pub cause: &'static str,
+    /// The held units resolved by the fault (never executed).
+    pub held: usize,
+}
+
+/// The S2 fault watch: the bot-side seam the pyo3 receipt observes. The host
+/// `set`s it on entering Faulted (first-wins — a second lane death for the
+/// same latch is idempotent); every waiting receipt resolves terminally
+/// instead of parking. This is the ONLY cross-crate surface the S2 seam adds
+/// (the `FleetIntake` port itself is unchanged).
+#[derive(Debug, Default)]
+pub struct IntakeFaultWatch {
+    state: Mutex<Option<IntakeFault>>,
+    cv: Condvar,
+}
+
+impl IntakeFaultWatch {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The current fault, if any (read-through).
+    #[must_use]
+    pub fn snapshot(&self) -> Option<IntakeFault> {
+        *self.state.lock()
+    }
+
+    /// First-wins: only the first fault is stored; later calls are no-ops
+    /// (idempotent under double lane-death delivery).
+    pub fn set(&self, fault: IntakeFault) {
+        let mut state = self.state.lock();
+        if state.is_none() {
+            *state = Some(fault);
+            self.cv.notify_all();
+        }
+    }
+
+    /// Block until a fault lands (or `timeout` elapses); returns it.
+    #[must_use]
+    pub fn wait_for(&self, timeout: Duration) -> Option<IntakeFault> {
+        let mut state = self.state.lock();
+        if state.is_none() {
+            self.cv.wait_for(&mut state, timeout);
+        }
+        *state
+    }
+}
+
+/// The installed registration executor's S2 fault watch — what the pyo3
+/// receipt observes. `None` before any engine construction (a submit would
+/// already have refused with the typed `BootError`). Deliberately NOT a
+/// separate process-global: the watch belongs to the executor, so hermetic
+/// executors isolate completely (7KAPBB).
+#[must_use]
+pub fn registration_fault_watch() -> Option<Arc<IntakeFaultWatch>> {
+    crate::arb_engine::fleet_registration_executor::global_fleet_registration_executor()
+        .ok()
+        .map(crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::fault_watch)
+}
 
 /// The pooled work unit: the seat threads' existing box shape, pinned as
 /// an alias (concrete, object-safe — never a generic on the port).

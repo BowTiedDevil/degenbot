@@ -694,6 +694,13 @@ impl FleetHost {
         self.posture.admits_lease(role.cordon_class())
     }
 
+    /// The sticky lane-death hold (read-through). The Faulted transition
+    /// (TB4QGX T6) keys on THIS typed latch — never on elapsed cordon time.
+    #[must_use]
+    pub fn lane_death_held(&self) -> bool {
+        self.posture.lane_death_held()
+    }
+
     /// The sim intake cap in the current posture (read through the shared
     /// owner — cordon floors it per §6 effect (b)).
     #[must_use]
@@ -972,6 +979,17 @@ impl FleetHost {
 
     fn take_from_role(&mut self, role: WorkerRole) -> Option<Unit> {
         self.role_queue_mut(role)?.pop_front()
+    }
+
+    /// Drain a role's queued (not-yet-granted) units, returning how many
+    /// were removed. The Faulted arm (TB4QGX T6) resolves them terminally;
+    /// granted in-flight units are untouched (they complete naturally).
+    pub fn drain_role_queue(&mut self, role: WorkerRole) -> usize {
+        self.role_queue_mut(role).map_or(0, |queue| {
+            let drained = queue.len();
+            queue.clear();
+            drained
+        })
     }
 
     fn return_unit(&mut self, unit: Unit) {

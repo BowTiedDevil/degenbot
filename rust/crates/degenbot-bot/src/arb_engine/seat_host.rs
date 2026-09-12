@@ -337,6 +337,11 @@ pub(crate) enum ProgressState {
     Idle,
     /// The backlog is non-empty — held units await admission.
     Backed,
+    /// The sticky lane-death latch is held (FF-T4): no admit can ever arrive,
+    /// so held work is resolved terminally instead of parked. Keyed on the
+    /// TYPED latch only — a long recoverable cordon stays `Backed`. Sticky:
+    /// once the latch is set there is no edge out (a fresh process only).
+    Faulted,
 }
 
 /// The serial binding's named cycle seat (FF-T4): the ONE thread that
@@ -589,6 +594,12 @@ pub(crate) struct HostPump<'a> {
     /// passes trip the loud fail). Borrowed so it persists across every
     /// pump pass of one host thread.
     pub(crate) no_progress: &'a mut NoProgressGuard,
+    /// The S2 fault watch (TB4QGX T6): set on entering Faulted so every
+    /// parked intake receipt resolves terminally. `None` on hosts whose
+    /// receipts are not pyo3-owned (sim/solve): `progress()` requires a
+    /// watch, so they NEVER enter Faulted — held work there follows the
+    /// pre-existing lane-death flows (S2 scope cut: registration intake).
+    pub(crate) fault: Option<&'a crate::arb_engine::fleet_intake::IntakeFaultWatch>,
     /// Test seam (T2): counts timeout-driven backstop pumps so the tick rate
     /// can be asserted bounded. Absent from production builds.
     #[cfg(test)]
@@ -609,10 +620,44 @@ impl HostPump<'_> {
     /// The intake progress state (backlog emptiness today; the fault and
     /// closed arms land with the transitions that make them reachable).
     fn progress(&self) -> ProgressState {
-        if self.backlog.is_empty() {
+        // Faulted is a PURE function of the sticky typed latch (TB4QGX T6):
+        // no separate flag, so double lane-death delivery is idempotent by
+        // construction and no elapsed-time heuristic can reach it. Gated on
+        // a fault watch: only receipt-owning hosts Fault — a SHARED process
+        // posture owner's sticky latch must never fault a host with no
+        // receipts (the 7KAPBB cross-test contamination class).
+        if self.fault.is_some() && self.host.lane_death_held() {
+            ProgressState::Faulted
+        } else if self.backlog.is_empty() {
             ProgressState::Idle
         } else {
             ProgressState::Backed
+        }
+    }
+
+    /// The Faulted arm (TB4QGX T6): drain the backlog AND the role queue and
+    /// report the held count to the S2 fault watch. Granted in-flight units
+    /// are untouched (they complete naturally). A held unit runs ZERO times
+    /// here — resolution != execution, so at-most-once holds. Idempotent:
+    /// the watch is first-wins, the drains are clears, and a repeat pass is
+    /// a no-op once both are empty.
+    fn resolve_fault(&mut self) {
+        let held = self.backlog.len() + self.host.queue_len(self.role);
+        self.backlog.clear();
+        let _ = self.host.drain_role_queue(self.role);
+        if let Some(fault) = self.fault {
+            if fault.snapshot().is_none() {
+                fault.set(crate::arb_engine::fleet_intake::IntakeFault {
+                    cause: "lane-death",
+                    held,
+                });
+                tracing::error!(
+                    target: "degenbot::fleet",
+                    role = ?self.role,
+                    held,
+                    "[fleet-intake] lane-death latch held — Faulted: {held} queued/backlogged unit(s) resolved terminally (never executed), in-flight units complete naturally"
+                );
+            }
         }
     }
 
@@ -732,6 +777,13 @@ impl HostPump<'_> {
     /// grant time — the seat-model delivery IS the claim — and completion
     /// arrives via [`HostMsg::SeatDone`].
     pub(crate) fn pump(&mut self) {
+        // Faulted FIRST (TB4QGX T6): the sticky lane-death latch means no
+        // admit can ever arrive, so held work is resolved terminally (and
+        // this returns before the T4 guard, which must never accrue here).
+        if self.progress() == ProgressState::Faulted {
+            self.resolve_fault();
+            return;
+        }
         // T4: snapshot the pre-pass shape for the no-progress guard. A pass
         // is "admitted" iff there is held work AND the admission predicate
         // would admit it; it "progressed" iff the backlog shrank or a grant
@@ -843,7 +895,11 @@ impl SeatHost {
     ///
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
-    pub(crate) fn boot(desc: &'static SeatRoleDesc, boot: FleetBoot) -> Result<Self, BootError> {
+    pub(crate) fn boot(
+        desc: &'static SeatRoleDesc,
+        boot: FleetBoot,
+        fault: Option<std::sync::Arc<crate::arb_engine::fleet_intake::IntakeFaultWatch>>,
+    ) -> Result<Self, BootError> {
         let host = FleetHost::boot(boot)?;
         // FF-T3 (Z2YW52): the LANE-TO-THREAD BINDING SEAM — one lane
         // interface, the binding is the adapter that maps lanes to
@@ -856,14 +912,14 @@ impl SeatHost {
         // here with the plan's typed pending refusal (never a silent
         // narrow).
         match host.plan().binding {
-            degenbot_workers::plan::Binding::Pinned => Ok(Self::boot_pinned(desc, host)),
+            degenbot_workers::plan::Binding::Pinned => Ok(Self::boot_pinned(desc, host, fault)),
             // FF-T4 (Z6XTDX): the serial arm BOOTS — one named cycle
             // thread (`work-fleet-serial-0`) runs the role's FSM slots in
             // grant order over the SAME queue and HostPump (§10
             // never-drop unchanged; the layout seats stay the FSM's
             // slots — the census rows print `logical`, riding the cycle
             // lane's time).
-            degenbot_workers::plan::Binding::Serial => Ok(Self::boot_serial(desc, host)),
+            degenbot_workers::plan::Binding::Serial => Ok(Self::boot_serial(desc, host, fault)),
         }
     }
 
@@ -872,7 +928,11 @@ impl SeatHost {
     /// running the ONE `HostPump` triple). Behavior-identical by
     /// construction — the parity corpus (the LW-T7 golden replay +
     /// the executor suites) is the regression harness.
-    fn boot_pinned(desc: &'static SeatRoleDesc, host: FleetHost) -> Self {
+    fn boot_pinned(
+        desc: &'static SeatRoleDesc,
+        host: FleetHost,
+        fault: Option<std::sync::Arc<crate::arb_engine::fleet_intake::IntakeFaultWatch>>,
+    ) -> Self {
         #[cfg(test)]
         let binding = host.plan().binding;
         let seats = (desc.seats)(host.budget());
@@ -902,7 +962,7 @@ impl SeatHost {
         let spawned = std::thread::Builder::new()
             .name(desc.host_thread.to_string())
             .spawn(move || {
-                host_loop(rx, host, desc, Arc::clone(&work));
+                host_loop(rx, host, desc, Arc::clone(&work), fault);
                 // Process teardown: the submission channel closed. Retire
                 // the seats so no worker parks forever on an empty queue.
                 work.close();
@@ -934,7 +994,11 @@ impl SeatHost {
     /// shape; saturation is the advisory queue depth, named and metered
     /// through the census's serial binding row (no second waiting
     /// policy — the 6HE6RF amendment).
-    fn boot_serial(desc: &'static SeatRoleDesc, host: FleetHost) -> Self {
+    fn boot_serial(
+        desc: &'static SeatRoleDesc,
+        host: FleetHost,
+        fault: Option<std::sync::Arc<crate::arb_engine::fleet_intake::IntakeFaultWatch>>,
+    ) -> Self {
         #[cfg(test)]
         let binding = host.plan().binding;
         #[cfg(test)]
@@ -960,7 +1024,7 @@ impl SeatHost {
         let spawned = std::thread::Builder::new()
             .name(desc.host_thread.to_string())
             .spawn(move || {
-                host_loop(rx, host, desc, Arc::clone(&work));
+                host_loop(rx, host, desc, Arc::clone(&work), fault);
                 work.close();
             });
         if let Err(err) = spawned {
@@ -1063,11 +1127,16 @@ fn seat_loop(desc: &'static SeatRoleDesc, work: &WorkQueue, done: &mpsc::Sender<
 /// run the ONE recv → apply → pump loop (6HE6RF).
 /// (`rx` moves into [`HostPump::run`] — the thread-boundary move the
 /// pre-fold loop needed a lint expectation for is now `run`'s.)
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the Arc moves into the spawned host thread — a borrow cannot cross the thread boundary"
+)]
 fn host_loop(
     rx: mpsc::Receiver<HostMsg>,
     mut host: FleetHost,
     desc: &'static SeatRoleDesc,
     queue: Arc<WorkQueue>,
+    fault: Option<std::sync::Arc<crate::arb_engine::fleet_intake::IntakeFaultWatch>>,
 ) {
     let sink = PooledSink { queue };
     let discipline = PooledDiscipline { desc };
@@ -1085,6 +1154,7 @@ fn host_loop(
         discipline: &discipline,
         backstop: intake_backstop(),
         no_progress: &mut no_progress,
+        fault: fault.as_deref(),
         #[cfg(test)]
         ticks: None,
     }
@@ -1210,7 +1280,11 @@ mod tests {
 
     use degenbot_workers::budget::BudgetOverrides;
     use degenbot_workers::dispatcher::{FleetBoot, FleetHost, Grant, GrantKind, Unit};
-    use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
+    use degenbot_workers::posture::{
+        FleetPosture, PostureCause, PostureOwner, PosturePolicy, ThrottleSample,
+    };
+
+    use crate::arb_engine::fleet_intake::IntakeFault;
     use degenbot_workers::role::WorkerRole;
 
     use super::{
@@ -1386,6 +1460,9 @@ mod tests {
         /// T4: the persistent no-progress guard (a real drive reuses ONE
         /// guard across passes, mirroring production).
         guard: NoProgressGuard,
+        /// T6: the S2 fault watch this driven host reports to (leaked to
+        /// 'static — hermetic per test).
+        fault: &'static crate::arb_engine::fleet_intake::IntakeFaultWatch,
         /// T2: the recv-timeout backstop used by a real-thread drive.
         backstop: Duration,
     }
@@ -1418,6 +1495,9 @@ mod tests {
                 in_flight: VecDeque::new(),
                 unit_seq: 0,
                 guard: NoProgressGuard::new(intake_no_progress_ticks()),
+                fault: std::boxed::Box::leak(std::boxed::Box::new(
+                    crate::arb_engine::fleet_intake::IntakeFaultWatch::new(),
+                )),
                 backstop: Duration::from_millis(50),
             }
         }
@@ -1468,6 +1548,7 @@ mod tests {
                 discipline: &self.discipline,
                 backstop: self.backstop,
                 no_progress: &mut self.guard,
+                fault: Some(self.fault),
                 #[cfg(test)]
                 ticks: None,
             }
@@ -2119,6 +2200,7 @@ mod tests {
                     discipline: &discipline,
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
+                    fault: None,
                     ticks: None,
                 }
                 .run(rx);
@@ -2203,6 +2285,7 @@ mod tests {
                     discipline: &discipline,
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
+                    fault: None,
                     ticks: Some(&ticks_in),
                 }
                 .run(rx);
@@ -2323,6 +2406,7 @@ mod tests {
                     discipline: &discipline,
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
+                    fault: None,
                     ticks: Some(&ticks_in),
                 }
                 .run(rx);
@@ -2366,6 +2450,7 @@ mod tests {
                     discipline: &discipline,
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
+                    fault: None,
                     ticks: None,
                 }
                 .run(rx);
@@ -2661,5 +2746,160 @@ mod tests {
         driven.run_to_quiescence();
         assert!(driven.backlog.is_empty(), "the healthy host drained");
         assert_eq!(driven.guard.consecutive(), 0);
+    }
+
+    /// T6: force the STICKY lane-death latch (not a throttle cordon).
+    fn force_lane_death(owner: &'static PostureOwner) {
+        owner.observe_cause(PostureCause::LaneDeath);
+        assert_eq!(owner.current(), FleetPosture::Cordoned);
+        assert!(owner.lane_death_held(), "the lane-death latch is sticky");
+    }
+
+    /// T6: forced lane death with a non-empty backlog -> Faulted resolves ALL
+    /// held units with the typed terminal record; no infinite ticking.
+    #[test]
+    fn lane_death_faults_held_intake_and_resolves_all() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        // Park three units under a RECOVERABLE EventBurst cordon FIRST, then
+        // upgrade to the sticky lane-death latch.
+        force_cordoned(owner);
+        for _ in 0..3 {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        assert_eq!(
+            driven.backlog.len(),
+            3,
+            "parked under the recoverable cordon"
+        );
+        assert_eq!(
+            driven.fault.snapshot(),
+            None,
+            "no fault while merely cordoned"
+        );
+        force_lane_death(owner);
+        driven.pump_handle().pump();
+        assert_eq!(
+            driven.pump_handle().progress(),
+            super::ProgressState::Faulted
+        );
+        assert!(driven.backlog.is_empty(), "the held backlog is resolved");
+        assert_eq!(
+            driven.fault.snapshot(),
+            Some(IntakeFault {
+                cause: "lane-death",
+                held: 3
+            }),
+            "every held unit is accounted to the typed terminal record"
+        );
+        assert!(driven.seated_units().is_empty(), "held units never ran");
+    }
+
+    /// T6: Faulted is keyed on the TYPED latch, never elapsed time — a long
+    /// recoverable EventBurst/Duty cordon must NOT fault.
+    #[test]
+    fn a_long_recoverable_cordon_never_faults() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        for _ in 0..2 {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        for _ in 0..(driven.guard.limit() * 5) {
+            driven.pump_handle().pump();
+            assert_eq!(
+                driven.pump_handle().progress(),
+                super::ProgressState::Backed,
+                "a recoverable cordon stays Backed"
+            );
+            assert_eq!(driven.fault.snapshot(), None, "no fault from elapsed time");
+        }
+        assert_eq!(
+            driven.backlog.len(),
+            2,
+            "held work is never resolved by a recoverable cordon"
+        );
+    }
+
+    /// T6: entering Faulted for the SAME lane death is idempotent under
+    /// double delivery — the first fault record wins and drains are no-ops.
+    #[test]
+    fn faulted_is_idempotent_under_double_lane_death() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        for _ in 0..2 {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        force_lane_death(owner);
+        driven.pump_handle().pump();
+        let first = driven
+            .fault
+            .snapshot()
+            .expect("the first fault is recorded");
+        assert_eq!(first.held, 2);
+        // A second delivery of the SAME lane death is Held, and re-pumping a
+        // Faulted host must not overwrite the first record.
+        assert_eq!(
+            owner.observe_cause(PostureCause::LaneDeath),
+            degenbot_workers::posture::PostureChange::Held
+        );
+        driven.pump_handle().pump();
+        assert_eq!(driven.fault.snapshot(), Some(first), "first-wins");
+        assert!(driven.backlog.is_empty());
+    }
+
+    /// T6: in-flight granted units are NOT cancelled — they complete naturally
+    /// after Faulted (and are never double-resolved).
+    #[test]
+    fn in_flight_units_complete_naturally_after_faulted() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        let unit = driven.next_unit();
+        driven.apply_and_pump(HostMsg::Enqueue(unit));
+        assert_eq!(driven.seated_units(), vec![1], "granted while Nominal");
+        force_lane_death(owner);
+        driven.pump_handle().pump();
+        assert_eq!(
+            driven.fault.snapshot(),
+            Some(IntakeFault {
+                cause: "lane-death",
+                held: 0
+            }),
+            "the granted unit is not held work"
+        );
+        driven.complete_oldest_in_flight();
+        assert_eq!(driven.seated_units(), vec![1], "completed exactly once");
+    }
+
+    /// T6: a unit enqueued AFTER Faulted is resolved terminally, never run.
+    #[test]
+    fn enqueue_after_faulted_is_resolved_not_run() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_lane_death(owner);
+        driven.pump_handle().pump();
+        let first = driven
+            .fault
+            .snapshot()
+            .expect("the fault is recorded even with zero held");
+        let late = driven.next_unit();
+        driven.apply_and_pump(HostMsg::Enqueue(late));
+        assert!(
+            driven.backlog.is_empty(),
+            "the late unit is resolved, not held"
+        );
+        assert!(
+            driven.seated_units().is_empty(),
+            "a Faulted host never runs new work"
+        );
+        assert_eq!(
+            driven.fault.snapshot(),
+            Some(first),
+            "the record is first-wins"
+        );
     }
 }

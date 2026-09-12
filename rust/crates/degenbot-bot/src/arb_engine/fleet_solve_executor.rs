@@ -393,6 +393,11 @@ fn host_loop(
         no_progress: &mut crate::arb_engine::seat_host::NoProgressGuard::new(
             crate::arb_engine::seat_host::intake_no_progress_ticks(),
         ),
+        // S2 scope cut: the solve host has no pyo3-owned intake receipts, so
+        // it never enters Faulted (progress() requires a fault watch); held
+        // solve work under a lane death follows the pre-existing lane-death
+        // flows, not this task's intake resolution path.
+        fault: None,
         #[cfg(test)]
         ticks: None,
     }

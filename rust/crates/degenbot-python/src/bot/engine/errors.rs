@@ -154,6 +154,27 @@ create_exception!(
     "The fleet host refused to boot: the detected CPU budget is below the pinned-role floor, or a boot invariant failed. The library never aborts the host process on this arm; the message carries the detected budget, the floor, and one operator hint."
 );
 
+// TB4QGX T6 (spike S2): the Faulted intake drain. The sticky lane-death
+// latch resolved parked intake units terminally; the receipt re-raises this
+// typed error. Distinct from the fatal verification errors so the driver can
+// tell a fleet fault from a bad pool; subclassing RuntimeError keeps broad
+// handlers working.
+create_exception!(
+    degenbot._ffi,
+    FleetIntakeFaultedError,
+    pyo3::exceptions::PyRuntimeError,
+    "The fleet registration intake faulted: the sticky lane-death latch resolved held intake units terminally (they were never executed). Sticky until a fresh process."
+);
+
+/// Map the bot-side typed `IntakeFault` onto the exception (ONE owner of the
+/// wording, mirroring `boot_refused`).
+pub(crate) fn intake_faulted(fault: degenbot_bot::fleet_intake::IntakeFault) -> PyErr {
+    FleetIntakeFaultedError::new_err(format!(
+        "fleet registration intake faulted ({}): {} held unit(s) resolved terminally and were never executed; the lane is dead and the cordon is sticky until a fresh process",
+        fault.cause, fault.held
+    ))
+}
+
 /// FF-T1 (BPHR6F): map the workers' typed `BootError` family onto the
 /// `BootRefused` exception — the ONE owner of the message shape (detected
 /// budget + floor + one operator hint), so the wording cannot drift per

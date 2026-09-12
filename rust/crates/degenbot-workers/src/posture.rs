@@ -360,6 +360,14 @@ impl PostureStateMachine {
         &self.counters
     }
 
+    /// The sticky lane-death hold (FF-T4): once set, no clean window can
+    /// ever lift it — the `FleetHost` Faulted transition (TB4QGX T6) keys on
+    /// THIS typed latch, never on elapsed cordon time.
+    #[must_use]
+    pub const fn lane_death_held(&self) -> bool {
+        self.lane_death_hold
+    }
+
     /// The active policy (operator-channel re-tune reads it through here).
     #[must_use]
     pub const fn policy(&self) -> &PosturePolicy {
@@ -734,6 +742,14 @@ impl PostureOwner {
     #[must_use]
     pub fn counters(&self) -> PostureCounters {
         *self.machine.lock().counters()
+    }
+
+    /// The sticky lane-death hold (read-through). A host keys its Faulted
+    /// transition on this TYPED latch, never on elapsed cordon time (a long
+    /// recoverable EventBurst/Duty cordon must not fault).
+    #[must_use]
+    pub fn lane_death_held(&self) -> bool {
+        self.machine.lock().lane_death_held()
     }
 
     /// Mirror the machine's state into the feed — compare-then-publish, so

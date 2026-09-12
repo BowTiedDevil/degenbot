@@ -46,7 +46,9 @@ use degenbot_workers::budget::FleetBudget;
 use degenbot_workers::dispatcher::{BootError, FleetBoot, GrantKind};
 use degenbot_workers::role::WorkerRole;
 
-use crate::arb_engine::fleet_intake::{FleetIntake, InnerWork};
+use std::sync::Arc;
+
+use crate::arb_engine::fleet_intake::{FleetIntake, InnerWork, IntakeFaultWatch};
 use crate::arb_engine::seat_host::{self, SeatHost, SeatRoleDesc};
 
 /// The intake executor's seat-host role descriptor — this module IS the
@@ -86,6 +88,9 @@ pub struct FleetRegistrationExecutor {
     /// The shared pooled-seat host (the channel submit end + the unit
     /// sequence).
     host: SeatHost,
+    /// This executor's S2 fault watch (TB4QGX T6). Per-instance so hermetic
+    /// executors isolate; the process-global executor shares the process one.
+    fault_watch: Arc<IntakeFaultWatch>,
     /// The budget's `PoolStateUpdater` slot cap (the pooled seat count).
     #[cfg(test)]
     seats: usize,
@@ -101,12 +106,26 @@ impl FleetRegistrationExecutor {
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        let host = SeatHost::boot(&REG_ROLE, boot)?;
+        Self::boot_with_watch(boot, Arc::new(IntakeFaultWatch::new()))
+    }
+
+    fn boot_with_watch(
+        boot: FleetBoot,
+        fault_watch: Arc<IntakeFaultWatch>,
+    ) -> Result<Self, BootError> {
+        let host = SeatHost::boot(&REG_ROLE, boot, Some(Arc::clone(&fault_watch)))?;
         Ok(Self {
             #[cfg(test)]
             seats: host.seat_count(),
             host,
+            fault_watch,
         })
+    }
+
+    /// This executor's S2 fault watch (the pyo3 receipt observes it).
+    #[must_use]
+    pub(crate) fn fault_watch(&self) -> Arc<IntakeFaultWatch> {
+        Arc::clone(&self.fault_watch)
     }
 
     /// The budget's `PoolStateUpdater` slot cap (the pooled seat count).

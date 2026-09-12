@@ -102,7 +102,7 @@ impl FleetSimExecutor {
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        let host = SeatHost::boot(&SIM_ROLE, boot)?;
+        let host = SeatHost::boot(&SIM_ROLE, boot, None)?;
         Ok(Self {
             #[cfg(test)]
             sim_seats: host.seat_count(),

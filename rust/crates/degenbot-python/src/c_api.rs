@@ -199,6 +199,15 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<crate::bot::engine::BootRefused>(),
     )?;
 
+    // TB4QGX T6: the Faulted intake drain (spike S2) surfaces as a typed
+    // receipt exception.
+    #[cfg(feature = "bot")]
+    m.add(
+        "FleetIntakeFaultedError",
+        m.py()
+            .get_type::<crate::bot::engine::FleetIntakeFaultedError>(),
+    )?;
+
     // Typed pool-admission exceptions (Plan 102, F2EVV6): a unified
     // `PoolRegistrationError` hierarchy so `build_paths` can classify
     // V2/V3/V4 admission refusals by type instead of fragile string
