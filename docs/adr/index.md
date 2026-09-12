@@ -60,6 +60,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [041](ADR-041-block-epoch-pipeline.md) | The block-epoch pipeline — one stage machine over a cheap-read data plane | implemented |
 | [042](ADR-042-role-switching-worker-fleet.md) | One role-switching worker fleet — a bounded, budgeted host for every execution resource | **proposed** |
 | [043](ADR-043-observability-standard.md) | The observability standard — four channels, a level rubric, one target taxonomy | **proposed** |
+| [044](ADR-044-fleet-intake-liveness.md) | Fleet intake liveness — BackstopTick + PostureEdge complete the host transition relation | **accepted** |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 

@@ -558,17 +558,23 @@ impl HostDiscipline for PooledDiscipline {
 /// — the consult's unconditional presence here IS the point (one shape,
 /// one consult, class-derived).
 ///
-/// # Wake discipline (the preserved contract — catalog row #9)
+/// # Wake discipline (the ratified contract — TB4QGX, ADR-044)
 ///
-/// Both pre-fold loops were message-driven ONLY ("no busy-spin — pump
-/// only runs on a message"), and a posture transition does NOT wake a
-/// parked backlog: the posture owner is fed by the block-pump thread and
-/// intentionally never signals the host channels. A lifted cordon with an
-/// idle seat pool and zero in-flight messages leaves held units parked
-/// until the next message — never dropped (§10); the registration flood
-/// keeps submitting, so a held backlog self-wakes. This shape preserves
-/// that verbatim (a posture-to-host wake channel is an explicit non-goal:
-/// a new mechanism with no never-drop gain).
+/// The pump runs on a message AND on the `BackstopTick`: `recv_timeout` is
+/// armed iff the backlog is non-empty (T2), so a guard change that arrives
+/// with no message — a posture lift from the block-pump thread — still
+/// re-runs the pump within the backstop. The posture owner does not signal
+/// host channels directly (layering); instead every owner-mutating feeder
+/// emits a `PostureEdge` (an untrusted, seq-stamped hint) through the
+/// bot-side waker (`arb_engine::fleet_wake`), which promptly wakes parked
+/// hosts. Both paths re-read the LIVE owner — neither carries a posture
+/// value. A held backlog is therefore drained by the next tick at the
+/// latest, never parked forever and never dropped (§10).
+///
+/// The retired client-fairness assumption (that a steady stream of
+/// submissions would itself re-wake a held backlog) is FALSIFIED by the
+/// driver's bounded submission window (`REG_INTAKE_WINDOW`) and must not be
+/// reintroduced.
 pub(crate) struct HostPump<'a> {
     /// The FSM — exclusively owned by this host thread.
     pub(crate) host: &'a mut FleetHost,

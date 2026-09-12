@@ -639,12 +639,14 @@ impl PostureOwner {
     /// transition (`Held` ticks are silent — a subscriber never sees a
     /// spurious edge).
     ///
-    /// # Feeder-site contract (TB4QGX T3)
+    /// # Feeder-site contract (TB4QGX T3, ADR-044)
     /// A BOT-side caller of this method MUST also wake the fleet hosts on a
-    /// non-`Held` change (the degenbot-bot host waker). This crate cannot
-    /// know about host channels (layering), so the wake is the caller's
-    /// obligation. The resulting hint is untrusted: hosts re-read the live
-    /// owner.
+    /// non-`Held` change (the degenbot-bot host waker,
+    /// `arb_engine::fleet_wake::wake_hosts`), which emits ONE untrusted,
+    /// seq-stamped `PostureEdge` per host. This crate cannot know about host
+    /// channels (layering), so the wake is the caller's obligation; the
+    /// host's `BackstopTick` bounds the damage if a feeder forgets, and the
+    /// hint never carries a posture value — hosts re-read the live owner.
     pub fn observe_throttle(&self, now_ms: u64, sample: ThrottleSample) -> PostureChange {
         let (change, posture) = {
             let mut machine = self.machine.lock();
@@ -662,9 +664,11 @@ impl PostureOwner {
     /// (an idempotent hold-upgrade returns `Held` and stays silent —
     /// the detection site owns the loud lane-death log).
     ///
-    /// # Feeder-site contract (TB4QGX T3)
+    /// # Feeder-site contract (TB4QGX T3, ADR-044)
     /// A BOT-side caller of this method MUST also wake the fleet hosts on a
-    /// non-`Held` change; see [`Self::observe_throttle`].
+    /// non-`Held` change; see [`Self::observe_throttle`]. On the lane-death
+    /// (`Faulted`) arm the wake still fires, and the host drains its held
+    /// receipts terminally instead of parking them.
     pub fn observe_cause(&self, cause: PostureCause) -> PostureChange {
         let (change, posture) = {
             let mut machine = self.machine.lock();
