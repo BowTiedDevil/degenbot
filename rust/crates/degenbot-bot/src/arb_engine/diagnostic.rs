@@ -367,7 +367,7 @@ impl ArbitrageEngine {
     /// Returns `None` if the path is not registered.
     #[must_use]
     pub fn diagnostic_path_state(&self, path_id: u64) -> Option<DiagnosticPathState> {
-        let path = self.path_pools.get(&path_id)?;
+        let path = self.registry.get(path_id)?;
         let solve_block = if self.cursor.is_anchored() {
             Some(self.cursor.results_block())
         } else {

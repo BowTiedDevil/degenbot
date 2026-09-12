@@ -90,7 +90,7 @@ impl ArbitrageEngine {
     /// engine under the core lock).
     #[must_use]
     pub fn path_info_for(&self, path_id: u64) -> Option<Result<PathInfo, PathInfoBuildError>> {
-        let path = self.path_pools.get(&path_id)?;
+        let path = self.registry.get(path_id)?;
         let core = self.core.read();
         let mut hops = Vec::with_capacity(path.pools.len());
         for pool_ref in &path.pools {
@@ -111,7 +111,7 @@ impl ArbitrageEngine {
     /// in the path"). Unresolvable identities degrade to the raw `pool_id`.
     #[must_use]
     pub fn describe_path(&self, path_id: u64) -> String {
-        let Some(path) = self.path_pools.get(&path_id) else {
+        let Some(path) = self.registry.get(path_id) else {
             return format!("path_id={path_id} (unregistered)");
         };
         let core = self.core.read();

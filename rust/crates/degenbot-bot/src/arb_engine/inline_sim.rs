@@ -251,7 +251,7 @@ impl ArbitrageEngine {
         metadata: &BlockMetadata,
     ) -> Option<SimulatedPathResult> {
         let sim = self.inline_sim.as_ref()?;
-        let hops = self.path_pools.get(&path_id)?.pools.clone();
+        let hops = self.registry.get(path_id)?.pools.clone();
         let request = InlineSimRequest {
             path_id,
             hops,

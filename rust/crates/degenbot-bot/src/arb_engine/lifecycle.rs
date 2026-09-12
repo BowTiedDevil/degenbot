@@ -1,45 +1,19 @@
 //! Path registration, buffer management, and engine accessors.
 
+use super::path_registry::PathRegistration;
 use super::{Address, ArbitrageEngine, HashMap};
 use crate::bot_core::resolve::resolve_hops;
 use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{
-    HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
+    HopType, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
 };
 use degenbot_core::diag;
 
-/// Typed refusal from [`ArbitrageEngine::register_path`] (PRG-4 / IRUMXD —
-/// was a bare `String`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PathRegistrationError {
-    /// Structural caller bug or stale view: fewer than two hops, a
-    /// `pool_id` not registered in the associated `BotState`, or a
-    /// structurally unroutable hop. Message text is unchanged from the
-    /// legacy `String` form (the `PyO3` mapping surfaces it verbatim as a
-    /// `ValueError`).
-    Invalid(String),
-    /// PRG-4: the registered-path cap is reached. A BENIGN stop signal, not
-    /// an error condition — the crawl catches it and stops discovery (it
-    /// replaces the Python `DiscoveryCrawlComplete` pre-count unwind).
-    RegistryFull {
-        /// The configured capacity.
-        cap: usize,
-        /// The registered-path count at refusal (== `cap`).
-        registered: usize,
-    },
-}
-
-impl std::fmt::Display for PathRegistrationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Invalid(msg) => f.write_str(msg),
-            Self::RegistryFull { cap, registered } => write!(
-                f,
-                "registered-path cap reached ({registered}/{cap}) — the crawl must stop discovery"
-            ),
-        }
-    }
-}
+/// PRG-4 / IRUMXD: `PathRegistrationError` moved to
+/// [`super::path_registry`] (ADR-045 `C4UAFP`); re-exported here at its old
+/// path so the `PyO3` mapper (`degenbot-python`) and white-box tests compile
+/// unchanged.
+pub use super::path_registry::PathRegistrationError;
 
 impl ArbitrageEngine {
     /// Derive a hop's family from the `BotState`'s `PoolEntry` variant.
@@ -118,7 +92,7 @@ impl ArbitrageEngine {
         // a duplicate. Without this, `build_paths` re-entry accumulated
         // hundreds of thousands of duplicate paths, OOM-killing the bot.
         let sig: Vec<(u64, bool)> = hops.iter().map(|h| (h.pool_id, h.zero_for_one)).collect();
-        if let Some(&existing_id) = self.path_signatures.get(&sig) {
+        if let Some(existing_id) = self.registry.lookup(&sig) {
             diag!(
                 domain = path,
                 path_id = existing_id,
@@ -127,7 +101,7 @@ impl ArbitrageEngine {
             );
             // PRG-4: the duplicate never crosses the FFI as a skip — the
             // engine counts it for the registration skip telemetry itself.
-            self.path_dedups += 1;
+            self.registry.note_dedup();
             if let Some(p) = crate::instruments::pipeline() {
                 p.count_registration_skip("dup");
             }
@@ -140,12 +114,7 @@ impl ArbitrageEngine {
         // cap is refused with the typed benign-stop refusal — the crawl
         // catches it and stops discovery; dedup hits above never reach this
         // check (an existing path is not growth).
-        if let Some(cap) = self.path_cap {
-            let registered = self.path_pools.len();
-            if registered >= cap {
-                return Err(PathRegistrationError::RegistryFull { cap, registered });
-            }
-        }
+        self.registry.ensure_capacity()?;
 
         let reg_span = tracing::info_span!("degenbot.path.register", hops.count = hops.len());
         let _reg_guard = reg_span.enter();
@@ -203,18 +172,13 @@ impl ArbitrageEngine {
             )));
         }
 
-        // Only now allocate the path id (no gaps from rejected registrations)
-        // and store the immutable pool refs + reverse index.
-        let path_id = self.next_path_id;
-        self.next_path_id += 1;
-        for pool_ref in &pool_refs {
-            self.pool_to_paths
-                .entry((pool_ref.hop_type, pool_ref.pool_key))
-                .or_default()
-                .push(path_id);
-        }
-        self.path_pools
-            .insert(path_id, std::sync::Arc::new(MixedPath { pools: pool_refs }));
+        // Only now commit the path identity (all-or-nothing): allocate the
+        // path id (no gaps from rejected registrations), store the immutable
+        // pool refs, extend the reverse index, and record the dedup signature.
+        let path_id = self.registry.commit(PathRegistration {
+            signature: sig,
+            pool_refs,
+        });
 
         // Store the resolve snapshot + drive the state machine. Arc-shared:
         // the solve dispatch stages Arc clones (f701ccd3 staging fix).
@@ -225,7 +189,6 @@ impl ArbitrageEngine {
             .entry(path_id)
             .or_default()
             .set_resolved(&deficits);
-        self.path_signatures.insert(sig, path_id);
 
         // DEBUG-gated (log-volume cut OPBD7L): one line per path registration
         // was ~48% of a 10G run log (new pools/hop-combos register constantly
@@ -420,13 +383,13 @@ impl ArbitrageEngine {
     /// Callers read results via `latest_results()`; none reads a dispatched
     /// `ResultBatch` from this entry (grep-verified across `tests/`, `examples/`,
     /// and `src/degenbot/`).
-    #[tracing::instrument(name = "degenbot.arb.solve_all", skip(self), fields(block_number, path_count = self.path_pools.len()))]
+    #[tracing::instrument(name = "degenbot.arb.solve_all", skip(self), fields(block_number, path_count = self.registry.len()))]
     pub fn solve_all_paths(&mut self, block_number: u64) {
         // Resolve all paths under the core lock (single consistent snapshot of
         // all family state — ADR-003).
         {
             let core = self.core.read();
-            for (&path_id, path) in &self.path_pools {
+            for (&path_id, path) in self.registry.iter() {
                 let mut resolved = ResolvedMixedPath::default();
                 let deficits = resolve_hops(
                     &core,
@@ -483,14 +446,14 @@ impl ArbitrageEngine {
     /// Number of registered mixed paths.
     #[must_use]
     pub fn path_count(&self) -> usize {
-        self.path_pools.len()
+        self.registry.len()
     }
 
     /// PRG-4 / IRUMXD: the engine path registry owns the registered-path cap
     /// (was the Python `MAX_REGISTERED_PATHS` counter). `None` = unlimited.
     /// The `PyO3` driver sets it once at boot from the typed config value.
     pub fn set_path_cap(&mut self, cap: Option<usize>) {
-        self.path_cap = cap;
+        self.registry.set_cap(cap);
     }
 
     /// PRG-4: dedup hits counted engine-side — a duplicate registration
@@ -498,7 +461,7 @@ impl ArbitrageEngine {
     /// so the `dup` telemetry needs this witness.
     #[must_use]
     pub fn path_dedups(&self) -> u64 {
-        self.path_dedups
+        self.registry.dedups()
     }
 
     /// Total actual hop projections performed (cache misses) since engine

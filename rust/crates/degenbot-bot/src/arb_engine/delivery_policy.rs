@@ -374,20 +374,10 @@ impl ArbitrageEngine {
     ///
     /// Returns `true` if the path existed and was removed.
     pub fn deregister_path(&mut self, path_id: u64) -> bool {
-        // Remove from path_pools and get the pool refs to clean up reverse index
-        let removed = self.path_pools.remove(&path_id);
+        // Remove from the registry: drops the path, prunes the reverse index,
+        // and clears the dedup signature.
+        let removed = self.registry.remove(path_id);
         let existed = removed.is_some();
-        if let Some(path) = removed {
-            // Remove from pool_to_paths reverse index
-            for pool_ref in &path.pools {
-                if let Some(path_ids) = self
-                    .pool_to_paths
-                    .get_mut(&(pool_ref.hop_type, pool_ref.pool_key))
-                {
-                    path_ids.retain(|id| *id != path_id);
-                }
-            }
-        }
 
         // Remove from path_resolved
         self.path_resolved.remove(&path_id);

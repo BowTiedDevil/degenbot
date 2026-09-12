@@ -45,7 +45,7 @@ use dashmap::DashMap;
 use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ::degenbot_solvers::mixed::{HopType, MixedPath, ResolvedMixedPath, SolvePathResult};
+use ::degenbot_solvers::mixed::{MixedPath, ResolvedMixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
@@ -53,6 +53,7 @@ use alloy::primitives::Address;
 use self::block_cursor::BlockCursor;
 use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
+use self::path_registry::PathRegistry;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
@@ -92,6 +93,9 @@ pub mod inline_sim;
 pub mod lifecycle;
 pub mod path_info;
 mod path_lifecycle;
+// ADR-045 (`C4UAFP`): the path-identity registry (`PathRegistry`) —
+// registered paths, reverse index, signatures, id allocator, cap, dedups.
+mod path_registry;
 // RZEWTX: the ONE pooled-seat host for the WorkQueue fleet roles (sim +
 // registration) — the executors are thin role descriptors over it; the
 // solve executor's exclusion (per-seat channel model + posture-invariant
@@ -365,14 +369,13 @@ pub struct ArbitrageEngine {
     /// mutations a write guard. Lock ordering when nested is
     /// engine-then-core; no code path ever nests in the opposite direction.
     pub(crate) core: Arc<StateLock<BotState>>,
-    /// Registered path pool refs (immutable after registration).
-    ///
-    /// `pub(crate)`: the field is an invariant (it must stay consistent with
-    /// the `pool_to_paths` reverse index, which only the engine's internal
-    /// register/deregister paths maintain). Downstream crates reach it only via
-    /// the immutable [`ArbitrageEngine::path_pools`] accessor — no mutable
-    /// access, so the reverse index can never be desynced externally.
-    pub(crate) path_pools: HashMap<u64, std::sync::Arc<MixedPath>>,
+    /// ADR-045 (`C4UAFP`): the engine's path-identity registry — registered
+    /// paths, the `pool_to_paths` reverse index, signature dedup, the path-id
+    /// allocator, the registered-path cap, and the dedup counter. Hot solves
+    /// read it through a shared `&PathRegistry`; only registration takes
+    /// `&mut`. The invariant "`path_pools` is consistent with `pool_to_paths`"
+    /// is internal to [`PathRegistry::commit`] / [`PathRegistry::remove`].
+    pub(crate) registry: PathRegistry,
     /// Resolved path states (mutated on each solve). Entries are Arc-shared
     /// into the parallel solve dispatch (f701ccd3 staging fix) — immutable
     /// between resolve passes, so staging is refcount bumps, not deep clones
@@ -396,9 +399,6 @@ pub struct ArbitrageEngine {
     /// process restart. When off, resolve paths re-project every hop fresh —
     /// build cost changes, solver intake stays byte-exact (parity tests).
     cl_projection_memo: bool,
-    /// Reverse index: (`hop_type`, `pool_key`) maps to list of `path_ids` that use this pool.
-    /// Vec instead of `HashSet` — sets are typically 1-4 entries, dedup at collection time.
-    pool_to_paths: HashMap<(HopType, u64), Vec<u64>>,
     /// Last solved results, keyed by path ID for O(1) updates.
     ///
     /// RAYPAR engine-shard T1 (C42WKO): sharded into a `DashMap` so Python
@@ -434,8 +434,6 @@ pub struct ArbitrageEngine {
     /// solved and appended to `results`. Tracked so `rebuild_and_solve_affected`
     /// can merge them instead of discarding them when it replaces `self.results`.
     pending_new_paths: HashSet<u64>,
-    /// Auto-incrementing path ID
-    next_path_id: u64,
     /// Delivery policy — the optional publish sink that consumes the solve
     /// output (`latest_results`) and pushes diffs over the result/block
     /// channels (ergo BI7UZV). Owns `delivered`/`deregistered`, the profit
@@ -533,21 +531,6 @@ pub struct ArbitrageEngine {
     /// Reuse-eligibility counter for the current solve cycle (probe only;
     /// reset each `solve_dirty` and surfaced on the resolve event).
     paths_same_state_this_cycle: u64,
-    /// Dedup index: canonical `(pool_id, zero_for_one)` sequence → existing
-    /// `path_id`. `register_path` is idempotent: re-registering the same hop
-    /// sequence returns the existing `path_id` instead of allocating a new
-    /// one. Without this, `build_paths` re-entry (reconnects, snapshot
-    /// rebuilds) accumulated duplicate paths indefinitely — 8.7k → 107k in
-    /// 25 min, causing OOM kills and multi-second CPU-bound solves (FPGOYX).
-    path_signatures: HashMap<Vec<(u64, bool)>, u64>,
-    /// PRG-4 / IRUMXD: the registered-path capacity owned by the engine
-    /// path registry (was the Python `MAX_REGISTERED_PATHS` counter). `None`
-    /// = unlimited. Set via [`Self::set_path_cap`].
-    path_cap: Option<usize>,
-    /// PRG-4: dedup hits counted engine-side — the duplicate registration
-    /// never crosses the FFI, so the `dup` skip telemetry needs this
-    /// witness (feeds `degenbot.registration.skips{reason="dup"}`).
-    path_dedups: u64,
     /// Engine lifecycle phase (ZU7RAF — core-OWNED). Enforces ordering
     /// `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`.
     /// Previously the `AtomicU8` lived on the pyo3 `PumpState` wrapper;
@@ -707,22 +690,17 @@ impl ArbitrageEngine {
             cfg: std::sync::Arc::clone(cfg),
             runtime_cfg: solver_dispatch::solve_runtime_config_from_cfg(cfg),
             core,
-            path_pools: HashMap::new(),
+            registry: PathRegistry::new(),
             path_resolved: HashMap::new(),
             path_status: HashMap::new(),
             hop_projection_cache: HopProjectionCache::new(),
             hop_projection_count: 0,
             cl_projection_memo: crate::bot_core::resolve::projection_memo_enabled(),
-            pool_to_paths: HashMap::new(),
             results: DashMap::new(),
             cursor: BlockCursor::default(), // (0, None, 0, false) — the pre-cursor init, unchanged
             solve_entry: "drain",
             cycle_arm: "unset",
             pending_new_paths: HashSet::new(),
-            next_path_id: 1, // path IDs start at 1
-            path_signatures: HashMap::new(),
-            path_cap: None,
-            path_dedups: 0,
             path_description_cache: parking_lot::Mutex::new(HashMap::new()),
             resolved_update_snapshot: HashMap::new(),
             last_walk_sims: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
@@ -787,7 +765,7 @@ impl ArbitrageEngine {
     /// paths maintain — so no mutable accessor is exposed.
     #[must_use]
     pub fn path_pools(&self) -> &HashMap<u64, std::sync::Arc<MixedPath>> {
-        &self.path_pools
+        self.registry.path_pools()
     }
 }
 

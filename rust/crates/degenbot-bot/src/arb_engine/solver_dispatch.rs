@@ -1261,7 +1261,7 @@ impl ArbitrageEngine {
             .saturating_sub(solved.cycle_seq);
         // Q1a deregister: nothing to merge into — drop, never
         // re-create.
-        let Some(registered) = self.path_pools.get(&solved.pid) else {
+        let Some(registered) = self.registry.get(solved.pid) else {
             self.detached_cycle
                 .disposition(detached_cycle::Disposition::DroppedDeregistered);
             diag!(
@@ -1732,7 +1732,7 @@ impl ArbitrageEngine {
     /// Returns the number of twin simulations executed (telemetry:
     /// `clamp.twins` on the solve-cycle completion event).
     pub(crate) fn clamp_cl_hop_capacity(&self, path_id: u64, result: &mut SolvePathResult) -> u64 {
-        let Some(path) = self.path_pools.get(&path_id) else {
+        let Some(path) = self.registry.get(path_id) else {
             return 0; // Unknown path → nothing to clamp
         };
         let core = self.core.read();
@@ -2028,7 +2028,7 @@ impl ArbitrageEngine {
             // LXDY4C: the affected keys ARE the delta's taken (HopType,
             // pool_id) reverse-index keys — one loop, no per-family intake.
             for key in affected {
-                if let Some(path_ids) = self.pool_to_paths.get(&key.path_index_key()) {
+                if let Some(path_ids) = self.registry.paths_for(&key.path_index_key()) {
                     for &path_id in path_ids {
                         if self
                             .path_status
@@ -2221,7 +2221,7 @@ impl ArbitrageEngine {
                     deferred: Vec::new(),
                 };
                 for (chunk_pos, &path_id) in path_ids.iter().enumerate() {
-                    let Some(path) = self.path_pools.get(&path_id) else {
+                    let Some(path) = self.registry.get(path_id) else {
                         continue;
                     };
                     // U6RNHH T1 solve-stage future-price tripwire: a hop whose PRICE
@@ -2413,7 +2413,7 @@ impl ArbitrageEngine {
                 deferred_sorted.sort_unstable();
                 let mut keys: Vec<degenbot_solvers::affected_keys::AffectedKey> = Vec::new();
                 for path_id in deferred_sorted {
-                    if let Some(path) = self.path_pools.get(&path_id) {
+                    if let Some(path) = self.registry.get(path_id) {
                         keys.extend(path.pools.iter().map(|pool_ref| {
                             degenbot_solvers::affected_keys::AffectedKey::new(
                                 pool_ref.hop_type,
@@ -2590,8 +2590,8 @@ impl ArbitrageEngine {
         let pool_refs: Vec<std::sync::Arc<MixedPath>> = to_solve
             .iter()
             .map(|(pid, _)| {
-                self.path_pools
-                    .get(pid)
+                self.registry
+                    .get(*pid)
                     .cloned()
                     .unwrap_or_else(|| std::sync::Arc::new(MixedPath { pools: Vec::new() }))
             })
@@ -2917,7 +2917,8 @@ impl ArbitrageEngine {
         // the pool-ref map for the UO3JM4 clamp. No engine state is touched
         // (engine-then-core invariant intact; the mixer only reads core).
         let memo = std::sync::Arc::clone(&self.walk_memo);
-        let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> = self.path_pools.clone();
+        let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> =
+            self.registry.path_pools().clone();
         let core = std::sync::Arc::clone(self.core());
         let results_block = self.cursor.results_block();
         let runtime_cfg = self.runtime_cfg;
@@ -3472,9 +3473,8 @@ mod profit_clamp_recompute_tests {
                 },
             ])
             .expect("two-hop path registers");
-        let pool_refs =
-            std::iter::once(engine.path_pools.get(&path_id).expect("registered").clone())
-                .collect::<Vec<_>>();
+        let pool_refs = std::iter::once(engine.registry.get(path_id).expect("registered").clone())
+            .collect::<Vec<_>>();
         (engine, path_id, pool_refs)
     }
 

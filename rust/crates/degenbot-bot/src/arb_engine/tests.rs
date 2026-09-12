@@ -2131,7 +2131,7 @@ mod tests {
         // Resolve and solve all paths (replaces start() + initial_solve())
         {
             let core = engine.core.read();
-            for (&path_id, path) in &engine.path_pools {
+            for (&path_id, path) in &engine.registry.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
                 let _ = crate::bot_core::resolve::resolve_hops(
                     &core,
@@ -2786,7 +2786,11 @@ mod tests {
             .unwrap();
 
         // Inspect the path
-        let path = engine.path_pools.get(&path_id).expect("path should exist");
+        let path = engine
+            .registry
+            .path_pools
+            .get(&path_id)
+            .expect("path should exist");
         assert_eq!(path.pools.len(), 3);
 
         // Verify hop types
@@ -2817,7 +2821,7 @@ mod tests {
         drop(core);
 
         // Inspect non-existent path
-        assert!(!engine.path_pools.contains_key(&99999));
+        assert!(!engine.registry.path_pools.contains_key(&99999));
     }
 
     #[test]
@@ -3207,6 +3211,7 @@ mod tests {
         // LXDY4C: the re-restored pools re-enter the epoch delta; the solve
         // consumes the delta's taken keys (all registered hop keys here).
         let reorg_keys: Vec<degenbot_solvers::affected_keys::AffectedKey> = engine
+            .registry
             .pool_to_paths
             .keys()
             .map(|(hop, pool)| degenbot_solvers::affected_keys::AffectedKey::new(*hop, *pool))
