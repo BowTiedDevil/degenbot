@@ -74,6 +74,8 @@ const RETIRED_KEYS: &[&str] = &[
     "DEGENBOT_GATE_TRACE",
     "DEGENBOT_AAVE_EVTRACE",
     "DEGENBOT_AAVE_TX_TRACE",
+    // ADR-043 §6: the retired stderr-fmt two-tunnel switch.
+    "DEGENBOT_LOG_FMT",
 ];
 
 /// Real static keys the artifact regex cannot capture (digit-terminated

@@ -26,10 +26,11 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
+| `DEGENBOT_LOG_LEVEL` | `telemetry.log_level` | `Option<LogLevel(Off|Error|Warn|Info|Debug|Trace)>` | `(unset: wiring default)` | Console wiring default level, used only when RUST_LOG is absent (off\|error\|warn\|info\|debug\|trace). The standalone Rust bot wiring defaults to warn; the Python driver to info. |
+| `DEGENBOT_TELEMETRY_DIAG` | `telemetry.diag` | `map<string, LogLevel>` | `(empty)` | Per-domain console escalation from a validated map: [telemetry.diag] with sim = "debug", or the env form sim=debug,solver=trace. A typo'd domain is a boot error. Ignored with one WARN when RUST_LOG is set. |
 | `DEGENBOT_OTEL` | `telemetry.otel` | `bool` | `true` | Enable the OTel OTLP span layer and the Prometheus metrics endpoint; `0`/empty opts out. |
 | `DEGENBOT_METRICS_ADDR` | `telemetry.metrics_addr` | `string` | `127.0.0.1:9464` | Prometheus scrape endpoint bind address (only active when otel is on). |
 | `DEGENBOT_JAEGER_ENDPOINT` | `telemetry.jaeger_endpoint` | `string` | `http://127.0.0.1:4318` | OTLP endpoint used by the opt-in Jaeger E2E test. |
-| `DEGENBOT_LOG_FMT` | `telemetry.log_fmt_stderr` | `bool` | `true` | Keep the stderr fmt-layer mirror of every record (including the Python logging bridge); 0 routes the fmt layer to the sink so a driver teeing both sinks records each line once. |
 | `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
 ## `allocator`
 

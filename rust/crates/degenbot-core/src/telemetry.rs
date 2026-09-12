@@ -261,6 +261,12 @@ pub const RETIRED_ENV_NAMES: &[(&str, &str)] = &[
     ("DEGENBOT_GATE_TRACE", "degenbot::solver=debug"),
     ("DEGENBOT_AAVE_EVTRACE", "degenbot::aave=debug"),
     ("DEGENBOT_AAVE_TX_TRACE", "degenbot::aave=debug"),
+    // The retired two-tunnel console hack (ADR-043 §6): exactly one
+    // console-emitting writer per process is derived from binding-present.
+    (
+        "DEGENBOT_LOG_FMT",
+        "the console writer is derived (one writer per process)",
+    ),
 ];
 
 /// Boot-time detection (ADR-043 §5): WARN once per retired env name present in

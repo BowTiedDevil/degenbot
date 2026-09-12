@@ -1,5 +1,14 @@
 """degenbot: Ethereum DEX helper library."""
 
+# FIRST import (ADR-043 §6): `logging` attaches the console handler that owns
+# this process's console. The Rust extension below emits its boot-time records
+# during ITS module init, and the Rust→Python bridge forwards them to the
+# `degenbot` logger — so the handler must already exist or those early records
+# hit stdlib `lastResort` (WARNING+, no handler) and are dropped.
+from .logging import logger
+
+# isort: split
+
 from .abi import (
     AbiDecodeError,
     AbiEncodeError,
@@ -33,7 +42,6 @@ from .curve import (
 )
 from .erc20 import Erc20Token, EtherPlaceholder
 from .fork import AnvilFork
-from .logging import logger
 from .pancakeswap import (
     PancakeswapV3Pool,
     PancakeswapV3PoolTracker,

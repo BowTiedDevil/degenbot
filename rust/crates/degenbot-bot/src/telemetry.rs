@@ -1,16 +1,19 @@
-//! Console-vs-trace telemetry split (2026-08-22 logging audit).
+//! Console-vs-trace telemetry split (ADR-043 section 4).
 //!
-//! High-frequency diagnostic events use the [`DIAGNOSTIC_TARGET`] target so
-//! the console sinks (stderr fmt + the Python log forwarder) can cap them via
-//! [`DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE`] while the `OTel` layer keeps full
-//! detail: a Jaeger trace answers "what did the engine do" without the stdout
-//! firehose, and stdout stays operator-grade. Warn and above always pass
-//! every sink (the cap directive is at warn).
+//! High-frequency diagnostic events use the [`DIAGNOSTIC_TARGET`] target;
+//! [`resolve_filters`] resolves each record layer's `EnvFilter` from the typed
+//! telemetry config: the console sinks (stderr fmt + the Python log forwarder)
+//! run at `telemetry.log_level` (or the wiring default) plus per-domain
+//! `telemetry.diag` escalations, while the `OTel` layer keeps
+//! `warn,degenbot=debug` — a Jaeger trace answers "what did the engine do"
+//! without the stdout firehose, and stdout stays operator-grade. Warn and
+//! above pass every sink.
 //!
 //! Convention: any event that is per-header/per-event/per-solve noise on the
-//! console but signal inside a trace gets `target: DIAGNOSTIC_TARGET`. An
-//! explicit `RUST_LOG` override bypasses the cap entirely (power-user
-//! contract: you asked for exactly what `RUST_LOG` says, on every sink).
+//! console but signal inside a trace gets `target: DIAGNOSTIC_TARGET`.
+//!
+//! An explicit `RUST_LOG` is a branch: it wins verbatim on every sink and the
+//! config knobs are ignored (one WARN names the active source).
 
 /// Target for high-frequency diagnostic events (see module docs).
 pub const DIAGNOSTIC_TARGET: &str = "degenbot::diag";
@@ -54,8 +57,99 @@ pub mod error_reason {
     pub const SIM_RPC: &str = "rpc";
 }
 
-/// `EnvFilter` directive capping [`DIAGNOSTIC_TARGET`] at warn on console sinks.
-pub const DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE: &str = "degenbot::diag=warn";
+/// Third-party transport crates whose routine INFO is throttled to warn on
+/// every sink (their WARN/ERROR still pass).
+pub const ALLOY_NOISE_TARGETS: &[&str] = &[
+    "alloy_pubsub",
+    "alloy_transport",
+    "alloy_transport_ws",
+    "alloy_transport_ipc",
+    "alloy_transport_http",
+    "alloy_provider",
+    "alloy_rpc",
+    "alloy_network",
+    "alloy_contract",
+    "tungstenite",
+];
+
+/// Console wiring default for the Python driver (ADR-043 section 6).
+pub const CONSOLE_WIRING_DEFAULT_PYTHON: &str = "info";
+/// Console wiring default for the standalone Rust bot (ADR-043 section 6).
+pub const CONSOLE_WIRING_DEFAULT_RUST: &str = "warn";
+/// `OTel` record-layer default (ADR-043 section 4): all of degenbot at debug,
+/// everything else at warn.
+pub const OTEL_RECORD_DEFAULT: &str = "warn,degenbot=debug";
+
+/// The resolved filter directives for the two record layers (ADR-043 §4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilterPlan {
+    /// Console (stderr fmt + Python forwarder) directives.
+    pub console: String,
+    /// `OTel` record-layer directives.
+    pub otel: String,
+    /// True when an explicit `RUST_LOG` supplied both; the config knobs are
+    /// then ignored (with one WARN naming the active source).
+    pub rust_log: bool,
+}
+
+/// Resolve the console + `OTel` record filters (ADR-043 §4).
+///
+/// Precedence is a BRANCH: an explicit `RUST_LOG` is used verbatim on both
+/// layers and `telemetry.log_level` / `telemetry.diag` are ignored (one WARN
+/// names the active source). Otherwise the console layer is `wiring_default`,
+/// overridden by `telemetry.log_level` and escalated per-domain by the
+/// validated `telemetry.diag` map; the `OTel` layer keeps its
+/// `warn,degenbot=debug` default.
+#[must_use]
+pub fn resolve_filters(wiring_default: &str) -> FilterPlan {
+    use std::fmt::Write as _;
+    if let Ok(raw) = std::env::var("RUST_LOG") {
+        if !raw.trim().is_empty() {
+            warn_config_filters_ignored_once();
+            return FilterPlan {
+                console: raw.clone(),
+                otel: raw,
+                rust_log: true,
+            };
+        }
+    }
+    let cfg = ::degenbot_config::holder::config();
+    let level = cfg
+        .telemetry
+        .log_level
+        .map_or_else(|| wiring_default.to_string(), |l| l.to_string());
+    let mut console = level;
+    for target in ALLOY_NOISE_TARGETS {
+        let _ = write!(console, ",{target}=warn");
+    }
+    for (domain, level) in &cfg.telemetry.diag {
+        let _ = write!(console, ",degenbot::{domain}={level}");
+    }
+    let mut otel = OTEL_RECORD_DEFAULT.to_string();
+    for target in ALLOY_NOISE_TARGETS {
+        let _ = write!(otel, ",{target}=warn");
+    }
+    FilterPlan {
+        console,
+        otel,
+        rust_log: false,
+    }
+}
+
+/// Emit the "config knobs ignored under `RUST_LOG`" WARN exactly once.
+fn warn_config_filters_ignored_once() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let cfg = ::degenbot_config::holder::config();
+        if cfg.telemetry.log_level.is_some() || !cfg.telemetry.diag.is_empty() {
+            degenbot_core::op_warn!(
+                domain = pump,
+                source = "RUST_LOG",
+                "RUST_LOG is set; telemetry.log_level and telemetry.diag are ignored (RUST_LOG is the active filter source)"
+            );
+        }
+    });
+}
 
 /// Surface a failure through every telemetry sink, idiomatically:
 ///

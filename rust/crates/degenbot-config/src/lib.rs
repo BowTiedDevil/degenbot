@@ -64,8 +64,48 @@ pub use error::ConfigError;
 pub use loader::{
     standard_file_path, BotConfigLoader, EnvVars, LoadedConfig, MapEnv, ProcessEnv, Source,
 };
-pub use schema::{AnchorSweep, FleetConfig, FleetProfile, QuiesceMode};
+pub use schema::{AnchorSweep, FleetConfig, FleetProfile, LogLevel, QuiesceMode};
 pub use schema::{BaseKind, BotConfig, KeyDecl, ValueKind, SCHEMA};
+
+/// The closed set of observability domains (ADR-043 section 3). A
+/// `TelemetryConfig::diag` entry naming anything else is a boot error, so a
+/// typo cannot silently no-op an escalation.
+pub const OBSERVABILITY_DOMAINS: &[&str] = &[
+    "state", "path", "solver", "sim", "pump", "exec", "verify", "ingest", "rpc", "aave",
+];
+
+/// Parse and validate the diag map: a comma-separated `domain=level` list
+/// (the env encoding of the `[telemetry.diag]` table). Every domain must be
+/// in [`OBSERVABILITY_DOMAINS`] and every level must parse into the generated
+/// level enum; the first problem fails the load.
+///
+/// # Errors
+///
+/// Returns a description for a malformed entry, an unknown domain, or an
+/// unparsable level.
+pub fn parse_level_map<T>(raw: &str) -> Result<std::collections::BTreeMap<String, T>, String>
+where
+    T: std::str::FromStr<Err = String>,
+{
+    let mut out = std::collections::BTreeMap::new();
+    for part in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let Some((domain, level)) = part.split_once('=') else {
+            return Err(format!(
+                "invalid diag entry {part:?} (expected domain=level, comma-separated)"
+            ));
+        };
+        let domain = domain.trim();
+        if !OBSERVABILITY_DOMAINS.contains(&domain) {
+            return Err(format!(
+                "unknown telemetry domain {domain:?} (expected one of: {})",
+                OBSERVABILITY_DOMAINS.join(" ")
+            ));
+        }
+        let level = T::from_str(level.trim())?;
+        out.insert(domain.to_string(), level);
+    }
+    Ok(out)
+}
 
 /// Parse a boolean flag value using the bot-wide truthy/falsey word lists.
 ///

@@ -238,6 +238,21 @@ pub fn init_global_metrics_with_addr(addr: SocketAddr) -> Result<(), MetricsInit
     Ok(())
 }
 
+/// Count a log record dropped by a bounded console queue (ADR-043 §6).
+/// Renders as `degenbot.log_dropped_total{sink}` — a silent ceiling is not
+/// acceptable, so the drop is observable. No-ops before
+/// [`init_global_metrics`] (telemetry off), same discipline as every other
+/// observation site.
+pub fn record_log_drop(sink: &'static str) {
+    static LOG_DROPS: OnceLock<Option<opentelemetry::metrics::Counter<u64>>> = OnceLock::new();
+    let counter = LOG_DROPS.get_or_init(|| {
+        try_global_meter().map(|meter| meter.u64_counter("degenbot.log_dropped_total").build())
+    });
+    if let Some(counter) = counter {
+        counter.add(1, &[opentelemetry::KeyValue::new("sink", sink)]);
+    }
+}
+
 /// The process-global meter for recording instruments, or `None` before
 /// [`init_global_metrics`] has run. Boot order is init-then-record; `None`
 /// here means the otel feature is compiled in but the gate was off, which
@@ -246,6 +261,17 @@ pub fn init_global_metrics_with_addr(addr: SocketAddr) -> Result<(), MetricsInit
 #[must_use]
 pub fn try_global_meter() -> Option<opentelemetry::metrics::Meter> {
     GLOBAL.get().map(|g| g.provider.meter(METER_NAME))
+}
+
+/// Flush the metrics provider WITHOUT stopping the scrape server.
+///
+/// The pre-teardown flush (ADR-043 §6): the OTLP exporter needs the tokio
+/// runtime for its final batch, so a flush after runtime teardown exports
+/// nothing. No-ops when init has not run.
+pub fn flush_global_metrics() {
+    if let Some(global) = GLOBAL.get() {
+        let _ = global.provider.force_flush();
+    }
 }
 
 /// Stop the scrape server and flush provider state (clean-shutdown path).

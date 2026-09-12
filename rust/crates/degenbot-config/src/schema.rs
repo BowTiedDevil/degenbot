@@ -47,6 +47,9 @@ pub enum BaseKind {
     F64,
     /// Small closed variant set (generated enum type).
     Enum(&'static str, &'static [&'static str]),
+    /// A validated domain -> level map (the generated key type is
+    /// `BTreeMap<String, E>`; the element enum name is carried for docs).
+    Map(&'static str),
 }
 
 impl fmt::Display for BaseKind {
@@ -64,6 +67,7 @@ impl fmt::Display for BaseKind {
             Self::U128 => f.write_str("u128 (decimal text)"),
             Self::F64 => f.write_str("f64"),
             Self::Enum(name, variants) => write!(f, "{name}({})", variants.join("|")),
+            Self::Map(name) => write!(f, "map<string, {name}>"),
         }
     }
 }
@@ -137,14 +141,16 @@ crate::config_schema! {
     }
 
     telemetry TelemetryConfig {
+        log_level [opt enum LogLevel Off Error Warn Info Debug Trace] = None, env = "DEGENBOT_LOG_LEVEL", def = "(unset: wiring default)",
+            doc = "Console wiring default level, used only when RUST_LOG is absent (off|error|warn|info|debug|trace). The standalone Rust bot wiring defaults to warn; the Python driver to info.";
+        diag [map LogLevel] = ::std::collections::BTreeMap::new(), env = "DEGENBOT_TELEMETRY_DIAG", def = "(empty)",
+            doc = "Per-domain console escalation from a validated map: [telemetry.diag] with sim = \"debug\", or the env form sim=debug,solver=trace. A typo'd domain is a boot error. Ignored with one WARN when RUST_LOG is set.";
         otel [bool] = true, env = "DEGENBOT_OTEL", def = "true",
             doc = "Enable the OTel OTLP span layer and the Prometheus metrics endpoint; `0`/empty opts out.";
         metrics_addr [string] = String::from("127.0.0.1:9464"), env = "DEGENBOT_METRICS_ADDR", def = "127.0.0.1:9464",
             doc = "Prometheus scrape endpoint bind address (only active when otel is on).";
         jaeger_endpoint [string] = String::from("http://127.0.0.1:4318"), env = "DEGENBOT_JAEGER_ENDPOINT", def = "http://127.0.0.1:4318",
             doc = "OTLP endpoint used by the opt-in Jaeger E2E test.";
-        log_fmt_stderr [bool] = true, env = "DEGENBOT_LOG_FMT", def = "true",
-            doc = "Keep the stderr fmt-layer mirror of every record (including the Python logging bridge); 0 routes the fmt layer to the sink so a driver teeing both sinks records each line once.";
         jaeger_e2e [bool] = false, env = "DEGENBOT_JAEGER_E2E", def = "false",
             doc = "Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint).";
     }

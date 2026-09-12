@@ -2,10 +2,19 @@
 //!
 //! Replaces `pyo3_log::init()` (per-record `Python::attach`) with a
 //! batched-drain pattern: events are pushed onto a bounded
-//! [`SegQueue`](crossbeam_queue::SegQueue) from any thread (no GIL
+//! [`ArrayQueue`](crossbeam_queue::ArrayQueue) from any thread (no GIL
 //! needed), and a dedicated OS thread drains the queue, batching up to 256
 //! records or every 50 ms, then forwarding the batch to Python `logging`
 //! via ONE `Python::attach` per flush.
+//!
+//! The queue is bounded so a stalled TTY or full pipe cannot stall the
+//! per-log pump; a push past the ceiling drops the record and counts it as
+//! `degenbot.log_dropped_total{sink="console"}` (ADR-043 §6 — never a silent
+//! ceiling).
+//!
+//! This layer is the ONE console-emitting writer in the Python driver
+//! (ADR-043 §6): the stderr `fmt` layer is routed to `io::sink()` because the
+//! binding is present, so a record is never written twice.
 //!
 //! This makes the pump's tokio workers GIL-free for logging: the per-record
 //! GIL round-trip is replaced by a lock-free queue push.
@@ -16,12 +25,12 @@
 //! remaining records. The Python driver should call this before interpreter
 //! finalization (e.g. in `__aexit__` or via Python `atexit`).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_queue::SegQueue;
+use crossbeam_queue::ArrayQueue;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use tracing_subscriber::layer::{Context, Layer, Layered};
@@ -47,19 +56,47 @@ struct PythonLogRecord {
     message: String,
 }
 
+/// Capacity of the bounded console queue: deep enough that a normal block's
+/// burst never hits the ceiling, shallow enough that a stalled console cannot
+/// grow memory without bound.
+const CONSOLE_QUEUE_CAPACITY: usize = 8192;
+
 /// Shared state between the tracing [`Layer`] and the drainer thread.
 struct PythonLogLayerState {
     /// Bounded, lock-free queue shared with the drainer thread.
-    queue: SegQueue<PythonLogRecord>,
+    queue: ArrayQueue<PythonLogRecord>,
+    /// Records dropped because the queue was full (`log_dropped_total`).
+    dropped: AtomicU64,
     /// Set to `true` to signal the drainer thread to shut down.
     shutdown: AtomicBool,
+}
+
+/// Count a console drop in Prometheus (`degenbot.log_dropped_total{sink}`).
+/// The metric stack lives behind the `otel` feature; without it the drop is
+/// still counted in-process ([`PythonLogLayerState::dropped`]).
+#[cfg(feature = "otel")]
+fn record_console_drop() {
+    degenbot_bot::metrics::record_log_drop("console");
+}
+
+#[cfg(not(feature = "otel"))]
+fn record_console_drop() {}
+
+impl PythonLogLayerState {
+    /// Push a record, counting a drop if the bounded queue is full.
+    fn push(&self, record: PythonLogRecord) {
+        if self.queue.push(record).is_err() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            record_console_drop();
+        }
+    }
 }
 
 /// A [`tracing_subscriber::Layer`] that forwards events to Python logging
 /// via a batched, GIL-free channel.
 ///
-/// Events are formatted and pushed onto an unbounded queue. A dedicated OS
-/// thread drains the queue and flushes batches to Python via one
+/// Events are formatted and pushed onto a bounded queue (drops counted). A
+/// dedicated OS thread drains the queue and flushes batches to Python via one
 /// `Python::attach` per flush. See module-level docs.
 pub struct PythonLogLayer {
     state: Arc<PythonLogLayerState>,
@@ -76,7 +113,8 @@ impl PythonLogLayer {
     #[must_use]
     pub fn new() -> Self {
         let state = Arc::new(PythonLogLayerState {
-            queue: SegQueue::new(),
+            queue: ArrayQueue::new(CONSOLE_QUEUE_CAPACITY),
+            dropped: AtomicU64::new(0),
             shutdown: AtomicBool::new(false),
         });
         let drainer_state = Arc::clone(&state);
@@ -105,6 +143,7 @@ impl PythonLogLayer {
     /// Returns a `PyErr` if the function can't be registered on the module.
     pub fn register_pyfunction(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(pyo3::wrap_pyfunction!(shutdown_log_drainer, m)?)?;
+        m.add_function(pyo3::wrap_pyfunction!(flush_telemetry, m)?)?;
         Ok(())
     }
 }
@@ -168,14 +207,12 @@ where
             message,
         };
 
-        // Unbounded by design (2026-08-22 audit): ACCURATE LOGGING beats
-        // memory frugality on this channel — the old bounded queue silently
-        // dropped the OLDEST records under load, which is exactly backwards
-        // (the oldest records are the ones the operator was already reading).
-        // The drainer batches + forwards as fast as Python logging consumes,
-        // and the console filter keeps high-frequency diagnostics off this
-        // path entirely, so memory stays bounded in practice.
-        self.state.queue.push(record);
+        // Bounded push (ADR-043 §6): the drainer batches + forwards as fast
+        // as Python logging consumes, and the console filter keeps
+        // high-frequency diagnostics off this path, so the ceiling is
+        // headroom — but a stalled console drops + COUNTS rather than stalling
+        // the pump or growing memory without bound.
+        self.state.push(record);
     }
 }
 
@@ -459,12 +496,29 @@ pub fn shutdown_log_drainer() {
     if let Some(state) = GLOBAL_LAYER_STATE.get() {
         state.shutdown.store(true, Ordering::Release);
     }
-    // K6PCKP: flush + kill the OTel provider (None-safe when the
+    flush_telemetry();
+    // K6PCKP: kill the OTel provider after the flush (None-safe when the
     // DEGENBOT_OTEL env gate was off).
     #[cfg(feature = "otel")]
     if let Some(handle) = OTEL_PROVIDER.get() {
-        let _ = handle.flush();
         let _ = handle.shutdown();
+    }
+}
+
+/// `PyO3` function: flush every telemetry provider (spans + metrics) so the
+/// tail of a run is not lost to teardown ordering (ADR-043 §6).
+///
+/// Call this BEFORE the tokio runtime is dropped: the OTLP exporter needs the
+/// runtime for its final batch, so a flush after teardown exports nothing.
+/// Idempotent and none-safe (telemetry off -> no-op).
+#[pyfunction]
+pub fn flush_telemetry() {
+    #[cfg(feature = "otel")]
+    {
+        if let Some(handle) = OTEL_PROVIDER.get() {
+            let _ = handle.flush();
+        }
+        degenbot_bot::metrics::flush_global_metrics();
     }
 }
 
@@ -483,59 +537,30 @@ static GLOBAL_LAYER_STATE: std::sync::OnceLock<Arc<PythonLogLayerState>> =
 /// Guard against calling `init_logging_subscriber` more than once.
 static INIT_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
-/// The default tracing `EnvFilter` when `RUST_LOG` is unset.
-///
-/// Defaults to `info` globally, EXCEPT the alloy-internal transport/network
-/// crates are throttled to `warn`. alloy emits routine lifecycle INFO from its
-/// internal pubsub/transport services (e.g. ``INFO alloy_pubsub::service:
-/// Pubsub service request channel closed. Shutting down.`` on a clean provider
-/// teardown) which is third-party noise on the Python-driven log / stderr
-/// stream, not a degenbot-originated diagnostic. Their WARN/ERROR records
-/// still pass (a `warn` directive enables ERROR and WARN — those signal real
-/// connection failures); only INFO/DEBUG/TRACE are dropped. degenbot's own
-/// `degenbot_*` targets are untouched. An explicit `RUST_LOG` overrides this
-/// default entirely.
-fn base_env_filter() -> EnvFilter {
-    let mut filter = EnvFilter::new("info");
-    for target in [
-        "alloy_pubsub",
-        "alloy_transport",
-        "alloy_transport_ws",
-        "alloy_transport_ipc",
-        "alloy_transport_http",
-        "alloy_provider",
-        "alloy_rpc",
-        "alloy_network",
-        "alloy_contract",
-        "tungstenite",
-    ] {
-        // Directives are static and always valid; parse defensively (an
-        // unrecognized directive would just leave the target unfiltered rather
-        // than abort subscriber setup).
-        if let Ok(directive) = format!("{target}=warn").parse() {
-            filter = filter.add_directive(directive);
-        }
-    }
-    filter
+/// The CONSOLE filter (stderr fmt + Python forwarder) resolved from the typed
+/// telemetry config per ADR-043 §4: the Python-driver wiring default (`info`),
+/// overridden by `telemetry.log_level` and escalated per-domain by
+/// `telemetry.diag`; an explicit `RUST_LOG` wins verbatim on every sink.
+fn console_env_filter() -> EnvFilter {
+    EnvFilter::new(
+        &degenbot_bot::telemetry::resolve_filters(
+            degenbot_bot::telemetry::CONSOLE_WIRING_DEFAULT_PYTHON,
+        )
+        .console,
+    )
 }
 
-/// The CONSOLE filter (stderr fmt + Python forwarder): base directives PLUS
-/// the diagnostic cap — high-frequency `degenbot::diag` events stay off
-/// stdout while remaining visible on the `OTel` layer (2026-08-22 audit).
-fn default_env_filter() -> EnvFilter {
-    let mut filter = base_env_filter();
-    if let Ok(cap) = degenbot_bot::telemetry::DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE.parse() {
-        filter = filter.add_directive(cap);
-    }
-    filter
-}
-
-/// The RECORD-level filter for the `OTel` layer: same base directives as the
-/// console filter but WITHOUT the diagnostic cap, so Jaeger keeps every
-/// diagnostic event. (Feature-gated: only the `OTel` stack has a second sink.)
+/// The RECORD-level filter for the `OTel` layer (`warn,degenbot=debug` by
+/// default), so Jaeger keeps every degenbot diagnostic event even when the
+/// console is quiet.
 #[cfg(feature = "otel")]
 fn record_env_filter() -> EnvFilter {
-    base_env_filter()
+    EnvFilter::new(
+        &degenbot_bot::telemetry::resolve_filters(
+            degenbot_bot::telemetry::CONSOLE_WIRING_DEFAULT_PYTHON,
+        )
+        .otel,
+    )
 }
 
 /// Install the tracing subscriber stack.
@@ -586,44 +611,17 @@ where
         .with(python_layer)
 }
 
-/// `DEGENBOT_LOG_FMT`: the stderr `fmt` layer copy of every record.
+/// The writer for the stderr `fmt` layer: always `io::sink()` in the Python
+/// driver.
 ///
-/// Default ON (the stderr mirror is handy for hand-runs that only capture
-/// stderr). Set `DEGENBOT_LOG_FMT=0` to route the fmt layer to `io::sink()`:
-/// a driver that tees BOTH stdout (Python logging) and stderr (fmt layer)
-/// into one file then records every degenbot line exactly once, halving the
-/// run-log volume and dropping the ANSI-escaped blocker lines from the file.
-/// The writer (not the layer) is swapped so the builder types — and every
-/// caller/test against them — stay unchanged; the layer keeps formatting
-/// (costs are CPU-trivial at INFO levels).
-#[cfg(feature = "otel")]
-pub(crate) fn fmt_enabled() -> bool {
-    !matches!(
-        std::env::var("DEGENBOT_LOG_FMT")
-            .map(|v| v.to_ascii_lowercase())
-            .as_deref(),
-        Ok("0" | "false" | "off" | "no" | "")
-    )
-}
-
-#[cfg(not(feature = "otel"))]
-fn fmt_enabled() -> bool {
-    !matches!(
-        std::env::var("DEGENBOT_LOG_FMT")
-            .map(|v| v.to_ascii_lowercase())
-            .as_deref(),
-        Ok("0" | "false" | "off" | "no" | "")
-    )
-}
-
-/// The writer for the stderr `fmt` layer: stderr, or a sink when
-/// `DEGENBOT_LOG_FMT` is falsey (see [`fmt_enabled`]).
+/// Exactly one console-emitting writer per process (ADR-043 §6), and the
+/// binding IS present here, so [`PythonLogLayer`] owns the console and the
+/// `fmt` layer must stay silent — otherwise every record is written twice.
+/// This replaces the `DEGENBOT_LOG_FMT` two-tunnel hack (retired). The writer
+/// (not the layer) is swapped so the builder types — and every caller/test
+/// against them — stay unchanged.
 fn fmt_writer() -> tracing_subscriber::fmt::writer::BoxMakeWriter {
-    if fmt_enabled() {
-        tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr)
-    } else {
-        tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink)
-    }
+    tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink)
 }
 
 #[cfg(feature = "otel")]
@@ -700,26 +698,14 @@ pub fn init_logging_subscriber() {
         // any log:: calls during subscriber setup are captured.
         let _ = tracing_log::LogTracer::init();
 
-        // Build the subscriber registry.
-        // `EnvFilter` controls which events each layer receives. Use
-        // `RUST_LOG` if set, otherwise default to `info` (matching pyo3-log's
-        // unconditional forwarding — Python `logging` handles its own
-        // per-logger level filtering).
-        // Console vs record filters (2026-08-22 audit): explicit RUST_LOG is
-        // honored verbatim on EVERY sink (no implicit caps); the default caps
-        // `degenbot::diag` on console sinks only.
+        // Build the subscriber registry. `EnvFilter` controls which events
+        // each layer receives; ADR-043 §4 resolves it from the typed telemetry
+        // config, with an explicit `RUST_LOG` winning verbatim on every sink
+        // (the config knobs are then ignored, with one WARN).
         #[cfg(feature = "otel")]
-        let (console_filter, record_filter) = if std::env::var_os("RUST_LOG").is_some() {
-            (
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter()),
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter()),
-            )
-        } else {
-            (default_env_filter(), record_env_filter())
-        };
+        let (console_filter, record_filter) = (console_env_filter(), record_env_filter());
         #[cfg(not(feature = "otel"))]
-        let console_filter =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter());
+        let console_filter = console_env_filter();
 
         #[cfg(feature = "otel")]
         {
@@ -870,11 +856,31 @@ mod tests {
     fn run_with_default_filter<R>(f: impl FnOnce() -> R) -> (R, Vec<(String, Level)>) {
         let capture = Capture::default();
         let subscriber = Registry::default()
-            .with(default_env_filter())
+            .with(console_env_filter())
             .with(capture.clone());
         let ret = tracing::dispatcher::with_default(&tracing::Dispatch::new(subscriber), f);
         let records = capture.0.lock().unwrap().clone();
         (ret, records)
+    }
+
+    /// ADR-043 §6: the console queue is bounded and every drop is counted
+    /// (a silent ceiling is not acceptable).
+    #[test]
+    fn bounded_console_queue_counts_drops() {
+        let state = PythonLogLayerState {
+            queue: ArrayQueue::new(2),
+            dropped: AtomicU64::new(0),
+            shutdown: AtomicBool::new(false),
+        };
+        for i in 0..3 {
+            state.push(PythonLogRecord {
+                logger_name: "degenbot.test".to_string(),
+                level: "INFO".to_string(),
+                message: format!("record {i}"),
+            });
+        }
+        assert_eq!(state.dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(state.queue.len(), 2);
     }
     /// K6PCKP seam C: the "`OTel`" layer composes onto the base logging
     /// registry (`EnvFilter` + fmt + the Python slot) and receives spans
@@ -897,17 +903,11 @@ mod tests {
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
 
         let capture = Capture::default();
-        // Console filter carries the diagnostic cap; the record filter does
-        // not — exactly the production default split.
+        // ADR-043 §4 split: the console layer is quiet (warn) while the record
+        // layer enables the degenbot diagnostics at debug.
         let subscriber = build_base_registry_with_otel(
-            EnvFilter::new(
-                format!(
-                    "info,{}",
-                    degenbot_bot::telemetry::DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE
-                )
-                .as_str(),
-            ),
-            EnvFilter::new("info"),
+            EnvFilter::new("warn"),
+            EnvFilter::new("degenbot=debug"),
             otel::layer(tracer),
             capture.clone(),
         );
@@ -916,7 +916,7 @@ mod tests {
         // slot stays free for the cross-thread sim-span test (7LV6VN T1).
         tracing::subscriber::with_default(subscriber, || {
             tracing::info_span!("seam.c.span").in_scope(|| {
-                tracing::info!(target: "degenbot_bot::bot_core::block_pump", "seam c event");
+                tracing::warn!(target: "degenbot_bot::bot_core::block_pump", "seam c event");
             });
             provider.force_flush().expect("flush");
 
@@ -956,14 +956,14 @@ mod tests {
         assert!(
             !records
                 .iter()
-                .any(|(target, _)| target.contains("degenbot.diag")),
-            "diagnostic event leaked to the console sink — the cap is broken"
+                .any(|(target, level)| { *level == Level::INFO && target.contains("diag") }),
+            "degenbot diagnostic INFO leaked to the quiet console sink"
         );
         assert!(
             records
                 .iter()
-                .any(|(target, level)| { *level == Level::INFO && target.contains("block_pump") }),
-            "event did not reach the Python-slot layer; records: {records:?}"
+                .any(|(target, level)| { *level == Level::WARN && target.contains("block_pump") }),
+            "WARN event did not reach the Python-slot layer; records: {records:?}"
         );
     }
 

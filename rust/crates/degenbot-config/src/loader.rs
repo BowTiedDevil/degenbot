@@ -384,8 +384,14 @@ impl BotConfigLoader {
                     ));
                     continue;
                 };
-                let Some(raw) = toml_value_to_raw(field_value, key.toml_path, path, problems)
-                else {
+                // Map-kind keys accept the nested table form (the primary
+                // `[telemetry.diag]` surface) and the flat string form.
+                let raw = if matches!(key.kind.base, crate::schema::BaseKind::Map(_)) {
+                    map_value_to_raw(field_value, key, path, problems)
+                } else {
+                    toml_value_to_raw(field_value, key.toml_path, path, problems)
+                };
+                let Some(raw) = raw else {
                     continue;
                 };
                 match config.assign(key.section, key.field, &raw) {
@@ -402,6 +408,37 @@ impl BotConfigLoader {
 /// Resolve a CLI override key: exact env name first, then TOML path.
 fn resolve_key(name: &str) -> Option<&'static crate::schema::KeyDecl> {
     SCHEMA.iter().find(|k| k.env == name || k.toml_path == name)
+}
+
+/// Render a TOML `[section.map]` table (or a flat string) into the
+/// `key=value,...` raw form the map parser consumes.
+fn map_value_to_raw(
+    value: &toml::Value,
+    key: &'static crate::schema::KeyDecl,
+    path: &Path,
+    problems: &mut Vec<String>,
+) -> Option<String> {
+    let toml::Value::Table(t) = value else {
+        return toml_value_to_raw(value, key.toml_path, path, problems);
+    };
+    let mut parts: Vec<String> = Vec::new();
+    let mut bad = false;
+    for (k, v) in t {
+        if let Some(level) = v.as_str() {
+            parts.push(format!("{k}={level}"));
+        } else {
+            problems.push(format!(
+                "--config {}: {}.{k} must be a string level",
+                path.display(),
+                key.toml_path
+            ));
+            bad = true;
+        }
+    }
+    if bad {
+        return None;
+    }
+    Some(parts.join(","))
 }
 
 /// Convert a TOML scalar into the normalized raw text the typed parser

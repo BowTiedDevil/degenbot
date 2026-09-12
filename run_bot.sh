@@ -66,20 +66,18 @@ mkdir -p "$LOGDIR"
 #                      crates to `debug` (docs/logging.md has the recipes).
 #   * DEGENBOT_DEBUG=1 is the Python `logging` gate for forwarded records.
 #
-# Duplication control (ADR-043 / docs/logging.md): the standard lands exactly
-# ONE console writer per process (binding-present derivation), and the
-# two-tunnel DEGENBOT_LOG_FMT mirror is RETIRING in the migration. Until it
-# lands, DEGENBOT_LOG_FMT=0 routes the Rust stderr `fmt` layer (the
-# ANSI-escaped copy) to a sink. RUST records still reach the log exactly
-# once via the Python-forwarding tunnel; without this every degenbot
-# line is written twice into bot_run.log.
-# All values respect a pre-set environment: RUST_LOG=warn ./run_bot.sh opts
-# out; DEGENBOT_LOG_FMT=1 restores the stderr mirror.
+# Duplication control (ADR-043 §6 / docs/logging.md): exactly ONE console
+# writer per process, derived from binding-present. In the Python driver the
+# Rust→Python bridge owns the console and the Rust stderr `fmt` layer is
+# routed to a sink, so every record reaches bot_run.log exactly once (the
+# retired DEGENBOT_LOG_FMT two-tunnel switch is gone and warns at boot).
+# The console filter comes from the typed telemetry config (Python-driver
+# default `info`, plus the alloy noise throttles) — no RUST_LOG needed here;
+# set RUST_LOG yourself for a one-off (`RUST_LOG=warn ./run_bot.sh` wins
+# verbatim on every sink and turns the config log knobs off).
+# All values respect a pre-set environment.
 # --------------------------------------------------------------------------
-DEFAULT_RUST_LOG="info,alloy_pubsub=warn,alloy_transport=warn,alloy_transport_ws=warn,alloy_transport_ipc=warn,alloy_transport_http=warn,alloy_provider=warn,alloy_rpc=warn,alloy_network=warn,alloy_contract=warn,tungstenite=warn"
-export RUST_LOG="${RUST_LOG:-$DEFAULT_RUST_LOG}"
 export DEGENBOT_DEBUG="${DEGENBOT_DEBUG:-0}"
-export DEGENBOT_LOG_FMT="${DEGENBOT_LOG_FMT:-0}"
 export DEGENBOT_OTEL="${DEGENBOT_OTEL:-1}"
 # SIMPIPE2 T4 soak arm: the ENGINE-side inline sim (worker seam). Default 0
 # (legacy option-A FFI pipeline); the soak flips 0/1 across equal windows.

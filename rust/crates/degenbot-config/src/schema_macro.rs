@@ -125,6 +125,8 @@ macro_rules! cfg_ty {
     (opt u64) => { Option<u64> };
     (opt i64) => { Option<i64> };
     (opt f64) => { Option<f64> };
+    (opt enum $e:ident $( $v:ident $( = $alias:literal )? )+) => { Option<$e> };
+    (map $e:ident) => { ::std::collections::BTreeMap<::std::string::String, $e> };
     (enum $e:ident $( $v:ident $( = $alias:literal )? )+) => { $e };
 }
 
@@ -133,6 +135,9 @@ macro_rules! cfg_ty {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! cfg_enum {
+    (opt enum $e:ident $( $v:ident $( = $alias:literal )? )+) => {
+        $crate::cfg_enum!(enum $e $( $v $( = $alias )? )+);
+    };
     (enum $e:ident $( $v:ident $( = $alias:literal )? )+) => {
         #[doc = concat!("Enum-valued config key generated at its declaration site (`", stringify!($e), "`).")]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -230,6 +235,18 @@ macro_rules! cfg_kind {
     (opt $b:ident) => {
         $crate::schema::ValueKind { base: $crate::cfg_base!($b), optional: true }
     };
+    (opt enum $e:ident $( $v:ident $( = $alias:literal )? )+) => {
+        $crate::schema::ValueKind {
+            base: $crate::schema::BaseKind::Enum(stringify!($e), &[ $( stringify!($v) ),+ ]),
+            optional: true,
+        }
+    };
+    (map $e:ident) => {
+        $crate::schema::ValueKind {
+            base: $crate::schema::BaseKind::Map(stringify!($e)),
+            optional: false,
+        }
+    };
     (enum $e:ident $( $v:ident $( = $alias:literal )? )+) => {
         $crate::schema::ValueKind {
             base: $crate::schema::BaseKind::Enum(stringify!($e), &[ $( stringify!($v) ),+ ]),
@@ -255,6 +272,12 @@ macro_rules! cfg_parse_single {
     (enum $e:ident $( $v:ident $( = $alias:literal )? )+, $raw:expr) => {
         // The generated FromStr renders the candidate list on error.
         <$e as ::core::str::FromStr>::from_str($raw)
+    };
+    (opt enum $e:ident $( $v:ident $( = $alias:literal )? )+, $raw:expr) => {
+        <$e as ::core::str::FromStr>::from_str($raw).map(Some)
+    };
+    (map $e:ident, $raw:expr) => {
+        $crate::parse_level_map::<$e>($raw)
     };
     (opt $b:tt, $raw:expr) => {
         $crate::cfg_parse_single!($b, $raw).map(Some)

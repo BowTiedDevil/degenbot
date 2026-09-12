@@ -59,7 +59,7 @@ from the target, so there is no hand-written tag to keep in sync.
 
 | Knob | Class | Shape |
 | --- | --- | --- |
-| `telemetry.log_level` | behavior | closed enum `error\|warn\|info\|debug\|trace` |
+| `telemetry.log_level` | behavior | closed enum `off\|error\|warn\|info\|debug\|trace` |
 | `telemetry.diag` | verbosity | validated map `{ domain = "level" }`, ships empty |
 | `telemetry.forensic` | behavior + sink | one capped, rotating file target |
 | `telemetry.otel`, `telemetry.metrics_addr` | behavior | driver wiring |
@@ -99,6 +99,20 @@ most-specific-first; see
 | Prometheus scrape | `curl http://127.0.0.1:9464/metrics` (override `telemetry.metrics_addr`) |
 | Jaeger traces | see the [bot-telemetry skill](../.agents/skills/bot-telemetry/SKILL.md) |
 
+## The console writer
+
+**Exactly one console-emitting writer per process** (ADR-043 §6). In the
+Python driver the binding is present, so the Rust→Python bridge
+owned by `logging.py` writes the console and the `fmt` layer is routed to
+`io::sink()`; in a standalone Rust binary the `fmt` layer owns it. A record is
+never written twice — the owner is *derived* from binding-present, not
+switched by an env var.
+
+The bridge's queue is **bounded** (8192 records): a stalled TTY or full pipe
+cannot stall the per-log pump. A push past the ceiling drops the record and
+counts it as `degenbot.log_dropped_total{sink="console"}`, so the ceiling is
+visible in Prometheus rather than silent.
+
 ## Retired verbosity flags
 
 The former per-diagnostic `DEGENBOT_*` env flags are retired (no aliases);
@@ -108,6 +122,9 @@ domain. The mapping and the disposition of the four default-ON streams
 (`verify_dbg`, `v2_calc_trace`, `dump_call_trace`,
 `sim_log_reverted_swaps`) live in
 [ADR-043 §5](adr/ADR-043-observability-standard.md).
+
+`DEGENBOT_LOG_FMT` is retired with them: the console owner is now derived, so
+the two-tunnel switch has no equivalent knob. Setting it warns at boot.
 
 ## Implementation status
 
@@ -124,8 +141,14 @@ contract and this section tracks the gap.
   `state_lock.trace` and `state_lock.diag` gate diagnostic *collection* cost,
   not log emission, so they keep their boolean config (the ADR table is
   corrected accordingly).
-- Phase 4 — `telemetry.log_level` / `telemetry.diag` / `telemetry.forensic`,
-  the single non-blocking console writer, and retired-flag detection.
+- **Phase 4** — landed: `telemetry.log_level` (closed enum, defaults to the
+  wiring default) and `telemetry.diag` (validated map, ships empty) resolve
+  both record-layer filters through `degenbot_bot::telemetry::resolve_filters`;
+  an explicit `RUST_LOG` is a branch that wins verbatim on every sink (the
+  config knobs are ignored, with one WARN naming the active source). The
+  console writer is single-owner and bounded with its drop counter;
+  `DEGENBOT_LOG_FMT` is retired (boot-time WARN). `telemetry.forensic`
+  remains the one unimplemented knob of this phase.
 - Phase 5 — golden snapshots, metric gates, naming normalization.
 
 ## See also

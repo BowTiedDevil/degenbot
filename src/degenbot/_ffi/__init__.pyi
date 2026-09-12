@@ -1480,6 +1480,9 @@ class BalanceVectorView:
 def shutdown_log_drainer() -> None:
     """Flush + stop the batched Python log drainer thread (idempotent)."""
 
+def flush_telemetry() -> None:
+    """Flush telemetry providers (spans + metrics) before teardown (ADR-043)."""
+
 def shutdown_subscriber_drainer() -> None:
     """Stop the pool-state subscriber drainer thread (idempotent)."""
 
@@ -1559,6 +1562,7 @@ __all__ = [
     "price",
     "provider",
     "runtime_status",
+    "flush_telemetry",
     "shutdown_log_drainer",
     "shutdown_subscriber_drainer",
     "simulation",

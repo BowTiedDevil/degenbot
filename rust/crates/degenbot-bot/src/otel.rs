@@ -349,12 +349,11 @@ pub fn init_otel_tracing() -> Result<OtelHandle, OtelInitError> {
     // record-level RUST_LOG filter (uncapped); stderr fmt gets the console
     // filter with the diagnostic cap, so high-frequency `degenbot::diag`
     // events stay off stdout while remaining visible in traces.
-    let mut console_filter = tracing_subscriber::EnvFilter::from_default_env();
-    if let Ok(cap) = crate::telemetry::DIAGNOSTIC_CONSOLE_CAP_DIRECTIVE.parse() {
-        console_filter = console_filter.add_directive(cap);
-    }
+    let plan = crate::telemetry::resolve_filters(crate::telemetry::CONSOLE_WIRING_DEFAULT_RUST);
+    let console_filter = tracing_subscriber::EnvFilter::new(&plan.console);
+    let record_filter = tracing_subscriber::EnvFilter::new(&plan.otel);
     let subscriber = tracing_subscriber::registry()
-        .with(layer(tracer).with_filter(tracing_subscriber::EnvFilter::from_default_env()))
+        .with(layer(tracer).with_filter(record_filter))
         .with(tracing_subscriber::fmt::layer().with_filter(console_filter));
     if subscriber.try_init().is_err() {
         op_warn!(domain = pump, "OTel init: a global tracing subscriber already exists (e.g. degenbot-python's registry); the OTel layer must be added to that registry (epic KDUED5 task K6PCKP)");

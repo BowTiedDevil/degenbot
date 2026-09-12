@@ -980,12 +980,21 @@ class BotRunner:
         self._phase = _Phase.CLOSED
         registry = getattr(self, "engine_registry", None)
         engine = getattr(registry, "engine", None) if registry is not None else None
-        if engine is None:
-            return
+        if engine is not None:
+            try:
+                engine.stop()
+            except Exception as exc:
+                bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
+        # ADR-043 §6: flush the telemetry providers BEFORE this runner — and
+        # the Rust core's tokio runtime behind it — is torn down. An OTLP batch
+        # flushed after runtime teardown exports nothing, so the tail of a run
+        # would be silently lost. None-safe when telemetry is off.
         try:
-            engine.stop()
+            from degenbot.telemetry import flush_telemetry as _flush_telemetry
+
+            _flush_telemetry()
         except Exception as exc:
-            bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
+            bot_logger.debug(f"[shutdown] telemetry flush failed: {exc!r}")
 
 
 # get_snapshots
