@@ -290,6 +290,8 @@ crate::config_schema! {
             doc = "SimDriver new-lease cap while cordoned; in-flight sims are never cancelled (default: half the slot cap).";
         intake_backstop_ms [ms] = 250, env = "DEGENBOT_FLEET_INTAKE_BACKSTOP_MS", def = "250",
             doc = "Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units (TB4QGX T2). Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin.";
+        intake_no_progress_ticks [usize] = 8, env = "DEGENBOT_FLEET_INTAKE_NO_PROGRESS_TICKS", def = "8",
+            doc = "Consecutive admitted-but-no-progress host intake passes (backlog non-empty, admission admits, yet no dequeue and no grant) before the host fails LOUDLY (TB4QGX T4). Legitimate WaitCap/WaitPosture holds never count, and only real progress resets the counter. Clamped to >= 1 at the site so a garbage value cannot trip on the first pass.";
     }
 
     capture CaptureConfig {

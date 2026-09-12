@@ -113,6 +113,7 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_FLEET_CORDON_EXIT_CLEAN_MS` | `fleet.cordon_exit_clean_ms` | `duration-ms (u64)` | `10000` | Clean-window hysteresis (ms) required before cordon exits (design doc §6: 10 s of clean windows). |
 | `DEGENBOT_FLEET_CORDON_SIM_INTAKE_FLOOR` | `fleet.cordon_sim_intake_floor` | `Option<usize>` | `(unset; half the slot cap)` | SimDriver new-lease cap while cordoned; in-flight sims are never cancelled (default: half the slot cap). |
 | `DEGENBOT_FLEET_INTAKE_BACKSTOP_MS` | `fleet.intake_backstop_ms` | `duration-ms (u64)` | `250` | Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units (TB4QGX T2). Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin. |
+| `DEGENBOT_FLEET_INTAKE_NO_PROGRESS_TICKS` | `fleet.intake_no_progress_ticks` | `usize` | `8` | Consecutive admitted-but-no-progress host intake passes (backlog non-empty, admission admits, yet no dequeue and no grant) before the host fails LOUDLY (TB4QGX T4). Legitimate WaitCap/WaitPosture holds never count, and only real progress resets the counter. Clamped to >= 1 at the site so a garbage value cannot trip on the first pass. |
 ## `capture`
 
 | Env var | TOML key | Type | Default | Description |

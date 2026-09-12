@@ -256,6 +256,76 @@ pub(crate) fn intake_backstop() -> Duration {
     )
 }
 
+/// The no-progress trip threshold K (T4): read from the installed typed
+/// config, clamped to >= 1 so a garbage value cannot trip on the first
+/// pass.
+pub(crate) fn intake_no_progress_ticks() -> usize {
+    crate::bot_core::stance::config()
+        .fleet
+        .intake_no_progress_ticks
+        .max(1)
+}
+
+/// The T4 no-progress guard: K CONSECUTIVE admitted-but-no-progress pump
+/// passes trip the loud fail. A pass is "admitted" iff the backlog is
+/// non-empty AND the pure admission predicate admits (so a legitimate
+/// `WaitCap`/`WaitPosture` hold never accrues), and "progressed" iff the
+/// backlog shrank or a grant was delivered. Only real progress (or an
+/// un-admitted pass) resets the counter — an untrusted `PostureEdge` hint
+/// runs no different code path, so it can never mask a livelock.
+#[derive(Debug)]
+pub(crate) struct NoProgressGuard {
+    consecutive: usize,
+    limit: usize,
+}
+
+/// One guard step's outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoProgressStep {
+    /// Progress was made, or the pass was legitimately un-admitted.
+    Progressed,
+    /// No progress this pass; `consecutive` of `limit` accrued.
+    Ticking { consecutive: usize },
+    /// K consecutive no-progress passes — the caller fails loudly.
+    Tipping { consecutive: usize },
+}
+
+impl NoProgressGuard {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self {
+            consecutive: 0,
+            limit: limit.max(1),
+        }
+    }
+
+    pub(crate) fn limit(&self) -> usize {
+        self.limit
+    }
+
+    #[cfg(test)]
+    pub(crate) fn consecutive(&self) -> usize {
+        self.consecutive
+    }
+
+    /// Fold one pump pass into the guard.
+    pub(crate) fn step(&mut self, admitted: bool, progressed: bool) -> NoProgressStep {
+        if !admitted || progressed {
+            self.consecutive = 0;
+            return NoProgressStep::Progressed;
+        }
+        self.consecutive += 1;
+        if self.consecutive >= self.limit {
+            NoProgressStep::Tipping {
+                consecutive: self.consecutive,
+            }
+        } else {
+            NoProgressStep::Ticking {
+                consecutive: self.consecutive,
+            }
+        }
+    }
+}
+
 /// The host intake's progress vocabulary. `Idle`/`Backed` are live in this
 /// refactor (the backlog drain loop keys on `Backed`); `Faulted`/`Closed`
 /// are introduced by the tasks whose transitions make them reachable (the
@@ -515,6 +585,10 @@ pub(crate) struct HostPump<'a> {
     /// block-pump thread) still re-runs the pump. Read once per host loop
     /// from the typed config.
     pub(crate) backstop: Duration,
+    /// The T4 no-progress guard (K consecutive admitted-but-no-progress
+    /// passes trip the loud fail). Borrowed so it persists across every
+    /// pump pass of one host thread.
+    pub(crate) no_progress: &'a mut NoProgressGuard,
     /// Test seam (T2): counts timeout-driven backstop pumps so the tick rate
     /// can be asserted bounded. Absent from production builds.
     #[cfg(test)]
@@ -658,6 +732,14 @@ impl HostPump<'_> {
     /// grant time — the seat-model delivery IS the claim — and completion
     /// arrives via [`HostMsg::SeatDone`].
     pub(crate) fn pump(&mut self) {
+        // T4: snapshot the pre-pass shape for the no-progress guard. A pass
+        // is "admitted" iff there is held work AND the admission predicate
+        // would admit it; it "progressed" iff the backlog shrank or a grant
+        // was delivered. A legitimate WaitCap/WaitPosture hold is therefore
+        // never counted (admitted is false), and the counter resets ONLY on
+        // real progress or an un-admitted pass — never on a bare wake.
+        let backlog_before = self.backlog.len();
+        let admitted = !self.backlog.is_empty() && admission(self.admission_inputs()).admits();
         // Backlog drains FIRST (FIFO across the loud-overflow seam). A
         // backed backlog that cannot enqueue (the cordon hold of Deferrable
         // intake, or a full per-role queue) parks here until the next host
@@ -691,6 +773,7 @@ impl HostPump<'_> {
                 self.discipline.fail("backlog drain", &err.to_string());
             }
         }
+        let mut granted = 0usize;
         loop {
             let grants = self.host.dispatch();
             if grants.is_empty() {
@@ -711,7 +794,19 @@ impl HostPump<'_> {
                     self.discipline.fail("grant start (T2)", &err.to_string());
                 }
                 self.sink.deliver(self.host, grant, unit);
+                granted += 1;
             }
+        }
+        let progressed = granted > 0 || self.backlog.len() < backlog_before;
+        if let NoProgressStep::Tipping { consecutive } = self.no_progress.step(admitted, progressed)
+        {
+            self.discipline.fail(
+                "no progress (T4)",
+                &format!(
+                    "admission admitted a non-empty backlog but {consecutive} consecutive pump passes made no progress (K = {}): the dispatch/admission invariant is broken and held work would park forever",
+                    self.no_progress.limit()
+                ),
+            );
         }
     }
 }
@@ -977,6 +1072,7 @@ fn host_loop(
     let sink = PooledSink { queue };
     let discipline = PooledDiscipline { desc };
     let mut backlog = VecDeque::new();
+    let mut no_progress = NoProgressGuard::new(intake_no_progress_ticks());
     HostPump {
         host: &mut host,
         backlog: &mut backlog,
@@ -988,6 +1084,7 @@ fn host_loop(
         mirror: None,
         discipline: &discipline,
         backstop: intake_backstop(),
+        no_progress: &mut no_progress,
         #[cfg(test)]
         ticks: None,
     }
@@ -1117,8 +1214,9 @@ mod tests {
     use degenbot_workers::role::WorkerRole;
 
     use super::{
-        admission, Admission, AdmissionInputs, GrantContract, HostDiscipline, HostMsg, HostPump,
-        ProgressState, SeatSink,
+        admission, intake_no_progress_ticks, Admission, AdmissionInputs, GrantContract,
+        HostDiscipline, HostMsg, HostPump, NoProgressGuard, NoProgressStep, ProgressState,
+        SeatSink,
     };
     use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
 
@@ -1189,6 +1287,9 @@ mod tests {
         Seated { unit: u64, slot: u64 },
         /// The row-#6 grant-kind denial fired (recorded, not aborted).
         ForeignGrant(GrantKind),
+        /// T4: the no-progress loud fail fired (recorded, then panicked so
+        /// the drive can catch it — production aborts the process).
+        NoProgressAbort,
     }
 
     /// One shared recorder behind the sink + the discipline.
@@ -1237,7 +1338,8 @@ mod tests {
 
     impl HostDiscipline for RecordingDiscipline {
         fn fail(&self, context: &str, err: &str) -> ! {
-            panic!("unexpected host failure at {context}: {err}")
+            self.recorder.record(Outcome::NoProgressAbort);
+            panic!("host failure recorded at {context}: {err}")
         }
 
         fn enqueue_refused(&self, err: &str) -> ! {
@@ -1281,6 +1383,9 @@ mod tests {
         cursor: usize,
         in_flight: VecDeque<u64>,
         unit_seq: u64,
+        /// T4: the persistent no-progress guard (a real drive reuses ONE
+        /// guard across passes, mirroring production).
+        guard: NoProgressGuard,
         /// T2: the recv-timeout backstop used by a real-thread drive.
         backstop: Duration,
     }
@@ -1312,6 +1417,7 @@ mod tests {
                 cursor: 0,
                 in_flight: VecDeque::new(),
                 unit_seq: 0,
+                guard: NoProgressGuard::new(intake_no_progress_ticks()),
                 backstop: Duration::from_millis(50),
             }
         }
@@ -1361,6 +1467,7 @@ mod tests {
                 mirror: self.mirror.as_deref(),
                 discipline: &self.discipline,
                 backstop: self.backstop,
+                no_progress: &mut self.guard,
                 #[cfg(test)]
                 ticks: None,
             }
@@ -1445,7 +1552,7 @@ mod tests {
                 .iter()
                 .filter_map(|outcome| match outcome {
                     Outcome::Seated { unit, .. } => Some(*unit),
-                    Outcome::ForeignGrant(_) => None,
+                    Outcome::ForeignGrant(_) | Outcome::NoProgressAbort => None,
                 })
                 .collect()
         }
@@ -2011,6 +2118,7 @@ mod tests {
                     mirror: None,
                     discipline: &discipline,
                     backstop,
+                    no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     ticks: None,
                 }
                 .run(rx);
@@ -2094,6 +2202,7 @@ mod tests {
                     mirror: None,
                     discipline: &discipline,
                     backstop,
+                    no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     ticks: Some(&ticks_in),
                 }
                 .run(rx);
@@ -2149,7 +2258,7 @@ mod tests {
                     .iter()
                     .filter_map(|o| match o {
                         Outcome::Seated { unit, slot } => Some((*slot, *unit)),
-                        Outcome::ForeignGrant(_) => None,
+                        Outcome::ForeignGrant(_) | Outcome::NoProgressAbort => None,
                     })
                     .collect();
                 let mut seated: Vec<u64> = grants.iter().map(|(_, unit)| *unit).collect();
@@ -2213,6 +2322,7 @@ mod tests {
                     mirror: None,
                     discipline: &discipline,
                     backstop,
+                    no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     ticks: Some(&ticks_in),
                 }
                 .run(rx);
@@ -2255,6 +2365,7 @@ mod tests {
                     mirror: None,
                     discipline: &discipline,
                     backstop,
+                    no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     ticks: None,
                 }
                 .run(rx);
@@ -2351,5 +2462,204 @@ mod tests {
         solve.apply_and_pump(HostMsg::PostureEdge);
         assert_eq!(solve.seated_units(), vec![1]);
         assert!(solve.backlog.is_empty());
+    }
+
+    /// T4 (pure): the guard tips on exactly the K-th consecutive admitted
+    /// no-progress pass, and stays tipped afterwards.
+    #[test]
+    fn no_progress_guard_tips_only_after_k_consecutive_admitted_passes() {
+        let mut guard = NoProgressGuard::new(3);
+        assert_eq!(
+            guard.step(true, false),
+            NoProgressStep::Ticking { consecutive: 1 }
+        );
+        assert_eq!(
+            guard.step(true, false),
+            NoProgressStep::Ticking { consecutive: 2 }
+        );
+        assert_eq!(
+            guard.step(true, false),
+            NoProgressStep::Tipping { consecutive: 3 }
+        );
+        assert!(matches!(
+            guard.step(true, false),
+            NoProgressStep::Tipping { .. }
+        ));
+    }
+
+    /// T4 (pure): real progress resets, and a legitimately UN-admitted pass
+    /// (WaitCap/WaitPosture) never accrues — no matter how many passes run.
+    #[test]
+    fn no_progress_guard_resets_on_progress_and_never_accrues_unadmitted() {
+        let mut guard = NoProgressGuard::new(3);
+        guard.step(true, false);
+        assert_eq!(guard.step(true, true), NoProgressStep::Progressed);
+        assert_eq!(guard.consecutive(), 0, "progress resets");
+        for _ in 0..10 {
+            assert_eq!(guard.step(false, false), NoProgressStep::Progressed);
+        }
+        assert_eq!(
+            guard.consecutive(),
+            0,
+            "a legitimate hold never accrues toward K"
+        );
+        // Progress on an un-admitted pass also resets.
+        guard.step(true, false);
+        guard.step(false, true);
+        assert_eq!(guard.consecutive(), 0);
+    }
+
+    /// T4 (pure): K is clamped to >= 1 (a garbage config cannot trip on the
+    /// first pass).
+    #[test]
+    fn no_progress_guard_clamps_k_to_at_least_one() {
+        let mut guard = NoProgressGuard::new(0);
+        assert_eq!(guard.limit(), 1);
+        assert_eq!(
+            guard.step(true, false),
+            NoProgressStep::Tipping { consecutive: 1 }
+        );
+    }
+
+    /// T4: the loud fail fires on the K-th admitted-but-progressless pass.
+    /// The drive parks a Deferrable pooled unit in a Solver host's backlog:
+    /// the Solver admission admits (Never-cordoned) while `try_enqueue`
+    /// hands the foreign-role unit BACK (`PostureHeld`) — the broken
+    /// dispatch/admission invariant the guard exists for.
+    #[test]
+    fn host_fails_loudly_after_k_admitted_but_progressless_passes() {
+        let owner = hermetic_owner();
+        force_cordoned(owner);
+        let mut driven = DrivenHost::boot_with(HostKind::Solve, owner);
+        driven.guard = NoProgressGuard::new(2);
+        driven.backlog.push_back(Unit::new(
+            1,
+            WorkerRole::PoolStateUpdater,
+            None,
+            false,
+            Box::new(|_ctx| {}),
+        ));
+        driven.pump_handle().pump();
+        assert_eq!(driven.guard.consecutive(), 1, "tick 1 of 2");
+        assert!(
+            !driven
+                .recorder
+                .snapshot()
+                .iter()
+                .any(|o| matches!(o, Outcome::NoProgressAbort)),
+            "no abort before K"
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            driven.pump_handle().pump();
+        }));
+        assert!(result.is_err(), "the K-th pass must fail loudly");
+        assert!(
+            driven
+                .recorder
+                .snapshot()
+                .iter()
+                .any(|o| matches!(o, Outcome::NoProgressAbort)),
+            "the test seam records the no-progress abort"
+        );
+    }
+
+    /// T4: an untrusted `PostureEdge` hint runs the SAME no-progress path —
+    /// it can never reset K and mask a livelock.
+    #[test]
+    fn posture_edge_hints_do_not_reset_the_no_progress_counter() {
+        let owner = hermetic_owner();
+        force_cordoned(owner);
+        let mut driven = DrivenHost::boot_with(HostKind::Solve, owner);
+        driven.guard = NoProgressGuard::new(3);
+        driven.backlog.push_back(Unit::new(
+            1,
+            WorkerRole::PoolStateUpdater,
+            None,
+            false,
+            Box::new(|_ctx| {}),
+        ));
+        driven.pump_handle().pump();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            driven.apply_and_pump(HostMsg::PostureEdge);
+            assert_eq!(
+                driven.guard.consecutive(),
+                2,
+                "a PostureEdge must not reset K"
+            );
+            driven.pump_handle().pump();
+        }));
+        assert!(result.is_err(), "the K-th pass still fails after hints");
+    }
+
+    /// T4: a legitimate `WaitPosture` hold parked across far more than K
+    /// passes never aborts and never accrues.
+    #[test]
+    fn a_legitimate_wait_posture_hold_never_accrues_no_progress_ticks() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        for _ in 0..3 {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        assert_eq!(driven.backlog.len(), 3, "held under the cordon");
+        for _ in 0..driven.guard.limit() * 3 {
+            driven.pump_handle().pump();
+            assert_eq!(
+                driven.guard.consecutive(),
+                0,
+                "a WaitPosture hold never accrues toward K"
+            );
+        }
+    }
+
+    /// T4: a legitimate `WaitCap` hold (all seats busy, role queue at cap)
+    /// parked across far more than K passes never aborts and never accrues.
+    #[test]
+    fn a_legitimate_wait_cap_hold_never_accrues_no_progress_ticks() {
+        let mut driven = DrivenHost::boot(HostKind::Pooled);
+        let cap = driven.host.queue_cap(driven.role());
+        // Fill the role queue to the cap while every seat is busy (no
+        // SeatDone is ever sent), then push one more: the next unit can
+        // only spill, and stays a WaitCap hold.
+        for _ in 0..=(cap + cap / 2) {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        assert!(
+            !driven.backlog.is_empty(),
+            "the overflow past the cap is a WaitCap hold"
+        );
+        for _ in 0..driven.guard.limit() * 3 {
+            driven.pump_handle().pump();
+            assert_eq!(
+                driven.guard.consecutive(),
+                0,
+                "a WaitCap hold never accrues toward K"
+            );
+        }
+    }
+
+    /// T4 (unreachability): a HEALTHY host — the production geometry, where
+    /// every admitted unit can reach a seat — never accrues a single
+    /// no-progress tick, even under a tiny K. Only a broken
+    /// dispatch/admission invariant can reach the trip.
+    #[test]
+    fn a_healthy_host_never_reaches_the_no_progress_trip() {
+        let mut driven = DrivenHost::boot(HostKind::Pooled);
+        driven.guard = NoProgressGuard::new(3);
+        let cap = driven.host.queue_cap(driven.role());
+        for _ in 0..(cap * 2) {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+            assert_eq!(
+                driven.guard.consecutive(),
+                0,
+                "a healthy host never accrues toward K"
+            );
+        }
+        driven.run_to_quiescence();
+        assert!(driven.backlog.is_empty(), "the healthy host drained");
+        assert_eq!(driven.guard.consecutive(), 0);
     }
 }

@@ -390,6 +390,9 @@ fn host_loop(
         mirror: Some(solver_queue_len),
         discipline: &discipline,
         backstop: intake_backstop(),
+        no_progress: &mut crate::arb_engine::seat_host::NoProgressGuard::new(
+            crate::arb_engine::seat_host::intake_no_progress_ticks(),
+        ),
         #[cfg(test)]
         ticks: None,
     }
