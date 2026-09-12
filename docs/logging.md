@@ -149,7 +149,16 @@ contract and this section tracks the gap.
   console writer is single-owner and bounded with its drop counter;
   `DEGENBOT_LOG_FMT` is retired (boot-time WARN). `telemetry.forensic`
   remains the one unimplemented knob of this phase.
-- Phase 5 — golden snapshots, metric gates, naming normalization.
+- **Phase 5** — landed: the naming gate (`degenbot-bot/tests/
+  observability_naming.rs` sweeps production sources; spans are
+  `degenbot.<area>.<verb>`, metrics `degenbot.<area>.<noun>` — the block-epoch
+  root span is now `degenbot.epoch.run`), the metric-cardinality gate
+  (`metric_cardinality.rs`: label names are a closed reviewed allowlist and
+  unbounded-looking names fail outright), and the `degenbot.metric_series`
+  self-metric + `DegenbotMetricCardinalityHigh` alert. Tracked successors for
+  the rest: `ZJUEXH` (behavioral volume gate), `RL7X4C` (golden snapshots for
+  boot / one block / one revert), `4QYTPH` (delete the `[area]` message tags
+  and derive the prefix from the target).
 
 ## See also
 
