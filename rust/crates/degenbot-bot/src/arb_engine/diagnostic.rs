@@ -368,10 +368,10 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn diagnostic_path_state(&self, path_id: u64) -> Option<DiagnosticPathState> {
         let path = self.registry.get(path_id)?;
-        let solve_block = if self.cursor.is_anchored() {
-            Some(self.cursor.results_block())
+        let solve_block = if self.cycle.cursor.is_anchored() {
+            Some(self.cycle.cursor.results_block())
         } else {
-            self.cursor.last_processed_block()
+            self.cycle.cursor.last_processed_block()
         };
 
         let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
@@ -382,7 +382,7 @@ impl ArbitrageEngine {
         // onchain fetch pinned to `solve_block` is a SNAPSHOT TIMING ARTIFACT
         // (post-publish swap included in live engine_state but excluded by the
         // pinned RPC), not real publish-time lag.
-        snapshot.engine_processed_block = self.cursor.last_processed_block();
+        snapshot.engine_processed_block = self.cycle.cursor.last_processed_block();
 
         // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop; V3/V4 state still reads the per-family

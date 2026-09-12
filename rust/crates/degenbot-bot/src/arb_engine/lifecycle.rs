@@ -155,9 +155,9 @@ impl ArbitrageEngine {
                 &core,
                 &pool_refs,
                 &mut resolved,
-                &self.hop_projection_cache,
-                Some(&mut self.hop_projection_count),
-                self.cl_projection_memo,
+                &self.cycle.hop_projection_cache,
+                Some(&mut self.cycle.hop_projection_count),
+                self.cycle.cl_projection_memo,
             )
         };
         if let Some(unroutable) = deficits
@@ -183,9 +183,11 @@ impl ArbitrageEngine {
         // Store the resolve snapshot + drive the state machine. Arc-shared:
         // the solve dispatch stages Arc clones (f701ccd3 staging fix).
         let path_valid = resolved.valid;
-        self.path_resolved
+        self.cycle
+            .path_resolved
             .insert(path_id, std::sync::Arc::new(resolved));
-        self.path_status
+        self.cycle
+            .path_status
             .entry(path_id)
             .or_default()
             .set_resolved(&deficits);
@@ -209,7 +211,7 @@ impl ArbitrageEngine {
     /// Register a path and eagerly solve it.
     ///
     /// Like `register_path`, but also solves the path immediately and
-    /// appends the result to `self.results`. The `pending_new_paths`
+    /// appends the result to `self.cycle.results`. The `pending_new_paths`
     /// set tracks the path so the next `rebuild_and_solve_affected`
     /// merge doesn't discard it.
     ///
@@ -224,7 +226,7 @@ impl ArbitrageEngine {
         let path_id = self.register_path(hops)?;
 
         // Eagerly solve the newly registered path
-        if let Some(resolved) = self.path_resolved.get(&path_id) {
+        if let Some(resolved) = self.cycle.path_resolved.get(&path_id) {
             if resolved.valid {
                 if let Some(mut solve_result) = ::degenbot_solvers::mixed::solve_path(
                     resolved,
@@ -234,8 +236,8 @@ impl ArbitrageEngine {
                 {
                     if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
                         self.clamp_cl_hop_capacity(path_id, &mut solve_result);
-                        self.results.insert(path_id, solve_result);
-                        self.pending_new_paths.insert(path_id);
+                        self.cycle.results.insert(path_id, solve_result);
+                        self.cycle.pending_new_paths.insert(path_id);
                     }
                 }
             }
@@ -271,11 +273,12 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
         (
-            self.results
+            self.cycle
+                .results
                 .iter()
                 .map(|r| (*r.key(), r.value().clone()))
                 .collect(),
-            self.cursor.results_block(),
+            self.cycle.cursor.results_block(),
         )
     }
 
@@ -283,7 +286,7 @@ impl ArbitrageEngine {
     /// Returns `None` if no block has been processed yet.
     #[must_use]
     pub const fn last_processed_block(&self) -> Option<u64> {
-        self.cursor.last_processed_block()
+        self.cycle.cursor.last_processed_block()
     }
 
     /// Set the last processed block manually.
@@ -297,7 +300,7 @@ impl ArbitrageEngine {
     /// 6XB6NJ: a monotone advance on the block cursor — a lower value
     /// cannot pull the processed boundary backwards.
     pub fn set_last_processed_block(&mut self, block: u64) {
-        self.cursor.advance_processed(block);
+        self.cycle.cursor.advance_processed(block);
     }
 
     /// The last block this engine's `finalize_block` guard advanced past.
@@ -307,7 +310,7 @@ impl ArbitrageEngine {
     /// tombstone `finalize_block(block > 0)` fires).
     #[must_use]
     pub const fn last_solved_block(&self) -> u64 {
-        self.cursor.last_solved_block()
+        self.cycle.cursor.last_solved_block()
     }
 
     /// Seed the engine's `last_solved_block` (e.g. on mid-flight join: a late
@@ -320,7 +323,7 @@ impl ArbitrageEngine {
     /// engine starts at 0 and the production stamps are non-decreasing, so
     /// the max is the same value the old unconditional write landed.
     pub fn set_last_solved_block(&mut self, block: u64) {
-        self.cursor.advance_solved_boundary(block);
+        self.cycle.cursor.advance_solved_boundary(block);
     }
 
     /// Seed the cold-start `results_block` anchor to a **settled** block (the
@@ -339,7 +342,7 @@ impl ArbitrageEngine {
     /// only-if-zero guard is subsumed ("never regress" holds by
     /// construction; see `BlockCursor::advance_solved`).
     pub fn set_solve_anchor(&mut self, block: u64) {
-        self.cursor.advance_solved(block);
+        self.cycle.cursor.advance_solved(block);
     }
 
     /// KJWIK5: install the deferred-path re-record hook (the ledger carry).
@@ -349,7 +352,7 @@ impl ArbitrageEngine {
     /// cold-start `solve_all`) leave it unset, and the deferral falls back
     /// to today's dropped behavior.
     pub(crate) fn set_deferred_re_record(&mut self, hook: super::DeferredReRecordHook) {
-        self.deferred_re_record = Some(hook);
+        self.cycle.deferred_re_record = Some(hook);
     }
 
     /// Whether any forward log applied since the last `finalize_block` (the
@@ -358,14 +361,14 @@ impl ArbitrageEngine {
     /// since LEZJAS; returns `false` until the first `record_logs_this_block`.
     #[must_use]
     pub const fn has_logs_this_block(&self) -> bool {
-        self.cursor.has_logs_this_block()
+        self.cycle.cursor.has_logs_this_block()
     }
 
     /// Record that at least one forward log applied this block (clears on the
     /// next `finalize_block`). Replaces the pump's `has_logs_this_block = true;`
     /// out-param write (ergo task LEZJAS).
     pub fn record_logs_this_block(&mut self) {
-        self.cursor.record_logs();
+        self.cycle.cursor.record_logs();
     }
 
     /// Resolve and solve all registered paths. **Solve-only — does NOT dispatch
@@ -373,7 +376,7 @@ impl ArbitrageEngine {
     /// via `send_result_batch`, driven by the debounce timer).
     ///
     /// Cold-start / test synchronization entry point (replaces the removed
-    /// `initial_solve`). Populates `self.results` and advances `results_block`;
+    /// `initial_solve`). Populates `self.cycle.results` and advances `results_block`;
     /// leaves `delivered` untouched (Python has not yet received anything —
     /// `delivered`'s invariant is "what Python has seen via the channel," and
     /// that stays empty until the pump's first real send). Subsequent
@@ -395,14 +398,16 @@ impl ArbitrageEngine {
                     &core,
                     &path.pools,
                     &mut resolved,
-                    &self.hop_projection_cache,
-                    Some(&mut self.hop_projection_count),
-                    self.cl_projection_memo,
+                    &self.cycle.hop_projection_cache,
+                    Some(&mut self.cycle.hop_projection_count),
+                    self.cycle.cl_projection_memo,
                 );
-                self.path_resolved
+                self.cycle
+                    .path_resolved
                     .insert(path_id, std::sync::Arc::new(resolved));
                 // R522XA: cold-start full sweep also refreshes the state machine.
-                self.path_status
+                self.cycle
+                    .path_status
                     .entry(path_id)
                     .or_default()
                     .set_resolved(&deficits);
@@ -411,13 +416,13 @@ impl ArbitrageEngine {
 
         // Solve all paths
         let results = self.solve_all();
-        self.results.clear();
+        self.cycle.results.clear();
         for (pid, r) in results {
-            self.results.insert(pid, r);
+            self.cycle.results.insert(pid, r);
         }
         // 6XB6NJ: monotone advance on the block cursor (the cold-start
         // sweep can no longer drag a seeded resume anchor backwards).
-        self.cursor.advance_solved(block_number);
+        self.cycle.cursor.advance_solved(block_number);
 
         // Intentionally no compute_diff_and_send here: dispatching would
         // advance `delivered` (claiming "Python has seen these") before any
@@ -468,7 +473,7 @@ impl ArbitrageEngine {
     /// construction. Test + telemetry observable for the projection memo.
     #[must_use]
     pub fn hop_projection_count(&self) -> u64 {
-        self.hop_projection_count
+        self.cycle.hop_projection_count
     }
 
     /// Return the list of registered V4 `PoolManager` addresses.

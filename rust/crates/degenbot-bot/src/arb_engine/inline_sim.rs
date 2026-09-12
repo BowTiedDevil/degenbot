@@ -259,7 +259,7 @@ impl ArbitrageEngine {
             consumed_inputs: clamp_admitted.consumed_inputs.clone(),
             hop_outputs: clamp_admitted.hop_outputs.clone(),
             state_nonces: clamp_admitted.state_nonces.clone(),
-            sim_block: self.cursor.results_block(),
+            sim_block: self.cycle.cursor.results_block(),
             block_timestamp: metadata.timestamp,
             parent_base_fee: metadata.base_fee_per_gas.unwrap_or(0),
             parent_gas_used: metadata.gas_used,

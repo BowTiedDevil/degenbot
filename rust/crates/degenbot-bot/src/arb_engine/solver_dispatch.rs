@@ -65,7 +65,7 @@ static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
 /// (`ArbitrageEngine::cycle_arm`), because the cycle's duration/Mutex hold are
 /// observed a frame up, in `EngineStages`, after `solve_dirty` returns —
 /// the span field alone is unreadable there.
-#[must_use = "the returned label is the engine's per-cycle latch — assign it to `self.cycle_arm`"]
+#[must_use = "the returned label is the engine's per-cycle latch — assign it to `self.cycle.cycle_arm`"]
 pub(crate) fn record_cycle_arm_telemetry(span: &tracing::Span, arm: &'static str) -> &'static str {
     span.record("cycle.arm", arm);
     // Handed back for the caller's per-cycle latch (see the doc above).
@@ -86,14 +86,20 @@ impl ArbitrageEngine {
     /// ledger).
     #[must_use]
     pub(crate) fn admission_budget_keys(&self) -> Option<usize> {
-        if !self.solve_admission {
+        if !self.cycle.solve_admission {
             return None;
         }
         let outstanding = self
+            .cycle
             .detached_cycle
             .outstanding
             .load(std::sync::atomic::Ordering::Relaxed);
-        usize::try_from(self.admission_target_depth.saturating_sub(outstanding)).ok()
+        usize::try_from(
+            self.cycle
+                .admission_target_depth
+                .saturating_sub(outstanding),
+        )
+        .ok()
     }
 }
 
@@ -1159,10 +1165,10 @@ impl ArbitrageEngine {
         hotpath::measure_block!("merge.payload_store", {
             match payload {
                 Some(p) => {
-                    self.inline_payloads.insert(pid, p);
+                    self.cycle.inline_payloads.insert(pid, p);
                 }
                 None => {
-                    self.inline_payloads.remove(&pid);
+                    self.cycle.inline_payloads.remove(&pid);
                 }
             }
         });
@@ -1171,8 +1177,12 @@ impl ArbitrageEngine {
         // possibly delay it). The per-entry emission composes with the
         // debounce sweep, which still owns expired/removed + the end-of-cycle
         // metadata batch.
-        let payload_now = self.inline_payloads.get(&pid).map(|e| e.value().clone());
-        if self.streaming_delivery {
+        let payload_now = self
+            .cycle
+            .inline_payloads
+            .get(&pid)
+            .map(|e| e.value().clone());
+        if self.cycle.streaming_delivery {
             hotpath::measure_block!("merge.delivery_emit", {
                 self.delivery.emit_single_result_batch(
                     solve_block,
@@ -1183,9 +1193,9 @@ impl ArbitrageEngine {
                 );
             });
         }
-        self.results.insert(pid, result);
+        self.cycle.results.insert(pid, result);
         #[cfg(test)]
-        if let Some(probe) = &self.merge_probe {
+        if let Some(probe) = &self.cycle.merge_probe {
             probe.lock().push(pid);
         }
         twins
@@ -1224,7 +1234,7 @@ impl ArbitrageEngine {
         // mid-item so the sidecar's catch_unwind guard + caught-panic
         // disposition (sticky cordon) can be pinned.
         #[cfg(test)]
-        if let Some(panic_pid) = self.test_merge_panic.as_ref() {
+        if let Some(panic_pid) = self.cycle.test_merge_panic.as_ref() {
             panic_pid(item.pid());
         }
         let LaneOutcome::Solved(solved) = &item else {
@@ -1248,7 +1258,7 @@ impl ArbitrageEngine {
         // P37YJG: the machine owns the pair — this is the RECEIPT half
         // (the decrement + both meter publishes ride with it,
         // byte-identical).
-        self.detached_cycle.solved_received();
+        self.cycle.detached_cycle.solved_received();
         // MQUKB6-T2: re-enter the enqueue-time cycle span for the
         // whole merge (Q1a drop/apply events + any profit emit
         // parent there). Inert without a subscriber or for
@@ -1256,13 +1266,15 @@ impl ArbitrageEngine {
         let merge_span = solved.solve_span.clone();
         let _merge_ctx = merge_span.enter();
         let age_cycles = self
+            .cycle
             .detached_cycle
             .issued_seq()
             .saturating_sub(solved.cycle_seq);
         // Q1a deregister: nothing to merge into — drop, never
         // re-create.
         let Some(registered) = self.registry.get(solved.pid) else {
-            self.detached_cycle
+            self.cycle
+                .detached_cycle
                 .disposition(detached_cycle::Disposition::DroppedDeregistered);
             diag!(
                 domain = solver,
@@ -1284,7 +1296,8 @@ impl ArbitrageEngine {
                 .collect()
         };
         if live_stamp != solved.update_stamp {
-            self.detached_cycle
+            self.cycle
+                .detached_cycle
                 .disposition(detached_cycle::Disposition::DroppedStale);
             op_info!(
                 domain = solver,
@@ -1333,7 +1346,8 @@ impl ArbitrageEngine {
         // what reached the merge — a refused duplicate increments only
         // `duplicate_outcomes` (the fuse), never this flag.
         if counts.solved > 0 {
-            self.detached_cycle
+            self.cycle
+                .detached_cycle
                 .disposition(detached_cycle::Disposition::Applied);
             diag!(
                 domain = solver,
@@ -1451,8 +1465,14 @@ impl ArbitrageEngine {
                     // ledger door (the KEY policy — the seq half — is
                     // machine-issued); a refused duplicate lands on the
                     // machine's fuse counter.
-                    if self.detached_cycle.claim((policy.ledger_seq, pid)).is_err() {
-                        self.detached_cycle
+                    if self
+                        .cycle
+                        .detached_cycle
+                        .claim((policy.ledger_seq, pid))
+                        .is_err()
+                    {
+                        self.cycle
+                            .detached_cycle
                             .disposition(detached_cycle::Disposition::Duplicate);
                         op_error!(
                             domain = solver,
@@ -1504,7 +1524,8 @@ impl ArbitrageEngine {
                     // sidecar's Failed arm — the deregistered bucket: the
                     // panic record is a genuine final drop, NOT the stale
                     // bucket, which the Q1a stale gate alone owns).
-                    self.detached_cycle
+                    self.cycle
+                        .detached_cycle
                         .disposition(detached_cycle::Disposition::DroppedDeregistered);
                     op_error!(domain = solver, path_id = pid,
                         failure = ?failure,
@@ -2031,6 +2052,7 @@ impl ArbitrageEngine {
                 if let Some(path_ids) = self.registry.paths_for(&key.path_index_key()) {
                     for &path_id in path_ids {
                         if self
+                            .cycle
                             .path_status
                             .entry(path_id)
                             .or_default()
@@ -2057,7 +2079,7 @@ impl ArbitrageEngine {
         // Cross-block walk-composition census: advance the epoch BEFORE the
         // per-path probes so a path solved both this block and the previous
         // one reports a hit (the engine-owned WalkMemo handle, SU7MAE T3).
-        self.walk_memo.begin_block(solve_block);
+        self.cycle.walk_memo.begin_block(solve_block);
         // -----------------------------------------------------------------
         // ADMISSION DRAW (QTZGFL): the DRAW already made the SINGLE
         // consumption decision in `on_resolve`. Consume and clear its verdict
@@ -2073,41 +2095,42 @@ impl ArbitrageEngine {
         // ledger for a later cycle (carry). The check precedes the
         // pending-new-path merge so a shed never clears work it did not do.
         // -----------------------------------------------------------------
-        let draw_zero = std::mem::take(&mut self.admission_draw_zero);
-        if self.solve_admission && draw_zero {
-            self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "shed");
-            self.detached_cycle.shed();
+        let draw_zero = std::mem::take(&mut self.cycle.admission_draw_zero);
+        if self.cycle.solve_admission && draw_zero {
+            self.cycle.cycle_arm = record_cycle_arm_telemetry(&solve_span, "shed");
+            self.cycle.detached_cycle.shed();
             op_info!(
                 domain = solver,
                 block_number = solve_block,
                 paths.affected = affected_path_ids.len(),
                 in_flight = self
+                    .cycle
                     .detached_cycle
                     .outstanding
                     .load(std::sync::atomic::Ordering::Relaxed),
-                target_depth = self.admission_target_depth,
+                target_depth = self.cycle.admission_target_depth,
                 "SHED: draw-time zero budget — nothing submitted; keys retained for carry"
             );
             // 6XB6NJ: monotone advance on the block cursor (the
             // skipped_empty bookkeeping contract).
-            self.cursor.advance_solved(solve_block);
+            self.cycle.cursor.advance_solved(solve_block);
             return;
         }
         // Also re-solve any paths registered via register_and_solve_path that
         // haven't been through rebuild_and_solve_affected yet. These paths were
         // eagerly solved at registration time, but the pump's process_block
-        // replaces self.results entirely — so we must include them to avoid
+        // replaces self.cycle.results entirely — so we must include them to avoid
         // dropping their results.
-        affected_path_ids.extend(&self.pending_new_paths);
-        self.pending_new_paths.clear();
+        affected_path_ids.extend(&self.cycle.pending_new_paths);
+        self.cycle.pending_new_paths.clear();
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
             // Cold-start trace: keys with NO registered paths reach here as a
             // bookkeeping-only pass (span exists, no dispatch) — stamp so the
             // cycle span never reads as arm-less.
-            self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "skipped_empty");
+            self.cycle.cycle_arm = record_cycle_arm_telemetry(&solve_span, "skipped_empty");
             // 6XB6NJ: monotone advance on the block cursor.
-            self.cursor.advance_solved(solve_block);
+            self.cycle.cursor.advance_solved(solve_block);
             return;
         }
 
@@ -2180,7 +2203,7 @@ impl ArbitrageEngine {
         // `deferred_paths` is now reserved for the genuinely illegitimate future-
         // price case below; genuine chain/solver divergence is left to the ADR-021
         // verifier, which fatal-aborts loudly (the preferred failure, esp. in dev).
-        self.paths_same_state_this_cycle = 0;
+        self.cycle.paths_same_state_this_cycle = 0;
         // 7LV6VN T2: these accumulate from the chunk merges inside the resolve
         // block below (same content the serial loop used to produce inline).
         let mut deferred_paths: HashSet<u64> = HashSet::new();
@@ -2188,7 +2211,7 @@ impl ArbitrageEngine {
         // KJWIK5: clone the deferred re-record hook out before the resolve
         // borrows `self` (Arc bump, cheap); it fires at the deferral site
         // below with the deferred paths' hop-pool keys.
-        let deferred_re_record = self.deferred_re_record.clone();
+        let deferred_re_record = self.cycle.deferred_re_record.clone();
         // MQUKB6-T2: phase span for the core-lock re-derive window (the
         // summary event after the block stays on the same node).
         let resolve_ctx = tracing::info_span!(
@@ -2245,6 +2268,7 @@ impl ArbitrageEngine {
                     // exercise the carry.
                     #[cfg(test)]
                     let mut future = self
+                        .cycle
                         .test_force_deferred
                         .as_ref()
                         .is_some_and(|forced| forced.contains(&path_id));
@@ -2258,6 +2282,7 @@ impl ArbitrageEngine {
                         update_snapshot.push(ub);
                     }
                     let same_state = self
+                        .cycle
                         .resolved_update_snapshot
                         .get(&path_id)
                         .is_some_and(|prev| *prev == update_snapshot);
@@ -2281,9 +2306,9 @@ impl ArbitrageEngine {
                         &core,
                         &path.pools,
                         &mut resolved,
-                        &self.hop_projection_cache,
+                        &self.cycle.hop_projection_cache,
                         Some(&mut chunk_projections),
-                        self.cl_projection_memo,
+                        self.cycle.cl_projection_memo,
                     );
                     out.projections = chunk_projections;
                     for d in &deficits {
@@ -2311,7 +2336,7 @@ impl ArbitrageEngine {
             let mut affected_vec: Vec<u64> = affected_path_ids.iter().copied().collect();
             affected_vec.sort_unstable();
             let chunk_outs: Vec<ResolveChunkOut> = hotpath::measure_block!("resolve.chunks", {
-                if !self.resolve_par_stance || affected_vec.len() < RESOLVE_PAR_MIN {
+                if !self.cycle.resolve_par_stance || affected_vec.len() < RESOLVE_PAR_MIN {
                     vec![resolve_chunk(&affected_vec)]
                 } else {
                     // P6YXA6: the resolve chunk fan-out leaves rayon with
@@ -2377,13 +2402,16 @@ impl ArbitrageEngine {
                     projections_total += projections;
                     deferred_paths.extend(deferred);
                     for (path_id, snapshot) in snapshots {
-                        self.resolved_update_snapshot.insert(path_id, snapshot);
+                        self.cycle
+                            .resolved_update_snapshot
+                            .insert(path_id, snapshot);
                     }
                     for (path_id, arc) in resolved {
-                        self.path_resolved.insert(path_id, arc);
+                        self.cycle.path_resolved.insert(path_id, arc);
                     }
                     for (path_id, deficits) in status {
-                        self.path_status
+                        self.cycle
+                            .path_status
                             .entry(path_id)
                             .or_default()
                             .set_resolved(&deficits);
@@ -2392,9 +2420,9 @@ impl ArbitrageEngine {
                         *invalid_reasons.entry(reason).or_insert(0u64) += count;
                     }
                 }
-                self.paths_same_state_this_cycle = same_state_total;
+                self.cycle.paths_same_state_this_cycle = same_state_total;
                 // Lifetime counter (the serial loop accumulated in place).
-                self.hop_projection_count += projections_total;
+                self.cycle.hop_projection_count += projections_total;
             });
         });
         // KJWIK5: the ledger carry for deferred paths — re-record EVERY hop
@@ -2434,7 +2462,7 @@ impl ArbitrageEngine {
             u32::try_from(affected_path_ids.len()).unwrap_or(u32::MAX),
         ));
         hotpath::gauge!("resolve_paths_same_state").set(f64::from(
-            u32::try_from(self.paths_same_state_this_cycle).unwrap_or(u32::MAX),
+            u32::try_from(self.cycle.paths_same_state_this_cycle).unwrap_or(u32::MAX),
         ));
         hotpath::gauge!("resolve_paths_deferred").set(f64::from(
             u32::try_from(deferred_paths.len()).unwrap_or(u32::MAX),
@@ -2449,8 +2477,8 @@ impl ArbitrageEngine {
         }
         diag!(domain = solver, block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
-            paths.same_state = self.paths_same_state_this_cycle,
-            hop.projections = self.hop_projection_count,
+            paths.same_state = self.cycle.paths_same_state_this_cycle,
+            hop.projections = self.cycle.hop_projection_count,
             paths.deferred_future_price = deferred_paths.len(),
             invalid.reasons = %invalid_reasons.iter().map(|(r, c)| format!("{c}x {r}")).collect::<Vec<_>>().join(", "),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
@@ -2478,7 +2506,7 @@ impl ArbitrageEngine {
         // A deferred path's result is dropped too: it is excluded from this
         // live solve (its pool is stale, so its prior result is stale as well).
         for &path_id in &affected_path_ids {
-            self.results.remove(&path_id);
+            self.cycle.results.remove(&path_id);
         }
 
         // Solve only the non-deferred affected set.
@@ -2501,7 +2529,7 @@ impl ArbitrageEngine {
         // immutable between resolve passes. Workers then write — under the
         // parallel closure — into the engine-level result-set via a
         // `Mutex`-free pattern: collect `(path_id, SolvePathResult)` pairs
-        // into a Vec, then merge sequentially into `self.results`. The
+        // into a Vec, then merge sequentially into `self.cycle.results`. The
         // parallel workers touch NO engine state and NO core.lock —
         // engine-then-core lock ordering is preserved unchanged (the
         // internal thread pool never re-enters the engine `Mutex`). For tiny
@@ -2510,13 +2538,13 @@ impl ArbitrageEngine {
         // executor internals.
         //
         // Pre-collect the work items (path_id + resolved-snapshot). The Arc
-        // clones drop the immutable borrow on `self.path_resolved` that
+        // clones drop the immutable borrow on `self.cycle.path_resolved` that
         // would block parallel dispatch.
         let mut invalid_count: u64 = 0;
         let to_solve: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)> = solve_path_ids
             .iter()
             .filter_map(|&pid| {
-                let resolved = self.path_resolved.get(&pid)?;
+                let resolved = self.cycle.path_resolved.get(&pid)?;
                 if !resolved.valid {
                     invalid_count += 1;
                     return None;
@@ -2601,7 +2629,7 @@ impl ArbitrageEngine {
             epoch: solve_block,
             metadata: *metadata,
             gate_capture,
-            walk_memo: std::sync::Arc::clone(&self.walk_memo),
+            walk_memo: std::sync::Arc::clone(&self.cycle.walk_memo),
             runtime: self.runtime_cfg,
             capture: capture.map(std::sync::Arc::new),
             capture_mixed: capture_mixed.map(std::sync::Arc::new),
@@ -2616,12 +2644,12 @@ impl ArbitrageEngine {
             walk_refine_sims_total,
             walk_ternary_total,
             walk_grid_total,
-            sims_recorder: std::sync::Arc::clone(&self.last_walk_sims),
-            gate_recorder: std::sync::Arc::clone(&self.last_gate_us),
+            sims_recorder: std::sync::Arc::clone(&self.cycle.last_walk_sims),
+            gate_recorder: std::sync::Arc::clone(&self.cycle.last_gate_us),
             #[cfg(test)]
-            test_solve_delay: self.test_solve_delay.clone(),
+            test_solve_delay: self.cycle.test_solve_delay.clone(),
             #[cfg(test)]
-            test_solve_panic: self.test_solve_panic.clone(),
+            test_solve_panic: self.cycle.test_solve_panic.clone(),
             core: std::sync::Arc::clone(self.core()),
             pool_refs,
             worker_clamp: INLINE_SIM_ENABLED.load(std::sync::atomic::Ordering::Relaxed),
@@ -2689,10 +2717,10 @@ impl ArbitrageEngine {
         // the in-cycle fallback retired; a positive-draw cycle ALWAYS
         // detaches (the draw already owns backpressure; there is no
         // post-begin race-shed).
-        let arm = self.detached_cycle.begin_cycle();
+        let arm = self.cycle.detached_cycle.begin_cycle();
         // Cold-start trace: attribute the arm on the cycle span BEFORE the
         // arms move ownership.
-        self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "detached");
+        self.cycle.cycle_arm = record_cycle_arm_telemetry(&solve_span, "detached");
         let DetachedArm {
             cycle_seq,
             merge_tx,
@@ -2706,7 +2734,8 @@ impl ArbitrageEngine {
                 to_solve
                     .iter()
                     .filter_map(|(pid, _)| {
-                        self.resolved_update_snapshot
+                        self.cycle
+                            .resolved_update_snapshot
                             .get(pid)
                             .map(|stamp| (*pid, stamp.clone()))
                     })
@@ -2753,7 +2782,7 @@ impl ArbitrageEngine {
                 // bin body; an Arc-shared atomic carries the bump) —
                 // the machine's ISSUE half:
                 let gauge_bump: std::sync::Arc<dyn Fn() + Send + Sync> =
-                    self.detached_cycle.gauge_hook();
+                    self.cycle.detached_cycle.gauge_hook();
                 // ergo INYMDG: bin jobs ride the fleet executor
                 // (fleet.stance=fleet) or the dedicated tokio solve
                 // executor (persistent warm workers, BXUSGL T1). The body
@@ -2833,7 +2862,7 @@ impl ArbitrageEngine {
                     );
                 }
             }
-            self.detached_cycle.publish_gauge();
+            self.cycle.detached_cycle.publish_gauge();
             diag!(
                 domain = solver,
                 block_number = solve_block,
@@ -2852,11 +2881,11 @@ impl ArbitrageEngine {
         // merge path, so they keep reading results synchronously. The
         // production path (EngineStages) leaves `test_sync_merge` OFF.
         #[cfg(test)]
-        if self.test_sync_merge {
+        if self.cycle.test_sync_merge {
             self.drain_merge_inline(to_solve.len());
         }
         // 6XB6NJ: monotone advance on the block cursor.
-        self.cursor.advance_solved(solve_block);
+        self.cycle.cursor.advance_solved(solve_block);
         // ENQUEUE-END semantics (T2 acceptance: "return is enqueue-end,
         // not apply-end"): the engine Mutex hold ENDS here; the sidecar
         // re-acquires it per merged straggler.
@@ -2890,11 +2919,12 @@ impl ArbitrageEngine {
         let solve_span = tracing::Span::current();
 
         // Pre-collect work items (path_id + Arc-shared resolved). The Arc
-        // clones drop the immutable borrow on self.path_resolved so the
+        // clones drop the immutable borrow on self.cycle.path_resolved so the
         // 'static bin jobs don't capture &self at all (f701ccd3 staging fix:
         // Arc clones are refcount bumps, not deep clones of the CL
         // tick-range sequences).
         let to_solve: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)> = self
+            .cycle
             .path_resolved
             .iter()
             .filter(|(_, r)| r.valid)
@@ -2916,11 +2946,11 @@ impl ArbitrageEngine {
         // Bin jobs are 'static over Arc-cloned state: walk memo, core and
         // the pool-ref map for the UO3JM4 clamp. No engine state is touched
         // (engine-then-core invariant intact; the mixer only reads core).
-        let memo = std::sync::Arc::clone(&self.walk_memo);
+        let memo = std::sync::Arc::clone(&self.cycle.walk_memo);
         let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> =
             self.registry.path_pools().clone();
         let core = std::sync::Arc::clone(self.core());
-        let results_block = self.cursor.results_block();
+        let results_block = self.cycle.cursor.results_block();
         let runtime_cfg = self.runtime_cfg;
         let (tx, rx) = std::sync::mpsc::channel::<(u64, SolvePathResult)>();
         for (bin_idx, bin) in bins.iter().enumerate() {
@@ -3596,7 +3626,7 @@ mod profit_clamp_recompute_tests {
 
         engine.merge_one_result(42, &metadata, path_id, mk(), 0, Some(payload));
         assert!(
-            engine.inline_payloads.contains_key(&path_id),
+            engine.cycle.inline_payloads.contains_key(&path_id),
             "the payload must be stored at merge"
         );
 
@@ -3604,7 +3634,7 @@ mod profit_clamp_recompute_tests {
         // the stale entry must drop — presence decides per entry.
         engine.merge_one_result(43, &metadata, path_id, mk(), 0, None);
         assert!(
-            !engine.inline_payloads.contains_key(&path_id),
+            !engine.cycle.inline_payloads.contains_key(&path_id),
             "a payload-less re-merge must drop the stale payload"
         );
     }
@@ -3634,7 +3664,7 @@ mod profit_clamp_recompute_tests {
         let committed = worker_result.clone();
         engine.merge_one_result(42, &metadata, path_id, worker_result, twins, None);
         {
-            let stored = engine.results.get(&path_id).expect("worker-merged");
+            let stored = engine.cycle.results.get(&path_id).expect("worker-merged");
             assert_eq!(
                 stored.consumed_inputs, committed.consumed_inputs,
                 "twins>0 must not re-clip the committed inputs"
@@ -3647,7 +3677,7 @@ mod profit_clamp_recompute_tests {
         let legacy = overfed();
         let pre = legacy.consumed_inputs[1];
         engine.merge_one_result(42, &metadata, path_id, legacy, 0, None);
-        let stored = engine.results.get(&path_id).expect("legacy-merged");
+        let stored = engine.cycle.results.get(&path_id).expect("legacy-merged");
         assert_ne!(
             stored.consumed_inputs[1], pre,
             "twins=0 must run the merge-site clamp"

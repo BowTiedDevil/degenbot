@@ -245,7 +245,7 @@ impl EngineStages {
             // detached enqueue (rx take + spawn atomic under the held guard).
             // P37YJG: THE ONE spawn — the machine owns the census register +
             // named thread + loud abort; this site only takes the parked rx.
-            if let Some(merge_rx) = engine.detached_cycle.take_merge_rx() {
+            if let Some(merge_rx) = engine.cycle.detached_cycle.take_merge_rx() {
                 super::detached_cycle::spawn_merge_sidecar(&self.engine, merge_rx);
             }
         }
@@ -260,7 +260,7 @@ impl EngineStages {
     /// P37YJG: THE ONE spawn — the machine owns it (the take-once rides the
     /// machine; the census/thread/abort body is `spawn_merge_sidecar`).
     fn spawn_detached_sidecar_if_pending(&self) {
-        let Some(merge_rx) = self.engine.lock().detached_cycle.take_merge_rx() else {
+        let Some(merge_rx) = self.engine.lock().cycle.detached_cycle.take_merge_rx() else {
             return;
         };
         super::detached_cycle::spawn_merge_sidecar(&self.engine, merge_rx);
@@ -315,18 +315,18 @@ impl StageHandlers for EngineStages {
         let mut engine = self.engine.lock();
         let admission = engine
             .admission_budget_keys()
-            .map(|budget| (budget, engine.admission_retention_blocks));
+            .map(|budget| (budget, engine.cycle.admission_retention_blocks));
         let affected = if let Some((budget, retention)) = admission {
             let cutoff = work.ctx.block().saturating_sub(retention);
             let expired = work.delta.expire_older_than(cutoff);
-            engine.detached_cycle.note_leads_expired(expired);
+            engine.cycle.detached_cycle.note_leads_expired(expired);
             // Stash the draw-time verdict BEFORE drawing: the drawn keys
             // leave the ledger, so the dispatch must honor THIS cycle's
             // decision, not a fresh gauge read.
-            engine.admission_draw_zero = budget == 0;
+            engine.cycle.admission_draw_zero = budget == 0;
             work.delta.draw_freshest(budget)
         } else {
-            engine.admission_draw_zero = false;
+            engine.cycle.admission_draw_zero = false;
             work.delta.take_keys()
         };
         drop(engine);

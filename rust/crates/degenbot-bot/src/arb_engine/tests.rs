@@ -102,7 +102,7 @@ mod tests {
         assert_eq!(engine.path_count(), 1);
 
         // Path should be resolved
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         assert_eq!(resolved.hops.len(), 2);
         assert_eq!(resolved.hops[0].hop_type(), HopType::V2);
         assert_eq!(resolved.hops[1].hop_type(), HopType::V3);
@@ -209,7 +209,7 @@ mod tests {
             ])
             .unwrap();
 
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.hops[0].as_v2_state().is_some());
         assert!(matches!(resolved.hops[1], ResolvedHop::V3 { .. }));
     }
@@ -417,7 +417,7 @@ mod tests {
                 },
             ])
             .unwrap();
-        match &engine.path_status[&path_id] {
+        match &engine.cycle.path_status[&path_id] {
             PathSolveStatus::Invalid { responsible } => {
                 assert_eq!(responsible.len(), 1);
                 assert!(responsible.contains(&(HopType::V3, empty_v3)));
@@ -428,7 +428,7 @@ mod tests {
         // Unrelated dirty (the V2 co-hop) must NOT re-resolve the invalid path:
         // clear the resolve stamp and prove the cycle does not re-derive the
         // path (no snapshot re-insertion).
-        engine.resolved_update_snapshot.clear();
+        engine.cycle.resolved_update_snapshot.clear();
         engine.rebuild_and_solve_affected(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2]),
@@ -439,10 +439,10 @@ mod tests {
             &BlockMetadata::default(),
         );
         assert!(
-            !engine.resolved_update_snapshot.contains_key(&path_id),
+            !engine.cycle.resolved_update_snapshot.contains_key(&path_id),
             "unrelated dirty co-hop must not re-derive the invalid path"
         );
-        match &engine.path_status[&path_id] {
+        match &engine.cycle.path_status[&path_id] {
             PathSolveStatus::Invalid { responsible } => {
                 assert_eq!(responsible.len(), 1);
                 assert!(responsible.contains(&(HopType::V3, empty_v3)));
@@ -462,7 +462,7 @@ mod tests {
             &BlockMetadata::default(),
         );
         assert!(
-            engine.resolved_update_snapshot.contains_key(&path_id),
+            engine.cycle.resolved_update_snapshot.contains_key(&path_id),
             "dirtying the path's own responsible pool must re-derive (re-check) it"
         );
     }
@@ -760,7 +760,7 @@ mod tests {
             .unwrap();
 
         // Should be tracked as pending so rebuild_and_solve_affected can merge
-        assert!(engine.pending_new_paths.contains(&path_id));
+        assert!(engine.cycle.pending_new_paths.contains(&path_id));
 
         // Results should already contain the eagerly-solved path
         let (results, _block) = engine.latest_results();
@@ -824,7 +824,7 @@ mod tests {
         );
 
         // Pending set should be cleared
-        assert!(engine.pending_new_paths.is_empty());
+        assert!(engine.cycle.pending_new_paths.is_empty());
 
         // The path's result should survive the rebuild
         let (results, block) = engine.latest_results();
@@ -1197,7 +1197,7 @@ mod tests {
 
         let huge_profit = U256::from(u64::MAX) + U256::from(1u64);
         let path_id = 7u64;
-        engine.results.insert(
+        engine.cycle.results.insert(
             path_id,
             SolvePathResult {
                 optimal_input: U256::from(1_000u64),
@@ -1244,7 +1244,7 @@ mod tests {
         engine.set_profit_thresholds(U256::ZERO, profit);
 
         let path_id = 7u64;
-        engine.results.insert(
+        engine.cycle.results.insert(
             path_id,
             SolvePathResult {
                 optimal_input: U256::from(1_000u64),
@@ -1283,7 +1283,7 @@ mod tests {
         engine.set_profit_thresholds(profit, U256::MAX);
 
         let path_id = 7u64;
-        engine.results.insert(
+        engine.cycle.results.insert(
             path_id,
             SolvePathResult {
                 optimal_input: U256::from(1_000u64),
@@ -1737,7 +1737,7 @@ mod tests {
         // it lands in `results` depends only on profitability, which the
         // re-anchored solve computes correctly at head.
         assert!(
-            engine.path_resolved.contains_key(&future_path),
+            engine.cycle.path_resolved.contains_key(&future_path),
             "future-state path must remain resolved for solving (never dropped)"
         );
     }
@@ -1802,7 +1802,7 @@ mod tests {
             ])
             .unwrap();
 
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         assert_eq!(resolved.hops[0].hop_type(), HopType::V3);
         assert_eq!(resolved.hops[1].hop_type(), HopType::V2);
         assert!(matches!(resolved.hops[0], ResolvedHop::V3 { .. }));
@@ -2137,19 +2137,20 @@ mod tests {
                     &core,
                     &path.pools,
                     &mut resolved,
-                    &engine.hop_projection_cache,
+                    &engine.cycle.hop_projection_cache,
                     None,
-                    engine.cl_projection_memo,
+                    engine.cycle.cl_projection_memo,
                 );
                 engine
+                    .cycle
                     .path_resolved
                     .insert(path_id, std::sync::Arc::new(resolved));
             }
         }
         let results_map = engine.solve_all();
-        engine.results.clear();
+        engine.cycle.results.clear();
         for (pid, r) in results_map {
-            engine.results.insert(pid, r);
+            engine.cycle.results.insert(pid, r);
         }
 
         let (results, _block) = engine.latest_results();
@@ -2934,7 +2935,7 @@ mod tests {
         assert_eq!(engine.path_count(), 1);
 
         // Verify the path is valid and resolved
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V3-V3-V3 path should be valid");
         assert_eq!(resolved.hops.len(), 3);
         assert_eq!(resolved.hops[0].hop_type(), HopType::V3);
@@ -3034,7 +3035,7 @@ mod tests {
             ])
             .unwrap();
 
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V2-V3-V2 path should be valid");
         assert_eq!(resolved.hops.len(), 3);
         assert_eq!(resolved.hops[0].hop_type(), HopType::V2);
@@ -3207,7 +3208,7 @@ mod tests {
         // (replaced by per-event `ReorgCoordinator::dispatch_reorg_log`);
         // this test verifies the engine-level outcome holds under the restore.
         engine.core.write().restore_all_pools_before_block(5);
-        engine.path_resolved.clear();
+        engine.cycle.path_resolved.clear();
         // LXDY4C: the re-restored pools re-enter the epoch delta; the solve
         // consumes the delta's taken keys (all registered hop keys here).
         let reorg_keys: Vec<degenbot_solvers::affected_keys::AffectedKey> = engine
@@ -4106,7 +4107,7 @@ mod tests {
                 },
             ])
             .expect("path registers");
-        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         let result = ::degenbot_solvers::mixed::solve_path(
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
@@ -4229,7 +4230,7 @@ mod tests {
                 },
             ])
             .expect("mixed V2+Solidly path registers");
-        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         let result = ::degenbot_solvers::mixed::solve_path(
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
@@ -4277,7 +4278,7 @@ mod tests {
                 },
             ])
             .expect("path registers");
-        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         assert!(
             ::degenbot_solvers::mixed::solve_path(
                 resolved,
@@ -4359,7 +4360,7 @@ mod tests {
                 },
             ])
             .expect("path registers (resolve is per-arm)");
-        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
         // Solidly + CL is out of scope (p): solve_path returns None.
         assert!(::degenbot_solvers::mixed::solve_path(
             resolved,
@@ -4611,7 +4612,7 @@ mod tests {
             ])
             .unwrap();
         // resolve + solve the bw path specifically
-        let resolved = &engine.path_resolved[&bw_path];
+        let resolved = &engine.cycle.path_resolved[&bw_path];
         let bw_result = ::degenbot_solvers::mixed::solve_path(
             resolved,
             &::degenbot_solvers::profit_envelope::GateDeps::offline(),
@@ -4738,7 +4739,7 @@ mod tests {
                 },
             ])
             .expect("path registers (resolve succeeds per-arm)");
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         // Balancer weighted + CL is out of scope — solve_path returns None.
         assert!(
             ::degenbot_solvers::mixed::solve_path(
@@ -5071,7 +5072,7 @@ mod tests {
                 },
             ])
             .expect("path registers (resolve succeeds per-arm)");
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(
             ::degenbot_solvers::mixed::solve_path(
                 resolved,
@@ -5305,7 +5306,7 @@ mod tests {
                 },
             ])
             .expect("path registers (resolve succeeds per-arm)");
-        let resolved = &engine.path_resolved[&path_id];
+        let resolved = &engine.cycle.path_resolved[&path_id];
         assert!(
             ::degenbot_solvers::mixed::solve_path(
                 resolved,
@@ -6222,12 +6223,18 @@ mod tests {
         // always host fast paths no matter what order the (HashSet-ordered)
         // work items land in. Without this, bin position is nondeterministic
         // (equal structural costs + arbitrary dirty-set iteration order).
-        engine.last_walk_sims.lock().insert(slow_pid, u64::MAX - 1);
         engine
+            .cycle
+            .last_walk_sims
+            .lock()
+            .insert(slow_pid, u64::MAX - 1);
+        engine
+            .cycle
             .last_walk_sims
             .lock()
             .insert(*fast_pids.first().unwrap_or(&0), u64::MAX / 4);
         engine
+            .cycle
             .last_walk_sims
             .lock()
             .insert(*fast_pids.get(1).unwrap_or(&0), u64::MAX / 8);
@@ -6498,14 +6505,14 @@ mod tests {
         {
             let engine_guard = engine.lock();
             assert!(
-                !engine_guard.results.contains_key(&slow_pid),
+                !engine_guard.cycle.results.contains_key(&slow_pid),
                 "the slow path must NOT be merged at enqueue-end return"
             );
         }
 
         // The sidecar populates the results within ~500ms of enqueue.
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-        while !engine.lock().results.contains_key(&slow_pid) {
+        while !engine.lock().cycle.results.contains_key(&slow_pid) {
             assert!(
                 std::time::Instant::now() < deadline,
                 "sidecar merge did not land within ~500ms of enqueue"
@@ -6514,13 +6521,14 @@ mod tests {
         }
         // And every path merged (fast + slow), applied by the sidecar.
         assert_eq!(
-            engine.lock().results.len(),
+            engine.lock().cycle.results.len(),
             3,
             "all three detached stragglers must be applied by the sidecar"
         );
         let guard = engine.lock();
         assert_eq!(
             guard
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6551,23 +6559,25 @@ mod tests {
         let stale_pid = path_ids[0];
         let fresh_pid = path_ids[1];
         assert!(
-            engine.results.contains_key(&stale_pid) && engine.results.contains_key(&fresh_pid),
+            engine.cycle.results.contains_key(&stale_pid)
+                && engine.cycle.results.contains_key(&fresh_pid),
             "precondition: fresh results merged by the inline drain"
         );
         // WFF6MM: the baseline cycle's own merges counted here — the straggler
         // assertions below are DELTAS against this snapshot.
         let applied_before = engine
+            .cycle
             .detached_cycle
             .applied
             .load(std::sync::atomic::Ordering::Relaxed);
-        let stale_stamp: Vec<u64> = engine.resolved_update_snapshot[&stale_pid]
+        let stale_stamp: Vec<u64> = engine.cycle.resolved_update_snapshot[&stale_pid]
             .clone()
             .iter()
             .map(|b| b + 1)
             .collect();
-        let stale_result = engine.results.get(&stale_pid).unwrap().clone();
-        let fresh_stamp = engine.resolved_update_snapshot[&fresh_pid].clone();
-        let fresh_result = engine.results.get(&fresh_pid).unwrap().clone();
+        let stale_result = engine.cycle.results.get(&stale_pid).unwrap().clone();
+        let fresh_stamp = engine.cycle.resolved_update_snapshot[&fresh_pid].clone();
+        let fresh_result = engine.cycle.results.get(&fresh_pid).unwrap().clone();
 
         let item = |result: SolvePathResult, stamp: Vec<u64>, pid: u64| {
             crate::arb_engine::executor::LaneOutcome::Solved(
@@ -6589,6 +6599,7 @@ mod tests {
         engine.merge_detached_item(item(stale_result, stale_stamp, stale_pid));
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .dropped_stale
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6597,6 +6608,7 @@ mod tests {
         );
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6607,6 +6619,7 @@ mod tests {
         engine.merge_detached_item(item(fresh_result, fresh_stamp, fresh_pid));
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6615,6 +6628,7 @@ mod tests {
         );
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .dropped_stale
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6644,11 +6658,12 @@ mod tests {
         engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
         let applied_before = engine
+            .cycle
             .detached_cycle
             .applied
             .load(std::sync::atomic::Ordering::Relaxed);
-        let fresh_stamp = engine.resolved_update_snapshot[&pid].clone();
-        let fresh_result = engine.results.get(&pid).unwrap().clone();
+        let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
+        let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
 
         let item = |result: SolvePathResult| {
             crate::arb_engine::executor::LaneOutcome::Solved(
@@ -6670,6 +6685,7 @@ mod tests {
 
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6678,6 +6694,7 @@ mod tests {
         );
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .duplicate_outcomes
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6699,12 +6716,12 @@ mod tests {
             .collect();
         engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
-        assert!(engine.resolved_update_snapshot.contains_key(&pid));
-        assert!(engine.path_status.contains_key(&pid));
+        assert!(engine.cycle.resolved_update_snapshot.contains_key(&pid));
+        assert!(engine.cycle.path_status.contains_key(&pid));
 
         assert!(engine.deregister_path(pid));
-        assert!(!engine.resolved_update_snapshot.contains_key(&pid));
-        assert!(!engine.path_status.contains_key(&pid));
+        assert!(!engine.cycle.resolved_update_snapshot.contains_key(&pid));
+        assert!(!engine.cycle.path_status.contains_key(&pid));
     }
 
     /// Q1a deregister (red/green): a straggler landing after its path was
@@ -6719,11 +6736,11 @@ mod tests {
             .collect();
         engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
-        let fresh_stamp = engine.resolved_update_snapshot[&pid].clone();
-        let fresh_result = engine.results.get(&pid).unwrap().clone();
+        let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
+        let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
 
         assert!(engine.deregister_path(pid), "path must deregister");
-        assert!(!engine.results.contains_key(&pid));
+        assert!(!engine.cycle.results.contains_key(&pid));
 
         engine.merge_detached_item(crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
@@ -6740,15 +6757,17 @@ mod tests {
         ));
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .dropped_deregistered
                 .load(std::sync::atomic::Ordering::Relaxed),
             1,
             "the deregistered straggler must be dropped"
         );
-        assert!(!engine.results.contains_key(&pid));
+        assert!(!engine.cycle.results.contains_key(&pid));
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -6931,7 +6950,7 @@ mod tests {
         // The stragglers DID land via the sidecar (cross-cycle merge),
         // without ever blocking the inline stage work along the way.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while engine.lock().results.len() < 3 {
+        while engine.lock().cycle.results.len() < 3 {
             assert!(
                 std::time::Instant::now() < deadline,
                 "all detached stragglers must merge via the sidecar"
@@ -6939,7 +6958,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         let guard = engine.lock();
-        assert!(path_ids.iter().all(|p| guard.results.contains_key(p)));
+        assert!(path_ids.iter().all(|p| guard.cycle.results.contains_key(p)));
     }
 
     // =================================================================
@@ -6966,13 +6985,14 @@ mod tests {
         engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
         assert!(
-            engine.results.contains_key(&pid),
+            engine.cycle.results.contains_key(&pid),
             "baseline: the in-cycle arm must merge pid {pid} first"
         );
-        let fresh_stamp = engine.resolved_update_snapshot[&pid].clone();
-        let fresh_result = engine.results.get(&pid).unwrap().clone();
-        let results_before = engine.results.len();
+        let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
+        let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
+        let results_before = engine.cycle.results.len();
         let applied_before = engine
+            .cycle
             .detached_cycle
             .applied
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -6984,7 +7004,7 @@ mod tests {
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
                 worker_clamp_twins: 0,
-                cycle_seq: engine.detached_cycle.issued_seq(), // the merged cycle's seq
+                cycle_seq: engine.cycle.detached_cycle.issued_seq(), // the merged cycle's seq
                 solve_block: 100,
                 metadata: BlockMetadata::default(),
                 pid,
@@ -6997,6 +7017,7 @@ mod tests {
 
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .duplicate_outcomes
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -7004,12 +7025,13 @@ mod tests {
             "merged ledger: the same-seq replay must trip the fuse exactly once"
         );
         assert_eq!(
-            engine.results.len(),
+            engine.cycle.results.len(),
             results_before,
             "merged ledger: the refused duplicate must not add a results entry"
         );
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -7035,14 +7057,14 @@ mod tests {
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
         engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
-        let results_before = engine.results.len();
+        let results_before = engine.cycle.results.len();
 
         // Seed directly into the sidecar ledger (pub(crate) state) with
         // pids not otherwise involved, at seq boundaries chosen to straddle
         // the LEDGER_AGE edge driven through the DETACHED key space.
         let mut seed = |seq: u64, pid: u64| {
-            let fresh_stamp = engine.resolved_update_snapshot[&path_ids[0]].clone();
-            let result = engine.results.get(&path_ids[0]).unwrap().clone();
+            let fresh_stamp = engine.cycle.resolved_update_snapshot[&path_ids[0]].clone();
+            let result = engine.cycle.results.get(&path_ids[0]).unwrap().clone();
             let item = crate::arb_engine::executor::LaneOutcome::Solved(
                 crate::arb_engine::executor::SolveOutcome {
                     payload: None,
@@ -7073,13 +7095,14 @@ mod tests {
         // SURVIVES a later claim, not that it survived the sweep that
         // built the (100, 3333) row.
         engine
+            .cycle
             .detached_cycle
             .outcome_ledger
             .lock()
             .claim((current - 63, 2222))
             .ok();
 
-        let ledger_rows = engine.detached_cycle.outcome_ledger.lock();
+        let ledger_rows = engine.cycle.detached_cycle.outcome_ledger.lock();
         assert!(
             !ledger_rows.contains((current - 65, 1111)),
             "LEDGER_AGE=64: row (seq-65) must be pruned after the seq-{current} claim"
@@ -7096,7 +7119,7 @@ mod tests {
         // retained row survived them.
         engine.solve_dirty(101, &BlockMetadata::default(), &affected_keys_v2);
         engine.solve_dirty(102, &BlockMetadata::default(), &affected_keys_v2);
-        let ledger_rows_still = engine.detached_cycle.outcome_ledger.lock();
+        let ledger_rows_still = engine.cycle.detached_cycle.outcome_ledger.lock();
         assert!(
             ledger_rows_still.contains((current - 63, 2222)),
             "in-cycle-only advances must not prune detached-keyed rows (anchor = detached_issued_seq)"
@@ -7150,18 +7173,22 @@ mod tests {
         loop {
             let guard = engine.lock();
             let applied = guard
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed);
             let stale = guard
+                .cycle
                 .detached_cycle
                 .dropped_stale
                 .load(std::sync::atomic::Ordering::Relaxed);
             let dereg = guard
+                .cycle
                 .detached_cycle
                 .dropped_deregistered
                 .load(std::sync::atomic::Ordering::Relaxed);
             let dup = guard
+                .cycle
                 .detached_cycle
                 .duplicate_outcomes
                 .load(std::sync::atomic::Ordering::Relaxed);
@@ -7203,6 +7230,7 @@ mod tests {
             panic!("path killed mid-bin (43E3H3 red harness)");
         }));
         let g0 = engine
+            .cycle
             .detached_cycle
             .outstanding
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -7227,22 +7255,27 @@ mod tests {
         loop {
             let guard = engine.lock();
             let applied = guard
+                .cycle
                 .detached_cycle
                 .applied
                 .load(std::sync::atomic::Ordering::Relaxed)
                 + guard
+                    .cycle
                     .detached_cycle
                     .dropped_stale
                     .load(std::sync::atomic::Ordering::Relaxed)
                 + guard
+                    .cycle
                     .detached_cycle
                     .dropped_deregistered
                     .load(std::sync::atomic::Ordering::Relaxed)
                 + guard
+                    .cycle
                     .detached_cycle
                     .duplicate_outcomes
                     .load(std::sync::atomic::Ordering::Relaxed);
             let gauge = guard
+                .cycle
                 .detached_cycle
                 .outstanding
                 .load(std::sync::atomic::Ordering::Relaxed);
@@ -7267,6 +7300,7 @@ mod tests {
         let (mut engine, pool_ids, _path_ids) = detached_fixture(0);
         // Seed the gauge AT the old cap: it must be ignored.
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed); // == DETACHED_INFLIGHT_CAP
@@ -7311,6 +7345,7 @@ mod tests {
         // At the (retired) in-flight cap: STILL detached (WFF6MM — the
         // cap gate is gone; every dispatched cycle takes the one arm).
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed); // == DETACHED_INFLIGHT_CAP
@@ -7322,6 +7357,7 @@ mod tests {
         );
         // A dirty key with NO registered paths: the bookkeeping-only pass.
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(0, std::sync::atomic::Ordering::Relaxed);
@@ -7363,7 +7399,7 @@ mod tests {
         // With a 400ms slow path the results land AFTER return (T2's read) —
         // at least the slow pid is absent.
         assert!(
-            !engine.results.contains_key(&path_ids[0]),
+            !engine.cycle.results.contains_key(&path_ids[0]),
             "the detached arm must return at enqueue end: the slow pid is absent AT return"
         );
     }
@@ -7393,6 +7429,7 @@ mod tests {
             "empty pipe: full headroom"
         );
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(1, std::sync::atomic::Ordering::Relaxed);
@@ -7402,6 +7439,7 @@ mod tests {
             "one straggler: target − 1"
         );
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(3, std::sync::atomic::Ordering::Relaxed);
@@ -7411,6 +7449,7 @@ mod tests {
             "at target: zero budget = the SHED verdict"
         );
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(99, std::sync::atomic::Ordering::Relaxed);
@@ -7421,6 +7460,7 @@ mod tests {
         );
         // The target is clamped to the design-locked safety valve.
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(0, std::sync::atomic::Ordering::Relaxed);
@@ -7461,6 +7501,7 @@ mod tests {
         engine.set_solve_admission(true);
         engine.set_admission_target_depth(8);
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed);
@@ -7491,6 +7532,7 @@ mod tests {
         );
         let sheds_before = engine
             .lock()
+            .cycle
             .detached_cycle
             .shed_cycles
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -7504,11 +7546,14 @@ mod tests {
             "a zero-budget cycle must latch the shed arm"
         );
         assert!(
-            path_ids.iter().all(|p| !guard.results.contains_key(p)),
+            path_ids
+                .iter()
+                .all(|p| !guard.cycle.results.contains_key(p)),
             "a shed cycle SUBMITS NOTHING: no path may be solved or merged"
         );
         assert_eq!(
             guard
+                .cycle
                 .detached_cycle
                 .shed_cycles
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -7565,12 +7610,13 @@ mod tests {
             ])
             .expect("eager path registration succeeds");
         assert!(
-            engine.pending_new_paths.contains(&pid),
+            engine.cycle.pending_new_paths.contains(&pid),
             "the eager path starts in the merge pipe"
         );
         engine.set_solve_admission(true);
         engine.set_admission_target_depth(8);
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed);
@@ -7602,17 +7648,18 @@ mod tests {
             let guard = engine.lock();
             assert_eq!(guard.cycle_arm(), "shed");
             assert!(
-                guard.pending_new_paths.contains(&pid),
+                guard.cycle.pending_new_paths.contains(&pid),
                 "a draw-zero shed must NOT consume the eager merge protection"
             );
             assert!(
-                guard.results.contains_key(&pid),
+                guard.cycle.results.contains_key(&pid),
                 "the eagerly-solved result survives the shed"
             );
         }
         // Cycle 2 (headroom back): the eager path merges and the pipe clears.
         engine
             .lock()
+            .cycle
             .detached_cycle
             .outstanding
             .store(0, std::sync::atomic::Ordering::Relaxed);
@@ -7632,7 +7679,7 @@ mod tests {
         loop {
             let merged = {
                 let guard = engine.lock();
-                guard.pending_new_paths.is_empty() && guard.results.contains_key(&pid)
+                guard.cycle.pending_new_paths.is_empty() && guard.cycle.results.contains_key(&pid)
             };
             if merged {
                 break;
@@ -7645,11 +7692,11 @@ mod tests {
         }
         let guard = engine.lock();
         assert!(
-            guard.pending_new_paths.is_empty(),
+            guard.cycle.pending_new_paths.is_empty(),
             "the next normal cycle merges + clears the eager-registration pipe"
         );
         assert!(
-            guard.results.contains_key(&pid),
+            guard.cycle.results.contains_key(&pid),
             "the eager result survives the merge cycle"
         );
     }
@@ -7682,7 +7729,7 @@ mod tests {
         engine.set_admission_target_depth(8);
         // An eager-registration path in the merge pipe: a post-merge race
         // shed would be the F2 data-loss class.
-        engine.pending_new_paths.insert(path_ids[1]);
+        engine.cycle.pending_new_paths.insert(path_ids[1]);
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
@@ -7717,11 +7764,13 @@ mod tests {
         // and the dispatch.
         engine
             .lock()
+            .cycle
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed);
         let sheds_before = engine
             .lock()
+            .cycle
             .detached_cycle
             .shed_cycles
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -7734,8 +7783,8 @@ mod tests {
         loop {
             let merged = {
                 let guard = engine.lock();
-                path_ids.iter().all(|p| guard.results.contains_key(p))
-                    && guard.pending_new_paths.is_empty()
+                path_ids.iter().all(|p| guard.cycle.results.contains_key(p))
+                    && guard.cycle.pending_new_paths.is_empty()
             };
             if merged {
                 break;
@@ -7754,6 +7803,7 @@ mod tests {
         );
         assert_eq!(
             guard
+                .cycle
                 .detached_cycle
                 .shed_cycles
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -7761,11 +7811,11 @@ mod tests {
             "a cycle that drew a POSITIVE budget must NEVER shed at the dispatch"
         );
         assert!(
-            path_ids.iter().all(|p| guard.results.contains_key(p)),
+            path_ids.iter().all(|p| guard.cycle.results.contains_key(p)),
             "the drawn keys must be SUBMITTED, never discarded"
         );
         assert!(
-            guard.pending_new_paths.is_empty(),
+            guard.cycle.pending_new_paths.is_empty(),
             "the race cycle must still merge + clear the eager-registration pipe (F2)"
         );
     }
@@ -7802,6 +7852,7 @@ mod tests {
         // Gauge AT the target: zero budget ⇒ shed — nothing drawn, all retained.
         engine
             .lock()
+            .cycle
             .detached_cycle
             .outstanding
             .store(2, std::sync::atomic::Ordering::Relaxed);
@@ -7825,6 +7876,7 @@ mod tests {
         // Depth falls: the NEXT cycle draws the carried keys (budget = 2).
         engine
             .lock()
+            .cycle
             .detached_cycle
             .outstanding
             .store(0, std::sync::atomic::Ordering::Relaxed);
@@ -7901,6 +7953,7 @@ mod tests {
         assert_eq!(
             engine
                 .lock()
+                .cycle
                 .detached_cycle
                 .leads_expired
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -7925,6 +7978,7 @@ mod tests {
         let (mut engine, pool_ids, _path_ids) = detached_fixture(0);
         // Stance left OFF; the gauge at the cap must NOT shed.
         engine
+            .cycle
             .detached_cycle
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed);
@@ -7940,6 +7994,7 @@ mod tests {
         );
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .shed_cycles
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -7992,20 +8047,21 @@ mod tests {
             .collect();
         engine.solve_dirty(100, &BlockMetadata::default(), &affected_keys_v2);
         let pid = path_ids[0];
-        let results_before = engine.results.len();
+        let results_before = engine.cycle.results.len();
         let applied_before = engine
+            .cycle
             .detached_cycle
             .applied
             .load(std::sync::atomic::Ordering::Relaxed);
         // WFF6MM: the machine issues the seq (no in-cycle counter) — read
         // back the tick the cycle actually claimed so the replay collides.
-        let cycle_seq = engine.detached_cycle.issued_seq();
+        let cycle_seq = engine.cycle.detached_cycle.issued_seq();
 
         // A second Solved arrival for the SAME (seq, pid) through the merge
         // disposition must be refused: no second results write, no applied
         // count for the duplicate.
-        let fresh_stamp = engine.resolved_update_snapshot[&pid].clone();
-        let fresh_result = engine.results.get(&pid).unwrap().clone();
+        let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
+        let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
         let item = crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
@@ -8023,6 +8079,7 @@ mod tests {
 
         assert_eq!(
             engine
+                .cycle
                 .detached_cycle
                 .duplicate_outcomes
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -8030,7 +8087,7 @@ mod tests {
             "in-cycle dup policy (tightened): the fuse must trip exactly once"
         );
         assert_eq!(
-            engine.results.len(),
+            engine.cycle.results.len(),
             results_before,
             "in-cycle dup policy (tightened): the refused duplicate must not re-merge"
         );
@@ -8124,7 +8181,7 @@ mod tests {
 
             // Cycle 2: dirty hub_b only -> 600 affected paths again; hub_a must
             // be walked ONCE by the shared sharded cache (serial: also once).
-            let projections_before = engine.hop_projection_count;
+            let projections_before = engine.cycle.hop_projection_count;
             engine.process_updates(
                 &[(Address::from([0xbb_u8; 20]), weth(880), usdc(1_230_000))],
                 &[],
@@ -8140,12 +8197,12 @@ mod tests {
                 501,
                 &BlockMetadata::default(),
             );
-            let projections_delta = engine.hop_projection_count - projections_before;
+            let projections_delta = engine.cycle.hop_projection_count - projections_before;
 
             let (results, _block) = engine.latest_results();
             (
                 results,
-                engine.paths_same_state_this_cycle,
+                engine.cycle.paths_same_state_this_cycle,
                 projections_delta,
                 path_ids,
             )
@@ -8313,12 +8370,12 @@ mod tests {
             "EVERY hop pool of the deferred path, in path order"
         );
         assert!(
-            !engine.results.contains_key(&deferred),
+            !engine.cycle.results.contains_key(&deferred),
             "the deferred path is not submitted this cycle (no double-submit)"
         );
         for &sibling in &path_ids[1..] {
             assert!(
-                engine.results.contains_key(&sibling),
+                engine.cycle.results.contains_key(&sibling),
                 "non-deferred siblings still solve"
             );
         }
@@ -8337,11 +8394,11 @@ mod tests {
             &kjwik5_affected_keys(&pool_ids),
         );
         assert!(
-            !engine.results.contains_key(&deferred),
+            !engine.cycle.results.contains_key(&deferred),
             "with the hook unset the deferred path keeps today's dropped behavior"
         );
-        assert!(engine.results.contains_key(&path_ids[0]));
-        assert!(engine.results.contains_key(&path_ids[2]));
+        assert!(engine.cycle.results.contains_key(&path_ids[0]));
+        assert!(engine.cycle.results.contains_key(&path_ids[2]));
     }
 
     /// Red-first (c): `paths.deferred_future_price` semantics are unchanged —
@@ -8416,7 +8473,7 @@ mod tests {
             .on_solve(&Solve { ctx, paths: drawn })
             .expect("solve hook is infallible");
         assert!(
-            !engine.lock().results.contains_key(&deferred),
+            !engine.lock().cycle.results.contains_key(&deferred),
             "cycle 1 defers the path (it is never submitted)"
         );
         let pending = delta.snapshot_keys();
@@ -8451,7 +8508,7 @@ mod tests {
 
         // Q1a: the retried path's solve block is the RETRY cycle's block.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !engine.lock().results.contains_key(&deferred) {
+        while !engine.lock().cycle.results.contains_key(&deferred) {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the retried path must solve and merge via the sidecar"
@@ -8512,6 +8569,7 @@ mod tests {
             .expect("solve hook is infallible");
         let expired_before = engine
             .lock()
+            .cycle
             .detached_cycle
             .leads_expired
             .load(Ordering::Relaxed);
@@ -8540,6 +8598,7 @@ mod tests {
             .expect("solve hook is infallible");
         let expired_after = engine
             .lock()
+            .cycle
             .detached_cycle
             .leads_expired
             .load(Ordering::Relaxed);

@@ -128,11 +128,12 @@ impl ArbitrageEngine {
     /// every block when the activation telemetry formats span fields.
     #[must_use]
     pub fn describe_path_cached(&self, path_id: u64) -> std::sync::Arc<str> {
-        if let Some(hit) = self.path_description_cache.lock().get(&path_id) {
+        if let Some(hit) = self.cycle.path_description_cache.lock().get(&path_id) {
             return std::sync::Arc::clone(hit);
         }
         let rendered: std::sync::Arc<str> = std::sync::Arc::from(self.describe_path(path_id));
-        self.path_description_cache
+        self.cycle
+            .path_description_cache
             .lock()
             .insert(path_id, std::sync::Arc::clone(&rendered));
         rendered

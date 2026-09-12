@@ -45,7 +45,7 @@ use dashmap::DashMap;
 use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ::degenbot_solvers::mixed::{MixedPath, ResolvedMixedPath, SolvePathResult};
+use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
@@ -54,6 +54,7 @@ use self::block_cursor::BlockCursor;
 use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
+use self::solve_cycle::SolveCycle;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::state_lock::StateLock;
 use crate::bot_core::BotState;
@@ -354,7 +355,6 @@ pub(crate) type DeferredReRecordHook =
 /// [`ArbitrageEngine::with_core`]; `new()` standalone sugar allocates its own)
 /// and reads/writes pool state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
-#[expect(clippy::struct_excessive_bools)] // construction-time stances (streaming, admission, resolve-par, event expiry) — each a distinct stance, not flag soup
 pub struct ArbitrageEngine {
     /// KAHU5W: the owner-loaded typed bot config (one loader process-wide;
     /// never re-read from the environment). Construction stances + capture
@@ -376,102 +376,19 @@ pub struct ArbitrageEngine {
     /// `&mut`. The invariant "`path_pools` is consistent with `pool_to_paths`"
     /// is internal to [`PathRegistry::commit`] / [`PathRegistry::remove`].
     pub(crate) registry: PathRegistry,
-    /// Resolved path states (mutated on each solve). Entries are Arc-shared
-    /// into the parallel solve dispatch (f701ccd3 staging fix) — immutable
-    /// between resolve passes, so staging is refcount bumps, not deep clones
-    /// of the CL tick-range sequences.
-    path_resolved: HashMap<u64, std::sync::Arc<ResolvedMixedPath>>,
-    /// Path solve-eligibility state machine (R522XA): per registered path the
-    /// `PathSolveStatus` that decides whether a dirty-pool fan-out must
-    /// (re)resolve it. Replaces the scattered `valid` bool + ad-hoc skip rules.
-    path_status: HashMap<u64, path_lifecycle::PathSolveStatus>,
-    /// Hop-projection memo (pool,direction) -> snapshot@nonce. Shared across
-    /// all resolve call sites so a dirty pool's tick walk runs once per
-    /// state change and serves every referencing path from the cache.
-    hop_projection_cache: HopProjectionCache,
-    /// Monotonic count of actual family projections (cache misses). Test-
-    /// observable; emitted on the solve-phase resolve event.
-    hop_projection_count: u64,
-    /// Fused hop-projection memo switch (KGXFT7 winner promotion): resolved
-    /// ONCE at construction from the process env
-    /// (`DEGENBOT_CL_PROJECTION_CACHE`, default-on — see
-    /// `bot_core::resolve::projection_memo_enabled`). Toggling requires a
-    /// process restart. When off, resolve paths re-project every hop fresh —
-    /// build cost changes, solver intake stays byte-exact (parity tests).
-    cl_projection_memo: bool,
-    /// Last solved results, keyed by path ID for O(1) updates.
-    ///
-    /// RAYPAR engine-shard T1 (C42WKO): sharded into a `DashMap` so Python
-    /// `latest_results` reads never park behind the drain-lock held engine
-    /// `Mutex`. Writes happen during the sequential `clamp_merge` phase;
-    /// reads snapshot the shards into a `HashMap` for the delivery policy.
-    results: DashMap<u64, SolvePathResult>,
-    /// 6XB6NJ: the ONE engine block cursor — the consolidated owner of the
-    /// block-coordinate residue (the `results_block` solve-anchor stamp
-    /// [KNEUQX], the `last_processed_block` backfill boundary hint, the
-    /// `last_solved_block` finalize boundary, and the
-    /// `has_logs_this_block` forward-log flag). Every advance rule lives
-    /// on the cursor (monotone-max; see the `block_cursor` module docs —
-    /// one intentional strengthening: a late/stale stamp can no longer
-    /// regress the anchor).
-    cursor: BlockCursor,
-    /// REMED1 T2: which entry drove the CURRENT solve cycle - `drain`
-    /// (`EngineStages::solve_dirty`, per-log streaming) vs `finalize` (the
-    /// boundary catch in `finalize_block`). Emitted on the cycle-complete
-    /// line so a block's two real cycles (65/1853 overnight) are attributable
-    /// instead of looking like duplicate logging.
-    solve_entry: &'static str,
-    /// Cold-start trace: the CURRENT solve cycle's dispatch arm — `detached`
-    /// | `skipped_empty` | `shed` (the cycle-span vocabulary; WFF6MM retired
-    /// the `in_cycle` arm), latched by the dispatch at the machine's begin
-    /// verdict (the `solve_entry` precedent). Read AFTER `solve_dirty`
-    /// returns, where the cycle's duration and Mutex hold are measurable, so
-    /// those histograms can be attributed by arm. `unset` = no cycle
-    /// dispatched yet (a bug signal, deliberately visible rather than folded
-    /// into `skipped_empty`).
-    cycle_arm: &'static str,
-    /// Paths registered via `register_and_solve_path` that have been eagerly
-    /// solved and appended to `results`. Tracked so `rebuild_and_solve_affected`
-    /// can merge them instead of discarding them when it replaces `self.results`.
-    pending_new_paths: HashSet<u64>,
+    /// ADR-045 (`ANVHXW`): the solve cycle's owned state — the resolve
+    /// companions, the cycle-transient stash, the solve output, the admissions
+    /// stance, the detached-arm collaborator, the walk/projection recorders,
+    /// and the seven `for_test` knobs. Fields only at T3; behavior methods move
+    /// at T4. The engine keeps identity (`registry`), the shared core, the
+    /// delivery policy, the lifecycle phase, and the construction stances.
+    pub(crate) cycle: SolveCycle,
     /// Delivery policy — the optional publish sink that consumes the solve
     /// output (`latest_results`) and pushes diffs over the result/block
     /// channels (ergo BI7UZV). Owns `delivered`/`deregistered`, the profit
     /// thresholds, and `result_tx`/`block_tx`; decoupled from solve state so a
     /// standalone consumer gets raw results without it.
     pub(crate) delivery: DeliveryPolicy,
-    /// Telemetry string cache: path id → formatted hop description, built
-    /// once at first emission (paths are immutable after registration, so the
-    /// cache never invalidates). Turns the per-block per-path hop formatting
-    /// of the activation telemetry into an Arc clone.
-    path_description_cache: parking_lot::Mutex<HashMap<u64, std::sync::Arc<str>>>,
-    /// Per-path snapshot of every hop's `pool_update_block` at the last
-    /// successful resolve. A byte-identical snapshot on the next cycle means
-    /// the whole solve intake (all hop states) is unchanged — the measured
-    /// ceiling for cross-block result reuse (epic RZRORC last leaf).
-    resolved_update_snapshot: HashMap<u64, Vec<u64>>,
-    /// Per-path previous-block MEASURED walk sims (recorded by `solve_fn`
-    /// after each solve; lock-free-read at bin construction). Refines the
-    /// LPT makespan predictor for stable pool shapes (loop-12 KUKHMX).
-    last_walk_sims: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
-    /// The engine-owned cross-block walk-composition memo (SU7MAE T3, Q12a):
-    /// passed into the solve entries by handle; epoch advances at the
-    /// block-lifecycle start. Enabled flags come from the owner's config
-    /// (`from_env` at construction until the config task lands).
-    walk_memo: std::sync::Arc<::degenbot_solvers::mobius_v3_int::WalkMemo>,
-    /// Per-path previous-block MEASURED gate time (µs, recorded by `solve_fn`;
-    /// lock-free-read at bin construction). Loop-18: gate-heavy paths
-    /// (dense-CL envelope compose, sims≈0) were invisible to the LPT cost —
-    /// bin-packed as cheap while dominating wall time.
-    last_gate_us: std::sync::Arc<parking_lot::Mutex<HashMap<u64, u64>>>,
-    /// T3 (epic BXUSGL): emit each clamp-passed above-threshold result as
-    /// an IMMEDIATE single-entry [`ResultBatch`] during the drain instead of
-    /// waiting for the pump debounce. Construction-time stance; **streaming
-    /// is the shipped default since epic SRQEK5 T3** (detached cycles pair
-    /// with per-path delivery); `DEGENBOT_STREAMING_DELIVERY=0` restores the
-    /// debounce sweep (A/B opt-out), which still owns expired/removed + the
-    /// end-of-cycle metadata batch either way.
-    streaming_delivery: bool,
     /// THE construction-stamped fleet boot (YI5NGB): the engine's OWN
     /// `FleetBoot`, derived from the CALLER's cfg at construction and
     /// stamped with the engine id + a deterministic cfg hash. Packed in
@@ -484,53 +401,6 @@ pub struct ArbitrageEngine {
     /// through the white-box probe accessor.
     #[cfg_attr(not(test), expect(dead_code))]
     fleet_boot_stamp: BootStamp,
-    /// KAHU5W: the chunked-parallel resolve stance as an instance value
-    /// (YI5NGB) — packed at construction from `cfg.solve.solve_resolve_par`;
-    /// the `RESOLVE_PAR_STANCE` process-static is deleted and the one test
-    /// A/B flip site mutates this field through the test-only seam.
-    resolve_par_stance: bool,
-    /// Test-only: hook invoked at the start of each path solve — lets the
-    /// streaming test slowen one path deterministically.
-    #[cfg(test)]
-    test_solve_delay: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
-    /// 43E3H3 red-first: test-only per-path PANIC hook (the breaker suite
-    /// needs a bin body that dies mid-walk to pin the detached arm's
-    /// witness/gauge behavior through the panic path).
-    #[cfg(test)]
-    test_solve_panic: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
-    /// KJWIK5 test seam: force the future-price deferral for these path ids.
-    /// The real tripwire is unreachable after the solve-anchor head floor
-    /// (only a mid-solve state advance can trip it), so this seam exists to
-    /// exercise the carry deterministically in tests.
-    #[cfg(test)]
-    test_force_deferred: Option<HashSet<u64>>,
-    /// Test-only: the drain appends each merged path id here (with the tokio
-    /// executor this happens per-path, before the slowest path completes).
-    #[cfg(test)]
-    merge_probe: Option<std::sync::Arc<parking_lot::Mutex<Vec<u64>>>>,
-    /// AQV6EF red-first: test-only per-path PANIC hook for the MERGE seat
-    /// (the sidecar guard suite needs `merge_detached_item` to die mid-item
-    /// so the caught-panic disposition + sticky cordon are pinned).
-    #[cfg(test)]
-    test_merge_panic: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
-    /// WFF6MM test harness: when ON (default), a DIRECT
-    /// `rebuild_and_solve_affected` / `solve_dirty` call merges its own
-    /// just-enqueued detached pipe INLINE (`drain_merge_inline`) so the
-    /// synchronous unit tests keep reading results. `EngineStages::solve_dirty`
-    /// turns this OFF before driving the engine — there the sidecar owns the
-    /// pipe (the spawn happens AFTER the engine call returns, so an inline
-    /// drain would steal the Receiver from it).
-    #[cfg(test)]
-    test_sync_merge: bool,
-    /// WFF6MM test harness: the inline drain's cached handle on the merge
-    /// pipe. Taken once on the first direct-call drain (the production
-    /// sidecar is never spawned for direct-call tests) and kept so repeated
-    /// drains reuse it — the machine's `take_merge_rx` is take-ONCE.
-    #[cfg(test)]
-    test_merge_rx: Option<std::sync::mpsc::Receiver<crate::arb_engine::executor::LaneOutcome>>,
-    /// Reuse-eligibility counter for the current solve cycle (probe only;
-    /// reset each `solve_dirty` and surfaced on the resolve event).
-    paths_same_state_this_cycle: u64,
     /// Engine lifecycle phase (ZU7RAF — core-OWNED). Enforces ordering
     /// `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`.
     /// Previously the `AtomicU8` lived on the pyo3 `PumpState` wrapper;
@@ -540,52 +410,6 @@ pub struct ArbitrageEngine {
     /// `Arc<Mutex<..>>` so the atomic read is lock-free across the pyo3
     /// wrappers and the pump task.
     phase: std::sync::atomic::AtomicU8,
-    // --- Detached solve cycle (epic SRQEK5 WV62TX; P37YJG machine) --------
-    /// QTZGFL: construction-time admission stance (`DEGENBOT_SOLVE_ADMISSION`,
-    /// default OFF for the experiment). OFF keeps the in-flight cap degrade
-    /// byte-identical; ON replaces it with a capacity-modulated draw
-    /// (`budget = max(0, admission_target_depth − in-flight)`) that SHEDS a
-    /// zero-budget cycle at the draw/cycle level (nothing submitted, arm
-    /// latched `"shed"`, cursor advanced, keys retained for carry).
-    solve_admission: bool,
-    /// QTZGFL: the un-merged-result pipe depth target in KEYS, clamped at
-    /// construction to `1..=detached_cycle::DETACHED_INFLIGHT_CAP` (a target
-    /// above the design-locked safety valve is meaningless; a target of 0
-    /// would never submit).
-    admission_target_depth: u64,
-    /// QTZGFL: the retained (carried) key retention window W in blocks — the
-    /// ledger prunes carried keys older than `head − W` on each block advance
-    /// so a starved lead expires visibly instead of pinning the ledger.
-    admission_retention_blocks: u64,
-    /// QTZGFL: the DRAW's consumption verdict for the cycle currently between
-    /// `on_resolve` and the dispatch — `true` when the admission draw's budget
-    /// was zero (the cycle SHEDS). The DRAW is the SINGLE consumption
-    /// decision; the dispatch consumes AND clears this verdict under the
-    /// engine mutex instead of re-reading the in-flight gauge. Two reads can
-    /// disagree, and every disagreement loses work: the draw already REMOVED
-    /// its keys from the ledger, so a later zero read would discard them
-    /// (never submitted, never re-recorded). Set in
-    /// [`EngineStages::on_resolve`](super::engine_stages::EngineStages::on_resolve)
-    /// under the engine lock, consumed + cleared by
-    /// `rebuild_and_solve_affected` in the same engine-lock scope. The stage
-    /// machine drives Resolved -> Solved sequentially on the driver thread,
-    /// so this stash cannot interleave with another cycle's draw.
-    admission_draw_zero: bool,
-    /// KJWIK5: the deferred-path re-record hook (the ledger carry for
-    /// `paths.deferred_future_price` deferrals). Installed by
-    /// `EngineStages::set_delta` alongside the shared ledger — the engine
-    /// holds no ledger of its own (LXDY4C deliberately avoided engine-side
-    /// ownership); the dispatch maps a deferred pid to its hop-pool keys and
-    /// fires this with the cycle's solve block. `None` on a direct engine
-    /// drive (unit tests, `solve_all`), where the deferral falls back to the
-    /// log-driven retry.
-    deferred_re_record: Option<DeferredReRecordHook>,
-    /// THE one solve-arm machine (P37YJG; WFF6MM reduced it to the two
-    /// detached states): the per-cycle states (`Unopened → Open`), the merge
-    /// pipe open/take, the outstanding-gauge pair, the seq counters, the
-    /// outcome-ledger door, and the disposition counters. See the module doc
-    /// ([`detached_cycle`]) — it owns the lifecycle end to end.
-    detached_cycle: detached_cycle::DetachedCycle,
     /// LPEOBI: does the core hold a configured `max_age` for the V3/V4
     /// buffered-event expiry? With the cockpit default (`max_age=None`)
     /// `expire` is a provable no-op, so `solve_dirty` must not take a core
@@ -597,11 +421,6 @@ pub struct ArbitrageEngine {
     /// [`ArbitrageEngine::set_inline_simulator`]; `None` = stance-relevant
     /// callers fall back to the batch FFI sim (module `inline_sim` doc).
     inline_sim: Option<std::sync::Arc<dyn inline_sim::InlineSimulator>>,
-    /// SIMPIPE2 T3: the per-path inline payloads resolved in the solve
-    /// workers (SIMPIPE2 T2's off-lock seam). Keyed by path id; the delivery
-    /// drains the entries for the paths it delivers and the map drops the
-    /// rest (a payload for an expired/removed path is stale by definition).
-    inline_payloads: DashMap<u64, inline_sim::SimulatedPathResult>,
 }
 
 impl ArbitrageEngine {
@@ -633,7 +452,7 @@ impl ArbitrageEngine {
     /// construction).
     #[must_use]
     pub fn streaming_delivery_probe(&self) -> bool {
-        self.streaming_delivery
+        self.cycle.streaming_delivery
     }
 
     #[must_use]
@@ -691,55 +510,57 @@ impl ArbitrageEngine {
             runtime_cfg: solver_dispatch::solve_runtime_config_from_cfg(cfg),
             core,
             registry: PathRegistry::new(),
-            path_resolved: HashMap::new(),
-            path_status: HashMap::new(),
-            hop_projection_cache: HopProjectionCache::new(),
-            hop_projection_count: 0,
-            cl_projection_memo: crate::bot_core::resolve::projection_memo_enabled(),
-            results: DashMap::new(),
-            cursor: BlockCursor::default(), // (0, None, 0, false) — the pre-cursor init, unchanged
-            solve_entry: "drain",
-            cycle_arm: "unset",
-            pending_new_paths: HashSet::new(),
-            path_description_cache: parking_lot::Mutex::new(HashMap::new()),
-            resolved_update_snapshot: HashMap::new(),
-            last_walk_sims: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            last_gate_us: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            streaming_delivery,
-            fleet_boot_stamp,
-            resolve_par_stance,
-            #[cfg(test)]
-            test_solve_delay: None,
-            #[cfg(test)]
-            test_solve_panic: None,
-            #[cfg(test)]
-            test_force_deferred: None,
-            #[cfg(test)]
-            merge_probe: None,
-            #[cfg(test)]
-            test_merge_panic: None,
-            #[cfg(test)]
-            test_sync_merge: true,
-            #[cfg(test)]
-            test_merge_rx: None,
-            walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
-                cfg.solve.solver_walk_memo,
-                cfg.solve.solver_walk_memo_stats,
-            )),
-            paths_same_state_this_cycle: 0,
+            cycle: SolveCycle {
+                path_resolved: HashMap::new(),
+                path_status: HashMap::new(),
+                hop_projection_cache: HopProjectionCache::new(),
+                hop_projection_count: 0,
+                cl_projection_memo: crate::bot_core::resolve::projection_memo_enabled(),
+                path_description_cache: parking_lot::Mutex::new(HashMap::new()),
+                resolved_update_snapshot: HashMap::new(),
+                cursor: BlockCursor::default(), // (0, None, 0, false) — the pre-cursor init, unchanged
+                admission_draw_zero: false,
+                cycle_arm: "unset",
+                solve_entry: "drain",
+                pending_new_paths: HashSet::new(),
+                paths_same_state_this_cycle: 0,
+                results: DashMap::new(),
+                inline_payloads: DashMap::new(),
+                solve_admission,
+                admission_target_depth,
+                admission_retention_blocks,
+                // P37YJG: the machine's pre-cycle init lives on the machine
+                // (dormant Unopened, pipe closed, counters at 0).
+                detached_cycle: detached_cycle::DetachedCycle::new(),
+                walk_memo: std::sync::Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
+                    cfg.solve.solver_walk_memo,
+                    cfg.solve.solver_walk_memo_stats,
+                )),
+                last_walk_sims: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
+                last_gate_us: std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new())),
+                streaming_delivery,
+                deferred_re_record: None,
+                resolve_par_stance,
+                #[cfg(test)]
+                test_solve_delay: None,
+                #[cfg(test)]
+                test_solve_panic: None,
+                #[cfg(test)]
+                test_force_deferred: None,
+                #[cfg(test)]
+                merge_probe: None,
+                #[cfg(test)]
+                test_merge_panic: None,
+                #[cfg(test)]
+                test_sync_merge: true,
+                #[cfg(test)]
+                test_merge_rx: None,
+            },
             delivery: DeliveryPolicy::default(),
+            fleet_boot_stamp,
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
-            solve_admission,
-            admission_target_depth,
-            admission_retention_blocks,
-            admission_draw_zero: false,
-            deferred_re_record: None,
-            // P37YJG: the machine's pre-cycle init lives on the machine
-            // (dormant Unopened, pipe closed, counters at 0).
-            detached_cycle: detached_cycle::DetachedCycle::new(),
             event_buffer_expiry_enabled: false,
             inline_sim: None,
-            inline_payloads: DashMap::new(),
         }
     }
 }
@@ -904,33 +725,33 @@ impl ArbitrageEngine {
 #[cfg(test)]
 impl ArbitrageEngine {
     pub(crate) fn set_solve_delay_hook(&mut self, hook: std::sync::Arc<dyn Fn(u64) + Send + Sync>) {
-        self.test_solve_delay = Some(hook);
+        self.cycle.test_solve_delay = Some(hook);
     }
 
     pub(crate) fn set_solve_panic_hook(&mut self, hook: std::sync::Arc<dyn Fn(u64) + Send + Sync>) {
-        self.test_solve_panic = Some(hook);
+        self.cycle.test_solve_panic = Some(hook);
     }
 
     /// KJWIK5 test seam: force the future-price deferral for `pids` (empty
     /// clears it). The real tripwire is unreachable after the solve-anchor
     /// head floor, so the carry is exercised through this seam.
     pub(crate) fn set_force_deferred_for_test(&mut self, pids: HashSet<u64>) {
-        self.test_force_deferred = if pids.is_empty() { None } else { Some(pids) };
+        self.cycle.test_force_deferred = if pids.is_empty() { None } else { Some(pids) };
     }
 
     pub(crate) fn set_merge_probe(&mut self, probe: std::sync::Arc<parking_lot::Mutex<Vec<u64>>>) {
-        self.merge_probe = Some(probe);
+        self.cycle.merge_probe = Some(probe);
     }
 
     pub(crate) fn set_merge_panic_hook(&mut self, hook: std::sync::Arc<dyn Fn(u64) + Send + Sync>) {
-        self.test_merge_panic = Some(hook);
+        self.cycle.test_merge_panic = Some(hook);
     }
 
     /// WFF6MM test harness: toggle the inline merge drain. `EngineStages`
     /// turns it OFF before driving the engine (the sidecar owns the pipe
     /// there — see the field doc).
     pub(crate) fn set_sync_merge_for_test(&mut self, on: bool) {
-        self.test_sync_merge = on;
+        self.cycle.test_sync_merge = on;
     }
 
     /// WFF6MM test harness: drain up to `expected` items from the merge pipe
@@ -941,21 +762,21 @@ impl ArbitrageEngine {
     /// `take_merge_rx` is take-ONCE, so the sidecar is never spawned for
     /// these engines.
     pub(crate) fn drain_merge_inline(&mut self, expected: usize) {
-        if self.test_merge_rx.is_none() {
-            self.test_merge_rx = self.detached_cycle.take_merge_rx();
+        if self.cycle.test_merge_rx.is_none() {
+            self.cycle.test_merge_rx = self.cycle.detached_cycle.take_merge_rx();
         }
-        let Some(rx) = self.test_merge_rx.take() else {
+        let Some(rx) = self.cycle.test_merge_rx.take() else {
             return;
         };
         for _ in 0..expected {
             let Ok(item) = rx.recv() else { break };
             self.merge_detached_item(item);
         }
-        self.test_merge_rx = Some(rx);
+        self.cycle.test_merge_rx = Some(rx);
     }
 
     pub(crate) fn set_streaming_delivery(&mut self, on: bool) {
-        self.streaming_delivery = on;
+        self.cycle.streaming_delivery = on;
     }
 
     /// YI5NGB (test-only F-suite probe): the engine's construction-stamped
@@ -970,14 +791,14 @@ impl ArbitrageEngine {
     /// `cfg.solve.admission_shed` at construction (never re-read).
     #[cfg(test)]
     pub(crate) fn set_solve_admission(&mut self, on: bool) {
-        self.solve_admission = on;
+        self.cycle.solve_admission = on;
     }
 
     /// QTZGFL: test seam for the target depth — the clamp mirrors the
     /// construction clamp exactly.
     #[cfg(test)]
     pub(crate) fn set_admission_target_depth(&mut self, depth: usize) {
-        self.admission_target_depth = u64::try_from(depth)
+        self.cycle.admission_target_depth = u64::try_from(depth)
             .unwrap_or(detached_cycle::DETACHED_INFLIGHT_CAP)
             .clamp(1, detached_cycle::DETACHED_INFLIGHT_CAP);
     }
@@ -985,7 +806,7 @@ impl ArbitrageEngine {
     /// QTZGFL: test seam for the retention window (blocks).
     #[cfg(test)]
     pub(crate) fn set_admission_retention_blocks(&mut self, window: u64) {
-        self.admission_retention_blocks = window;
+        self.cycle.admission_retention_blocks = window;
     }
 
     /// YI5NGB: A/B seam (TEST ONLY). The production stance is
@@ -994,6 +815,6 @@ impl ArbitrageEngine {
     /// flipping a process-global.
     #[cfg(test)]
     pub(crate) fn set_resolve_parallel_for_test(&mut self, on: bool) {
-        self.resolve_par_stance = on;
+        self.cycle.resolve_par_stance = on;
     }
 }

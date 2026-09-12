@@ -330,13 +330,14 @@ impl ArbitrageEngine {
     /// window). The [`DeliveryPolicy`] refuses to publish at block 0 (safety
     /// net) if no anchor has been seeded yet.
     pub fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
-        let results_block = self.cursor.results_block();
+        let results_block = self.cycle.cursor.results_block();
         // f701ccd3 bridge: capture the settle-entered block span as the
         // propagation parent for `results_block` — the Python simulate seam
         // re-attaches it (telemetry::simulate_dispatch_span) so the whole
         // block chain renders as one Jaeger trace.
         crate::telemetry::publish_block_context(results_block);
         let results_snapshot: HashMap<u64, SolvePathResult> = self
+            .cycle
             .results
             .iter()
             .map(|r| (*r.key(), r.value().clone()))
@@ -345,13 +346,14 @@ impl ArbitrageEngine {
         // publish; the delivery ships the entries for the delivered paths and
         // drops the rest.
         let inline_payloads: HashMap<u64, crate::arb_engine::inline_sim::SimulatedPathResult> =
-            self.inline_payloads
+            self.cycle
+                .inline_payloads
                 .iter()
                 .map(|e| (*e.key(), e.value().clone()))
                 .collect();
-        self.inline_payloads.clear();
+        self.cycle.inline_payloads.clear();
         // 6XB6NJ: the anchored gate comes from the block cursor.
-        let anchored = self.cursor.is_anchored();
+        let anchored = self.cycle.cursor.is_anchored();
         self.delivery.diff_and_send(
             &results_snapshot,
             results_block,
@@ -380,19 +382,19 @@ impl ArbitrageEngine {
         let existed = removed.is_some();
 
         // Remove from path_resolved
-        self.path_resolved.remove(&path_id);
+        self.cycle.path_resolved.remove(&path_id);
 
         // RLVDUP T3: the resolve bookkeeping follows the path everywhere
         // else - leaving `path_status` / `resolved_update_snapshot` entries
         // behind grew the maps unbounded on path churn.
-        self.path_status.remove(&path_id);
-        self.resolved_update_snapshot.remove(&path_id);
+        self.cycle.path_status.remove(&path_id);
+        self.cycle.resolved_update_snapshot.remove(&path_id);
 
         // Remove from results
-        self.results.remove(&path_id);
+        self.cycle.results.remove(&path_id);
 
         // Remove from pending_new_paths
-        self.pending_new_paths.remove(&path_id);
+        self.cycle.pending_new_paths.remove(&path_id);
 
         // Record for the next batch (delivery-policy half)
         self.delivery.on_path_deregistered(path_id, existed);

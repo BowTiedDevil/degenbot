@@ -207,6 +207,6 @@ impl ArbitrageEngine {
     /// (`engine.results_block = n`). NOT part of the production interface.
     #[cfg(test)]
     pub(crate) fn set_results_block_for_test(&mut self, block: u64) {
-        self.cursor.set_results_block_for_test(block);
+        self.cycle.cursor.set_results_block_for_test(block);
     }
 }

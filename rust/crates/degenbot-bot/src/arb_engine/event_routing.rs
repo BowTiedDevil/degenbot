@@ -30,14 +30,14 @@ impl ArbitrageEngine {
     /// (`drain` streaming vs `finalize` boundary catch) for the
     /// cycle-complete telemetry line.
     pub fn set_solve_entry(&mut self, entry: &'static str) {
-        self.solve_entry = entry;
+        self.cycle.solve_entry = entry;
     }
 
     /// The CURRENT cycle's dispatch arm (see the field note): the latency
     /// histograms' `arm` label, read by the caller that observes the cycle.
     #[must_use]
     pub fn cycle_arm(&self) -> &'static str {
-        self.cycle_arm
+        self.cycle.cycle_arm
     }
 
     /// KNEUQX: the block the MOST RECENT solve cycle ran anchored on - the
@@ -49,7 +49,7 @@ impl ArbitrageEngine {
     /// phase children (fanout/resolve/stage) always carry the anchor.
     #[must_use]
     pub fn results_block(&self) -> u64 {
-        self.cursor.results_block()
+        self.cycle.cursor.results_block()
     }
 
     pub fn solve_dirty(
@@ -102,7 +102,7 @@ impl ArbitrageEngine {
         self.rebuild_and_solve_affected(affected, block_number, metadata);
 
         // 6XB6NJ: monotone advance on the block cursor.
-        self.cursor.advance_processed(block_number);
+        self.cycle.cursor.advance_processed(block_number);
     }
 
     /// One buffered-event expiry round under its own `degenbot.arb.expire`
@@ -171,7 +171,7 @@ impl ArbitrageEngine {
     /// cursor); a mid-flight engine joining the pump can inherit the pump's
     /// last solved block via `set_last_solved_block` (ADR-006 D4).
     pub fn finalize_block(&mut self, block: u64, metadata: &BlockMetadata) {
-        if self.cursor.finalize(block) {
+        if self.cycle.cursor.finalize(block) {
             // PWPPAZ T1 (supersedes the two former solve branches and the
             // X35QKN empty-block inlining): the finalize is tombstone-
             // dispatched and executed by the drainer while the SUCCESSOR
@@ -249,7 +249,7 @@ impl ArbitrageEngine {
             metadata,
         );
         // 6XB6NJ: monotone advance on the block cursor.
-        self.cursor.advance_processed(block_number);
+        self.cycle.cursor.advance_processed(block_number);
     }
 
     /// Process pre-decoded V4 updates.
