@@ -29,6 +29,8 @@
 use crate::mobius_v3_int::{build_cl_crossing_table, ClCrossingTable};
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
+#[cfg(not(feature = "hotpath"))]
+use degenbot_core::op_warn;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
@@ -1796,13 +1798,11 @@ fn path_profit_bound_inner(
     #[cfg(not(feature = "hotpath"))]
     if lines.len() > 200 {
         let hop_counts: Vec<usize> = all_hops.iter().map(|(ls, _)| ls.len()).collect();
-        tracing::warn!(
-                    target: "degenbot::solver",
-        gate_lines = lines.len(),
-                    gate_hop_line_counts = ?hop_counts,
-                    gate_domain = %domain,
-                    "[gate] composed tangent-line explosion"
-                );
+        op_warn!(domain = solver, gate_lines = lines.len(),
+            gate_hop_line_counts = ?hop_counts,
+            gate_domain = %domain,
+            "[gate] composed tangent-line explosion"
+        );
     }
     // Discrete concave max of f(x) = min_lines(x) − x over [0, xmax].
     if xmax.is_zero() {

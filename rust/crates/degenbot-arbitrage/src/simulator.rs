@@ -30,6 +30,7 @@
 // WETH9, PoolManager, Multicall3, balanceOf, getEthBalance, ERC6909, etc.) are
 // ubiquitous here — match the degenbot-simulation convention.
 #![expect(clippy::doc_markdown)]
+use degenbot_core::op_info;
 
 use std::collections::BTreeMap;
 
@@ -1137,8 +1138,7 @@ where
     // rather than silently dropping as `encode-failed`.
     if ::degenbot_config::holder::config().aave.bridge_probe {
         if let Some(desc) = scan_for_v4_v2_boundary_bridge(&path.path_info.hops, ctx.weth_address) {
-            tracing::info!(
-                path_id = path.path_id,
+            op_info!(domain = sim, path_id = path.path_id,
                 desc = %desc,
                 "[bridge-probe] V4 native to V2 WETH boundary; 3-hop composer does not encode this"
             );
@@ -1855,7 +1855,8 @@ fn log_reverted_swaps_vs_hop_outputs(
         return;
     }
     let matches = match_reverted_swaps_to_hops(reverted_swaps, hops, hop_outputs);
-    tracing::info!(
+    op_info!(
+        domain = sim,
         path_id,
         reverted_swaps = reverted_swaps.len(),
         hop_outputs = hop_outputs.len(),
@@ -1865,8 +1866,7 @@ fn log_reverted_swaps_vs_hop_outputs(
         let hop_str = m
             .hop_index
             .map_or_else(|| "unmatched".into(), |i| i.to_string());
-        tracing::info!(
-            path_id,
+        op_info!(domain = sim, path_id,
             hop = %hop_str,
             emit = m.emit_index,
             family = ?m.family,

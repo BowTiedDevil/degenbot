@@ -48,6 +48,7 @@
 //! on pool classes), a deferred sibling task. The adapter surfaces the
 //! `pool_id` to Python; the cutover task will widen the payload.
 
+use degenbot_core::op_warn;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::thread;
@@ -251,8 +252,7 @@ fn flush_notification_batch(notifications: &[SubscriberNotification]) {
             if let Err(err) = callback.call1((notification.pool_id,)) {
                 // Log via tracing (not log::) to avoid re-entering the log
                 // drainer on the GIL-holding drainer thread.
-                tracing::warn!(
-                    pool_id = notification.pool_id,
+                op_warn!(domain = ingest, pool_id = notification.pool_id,
                     error = %err,
                     "PySubscriberAdapter: callback raised during batched notify"
                 );

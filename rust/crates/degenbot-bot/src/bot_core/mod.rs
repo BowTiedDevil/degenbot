@@ -4,6 +4,7 @@
 //! live here. Python objects are thin `PyO3` handles carrying keys into
 //! `BotState`'s `HashMaps`.
 
+use degenbot_core::op_info;
 use hashbrown::HashMap;
 
 use alloy::primitives::{Address, U256};
@@ -383,8 +384,7 @@ fn drain_dbg_log_buf(
     if !drain_dbg_pool_match(address) {
         return;
     }
-    tracing::info!(
-        %tag,
+    op_info!(domain = state, %tag,
         pool_addr = %format!("{address:x}"),
         tick_lower,
         tick_upper,
@@ -429,8 +429,7 @@ pub(crate) fn trace_ws_log_dispatch(
     if !pool_match && !global_liquidity_hit && !global_ws_hit {
         return;
     }
-    tracing::info!(
-        pool_addr = %format!("{address:x}"),
+    op_info!(domain = state, pool_addr = %format!("{address:x}"),
         block = block_number,
         log_index = ?log_index,
         tx_index = ?tx_index,
@@ -465,8 +464,7 @@ pub(crate) fn trace_apply_swap_v3(
     if !drain_dbg_pool_match(pool_address) {
         return;
     }
-    tracing::info!(
-        pool_addr = %format!("{pool_address:x}"),
+    op_info!(domain = state, pool_addr = %format!("{pool_address:x}"),
         family = "V3",
         sqrt_price_x96 = %sqrt_price_x96,
         liquidity,
@@ -490,8 +488,7 @@ pub(crate) fn trace_apply_swap_v4(
     if !trace_pool_id_match(pool_id_hex) {
         return;
     }
-    tracing::info!(
-        pool_manager = %format!("{pool_manager:x}"),
+    op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
         pool_id = %pool_id_hex,
         family = "V4",
         sqrt_price_x96 = %sqrt_price_x96,
@@ -514,8 +511,7 @@ pub(crate) fn trace_apply_route_v3(
     if !drain_dbg_pool_match(address) && !trace_liquidity_global() {
         return;
     }
-    tracing::info!(
-        pool_addr = %format!("{address:x}"),
+    op_info!(domain = state, pool_addr = %format!("{address:x}"),
         family = "V3",
         tick_lower,
         tick_upper,
@@ -547,8 +543,7 @@ pub(crate) fn trace_apply_route_v4(
     if !trace_liquidity_global() && !trace_pool_id_match(pool_id_hex) {
         return;
     }
-    tracing::info!(
-        pool_manager = %format!("{pool_manager:x}"),
+    op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
         pool_id = %pool_id_hex,
         family = "V4",
         tick_lower,

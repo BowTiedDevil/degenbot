@@ -4,6 +4,7 @@
 //! relocates the other `bot` / `bot::pool` wrappers alongside.
 //! (ergo UG6FKN task WXHGOH.)
 
+use degenbot_core::op_warn;
 pub mod build_flights;
 pub mod deployments;
 pub mod dex_identity;
@@ -642,7 +643,8 @@ impl PyBot {
                         .close_with_canary(s_snapshot, chain)
                         .map_err(|e| crate::db::db_err_to_py(&e))?;
                     if report.advanced {
-                        tracing::warn!(
+                        op_warn!(
+                            domain = state,
                             s_snapshot = report.s_snapshot.unwrap_or(0),
                             s_live = report.s_live.unwrap_or(0),
                             "DB advanced during startup — operator discipline violation"

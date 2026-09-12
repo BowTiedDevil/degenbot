@@ -24,6 +24,7 @@ use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::{WebSocketConfig, WsConnect};
 use alloy::transports::{RpcError, TransportErrorKind};
 use degenbot_core::errors::{ProviderError, ProviderResult};
+use degenbot_core::{op_error, op_warn};
 use rand::RngExt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
@@ -94,9 +95,7 @@ where
 
         attempt += 1;
         if attempt >= max_attempts {
-            tracing::error!(
-                target: "degenbot_rpc::provider",
-                attempt,
+            op_error!(domain = rpc, attempt,
                 max_attempts,
                 %outcome,
                 "RPC retries exhausted"
@@ -119,9 +118,7 @@ where
                 "RPC retry"
             );
         } else {
-            tracing::warn!(
-                target: "degenbot_rpc::provider",
-                attempt,
+            op_warn!(domain = rpc, attempt,
                 max_attempts,
                 sleep_ms,
                 %outcome,
@@ -187,7 +184,6 @@ pub(crate) fn compute_tx_hash_from_signed_payload(encoded_tx: &[u8]) -> Provider
 /// `self.call_timeout`, `self.max_attempts`, `tx_hash`, the broadcast op, and
 /// the receipt-reconcile op) so the decision logic is unit-testable without
 /// a live provider — the tests inject closures simulating each branch.
-#[expect(clippy::too_many_lines)]
 pub(crate) async fn send_raw_transaction_with_reconciliation<F, Fut, G, FutR>(
     tx_hash: B256,
     broadcast: F,
@@ -226,17 +222,13 @@ where
                         Ok(false) => {
                             // Receipt absent → the body did NOT reach the node
                             // (or hasn't been mined). Rebroadcast after backoff.
-                            tracing::warn!(
-                                target: "degenbot_rpc::provider",
-                                %e,
+                            op_warn!(domain = rpc, %e,
                                 "eth_sendRawTransaction: ambiguous outcome — receipt absent, rebroadcasting"
                             );
                             // fall through to the shared backoff/retry block below
                             attempt += 1;
                             if attempt >= max_attempts {
-                                tracing::error!(
-                                    target: "degenbot_rpc::provider",
-                                    attempt,
+                                op_error!(domain = rpc, attempt,
                                     max_attempts,
                                     %e,
                                     "eth_sendRawTransaction: retries exhausted"
@@ -256,17 +248,13 @@ where
                             // RPC error on get_transaction_receipt). Treat as
                             // "absent / unknown" and rebroadcast — a missed
                             // receipt-probe must not strand the broadcast.
-                            tracing::warn!(
-                                target: "degenbot_rpc::provider",
-                                %e,
+                            op_warn!(domain = rpc, %e,
                                 %reconcile_err,
                                 "eth_sendRawTransaction: ambiguous outcome; reconcile probe failed — rebroadcasting"
                             );
                             attempt += 1;
                             if attempt >= max_attempts {
-                                tracing::error!(
-                                    target: "degenbot_rpc::provider",
-                                    attempt,
+                                op_error!(domain = rpc, attempt,
                                     max_attempts,
                                     %e,
                                     "eth_sendRawTransaction: retries exhausted"
@@ -288,17 +276,15 @@ where
                 ProviderError::RateLimited { .. } => {
                     attempt += 1;
                     if attempt >= max_attempts {
-                        tracing::error!(
-                            target: "degenbot_rpc::provider",
-                            attempt,
+                        op_error!(domain = rpc, attempt,
                             max_attempts,
                             %e,
                             "eth_sendRawTransaction: retries exhausted"
                         );
                         return Err(e);
                     }
-                    tracing::warn!(
-                        target: "degenbot_rpc::provider",
+                    op_warn!(
+                        domain = rpc,
                         attempt,
                         max_attempts,
                         "eth_sendRawTransaction: rate-limited — rebroadcasting"
@@ -390,9 +376,7 @@ async fn connect_ws_with_retries(
                         ),
                     });
                 }
-                tracing::warn!(
-                    target: "degenbot_rpc::provider",
-                    attempt,
+                op_warn!(domain = rpc, attempt,
                     max_retries,
                     delay_ms,
                     %e,
@@ -433,9 +417,7 @@ async fn connect_ipc_with_retries(
                         ),
                     });
                 }
-                tracing::warn!(
-                    target: "degenbot_rpc::provider",
-                    attempt,
+                op_warn!(domain = rpc, attempt,
                     max_retries,
                     delay_ms,
                     %e,
@@ -2124,7 +2106,11 @@ mod tests {
     {
         fn on_event(&self, event: &tracing::Event, _ctx: Context<'_, S>) {
             let meta = event.metadata();
-            if !meta.target().starts_with("degenbot_rpc::provider") {
+            // ADR-043: retry events moved to the closed `degenbot::rpc` target;
+            // the loop's own attempt-0 debug still uses the module target.
+            if !meta.target().starts_with("degenbot_rpc::provider")
+                && meta.target() != "degenbot::rpc"
+            {
                 return;
             }
             // Format the event message by visiting fields.

@@ -1,6 +1,7 @@
 //! Path resolution, solver dispatch, and rebuild logic.
 
 use alloy::primitives::{I256, U256};
+use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::PoisonError;
 
 use ::degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
@@ -184,8 +185,8 @@ pub(crate) struct SeatPlan {
 #[must_use]
 pub(crate) fn plan_bins(intended_bins: usize, structural_seats: usize) -> SeatPlan {
     if structural_seats < intended_bins {
-        tracing::info!(
-            target: "degenbot::solver",
+        op_info!(
+            domain = solver,
             intended = intended_bins,
             running = structural_seats,
             "[seat-plan] capability drop under cordon — running the NAMED \
@@ -497,7 +498,8 @@ pub(crate) fn solve_one_path(
     if outcome_stats.max_dense_words >= ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD
         && !WALK_DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
-        tracing::warn!(
+        op_warn!(
+            domain = solver,
             max_dense_words = outcome_stats.max_dense_words,
             threshold = ::degenbot_solvers::mobius_v3_int::DENSE_OBSERVE_THRESHOLD,
             "Q3-DENSE: a CL range crossed the dense-word threshold; harvest a real capture"
@@ -831,9 +833,7 @@ impl PipelinedSims {
             Ok(intake) => intake.spawn(Box::new(run_sim_body)),
             Err(err) => {
                 if !SIM_BOOT_REFUSAL_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    tracing::error!(
-                        target: "degenbot::fleet",
-                        error = %err,
+                    op_error!(domain = solver, error = %err,
                         "[fleet-sim] sim dispatch skipped — the fleet boot was refused (typed, FF-T1); the item flushes un-simulated (None payload)"
                     );
                 }
@@ -1122,9 +1122,7 @@ impl ArbitrageEngine {
         // M2 probe: per-result events cross the Python log bridge (GIL) -
         // size that cost vs the map/delivery work (hotpath-attributed).
         hotpath::measure_block!("merge.telemetry_event", {
-            tracing::info!(
-                target: "degenbot::solver",
-                block_number = solve_block,
+            op_info!(domain = solver, block_number = solve_block,
                 path.id = pid,
                 input = %result.optimal_input,
                 profit = %result.profit,
@@ -1290,8 +1288,8 @@ impl ArbitrageEngine {
         if live_stamp != solved.update_stamp {
             self.detached_cycle
                 .disposition(detached_cycle::Disposition::DroppedStale);
-            tracing::info!(
-                target: crate::telemetry::DIAGNOSTIC_TARGET,
+            op_info!(
+                domain = solver,
                 path_id = solved.pid,
                 detached_seq = solved.cycle_seq,
                 detached_age_cycles = age_cycles,
@@ -1458,9 +1456,7 @@ impl ArbitrageEngine {
                     if self.detached_cycle.claim((policy.ledger_seq, pid)).is_err() {
                         self.detached_cycle
                             .disposition(detached_cycle::Disposition::Duplicate);
-                        tracing::error!(
-                            target: crate::telemetry::DIAGNOSTIC_TARGET,
-                            path_id = pid,
+                        op_error!(domain = solver, path_id = pid,
                             ledger_seq = policy.ledger_seq,
                             "[solve-merge] duplicate lane outcome for path — exactness fuse tripped (QR3NUS)"
                         );
@@ -1509,9 +1505,7 @@ impl ArbitrageEngine {
                     // bucket, which the Q1a stale gate alone owns).
                     self.detached_cycle
                         .disposition(detached_cycle::Disposition::DroppedDeregistered);
-                    tracing::error!(
-                        target: crate::telemetry::DIAGNOSTIC_TARGET,
-                        path_id = pid,
+                    op_error!(domain = solver, path_id = pid,
                         failure = ?failure,
                         "[solve-merge] path outcome lost to a seat panic — typed failure record (QR3NUS)"
                     );
@@ -1894,9 +1888,7 @@ impl ArbitrageEngine {
                     if let Some(p) = crate::instruments::pipeline() {
                         p.count_clamp();
                     }
-                    tracing::info!(
-                        target: crate::telemetry::DIAGNOSTIC_TARGET,
-                        "[clamp-cl] path_id={path_id} hop={i} family={:?} input requested={requested} \
+                    op_info!(domain = solver, "[clamp-cl] path_id={path_id} hop={i} family={:?} input requested={requested} \
                          clamped={clamped} reduction={}",
                         pool_ref.hop_type,
                         requested - clamped
@@ -1914,9 +1906,7 @@ impl ArbitrageEngine {
                     if let Some(p) = crate::instruments::pipeline() {
                         p.count_clamp();
                     }
-                    tracing::info!(
-                        target: crate::telemetry::DIAGNOSTIC_TARGET,
-                        "[clamp-cl-hop] path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
+                    op_info!(domain = solver, "[clamp-cl-hop] path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
                          twin_out={out} delta={}",
                         pool_ref.hop_type,
                         if *hop_out > out { *hop_out - out } else { out - *hop_out }
@@ -1935,8 +1925,8 @@ impl ArbitrageEngine {
                     if let Some(p) = crate::instruments::pipeline() {
                         p.count_clamp();
                     }
-                    tracing::info!(
-                        target: crate::telemetry::DIAGNOSTIC_TARGET,
+                    op_info!(
+                        domain = solver,
                         "[clamp-cl-out] path_id={path_id} hop={i} family={:?} forward={forward} \
                          twin_out={out} reduction={}",
                         pool_ref.hop_type,
@@ -1957,8 +1947,7 @@ impl ArbitrageEngine {
         if let Some(recomputed) = Self::recompute_clamped_profit(result) {
             let profit_before = result.profit;
             if recomputed != profit_before {
-                tracing::info!(
-                    path_id,
+                op_info!(domain = solver, path_id,
                     profit_before = %profit_before,
                     profit_after = %recomputed,
                     profit_delta = %profit_before.saturating_sub(recomputed),
@@ -2077,9 +2066,7 @@ impl ArbitrageEngine {
         if self.solve_admission && draw_zero {
             self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "shed");
             self.detached_cycle.shed();
-            tracing::info!(
-                target: "degenbot::solver",
-                block_number = solve_block,
+            op_info!(domain = solver, block_number = solve_block,
                 paths.affected = affected_path_ids.len(),
                 in_flight = self
                     .detached_cycle
@@ -2147,8 +2134,8 @@ impl ArbitrageEngine {
         // Telemetry: fan-out summary (activations above can be hundreds of
         // events; this one line carries the aggregate).
         let fanout_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX);
-        tracing::info!(
-            target: "degenbot::solver",
+        op_info!(
+            domain = solver,
             block_number = solve_block,
             paths.affected = affected_path_ids.len(),
             dirty.keys = affected.len(),
@@ -2269,8 +2256,7 @@ impl ArbitrageEngine {
                     }
                     if future {
                         out.deferred.push(path_id);
-                        tracing::error!(
-                            "[future-price] path_id={path_id} rejected at solve block {solve_block}: \
+                        op_error!(domain = solver, "[future-price] path_id={path_id} rejected at solve block {solve_block}: \
                              a hop price clock runs AHEAD of the solve block (update_block > \
                              solve_block) — never legitimate"
                         );
@@ -2449,9 +2435,7 @@ impl ArbitrageEngine {
             hotpath::gauge!(format!("resolve_invalid_{reason}"))
                 .set(f64::from(u32::try_from(*count).unwrap_or(u32::MAX)));
         }
-        tracing::info!(
-            target: "degenbot::solver",
-            block_number = solve_block,
+        op_info!(domain = solver, block_number = solve_block,
             paths.resolved = affected_path_ids.len(),
             paths.same_state = self.paths_same_state_this_cycle,
             hop.projections = self.hop_projection_count,
@@ -2838,8 +2822,8 @@ impl ArbitrageEngine {
                 }
             }
             self.detached_cycle.publish_gauge();
-            tracing::info!(
-                target: "degenbot::solver",
+            op_info!(
+                domain = solver,
                 block_number = solve_block,
                 detached_seq = cycle_seq,
                 detached_bins = n_bins,

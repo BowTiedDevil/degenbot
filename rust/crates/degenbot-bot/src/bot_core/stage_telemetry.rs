@@ -42,6 +42,7 @@
 //! — per-epoch context rides the SPANS, not the histograms; the instruments
 //! file's closed-set label law forbids unbounded epoch labels on metrics.
 
+use degenbot_core::op_warn;
 use std::time::{Duration, Instant};
 
 use tracing::Span;
@@ -259,7 +260,8 @@ impl StageTelemetry {
             );
             open.span.record("queue.force_closed", true);
         }
-        tracing::warn!(
+        op_warn!(
+            domain = state,
             stage = kind.slug(),
             epoch.block = epoch.block(),
             epoch.seq = epoch.seq(),

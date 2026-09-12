@@ -59,6 +59,7 @@
 //! empty state. If a retry-only-on-RPC-errors policy is later needed, match on
 //! the variant at the `PyO3` boundary.
 
+use degenbot_core::op_info;
 use hashbrown::HashMap;
 
 use alloy::primitives::Address;
@@ -168,9 +169,7 @@ pub(crate) fn dump_tick_map_seed(
     seed: &(HashMap<i32, TickInfo>, PoolTickCoverage),
 ) {
     if crate::bot_core::stance::config().trace.dump_tick_maps {
-        tracing::info!(
-            target: crate::telemetry::DIAGNOSTIC_TARGET,
-            pool = %pool_ident,
+        op_info!(domain = state, pool = %pool_ident,
             seed_origin = "db-snapshot",
             coverage = ?seed.1,
             tick_count = seed.0.len(),

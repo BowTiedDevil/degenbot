@@ -50,6 +50,7 @@
 //! Python orchestrated this manually; the epic relocates backfill into the
 //! core, driven automatically by `resume`.)
 
+use degenbot_core::{op_error, op_info, op_warn};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -333,8 +334,7 @@ impl BlockPump {
         let first_block = subscribe_state.first_block;
         let (backfill_res, combined) = self.backfill_with_drain(first_block, combined).await;
         if let Err(e) = backfill_res {
-            tracing::error!(
-                first_block,
+            op_error!(domain = pump, first_block,
                 %e,
                 "BlockPump: auto-backfill failed — starting live loop from gap (not closed)"
             );
@@ -401,8 +401,7 @@ impl BlockPump {
                     if let Some(ev) = ev {
                         drained.push(ev);
                     } else {
-                        tracing::warn!(
-                            "BlockPump: WS stream ended during backfill (no re-inject gap)"
+                        op_warn!(domain = pump, "BlockPump: WS stream ended during backfill (no re-inject gap)"
                         );
                         return (Ok(0), drained);
                     }
@@ -437,7 +436,8 @@ impl BlockPump {
         if seed == 0 || ws_block == 0 || seed >= ws_block {
             return Ok(0);
         }
-        tracing::info!(
+        op_info!(
+            domain = pump,
             seed,
             ws_block,
             "BlockPump: auto-backfill from snapshot block to WS block before resume"
@@ -539,13 +539,15 @@ impl BlockPump {
         #[cfg(feature = "hotpath")]
         if let Some(window) = crate::profiling::timed_exit_window() {
             let flag = Arc::clone(&self.shutdown);
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 window_ms = window.as_millis() as u64,
                 "timed exit: cooperative pump shutdown armed"
             );
             tokio::spawn(async move {
                 tokio::time::sleep(window).await;
-                tracing::info!(
+                op_info!(
+                    domain = pump,
                     "timed exit: HOTPATH_SHUTDOWN_MS window elapsed — raising pump shutdown"
                 );
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -574,17 +576,26 @@ impl BlockPump {
             // cold-start lines across branches were collapsed).
             if matches!(snapshot_seed, Some(seed) if seed > 0 && seed < first_observed_block) {
                 let seed = snapshot_seed.unwrap_or_default();
-                tracing::info!(
+                op_info!(
+                    domain = pump,
                     first_observed_block,
                     backfill_start = seed + 1,
                     backfill_end = first_observed_block,
                     "BlockPump: resuming from block (backfilled snapshot gap)"
                 );
             } else {
-                tracing::info!(first_observed_block, "BlockPump: cold start from block");
+                op_info!(
+                    domain = pump,
+                    first_observed_block,
+                    "BlockPump: cold start from block"
+                );
             }
         } else {
-            tracing::info!(current_block, "BlockPump: starting from block");
+            op_info!(
+                domain = pump,
+                current_block,
+                "BlockPump: starting from block"
+            );
         }
 
         // Track the last block we've solved for: owned by the engine since
@@ -810,7 +821,7 @@ impl BlockPump {
 
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
-                tracing::info!("BlockPump: shutting down");
+                op_info!(domain = pump, "BlockPump: shutting down");
                 return;
             }
 
@@ -837,7 +848,7 @@ impl BlockPump {
                 // is free relative to the window (minutes) it serves.
                 _ = timed_exit_tick.tick() => {
                     if self.shutdown.load(Ordering::Relaxed) {
-                        tracing::info!("timed exit: shutdown signaled — unwinding pump loop");
+                        op_info!(domain = pump, "timed exit: shutdown signaled — unwinding pump loop");
                         break;
                     }
                     // SONJQA (G3, preserved — BF43PM): force-close a stale
@@ -887,8 +898,7 @@ impl BlockPump {
                                 // stalled/dead while `newHeads` is alive. One
                                 // warning per silence episode (re-armed when
                                 // the next log resumes the sub).
-                                tracing::warn!(
-                                    silence_secs = self.watchdog.log_silence.as_secs(),
+                                op_warn!(domain = pump, silence_secs = self.watchdog.log_silence.as_secs(),
                                     "[pump] logs subscription silent: headers flowing but no log"
                                 );
                                 self.watchdog.record_silence_alarm();
@@ -1013,8 +1023,8 @@ impl BlockPump {
                                     let apply_us = apply_started_at
                                         .map_or(0, |t| t.elapsed().as_micros() as u64);
                                     let (hw, lw) = (pregap.header_at, pregap.first_log);
-                                    tracing::info!(
-                                        target: "degenbot::diag",
+                                    op_info!(
+                                        domain = pump,
                                         block_number = open,
                                         sequence = nth,
                                         logs = pregap.logs,
@@ -1198,7 +1208,8 @@ impl BlockPump {
                                 let to = to.unwrap_or_else(|| {
                                     unreachable!("on_header backfill always carries an upper bound")
                                 });
-                                tracing::info!(
+                                op_info!(
+                                    domain = pump,
                                     from_block = from,
                                     to_block = to,
                                     "BlockPump: gap from block to block — backfilling"
@@ -1412,8 +1423,7 @@ impl BlockPump {
                                 Epoch::with_generation(log_block, fsm.rewind_seq()),
                                 prev_stage,
                             );
-                            tracing::warn!(
-                                reorg_block,
+                            op_warn!(domain = pump, reorg_block,
                                 "BlockPump: chain reorg detected (removed log) — entering unwind path"
                             );
                             // WAJEQP T-R1: open the episode span — its OWN
@@ -1470,7 +1480,7 @@ impl BlockPump {
                                     if let Some(window) = reorg_span.as_ref() {
                                         window.record("reorg.outcome", "too_deep_shutdown");
                                     }
-                                    tracing::error!(?err, "BlockPump: too-deep reorg — shutting down");
+                                    op_error!(domain = pump, ?err, "BlockPump: too-deep reorg — shutting down");
                                     self.shutdown.store(true, Ordering::Relaxed);
                                     return;
                                 }
@@ -1485,7 +1495,8 @@ impl BlockPump {
                             // restore another pool at `log_block`. Trailing the
                             // first event lets the operator correlate successive
                             // unwinds in the same reorg.
-                            tracing::warn!(
+                            op_warn!(
+                                domain = pump,
                                 log_block,
                                 "BlockPump: reorg continues — restoring pool for removed log"
                             );
@@ -1510,7 +1521,7 @@ impl BlockPump {
                                     if let Some(window) = reorg_span.as_ref() {
                                         window.record("reorg.outcome", "too_deep_shutdown");
                                     }
-                                    tracing::error!(?err, "BlockPump: too-deep reorg — shutting down");
+                                    op_error!(domain = pump, ?err, "BlockPump: too-deep reorg — shutting down");
                                     self.shutdown.store(true, Ordering::Relaxed);
                                     return;
                                 }
@@ -1521,7 +1532,8 @@ impl BlockPump {
                             // Reorg window closed — the coordinator restored
                             // unwound pools per-event; this forward log's block
                             // is the new head. Resume forward tracking from it.
-                            tracing::info!(
+                            op_info!(
+                                domain = pump,
                                 new_head,
                                 "BlockPump: reorg window closed — resuming forward tracking"
                             );
@@ -1756,8 +1768,7 @@ impl BlockPump {
                     // channels) so the Python consumer's block stream ENDS and
                     // the settlement bot aborts loudly instead of idling
                     // forever (the "deadlock" operators observed).
-                    tracing::error!(
-                        "BlockPump: WS subscription streams ended - pump is STOPPED. The bot will no longer process blocks (no reconnect). Check the WS endpoint / restart."
+                    op_error!(domain = pump, "BlockPump: WS subscription streams ended - pump is STOPPED. The bot will no longer process blocks (no reconnect). Check the WS endpoint / restart."
                     );
                     self.engine.on_pump_ended();
                     return;
@@ -1920,8 +1931,7 @@ impl BlockPump {
         let observed_seq = fsm.rewind_seq();
         let epoch = ctx.epoch();
         if epoch.seq() < observed_seq {
-            tracing::warn!(
-                item_block = epoch.block(),
+            op_warn!(domain = pump, item_block = epoch.block(),
                 item_seq = epoch.seq(),
                 observed_seq,
                 "reorg-flying stage work: stale epoch dropped instead of consuming epoch.block() (I3)"
@@ -1955,7 +1965,7 @@ impl BlockPump {
         ) {
             Ok(q) => q,
             Err(error) => {
-                tracing::error!(%error, "stage StreamingComplete failed — solve skipped");
+                op_error!(domain = pump, %error, "stage StreamingComplete failed — solve skipped");
                 return;
             }
         };
@@ -1966,12 +1976,12 @@ impl BlockPump {
         }) {
             Ok(p) => p,
             Err(error) => {
-                tracing::error!(%error, "stage Resolve failed — solve skipped");
+                op_error!(domain = pump, %error, "stage Resolve failed — solve skipped");
                 return;
             }
         };
         if let Err(error) = self.engine.on_solve(&Solve { ctx, paths }) {
-            tracing::error!(%error, "stage Solve failed");
+            op_error!(domain = pump, %error, "stage Solve failed");
         } else {
             // LEZJAS: engine owns `last_solved_block` — mark this block
             // solved so the next finalize guard no-ops.
@@ -2004,7 +2014,7 @@ impl BlockPump {
             ctx,
             gated: gated.clone(),
         }) {
-            tracing::error!(%error, "stage Publish failed — batch not delivered");
+            op_error!(domain = pump, %error, "stage Publish failed — batch not delivered");
         }
     }
 
@@ -2023,20 +2033,21 @@ impl BlockPump {
             ctx,
             published: *published,
         }) {
-            tracing::error!(%error, "stage Finalize failed — boundary not stamped");
+            op_error!(domain = pump, %error, "stage Finalize failed — boundary not stamped");
         }
     }
 
     /// Handle a 60s timeout by backfilling any missed blocks (eager variant).
     async fn handle_timeout_eager(&self, fsm: &mut StageMachine) {
-        tracing::warn!(
+        op_warn!(
+            domain = pump,
             backfill_timeout_secs = BACKFILL_TIMEOUT_SECS,
             "BlockPump: no activity — attempting backfill"
         );
         let latest_block = match self.ingestor.latest_block().await {
             Ok(n) => n,
             Err(e) => {
-                tracing::error!(%e, "BlockPump: backfill failed — can't get block number");
+                op_error!(domain = pump, %e, "BlockPump: backfill failed — can't get block number");
                 return;
             }
         };
@@ -2065,7 +2076,12 @@ impl BlockPump {
             return;
         }
 
-        tracing::info!(from_block, to_block, "BlockPump: backfilling blocks");
+        op_info!(
+            domain = pump,
+            from_block,
+            to_block,
+            "BlockPump: backfilling blocks"
+        );
         // T2: one counter per executed backfill range.
         if let Some(p) = crate::instruments::pipeline() {
             p.count_backfill();
@@ -2076,7 +2092,7 @@ impl BlockPump {
         let logs = match self.ingestor.fetch_logs(from_block, to_block).await {
             Ok(logs) => logs,
             Err(e) => {
-                tracing::error!(%e, "BlockPump: backfill eth_getLogs failed");
+                op_error!(domain = pump, %e, "BlockPump: backfill eth_getLogs failed");
                 return;
             }
         };
@@ -2095,7 +2111,7 @@ impl BlockPump {
         let mut any_processed = false;
         for block in from_block..=to_block {
             if self.shutdown.load(Ordering::Relaxed) {
-                tracing::info!("BlockPump: shutting down during backfill");
+                op_info!(domain = pump, "BlockPump: shutting down during backfill");
                 return;
             }
 
@@ -2125,7 +2141,8 @@ impl BlockPump {
                     | LogDecision::ContinueReorg
                     | LogDecision::CloseReorg { .. }
                     | LogDecision::LateForward(_) => {
-                        tracing::warn!(
+                        op_warn!(
+                            domain = pump,
                             block,
                             "BlockPump: backfill saw unexpected decision; skipping log"
                         );
@@ -2143,13 +2160,15 @@ impl BlockPump {
         }
 
         if any_processed {
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 from_block,
                 to_block,
                 "BlockPump: backfill complete for blocks"
             );
         } else {
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 from_block,
                 to_block,
                 "BlockPump: backfill found no relevant events"
@@ -2195,8 +2214,7 @@ impl BlockPump {
         let logs = match self.ingestor.fetch_logs(block, block).await {
             Ok(logs) => logs,
             Err(e) => {
-                tracing::error!(
-                    block,
+                op_error!(domain = pump, block,
                     %e,
                     "BlockPump: WS-completeness eth_getLogs failed (not a mismatch; "
                 );
@@ -2228,8 +2246,7 @@ impl BlockPump {
             // HARD and immediately. A contained worker-thread panic would
             // leave the bot half-alive (silent-ish), which is itself a failure
             // mode; `std::process::abort` guarantees termination.
-            tracing::error!(
-                "[WS-INVARIANT] LIVE WEBSOCKET LOG DROP at block {block}: {} relevant on-chain log(s) missing from WS delivery: log_index {:?}. eth_getLogs={} logs, WS delivered={} logs. The websocket/pump delivery path dropped a relevant event — ABORT (DFQYM5/WS-DROP). Investigate the subscription/reconnect path; do NOT silence this.",
+            op_error!(domain = pump, "[WS-INVARIANT] LIVE WEBSOCKET LOG DROP at block {block}: {} relevant on-chain log(s) missing from WS delivery: log_index {:?}. eth_getLogs={} logs, WS delivered={} logs. The websocket/pump delivery path dropped a relevant event — ABORT (DFQYM5/WS-DROP). Investigate the subscription/reconnect path; do NOT silence this.",
                 missing.len(),
                 missing,
                 onchain.len(),
@@ -2260,8 +2277,7 @@ impl BlockPump {
             .copied()
             .collect();
         if !extra.is_empty() {
-            tracing::warn!(
-                block,
+            op_warn!(domain = pump, block,
                 extras = ?extra,
                 "BlockPump: WS delivered relevant logs not present in eth_getLogs"
             );
@@ -2300,17 +2316,22 @@ impl BlockPump {
             state.snapshot_seed_block()
         };
         let Some(s) = s else {
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 "BlockPump::backfill_from_snapshot: no snapshot loaded, cold-start path"
             );
             return Ok(0);
         };
         if s == 0 {
-            tracing::warn!("BlockPump::backfill_from_snapshot: snapshot block S=0, skipping");
+            op_warn!(
+                domain = pump,
+                "BlockPump::backfill_from_snapshot: snapshot block S=0, skipping"
+            );
             return Ok(0);
         }
         if s >= w {
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 s,
                 ws_block = w,
                 "BlockPump::backfill_from_snapshot: snapshot >= WS block, nothing to backfill"
@@ -2328,7 +2349,8 @@ impl BlockPump {
         // `run_with_stream` (see the `log_block <= W` guard).
         let to_block = w;
         let total_blocks = to_block - from_block + 1;
-        tracing::info!(
+        op_info!(
+            domain = pump,
             from_block,
             to_block,
             total_blocks,
@@ -2339,7 +2361,8 @@ impl BlockPump {
         let mut chunk_start = from_block;
         while chunk_start <= to_block {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 chunk_start,
                 chunk_end,
                 "BlockPump::backfill_from_snapshot: fetching chunk"
@@ -2356,8 +2379,7 @@ impl BlockPump {
                 })?;
             let n = logs.len();
             let fetch_ms = t0.elapsed().as_millis();
-            tracing::info!(
-                chunk_start,
+            op_info!(domain = pump, chunk_start,
                 chunk_end,
                 log_count = n,
                 fetch_ms = %fetch_ms,
@@ -2370,7 +2392,8 @@ impl BlockPump {
                 .state_arc()
                 .write()
                 .process_backfill_logs(&logs, chunk_end);
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 chunk_start,
                 chunk_end,
                 log_count = n,
@@ -2378,7 +2401,8 @@ impl BlockPump {
             );
             chunk_start = chunk_end + 1;
         }
-        tracing::info!(
+        op_info!(
+            domain = pump,
             total_logs,
             total_blocks,
             "BlockPump::backfill_from_snapshot: complete"

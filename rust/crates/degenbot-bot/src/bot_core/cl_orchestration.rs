@@ -12,6 +12,7 @@
 //! these are inherent methods on `BotState`, and `bot_core/mod.rs` remains the
 //! assembly + re-export hub.
 
+use degenbot_core::{op_info, op_warn};
 use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U256};
@@ -123,8 +124,7 @@ impl BotState {
         // hypothesis; a head-fresh seed points the finger at a post-registration
         // rewind instead.
         if crate::bot_core::stance::config().trace.trace_register_seed {
-            tracing::info!(
-                pool_addr = %format!("{:x}", params.address),
+            op_info!(domain = state, pool_addr = %format!("{:x}", params.address),
                 family = "V3",
                 seed_update_block = params.update_block,
                 seed_sqrt = %params.sqrt_price_x96,
@@ -626,19 +626,18 @@ impl BotState {
         let dbg = crate::bot_core::drain_dbg_pool_match(*address);
         let Some(&key) = self.pool_addresses.get(address) else {
             if dbg {
-                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] backfill NOT REGISTERED");
+                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill NOT REGISTERED");
             }
             return;
         };
         let Some(buffered) = self.v3_buffer.drain_backfill(address) else {
             if dbg {
-                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] backfill EMPTY");
+                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill EMPTY");
             }
             return;
         };
         if dbg {
-            tracing::info!(
-                pool_addr = %format!("{address:x}"),
+            op_info!(domain = state, pool_addr = %format!("{address:x}"),
                 count = buffered.len(),
                 "[dbg-drain] backfill"
             );
@@ -647,8 +646,7 @@ impl BotState {
             if dbg {
                 match &update {
                     BufferedV3PoolEvent::Liquidity(u) => {
-                        tracing::info!(
-                            pool_addr = %format!("{address:x}"),
+                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
                             tick_lower = u.tick_lower,
                             tick_upper = u.tick_upper,
                             delta = u.liquidity_delta,
@@ -657,8 +655,7 @@ impl BotState {
                         );
                     }
                     BufferedV3PoolEvent::Swap(s) => {
-                        tracing::info!(
-                            pool_addr = %format!("{address:x}"),
+                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
                             liquidity = s.liquidity,
                             tick = s.tick,
                             block = s.block_number,
@@ -676,8 +673,7 @@ impl BotState {
                 let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
                 if dbg && state.update_block < ub_before {
-                    tracing::warn!(
-                        pool_addr = %format!("{address:x}"),
+                    op_warn!(domain = state, pool_addr = %format!("{address:x}"),
                         ub_before,
                         ub_after = state.update_block,
                         "[dbg-drain] update_block REWIND (backfill)"
@@ -696,7 +692,7 @@ impl BotState {
         let dbg = crate::bot_core::drain_dbg_pool_match(*address);
         let Some(&key) = self.pool_addresses.get(address) else {
             if dbg {
-                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump NOT REGISTERED");
+                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NOT REGISTERED");
             }
             return;
         };
@@ -708,37 +704,39 @@ impl BotState {
         let cutoff = self.pump_complete_cutoff;
         if cutoff == 0 {
             if dbg {
-                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump NO-COMPLETE (no tombstone yet)");
+                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NO-COMPLETE (no tombstone yet)");
             }
             return;
         }
         let Some(buffered) = self.v3_buffer.drain_pump_completed(address, cutoff) else {
             if dbg {
-                tracing::info!(pool_addr = %format!("{address:x}"), "[dbg-drain] pump EMPTY (no completed blocks)");
+                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] pump EMPTY (no completed blocks)");
             }
             return;
         };
         if dbg {
-            tracing::info!(pool_addr = %format!("{address:x}"), count = buffered.len(), "[dbg-drain] pump");
+            op_info!(domain = state, pool_addr = %format!("{address:x}"), count = buffered.len(), "[dbg-drain] pump");
         }
         for update in buffered {
             if dbg {
                 match &update {
-                    BufferedV3PoolEvent::Liquidity(u) => tracing::info!(
-                        pool_addr = %format!("{address:x}"),
-                        tick_lower = u.tick_lower,
-                        tick_upper = u.tick_upper,
-                        delta = u.liquidity_delta,
-                        block = u.block_number,
-                        "[dbg-drain] pump apply liq"
-                    ),
-                    BufferedV3PoolEvent::Swap(s) => tracing::info!(
-                        pool_addr = %format!("{address:x}"),
-                        liquidity = s.liquidity,
-                        tick = s.tick,
-                        block = s.block_number,
-                        "[dbg-drain] pump apply swap"
-                    ),
+                    BufferedV3PoolEvent::Liquidity(u) => {
+                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
+                            tick_lower = u.tick_lower,
+                            tick_upper = u.tick_upper,
+                            delta = u.liquidity_delta,
+                            block = u.block_number,
+                            "[dbg-drain] pump apply liq"
+                        );
+                    }
+                    BufferedV3PoolEvent::Swap(s) => {
+                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
+                            liquidity = s.liquidity,
+                            tick = s.tick,
+                            block = s.block_number,
+                            "[dbg-drain] pump apply swap"
+                        );
+                    }
                 }
             }
             if let Some(state) = self
@@ -750,8 +748,7 @@ impl BotState {
                 let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
                 if dbg && state.update_block < ub_before {
-                    tracing::warn!(
-                        pool_addr = %format!("{address:x}"),
+                    op_warn!(domain = state, pool_addr = %format!("{address:x}"),
                         ub_before,
                         ub_after = state.update_block,
                         "[dbg-drain] update_block REWIND (pump)"
@@ -976,8 +973,7 @@ impl BotState {
         if let Some((tick_data_block, seed_block, tick_count, watch, verdict)) = diag {
             let pool_match = drain_dbg_pool_match(address);
             if verify_dbg_enabled() {
-                tracing::info!(
-                    pool_addr = %format!("{address:x}"),
+                op_info!(domain = state, pool_addr = %format!("{address:x}"),
                     tick_data_block,
                     tick_count,
                     pump_count = self.v3_buffer.pump_count_at_or_below(&address, tick_data_block),
@@ -990,8 +986,7 @@ impl BotState {
             // upper tick) is visible at the moment step-2 verify compares it.
             if pool_match {
                 if let Some((g, n)) = watch {
-                    tracing::info!(
-                        pool_addr = %format!("{address:x}"),
+                    op_info!(domain = state, pool_addr = %format!("{address:x}"),
                         tick_data_block,
                         watch_tick = ?trace_watch_tick(),
                         gross = %g,
@@ -999,8 +994,7 @@ impl BotState {
                         "[trace] pin watch-tick"
                     );
                 } else {
-                    tracing::info!(
-                        pool_addr = %format!("{address:x}"),
+                    op_info!(domain = state, pool_addr = %format!("{address:x}"),
                         tick_data_block,
                         watch_tick = ?trace_watch_tick(),
                         "[trace] pin watch-tick absent"
@@ -1018,8 +1012,7 @@ impl BotState {
             // provenance covers freshness-claim honesty.
             match verdict {
                 PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
-                    tracing::warn!(
-                        pool_addr = %format!("{address:x}"),
+                    op_warn!(domain = state, pool_addr = %format!("{address:x}"),
                         seed_block,
                         cutoff,
                         witnessed_horizon,
@@ -1882,8 +1875,7 @@ impl BotState {
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                tracing::info!(
-                    pool_addr = %format!("{address:x}"),
+                op_info!(domain = state, pool_addr = %format!("{address:x}"),
                     drained_tail = buffered.len(),
                     blocks = ?blocks,
                     distinct_blocks = ?distinct,
@@ -1935,8 +1927,7 @@ impl BotState {
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                tracing::info!(
-                    pool_manager = %format!("{pool_manager:x}"),
+                op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
                     pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id),
                     drained_tail = buffered.len(),
                     blocks = ?blocks,
@@ -2018,7 +2009,8 @@ impl BotState {
             return;
         }
         if verify_dbg_enabled() {
-            tracing::info!(
+            op_info!(
+                domain = state,
                 v3 = v3_addrs.len(),
                 v4 = v4_keys.len(),
                 "[verify-dbg] release-all quarantined"
@@ -2181,8 +2173,7 @@ impl BotState {
         };
         if let Some((tick_data_block, seed_block, verdict)) = diag {
             if verify_dbg_enabled() {
-                tracing::info!(
-                    pool_manager = %format!("{pool_manager:x}"),
+                op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
                     pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
                     tick_data_block,
                     pump_count = self.v4_buffer.pump_count_at_or_below(&key, tick_data_block),
@@ -2193,8 +2184,7 @@ impl BotState {
             // FUWYUR stamp provenance (7HUYWM, V4 twin) — see the V3 pin.
             match verdict {
                 PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
-                    tracing::warn!(
-                        pool_manager = %format!("{pool_manager:x}"),
+                    op_warn!(domain = state, pool_manager = %format!("{pool_manager:x}"),
                         pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
                         seed_block,
                         cutoff,

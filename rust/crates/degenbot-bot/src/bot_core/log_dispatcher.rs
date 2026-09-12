@@ -18,6 +18,7 @@
 
 #![expect(clippy::doc_markdown)]
 
+use degenbot_core::{op_info, op_warn};
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
@@ -711,9 +712,7 @@ impl LogDispatcher {
                 // Telemetry: ALWAYS-ON structured outcome events. This is the
                 // "pool event processed + state updated" node in every Jaeger
                 // trace: concrete pool identity AND engine pool_id.
-                tracing::info!(
-                    target: "degenbot::state",
-                    block = log.block_number,
+                op_info!(domain = ingest, block = log.block_number,
                     log.index = ?log.log_index,
                     tx.index = ?log.transaction_index,
                     pool.id = pool_id,
@@ -782,7 +781,8 @@ impl LogDispatcher {
             // BotState advances (the frozen-update_block signature). Silent
             // before this trace; env-gated like its siblings.
             if crate::bot_core::stance::config().trace.dispatch {
-                tracing::warn!(
+                op_warn!(
+                    domain = ingest,
                     pool_id,
                     "dispatch: NOTIFY MISS - state applied but no subscriber attached"
                 );

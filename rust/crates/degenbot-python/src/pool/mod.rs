@@ -31,6 +31,7 @@
 //! constraint holds. If a future async-Python driver embeds tokio, wrap the
 //! call in `tokio::task::spawn_blocking`.
 
+use degenbot_core::{op_error, op_warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -79,12 +80,12 @@ impl ProgressSink for PyProgressSink {
             let dict = match progress_report_to_dict(py, progress) {
                 Ok(d) => d,
                 Err(e) => {
-                    tracing::error!(%e, "run_pool_update: failed to build progress dict");
+                    op_error!(domain = state, %e, "run_pool_update: failed to build progress dict");
                     return;
                 }
             };
             if let Err(err) = self.callback.call1(py, (dict,)) {
-                tracing::warn!(%err, "run_pool_update: Python progress callback raised");
+                op_warn!(domain = state, %err, "run_pool_update: Python progress callback raised");
             }
         });
     }

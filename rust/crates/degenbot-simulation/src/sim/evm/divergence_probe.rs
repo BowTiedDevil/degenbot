@@ -47,6 +47,7 @@
     test,
     allow(clippy::unreadable_literal, clippy::decimal_bitwise_operands)
 )]
+use degenbot_core::op_info;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -221,8 +222,7 @@ pub fn observe_storage_read_forced(
     if matched {
         return;
     }
-    tracing::info!(
-        pool_addr = %format!("{address:?}"),
+    op_info!(domain = sim, pool_addr = %format!("{address:?}"),
         slot = %index,
         kind = ?probe.kind,
         engine = %hex_padded(probe.engine_word),
@@ -268,7 +268,8 @@ pub fn dump_divergence_summary() {
         return;
     }
     let tally = divergence_tally_snapshot();
-    tracing::info!(
+    op_info!(
+        domain = sim,
         slots_compared = tally.slots_compared,
         divergent_slots = tally.divergent_slots,
         divergent_pairs = tally.divergent_pairs,

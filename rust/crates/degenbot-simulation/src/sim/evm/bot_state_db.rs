@@ -53,6 +53,7 @@
 
 use alloy::primitives::Address;
 use degenbot_bot::bot_core::SimAnchorState;
+use degenbot_core::op_warn;
 use revm::database_interface::DatabaseRef;
 use revm::primitives::{StorageKey, StorageValue, B256, KECCAK_EMPTY};
 use revm::state::AccountInfo;
@@ -250,8 +251,7 @@ where
                     "code-less (KECCAK_EMPTY)"
                 };
                 let provenance = self.code_probe_provenance(address, info.as_ref());
-                tracing::warn!(
-                    "[codeless-probe] tracked pool {address} resolved {state} @ block {:?}; {provenance}",
+                op_warn!(domain = sim, "[codeless-probe] tracked pool {address} resolved {state} @ block {:?}; {provenance}",
                     self.code_probe_block,
                 );
                 panic!(

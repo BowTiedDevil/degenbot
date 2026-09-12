@@ -34,6 +34,7 @@
 //! (`/v1/traces` appended). [`provider_from_endpoint`] is the code-configured
 //! variant for pure-Rust consumers.
 
+use degenbot_core::op_warn;
 use std::sync::OnceLock;
 
 #[cfg(feature = "otel")]
@@ -356,7 +357,7 @@ pub fn init_otel_tracing() -> Result<OtelHandle, OtelInitError> {
         .with(layer(tracer).with_filter(tracing_subscriber::EnvFilter::from_default_env()))
         .with(tracing_subscriber::fmt::layer().with_filter(console_filter));
     if subscriber.try_init().is_err() {
-        tracing::warn!("OTel init: a global tracing subscriber already exists (e.g. degenbot-python's registry); the OTel layer must be added to that registry (epic KDUED5 task K6PCKP)");
+        op_warn!(domain = pump, "OTel init: a global tracing subscriber already exists (e.g. degenbot-python's registry); the OTel layer must be added to that registry (epic KDUED5 task K6PCKP)");
         return Err(OtelInitError::AlreadySetUp(
             "a global tracing subscriber is already installed",
         ));

@@ -55,6 +55,7 @@ use degenbot_arbitrage::{
 };
 use degenbot_arbitrage::{CapturedSwap, SimResult, SimulateContext};
 use degenbot_bot::bot_core::state_lock::StateLock;
+use degenbot_core::op_info;
 use degenbot_executor::composers::{HopInfo, PathInfo};
 use degenbot_submission::{PoolKey, SubmitCandidate};
 use pyo3::exceptions::PyValueError;
@@ -200,8 +201,8 @@ pub fn dispatch_profitable_py<'py>(
     // cannot itself cause the fan-out's per-candidate GIL contention; it tags
     // the start/end of the body on a tokio worker.
     let phase_candidate_count = built.len();
-    tracing::info!(
-        target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
+    op_info!(
+        domain = sim,
         current_block,
         phase_candidate_count,
         "[dispatch-phase] future body START (emitted synchronously — its absence \
@@ -215,8 +216,8 @@ pub fn dispatch_profitable_py<'py>(
         // (build_paths sync pyo3 call / _asyncio futex park), this line will
         // NOT appear until the GIL frees; its absence in the log vs the
         // `[dispatch-phase] future body START` line above pinpoints the block.
-        tracing::info!(
-            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
+        op_info!(
+            domain = sim,
             current_block,
             phase_candidate_count,
             "[dispatch-phase] fan-out ENTER"
@@ -249,9 +250,7 @@ pub fn dispatch_profitable_py<'py>(
             bot_state,
             warm_cache,
         );
-        tracing::info!(
-            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
-            current_block,
+        op_info!(domain = sim, current_block,
             elapsed_ms = %phase_started.elapsed().as_millis(),
             survivors = outcome.gas_profitable.len(),
             "[dispatch-phase] fan-out EXIT"
@@ -285,8 +284,8 @@ pub fn dispatch_profitable_py<'py>(
         // GIL acquire on this dispatch path, and the one the parked main
         // thread starves. If this line appears but the next block never
         // advances, the result-setter is the blocked step.
-        tracing::info!(
-            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
+        op_info!(
+            domain = sim,
             current_block,
             "[dispatch-phase] future body END — handing to set_result via Python::attach"
         );

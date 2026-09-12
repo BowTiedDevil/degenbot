@@ -25,6 +25,7 @@
 //! driven by `CompletenessDecision::Verify`), and is not part of the pump's
 //! hot loop.
 
+use degenbot_core::{op_info, op_warn};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -79,16 +80,13 @@ impl PumpTelemetry {
         } else {
             self.last_header_at.elapsed().as_secs_f64()
         };
-        tracing::info!(
-            target: crate::telemetry::DIAGNOSTIC_TARGET,
-            number,
+        op_info!(domain = pump, number,
             diag_header_count = self.header_count,
             gap_secs = %format!("{:.1}", gap),
             "BlockPump: [DIAG] HEADER"
         );
         if self.header_count > 1 && self.last_header_at.elapsed() > self.stall_window {
-            tracing::warn!(
-                number,
+            op_warn!(domain = pump, number,
                 silent_secs = %format!("{:.1}", gap),
                 "BlockPump: [DIAG] *** HEADER STALL: headers were silent"
             );
@@ -140,8 +138,8 @@ impl PumpTelemetry {
             }
         }
         let last_header_secs = self.last_header_at.elapsed().as_secs();
-        tracing::info!(
-            target: crate::telemetry::DIAGNOSTIC_TARGET,
+        op_info!(
+            domain = pump,
             diag_header_count = self.header_count,
             diag_log_count = self.log_count,
             last_header_secs = last_header_secs,

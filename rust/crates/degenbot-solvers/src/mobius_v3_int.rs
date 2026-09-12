@@ -28,6 +28,7 @@
 //! Gamma = 1 - fee = (1_000_000 - fee) / 1_000_000.
 //! We store `gamma_numer = 1_000_000 - fee`, `fee_denom = 1_000_000`.
 
+use degenbot_core::op_warn;
 // NOTE: a historical file-level `expect(clippy::too_many_lines)` stood here
 // (the hot fn bodies were over clippy's 100-line threshold; instrumented
 // `hotpath` builds moved macro code around so it stopped firing there).
@@ -2092,9 +2093,7 @@ fn solve_active_set_path_inner(
             range_counts.push(n);
             total_ranges += n;
         }
-        tracing::warn!(
-            target: "degenbot_solvers::walk",
-            pieces = ws.pieces,
+        op_warn!(domain = solver, pieces = ws.pieces,
             sims = ws.sims,
             word_steps = ws.word_steps,
             refine_sims = ws.refine_sims,

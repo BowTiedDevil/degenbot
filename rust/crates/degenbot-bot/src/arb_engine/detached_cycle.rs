@@ -36,6 +36,7 @@
 //!
 //! _Avoid_: "detached arm plumbing", "sidecar state" (CONTEXT.md).
 
+use degenbot_core::op_error;
 // ---------------------------------------------------------------------------
 // The machine surface — states, verbs, the total transition table
 // ---------------------------------------------------------------------------
@@ -321,8 +322,8 @@ impl DetachedCycle {
         } else {
             // unreachable-by-construction (opened above); a vanished
             // pipe would strand every result, so die loudly.
-            tracing::error!(
-                target: crate::telemetry::DIAGNOSTIC_TARGET,
+            op_error!(
+                domain = solver,
                 "[detached] merge pipe vanished between open and clone — aborting"
             );
             std::process::abort();
@@ -505,8 +506,7 @@ pub(crate) fn spawn_merge_sidecar(
     {
         // LOUD abort: a stranded merge pipe would silently orphan
         // every detached result.
-        tracing::error!(
-            error = %err,
+        op_error!(domain = solver, error = %err,
             "detached merge sidecar spawn failed — aborting (stranded merge pipe)"
         );
         std::process::abort();

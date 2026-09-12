@@ -49,6 +49,9 @@
 //! and CPU-bound solve work. See `docs/architecture/rust-owned-bot.md` for the
 //! component map.
 
+#[cfg(feature = "hotpath")]
+use degenbot_core::op_info;
+use degenbot_core::op_warn;
 /// The profiling guard type. With the `hotpath` feature off this is hotpath's
 /// no-op `HotpathGuard` (a zero-sized stub from `lib_off.rs`); with it on it
 /// is the real guard whose drop writes the report.
@@ -66,7 +69,7 @@ pub fn timed_exit_window() -> Option<std::time::Duration> {
         Ok(raw) => match raw.parse::<u64>() {
             Ok(ms) => Some(std::time::Duration::from_millis(ms)),
             Err(e) => {
-                tracing::warn!(%raw, %e, "HOTPATH_SHUTDOWN_MS not a millisecond count — timed exit disabled");
+                op_warn!(domain = pump, %raw, %e, "HOTPATH_SHUTDOWN_MS not a millisecond count — timed exit disabled");
                 None
             }
         },
@@ -102,13 +105,13 @@ pub fn hotpath_guard(caller_name: &'static str) -> Option<Guard> {
         // window, lets the loop unwind through all span guards, flushes OTel,
         // and only then drops this guard (report) at scope end.
         if let Ok(raw) = std::env::var("HOTPATH_SHUTDOWN_MS") {
-            tracing::info!(
-                caller_name,
+            op_info!(domain = pump, caller_name,
                 window_ms = %raw,
                 "hotpath: profiling active — cooperative timed exit via HOTPATH_SHUTDOWN_MS"
             );
         } else {
-            tracing::info!(
+            op_info!(
+                domain = pump,
                 caller_name,
                 "hotpath: profiling guard active (report on pump exit)"
             );
@@ -122,7 +125,8 @@ pub fn hotpath_guard(caller_name: &'static str) -> Option<Guard> {
         // enabling the Cargo feature). Surface that instead of silently
         // profiling nothing.
         let _ = caller_name;
-        tracing::warn!(
+        op_warn!(
+            domain = pump,
             "hotpath: DEGENBOT_HOTPATH=1 set but the hotpath Cargo feature is not \
              enabled on degenbot-bot — rebuild with --features hotpath"
         );

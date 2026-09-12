@@ -29,6 +29,7 @@ use crate::prelude::*;
 use crate::provider::AlloyProvider;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
 use alloy::primitives::Bytes;
+use degenbot_core::op_info;
 use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyBytes;
@@ -213,10 +214,6 @@ impl crate::bot::engine::PyArbitrageEngine {
         degenbot_workers::lane::install_default_escalation_port(escalation_port);
         // The soak's hook-wiring tell — one line at install, matching the
         // `[solve-phase] cycle complete` inline.* fields it pairs with.
-        tracing::info!(
-            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
-            erc6909_profit,
-            "[inline-sim] hook installed"
-        );
+        op_info!(domain = sim, erc6909_profit, "[inline-sim] hook installed");
     }
 }

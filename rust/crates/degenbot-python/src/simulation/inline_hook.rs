@@ -32,6 +32,7 @@
 //! (affect-cache misses, escalations) rides the injected `EscalationPort`
 //! — never an ambient `Handle`.
 
+use degenbot_core::op_info;
 use std::sync::Arc;
 
 use alloy::primitives::{Bytes, U256};
@@ -488,8 +489,8 @@ impl InlineSimulator for InlineSimHook {
         };
         let verify_divergence = reverify || spotcheck;
         if verify_divergence {
-            tracing::info!(
-                target: "degenbot::diag",
+            op_info!(
+                domain = sim,
                 path_id = req.path_id,
                 reason = if reverify { "fail-retry" } else { "spot-check" },
                 "[sim-verify] divergence probe armed (on-demand verification)"
@@ -509,8 +510,8 @@ impl InlineSimulator for InlineSimHook {
                 // + OTel only).
                 let (hits, misses) = guard.1.stats();
                 if hits + misses > 0 {
-                    tracing::info!(
-                        target: "degenbot::diag",
+                    op_info!(
+                        domain = sim,
                         block_number = guard.0,
                         memo.hits = hits,
                         memo.misses = misses,

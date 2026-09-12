@@ -11,6 +11,7 @@
 //! monotonic milliseconds so the FSM is deterministic under test; callers
 //! feed `Instant::now()` deltas from their throttle poller.
 
+use degenbot_core::{op_info, op_warn};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -418,9 +419,7 @@ impl PostureStateMachine {
                     // An existing (throttle) cordon UPGRADES to the
                     // sticky hold: no state transition, but the cause
                     // is new and loud.
-                    tracing::warn!(
-                        target: "degenbot::fleet",
-                        lane_deaths = self.counters.lane_deaths,
+                    op_warn!(domain = pump, lane_deaths = self.counters.lane_deaths,
                         "[fleet-posture] lane-death HOLD upgrades an existing cordon — sticky, clean-window exit disabled"
                     );
                     return PostureChange::Held;
@@ -509,9 +508,7 @@ impl PostureStateMachine {
     fn enter(&mut self, reason: EnterReason) -> PostureChange {
         self.state = FleetPosture::Cordoned;
         self.counters.entered += 1;
-        tracing::warn!(
-            target: "degenbot::fleet",
-            reason = ?reason,
+        op_warn!(domain = pump, reason = ?reason,
             entered = self.counters.entered,
             "[fleet-posture] cordon ENTER — deferrable intake held, sim intake floored; in-flight units complete"
         );
@@ -536,8 +533,8 @@ impl PostureStateMachine {
         }
         self.state = FleetPosture::Nominal;
         self.counters.exited += 1;
-        tracing::info!(
-            target: "degenbot::fleet",
+        op_info!(
+            domain = pump,
             exited = self.counters.exited,
             clean_ms = self.policy.exit_clean_ms,
             "[fleet-posture] cordon EXIT after clean-window hysteresis"

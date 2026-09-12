@@ -15,6 +15,7 @@
 //!   `BotState`, v3/v4 snapshot stores, verify config) stays on
 //!   `PyArbitrageEngine`.
 
+use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::Arc;
 
 use degenbot_bot::arb_engine::{ArbitrageEngine, EnginePhase, EngineStages};
@@ -281,8 +282,7 @@ impl PumpState {
             })
         });
         if let Err(e) = backfill_res {
-            tracing::error!(
-                first_block,
+            op_error!(domain = pump, first_block,
                 %e,
                 "BlockPump: auto-backfill failed — starting live loop with gap"
             );
@@ -333,9 +333,12 @@ impl PumpState {
             // runtime matches the existing `subscribe`/`backfill_from_snapshot`
             // sync discipline; the aborted task completes promptly.
             let _ = degenbot_core::runtime::get_runtime().block_on(handle);
-            tracing::info!("[shutdown] BlockPump task aborted");
+            op_info!(domain = pump, "[shutdown] BlockPump task aborted");
         } else {
-            tracing::info!("[shutdown] BlockPump not running (no pump handle to abort)");
+            op_info!(
+                domain = pump,
+                "[shutdown] BlockPump not running (no pump handle to abort)"
+            );
         }
         // Drop half-built subscribe state so a later `subscribe()` is allowed
         // (the phase guard + the `subscribe_state.is_some()` check would
@@ -453,9 +456,9 @@ impl PumpState {
             .instrument(lifecycle_span)
             .await;
             if result.is_ok() {
-                tracing::info!(target: "degenbot::state", version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
+                op_info!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
             } else {
-                tracing::warn!(target: "degenbot::state", version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
+                op_warn!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
             }
             result.map_err(|err| match err {
                 RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -516,9 +519,9 @@ impl PumpState {
             .instrument(lifecycle_span)
             .await;
             if result.is_ok() {
-                tracing::info!(target: "degenbot::state", version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
+                op_info!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
             } else {
-                tracing::warn!(target: "degenbot::state", version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
+                op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
             }
             result.map_err(|err| match err {
                 RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -574,9 +577,9 @@ impl PumpState {
             .instrument(lifecycle_span),
         );
         if result.is_ok() {
-            tracing::info!(target: "degenbot::state", version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
+            op_info!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
         } else {
-            tracing::warn!(target: "degenbot::state", version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
+            op_warn!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
         }
         result.map_err(|err| match err {
             RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -637,9 +640,9 @@ impl PumpState {
             .instrument(lifecycle_span),
         );
         if result.is_ok() {
-            tracing::info!(target: "degenbot::state", version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
+            op_info!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
         } else {
-            tracing::warn!(target: "degenbot::state", version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
+            op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
         }
         result.map_err(|err| match err {
             RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -695,8 +698,7 @@ impl Drop for PumpState {
     fn drop(&mut self) {
         let running = self.pump_handle.lock().is_some();
         if running {
-            tracing::warn!(
-                pump_task_still_armed = true,
+            op_warn!(domain = pump, pump_task_still_armed = true,
                 "[shutdown] PumpState dropped WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
             );
         } else {

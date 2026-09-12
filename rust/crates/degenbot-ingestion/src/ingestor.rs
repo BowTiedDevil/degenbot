@@ -1,6 +1,7 @@
 //! `WsIngestor` — the transport handle: connect, subscribe + handshake,
 //! fetch backfill ranges.
 
+use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -173,6 +174,7 @@ impl WsIngestor {
     /// log stream is PROVABLY live. The boundary `W` returned is
     /// `first_log_block` (falls back to the header-confirmed head if the log
     /// stream stays silent past [`LOG_CATCHUP_SETTLE_SECS`]).
+    #[expect(clippy::too_many_lines)] // ADR-043 domain-target args widen the emit calls
     async fn observe_complete_block(
         &self,
         shutdown: &AtomicBool,
@@ -194,7 +196,10 @@ impl WsIngestor {
 
         loop {
             if shutdown.load(Ordering::Relaxed) {
-                tracing::info!("WsIngestor: shutting down during subscribe phase");
+                op_info!(
+                    domain = ingest,
+                    "WsIngestor: shutting down during subscribe phase"
+                );
                 return (0, 0, pending);
             }
 
@@ -203,17 +208,19 @@ impl WsIngestor {
             match event {
                 Err(_) => {
                     // Timeout — fall back to eth_blockNumber RPC (degraded path).
-                    tracing::warn!("WsIngestor: timeout during subscribe, fetching current block");
+                    op_warn!(
+                        domain = ingest,
+                        "WsIngestor: timeout during subscribe, fetching current block"
+                    );
                     match self.provider.get_block_number().await {
                         Ok(block) => {
-                            tracing::info!(
-                                block,
+                            op_info!(domain = ingest, block,
                                 "WsIngestor: subscribe observed block via RPC (degraded - no two-header confirmation)"
                             );
                             return (block, 0, pending);
                         }
                         Err(e) => {
-                            tracing::error!(%e, "WsIngestor: can't get block number during subscribe");
+                            op_error!(domain = ingest, %e, "WsIngestor: can't get block number during subscribe");
                         }
                     }
                 }
@@ -239,7 +246,8 @@ impl WsIngestor {
                             }
                             confirmed_head = Some(prev);
                             prev_timestamp = timestamp;
-                            tracing::info!(
+                            op_info!(
+                                domain = ingest,
                                 prev,
                                 number,
                                 "WsIngestor: subscribe confirmed head at {prev} (header {number})"
@@ -270,7 +278,10 @@ impl WsIngestor {
                 }
 
                 Ok(None) => {
-                    tracing::warn!("WsIngestor: subscription streams ended during subscribe");
+                    op_warn!(
+                        domain = ingest,
+                        "WsIngestor: subscription streams ended during subscribe"
+                    );
                     return (prev_header.unwrap_or(0), prev_timestamp, pending);
                 }
             }
@@ -288,7 +299,8 @@ impl WsIngestor {
                 };
                 if boundary_ok {
                     let boundary = first_log_block.unwrap_or(head);
-                    tracing::info!(
+                    op_info!(
+                        domain = ingest,
                         confirmed_head = head,
                         boundary,
                         source = if first_log_block.is_some() {

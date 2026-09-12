@@ -23,6 +23,7 @@
 //!
 //! See individual module documentation for usage examples.
 
+use degenbot_core::op_info;
 // Opt-in allocator swap for churn-heavy workloads (missed-WS-pong follow-up,
 // RSS-growth investigation). The measured pathology was glibc free-page
 // retention across per-thread arenas (system vs in-use spread of gigabytes,
@@ -281,8 +282,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
                 .map(|(k, a)| format!("{k}={a}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            tracing::info!(
-                count = overrides.len(),
+            op_info!(domain = pump, count = overrides.len(),
                 overrides = %pairs,
                 "failure_policy overrides installed"
             );

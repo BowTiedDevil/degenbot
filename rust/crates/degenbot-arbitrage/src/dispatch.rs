@@ -32,6 +32,7 @@
 //!   from `simulator` at this crate's root) the companion renders.
 //!   the companion renders.
 
+use degenbot_core::op_info;
 // Solidity/EVM + Rust-ecosystem identifiers (tokio, JoinSet, bps, PathSuppression,
 // MAX_SIMULATE_CONCURRENT, etc.) are ubiquitous here.
 
@@ -767,11 +768,10 @@ pub fn dispatch_profitable_results(
             degenbot_simulation::sim::evm::sim_metrics::snapshot(),
             lab_before,
         );
-        tracing::info!(
-            target: degenbot_bot::telemetry::DIAGNOSTIC_TARGET,
+        op_info!(
+            domain = sim,
             current_block,
-            fanout_ms = u64::try_from(lab_fanout_started.elapsed().as_millis())
-                .unwrap_or(u64::MAX),
+            fanout_ms = u64::try_from(lab_fanout_started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "{}",
             degenbot_simulation::sim::evm::sim_metrics::format_delta(&lab, fanout_candidate_count)
         );

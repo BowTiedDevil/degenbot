@@ -98,9 +98,7 @@ pub fn set_export_hook(hook: fn(&[WorkerCensusEntry])) {
 pub fn emit_boot_table() {
     let table = snapshot();
     BOOT_DUMPED.get_or_init(|| {
-        tracing::info!(
-            target: "degenbot::worker-census",
-            entries = ?table,
+        crate::op_info!(domain = pump, entries = ?table,
             "[worker-census] boot table full",
         );
     });
@@ -131,8 +129,8 @@ pub fn register(entry: WorkerCensusEntry) {
         table.sort_by(|a, b| a.resource.cmp(b.resource));
     }
     if late {
-        tracing::info!(
-            target: "degenbot::worker-census",
+        crate::op_info!(
+            domain = pump,
             resource = announced.0,
             count = announced.1,
             thread_name = announced.2,

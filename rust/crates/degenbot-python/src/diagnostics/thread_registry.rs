@@ -10,6 +10,7 @@
 //! with every thread's /proc state + waited futex to a JSON file. Std
 //! Standard thread-ids are the same ids that appear as the `thread.id` span tag
 //! on `OTel` spans (scrape from Jaeger to join a span to an OS TID).
+use degenbot_core::op_error;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -269,12 +270,12 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
         Ok(s) => match std::fs::write(&path, s) {
             Ok(()) => Some(std::path::PathBuf::from(path)),
             Err(e) => {
-                tracing::error!(error = %e, "[thread-registry] dump write failed");
+                op_error!(domain = pump, error = %e, "[thread-registry] dump write failed");
                 None
             }
         },
         Err(e) => {
-            tracing::error!(error = %e, "[thread-registry] dump serialize failed");
+            op_error!(domain = pump, error = %e, "[thread-registry] dump serialize failed");
             None
         }
     }

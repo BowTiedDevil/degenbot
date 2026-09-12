@@ -32,6 +32,7 @@
 //! default read path is the bare `parking_lot` read plus the cheap blocked-wait
 //! warning (no registry traffic, no allocation).
 
+use degenbot_core::op_warn;
 use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use std::fmt::{self, Write as _};
@@ -228,7 +229,7 @@ fn log_slow_holds(key: usize, holds: &[SlowHold]) {
         if let Some(bt) = &hold.backtrace {
             let _ = write!(msg, "\n{bt}");
         }
-        tracing::warn!("{msg}");
+        op_warn!(domain = state, "{msg}");
     }
 }
 
@@ -302,7 +303,7 @@ fn record_slow_read_drop(hold: SlowHold) {
     if let Some(bt) = &hold.backtrace {
         let _ = write!(msg, "\n{bt}");
     }
-    tracing::warn!("{msg}");
+    op_warn!(domain = state, "{msg}");
     let mut ring = SLOW_READ_DROPS.lock();
     while ring.len() >= SLOW_READ_DROPS_CAP {
         ring.remove(0);
@@ -443,7 +444,8 @@ impl<T> StateLock<T> {
             // required for it).
             let waited = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
             if waited >= warn_threshold_ms() {
-                tracing::warn!(
+                op_warn!(
+                    domain = state,
                     "[state-lock] read acquisition blocked {waited}ms at {} \
                      (hold tracking disabled - set DEGENBOT_STATE_LOCK_DIAG=1 to name holders)",
                     Location::caller()
@@ -463,7 +465,8 @@ impl<T> StateLock<T> {
         let waited = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
         if waited >= warn_threshold_ms() {
             let holders = snapshot_holds(key);
-            tracing::warn!(
+            op_warn!(
+                domain = state,
                 "[state-lock] read acquisition blocked {waited}ms at {location} \
                  (lock 0x{key:x}); active reads at acquire: {holders:?}"
             );
@@ -501,7 +504,8 @@ impl<T> StateLock<T> {
         record_wait(site, "write", t0);
         if waited >= warn_threshold_ms() {
             let holders = snapshot_holds(key);
-            tracing::warn!(
+            op_warn!(
+                domain = state,
                 "[state-lock] WRITE acquisition blocked {waited}ms at {location} \
                  (lock 0x{key:x}); readers still registered after acquire: {holders:?}"
             );
@@ -655,7 +659,8 @@ impl<T> Drop for StateWriteGuard<'_, T> {
             })
         };
         if let Some((loc, held)) = warned {
-            tracing::warn!(
+            op_warn!(
+                domain = state,
                 "[state-lock] WRITE guard held {held}ms at {loc} (lock 0x{:x})",
                 self.key
             );

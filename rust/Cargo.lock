@@ -2478,6 +2478,7 @@ version = "0.6.0-alpha.10"
 dependencies = [
  "alloy",
  "criterion",
+ "degenbot-core",
  "degenbot-math",
  "degenbot-pools",
  "degenbot-rpc",

@@ -21,6 +21,7 @@
 //! (silencing a warn, never firing a false positive); the probability is
 //! about 2^-64 per pair — documented here as the accepted floor.
 
+use degenbot_core::op_warn;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use degenbot_workers::dispatcher::FleetBoot;
@@ -195,9 +196,7 @@ pub(crate) fn record_ride(role: BootRole, stamp: &BootStamp) {
             // DIFFERENT-cfg rider: prod = count + one warn per pair; test =
             // ILLEGAL by construction (the F2 fire drill).
             rides.push((stamp.engine_id, stamp.cfg_hash));
-            tracing::warn!(
-                target: "degenbot::fleet-boot-audit",
-                role = role.label(),
+            op_warn!(domain = solver, role = role.label(),
                 winner_engine = winner_engine,
                 winner_cfg = format_args!("{winner_cfg:016x}"),
                 rider_engine = stamp.engine_id,

@@ -17,6 +17,7 @@
 //! loud-abort tripwire (log at error + `std::process::abort`), mirroring the
 //! executor discipline.
 
+use degenbot_core::{op_error, op_info};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -515,9 +516,7 @@ impl FleetHost {
         // tier refuses with its own typed refusal until the arm lands
         // (FF-T4) — never a silent narrow.
         let plan = crate::plan::plan(boot.quota_cpus, boot.profile, &boot.overrides)?;
-        tracing::info!(
-            target: "degenbot::fleet",
-            plan = plan.id,
+        op_info!(domain = pump, plan = plan.id,
             binding = %plan.binding,
             budget_cpus = plan.budget_cpus,
             oversubscribed = plan.oversubscribed,
@@ -891,8 +890,8 @@ impl FleetHost {
         // admission arithmetic (`queue_cap`, intake caps) while the layout
         // keeps serving the boot table geometry; see the asymmetry note on
         // [`FleetHost::queue_cap`] before "unifying" the two.
-        tracing::info!(
-            target: "degenbot::fleet",
+        op_info!(
+            domain = pump,
             quota = new_quota_cpus,
             solver_pins = self.budget.solver_pin_count,
             sim_driver_slots = self.budget.sim_slot_cap,
@@ -944,9 +943,7 @@ impl FleetHost {
             .map_or(0, VecDeque::len);
         if len >= cap {
             self.overflow_count += 1;
-            tracing::error!(
-                target: "degenbot::fleet",
-                role = unit.role.label(),
+            op_error!(domain = pump, role = unit.role.label(),
                 len,
                 cap,
                 overflows = self.overflow_count,
@@ -1275,9 +1272,7 @@ impl FleetHost {
                 Ok(to)
             }
             Err(rejected) => {
-                tracing::error!(
-                    target: "degenbot::fleet",
-                    slot,
+                op_error!(domain = pump, slot,
                     from = ?rejected.from,
                     transition = ?rejected.transition,
                     reason = %rejected.reason,
@@ -1417,9 +1412,7 @@ impl FleetHost {
     /// Always: [`HostError::StrandedPipe`] (the default handler aborts
     /// before returning).
     pub fn strand_unit(&mut self, slot: SlotId) -> Result<(), HostError> {
-        tracing::error!(
-            target: "degenbot::fleet",
-            slot,
+        op_error!(domain = pump, slot,
             "[fleet-deadlock] stranded result pipe: a dead host abandons a unit with in-flight result sends — loud abort (design doc §10.3)"
         );
         (self.tripwire)("stranded result pipe: unit abandoned mid-drain");

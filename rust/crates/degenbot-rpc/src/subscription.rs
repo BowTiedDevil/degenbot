@@ -22,6 +22,7 @@
 //! `async for` iteration works naturally.
 
 use crate::provider::AlloyProvider;
+use degenbot_core::op_warn;
 
 use alloy::network::Ethereum;
 use alloy::primitives::B256;
@@ -223,16 +224,14 @@ async fn reconnect_new_heads_stream(provider: Arc<dyn Provider<Ethereum>>) -> Op
         {
             Ok(Ok(s)) => return Some(s.into_stream().boxed()),
             Ok(Err(e)) => {
-                tracing::warn!(
-                    target: "degenbot_rpc::subscription",
-                    %e,
+                op_warn!(domain = rpc, %e,
                     delay_ms,
                     "newHeads reconnect subscribe failed — retrying"
                 );
             }
             Err(_) => {
-                tracing::warn!(
-                    target: "degenbot_rpc::subscription",
+                op_warn!(
+                    domain = rpc,
                     delay_ms,
                     "newHeads reconnect subscribe hung — retrying"
                 );

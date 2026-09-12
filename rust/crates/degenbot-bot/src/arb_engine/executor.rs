@@ -9,6 +9,7 @@
 //! seam types (mirroring the degenbot-workers placement of shared types —
 //! no pyo3 in any signature).
 
+use degenbot_core::op_error;
 use degenbot_workers::dispatcher::{BootError, SubmitError};
 use degenbot_workers::lane::LaneCtx;
 
@@ -241,9 +242,7 @@ pub(crate) fn drain_death_response(
     );
     let occurrence = DRAIN_DEATH_LOGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if occurrence == 1 || occurrence.is_multiple_of(DRAIN_DEATH_LOG_EVERY) {
-        tracing::error!(
-            target: "degenbot::fleet",
-            failure = ?failure,
+        op_error!(domain = exec, failure = ?failure,
             occurrence,
             "[fleet-solve] merge drain DEAD — outcome lost and counted, sticky posture cordon set (FF-T4 lane death); the process lives, only a fresh process lifts it (AQV6EF)"
         );
@@ -386,9 +385,7 @@ pub(crate) fn lane_death_response(
         owner,
         degenbot_workers::posture::PostureCause::LaneDeath,
     );
-    tracing::error!(
-        target: "degenbot::fleet",
-        unit,
+    op_error!(domain = exec, unit,
         seat,
         patched,
         "[fleet-solve] lane died mid-flight — terminal failure records patched, posture cordoned (sticky), the process lives (FF-T4)"
@@ -437,9 +434,7 @@ pub(crate) fn run_solve_lane(
                     },
                 );
             }
-            tracing::error!(
-                target: "degenbot::fleet",
-                unit = lane.unit,
+            op_error!(domain = exec, unit = lane.unit,
                 seat = lane.seat,
                 message = ?message,
                 patched,

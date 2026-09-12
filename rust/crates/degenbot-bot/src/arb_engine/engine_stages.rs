@@ -35,6 +35,7 @@
 //! `latest_results` / `register_path` / the FFI surface keep their
 //! StateLock-mediated core locking — this type adds NO lock layer.
 
+use degenbot_core::op_error;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
@@ -415,8 +416,7 @@ impl StageHandlers for EngineStages {
     }
 
     fn on_pump_ended(&self) {
-        tracing::error!(
-            "EngineStages: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
+        op_error!(domain = solver, "EngineStages: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
         self.block_clock.lock().close();
         self.engine.lock().on_pump_ended();

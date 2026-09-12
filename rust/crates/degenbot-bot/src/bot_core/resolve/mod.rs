@@ -22,6 +22,7 @@
 //! shared surface is only the file + the thin `ResolvedHop` wrap + nonce
 //! return.
 
+use degenbot_core::op_error;
 pub(crate) mod balancer_stable;
 pub(crate) mod balancer_weighted;
 pub(crate) mod cl;
@@ -397,7 +398,11 @@ pub(crate) fn resolve_hops(
     // so reaching here is a programming error. Return no deficits rather than
     // fabricating a responsible pool that could never clear.
     if pool_refs.len() < 2 {
-        tracing::error!(hops = pool_refs.len(), "resolve_hops: path has <2 hops");
+        op_error!(
+            domain = state,
+            hops = pool_refs.len(),
+            "resolve_hops: path has <2 hops"
+        );
         return Vec::new();
     }
 

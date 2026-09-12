@@ -14,6 +14,7 @@
 //! function re-derives what the host WOULD run; `fleet_booted` names
 //! which view it is).
 
+use degenbot_core::op_warn;
 use std::sync::OnceLock;
 
 use degenbot_config::FleetProfile;
@@ -173,9 +174,7 @@ pub fn record_fleet_profile_at_install(boot: &FleetBoot) {
     let summary = *FLEET_PROFILE_SUMMARY.get_or_init(|| summary);
     crate::instruments::note_fleet_profile(&summary);
     if summary.binding == "serial" {
-        tracing::warn!(
-            target: "degenbot::fleet",
-            profile = summary.profile,
+        op_warn!(domain = solver, profile = summary.profile,
             quota_cpus = boot.quota_cpus,
             "[fleet-profile] PRODUCTION ALERT: this host resolved to the SERIAL tier              (2-5 cores: one cycle lane per host) - the small-host arm is a              degradation signal, never a silent narrow (FF-T5, NT7HJC)"
         );

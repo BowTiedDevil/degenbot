@@ -10,6 +10,7 @@
 //! loop or another Python thread holds the GIL. This cannot deadlock — see
 //! `rpc::async_provider.rs` module-level comment for the full reasoning.
 
+use degenbot_core::op_warn;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
 
@@ -106,7 +107,7 @@ pub fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
 
     // Fallback: convert to string with warning
     let s = obj.str()?.to_string();
-    tracing::warn!(%s, "Converting unexpected Python type to string in JSON conversion");
+    op_warn!(domain = state, %s, "Converting unexpected Python type to string in JSON conversion");
     Ok(serde_json::Value::String(s))
 }
 

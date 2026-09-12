@@ -19,6 +19,7 @@
 //! eventually pulled into its own crate (ADR-018 trigger: a second engine
 //! family), `DeliveryPolicy` and its channels can travel intact.
 
+use degenbot_core::op_warn;
 use hashbrown::HashMap;
 
 use alloy::primitives::U256;
@@ -158,7 +159,8 @@ impl DeliveryPolicy {
         // they are re-delivered once the first real solve anchors them at a
         // valid block.
         if !anchored && !results.is_empty() {
-            tracing::warn!(
+            op_warn!(
+                domain = solver,
                 results = results.len(),
                 "delivery: deferring {} candidate(s) — no solve anchor yet (results_block=0)",
                 results.len(),

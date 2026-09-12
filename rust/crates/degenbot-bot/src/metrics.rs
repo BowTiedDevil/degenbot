@@ -19,6 +19,7 @@
 //! those belong in trace span fields (click from a dashboard anomaly to an
 //! example trace), and unbounded label sets will explode the scraper.
 
+use degenbot_core::{op_info, op_warn};
 use std::io::{Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -226,10 +227,13 @@ pub fn init_global_metrics_with_addr(addr: SocketAddr) -> Result<(), MetricsInit
             serve_on_listener(&listener, &body, &body_stop);
         });
     if spawned.is_err() {
-        tracing::warn!("metrics scrape thread spawn failed - endpoint inactive");
+        op_warn!(
+            domain = pump,
+            "metrics scrape thread spawn failed - endpoint inactive"
+        );
         stop.store(true, Ordering::Relaxed);
     } else {
-        tracing::info!(addr = %addr, "Prometheus metrics endpoint active");
+        op_info!(domain = pump, addr = %addr, "Prometheus metrics endpoint active");
     }
     Ok(())
 }

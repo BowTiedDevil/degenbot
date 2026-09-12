@@ -18,6 +18,7 @@
 //! idle Solver seat (T1→T2→T3); every later unit for that bin continues
 //! on the SAME seat (T6).
 
+use degenbot_core::op_error;
 use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,8 +49,7 @@ pub(crate) const SOLVE_BIN_KEY_BASE: PinKey = 1;
     reason = "the abort path must stay legible with no tracing subscriber installed (test harnesses drop the tracing event); stderr is the process's last message"
 )]
 pub(crate) fn abort_executor(context: &str, err: &str) -> ! {
-    tracing::error!(
-        context = %context,
+    op_error!(domain = solver, context = %context,
         error = %err,
         "[fleet-solve] unrecoverable — aborting (stranded result pipe)"
     );
@@ -347,8 +347,8 @@ fn seat_loop(seat: u64, rx: mpsc::Receiver<SeatJob>, done: &mpsc::Sender<HostMsg
         // would strand): keep the seat alive, log loudly, report done.
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| (job.work)(&job.ctx)));
         if outcome.is_err() {
-            tracing::error!(
-                target: "degenbot::fleet",
+            op_error!(
+                domain = solver,
                 seat,
                 unit = job.unit,
                 "[fleet-solve] bin job panicked — the seat survives, the failure is loud"

@@ -121,6 +121,7 @@
 //! entry (`pinned` = dedicated seat threads, `shared` = pooled runtimes,
 //! `logical` = a lane riding other threads' time).
 
+use degenbot_core::op_error;
 use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -667,9 +668,7 @@ impl HostPump<'_> {
                     cause: "lane-death",
                     held,
                 });
-                tracing::error!(
-                    target: "degenbot::fleet",
-                    role = ?self.role,
+                op_error!(domain = solver, role = ?self.role,
                     held,
                     "[fleet-intake] lane-death latch held — Faulted: {held} queued/backlogged unit(s) resolved terminally (never executed), in-flight units complete naturally"
                 );
@@ -1124,8 +1123,8 @@ fn seat_loop(desc: &'static SeatRoleDesc, work: &WorkQueue, done: &mpsc::Sender<
         let ctx = LaneCtx::detached();
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| (job.work)(&ctx)));
         if outcome.is_err() {
-            tracing::error!(
-                target: "degenbot::fleet",
+            op_error!(
+                domain = solver,
                 seat = job.slot,
                 "{} {} unit panicked — the seat survives, the failure is loud",
                 desc.abort_tag,
@@ -1189,8 +1188,7 @@ fn host_loop(
     reason = "the abort path must stay legible with no tracing subscriber installed (test harnesses drop the tracing event); stderr is the process's last message"
 )]
 fn abort_executor(desc: &SeatRoleDesc, context: &str, err: &str) -> ! {
-    tracing::error!(
-        context = %context,
+    op_error!(domain = solver, context = %context,
         error = %err,
         "{} unrecoverable — aborting (stranded {} receipt pipe)",
         desc.abort_tag,
@@ -1267,8 +1265,7 @@ pub(crate) fn global_executor<T>(
             // will not be drained, no lane, no thread. Same message
             // discipline as the abort family (tag + context), minus the
             // abort: the process survives; the binary owns the loud exit.
-            tracing::error!(
-                context = "fleet budget boot",
+            op_error!(domain = solver, context = "fleet budget boot",
                 error = %err,
                 "{} fleet boot refused — typed error surfaces to the caller (FF-T1); the process survives",
                 desc.abort_tag

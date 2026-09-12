@@ -43,6 +43,7 @@
 //! under the state write.
 
 use alloy::rpc::types::Log;
+use degenbot_core::{op_error, op_warn};
 use std::sync::Arc;
 
 use crate::bot_core::Bot;
@@ -135,7 +136,8 @@ impl ReorgCoordinator {
         // unifies V2/V3/V4 onto one `Err` path before any mutation.
         if !bot.has_state_prior_to(pool_id, block) {
             span.record("reorg.action", "too_deep");
-            tracing::error!(
+            op_error!(
+                domain = pump,
                 pool_id,
                 block,
                 "ReorgCoordinator: too-deep reorg — no journal state at or before the target"
@@ -167,7 +169,8 @@ impl ReorgCoordinator {
         // which leaves "duplicate block" indistinguishable from a reorg vs.
         // an unreliable-WS duplication. `warn!` (not `info!`) because a chain
         // reorg is an operator-actionable event, not routine traffic.
-        tracing::warn!(
+        op_warn!(
+            domain = pump,
             pool_id,
             block,
             "ReorgCoordinator: restored pool to its pre-block state + notified subscribers"

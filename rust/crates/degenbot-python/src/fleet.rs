@@ -32,6 +32,7 @@
 //! barrier: the first Python consumer mints the home; no leaf imports
 //! `degenbot._ffi` directly).
 
+use degenbot_core::op_warn;
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -295,9 +296,7 @@ pub fn set_posture_policy(patch: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
     // identical value) is silent: the policy did not change.
     let changed = policy_changes(&current, &effective);
     if !changed.is_empty() {
-        tracing::warn!(
-            target: "degenbot::fleet",
-            changed = %changed,
+        op_warn!(domain = solver, changed = %changed,
             "[fleet-posture] operator retune — cordon thresholds changed and are LIVE"
         );
         // TB4QGX T9 (retune wake gap): a live retune can change the

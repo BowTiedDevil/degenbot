@@ -235,8 +235,8 @@ pub fn solve_worker_count() -> usize {
             override_headroom.as_deref(),
             budget,
         );
-        tracing::info!(
-            target: "degenbot::solver",
+        crate::op_info!(
+            domain = solver,
             cpu_budget = budget,
             solve_workers = workers,
             solve_headroom = DEFAULT_SOLVE_HEADROOM,
@@ -285,9 +285,7 @@ pub(crate) fn ambient_io_worker_count() -> usize {
         let io_override = ::degenbot_config::holder::config().runtime.io_workers;
         let solve = solve_worker_count();
         let workers = ambient_io_worker_count_from(io_override, solve, budget);
-        tracing::info!(
-            target: "degenbot::solver",
-            cpu_budget = budget,
+        crate::op_info!(domain = solver, cpu_budget = budget,
             solve_workers = solve,
             ambient_io_workers = workers,
             io_workers_override = ?io_override,

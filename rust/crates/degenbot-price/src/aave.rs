@@ -16,6 +16,7 @@
 use crate::decode::as_uint;
 use crate::error::{PriceError, PriceResult};
 use alloy::primitives::{Address, U256};
+use degenbot_core::op_warn;
 use degenbot_rpc::contract::Contract;
 use degenbot_rpc::provider::AlloyProvider;
 use std::collections::HashMap;
@@ -110,8 +111,7 @@ impl AavePriceOracle {
                     prices.insert(*asset, price);
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        asset = %asset.to_checksum(None),
+                    op_warn!(domain = aave, asset = %asset.to_checksum(None),
                         %e,
                         "Aave oracle: failed to fetch price"
                     );

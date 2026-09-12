@@ -11,6 +11,7 @@
 //! seats run concurrently through the Rust core — the identical runtime
 //! the legacy `ThreadPoolExecutor` provided (parity gate).
 
+use degenbot_core::op_warn;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -233,8 +234,8 @@ pub fn submit(fn_work: Py<PyAny>) -> PyResult<PyIntakeReceipt> {
         // A waiting driver may be gone (cancelled task): log it, never
         // crash a warm seat.
         if sig_tx.send(()).is_err() {
-            tracing::warn!(
-                target: "degenbot::fleet",
+            op_warn!(
+                domain = ingest,
                 "[fleet-reg] intake unit completed with no waiting consumer"
             );
         }

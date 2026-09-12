@@ -39,6 +39,7 @@
 //! and dumps the probe's last sample — confirming permanent deadlock
 //! independently of the GIL (this thread never acquires the GIL).
 
+use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -112,7 +113,10 @@ fn mark_progress() {
 #[expect(clippy::too_many_lines)] // thread bodies are linear by design
 fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResult<()> {
     if PROBE_RUNNING.swap(true, Ordering::SeqCst) {
-        tracing::warn!("[gil-probe] already running — start_gil_probe() call ignored (idempotent)");
+        op_warn!(
+            domain = pump,
+            "[gil-probe] already running — start_gil_probe() call ignored (idempotent)"
+        );
         return Ok(());
     }
     LAST_PROGRESS_MS.store(now_ms(), Ordering::Relaxed);
@@ -135,8 +139,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
     thread::Builder::new()
         .name("gil-probe".to_string())
         .spawn(move || {
-            tracing::info!(
-                interval = ?interval,
+            op_info!(domain = pump, interval = ?interval,
                 threshold = ?threshold,
                 "[gil-probe] sampling"
             );
@@ -158,8 +161,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                 // merely being busy (probe still sampling).
                 LAST_PROBE_SAMPLE_MS.store(now, Ordering::Relaxed);
                 if elapsed >= threshold {
-                    tracing::warn!(
-                        acquire_ms = %elapsed.as_millis(),
+                    op_warn!(domain = pump, acquire_ms = %elapsed.as_millis(),
                         gap,
                         "[gil-probe] GIL held: acquire took ms — main thread holding GIL"
                     );
@@ -197,8 +199,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
     thread::Builder::new()
         .name("gil-probe-watchdog".to_string())
         .spawn(move || {
-            tracing::info!(
-                stuck = ?stuck,
+            op_info!(domain = pump, stuck = ?stuck,
                 "[gil-probe] stuck-watchdog armed"
             );
             let stuck_ms = u64::try_from(stuck.as_millis()).unwrap_or(u64::MAX);
@@ -218,8 +219,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                         since_progress,
                         since_sample,
                     } => {
-                        tracing::info!(
-                            since_progress,
+                        op_info!(domain = pump, since_progress,
                             since_sample,
                             "[gil-probe] main loop idle: no progress — busy, not a GIL deadlock \\
                              (if this persists for minutes while sampling stays fresh, suspect a \
@@ -230,8 +230,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                             if let Some(p) =
                                 crate::diagnostics::thread_registry::dump_to_file()
                             {
-                                tracing::error!(
-                                    path = %p.display(),
+                                op_error!(domain = pump, path = %p.display(),
                                     since_progress,
                                     "[gil-probe] long-Busy episode: thread-registry + futex table dumped (non-GIL wedge suspect)"
                                 );
@@ -250,14 +249,12 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                         alarm_count += 1;
                         if alarm_count == 1 || alarm_count.is_multiple_of(10) {
                             if let Some(p) = crate::diagnostics::thread_registry::dump_to_file() {
-                                tracing::error!(
-                                    path = %p.display(),
+                                op_error!(domain = pump, path = %p.display(),
                                     "[gil-probe] thread-registry + futex table dumped"
                                 );
                             }
                         }
-                        tracing::error!(
-                            since_progress,
+                        op_error!(domain = pump, since_progress,
                             since_sample,
                             stuck = ?stuck,
                             "[gil-probe] GIL DEADLOCK confirmed"

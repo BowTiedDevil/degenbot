@@ -28,6 +28,7 @@
 //! driver runs `run_aave_update` from a worker thread with NO ambient tokio
 //! runtime. See [`crate::pool`] for the same constraint.
 
+use degenbot_core::{op_error, op_warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -75,12 +76,12 @@ impl ProgressSink for PyProgressSink {
             let dict = match aave_progress_report_to_dict(py, progress) {
                 Ok(d) => d,
                 Err(e) => {
-                    tracing::error!(%e, "run_aave_update: failed to build progress dict");
+                    op_error!(domain = aave, %e, "run_aave_update: failed to build progress dict");
                     return;
                 }
             };
             if let Err(err) = self.callback.call1(py, (dict,)) {
-                tracing::warn!(%err, "run_aave_update: Python progress callback raised");
+                op_warn!(domain = aave, %err, "run_aave_update: Python progress callback raised");
             }
         });
     }

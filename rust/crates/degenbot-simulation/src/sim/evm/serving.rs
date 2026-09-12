@@ -46,6 +46,7 @@
 
 #![cfg_attr(test, allow(clippy::unreadable_literal))]
 
+use degenbot_core::op_info;
 use std::sync::OnceLock;
 
 use alloy::primitives::{Address, U256};
@@ -126,8 +127,7 @@ pub fn serve_tracked_slot(
     let probe = anchor.probe_tracked_storage_slot(address, index)?;
     let served = U256::from_be_bytes(probe.engine_word.0);
     let delta_xor = served ^ rpc_value;
-    tracing::info!(
-        pool_addr = %format!("{address:?}"),
+    op_info!(domain = sim, pool_addr = %format!("{address:?}"),
         slot = %index,
         kind = ?probe.kind,
         served = %hex_padded_u256(served),

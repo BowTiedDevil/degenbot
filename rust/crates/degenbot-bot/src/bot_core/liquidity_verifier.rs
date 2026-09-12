@@ -22,6 +22,7 @@
 //!
 //! On ANY mismatch, returns `Err` — the bot must not operate with stale tick data.
 
+use degenbot_core::{op_info, op_warn};
 use hashbrown::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -167,9 +168,7 @@ fn log_tick_map_desync(
     divergences: &[TickDivergence],
 ) {
     let dump_maps = crate::bot_core::stance::config().trace.dump_tick_maps;
-    tracing::info!(
-        target: crate::telemetry::DIAGNOSTIC_TARGET,
-        pool = %pool_ident,
+    op_info!(domain = verify, pool = %pool_ident,
         block_tag = %block_tag,
         tick_spacing,
         active_tick,
@@ -299,8 +298,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     }
     if let Some(msg) = first_mismatch {
         if crate::bot_core::stance::config().verify.verify_dbg && !all_mismatches.is_empty() {
-            tracing::warn!(
-                %pool_address,
+            op_warn!(domain = verify, %pool_address,
                 phase,
                 block_number,
                 divergent_tick_count = all_mismatches.len(),
@@ -541,9 +539,7 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
         if our_gross != on_chain_gross {
             // TEMP DEBUG: dump journal depth + update_block for the failing pool
             // so we can tell whether ANY events were applied since the snapshot seed.
-            tracing::info!(
-                target: crate::telemetry::DIAGNOSTIC_TARGET,
-                pool_addr = %pool_addr,
+            op_info!(domain = verify, pool_addr = %pool_addr,
                 tick_idx = d.tick,
                 block_tag = %block_tag,
                 engine_gross = our_gross,
