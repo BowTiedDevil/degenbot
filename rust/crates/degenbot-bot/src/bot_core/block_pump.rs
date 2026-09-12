@@ -1074,7 +1074,7 @@ impl BlockPump {
                     // this arm nest under it for free.
                     let epoch_seq = fsm.rewind_seq();
                     let new_block_span = tracing::info_span!(
-                        "degenbot.epoch",
+                        "degenbot.epoch.run",
                         epoch.block = number,
                         epoch.seq = epoch_seq,
                         block.number = number,
@@ -3783,7 +3783,7 @@ mod tests {
         // Breadcrumbs on the interrupted block's epoch root span.
         let block_spans: Vec<u64> = spans
             .iter()
-            .filter(|(n, _, _)| n == "degenbot.epoch")
+            .filter(|(n, _, _)| n == "degenbot.epoch.run")
             .map(|(_, id, _)| *id)
             .collect();
         assert!(!block_spans.is_empty());
@@ -6833,7 +6833,7 @@ mod tests {
         let my_spans: Vec<_> = spans
             .iter()
             .filter(|sp| {
-                sp.name.as_ref() == "degenbot.epoch"
+                sp.name.as_ref() == "degenbot.epoch.run"
                     && sp.attributes.iter().any(|kv| {
                         kv.key == opentelemetry::Key::from_static_str("epoch.block")
                             && (matches!(kv.value, opentelemetry::Value::I64(v) if v == MY_BLOCK_I64)
@@ -6879,7 +6879,7 @@ mod tests {
         let next_spans: Vec<_> = spans
             .iter()
             .filter(|sp| {
-                sp.name.as_ref() == "degenbot.epoch"
+                sp.name.as_ref() == "degenbot.epoch.run"
                     && sp.attributes.iter().any(|kv| {
                         kv.key == opentelemetry::Key::from_static_str("epoch.block")
                             && (matches!(kv.value, opentelemetry::Value::I64(v) if v == i64::try_from(NEXT_BLOCK).unwrap_or(i64::MAX))
@@ -6969,7 +6969,7 @@ mod tests {
 
         let mut seen = std::collections::HashSet::new();
         for sp in &spans {
-            if sp.name.as_ref() == "degenbot.epoch" {
+            if sp.name.as_ref() == "degenbot.epoch.run" {
                 for kv in &sp.attributes {
                     if kv.key == opentelemetry::Key::from_static_str("epoch.block") {
                         if let opentelemetry::Value::String(ref v) = kv.value {

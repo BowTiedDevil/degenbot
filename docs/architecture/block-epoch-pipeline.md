@@ -230,7 +230,7 @@ machine). Source: `rust/crates/degenbot-ingestion/src/`
   wrapper (Z4Z6VO) guarding `BotState`; hold-tracking forensics off by default
   (`DEGENBOT_STATE_LOCK_DIAG`), the blocked-wait warn threshold (500 ms) always on.
 - `bot_core/stage_telemetry.rs` + `bot_core/pump_telemetry.rs` — BF43PM: one
-  `degenbot.epoch` ROOT per block epoch (carrying `epoch.block` + `epoch.seq`) and
+  `degenbot.epoch.run` ROOT per block epoch (carrying `epoch.block` + `epoch.seq`) and
   one `degenbot.stage.<stage>` span per transition (`stage.from`→`stage.to`,
   `queue.age_us`); open rows (`streaming`, `rewind`) are force-closed past
   `STAGE_MAX_AGE_SECS` by `force_close_aged` (the SONJQA/G3 law). Metric series
@@ -316,7 +316,7 @@ holds on the solve path collapse to enqueue-length, so the solve is uncontended 
 
 The proto-pump waterfall names are fully retired: `degenbot.pump.block`,
 `degenbot.pump.log_wait`, and `degenbot.pump.apply_stream` no longer exist as
-spans; the per-header beat became the `degenbot.epoch` root and the opaque
+spans; the per-header beat became the `degenbot.epoch.run` root and the opaque
 children became `degenbot.stage.<stage>` rows. The operational lesson they
 encoded survives as the watchdog's span force-close bound
 (`LOG_WAIT_MAX_AGE_SECS` / `STAGE_MAX_AGE_SECS`).

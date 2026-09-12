@@ -104,7 +104,7 @@ export DEGENBOT_PUMP_DEBOUNCE_MS="${DEGENBOT_PUMP_DEBOUNCE_MS:-15}"
 # table lives in docs/rust-config-keys.md. Observability note (MROOY7): the
 # retired pump/queue surface (spans degenbot.pump.block / pump.log_wait /
 # pump.apply_stream, series degenbot_drain_queue_depth) is succeeded by the
-# stage telemetry — spans degenbot.epoch + degenbot.stage.{streaming,quiesced,
+# stage telemetry — spans degenbot.epoch.run + degenbot.stage.{streaming,quiesced,
 # publish,finalize,rewind}, series degenbot_stage_publish_cycle_seconds /
 # degenbot_stage_rewind_total / _duration_seconds; the metrics endpoint is
 # DEGENBOT_METRICS_ADDR (default 127.0.0.1:9464).

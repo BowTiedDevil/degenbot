@@ -269,7 +269,7 @@ groups:
             where submission/delivery subscribe - has its 5m p95 above 2s.
             Warning level: money is landing but late. Investigated with the
             dashboard stage-cycle waterfall (delivery / burst / settle /
-            streaming-age legs) and a degenbot.epoch trace from Jaeger.
+            streaming-age legs) and a degenbot.epoch.run trace from Jaeger.
         data:
           - refId: A
             relativeTimeRange: { from: 600, to: 0 }

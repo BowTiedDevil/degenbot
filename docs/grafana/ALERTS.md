@@ -93,7 +93,7 @@ shared instruments.
   `docs/grafana/hotpath-profiling.json` dashboard — the enablement and scrape
   recipe is [`HOTPATH.md`](HOTPATH.md).
 - Traces: Jaeger UI, service `degenbot-bot`. Per-block traces root at
-  `degenbot.epoch` (attrs `epoch.block` / `epoch.seq` plus the pre-solve gap
+  `degenbot.epoch.run` (attrs `epoch.block` / `epoch.seq` plus the pre-solve gap
   fields); the ADR-041 stage spans (`degenbot.stage.streaming` / `quiesced` /
   `publish` / `finalize` / `rewind`) and the solve arm nest under it. The
   `degenbot.pump.block` / `pump.log_wait` / `pump.apply_stream` spans are
@@ -155,7 +155,7 @@ Rule inventory (10 rules, 2 groups, 60s evaluation):
   race ends at the Published edge (submission/delivery subscribe there), not
   at solve; the retired drain-era header→solved endpoint no longer owns this
   signal. Triage with the dashboard stage-cycle waterfall (delivery / burst /
-  settle / streaming-age legs) plus a `degenbot.epoch` Jaeger trace.
+  settle / streaming-age legs) plus a `degenbot.epoch.run` Jaeger trace.
 - **DegenbotEpochStaleDrops** - `degenbot_epoch_stale_drops_total` > 0 for
   10m: the I3 rewind-generation fail-fast is dropping stage work as stale
   epochs (the loud warn in `BlockPump::reorg_flying_stale`). Early warning

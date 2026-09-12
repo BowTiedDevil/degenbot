@@ -5703,14 +5703,14 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             // Published context for block 100 (a completed earlier settle).
             {
-                let block100 = tracing::info_span!("degenbot.epoch", block.number = 100u64);
+                let block100 = tracing::info_span!("degenbot.epoch.run", block.number = 100u64);
                 let _guard = block100.enter();
                 crate::telemetry::publish_block_context(100);
             }
 
             // The newer block's loop context is ambient during both solves
             // (the stale-crossing shape: block 101's context is current).
-            let ambient = tracing::info_span!("degenbot.epoch", block.number = 101u64);
+            let ambient = tracing::info_span!("degenbot.epoch.run", block.number = 101u64);
             let _ambient_guard = ambient.enter();
 
             // (1) Exact hit: solve of the PUBLISHED block 100 re-attaches to
@@ -5739,8 +5739,8 @@ mod tests {
                 }).map_or_else(|| panic!("{name} for block {blk} must be exported"), |sp| sp.span_context.span_id())
         };
 
-        let published_100 = span_for_block(100, "degenbot.epoch");
-        let ambient_101 = span_for_block(101, "degenbot.epoch");
+        let published_100 = span_for_block(100, "degenbot.epoch.run");
+        let ambient_101 = span_for_block(101, "degenbot.epoch.run");
         let solve_100 = span_for_block(100, "degenbot.arb.solve");
         let solve_101 = span_for_block(101, "degenbot.arb.solve");
 

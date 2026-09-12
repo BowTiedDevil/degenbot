@@ -108,7 +108,7 @@ fn simulate_dispatch_span_carries_published_block_parent() {
     let _guard = tracing::subscriber::set_default(subscriber);
 
     {
-        let block_span = tracing::info_span!("degenbot.epoch", block.number = 77);
+        let block_span = tracing::info_span!("degenbot.epoch.run", block.number = 77);
         let _entered = block_span.enter();
         // Production call site: `compute_diff_and_send` under the settle-
         // entered block span.
@@ -129,7 +129,7 @@ fn simulate_dispatch_span_carries_published_block_parent() {
     // exported data, not from a live handle.)
     let block = spans
         .iter()
-        .find(|s| s.name.as_ref() == "degenbot.epoch")
+        .find(|s| s.name.as_ref() == "degenbot.epoch.run")
         .expect("epoch root span must be exported");
     let child = spans
         .iter()
@@ -169,7 +169,7 @@ fn attach_published_parent_parents_a_detached_task_span() {
     let _guard = tracing::subscriber::set_default(subscriber);
 
     {
-        let block_span = tracing::info_span!("degenbot.epoch", block.number = 91);
+        let block_span = tracing::info_span!("degenbot.epoch.run", block.number = 91);
         let _entered = block_span.enter();
         telemetry::publish_block_context(91);
     }
@@ -186,7 +186,7 @@ fn attach_published_parent_parents_a_detached_task_span() {
     let spans = exporter.get_finished_spans().expect("spans");
     let block = spans
         .iter()
-        .find(|s| s.name.as_ref() == "degenbot.epoch")
+        .find(|s| s.name.as_ref() == "degenbot.epoch.run")
         .expect("epoch root span must be exported");
     let verify = spans
         .iter()

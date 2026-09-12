@@ -9,7 +9,7 @@ the Jaeger-side investigation guide.
 Sources of truth:
 
 - Spans/events: `rust/crates/degenbot-bot/src/arb_engine/solver_dispatch.rs`
-  (the `[solve-phase]` family), `bot_core/block_pump.rs` (`degenbot.epoch` root + pre-solve
+  (the `[solve-phase]` family), `bot_core/block_pump.rs` (`degenbot.epoch.run` root + pre-solve
   gap fields), `bot_core/stage_telemetry.rs` (`degenbot.stage.*` per-transition spans),
   `arb_engine/engine_handle.rs` (`degenbot.arb.solve`).
 - Metrics: `rust/crates/degenbot-bot/src/instruments.rs` (`degenbot_*` families).
@@ -62,8 +62,8 @@ OTel context: simulate/bundle spans exported as ROOT traces, correlated only
 by the `current_block` tag. The bridge (`telemetry::publish_block_context` at
 batch send + `telemetry::simulate_dispatch_span` at the Python seam) parents
 the dispatch fan-out to the published block's span, so ONE Jaeger trace now
-carries `degenbot.epoch → arb.solve → simulate.dispatch → bundle.*` (the per-epoch
-`degenbot.epoch` root succeeded the retired `pump.block` waterfall, BF43PM). The lookup
+carries `degenbot.epoch.run → arb.solve → simulate.dispatch → bundle.*` (the per-epoch
+`degenbot.epoch.run` root succeeded the retired `pump.block` waterfall, BF43PM). The lookup
 falls back to the closest earlier block because Python's `current_block` can
 be one ahead (the batch is dispatched after the next header arrives). If
 simulate spans reappear as roots, the registry capture (batch send) or the
@@ -184,7 +184,7 @@ twin simulators are `v3_simulate_swap`/`v4_simulate_swap` in degenbot-pools.
 
 ### S5. Pump block span ≫ solve span total
 
-`degenbot.epoch` (successor of the retired `degenbot.pump.block`) should wrap the epoch tightly.
+`degenbot.epoch.run` (successor of the retired `degenbot.pump.block`) should wrap the epoch tightly.
 If epoch duration exceeds
 the sum of child solves by a lot, time is going to: header decode, log decode,
 state apply (each has a Prometheus histogram: `degenbot_log_decode`,
@@ -197,7 +197,7 @@ new spans.
 
 ### S7. header_to_publish dominated by a flat settle wait
 
-Decompose the pre-solve gap first — `degenbot.epoch` root fields (recorded at the settle point):
+Decompose the pre-solve gap first — `degenbot.epoch.run` root fields (recorded at the settle point):
 `header_to_first_log_us` (header → first relevant log), `log_burst_us`
 (first → last relevant log, i.e. the apply work), `settle_wait_us` (last log →
 settle decision). The settle wait is the publish debounce — it costs roughly
@@ -243,7 +243,7 @@ Known incident class, not a bot bug:
 
 ## Telemetry inventory (quick reference)
 
-Jaeger spans: `degenbot.epoch` (trace ROOT per block epoch, attrs
+Jaeger spans: `degenbot.epoch.run` (trace ROOT per block epoch, attrs
 `epoch.block`/`epoch.seq`), `degenbot.stage.{streaming,quiesced,publish,finalize,rewind}`
 (one span per ADR-041 stage transition; `streaming`/`rewind` hold open, the rest are point
 spans), `degenbot.arb.solve` (child, per solve cycle), `degenbot.path.register`

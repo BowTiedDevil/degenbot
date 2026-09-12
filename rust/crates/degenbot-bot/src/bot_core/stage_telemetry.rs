@@ -492,7 +492,7 @@ mod otel_tests {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         let mut tel = StageTelemetry::new();
-        let root = tracing::info_span!("degenbot.epoch", epoch.block = 100u64);
+        let root = tracing::info_span!("degenbot.epoch.run", epoch.block = 100u64);
         tel.on_first_log(&root, Epoch::at(100));
         // Age the interval past the max age, then run the force-close.
         if let Some(open) = tel.open.as_mut() {
