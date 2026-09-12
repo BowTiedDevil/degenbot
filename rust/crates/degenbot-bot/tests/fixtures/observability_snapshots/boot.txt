@@ -1,0 +1,19 @@
+# observability snapshot: boot
+# regenerate: UPDATE_GOLDEN=1 cargo test -p degenbot-bot --features otel --test observability_snapshots
+## console
+INFO degenbot::state: message=boot probe
+INFO degenbot::path: message=boot probe
+INFO degenbot::solver: message=boot probe
+INFO degenbot::sim: message=boot probe
+INFO degenbot::pump: message=boot probe
+INFO degenbot::exec: message=boot probe
+INFO degenbot::verify: message=boot probe
+INFO degenbot::ingest: message=boot probe
+INFO degenbot::rpc: message=boot probe
+INFO degenbot::aave: message=boot probe
+WARN degenbot::diag: message=diagnostic emitted outside an engine span (this warning fires once; ADR-043 §3) context=observability_snapshots
+DEBUG degenbot::sim: message=boot probe (debug)
+## spans
+## series
+degenbot_metric_series{otel_scope_name}
+target_info{service_name,service_version,telemetry_sdk_language,telemetry_sdk_name,telemetry_sdk_version}

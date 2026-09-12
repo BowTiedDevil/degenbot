@@ -1,0 +1,13 @@
+# observability snapshot: one_revert
+# regenerate: UPDATE_GOLDEN=1 cargo test -p degenbot-bot --features otel --test observability_snapshots
+## console
+## spans
+degenbot.epoch.run attrs=[block.number=21000000,code.file.path=crates/degenbot-bot/tests/observability_snapshots.rs,code.module.name=observability_snapshots,epoch.block=21000000,epoch.seq=0,target=observability_snapshots] events=[]
+degenbot.epoch.run attrs=[block.number=21000000,code.file.path=crates/degenbot-bot/tests/observability_snapshots.rs,code.module.name=observability_snapshots,epoch.block=21000000,epoch.seq=1,target=observability_snapshots] events=[]
+degenbot.stage.rewind attrs=[code.file.path=crates/degenbot-bot/src/bot_core/stage_telemetry.rs,code.module.name=degenbot_bot::bot_core::stage_telemetry,epoch.block=21000000,epoch.seq=0,stage.from=streaming,stage.to=rewind,target=degenbot_bot::bot_core::stage_telemetry] events=[]
+degenbot.stage.streaming attrs=[code.file.path=crates/degenbot-bot/src/bot_core/stage_telemetry.rs,code.module.name=degenbot_bot::bot_core::stage_telemetry,epoch.block=21000000,epoch.seq=0,stage.from=streaming,stage.to=streaming,target=degenbot_bot::bot_core::stage_telemetry] events=[]
+degenbot.stage.streaming attrs=[code.file.path=crates/degenbot-bot/src/bot_core/stage_telemetry.rs,code.module.name=degenbot_bot::bot_core::stage_telemetry,epoch.block=21000000,epoch.seq=1,stage.from=rewind,stage.to=streaming,target=degenbot_bot::bot_core::stage_telemetry] events=[]
+degenbot.stage.streaming attrs=[code.file.path=crates/degenbot-bot/src/bot_core/stage_telemetry.rs,code.module.name=degenbot_bot::bot_core::stage_telemetry,epoch.block=21000000,epoch.seq=1,stage.from=streaming,stage.to=streaming,target=degenbot_bot::bot_core::stage_telemetry] events=[]
+## series
+degenbot_metric_series{otel_scope_name}
+target_info{service_name,service_version,telemetry_sdk_language,telemetry_sdk_name,telemetry_sdk_version}
