@@ -39,6 +39,15 @@ pub const DEFAULT_METRICS_ADDR: &str = "127.0.0.1:9464";
 /// Env var overriding the scrape endpoint.
 const METRICS_ADDR_ENV: &str = "DEGENBOT_METRICS_ADDR";
 
+/// Live distinct-series count, refreshed by every [`render`] (the scrape path)
+/// and reported by the `degenbot.metric_series` observable gauge (ADR-043 §9).
+///
+/// The gauge callback MUST NOT call [`prometheus::Registry::gather`] itself:
+/// it runs inside the exporter's collect, so a nested gather re-enters the
+/// registry lock and deadlocks the scrape. Reading this atomic keeps the
+/// callback re-entrancy-free; the reported value lags one scrape.
+static SERIES_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Errors from metrics initialization.
 #[derive(Debug, Error)]
 pub enum MetricsInitError {
@@ -69,7 +78,28 @@ pub fn build_prometheus_provider(
         .with_resource(crate::otel::bot_resource())
         .with_reader(exporter)
         .build();
+    install_metric_series_self_metric(&provider);
     Ok((provider, registry))
+}
+
+/// ADR-043 §9: expose the live distinct-series count so a cardinality blowup
+/// is visible BEFORE the collector falls over.
+///
+/// The value is taken from the registry at scrape time and includes this
+/// gauge's own series, so the floor is 1 and no threshold can be tuned to
+/// zero. It is the metric-side twin of the log-volume gate: an unexpected jump
+/// is a diff, not a surprise.
+fn install_metric_series_self_metric(provider: &SdkMeterProvider) {
+    let _self_metric = provider
+        .meter(METER_NAME)
+        .u64_observable_gauge("degenbot.metric_series")
+        .with_description(
+            "Live distinct Prometheus series count (cardinality twin, ADR-043 section 9)",
+        )
+        .with_callback(|observer| {
+            observer.observe(SERIES_COUNT.load(Ordering::Relaxed), &[]);
+        })
+        .build();
 }
 
 /// Render a registry to the Prometheus text exposition format (what
@@ -84,7 +114,15 @@ pub fn render(registry: &prometheus::Registry) -> String {
     if encoder.encode(&registry.gather(), &mut buf).is_err() {
         return String::new();
     }
-    String::from_utf8(buf).unwrap_or_default()
+    let text = String::from_utf8(buf).unwrap_or_default();
+    // ADR-043 §9: refresh the series-count self-metric from the scrape we just
+    // rendered (sample lines are everything that is not a `#` comment).
+    let series = text
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .count() as u64;
+    SERIES_COUNT.store(series, Ordering::Relaxed);
+    text
 }
 
 /// Serve `/metrics` until `stop` is set: one accept loop of blocking I/O on

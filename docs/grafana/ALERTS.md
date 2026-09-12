@@ -57,6 +57,15 @@ Half of submitted txs never confirming - fee/nonce/pool-contention problem.
       > 0.8
 More than 80% of found profit is being left on the table (unsubmitted).
 
+### Metric cardinality high (ADR-043 §9)
+    expr: degenbot_metric_series > 2000
+    for: 15m
+The `degenbot.metric_series` self-metric reports the live distinct-series
+count from every scrape (it includes its own series, so the floor is 1).
+Ordinary operation sits at a flat floor; a rising line means a label gained
+values — the collector falls over before the dashboards do. Raise the
+threshold deliberately or delete the offending label.
+
 ### Simulate error rate
     expr: sum(rate(degenbot_simulate_verdicts_total{outcome="error"}[10m]))
       / clamp_min(sum(rate(degenbot_simulate_verdicts_total[10m])), 0.001) > 0.1

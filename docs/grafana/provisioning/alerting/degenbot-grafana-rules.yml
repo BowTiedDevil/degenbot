@@ -318,6 +318,35 @@ groups:
               expression: A
               conditions:
                 - evaluator: { type: gt, params: [0] }
+      - uid: degenbot-metric-cardinality
+        title: DegenbotMetricCardinalityHigh
+        condition: C
+        for: 15m
+        annotations:
+          summary: degenbot metric cardinality high - series count growing
+          description: >-
+            The ADR-043 section 9 self-metric (distinct Prometheus series)
+            climbed past the operator ceiling. A steady floor is expected
+            (instruments + labels); a rising line means a bounded label gained
+            values (or a new instrument with an unbounded key landed) and the
+            collector will fall over before the dashboards do. Raise the
+            threshold deliberately, or delete the offending label.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: eea7hc2lizlz4d
+            model:
+              expr: 'degenbot_metric_series > 2000'
+              datasource: { type: prometheus, uid: eea7hc2lizlz4d }
+              editorMode: code
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
       - uid: degenbot-simulate-error-rate
         title: DegenbotSimulateErrorRate
         condition: C
