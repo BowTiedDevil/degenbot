@@ -635,6 +635,15 @@ impl HostPump<'_> {
         }
     }
 
+    /// Publish the live backlog depth to the `degenbot_fleet_intake_backlog`
+    /// gauge (TB4QGX T7). Called at every pump exit and after a fault drain,
+    /// so a stalled held backlog is observable.
+    fn publish_backlog(&self) {
+        if let Some(pipeline) = crate::instruments::pipeline() {
+            pipeline.set_intake_backlog(self.role.label(), self.backlog.len() as u64);
+        }
+    }
+
     /// The Faulted arm (TB4QGX T6): drain the backlog AND the role queue and
     /// report the held count to the S2 fault watch. Granted in-flight units
     /// are untouched (they complete naturally). A held unit runs ZERO times
@@ -645,6 +654,7 @@ impl HostPump<'_> {
         let held = self.backlog.len() + self.host.queue_len(self.role);
         self.backlog.clear();
         let _ = self.host.drain_role_queue(self.role);
+        self.publish_backlog();
         if let Some(fault) = self.fault {
             if fault.snapshot().is_none() {
                 fault.set(crate::arb_engine::fleet_intake::IntakeFault {
@@ -850,6 +860,7 @@ impl HostPump<'_> {
             }
         }
         let progressed = granted > 0 || self.backlog.len() < backlog_before;
+        self.publish_backlog();
         if let NoProgressStep::Tipping { consecutive } = self.no_progress.step(admitted, progressed)
         {
             self.discipline.fail(
@@ -1293,6 +1304,7 @@ mod tests {
         SeatSink,
     };
     use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
+    use proptest::prelude::*;
 
     /// A FRESH hermetic posture owner (leaked to 'static): every test boot
     /// gets its own owner, never the process global (7KAPBB isolation).
@@ -2901,5 +2913,231 @@ mod tests {
             Some(first),
             "the record is first-wins"
         );
+    }
+
+    // ── T7 (TB4QGX): mechanized safety, liveness, reachability ────────────
+    //
+    // Falsification contract (adversarial-review requirement): every property
+    // below states HOW it fails, not merely that it passes.
+    //   * S (safety ledger) — the FIRST symbol at which the conservation
+    //     equation breaks is the falsifying trace; proptest shrinks the
+    //     symbol sequence to that prefix and the assert prints it.
+    //   * L (liveness) — the falsifying trace is a reachable state whose
+    //     backlog the pure predicate ADMITS but ONE BackstopTick pump fails
+    //     to shrink; the admission tuple is printed.
+    //   * BackstopTick-alone — the falsifying trace is a reachable admitted
+    //     backlog still non-empty after a bare pump (no hint messages).
+    //   * Reachability — the falsifying trace is a reachable non-Faulted
+    //     Backed state with NO enabled transition (the predicate does not
+    //     admit and the backstop is not armed).
+
+    /// The property alphabet: abstract host inputs a real drive can deliver.
+    /// `Backstop` is the recv-timeout tick; `Cordon`/`Lift` are the
+    /// recoverable posture edges; `Edge` is the no-op posture notification.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Sym {
+        Enqueue,
+        SeatDone,
+        Backstop,
+        Edge,
+        Cordon,
+        Lift,
+    }
+
+    fn sym_strategy() -> impl Strategy<Value = Sym> {
+        prop_oneof![
+            Just(Sym::Enqueue),
+            Just(Sym::Enqueue),
+            Just(Sym::SeatDone),
+            Just(Sym::Backstop),
+            Just(Sym::Edge),
+            Just(Sym::Cordon),
+            Just(Sym::Lift),
+        ]
+    }
+
+    /// Apply one symbol to a driven host; returns the (enqueued, completed)
+    /// deltas for the ledger. A `SeatDone` with nothing in flight is a legal
+    /// no-op: a stray completion names a slot that does not exist and the
+    /// real discipline would panic (T5), so the property skips it.
+    fn apply_sym(driven: &mut DrivenHost, owner: &'static PostureOwner, sym: Sym) -> (u64, u64) {
+        match sym {
+            Sym::Enqueue => {
+                let unit = driven.next_unit();
+                driven.apply_and_pump(HostMsg::Enqueue(unit));
+                (1, 0)
+            }
+            Sym::SeatDone => {
+                driven.absorb_new_grants();
+                if driven.in_flight.is_empty() {
+                    (0, 0)
+                } else {
+                    driven.complete_oldest_in_flight();
+                    (0, 1)
+                }
+            }
+            Sym::Backstop => {
+                driven.pump_handle().pump();
+                (0, 0)
+            }
+            Sym::Edge => {
+                driven.apply_and_pump(HostMsg::PostureEdge);
+                (0, 0)
+            }
+            Sym::Cordon => {
+                if owner.current() == FleetPosture::Nominal {
+                    force_cordoned(owner);
+                }
+                driven.pump_handle().pump();
+                (0, 0)
+            }
+            Sym::Lift => {
+                if owner.current() == FleetPosture::Cordoned {
+                    lift_cordon(owner);
+                }
+                driven.pump_handle().pump();
+                (0, 0)
+            }
+        }
+    }
+
+    proptest! {
+        /// T7 — S: `submitted == in-flight + completed + queued + backlog`
+        /// after every transition, over arbitrary symbol sequences.
+        #[test]
+        fn safety_ledger_is_conserved_over_symbol_sequences(
+            syms in prop::collection::vec(sym_strategy(), 0..40),
+        ) {
+            let owner = hermetic_owner();
+            let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+            let mut submitted: u64 = 0;
+            let mut completed: u64 = 0;
+            for (i, sym) in syms.iter().enumerate() {
+                let (e, c) = apply_sym(&mut driven, owner, *sym);
+                submitted += e;
+                completed += c;
+                driven.absorb_new_grants();
+                let queued = driven.host.queue_len(driven.role()) as u64;
+                let backlog = driven.backlog.len() as u64;
+                let in_flight = driven.in_flight.len() as u64;
+                let mut grants = driven.seated_units();
+                grants.sort_unstable();
+                grants.dedup();
+                prop_assert_eq!(
+                    submitted,
+                    in_flight + completed + queued + backlog,
+                    "S (ledger) broken at step {} of {:?}: submitted={} inflight={} completed={} queued={} backlog={}",
+                    i, syms, submitted, in_flight, completed, queued, backlog
+                );
+                prop_assert_eq!(
+                    grants.len() as u64,
+                    in_flight + completed,
+                    "S (grants) broken at step {} of {:?}",
+                    i, syms
+                );
+            }
+        }
+
+        /// T7 — L: every reachable state whose backlog the pure predicate
+        /// ADMITS shrinks under ONE BackstopTick pump, with no
+        /// enqueue/completion hint. FALSIFICATION: the printed admission
+        /// tuple + backlog depth at which the pump was a no-op.
+        #[test]
+        fn liveness_backstop_tick_drains_any_admitted_backlog(
+            syms in prop::collection::vec(sym_strategy(), 0..20),
+        ) {
+            let owner = hermetic_owner();
+            let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+            for sym in &syms {
+                let _ = apply_sym(&mut driven, owner, *sym);
+            }
+            driven.absorb_new_grants();
+            if !driven.backlog.is_empty() {
+                let inputs = driven.pump_handle().admission_inputs();
+                let admitted = admission(inputs).admits();
+                let before = driven.backlog.len();
+                driven.pump_handle().pump();
+                if admitted {
+                    prop_assert!(
+                        driven.backlog.len() < before,
+                        "L broken: admitted backlog did not shrink under one BackstopTick \
+                         (inputs={:?}, backlog_before={}, backlog_after={}, sequence={:?})",
+                        inputs, before, driven.backlog.len(), syms
+                    );
+                }
+            }
+        }
+    }
+
+    /// T7 — "`BackstopTick` ALONE is sufficient to drain any reachable
+    /// admissible backlog": enumerate backlog depths, park under a
+    /// recoverable cordon, LIFT with no message, then run ONE bare pump.
+    /// FALSIFICATION: a backlog still non-empty after the pump, or a unit
+    /// seated twice.
+    #[test]
+    fn backstop_tick_alone_drains_an_admissible_backlog() {
+        for backlog in 1..=3usize {
+            let owner = hermetic_owner();
+            let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+            force_cordoned(owner);
+            for _ in 0..backlog {
+                let unit = driven.next_unit();
+                driven.apply_and_pump(HostMsg::Enqueue(unit));
+            }
+            assert_eq!(driven.backlog.len(), backlog, "held under the cordon");
+            lift_cordon(owner);
+            // NO Enqueue and NO SeatDone — the backstop tick alone.
+            driven.pump_handle().pump();
+            assert!(
+                driven.backlog.is_empty(),
+                "backlog of {backlog} not drained by a single backstop pump"
+            );
+            driven.absorb_new_grants();
+            let mut units = driven.seated_units();
+            units.sort_unstable();
+            units.dedup();
+            assert_eq!(units.len(), backlog, "every held unit seated exactly once");
+        }
+    }
+
+    /// T7 — exhaustive small-bound reachability: over (backlog 0..=2) ×
+    /// (posture Nominal/Cordoned), a non-empty non-Faulted backlog ALWAYS
+    /// has an enabled transition — the pure predicate admits a drain, or
+    /// `progress() == Backed` arms the `BackstopTick`. FALSIFICATION: a parked
+    /// state with both false (the 9,955 zero-transition trap).
+    #[test]
+    fn no_reachable_non_faulted_backlog_has_zero_enabled_transitions() {
+        for backlog in 0..=2usize {
+            for cordon in [false, true] {
+                let owner = hermetic_owner();
+                let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+                if cordon {
+                    force_cordoned(owner);
+                }
+                for _ in 0..backlog {
+                    let unit = driven.next_unit();
+                    driven.apply_and_pump(HostMsg::Enqueue(unit));
+                }
+                let held = !driven.backlog.is_empty();
+                let progress = driven.pump_handle().progress();
+                assert_ne!(
+                    progress,
+                    ProgressState::Faulted,
+                    "no lane death was recorded (backlog={backlog}, cordon={cordon})"
+                );
+                if !held {
+                    assert_eq!(progress, ProgressState::Idle, "empty backlog is Idle");
+                    continue;
+                }
+                assert_eq!(progress, ProgressState::Backed, "a held backlog is Backed");
+                let admits = admission(driven.pump_handle().admission_inputs()).admits();
+                // `Backed` arms the backstop (run() blocks on recv_timeout
+                // iff Backed), so the enabled-transition disjunction is total.
+                assert!(
+                    admits || progress == ProgressState::Backed,
+                    "zero enabled transitions: backlog={backlog} cordon={cordon}"
+                );
+            }
+        }
     }
 }

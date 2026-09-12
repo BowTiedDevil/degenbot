@@ -38,6 +38,7 @@ from degenbot.exceptions import (
     PathRejectedError,
     VerificationMismatchError,
 )
+from degenbot._ffi import FleetIntakeFaultedError
 from degenbot.runner.build_paths import (
     REG_INTAKE_WINDOW,
     PathRegistrationPipeline,
@@ -97,6 +98,37 @@ class _FleetBot:
                 self.inflight -= 1
 
         return _run
+
+
+class _FaultingReceipt:
+    """A receipt double that resolves terminally: the seat never ran.
+
+    This is the T6/S2 lane-death shape — the held unit is RESOLVED (never
+    executed), so ``wait_async`` raises the typed fault rather than
+    returning a ``result()``.
+    """
+
+    async def wait_async(self) -> None:
+        raise FleetIntakeFaultedError(
+            "fleet registration intake faulted (lane-death): 1 held unit(s) "
+            "resolved terminally and were never executed"
+        )
+
+    def result(self) -> object:
+        raise AssertionError("result() must not be reached: the fault resolved the unit")
+
+    def done(self) -> bool:
+        return True
+
+
+class _FaultingBot:
+    """Bot double whose every receipt resolves with the intake fault."""
+
+    def registration_fleet_hosted(self) -> bool:
+        return True
+
+    def submit_registration_unit(self, _fn: object) -> _FaultingReceipt:
+        return _FaultingReceipt()
 
 
 @dataclass
@@ -711,3 +743,26 @@ async def test_trigger_discovery_no_db_never_latches() -> None:
     assert await pipeline.trigger_discovery() == 2
     assert await pipeline.trigger_discovery() == 2
     assert sweep_count["n"] == 2
+
+
+async def test_intake_fault_propagates_through_consume() -> None:
+    """The operator `_consume` seam surfaces the typed lane-death fault.
+
+    FALSIFICATION: a swallowed fault (the counters folding a non-outcome) or
+    a parked waiter; the typed error must escape `_consume` unchanged.
+    """
+    pipeline, _bot = _pipeline_with_bot(_FaultingBot())
+    with pytest.raises(FleetIntakeFaultedError):
+        await pipeline._consume(_ScriptedPath("p"))
+    assert pipeline.path_count == 0, "a faulted unit is never folded as registered"
+
+
+async def test_intake_fault_propagates_through_run_registration() -> None:
+    """The crawl's `_resolve` seam surfaces the typed lane-death fault.
+
+    FALSIFICATION: the crawl returning normally with the fault unobserved.
+    """
+    pipeline, _bot = _pipeline_with_bot(_FaultingBot())
+    with pytest.raises(FleetIntakeFaultedError):
+        await pipeline.run_registration(producer=_producer([_ScriptedPath("p")]))
+    assert pipeline.path_count == 0

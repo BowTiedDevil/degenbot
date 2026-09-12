@@ -148,6 +148,8 @@ pub mod instruments {
         pub fn count_solves_executed(&self) {}
         /// no-op
         pub fn set_registered_paths(&self, _count: u64) {}
+        /// no-op (TB4QGX T7)
+        pub fn set_intake_backlog(&self, _role: &str, _depth: u64) {}
         /// no-op
         pub fn count_candidates_found(&self, _n: u64) {}
         /// no-op

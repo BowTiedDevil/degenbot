@@ -130,6 +130,10 @@ pub struct PipelineInstruments {
     solves_executed: Counter<u64>,
     /// Registered solver paths (engine gauge).
     registered_paths: Gauge<f64>,
+    /// TB4QGX T7: host intake backlog depth, one series per role
+    /// (`degenbot_fleet_intake_backlog{role=...}`). A stalled held backlog
+    /// becomes observable here (T9 soak reads it).
+    intake_backlog: Gauge<f64>,
     /// PE4FPM worker census: one row per registered execution resource
     /// (`resource` = the `degenbot_core::worker_census` registry id, a
     /// small closed set). Rendered as `degenbot_worker_census{resource=...}`.
@@ -427,6 +431,12 @@ impl PipelineInstruments {
             registered_paths: meter
                 .f64_gauge("degenbot.engine.registered_paths")
                 .with_description("Registered solver paths")
+                .build(),
+            intake_backlog: meter
+                .f64_gauge("degenbot.fleet.intake_backlog")
+                .with_description(
+                    "Host intake backlog depth per role (TB4QGX T7): held-but-unadmitted units; a stalled held backlog is visible here",
+                )
                 .build(),
             worker_census: meter
                 .f64_gauge("degenbot.worker.census")
@@ -813,6 +823,15 @@ impl PipelineInstruments {
     pub fn set_registered_paths(&self, count: u64) {
         self.registered_paths
             .record(f64::from(u32::try_from(count).unwrap_or(u32::MAX)), &[]);
+    }
+
+    /// TB4QGX T7: the host intake backlog depth for `role`
+    /// (`degenbot_fleet_intake_backlog{role=...}`).
+    pub fn set_intake_backlog(&self, role: &str, depth: u64) {
+        self.intake_backlog.record(
+            f64::from(u32::try_from(depth).unwrap_or(u32::MAX)),
+            &[KeyValue::new("role", role.to_owned())],
+        );
     }
 
     /// PE4FPM: one census row — declared workers/slots of `resource`.
@@ -1582,6 +1601,28 @@ mod kind_tests {
         assert_eq!(
             attributed, 2,
             "both solve-latency histograms must attribute their sample to the cycle's arm ({text})"
+        );
+        drop(provider);
+    }
+
+    /// TB4QGX T7: the fleet intake backlog gauge renders with its role
+    /// label and the live depth — a stalled held backlog must be observable
+    /// (T9 reads this series).
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn fleet_intake_backlog_gauge_renders_with_its_role_label() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test_intake_backlog"));
+        instruments.set_intake_backlog("Solver", 7);
+        let text = crate::metrics::render(&registry);
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("degenbot_fleet_intake_backlog"))
+            .expect("the intake backlog gauge must be exported");
+        assert!(
+            line.contains("role=\"Solver\"") && line.ends_with(" 7"),
+            "gauge line: {line}"
         );
         drop(provider);
     }

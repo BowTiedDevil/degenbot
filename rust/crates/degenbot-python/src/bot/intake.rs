@@ -241,3 +241,59 @@ pub fn submit(fn_work: Py<PyAny>) -> PyResult<PyIntakeReceipt> {
     }));
     Ok(receipt)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use degenbot_bot::fleet_intake::{IntakeFault, IntakeFaultWatch};
+
+    /// TB4QGX T7 (carried from the T6 acceptance): a lane death latches the
+    /// sticky watch; a waiting receipt's `join_signals` resolves to the TYPED
+    /// `FleetIntakeFaultedError` instead of parking forever — the S2 seam's
+    /// Python-observable half.
+    ///
+    /// FALSIFICATION: a bare `PyRuntimeError` (or a timeout) instead of the
+    /// typed class, or a parked waiter (the test would hang, not fail).
+    #[test]
+    #[expect(clippy::expect_used)] // the fault is asserted to surface, not just not-panic
+    fn join_signals_resolves_a_lane_death_to_the_typed_fault_error() {
+        let (_tx, rx) = std::sync::mpsc::channel::<()>();
+        let watch = IntakeFaultWatch::new();
+        watch.set(IntakeFault {
+            cause: "lane-death",
+            held: 3,
+        });
+        let done = AtomicBool::new(false);
+        let err = join_signals(&Mutex::new(rx), &done, Some(&watch), None)
+            .expect_err("a latched fault must not park");
+        Python::attach(|py| {
+            assert!(
+                err.is_instance_of::<crate::bot::engine::FleetIntakeFaultedError>(py),
+                "typed FleetIntakeFaultedError expected, got {err:?}"
+            );
+        });
+    }
+
+    /// The fault message names the cause and the held-unit count (the
+    /// operator greppability contract) — the Python-facing half of
+    /// `intake_faulted`.
+    #[test]
+    fn intake_faulted_message_names_the_cause_and_held_count() {
+        let err = intake_faulted(IntakeFault {
+            cause: "lane-death",
+            held: 7,
+        });
+        let text = err.to_string();
+        assert!(text.contains("lane-death"), "cause missing: {text}");
+        assert!(
+            text.contains("7 held unit(s)"),
+            "held count missing: {text}"
+        );
+        Python::attach(|py| {
+            assert!(
+                err.is_instance_of::<crate::bot::engine::FleetIntakeFaultedError>(py),
+                "typed class expected"
+            );
+        });
+    }
+}

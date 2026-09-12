@@ -1302,6 +1302,15 @@ class BootRefused(RuntimeError):
     ``isinstance`` for the fail-fast path.
     """
 
+class FleetIntakeFaultedError(RuntimeError):
+    """The fleet registration intake faulted (spike S2 / VXP27K).
+
+    Raised when the sticky lane-death latch resolves held intake units
+    terminally: every waiting receipt stops parking and surfaces this typed
+    error instead. Sticky until a fresh process; subclasses
+    ``RuntimeError`` so broad handlers keep working.
+    """
+
 class PathRegistryFullError(ValueError):
     """The engine path registry is at its configured registered-path cap.
 
