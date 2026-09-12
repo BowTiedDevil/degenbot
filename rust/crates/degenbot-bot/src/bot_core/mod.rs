@@ -569,7 +569,7 @@ fn trace_pool_id_match(pool_id_hex: &str) -> bool {
 
 /// Whether the verify-diagnostics probes are enabled.
 ///
-/// Conservative default ON (`DEGENBOT_VERIFY_DBG`, via [`bot_env_flag_default_on`]);
+/// Conservative default ON (`verify_dbg`, via [`bot_env_flag_default_on`]);
 /// set `=0` to disable the structural visibility probes that diagnose
 /// intermittent liquidity-map verification misses at startup (the pump /
 /// drain / verifier concurrency window). The probes are pure `log::info!`
@@ -593,10 +593,6 @@ fn trace_pool_id_match(pool_id_hex: &str) -> bool {
 ///   last_complete_block` alone as evidence of a leaked in-progress event.
 /// - `set_v3/v4_pool_live` logs the count + block numbers of the retained
 ///   in-progress-block tail flushed via the unguarded `drain_pump`.
-fn verify_dbg_enabled() -> bool {
-    stance::config().verify.verify_dbg
-}
-
 impl BotState {
     /// Create a new, empty `BotState` with the default 32-block reorg journal.
     #[must_use]
@@ -1518,11 +1514,11 @@ mod tests {
     #[test]
     fn conservative_bot_flag_default_on() {
         // KAHU5W: the env-flag parse contract moved to degenbot-config's
-        // fail-closed loader (parse_bool_flag). The Z4KQXF conservative-ON
-        // posture now lives in the typed schema defaults (e.g. verify_dbg
-        // defaults true); this asserts the holder's test-default stance.
+        // fail-closed loader (parse_bool_flag). ADR-043 retired the old
+        // verbosity flags; this asserts the holder's test-default stance on a
+        // surviving default-ON behavior key.
         assert!(!crate::bot_core::stance::installed());
-        assert!(crate::bot_core::stance::config().verify.verify_dbg);
+        assert!(crate::bot_core::stance::config().solve.cl_projection_cache);
     }
 
     fn make_pool_addr() -> Address {
@@ -6146,7 +6142,7 @@ mod tests {
         );
     }
 
-    // ── verify-dbg visibility probes (DEGENBOT_VERIFY_DBG) ───────────────────
+    // ── verify-dbg visibility probes (verify_dbg) ───────────────────
     //
     // Asserts the WIRING the probes rely on: a tracked V3 pool's pump
     // Mint/Burn is counted by `v3_buffer.pump_count_at_or_below` through the
@@ -6155,7 +6151,7 @@ mod tests {
     // `pin_v3_post_drain_snapshot` +
     // `set_v3_pool_live` remain behavior-preserving under the buffered
     // tail (the apply path executes regardless of the gate — the
-    // `verify_dbg_enabled()` branch is pure logging).
+    // diagnostic branch is pure logging).
     #[test]
     fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
         use crate::arb_engine::PoolTickCoverage;

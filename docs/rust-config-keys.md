@@ -131,7 +131,6 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_VERIFY_DBG` | `verify.verify_dbg` | `bool` | `true` | Structural visibility probes diagnosing liquidity-map verification misses (default ON; `0` disables). |
 | `DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD` | `verify.verify_spotcheck_permyriad` | `u64` | `0` | Per-myriad (1/10_000) sampling rate for verify spot-checks (0 = off). |
 ## `simulation`
 

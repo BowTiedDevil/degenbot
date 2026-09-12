@@ -30,11 +30,11 @@ use degenbot_pools::v4_state::{
 
 use super::{
     drain_dbg_log_buf, drain_dbg_pool_match, trace_apply_route_v3, trace_apply_route_v4,
-    trace_apply_swap_v3, trace_apply_swap_v4, trace_watch_tick, verify_dbg_enabled, BotState,
-    BufferedV3PoolEvent, BufferedV4PoolEvent, ConcentratedLiquidityPoolMut, PoolEntry,
-    PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
-    RegisterV4PoolParams, RegistrationLifecycle, TickInfo, V3PoolIdentity, V3PoolState,
-    V4PoolIdentity, V4PoolState, V4SwapUpdate,
+    trace_apply_swap_v3, trace_apply_swap_v4, trace_watch_tick, BotState, BufferedV3PoolEvent,
+    BufferedV4PoolEvent, ConcentratedLiquidityPoolMut, PoolEntry, PoolTickCoverage,
+    RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError, RegisterV4PoolParams,
+    RegistrationLifecycle, TickInfo, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState,
+    V4SwapUpdate,
 };
 
 /// RATR5A: the staged fetch plan captured under a SHORT write — pool, word,
@@ -973,15 +973,13 @@ impl BotState {
         };
         if let Some((tick_data_block, seed_block, tick_count, watch, verdict)) = diag {
             let pool_match = drain_dbg_pool_match(address);
-            if verify_dbg_enabled() {
-                op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                    tick_data_block,
-                    tick_count,
-                    pump_count = self.v3_buffer.pump_count_at_or_below(&address, tick_data_block),
-                    last_complete_block = self.pump_complete_cutoff(),
-                    "[verify-dbg] V3 pin"
-                );
-            }
+            diag!(domain = verify, pool_addr = %format!("{address:x}"),
+                tick_data_block,
+                tick_count,
+                pump_count = self.v3_buffer.pump_count_at_or_below(&address, tick_data_block),
+                last_complete_block = self.pump_complete_cutoff(),
+                "V3 pin"
+            );
             // Per-pool watch-tick probe: log (gross, net) at `DEGENBOT_TRACE_TICK`
             // right at the pin, so a ghost-value tick (e.g. an un-burned Mint
             // upper tick) is visible at the moment step-2 verify compares it.
@@ -1865,7 +1863,7 @@ impl BotState {
         // Flush the retained pump tail first (backfill already fully drained
         // during `apply_backfill_buffer_v3`).
         if let Some(buffered) = self.v3_buffer.drain_pump(&address) {
-            if verify_dbg_enabled() {
+            {
                 use ::degenbot_pools::liquidity_event::LiquidityEvent;
                 let blocks: Vec<u64> = buffered.iter().map(LiquidityEvent::block_number).collect();
                 let mut sorted = blocks.clone();
@@ -1875,11 +1873,11 @@ impl BotState {
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                op_info!(domain = state, pool_addr = %format!("{address:x}"),
+                diag!(domain = verify, pool_addr = %format!("{address:x}"),
                     drained_tail = buffered.len(),
                     blocks = ?blocks,
                     distinct_blocks = ?distinct,
-                    "[verify-dbg] V3 set_live"
+                    "V3 set_live"
                 );
             }
             for event in buffered {
@@ -1917,7 +1915,7 @@ impl BotState {
             return;
         };
         if let Some(buffered) = self.v4_buffer.drain_pump(&key) {
-            if verify_dbg_enabled() {
+            {
                 use ::degenbot_pools::liquidity_event::LiquidityEvent;
                 let blocks: Vec<u64> = buffered.iter().map(LiquidityEvent::block_number).collect();
                 let mut sorted = blocks.clone();
@@ -1927,12 +1925,12 @@ impl BotState {
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
+                diag!(domain = verify, pool_manager = %format!("{pool_manager:x}"),
                     pool_id = %degenbot_core::hex_utils::encode_hex(&pool_id),
                     drained_tail = buffered.len(),
                     blocks = ?blocks,
                     distinct_blocks = ?distinct,
-                    "[verify-dbg] V4 set_live"
+                    "V4 set_live"
                 );
             }
             for event in buffered {
@@ -2008,14 +2006,12 @@ impl BotState {
         if total == 0 {
             return;
         }
-        if verify_dbg_enabled() {
-            op_info!(
-                domain = state,
-                v3 = v3_addrs.len(),
-                v4 = v4_keys.len(),
-                "[verify-dbg] release-all quarantined"
-            );
-        }
+        diag!(
+            domain = verify,
+            v3 = v3_addrs.len(),
+            v4 = v4_keys.len(),
+            "release-all quarantined"
+        );
         for addr in v3_addrs {
             self.set_v3_pool_live(addr);
         }
@@ -2172,15 +2168,13 @@ impl BotState {
             }
         };
         if let Some((tick_data_block, seed_block, verdict)) = diag {
-            if verify_dbg_enabled() {
-                op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
-                    pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
-                    tick_data_block,
-                    pump_count = self.v4_buffer.pump_count_at_or_below(&key, tick_data_block),
-                    last_complete_block = self.pump_complete_cutoff(),
-                    "[verify-dbg] V4 pin"
-                );
-            }
+            diag!(domain = verify, pool_manager = %format!("{pool_manager:x}"),
+                pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
+                tick_data_block,
+                pump_count = self.v4_buffer.pump_count_at_or_below(&key, tick_data_block),
+                last_complete_block = self.pump_complete_cutoff(),
+                "V4 pin"
+            );
             // FUWYUR stamp provenance (7HUYWM, V4 twin) — see the V3 pin.
             match verdict {
                 PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {

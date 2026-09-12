@@ -316,8 +316,6 @@ crate::config_schema! {
     }
 
     verify VerifyConfig {
-        verify_dbg [bool] = true, env = "DEGENBOT_VERIFY_DBG", def = "true",
-            doc = "Structural visibility probes diagnosing liquidity-map verification misses (default ON; `0` disables).";
         verify_spotcheck_permyriad [u64] = 0, env = "DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD", def = "0",
             doc = "Per-myriad (1/10_000) sampling rate for verify spot-checks (0 = off).";
     }

@@ -22,7 +22,7 @@
 //!
 //! On ANY mismatch, returns `Err` — the bot must not operate with stale tick data.
 
-use degenbot_core::{op_info, op_warn};
+use degenbot_core::{diag, op_info};
 use hashbrown::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -272,7 +272,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     let observed: HashMap<i32, (u128, i128)> = rows.into_iter().collect();
     // Scan EVERY tick (not just until the first divergence) so a single
     // verify failure surfaces the FULL divergence set under
-    // `DEGENBOT_VERIFY_DBG`. A Mint-without-its-Burn leaves the upper tick
+    // `verify_dbg`. A Mint-without-its-Burn leaves the upper tick
     // divergent while the lower tick is +L vs 0 — one row per divergent tick
     // reveals that pairing without re-running. The returned error keeps the
     // EXACT historical message for the first mismatch (tests pin it); only
@@ -297,13 +297,13 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
         }
     }
     if let Some(msg) = first_mismatch {
-        if crate::bot_core::stance::config().verify.verify_dbg && !all_mismatches.is_empty() {
-            op_warn!(domain = verify, %pool_address,
+        if !all_mismatches.is_empty() {
+            diag!(domain = verify, %pool_address,
                 phase,
                 block_number,
                 divergent_tick_count = all_mismatches.len(),
                 rows = ?all_mismatches,
-                "[verify-dbg] V3 divergence set"
+                "V3 divergence set"
             );
         }
         return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
