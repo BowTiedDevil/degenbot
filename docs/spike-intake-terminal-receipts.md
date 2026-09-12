@@ -129,12 +129,15 @@ distinct summary line.
   loud log in the `drain_death_response` cadence.
 - A completion-log clause "`{n} intake unit(s) unresolvable (faulted)`".
 
-## 9. Open questions (blocking VXP27K)
+## 9. Decision adopted (operator sign-off, 2026-09-12)
 
-1. **Semantics:** adopt **(C) hybrid** (crawl fatal, operator raises), pure
-   **(A)**, or pure **(B)**?
-2. **Typed error:** new `FleetIntakeFaultedError` vs reuse `RuntimeError`?
-3. **Seam:** accept the `fleet_intake` ratchet break for **S1**, or require
-   **S2** (no port change)?
+1. **Semantics: (C) hybrid.** `run_registration` (discovery crawl) aborts loudly
+   on the typed fault; the operator surfaces (`enqueue_path` / `trigger_discovery`
+   via `_consume`) raise the typed error to the caller.
+2. **Typed error: a new `FleetIntakeFaultedError`** (distinct from the existing
+   fatal `VerificationMismatchError` / `VerificationRpcError` /
+   `DirectionResolutionError`), carrying the cause + held-unit count.
+3. **Seam: (S2), receipt-side fault watch.** No `fleet_intake` port change; the
+   pyo3 leaf races the unit delivery against a fault handle.
 
-**Do not proceed without approval.**
+**VXP27K implements exactly this.**
