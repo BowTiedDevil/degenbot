@@ -184,6 +184,70 @@ pub(crate) enum HostMsg {
     SeatDone { seat: u64 },
 }
 
+/// The complete, constructible input tuple of the admission predicate
+/// (adversarial-review requirement 5): [`admission`] reads NOTHING else —
+/// no shared map, no channel depth, no host borrow. Property tests
+/// construct these tuples directly with no live host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AdmissionInputs {
+    /// The bounded role queue's current occupancy (`FleetHost::queue_len`).
+    pub(crate) queue_len: usize,
+    /// The role's queue cap (`FleetHost::queue_cap`).
+    pub(crate) queue_cap: usize,
+    /// The live posture consult (`FleetHost::posture_admits_role`).
+    pub(crate) posture_admits: bool,
+}
+
+/// The admission predicate's total output. Saturated and posture-held are
+/// NOT progress states — they are the two independent WAIT reasons here,
+/// and they can co-occur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Admission {
+    /// The backlog head may move to the role queue.
+    Admit,
+    /// Blocked by the cap alone.
+    WaitCap,
+    /// Blocked by the posture hold alone.
+    WaitPosture,
+    /// Blocked by both (the terms co-occur).
+    WaitBoth,
+}
+
+impl Admission {
+    /// Whether the unit may leave the backlog for the role queue.
+    pub(crate) fn admits(self) -> bool {
+        matches!(self, Admission::Admit)
+    }
+}
+
+/// THE pure admission predicate (JCI2FW unified consult, 6HE6RF fold): a
+/// total function of [`AdmissionInputs`] ALONE. It is the ONLY gate on the
+/// backlog → role-queue move; `try_enqueue`'s `PostureHeld` hand-back
+/// stays the TOCTOU backstop for a cordon onset between the consult and the
+/// enqueue (hold, never drop, never abort).
+pub(crate) fn admission(inputs: AdmissionInputs) -> Admission {
+    let at_cap = inputs.queue_len >= inputs.queue_cap;
+    match (at_cap, !inputs.posture_admits) {
+        (false, false) => Admission::Admit,
+        (true, false) => Admission::WaitCap,
+        (false, true) => Admission::WaitPosture,
+        (true, true) => Admission::WaitBoth,
+    }
+}
+
+/// The host intake's progress vocabulary. `Idle`/`Backed` are live in this
+/// refactor (the backlog drain loop keys on `Backed`); `Faulted`/`Closed`
+/// are introduced by the tasks whose transitions make them reachable (the
+/// no-progress loud-fail and the lane-death fault), so no unconstructed
+/// variant ships here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProgressState {
+    /// The backlog is empty — nothing held.
+    Idle,
+    /// The backlog is non-empty — held units await admission.
+    Backed,
+}
+
 /// The serial binding's named cycle seat (FF-T4): the ONE thread that
 /// runs the role's granted units in grant order on a 2-5 core host.
 pub(crate) const SERIAL_SEAT_NAME: &str = "work-fleet-serial-0";
@@ -428,6 +492,26 @@ pub(crate) struct HostPump<'a> {
 }
 
 impl HostPump<'_> {
+    /// Build the complete admission input tuple from the live host — the
+    /// ONLY host read that feeds [`admission`].
+    fn admission_inputs(&self) -> AdmissionInputs {
+        AdmissionInputs {
+            queue_len: self.host.queue_len(self.role),
+            queue_cap: self.host.queue_cap(self.role),
+            posture_admits: self.host.posture_admits_role(self.role),
+        }
+    }
+
+    /// The intake progress state (backlog emptiness today; the fault and
+    /// closed arms land with the transitions that make them reachable).
+    fn progress(&self) -> ProgressState {
+        if self.backlog.is_empty() {
+            ProgressState::Idle
+        } else {
+            ProgressState::Backed
+        }
+    }
+
     /// The ONE dispatch loop (design doc §4): recv → apply → pump. Exits
     /// when the submission channel closes (all executor handles dropped —
     /// process teardown).
@@ -464,9 +548,7 @@ impl HostPump<'_> {
                 // `admits_lease` blocks only `(Cordoned, Deferrable)`;
                 // `Solver` is `CordonClass::Never`) — the consult's
                 // presence is the unified shape, not a new gate.
-                if self.host.queue_len(self.role) >= self.host.queue_cap(self.role)
-                    || !self.host.posture_admits_role(self.role)
-                {
+                if !admission(self.admission_inputs()).admits() {
                     self.backlog.push_back(unit);
                     if let Some(mirror) = self.mirror {
                         // The spill stamp: the receipt's advisory reads the
@@ -524,14 +606,12 @@ impl HostPump<'_> {
         // drops). Every unit in this host's backlog carries the host's role
         // by construction (the submit seams stamp it), so the role check is
         // the host's own role.
-        while self.backlog.front().is_some() {
-            // The per-pop guard re-reads BOTH terms live (no mirrors): the
-            // cap, and the posture consult (Solver: provably constant-true
-            // — the struct doc's proof; the term exists so nobody re-adds
-            // a Solver cordon gate by hand).
-            if self.host.queue_len(self.role) >= self.host.queue_cap(self.role)
-                || !self.host.posture_admits_role(self.role)
-            {
+        while self.progress() == ProgressState::Backed {
+            // The per-pop guard re-reads the WHOLE admission tuple live
+            // (no mirrors): the cap and the posture consult (Solver:
+            // provably constant-true — the struct doc's proof; the term
+            // exists so nobody re-adds a Solver cordon gate by hand).
+            if !admission(self.admission_inputs()).admits() {
                 break;
             }
             let Some(unit) = self.backlog.pop_front() else {
@@ -962,7 +1042,10 @@ mod tests {
     use degenbot_workers::posture::{FleetPosture, PostureOwner, PosturePolicy, ThrottleSample};
     use degenbot_workers::role::WorkerRole;
 
-    use super::{GrantContract, HostDiscipline, HostMsg, HostPump, SeatSink};
+    use super::{
+        admission, Admission, AdmissionInputs, GrantContract, HostDiscipline, HostMsg, HostPump,
+        ProgressState, SeatSink,
+    };
     use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
 
     /// A FRESH hermetic posture owner (leaked to 'static): every test boot
@@ -1573,6 +1656,236 @@ mod tests {
             mirror.load(Ordering::Relaxed),
             0,
             "at rest the role queue is empty and the stamp says so"
+        );
+    }
+
+    /// T1: the admission predicate's total truth table — every reachable
+    /// (occupancy × cap × posture) combination maps to exactly one
+    /// [`Admission`] value. The predicate reads the tuple alone, so the
+    /// tuple is constructible here with no live host.
+    #[test]
+    fn admission_predicate_truth_table() {
+        let cases = [
+            (0usize, 4usize, true, Admission::Admit),
+            (3, 4, true, Admission::Admit),
+            (4, 4, true, Admission::WaitCap),
+            (5, 4, true, Admission::WaitCap),
+            (0, 4, false, Admission::WaitPosture),
+            (3, 4, false, Admission::WaitPosture),
+            (4, 4, false, Admission::WaitBoth),
+            (0, 0, true, Admission::WaitCap),
+            (0, 0, false, Admission::WaitBoth),
+        ];
+        for (queue_len, queue_cap, posture_admits, want) in cases {
+            let inputs = AdmissionInputs {
+                queue_len,
+                queue_cap,
+                posture_admits,
+            };
+            assert_eq!(
+                admission(inputs),
+                want,
+                "admission(len={queue_len}, cap={queue_cap}, admits={posture_admits})"
+            );
+            // Totality + purity: identical inputs, identical output.
+            assert_eq!(admission(inputs), admission(inputs));
+        }
+    }
+
+    /// T1: `admits()` is the `Admit` arm and nothing else — the single gate.
+    #[test]
+    fn admission_admits_only_on_the_admit_arm() {
+        assert!(Admission::Admit.admits());
+        for denied in [
+            Admission::WaitCap,
+            Admission::WaitPosture,
+            Admission::WaitBoth,
+        ] {
+            assert!(!denied.admits(), "{denied:?} must not admit");
+        }
+    }
+
+    /// T1: the progress vocabulary is `Backed` iff the backlog is
+    /// non-empty; the drain loop keys on it.
+    #[test]
+    fn progress_state_is_backed_iff_the_backlog_is_non_empty() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        assert_eq!(
+            driven.pump_handle().progress(),
+            ProgressState::Idle,
+            "an empty backlog is Idle"
+        );
+        let unit = driven.next_unit();
+        driven.apply_and_pump(HostMsg::Enqueue(unit));
+        assert_eq!(
+            driven.pump_handle().progress(),
+            ProgressState::Backed,
+            "a held unit is Backed"
+        );
+        lift_cordon(owner);
+        let unit = driven.next_unit();
+        driven.apply_and_pump(HostMsg::Enqueue(unit));
+        driven.run_to_quiescence();
+        assert_eq!(
+            driven.pump_handle().progress(),
+            ProgressState::Idle,
+            "a drained backlog is Idle"
+        );
+    }
+
+    /// T1: the predicate is the ONLY gate on the backlog → role-queue move.
+    /// `WaitPosture` holds with room available; `WaitCap` holds when the
+    /// bounded queue is full; `Admit` seats.
+    #[test]
+    fn admission_is_the_only_gate() {
+        // WaitPosture: cordoned, room available.
+        let owner = hermetic_owner();
+        let mut pooled = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        let unit = pooled.next_unit();
+        pooled.apply_and_pump(HostMsg::Enqueue(unit));
+        assert!(pooled.seated_units().is_empty());
+        assert_eq!(pooled.backlog.len(), 1, "WaitPosture holds in the backlog");
+        // Admit: lift — the held unit plus the next drain.
+        lift_cordon(owner);
+        let unit = pooled.next_unit();
+        pooled.apply_and_pump(HostMsg::Enqueue(unit));
+        pooled.run_to_quiescence();
+        let mut seated = pooled.seated_units();
+        seated.sort_unstable();
+        assert_eq!(seated, vec![1, 2], "Admit seats every unit exactly once");
+        assert!(pooled.backlog.is_empty());
+
+        // WaitCap: all role-queue seats running, then fill the bounded
+        // queue to its cap; the next submission spills to the backlog.
+        let owner = hermetic_owner();
+        let mut capped = DrivenHost::boot_with(HostKind::Pooled, owner);
+        let cap = capped.host.queue_cap(capped.role());
+        // Fill until the bounded role queue saturates: with no SeatDone,
+        // the free slots take units until none are free, then the queue
+        // fills to its cap. (Iteration is bounded well above cap.)
+        let mut submitted = 0usize;
+        while capped.host.queue_len(capped.role()) < cap {
+            let unit = capped.next_unit();
+            capped.apply_and_pump(HostMsg::Enqueue(unit));
+            submitted += 1;
+            assert!(
+                submitted <= 4 * cap + 2,
+                "the bounded role queue never saturated (cap={cap})"
+            );
+        }
+        assert_eq!(capped.host.queue_len(capped.role()), cap);
+        assert!(
+            capped.backlog.is_empty(),
+            "no spill at exactly the cap — WaitCap begins one past it"
+        );
+        let unit = capped.next_unit();
+        capped.apply_and_pump(HostMsg::Enqueue(unit));
+        assert_eq!(
+            capped.backlog.len(),
+            1,
+            "WaitCap spills the overflow to the backlog (never dropped)"
+        );
+    }
+
+    /// T1 transition coverage: an admitted `Enqueue` in `Idle` leaves the host
+    /// `Idle` (the unit is granted to a running slot, the backlog stays
+    /// empty), and the matching `SeatDone` is likewise an `Idle` self-loop —
+    /// the "self-transitions are covered" requirement for the two states
+    /// live in this task.
+    #[test]
+    fn idle_enqueue_and_seatdone_are_self_transitions() {
+        let mut driven = DrivenHost::boot(HostKind::Pooled);
+        assert_eq!(driven.pump_handle().progress(), ProgressState::Idle);
+        let unit = driven.next_unit();
+        driven.apply_and_pump(HostMsg::Enqueue(unit));
+        assert_eq!(
+            driven.pump_handle().progress(),
+            ProgressState::Idle,
+            "an admitted Enqueue grants straight to a slot — Idle self-loop"
+        );
+        driven.complete_oldest_in_flight();
+        assert_eq!(
+            driven.pump_handle().progress(),
+            ProgressState::Idle,
+            "a SeatDone on an empty backlog is an Idle self-loop"
+        );
+    }
+
+    /// T1 transition coverage, closed (adversarial-review finding): the two
+    /// remaining live pairs are Backed self-loops.
+    /// (Backed, held Enqueue): a second hold accumulates in FIFO order and
+    /// the state stays Backed. (Backed, SeatDone): a completion with the
+    /// bounded queue saturated keeps the host Backed; the single pump pass
+    /// evaluates the backlog drain BEFORE the grant frees capacity, so the
+    /// backlog is untouched in that pass and the freed slot takes the
+    /// queued head. The state must NOT fall back to Idle while units
+    /// remain held, and no unit may be lost or double-granted. (A later
+    /// pass — or T2's `BackstopTick` — drains the backlog into the freed
+    /// capacity.)
+    #[test]
+    fn backed_enqueue_and_seatdone_are_self_transitions() {
+        // (Backed, held Enqueue) -> Backed.
+        let owner = hermetic_owner();
+        let mut held = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        let a = held.next_unit();
+        held.apply_and_pump(HostMsg::Enqueue(a));
+        assert_eq!(held.pump_handle().progress(), ProgressState::Backed);
+        assert_eq!(held.backlog.len(), 1);
+        let b = held.next_unit();
+        held.apply_and_pump(HostMsg::Enqueue(b));
+        assert_eq!(
+            held.pump_handle().progress(),
+            ProgressState::Backed,
+            "a second held Enqueue is a Backed self-loop"
+        );
+        assert_eq!(held.backlog.len(), 2, "the second hold accumulates");
+        let held_ids: Vec<u64> = held.backlog.iter().map(|u| u.id).collect();
+        assert_eq!(held_ids, vec![1, 2], "FIFO order preserved across holds");
+
+        // (Backed, SeatDone) -> Backed, with conservation. Saturate the
+        // bounded role queue (WaitCap) so no SeatDone can empty it, then
+        // spill two units to the backlog.
+        let mut capped = DrivenHost::boot(HostKind::Pooled);
+        let cap = capped.host.queue_cap(capped.role());
+        let mut n = 0usize;
+        while capped.host.queue_len(capped.role()) < cap {
+            let unit = capped.next_unit();
+            capped.apply_and_pump(HostMsg::Enqueue(unit));
+            n += 1;
+            assert!(n <= 4 * cap + 2, "the role queue never saturated");
+        }
+        for _ in 0..2 {
+            let unit = capped.next_unit();
+            capped.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        assert_eq!(capped.pump_handle().progress(), ProgressState::Backed);
+        assert_eq!(capped.backlog.len(), 2);
+        let seated_before = capped.seated_units().len();
+        let queued_before = capped.host.queue_len(capped.role());
+        capped.complete_oldest_in_flight();
+        assert_eq!(
+            capped.pump_handle().progress(),
+            ProgressState::Backed,
+            "a SeatDone under a saturated queue is a Backed self-loop, not Idle"
+        );
+        assert_eq!(
+            capped.backlog.len(),
+            2,
+            "the backlog is untouched this pass: the drain ran before the grant freed capacity"
+        );
+        assert_eq!(
+            capped.seated_units().len(),
+            seated_before + 1,
+            "the freed slot granted the queued head exactly once (never dropped)"
+        );
+        assert_eq!(
+            capped.host.queue_len(capped.role()),
+            queued_before - 1,
+            "the freed queue slot took the queued head, not a backlog unit"
         );
     }
 }
