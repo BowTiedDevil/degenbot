@@ -55,6 +55,25 @@ const RETIRED_KEYS: &[&str] = &[
     "DEGENBOT_FLEET",
     "DEGENBOT_SOLVE_SIM_INFLIGHT",
     "DEGENBOT_DETACHED_SOLVES",
+    // ADR-043 §5 retired verbosity flags. These literals live in
+    // `degenbot_core::telemetry::RETIRED_ENV_NAMES` (the boot-time detection
+    // list) because the scanner sweeps the crates; the names are detected and
+    // warned about, never honored.
+    "DEGENBOT_VERIFY_DBG",
+    "DEGENBOT_V2_CALC_TRACE",
+    "DEGENBOT_SIM_LOG_REVERTED_SWAPS",
+    "DEGENBOT_SIM_DIVERGENCE_LOG",
+    "DEGENBOT_DUMP_CALL_TRACE",
+    "DEGENBOT_DUMP_TICK_MAPS",
+    "DEGENBOT_WS_TRACE",
+    "DEGENBOT_DRAIN_DBG",
+    "DEGENBOT_TRACE_DISPATCH",
+    "DEGENBOT_TRACE_REGISTER_SEED",
+    "DEGENBOT_TRACE_LIQUIDITY",
+    "DEGENBOT_TRACE_TICK",
+    "DEGENBOT_GATE_TRACE",
+    "DEGENBOT_AAVE_EVTRACE",
+    "DEGENBOT_AAVE_TX_TRACE",
 ];
 
 /// Real static keys the artifact regex cannot capture (digit-terminated

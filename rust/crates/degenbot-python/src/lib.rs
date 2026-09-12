@@ -304,6 +304,10 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     python_log_layer::init_logging_subscriber();
 
+    // ADR-043 §5 migration safety net: loudly name any retired verbosity env
+    // name still present in the environment (detection, not compatibility).
+    degenbot_core::telemetry::warn_retired_env_names();
+
     // GOQWCL (incident 2026-08-21): bind pyo3-async-runtimes to the shared
     // bot runtime instead of letting the first `future_into_py` call lazily
     // spawn a SECOND nproc-worker multi-thread runtime mid-run (observed as

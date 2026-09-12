@@ -242,6 +242,46 @@ macro_rules! op_span {
     };
 }
 
+/// Closed list of retired verbosity env names (ADR-043 §5) mapped to the
+/// equivalent domain directive. Detection only — no alias is honored. The
+/// shim is deleted at 0.7 alongside the other gated cleanups.
+pub const RETIRED_ENV_NAMES: &[(&str, &str)] = &[
+    ("DEGENBOT_VERIFY_DBG", "degenbot::verify=debug"),
+    ("DEGENBOT_V2_CALC_TRACE", "degenbot::sim=debug"),
+    ("DEGENBOT_SIM_LOG_REVERTED_SWAPS", "degenbot::sim=debug"),
+    ("DEGENBOT_SIM_DIVERGENCE_LOG", "degenbot::sim=debug"),
+    ("DEGENBOT_DUMP_CALL_TRACE", "degenbot::sim=trace"),
+    ("DEGENBOT_DUMP_TICK_MAPS", "degenbot::state=trace"),
+    ("DEGENBOT_WS_TRACE", "degenbot::ingest=debug"),
+    ("DEGENBOT_DRAIN_DBG", "degenbot::pump=debug"),
+    ("DEGENBOT_TRACE_DISPATCH", "degenbot::pump=debug"),
+    ("DEGENBOT_TRACE_REGISTER_SEED", "degenbot::path=debug"),
+    ("DEGENBOT_TRACE_LIQUIDITY", "degenbot::state=debug"),
+    ("DEGENBOT_TRACE_TICK", "degenbot::state=debug"),
+    ("DEGENBOT_GATE_TRACE", "degenbot::solver=debug"),
+    ("DEGENBOT_AAVE_EVTRACE", "degenbot::aave=debug"),
+    ("DEGENBOT_AAVE_TX_TRACE", "degenbot::aave=debug"),
+];
+
+/// Boot-time detection (ADR-043 §5): WARN once per retired env name present in
+/// the process environment, naming the equivalent domain directive. The
+/// retired names no longer control anything, so this is a loud migration
+/// signal rather than a compatibility shim. Idempotent and cheap; call once at
+/// process boot.
+pub fn warn_retired_env_names() {
+    for (name, directive) in RETIRED_ENV_NAMES {
+        if let Ok(value) = std::env::var(name) {
+            crate::op_warn!(
+                domain = pump,
+                retired_env = %name,
+                value = %value,
+                equivalent = %directive,
+                "retired telemetry flag set; use the domain directive instead (ADR-043 section 5)"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::domain;

@@ -76,6 +76,10 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/degenbot-python/src/diagnostics/thread_registry.rs",
             &["DEGENBOT_STATE_LOCK_DIAG"][..], // test stance (feature-gated)
         );
+        // (4) The ADR-043 §5 retired-name boot detection: reads the env by
+        // iterating a closed list (`RETIRED_ENV_NAMES`), so the name is
+        // computed at the call site. Detection only — no alias is honored.
+        m.insert("crates/degenbot-core/src/telemetry.rs", &["name"][..]);
         m.insert(
             "crates/degenbot-python/build.rs",
             // The build-receipt work (1e1c0ddf7): the build script locates
