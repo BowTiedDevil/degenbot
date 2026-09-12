@@ -19,6 +19,8 @@ use std::sync::{mpsc, OnceLock};
 
 use parking_lot::Mutex;
 
+use degenbot_workers::posture::{PostureCause, PostureChange, PostureOwner, ThrottleSample};
+
 use crate::arb_engine::seat_host::HostMsg;
 
 /// The registered host wake senders, keyed by token.
@@ -47,9 +49,33 @@ pub(crate) fn deregister(token: u64) {
 /// Wake every live host with an untrusted `PostureEdge` hint. Called by
 /// every bot-side owner feeder on a non-`Held` transition. A disconnected
 /// receiver is pruned (host retired).
-pub(crate) fn wake_hosts() {
+pub fn wake_hosts() {
     let mut wakers = wakers().lock();
     wakers.retain(|(_, tx)| tx.send(HostMsg::PostureEdge).is_ok());
+}
+
+/// Feed ONE throttle-poll delta to the ONE process-level posture owner and
+/// wake the fleet hosts on a real (non-`Held`) transition. This is the ONLY
+/// bot-side throttle feeder (TB4QGX T9): the pairing is mechanical, asserted
+/// by `production_feeders_go_through_the_wrapper`.
+pub fn feed_throttle(now_ms: u64, sample: ThrottleSample) {
+    let change = degenbot_workers::posture::process().observe_throttle(now_ms, sample);
+    if !matches!(change, PostureChange::Held) {
+        wake_hosts();
+    }
+}
+
+/// [`feed_throttle`]'s typed-cause twin against a caller-supplied owner
+/// (`None` selects the process owner). Pairs the feed with the wake so a new
+/// cause site cannot forget the `PostureEdge`.
+pub fn feed_cause(owner: Option<&PostureOwner>, cause: PostureCause) {
+    let change = match owner {
+        Some(owner) => owner.observe_cause(cause),
+        None => degenbot_workers::posture::process().observe_cause(cause),
+    };
+    if !matches!(change, PostureChange::Held) {
+        wake_hosts();
+    }
 }
 
 #[cfg(test)]
@@ -57,6 +83,45 @@ mod tests {
     use super::{deregister, register, wake_hosts, wakers};
     use crate::arb_engine::seat_host::HostMsg;
     use std::sync::mpsc;
+
+    /// TB4QGX T9: every bot-side production feeder MUST go through
+    /// [`super::feed_throttle`]/[`super::feed_cause`], which pair `observe_*`
+    /// with `wake_hosts`. FALSIFICATION: a raw
+    /// `observe_throttle(`/`observe_cause(` in the non-test prefix of any
+    /// other bot source file (test modules conventionally live at the end of
+    /// a file, so the scan stops at the first `#[cfg(test)]`).
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn production_feeders_go_through_the_wrapper() {
+        fn scan(dir: &std::path::Path, offenders: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("read source dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    scan(&path, offenders);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs")
+                    || path.file_name().and_then(|n| n.to_str()) == Some("fleet_wake.rs")
+                {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).expect("read source file");
+                let production = text.split("#[cfg(test)]").next().unwrap_or("");
+                for needle in ["observe_throttle(", "observe_cause("] {
+                    if production.contains(needle) {
+                        offenders.push(format!("{}: {needle}", path.display()));
+                    }
+                }
+            }
+        }
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        scan(&src, &mut offenders);
+        assert!(
+            offenders.is_empty(),
+            "raw posture feeds bypass the wake pairing (use feed_throttle/feed_cause): {offenders:?}"
+        );
+    }
 
     #[test]
     fn wake_fans_out_to_registered_hosts_and_prunes_retired_ones() {

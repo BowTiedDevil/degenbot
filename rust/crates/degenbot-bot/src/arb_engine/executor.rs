@@ -233,18 +233,12 @@ pub(crate) fn drain_death_response(
             }
         }
     }
-    let lane_death_change = match owner {
-        Some(owner) => owner.observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
-        None => degenbot_workers::posture::process()
-            .observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
-    };
-    // Feeder-site contract (T3): wake the fleet hosts on a real transition.
-    if !matches!(
-        lane_death_change,
-        degenbot_workers::posture::PostureChange::Held
-    ) {
-        crate::arb_engine::fleet_wake::wake_hosts();
-    }
+    // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes
+    // the fleet hosts on a real transition — never a raw `observe_cause`.
+    crate::arb_engine::fleet_wake::feed_cause(
+        owner,
+        degenbot_workers::posture::PostureCause::LaneDeath,
+    );
     let occurrence = DRAIN_DEATH_LOGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if occurrence == 1 || occurrence.is_multiple_of(DRAIN_DEATH_LOG_EVERY) {
         tracing::error!(
@@ -386,18 +380,12 @@ pub(crate) fn lane_death_response(
     for pid in unemitted {
         lane.failed(pid, LaneFailure::LaneDeath { unit, seat });
     }
-    let lane_death_change = match owner {
-        Some(owner) => owner.observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
-        None => degenbot_workers::posture::process()
-            .observe_cause(degenbot_workers::posture::PostureCause::LaneDeath),
-    };
-    // Feeder-site contract (T3): wake the fleet hosts on a real transition.
-    if !matches!(
-        lane_death_change,
-        degenbot_workers::posture::PostureChange::Held
-    ) {
-        crate::arb_engine::fleet_wake::wake_hosts();
-    }
+    // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes
+    // the fleet hosts on a real transition — never a raw `observe_cause`.
+    crate::arb_engine::fleet_wake::feed_cause(
+        owner,
+        degenbot_workers::posture::PostureCause::LaneDeath,
+    );
     tracing::error!(
         target: "degenbot::fleet",
         unit,

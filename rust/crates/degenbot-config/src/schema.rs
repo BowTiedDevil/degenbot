@@ -374,8 +374,6 @@ crate::config_schema! {
             doc = "Allocation-tracking gate for the math/pools bench suites (`1` enables).";
         self_abort_test [bool] = false, env = "DEGENBOT_SELF_ABORT_TEST", def = "false",
             doc = "Block-pump self-abort hatch (presence gates in tests).";
-        no_progress_abort_test [bool] = false, env = "DEGENBOT_NO_PROGRESS_ABORT_TEST", def = "false",
-            doc = "No-progress abort hatch gate (test scaffolding; `1` enables).";
         unused_test_flag [bool] = true, env = "DEGENBOT_UNUSED_TEST_FLAG", def = "true",
             doc = "Default-ON flag-parse probe (asserted by the bot-core unit tests).";
     }

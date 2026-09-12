@@ -113,7 +113,10 @@ fn feed_executor_throttle_sample(now_ms: u64, events: u64, throttled_usec: u64) 
     } else {
         now_ms.saturating_sub(last_ms).saturating_mul(1_000)
     };
-    let change = degenbot_workers::posture::process().observe_throttle(
+    // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes
+    // the fleet hosts on a real (non-`Held`) transition — never a raw
+    // `observe_throttle` call.
+    crate::arb_engine::fleet_wake::feed_throttle(
         now_ms,
         ThrottleSample {
             events,
@@ -121,12 +124,6 @@ fn feed_executor_throttle_sample(now_ms: u64, events: u64, throttled_usec: u64) 
             elapsed_usec,
         },
     );
-    // Feeder-site contract (T3): a real transition wakes the fleet hosts
-    // with an untrusted PostureEdge hint (the owner is in degenbot-workers
-    // and cannot know about host channels).
-    if !matches!(change, degenbot_workers::posture::PostureChange::Held) {
-        crate::arb_engine::fleet_wake::wake_hosts();
-    }
 }
 
 /// Wall-clock milliseconds since the Unix epoch. The epoch-race anchor

@@ -73,10 +73,6 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             ][..],
         );
         m.insert(
-            "crates/degenbot-bot/src/bot_core/event_dispatch.rs",
-            &["DEGENBOT_NO_PROGRESS_ABORT_TEST"][..],
-        );
-        m.insert(
             "crates/degenbot-python/src/diagnostics/thread_registry.rs",
             &["DEGENBOT_STATE_LOCK_DIAG"][..], // test stance (feature-gated)
         );

@@ -170,5 +170,4 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_ALLOC_TRACK` | `test_hooks.alloc_track` | `bool` | `false` | Allocation-tracking gate for the math/pools bench suites (`1` enables). |
 | `DEGENBOT_SELF_ABORT_TEST` | `test_hooks.self_abort_test` | `bool` | `false` | Block-pump self-abort hatch (presence gates in tests). |
-| `DEGENBOT_NO_PROGRESS_ABORT_TEST` | `test_hooks.no_progress_abort_test` | `bool` | `false` | No-progress abort hatch gate (test scaffolding; `1` enables). |
 | `DEGENBOT_UNUSED_TEST_FLAG` | `test_hooks.unused_test_flag` | `bool` | `true` | Default-ON flag-parse probe (asserted by the bot-core unit tests). |
