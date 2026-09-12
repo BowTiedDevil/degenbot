@@ -4,6 +4,13 @@ pub use degenbot_core as core;
 /// Foundational utilities — errors, hex, EIP-55 addresses, shared runtime.
 pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 
+/// The observability facade (ADR-043): closed `degenbot::<domain>` targets,
+/// the `diag!`/`op_info!`/`op_warn!`/`op_error!`/`op_span!` macros, and the
+/// panic hook. Re-exported so a `cargo add degenbot` consumer emits on the
+/// same standard as the PyO3 binding.
+pub use degenbot_core::telemetry;
+pub use degenbot_core::{diag, op_error, op_info, op_span, op_warn, telemetry_target};
+
 /// `examples/path*_solver_fixture.rs` investigate-runner dialect.
 pub mod investigation;
 

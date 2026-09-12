@@ -32,6 +32,7 @@ pyo3 = ["dep:pyo3"]
 
 [dev-dependencies]
 proptest = "^1.11"
+tracing-subscriber = "^0.3"
 # Test-only: a minimal recording Subscriber for the [cpu-budget] boot-log
 # probe (tracing's trait methods take tracing-core types by name).
 tracing-core = "^0.1"

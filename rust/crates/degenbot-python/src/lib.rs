@@ -314,24 +314,14 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
         tracing::debug!("[init] pyo3_async_runtimes already bound to a runtime");
     }
 
-    // Soak-2026-08-22 forensics: every worker panic gets a loud, timestamped
-    // ERROR with the thread name BEFORE the default hook runs. The v4 TLS
-    // AccessError abort surfaced with zero preceding context - the default
-    // hook's stderr output raced the abort and we could not tell whether a
-    // panic or an external shutdown initiated runtime teardown. This hook
-    // guarantees a first-mover log line through our subscriber (which the
-    // PythonLogLayer forwards to Python logging) for ANY panic anywhere.
-    {
-        let default_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            tracing::error!(
-                thread = std::thread::current().name().unwrap_or("<unnamed>"),
-                payload = %info,
-                "[teardown] panic captured - runtime may be unwinding"
-            );
-            default_hook(info);
-        }));
-    }
+    // Soak-2026-08-22 forensics + ADR-043 §2: the panic hook lives in the
+    // observability facade (degenbot_core::telemetry::install_panic_hook) so
+    // the pure-Rust core and this binding share ONE contract — exactly one
+    // ERROR carrying the panic payload + thread name, with the active span
+    // marked ERROR so the OTel layer exports it as a span exception. The hook
+    // chains the previous hook, so the default backtrace still prints, and
+    // fires for ANY panic anywhere (PythonLogLayer forwards it to Python).
+    degenbot_core::telemetry::install_panic_hook();
 
     // PE4FPM: dump the ONE structured worker-census boot line with the full
     // table (see degenbot_core::worker_census). Resources that boot lazily
