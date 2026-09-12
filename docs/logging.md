@@ -1,184 +1,131 @@
-# Controlling Tracing / Logging
+# Controlling logging, tracing, and telemetry
 
-How to control what the bot writes to stderr / `logs/bot_run.log`, the level at
-which each message appears, and how to dial a noisy diagnostic up or down.
+The operational form of the observability standard; the binding decision record
+is [ADR-043](adr/ADR-043-observability-standard.md). This is the single source
+of truth for what the bot emits, at what level, and how to dial it up or down.
 
-There are two independent knobs that both must allow a record before you see it:
+degenbot has two first-class consumers — the pure-Rust MEV bot and the
+Python-driven bot — so the contract is split between the **core** (which emits
+signals and owns no sink) and the **wiring** (which installs sinks and chooses
+levels).
 
-1. **`RUST_LOG`** — the Rust `tracing` level filter (a `EnvFilter`). Gates the
-   **Rust core's** `tracing::info!` / `tracing::debug!` / `tracing::warn!` /
-   `tracing::error!` / `tracing::trace!` events *before* they reach either
-   sink.
-2. **`DEGENBOT_DEBUG`** — the **Python `logging`** level (INFO by default,
-   DEBUG when set). Gates Python-side records and Rust records that *survive*
-   step 1 once they are forwarded into Python `logging`.
+## The four channels
 
-So a Rust `debug!` line requires **both** `RUST_LOG` to include that target at
-`debug` (or above) **and** `DEGENBOT_DEBUG=1` (for the Python-forwarded copy).
-The plain `[debug-...]` lines you see on stderr with no timestamp prefix are the
-`fmt`-layer copy, which is controlled by `RUST_LOG` alone.
+| Channel | Consumer | Default | Content |
+| --- | --- | --- | --- |
+| Console log | operator | on | process lifecycle and outcomes |
+| Span (OTel) | investigator | when `telemetry.otel` | per-operation timing + structured context |
+| Metric (Prometheus) | alerting | on | aggregates, low cardinality |
+| Forensic file | repro | opt-in | full-field dumps |
 
----
+A fact is emitted on exactly one channel; it is never restated as a per-event
+INFO line. Any fact that paging depends on is carried by *both* the console and
+a metric, because OTel can be unavailable when it matters.
 
-## The two tunnels (how a Rust record reaches you)
+The Rust core reaches Python `logging` and the stderr `fmt` writer through one
+`tracing` subscriber (`init_logging_subscriber` in
+`rust/crates/degenbot-python/src/python_log_layer.rs`); `log::` records are
+bridged in by `tracing_log::LogTracer`. Prometheus metrics are declared in
+`degenbot-bot/src/instruments.rs`.
 
-When the `degenbot_rs` Python module initializes
-(`init_logging_subscriber` in `crates/degenbot-python/src/python_log_layer.rs`),
-it installs one `tracing_subscriber::Registry` with two layers sharing a
-single `EnvFilter`:
+## Levels
 
-- **`fmt` layer → stderr** — ANSI-colored, `[timestamp] LEVEL target: msg`.
-- **`PythonLogLayer` → Python `logging`** — batches records (lock-free queue,
-  256/batch or 50 ms flush) and forwards them to the Python logger named after
-  the Rust target with `::` → `.` (e.g. `degenbot_bot.bot_core.block_pump`).
-  This is why **every Rust line appears twice** in a teed log: once as the
-  `fmt` stderr line (with timestamp/level) and once as the plain
-  `[prefix] ...` Python copy.
+| Level | Use | Budget |
+| --- | --- | --- |
+| ERROR | abort, integrity loss, shutdown seam; mirrored by a metric | rare |
+| WARN | degraded but continuing: tripwire, quarantine, retry exhaustion, verify failure, posture cordon, auto-recovering seam | O(events) |
+| INFO | process lifecycle and outcomes: one block summary per block, one line per submit decision, per-phase boot/backfill/pump lines | O(1)/block + O(submits) |
+| DEBUG | per-entity detail: per-pool, per-path, per-candidate, per-sim, per-log, phase timing, verify diagnostics | O(entities) |
+| TRACE | per-hop/per-field dumps and raw traces | unbounded (opt-in) |
 
-The `EnvFilter` is:
+The rubric is deliberately asymmetric: if a line is per-pool or per-path, it is
+DEBUG. The console firehose that motivated the standard was per-entity lines
+emitted at INFO.
 
-- `RUST_LOG` if that env var is set;
-- otherwise a default of `info` globally, with a handful of third-party
-  `alloy_*` / `tungstenite` targets throttled to `warn` (they emit routine
-  lifecycle INFO noise that is not degenbot-originated).
+## Targets
 
-Python `logging` base config lives in `src/degenbot/logging.py`. It wires the
-crate-root loggers (`degenbot_bot`, `degenbot_core`, `degenbot_rs`,
-`degenbot_rpc`, `degenbot_decoders`, `degenbot_uniswap`,
-`degenbot_simulation`, `degenbot_arbitrage`) to a stdout
-`QueueHandler`/`QueueListener` pair. Rust records are forwarded to these
-loggers, so the Python side is the **second gate**.
+The closed domain set is `degenbot::state`, `degenbot::path`,
+`degenbot::solver`, `degenbot::sim`, `degenbot::pump`, `degenbot::exec`,
+`degenbot::verify`, `degenbot::ingest`, `degenbot::rpc`, and
+`degenbot::aave`. Every diagnostic is a DEBUG event under its domain; there
+is no separate `diag` target. Engine diagnostics are emitted within an active
+engine span, which is what makes them visible in Jaeger.
 
----
+Span names are `degenbot.<area>.<verb>` and metric names are
+`degenbot.<noun>_<unit>`. The console formatter derives its `[area]` prefix
+from the target, so there is no hand-written tag to keep in sync.
 
-## Quick reference
+## The control surface
 
-| I want to … | Set this |
-|---|---|
-| Raise the Rust core to `debug` everywhere | `RUST_LOG=debug` |
-| Raise the Rust core to `debug` **and** let Python loggers pass `debug` | `RUST_LOG=debug DEGENBOT_DEBUG=1` |
-| Keep `info` default but see the fine-grained solver/sim diagnostics | `RUST_LOG=info,degenbot_bot=debug,degenbot_arbitrage=debug` |
-| Silence third-party `alloy`/`tungstenite` entirely | `RUST_LOG=alloy=off,tungstenite=off` (or rely on the built-in `=warn` default) |
-| Get just `warn`/`error` (quietest useful run) | `RUST_LOG=warn` |
-| Disable ALL Rust core logs from the console | `RUST_LOG=off` |
-| Silence the Rust `fmt` stderr copy (single-tunnel logging) | `DEGENBOT_LOG_FMT=0` |
+| Knob | Class | Shape |
+| --- | --- | --- |
+| `telemetry.log_level` | behavior | closed enum `error\|warn\|info\|debug\|trace` |
+| `telemetry.diag` | verbosity | validated map `{ domain = "level" }`, ships empty |
+| `telemetry.forensic` | behavior + sink | one capped, rotating file target |
+| `telemetry.otel`, `telemetry.metrics_addr` | behavior | driver wiring |
 
-`RUST_LOG` directives are comma-separated `target=level` pairs, applied
-most-specific-first. `level` is one of `trace`, `debug`, `info`, `warn`,
-`error`, `off`. A bare `RUST_LOG=info` sets the global default; add
-`target=debug` overrides per crate / module. See
+`telemetry.diag` is the **console escalation** knob: it raises named domains
+on the console without touching the OTel side (which already carries
+`degenbot` at `debug`). Keys are validated at config load against the closed
+domain set, so a typo is a boot error naming the offending key and the valid
+set — never a silent no-op. The map is validated even when `RUST_LOG`
+overrides it, with one WARN that it is being ignored.
+
+### Precedence
+
+Precedence is a branch, not an ordering:
+
+1. If `RUST_LOG` is present it is used as-is on every sink, the config log
+   knobs are ignored, and the active source is named once at startup.
+2. Otherwise `telemetry.log_level` + `telemetry.diag` compile into one
+   `EnvFilter` (the console filter).
+3. The OTel spans layer is an independent fixed default,
+   `warn,degenbot=debug`, whenever `telemetry.otel` is on.
+
+`RUST_LOG` is directives of the form `target=level`, comma-separated, applied
+most-specific-first; see
 [`tracing-subscriber`'s EnvFilter docs](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html).
 
----
+## Operator recipes
 
-## Debug-named diagnostics gated at `debug`
+| I want to … | Do this |
+| --- | --- |
+| Quietest useful run (warn/error only) | `RUST_LOG=warn ./run_bot.sh` |
+| Default operator posture | `./run_bot.sh` |
+| Keep `info` but raise one domain on the console | `[telemetry.diag] sim = "debug"` (or the env equivalent) |
+| Full Rust + Python debug | `RUST_LOG=debug DEGENBOT_DEBUG=1` then the bot |
+| Just the Rust core at debug | `RUST_LOG=info,degenbot=debug` |
+| Full diagnostic stream in Jaeger only | leave the defaults — the OTel layer already runs `degenbot=debug` |
+| Prometheus scrape | `curl http://127.0.0.1:9464/metrics` (override `telemetry.metrics_addr`) |
+| Jaeger traces | see the [bot-telemetry skill](../.agents/skills/bot-telemetry/SKILL.md) |
 
-The following noisy diagnostics are emitted at `debug` level, so they are
-**invisible under the default `info` filter**. Re-enable them by raising the
-relevant crate to `debug` (`RUST_LOG=degenbot_bot=debug,degenbot_arbitrage=debug`).
-They were historically `info`/`warn` and flooded `bot_run.log` — that spam is
-why they were demoted. They are intentionally **kept in the code**, just gated.
+## Retired verbosity flags
 
-| prefix | crate target | what it does |
-|---|---|---|
-| `[solver-dbg]` | `degenbot_bot` | solve-entry debug trace (`rebuild_and_solve_affected`, `solve_all`) |
-| `[solver-st]` | `degenbot_bot` | per-path solver pool-state dump for cross-referencing against sim |
-| `[v2-calc-trace]` | `degenbot_arbitrage` | V2 reserves slot-8 read immediately before each path sim |
+The former per-diagnostic `DEGENBOT_*` env flags are retired (no aliases);
+each maps to a domain and is now a DEBUG event under it. A boot-time WARN
+scans the process environment for any retired name and prints the equivalent
+domain. The mapping and the disposition of the four default-ON streams
+(`verify_dbg`, `v2_calc_trace`, `dump_call_trace`,
+`sim_log_reverted_swaps`) live in
+[ADR-043 §5](adr/ADR-043-observability-standard.md).
 
-These are all "leftover debug tracing" — useful when investigating a specific
-mismatch (e.g. the path-11354 / path-142603 fixes), but far too loud to print
-every block by default. To debug one of them, run with the crate set to
-`debug`:
+## Implementation status
 
-```bash
-RUST_LOG=info,degenbot_bot=debug,degenbot_arbitrage=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-```
+The standard is being migrated in five phases (ergo epic `RAYW7I`). Until a
+phase lands, its knob is not yet live; the tables above describe the target
+contract and this section tracks the gap.
 
-or, for just the V2 calc trace:
+- Phase 1 (docs + ADR) — this document.
+- Phase 2 — telemetry facade, compile-time enforcement, engine-span guard,
+  panic hook.
+- Phase 3 — per-crate demotion of per-entity INFO to DEBUG and flag removal.
+- Phase 4 — `telemetry.log_level` / `telemetry.diag` / `telemetry.forensic`,
+  the single non-blocking console writer, and retired-flag detection.
+- Phase 5 — golden snapshots, metric gates, naming normalization.
 
-```bash
-RUST_LOG=info,degenbot_arbitrage=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-```
+## See also
 
----
-
-## Env-gated hard/loud diagnostics (independent of level)
-
-Several diagnostics are additionally gated by **dedicated env flags** that work
-*whatever* `RUST_LOG` level is active. Most are **default-ON** (conservative /
-loud) and are disabled by setting the flag to a falsey value (`0`, `false`,
-`off`, `no`, `""`). `DEGENBOT_DEBUG` does not affect them — they are checked in
-code, not by the tracing filter.
-
-| env var | default | gates |
-|---|---|---|
-| `DEGENBOT_VERIFY_DBG` | ON | structural verify diagnostics / divergence set |
-| `DEGENBOT_DUMP_CALL_TRACE` | ON | full revm call trace on a sim failure |
-| `DEGENBOT_V2_CALC_TRACE` | ON | V2 reserves slot-8 read before each sim (see `[v2-calc-trace]` above) |
-| `DEGENBOT_SIM_LOG_REVERTED_SWAPS` | ON | per-hop actual-vs-predicted on revert |
-| `DEGENBOT_SIM_EXIT_ON_FAIL` | 1 | stop on first sim failure (`=0` for a soak run) |
-| `DEGENBOT_WS_COMPLETENESS` | ON | per-block `eth_getLogs` vs WS delivery cross-check (aborts loudly on a live WS drop) |
-| `DEGENBOT_DRAIN_DBG` | **OFF** | per-event debug-drain log for a specific pool address (opt-in) |
-| `DEGENBOT_TRACE_REGISTER_SEED` | **OFF** | registration-seed trace (opt-in) |
-| `DEGENBOT_PUMP_DEBOUNCE_MS` | 50 | publish-debounce window (ms) — last dirty log → settle decision. Invalid/zero/empty falls back to 50. Lower to cut the per-block settle tax (see S7 in `docs/telemetry-latency-playbook.md`); the 2026-09-04 A/B at 15 ms cut ~33 ms/block with no extra solve cycles |
-| `DEGENBOT_LOG_FMT` | ON | the stderr `fmt` layer copy of every Rust record. Set falsey (`0`/`off`/`""`) to write the fmt layer to a sink — a driver that tees BOTH stdout and stderr into one file (`run_bot.sh`) then records every degenbot line exactly once via the Python-forwarded copy (halves the run log; drops the ANSI-escaped fmt lines from the file). Set =1 to restore the stderr mirror |
-
-### INFO-only defaults (log-volume cut OPBD7L)
-
-The per-registration `[path] registered` event and the `[bundle] inline
-payload settle` event were demoted to `debug`: on a live run they produced
-~half of a 10 G `logs/bot_run.log` and duplicated detail that is already in
-OTel (the `degenbot.path.register` span / `degenbot.arb.merge` span events —
-the Jaeger record filter is uncapped) and in the Python `[sim]` summary.
-Re-enable a diagnosis with `RUST_LOG=info,degenbot_bot=debug` +
-`DEGENBOT_DEBUG=1`. `run_bot.sh` now defaults to INFO-only posture (see its
-header).
-
-`run_bot.sh` documents this set in its header. To run a long-lived soak that
-trades through the routine thin-margin/no-profit reverts (instead of trapping on
-the first one), override the fail-fast:
-
-```bash
-DEGENBOT_SIM_EXIT_ON_FAIL=0 ./run_bot.sh
-```
-
----
-
-## Python-side control
-
-- **`DEGENBOT_DEBUG=1`** — sets the degenbot + Rust-bridge Python logger levels
-  to `DEBUG` (else `INFO`). This is the Python-side gate that, together with
-  `RUST_LOG`, controls whether Rust `debug!` records reach the Python-forwarded
-  copy.
-- **`DEGENBOT_DEBUG_FUNCTION_CALLS=1`** — enables the `@log_function_call`
-  decorator annotations (very noisy; opt-in).
-
----
-
-## Practical example: quiet default vs. deep dive
-
-**Default (quiet):** the shipped defaults give you INFO-level operational logs
-(the `[sim]`, `[solver]`, `[dispatch]` status lines) with the debug diagnostics
-muted and the `alloy`/`tungstenite` lifecycle noise throttled to `warn`:
-
-```bash
-./run_bot.sh
-```
-
-**Deep dive (everything):** full Rust + Python debug, all hard/loud gates
-explicitly on:
-
-```bash
-RUST_LOG=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-```
-
-**Targeted (a single subsystem):** only the V2 calc + solver internals, keeping
-the rest at info:
-
-```bash
-RUST_LOG=info,degenbot_bot=debug,degenbot_arbitrage=debug DEGENBOT_DEBUG=1 \
-    uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py
-```
+- [ADR-043](adr/ADR-043-observability-standard.md) — the decision record.
+- [Bot configuration keys](rust-config-keys.md) — the generated key table.
+- [Bot telemetry skill](../.agents/skills/bot-telemetry/SKILL.md) — Jaeger and
+  Prometheus workflows.

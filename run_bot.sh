@@ -69,11 +69,13 @@ mkdir -p "$LOGDIR"
 #                      crates to `debug` (docs/logging.md has the recipes).
 #   * DEGENBOT_DEBUG=1 is the Python `logging` gate for forwarded records.
 #
-# Duplication control:
-#   * DEGENBOT_LOG_FMT=0  routes the Rust stderr `fmt` layer (the
-#     ANSI-escaped copy) to a sink. RUST records still reach the log exactly
-#     once via the Python-forwarding tunnel; without this every degenbot
-#     line is written twice into bot_run.log.
+# Duplication control (ADR-043 / docs/logging.md): the standard lands exactly
+# ONE console writer per process (binding-present derivation), and the
+# two-tunnel DEGENBOT_LOG_FMT mirror is RETIRING in the migration. Until it
+# lands, DEGENBOT_LOG_FMT=0 routes the Rust stderr `fmt` layer (the
+# ANSI-escaped copy) to a sink. RUST records still reach the log exactly
+# once via the Python-forwarding tunnel; without this every degenbot
+# line is written twice into bot_run.log.
 #   * DEGENBOT_WS_TRACE=0 silences the per-WS-log `[trace] ws-log` probe
 #     (it fires for EVERY relevant-topic log at info when =1).
 #
