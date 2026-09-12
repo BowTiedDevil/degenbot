@@ -5093,7 +5093,7 @@ mod tests {
         let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
         let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
         eprintln!(
-            "[guard] deep fixture: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
+            "deep fixture: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
         );
         assert!(
             pieces <= 13 + 2,
@@ -5122,7 +5122,7 @@ mod tests {
         let grid_sims = WALK_GRID_SIMS.with(std::cell::Cell::get);
         let word_steps = WALK_WORD_STEPS.with(std::cell::Cell::get);
         eprintln!(
-            "[guard] 3-hop: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
+            "3-hop: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
         );
         assert!(pieces <= 24 + 2);
         // Seeded-bracket regression contract (J3OU5F): 251 measured with the
@@ -5198,7 +5198,7 @@ mod tests {
                 let solver = solve_cl_derived(&seqs, &SolveRuntimeConfig::default()).result;
                 let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
                 eprintln!(
-                    "[grid] deep_liquidity={deep_liquidity} deep_index={deep_index}:                      oracle={oracle} solver={solver_profit}"
+                    "deep_liquidity={deep_liquidity} deep_index={deep_index}:                      oracle={oracle} solver={solver_profit}"
                 );
                 // The grid is a max over SAMPLED points only — a lower
                 // bound on the true optimum. The walk may beat it slightly
@@ -5236,7 +5236,7 @@ mod tests {
                 f();
             }
             let per = start.elapsed() / n;
-            eprintln!("[bench] {label}: {per:?}/solve");
+            eprintln!("{label}: {per:?}/solve");
         }
 
         // single-range 2-hop (previously the O(1)-lookup fast path)
@@ -5277,7 +5277,7 @@ mod tests {
             WALK_PIECES_VISITED.with(|c| c.set(0));
             let _ = solve_cl_derived(&[&mr2h1, &mr2h2], &SolveRuntimeConfig::default()).result;
             eprintln!(
-                "[bench] 2-hop 8-range walk: pieces={} sims={}",
+                "2-hop 8-range walk: pieces={} sims={}",
                 WALK_PIECES_VISITED.with(std::cell::Cell::get),
                 WALK_PATH_SIMULATIONS.with(std::cell::Cell::get)
             );
@@ -5305,13 +5305,13 @@ mod tests {
 
         let exact = walk_piece_anchor(&hops, &ks);
         let transitional = walk_piece_anchor_transitional(&hops, &ks);
-        eprintln!("[EHSWSX] exact anchor: {exact}, transitional: {transitional}");
+        eprintln!("exact anchor: {exact}, transitional: {transitional}");
 
         let exact_outcome = simulate_walk_path(exact, &hops);
         let trans_outcome = simulate_walk_path(transitional, &hops);
         let exact_score = walk_profit_score(exact_outcome.final_output, exact);
         let trans_score = walk_profit_score(trans_outcome.final_output, transitional);
-        eprintln!("[EHSWSX] scores: exact={exact_score} transitional={trans_score}");
+        eprintln!("scores: exact={exact_score} transitional={trans_score}");
 
         assert!(
             exact_score > trans_score,
@@ -5384,7 +5384,7 @@ mod tests {
                         transitional,
                     );
                     eprintln!(
-                    "[EHSWSX] deep_index={deep_index} deep_liquidity={deep_liquidity} ks={ks:?}:                      exact_gap={} trans_gap={}",
+                    "deep_index={deep_index} deep_liquidity={deep_liquidity} ks={ks:?}:                      exact_gap={} trans_gap={}",
                     piece_best_score - exact_score,
                     piece_best_score - trans_score,
                 );

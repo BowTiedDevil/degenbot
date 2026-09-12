@@ -165,7 +165,7 @@ fn trace_boundary(hop_idx: usize, hop_lines: usize, survivors: usize, next: &[Li
         .min()
         .unwrap_or(I512::ZERO);
     diag!(domain = solver, hop_idx, hop_lines, survivors, min_eval_0 = %min0,
-        "[gate-trace] boundary");
+        "boundary");
 }
 
 /// Target coefficient width after sound-reduction: two operands of this
@@ -1604,7 +1604,7 @@ fn path_profit_bound_inner(
             };
             diag!(domain = solver, hop_index = hop_idx,
                 family = %family,
-                "[gate] degenerate hop rejected (impossible to bound — solved unscreened)"
+                "degenerate hop rejected (impossible to bound — solved unscreened)"
             );
             // M6776W golden capture: serialize the full per-hop state when a
             // capture harness is configured so the pool states can be replayed
@@ -1791,7 +1791,7 @@ fn path_profit_bound_inner(
         op_warn!(domain = solver, gate_lines = lines.len(),
             gate_hop_line_counts = ?hop_counts,
             gate_domain = %domain,
-            "[gate] composed tangent-line explosion"
+            "composed tangent-line explosion"
         );
     }
     // Discrete concave max of f(x) = min_lines(x) − x over [0, xmax].
@@ -2106,7 +2106,7 @@ fn compose_boundary_merged(
         diag!(
             domain = solver,
             reason = reason.key(),
-            "[gate] compose merge fell back to legacy pair product"
+            "compose merge fell back to legacy pair product"
         );
         compose_boundary_reference(hop_lines, chain, upper, cap)
     };

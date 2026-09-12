@@ -670,7 +670,7 @@ impl HostPump<'_> {
                 });
                 op_error!(domain = solver, role = ?self.role,
                     held,
-                    "[fleet-intake] lane-death latch held — Faulted: {held} queued/backlogged unit(s) resolved terminally (never executed), in-flight units complete naturally"
+                    "lane-death latch held — Faulted: {held} queued/backlogged unit(s) resolved terminally (never executed), in-flight units complete naturally"
                 );
             }
         }

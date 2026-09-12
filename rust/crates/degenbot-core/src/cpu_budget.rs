@@ -240,7 +240,7 @@ pub fn solve_worker_count() -> usize {
             cpu_budget = budget,
             solve_workers = workers,
             solve_headroom = DEFAULT_SOLVE_HEADROOM,
-            "[cpu-budget] solve worker count detected from cgroup + affinity"
+            "solve worker count detected from cgroup + affinity"
         );
         workers
     })
@@ -289,7 +289,7 @@ pub(crate) fn ambient_io_worker_count() -> usize {
             solve_workers = solve,
             ambient_io_workers = workers,
             io_workers_override = ?io_override,
-            "[cpu-budget] ambient I/O runtime sized from the cgroup + affinity budget minus the solve bins"
+            "ambient I/O runtime sized from the cgroup + affinity budget minus the solve bins"
         );
         workers
     })
@@ -690,20 +690,13 @@ mod tests {
     fn ambient_sizing_logs_the_cpu_budget_verdict_once() {
         // First sizing call runs initialization inside a recording subscriber;
         // the line must carry the ambient worker count AND the budget/solve
-        // split it was derived from, under the `[cpu-budget]` boot-log tag.
+        // split it was derived from, The tag is not part of the message:
+        // the console derives the area from the record target (ADR-043 s7).
         let rec = std::sync::Arc::new(RecordingSubscriber(std::sync::Mutex::new(String::new())));
         let _ = tracing::subscriber::with_default(rec.clone(), ambient_io_worker_count);
         let logged = rec.0.lock().expect("log buffer").clone();
-        for needle in [
-            "[cpu-budget]",
-            "ambient_io_workers",
-            "cpu_budget",
-            "solve_workers",
-        ] {
-            assert!(
-                logged.contains(needle),
-                "[cpu-budget] line missing {needle}: {logged}"
-            );
+        for needle in ["ambient_io_workers", "cpu_budget", "solve_workers"] {
+            assert!(logged.contains(needle), "line missing {needle}: {logged}");
         }
         // Idempotent: the OnceLock must not re-log on later calls.
         let rec2 = std::sync::Arc::new(RecordingSubscriber(std::sync::Mutex::new(String::new())));

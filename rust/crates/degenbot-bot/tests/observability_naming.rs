@@ -6,6 +6,10 @@
 //!   renderer maps `.` to `_`, so the exposed series stays
 //!   `degenbot_<area>_<noun>_<unit>`).
 //!
+//! * message — no `[area] ` prefix: the console area is derived from the
+//!   target by the driver's formatter, so the tag is a duplicate of the
+//!   routing decision and drifts from it.
+//!
 //! The sweep is source-based because the rule is about what maintainers
 //! write: a name that is only normalized at the export boundary drifts back.
 //! `#[cfg(test)]` modules and `tests/` trees are exempt — they name spans to
@@ -128,6 +132,52 @@ fn instrument_names(text: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// String literals that begin with an `[area] ` tag. ADR-043 §7: the console
+/// area comes from the closed domain target, so a message that re-states it
+/// duplicates the routing decision and drifts from the target.
+///
+/// Tags are matched lowercase-only (`[a-z0-9_-]+`) so a regex literal such as
+/// `"[a-zA-Z_]…"` is not mistaken for one; an uppercase tag would slip the
+/// gate, which is the acceptable direction to fail in.
+fn tagged_message_literals(text: &str) -> Vec<(usize, String)> {
+    let bytes = text.as_bytes();
+    let mut out: Vec<(usize, String)> = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut j = start;
+        while j < bytes.len() {
+            match bytes[j] {
+                b'\\' => j += 2,
+                b'"' => break,
+                _ => j += 1,
+            }
+        }
+        let end = j.min(bytes.len());
+        let lit = &text[start..end];
+        if let Some(rest) = lit.strip_prefix('[') {
+            if let Some(close) = rest.find(']') {
+                let tag = &rest[..close];
+                let after = &rest[close + 1..];
+                if !tag.is_empty()
+                    && tag.chars().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'
+                    })
+                    && after.starts_with(' ')
+                {
+                    out.push((start, lit.to_string()));
+                }
+            }
+        }
+        i = end + 1;
+    }
+    out
+}
+
 /// Every `.`-separated segment is non-empty lowercase snake.
 fn snake_segments(rest: &str) -> bool {
     let segs: Vec<&str> = rest.split('.').collect();
@@ -176,6 +226,7 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("rs"))
             && !path.to_string_lossy().contains("/tests/")
+            && !path.to_string_lossy().contains("/examples/")
         {
             out.push(path);
         }
@@ -219,6 +270,37 @@ fn production_spans_and_metrics_are_normalized() {
         violations.is_empty(),
         "ADR-043 §7 naming violations (span degenbot.<area>.<verb>, \
          metric degenbot.<area>.<noun>):\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn messages_carry_no_area_tags() {
+    let root = crates_root();
+    let mut files = Vec::new();
+    collect_rs(&root, &mut files);
+    assert!(!files.is_empty(), "source sweep found no files");
+
+    let mut violations: Vec<String> = Vec::new();
+    for path in &files {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let regions = test_regions(&text);
+        let rel = path
+            .strip_prefix(&root)
+            .map_or_else(|_| path.display().to_string(), |p| p.display().to_string());
+        for (offset, literal) in tagged_message_literals(&text) {
+            if in_test_region(&regions, offset) {
+                continue;
+            }
+            violations.push(format!("{rel}:{offset}: {literal:?}"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "ADR-043 section 7 message-tag violations (the console area is derived from the \
+         closed domain target; delete the in-message [tag]):\n{}",
         violations.join("\n")
     );
 }

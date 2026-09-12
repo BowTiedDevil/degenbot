@@ -108,6 +108,13 @@ owned by `logging.py` writes the console and the `fmt` layer is routed to
 never written twice — the owner is *derived* from binding-present, not
 switched by an env var.
 
+Every console line is `LEVEL [area] message`, where the area is derived from
+the record's logger name — the closed domain target for bridged Rust records
+(`degenbot::solver` → `solver`), the owning segment for a Python-side record.
+The message itself carries no `[tag]`: a tag would state the routing decision a
+second time and drift from it (ADR-043 §7, enforced by the message sweep in
+`observability_naming.rs`).
+
 The bridge's queue is **bounded** (8192 records): a stalled TTY or full pipe
 cannot stall the per-log pump. A push past the ceiling drops the record and
 counts it as `degenbot.log_dropped_total{sink="console"}`, so the ceiling is
@@ -152,13 +159,16 @@ contract and this section tracks the gap.
 - **Phase 5** — landed: the naming gate (`degenbot-bot/tests/
   observability_naming.rs` sweeps production sources; spans are
   `degenbot.<area>.<verb>`, metrics `degenbot.<area>.<noun>` — the block-epoch
-  root span is now `degenbot.epoch.run`), the metric-cardinality gate
+  root span is now `degenbot.epoch.run`), the message sweep (no `[area]` tag in
+  a production message; the console `_AreaFormatter` derives it from the logger
+  name instead), the metric-cardinality gate
   (`metric_cardinality.rs`: label names are a closed reviewed allowlist and
   unbounded-looking names fail outright), and the `degenbot.metric_series`
   self-metric + `DegenbotMetricCardinalityHigh` alert. Tracked successors for
   the rest: `ZJUEXH` (behavioral volume gate), `RL7X4C` (golden snapshots for
-  boot / one block / one revert), `4QYTPH` (delete the `[area]` message tags
-  and derive the prefix from the target).
+  boot / one block / one revert) — both landed; every `[area]` message tag is
+  deleted (147 in `src`, plus tests/examples) and the console prefix is derived
+  (`4QYTPH`).
 
 ## See also
 

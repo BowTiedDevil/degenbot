@@ -2215,7 +2215,7 @@ mod apply_inherent_tests {
             .expect("should build a sequence");
 
         let liqs: Vec<u128> = seq.ranges.iter().map(|r| r.liquidity).collect();
-        eprintln!("[drain-test] range liquidities: {liqs:?}");
+        eprintln!("range liquidities: {liqs:?}");
 
         assert_eq!(
             liqs[0], 5_407_362_545_736_161_987,
@@ -2242,7 +2242,7 @@ mod apply_inherent_tests {
             .build_int_v3_sequence(1, 100, false)
             .expect("should build an ofz sequence");
         let ofz_r0 = seq_ofz.ranges[0].liquidity;
-        eprintln!("[drain-test] ofz r0 liquidity: {ofz_r0}");
+        eprintln!("ofz r0 liquidity: {ofz_r0}");
         assert_eq!(
             ofz_r0, 5_407_362_545_736_161_987,
             "ofz r0 must NOT drain (gt exclusive)"

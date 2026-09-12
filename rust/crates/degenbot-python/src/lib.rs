@@ -248,7 +248,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
         Err(e) => {
             #[expect(clippy::print_stderr)]
             {
-                eprintln!("[config] invalid configuration - boot refused: {e}");
+                eprintln!("invalid configuration - boot refused: {e}");
             }
             #[expect(clippy::exit)]
             std::process::exit(2);
@@ -269,7 +269,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
                 // pre-abort stderr marker).
                 #[expect(clippy::print_stderr)]
                 {
-                    eprintln!("[failure_policy] invalid override - boot refused: {e}");
+                    eprintln!("invalid override - boot refused: {e}");
                 }
                 #[expect(clippy::exit)]
                 std::process::exit(2);
@@ -295,7 +295,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
             // DELIBERATE fail-loud import seam (see the Ok arm above).
             #[expect(clippy::print_stderr)]
             {
-                eprintln!("[failure_policy] invalid override table - boot refused: {e}");
+                eprintln!("invalid override table - boot refused: {e}");
             }
             #[expect(clippy::exit)]
             std::process::exit(2);
@@ -318,7 +318,7 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         diag!(
             domain = pump,
-            "[init] pyo3_async_runtimes already bound to a runtime"
+            "pyo3_async_runtimes already bound to a runtime"
         );
     }
 

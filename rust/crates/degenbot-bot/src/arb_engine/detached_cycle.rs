@@ -324,7 +324,7 @@ impl DetachedCycle {
             // pipe would strand every result, so die loudly.
             op_error!(
                 domain = solver,
-                "[detached] merge pipe vanished between open and clone — aborting"
+                "merge pipe vanished between open and clone — aborting"
             );
             std::process::abort();
         };

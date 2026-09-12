@@ -520,7 +520,7 @@ impl FleetHost {
             binding = %plan.binding,
             budget_cpus = plan.budget_cpus,
             oversubscribed = plan.oversubscribed,
-            "[fleet] boot plan resolved"
+            "boot plan resolved"
         );
         // FF-T4 (Z6XTDX): BOTH bindings boot — the projection is
         // binding-derived (pinned: the floor-checked budget; serial: the
@@ -895,7 +895,7 @@ impl FleetHost {
             quota = new_quota_cpus,
             solver_pins = self.budget.solver_pin_count,
             sim_driver_slots = self.budget.sim_slot_cap,
-            "[fleet-budget] quota re-detected — shares re-declared, sum re-checked"
+            "quota re-detected — shares re-declared, sum re-checked"
         );
         Ok(())
     }
@@ -943,11 +943,13 @@ impl FleetHost {
             .map_or(0, VecDeque::len);
         if len >= cap {
             self.overflow_count += 1;
-            op_error!(domain = pump, role = unit.role.label(),
+            op_error!(
+                domain = pump,
+                role = unit.role.label(),
                 len,
                 cap,
                 overflows = self.overflow_count,
-                "[fleet-dispatch] queue FULL — loud overflow (ADR-021: classify, stop, never silently drop)"
+                "queue FULL — loud overflow (ADR-021: classify, stop, never silently drop)"
             );
             return Err((
                 EnqueueError::QueueFull {
@@ -1276,7 +1278,7 @@ impl FleetHost {
                     from = ?rejected.from,
                     transition = ?rejected.transition,
                     reason = %rejected.reason,
-                    "[fleet-fsm] transition REJECTED — off the T-table"
+                    "transition REJECTED — off the T-table"
                 );
                 Err(HostError::Transition(rejected))
             }
@@ -1413,7 +1415,7 @@ impl FleetHost {
     /// before returning).
     pub fn strand_unit(&mut self, slot: SlotId) -> Result<(), HostError> {
         op_error!(domain = pump, slot,
-            "[fleet-deadlock] stranded result pipe: a dead host abandons a unit with in-flight result sends — loud abort (design doc §10.3)"
+            "stranded result pipe: a dead host abandons a unit with in-flight result sends — loud abort (design doc §10.3)"
         );
         (self.tripwire)("stranded result pipe: unit abandoned mid-drain");
         Err(HostError::StrandedPipe(slot))

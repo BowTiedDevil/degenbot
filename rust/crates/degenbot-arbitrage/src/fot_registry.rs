@@ -429,7 +429,7 @@ impl FeeOnTransferRegistry {
         if confirmed && self.is_verified_non_fot(token) {
             op_error!(domain = exec, %token,
                 current_block,
-                "[fot] verified non-FoT token accumulated FoT suspicion — false positive; clearing record"
+                "verified non-FoT token accumulated FoT suspicion — false positive; clearing record"
             );
             return false;
         }
@@ -493,7 +493,7 @@ impl FeeOnTransferRegistry {
     fn assert_not_verified_non_fot(&self, token: Address, confirmed: bool) -> bool {
         assert!(
             !(confirmed && self.verified_non_fot.contains(&token)),
-            "[fot] verified non-FoT token confirmed as fee-on-transfer: {token:?} — classifier bug; refusing to silently drop a real token"
+            "verified non-FoT token confirmed as fee-on-transfer: {token:?} — classifier bug; refusing to silently drop a real token"
         );
         confirmed
     }

@@ -137,14 +137,14 @@ async fn main() {
         let tx_env = match tx_env_from_alloy_tx(tx) {
             Ok(env) => env,
             Err(why) => {
-                eprintln!("[replay] tx {i}: skipping ({why})");
+                eprintln!("tx {i}: skipping ({why})");
                 errors += 1;
                 continue;
             }
         };
         let res = evm.transact_commit(tx_env);
         if let Err(e) = &res {
-            eprintln!("[replay] tx {i}: ERR {e}");
+            eprintln!("tx {i}: ERR {e}");
         }
         let outcome = match res {
             Ok(r) => match &r {

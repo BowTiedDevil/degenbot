@@ -233,7 +233,13 @@ documented), so the tail of a trace is not lost to teardown ordering.
 
 Span `degenbot.<area>.<verb>`; metric `degenbot.<noun>_<unit>`; target
 `degenbot::<domain>`. The message `[area]` tag is deleted: the console
-formatter derives the prefix from the target, so maintainers set one thing.
+formatter (`_AreaFormatter` in `src/degenbot/logging.py`) renders
+`LEVEL [area] message` with the area derived from the record's logger name —
+the domain target for a bridged Rust record, the owning segment for a
+Python-side one — so maintainers set one thing and a record that moves between
+areas needs no message edit. Landed in `4QYTPH`; a production message that
+re-introduces an `[area] ` tag fails `observability_naming.rs
+::messages_carry_no_area_tags`.
 
 ### 8. Enforcement
 

@@ -318,7 +318,7 @@ fn drain_dbg_log_buf(
         tick_upper,
         liquidity_delta,
         block_number,
-        "[dbg-buf] INSERT"
+        "INSERT"
     );
 }
 
@@ -350,7 +350,7 @@ pub(crate) fn trace_ws_log_dispatch(
         topic1 = ?topics.get(1), // 42FL35: V4 PoolId lives here - greppable
         removed,
         decision = %decision,
-        "[trace] ws-log"
+        "ws-log"
     );
 }
 
@@ -373,7 +373,7 @@ pub(crate) fn trace_apply_swap_v3(
         liquidity,
         tick,
         block = block_number,
-        "[trace] swap-apply"
+        "swap-apply"
     );
 }
 
@@ -395,7 +395,7 @@ pub(crate) fn trace_apply_swap_v4(
         liquidity,
         tick,
         block = block_number,
-        "[trace] swap-apply"
+        "swap-apply"
     );
 }
 
@@ -420,7 +420,7 @@ pub(crate) fn trace_apply_route_v3(
         block = block_number,
         lifecycle = %lifecycle,
         routed_to = %routed_to,
-        "[trace] apply-route"
+        "apply-route"
     );
 }
 
@@ -449,7 +449,7 @@ pub(crate) fn trace_apply_route_v4(
         block = block_number,
         lifecycle = %lifecycle,
         routed_to = %routed_to,
-        "[trace] apply-route"
+        "apply-route"
     );
 }
 

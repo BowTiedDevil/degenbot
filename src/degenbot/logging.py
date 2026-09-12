@@ -71,6 +71,55 @@ logger.setLevel(_LOG_LEVEL)
 # ``QueueHandler-not-StreamHandler`` + listener-drains guards).
 _STDOUT_HANDLER = logging.StreamHandler(sys.stdout)
 
+#: The closed target domains (ADR-043 §3). A Rust record's logger name is its
+#: target with `::` dotted (`degenbot::solver` → `degenbot.solver`), so the
+#: domain is the first segment in this set; a Python module name has no domain
+#: segment and falls back to its own last segment.
+_DOMAIN_AREAS = frozenset({
+    "state",
+    "path",
+    "solver",
+    "sim",
+    "pump",
+    "exec",
+    "verify",
+    "ingest",
+    "rpc",
+    "aave",
+    "diag",
+})
+
+
+def _area_for(logger_name: str) -> str:
+    """Derive the console area prefix from a record's logger name."""
+    parts = logger_name.split(".")
+    for part in parts[1:] if len(parts) > 1 else parts:
+        if part in _DOMAIN_AREAS:
+            return part
+    return parts[-1] if parts else logger_name
+
+
+def _short_level(levelname: str) -> str:
+    return "WARN" if levelname == "WARNING" else levelname
+
+
+class _AreaFormatter(logging.Formatter):
+    """Console line: `LEVEL [area] message`.
+
+    The area is derived from the *record's logger name* — the closed domain
+    target for bridged Rust records, the owning module for Python-side ones —
+    never from an in-message `[tag]` prefix. ADR-043 §7: the target is the
+    single source of the area, so a message carries no routing information of
+    its own and there is exactly one thing to change when a record moves
+    between areas.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return f"{_short_level(record.levelname)} [{_area_for(record.name)}] {record.getMessage()}"
+
+
+_STDOUT_HANDLER.setFormatter(_AreaFormatter())
+
 # In-process queue + listener. ``SimpleQueue`` is ``thread.Lock``-based (no
 # ``Condition``, no notifier thread) — ``put_nowait`` is a few microseconds and never
 # blocks. ``respect_handler_level=True`` so the listener still honors each

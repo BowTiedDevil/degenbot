@@ -728,12 +728,12 @@ fn bound_dominates_golden_profit_on_heavy_cl_captures() {
                 )
                 .unwrap();
                 eprintln!(
-                    "[bind-fail] hop{ih} truth={so} bound_at={sb} (def {})",
+                    "hop{ih} truth={so} bound_at={sb} (def {})",
                     sb.saturating_sub(so)
                 );
             }
             eprintln!(
-                "[bind-fail] go_in={go_in} last={go_last} bound={bound} (block {doc_block} path {doc_pid})"
+                "go_in={go_in} last={go_last} bound={bound} (block {doc_block} path {doc_pid})"
             );
         }
         assert!(

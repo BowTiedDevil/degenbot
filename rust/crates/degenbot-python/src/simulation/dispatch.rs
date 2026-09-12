@@ -205,7 +205,7 @@ pub fn dispatch_profitable_py<'py>(
         domain = sim,
         current_block,
         phase_candidate_count,
-        "[dispatch-phase] future body START (emitted synchronously — its absence \
+        "future body START (emitted synchronously — its absence \
          past this point means the GIL was already parked)"
     );
     let dispatch_body = async move {
@@ -220,7 +220,7 @@ pub fn dispatch_profitable_py<'py>(
             domain = sim,
             current_block,
             phase_candidate_count,
-            "[dispatch-phase] fan-out ENTER"
+            "fan-out ENTER"
         );
         let ctx = SimulateContext {
             provider: &provider,
@@ -253,7 +253,7 @@ pub fn dispatch_profitable_py<'py>(
         op_info!(domain = sim, current_block,
             elapsed_ms = %phase_started.elapsed().as_millis(),
             survivors = outcome.gas_profitable.len(),
-            "[dispatch-phase] fan-out EXIT"
+            "fan-out EXIT"
         );
 
         // ── Join survivors → SubmitCandidates (pure Rust — no GIL needed) ──
@@ -287,7 +287,7 @@ pub fn dispatch_profitable_py<'py>(
         op_info!(
             domain = sim,
             current_block,
-            "[dispatch-phase] future body END — handing to set_result via Python::attach"
+            "future body END — handing to set_result via Python::attach"
         );
         Ok(PyDispatchOutcome::from_join(
             joined,

@@ -421,7 +421,7 @@ impl PostureStateMachine {
                     // sticky hold: no state transition, but the cause
                     // is new and loud.
                     op_warn!(domain = pump, lane_deaths = self.counters.lane_deaths,
-                        "[fleet-posture] lane-death HOLD upgrades an existing cordon — sticky, clean-window exit disabled"
+                        "lane-death HOLD upgrades an existing cordon — sticky, clean-window exit disabled"
                     );
                     return PostureChange::Held;
                 }
@@ -511,7 +511,7 @@ impl PostureStateMachine {
         self.counters.entered += 1;
         op_warn!(domain = pump, reason = ?reason,
             entered = self.counters.entered,
-            "[fleet-posture] cordon ENTER — deferrable intake held, sim intake floored; in-flight units complete"
+            "cordon ENTER — deferrable intake held, sim intake floored; in-flight units complete"
         );
         PostureChange::Entered(reason)
     }
@@ -538,7 +538,7 @@ impl PostureStateMachine {
             domain = pump,
             exited = self.counters.exited,
             clean_ms = self.policy.exit_clean_ms,
-            "[fleet-posture] cordon EXIT after clean-window hysteresis"
+            "cordon EXIT after clean-window hysteresis"
         );
         PostureChange::Exited
     }
@@ -779,7 +779,9 @@ static PROCESS_OWNER: OnceLock<PostureOwner> = OnceLock::new();
 #[must_use]
 pub fn install_process_owner(policy: PosturePolicy) -> &'static PostureOwner {
     if PROCESS_OWNER.set(PostureOwner::new(policy)).is_err() {
-        diag!(domain = pump, "[fleet-posture] process owner already installed — first-wins, keeping the existing owner"
+        diag!(
+            domain = pump,
+            "process owner already installed — first-wins, keeping the existing owner"
         );
     }
     process()

@@ -78,11 +78,11 @@ const MAX_TARGET_TX_INDEX: usize = 30;
 async fn main() {
     // Opt-in gate — the probe needs a live archive node; CI has none.
     if std::env::var("DEGENBOT_SWAP_CAPTURE_PROBE").ok().as_deref() != Some("1") {
-        eprintln!("[swap-capture-probe] skipped (set DEGENBOT_SWAP_CAPTURE_PROBE=1 to run)");
+        eprintln!("skipped (set DEGENBOT_SWAP_CAPTURE_PROBE=1 to run)");
         return;
     }
     let rpc_url = std::env::var("RPC").unwrap_or_else(|_| RPC_URL_DEFAULT.to_string());
-    eprintln!("[swap-capture-probe] RPC URL: {rpc_url}");
+    eprintln!("RPC URL: {rpc_url}");
 
     let provider = ProviderBuilder::default().connect_http(rpc_url.parse().expect("valid URL"));
 
@@ -90,11 +90,11 @@ async fn main() {
     let latest = match provider.get_block_number().await {
         Ok(n) => n,
         Err(e) => {
-            eprintln!("[swap-capture-probe] RPC unreachable ({e:?}) — skipping");
+            eprintln!("RPC unreachable ({e:?}) — skipping");
             return;
         }
     };
-    eprintln!("[swap-capture-probe] latest block: {latest}");
+    eprintln!("latest block: {latest}");
 
     let mut validated_v2 = false;
     let mut validated_v3 = false;
@@ -111,7 +111,7 @@ async fn main() {
                         match validate_swap_capture(&provider, block_number, cand).await {
                             Ok(()) => validated_v2 = true,
                             Err(why) => eprintln!(
-                                "[swap-capture-probe] block {block_number} V2 tx index {} \
+                                "block {block_number} V2 tx index {} \
                                  validation FAILED: {why}",
                                 cand.tx_index
                             ),
@@ -120,7 +120,7 @@ async fn main() {
                         match validate_swap_capture(&provider, block_number, cand).await {
                             Ok(()) => validated_v3 = true,
                             Err(why) => eprintln!(
-                                "[swap-capture-probe] block {block_number} V3 tx index {} \
+                                "block {block_number} V3 tx index {} \
                                  validation FAILED: {why}",
                                 cand.tx_index
                             ),
@@ -129,7 +129,7 @@ async fn main() {
                         match validate_swap_capture(&provider, block_number, cand).await {
                             Ok(()) => validated_v4 = true,
                             Err(why) => eprintln!(
-                                "[swap-capture-probe] block {block_number} V4 tx index {} \
+                                "block {block_number} V4 tx index {} \
                                  validation FAILED: {why}",
                                 cand.tx_index
                             ),
@@ -137,7 +137,7 @@ async fn main() {
                     }
                 }
             }
-            Err(why) => eprintln!("[swap-capture-probe] block {block_number} scan error: {why}"),
+            Err(why) => eprintln!("block {block_number} scan error: {why}"),
         }
     }
 
@@ -322,7 +322,7 @@ async fn validate_swap_capture(
     let parent_block = block_number.saturating_sub(1);
     let tx_index = candidate.tx_index;
     eprintln!(
-        "[swap-capture-probe] block {block_number} {:?} tx index {tx_index} (parent pin \
+        "block {block_number} {:?} tx index {tx_index} (parent pin \
          {parent_block}) — fetching full block + receipts…",
         candidate.family
     );
@@ -390,7 +390,7 @@ async fn validate_swap_capture(
         }
     }
     eprintln!(
-        "[swap-capture-probe] replayed {tx_index} prior tx(s) in {:?}; inspecting target…",
+        "replayed {tx_index} prior tx(s) in {:?}; inspecting target…",
         replay_start.elapsed()
     );
 
@@ -415,7 +415,7 @@ async fn validate_swap_capture(
 
     let captured = handle.take_swaps();
     eprintln!(
-        "[swap-capture-probe] captured {} swap(s) for tx[{tx_index}] {:?}; comparing to receipt…",
+        "captured {} swap(s) for tx[{tx_index}] {:?}; comparing to receipt…",
         captured.len(),
         candidate.family
     );

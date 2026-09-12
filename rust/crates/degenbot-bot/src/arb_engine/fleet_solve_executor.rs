@@ -51,9 +51,9 @@ pub(crate) const SOLVE_BIN_KEY_BASE: PinKey = 1;
 pub(crate) fn abort_executor(context: &str, err: &str) -> ! {
     op_error!(domain = solver, context = %context,
         error = %err,
-        "[fleet-solve] unrecoverable — aborting (stranded result pipe)"
+        "unrecoverable — aborting (stranded result pipe)"
     );
-    eprintln!("[fleet-solve] UNRECOVERABLE, aborting (stranded result pipe): {context}: {err}");
+    eprintln!("UNRECOVERABLE, aborting (stranded result pipe): {context}: {err}");
     std::process::abort();
 }
 /// Public loud-stop wrapper (ADR-021; used by the `solver_dispatch` submit
@@ -351,7 +351,7 @@ fn seat_loop(seat: u64, rx: mpsc::Receiver<SeatJob>, done: &mpsc::Sender<HostMsg
                 domain = solver,
                 seat,
                 unit = job.unit,
-                "[fleet-solve] bin job panicked — the seat survives, the failure is loud"
+                "bin job panicked — the seat survives, the failure is loud"
             );
         }
         if done.send(HostMsg::SeatDone { seat }).is_err() {

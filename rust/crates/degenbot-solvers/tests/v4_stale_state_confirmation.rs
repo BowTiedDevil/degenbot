@@ -196,7 +196,7 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
     );
 
     eprintln!(
-        "[protocol-fee-fix-confirmed] amount_in={amount_in} \
+        "amount_in={amount_in} \
          swapFee_out={sim_out} (== on-chain actual {ONCHAIN_ACTUAL_OUT}) \
          lpFee_out={sim_out_no_proto} (== pre-fix prediction {PRE_FIX_LP_FEE_PREDICTION}) \
          => BZBOLL fix threads calculateSwapFee into both v4_simulate_swap + solver"

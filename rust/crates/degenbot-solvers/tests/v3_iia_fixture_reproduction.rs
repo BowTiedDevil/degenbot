@@ -139,9 +139,7 @@ fn v3_exact_in_output_ofz(outcome: &V3SwapOutcome) -> U256 {
 #[test]
 fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
     let Ok(rpc_url) = std::env::var("DEGENBOT_V3_FIXTURE_RPC") else {
-        eprintln!(
-            "[v3-iia-fixture] DEGENBOT_V3_FIXTURE_RPC unset — skipping network-gated reproduction"
-        );
+        eprintln!("DEGENBOT_V3_FIXTURE_RPC unset — skipping network-gated reproduction");
         return;
     };
     let block = std::env::var("DEGENBOT_V3_FIXTURE_BLOCK")
@@ -168,9 +166,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         });
     let tick: i32 = tick_i256.try_into().expect("tick fits i32");
     let liquidity: u128 = liquidity_u256.to::<u128>();
-    eprintln!(
-        "[v3-iia-fixture] block={block} sqrtPriceX96={sqrt_price_x96} tick={tick} liquidity={liquidity}"
-    );
+    eprintln!("block={block} sqrtPriceX96={sqrt_price_x96} tick={tick} liquidity={liquidity}");
 
     // 2. Build a Sparse V3PoolState with the bootstrap-backed fetcher.
     let bootstrap = Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(&provider)));
@@ -223,17 +219,17 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
                 // tick-range cache (so the retry sees the new ticks).
                 state.merge_tick_word(&new_word);
             }
-            Err(e) => panic!("[v3-iia-fixture] v3_simulate_swap error: {e:?}"),
+            Err(e) => panic!("v3_simulate_swap error: {e:?}"),
         }
     };
 
-    eprintln!("[v3-iia-fixture] sim(v3_simulate_swap)={sim_out}");
+    eprintln!("sim(v3_simulate_swap)={sim_out}");
 
     // 4. Build the solver's sequence from the (now backfilled) state and run
     //    the solver crossing path on the SAME amount_in.
     let Some(seq) = state.build_int_v3_sequence(TICK_SPACING, FEE, zero_for_one) else {
         eprintln!(
-            "[v3-iia-fixture] build_int_v3_sequence returned None — sparse backfill only \
+            "build_int_v3_sequence returned None — sparse backfill only \
              seeded words the swap touched; the solver's 24-range walk needs more. \
              sim_out alone is the decisive signal (see assertion below)."
         );
@@ -248,12 +244,12 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         solver_crossing_output(U256::from(AMOUNT_IN), &seq).expect("solver crossing output");
 
     eprintln!(
-        "[v3-iia-fixture] amount_in={AMOUNT_IN} sim(v3_simulate_swap)={sim_out} \
+        "amount_in={AMOUNT_IN} sim(v3_simulate_swap)={sim_out} \
          solver(crossing)={solver_out} captured_actual={CAPTURED_ACTUAL} \
          captured_predicted={CAPTURED_PREDICTED}"
     );
     eprintln!(
-        "[v3-iia-fixture] sim_vs_captured_actual delta={}",
+        "sim_vs_captured_actual delta={}",
         if sim_out > U256::from(CAPTURED_ACTUAL) {
             sim_out - U256::from(CAPTURED_ACTUAL)
         } else {
@@ -261,7 +257,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         }
     );
     eprintln!(
-        "[v3-iia-fixture] solver_vs_sim delta={}",
+        "solver_vs_sim delta={}",
         if solver_out > sim_out {
             solver_out - sim_out
         } else {

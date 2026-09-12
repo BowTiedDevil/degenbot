@@ -1461,19 +1461,21 @@ mod tests {
         // swap is zero_for_one (DAI->WETH, price descending).
         let result = compute_tick_ranges(&tick_data, -74028, 1, 5_407_362_545_736_161_987, true);
         if let Some((ranges, _)) = result {
-            eprintln!("[diag] mainnet DAI/WETH pool: {} ranges", ranges.len());
+            eprintln!("mainnet DAI/WETH pool: {} ranges", ranges.len());
             for (i, r) in ranges.iter().enumerate() {
                 eprintln!(
-                    "[diag] range[{i}] tick=[{},{}] liq_net={}",
+                    "range[{i}] tick=[{},{}] liq_net={}",
                     r.tick_lower, r.tick_upper, r.liquidity_net
                 );
             }
             let reaches_distant = ranges
                 .iter()
                 .any(|r| r.tick_lower == -84382 || r.tick_upper == -84382);
-            eprintln!("[diag] reaches -84382 (the first liquidity-changing tick below)? {reaches_distant}");
+            eprintln!(
+                "reaches -84382 (the first liquidity-changing tick below)? {reaches_distant}"
+            );
         } else {
-            eprintln!("[diag] mainnet DAI/WETH pool: compute_tick_ranges returned None");
+            eprintln!("mainnet DAI/WETH pool: compute_tick_ranges returned None");
             panic!("returned None for real pool data");
         }
     }

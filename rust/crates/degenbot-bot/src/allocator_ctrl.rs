@@ -224,7 +224,7 @@ fn apply_decommits(decommits: bool) {
     op_info!(
         domain = pump,
         decommits,
-        "[allocator-ctrl] mimalloc purge decommits applied (false = MADV_FREE)"
+        "mimalloc purge decommits applied (false = MADV_FREE)"
     );
 }
 
@@ -243,7 +243,7 @@ fn apply_delay_ms(delay_ms: i64) {
             op_warn!(
                 domain = pump,
                 version = v,
-                "[allocator-ctrl] unsupported mimalloc major - purge-delay control disabled"
+                "unsupported mimalloc major - purge-delay control disabled"
             );
         }
         ok
@@ -260,7 +260,7 @@ fn apply_delay_ms(delay_ms: i64) {
     op_info!(
         domain = pump,
         delay_ms,
-        "[allocator-ctrl] mimalloc purge delay applied from block cadence"
+        "mimalloc purge delay applied from block cadence"
     );
 }
 
@@ -271,7 +271,7 @@ fn apply_delay_ms(delay_ms: i64) {
         op_warn!(
             domain = pump,
             delay_ms,
-            "[allocator-ctrl] computed purge delay but the allocator-ctrl \
+            "computed purge delay but the allocator-ctrl \
              cargo feature is not enabled - mimalloc keeps its default delay"
         );
     }
@@ -307,7 +307,7 @@ pub fn init_from_env_at_pump_start() {
             mult = cfg.mult,
             min_blocks = MIN_BLOCKS,
             window = WINDOW,
-            "[allocator-ctrl] block-cadence purge-delay discovery armed"
+            "block-cadence purge-delay discovery armed"
         );
     }
 }

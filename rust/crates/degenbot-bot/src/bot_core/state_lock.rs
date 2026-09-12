@@ -223,7 +223,7 @@ fn flag_aged_records(records: &mut [HoldRecord], now_ms: u64, threshold_ms: u64)
 fn log_slow_holds(key: usize, holds: &[SlowHold]) {
     for hold in holds {
         let mut msg = format!(
-            "[state-lock] read guard held {}ms by {} at {} (lock 0x{key:x})",
+            "read guard held {}ms by {} at {} (lock 0x{key:x})",
             hold.held_ms, hold.thread, hold.location,
         );
         if let Some(bt) = &hold.backtrace {
@@ -297,7 +297,7 @@ const SLOW_READ_DROPS_CAP: usize = 128;
 /// warn (mirrors [`log_slow_holds`]'s message shape).
 fn record_slow_read_drop(hold: SlowHold) {
     let mut msg = format!(
-        "[state-lock] read guard (drop-report) held {}ms by {} at {}",
+        "read guard (drop-report) held {}ms by {} at {}",
         hold.held_ms, hold.thread, hold.location,
     );
     if let Some(bt) = &hold.backtrace {
@@ -446,7 +446,7 @@ impl<T> StateLock<T> {
             if waited >= warn_threshold_ms() {
                 op_warn!(
                     domain = state,
-                    "[state-lock] read acquisition blocked {waited}ms at {} \
+                    "read acquisition blocked {waited}ms at {} \
                      (hold tracking disabled - set DEGENBOT_STATE_LOCK_DIAG=1 to name holders)",
                     Location::caller()
                 );
@@ -467,7 +467,7 @@ impl<T> StateLock<T> {
             let holders = snapshot_holds(key);
             op_warn!(
                 domain = state,
-                "[state-lock] read acquisition blocked {waited}ms at {location} \
+                "read acquisition blocked {waited}ms at {location} \
                  (lock 0x{key:x}); active reads at acquire: {holders:?}"
             );
         }
@@ -506,7 +506,7 @@ impl<T> StateLock<T> {
             let holders = snapshot_holds(key);
             op_warn!(
                 domain = state,
-                "[state-lock] WRITE acquisition blocked {waited}ms at {location} \
+                "WRITE acquisition blocked {waited}ms at {location} \
                  (lock 0x{key:x}); readers still registered after acquire: {holders:?}"
             );
         }
@@ -661,7 +661,7 @@ impl<T> Drop for StateWriteGuard<'_, T> {
         if let Some((loc, held)) = warned {
             op_warn!(
                 domain = state,
-                "[state-lock] WRITE guard held {held}ms at {loc} (lock 0x{:x})",
+                "WRITE guard held {held}ms at {loc} (lock 0x{:x})",
                 self.key
             );
         }

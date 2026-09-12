@@ -270,12 +270,12 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
         Ok(s) => match std::fs::write(&path, s) {
             Ok(()) => Some(std::path::PathBuf::from(path)),
             Err(e) => {
-                op_error!(domain = pump, error = %e, "[thread-registry] dump write failed");
+                op_error!(domain = pump, error = %e, "dump write failed");
                 None
             }
         },
         Err(e) => {
-            op_error!(domain = pump, error = %e, "[thread-registry] dump serialize failed");
+            op_error!(domain = pump, error = %e, "dump serialize failed");
             None
         }
     }

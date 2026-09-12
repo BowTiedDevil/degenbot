@@ -297,7 +297,7 @@ pub fn set_posture_policy(patch: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
     let changed = policy_changes(&current, &effective);
     if !changed.is_empty() {
         op_warn!(domain = solver, changed = %changed,
-            "[fleet-posture] operator retune — cordon thresholds changed and are LIVE"
+            "operator retune — cordon thresholds changed and are LIVE"
         );
         // TB4QGX T9 (retune wake gap): a live retune can change the
         // admission guard with no message in flight. Wake every parked host

@@ -99,7 +99,7 @@ pub fn emit_boot_table() {
     let table = snapshot();
     BOOT_DUMPED.get_or_init(|| {
         crate::op_info!(domain = pump, entries = ?table,
-            "[worker-census] boot table full",
+            "boot table full",
         );
     });
 }
@@ -135,7 +135,7 @@ pub fn register(entry: WorkerCensusEntry) {
             count = announced.1,
             thread_name = announced.2,
             sizing = announced.3,
-            "[worker-census] registered after boot dump — new spawn site must register",
+            "registered after boot dump — new spawn site must register",
         );
     }
     if let Some(hook) = EXPORT_HOOK.get() {
@@ -280,7 +280,12 @@ mod tests {
         let sunk = std::sync::Arc::clone(&rec);
         tracing::subscriber::with_default(sunk, emit_boot_table);
         let logged = rec.0.lock().unwrap().clone();
-        assert!(logged.contains("[worker-census]"), "tag missing: {logged}");
+        // The area is derived from the target, not carried in the message
+        // (ADR-043 section 7) - the table itself must stay intact.
+        assert!(
+            !logged.contains("[worker-census]"),
+            "tag left in message: {logged}"
+        );
         assert!(
             logged.contains("census-probe-boot"),
             "boot table missing the registered resource: {logged}"

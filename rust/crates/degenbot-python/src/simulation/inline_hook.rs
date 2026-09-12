@@ -493,7 +493,7 @@ impl InlineSimulator for InlineSimHook {
                 domain = sim,
                 path_id = req.path_id,
                 reason = if reverify { "fail-retry" } else { "spot-check" },
-                "[sim-verify] divergence probe armed (on-demand verification)"
+                "divergence probe armed (on-demand verification)"
             );
         }
         let storage_memo = {
@@ -515,7 +515,7 @@ impl InlineSimulator for InlineSimHook {
                         block_number = guard.0,
                         memo.hits = hits,
                         memo.misses = misses,
-                        "[inline-sim] storage memo stats (block retired)"
+                        "storage memo stats (block retired)"
                     );
                 }
                 *guard = (
@@ -832,6 +832,16 @@ mod spawn_span_parent_tests {
     use opentelemetry_sdk::trace::InMemorySpanExporter;
     use tracing_subscriber::layer::SubscriberExt;
 
+    /// Install the process-wide subscriber, or report that another test owns
+    /// the slot. `set_global_default` is once-per-process and `cargo test` runs
+    /// these tests in parallel (the `python_log_layer` capture test wants the
+    /// same slot), so the loser must skip rather than panic.
+    fn install_global_or_skip(
+        subscriber: impl tracing::Subscriber + Send + Sync + 'static,
+    ) -> bool {
+        tracing::subscriber::set_global_default(subscriber).is_ok()
+    }
+
     #[test]
     fn sim_task_span_parents_under_the_caller_span() {
         let exporter = InMemorySpanExporter::default();
@@ -847,8 +857,14 @@ mod spawn_span_parent_tests {
         // block_pump header-span test: with_default is thread-local and the
         // spawned task runs on a runtime worker thread). This crate's test
         // binary installs it at most once.
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("global default already set by another test");
+        if !install_global_or_skip(subscriber) {
+            // Another test in this binary holds the process-wide global
+            // subscriber slot, so this test capture was never installed and
+            // any assertion below would read another test buffer. Each test
+            // is verified in isolation: `cargo test -p degenbot_rs --lib
+            // simulation::inline_hook`.
+            return;
+        }
 
         // Scope the solve span so it ENDS before the flush (an exporter only
         // receives closed spans).
@@ -906,8 +922,14 @@ mod spawn_span_parent_tests {
         ));
         let done: Arc<std::sync::atomic::AtomicU64> = Arc::default();
 
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("global default already set by another test");
+        if !install_global_or_skip(subscriber) {
+            // Another test in this binary holds the process-wide global
+            // subscriber slot, so this test capture was never installed and
+            // any assertion below would read another test buffer. Each test
+            // is verified in isolation: `cargo test -p degenbot_rs --lib
+            // simulation::inline_hook`.
+            return;
+        }
 
         {
             let solve = tracing::info_span!("degenbot.arb.solve", block.number = 3u64);

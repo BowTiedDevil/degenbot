@@ -135,7 +135,7 @@ fn failure_policy_section_is_skipped_not_rejected() {
         .load()
     {
         Ok(loaded) => loaded,
-        Err(e) => unreachable!("[failure_policy] must be permitted, boot refused with: {e}"),
+        Err(e) => unreachable!("must be permitted, boot refused with: {e}"),
     };
     cleanup(&path);
     assert!(

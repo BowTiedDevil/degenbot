@@ -281,7 +281,7 @@ pub(crate) fn read_failure_policy_overrides(
                 return Ok(Vec::new());
             };
             let Some(entries) = policy.as_table() else {
-                return Err("[failure_policy] must be a table of bucket = action".to_owned());
+                return Err("must be a table of bucket = action".to_owned());
             };
             let mut out = Vec::new();
             for (k, v) in entries {

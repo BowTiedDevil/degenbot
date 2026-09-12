@@ -715,7 +715,7 @@ impl LogDispatcher {
                     tx.index = ?log.transaction_index,
                     pool.id = pool_id,
                     pool = %identity,
-                    "[state] pool event applied"
+                    "pool event applied"
                 );
                 // T2: successful apply to a registered pool.
                 EpochLogTally::inc(&self.tally.applied);

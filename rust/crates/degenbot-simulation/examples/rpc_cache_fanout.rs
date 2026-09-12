@@ -194,11 +194,11 @@ async fn main() {
         100.0 * saved as f64 / b_total as f64
     };
     eprintln!(
-        "[warm-cache] config D total RPCs = {d_total} vs config B (no warm cache) total RPCs = {b_total} over {WARM_CACHE_N_BLOCKS} blocks (saved {saved} RPCs, {pct:.0}% reduction)"
+        "config D total RPCs = {d_total} vs config B (no warm cache) total RPCs = {b_total} over {WARM_CACHE_N_BLOCKS} blocks (saved {saved} RPCs, {pct:.0}% reduction)"
     );
     assert_warm_cache_ttl_boundary(&cfg_d, WARM_CACHE_TTL_BLOCKS);
     eprintln!(
-        "[warm-cache] PASS: TTL boundary re-cold-load verified (basic RPCs: cold at block 1, warm through block {warm}, re-cold at block {cold})",
+        "PASS: TTL boundary re-cold-load verified (basic RPCs: cold at block 1, warm through block {warm}, re-cold at block {cold})",
         warm = WARM_CACHE_TTL_BLOCKS + 1,
         cold = WARM_CACHE_TTL_BLOCKS + 2
     );
@@ -541,12 +541,9 @@ fn print_transact_result<E: std::fmt::Display>(
             let out = r
                 .output()
                 .map_or_else(|| "<none>".to_string(), revm::primitives::hex::encode);
-            eprintln!(
-                "[transact-result] {kind} output_len={} output={out}",
-                out.len()
-            );
+            eprintln!("{kind} output_len={} output={out}", out.len());
         }
-        Err(e) => eprintln!("[transact-result] Err({e})"),
+        Err(e) => eprintln!("Err({e})"),
     }
 }
 
@@ -576,7 +573,7 @@ fn run_config_bare(provider: &RootProvider, tx: &TxEnv, block_id: BlockId) -> Co
         per_call.push(t.elapsed().as_nanos() as u64);
         if i == 0 {
             eprintln!(
-                "[A] trigger call done: {} storage RPCs, {} basic RPCs",
+                "trigger call done: {} storage RPCs, {} basic RPCs",
                 counter.storage_rpcs(),
                 counter.basic_rpcs()
             );
@@ -613,7 +610,7 @@ fn run_config_shared_cachedb(
     // Trigger (call 0) warms the cache; fan-out (1..=FANOUT) hits it.
     let per_call = run_isolated_transacts(&mut evm, tx, 1 + FANOUT, true);
     eprintln!(
-        "[B] after trigger+fan-out: {} storage RPCs, {} basic RPCs",
+        "after trigger+fan-out: {} storage RPCs, {} basic RPCs",
         counter.storage_rpcs(),
         counter.basic_rpcs()
     );
@@ -653,7 +650,7 @@ fn run_config_proactive(provider: &RootProvider, tx: &TxEnv, block_id: BlockId) 
         per_call.push(t.elapsed().as_nanos() as u64);
         if i == 0 {
             eprintln!(
-                "[C] trigger call done: {} storage RPCs, {} basic RPCs",
+                "trigger call done: {} storage RPCs, {} basic RPCs",
                 counter.storage_rpcs(),
                 counter.basic_rpcs()
             );

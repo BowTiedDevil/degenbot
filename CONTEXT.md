@@ -980,6 +980,32 @@ _Avoid_: "quote", "oracle", "gate" (admission-control connotations),
 
 
 
+### Solve cycle (2026-09 architecture review — decided in grilling, epic TBD)
+
+- **Solve cycle** — the per-block dirty-solve unit: affected-path fan-out from
+  the EpochDelta keys, admission (draw/shed), (re)resolve, solve, witness,
+  drain, merge, cursor advance. One module owns all four solve entrances
+  (the dirty-solve cycle, the all-paths drain, the registration-time eager
+  solve, the pending-new-paths carry) behind one narrow interface; the
+  detached-arm machine (`detached_cycle.rs`) stays a collaborator module.
+- **Cycle-transient state** — the stash the cycle borrows between blocks:
+  the admission draw verdict, the cycle arm, pending new paths, the cursor
+  advance. Owned by the solve cycle, not smeared across the engine's
+  long-lived fields.
+- **Cycle outcome** — the typed fact a solve cycle returns: the arm
+  (shed / skipped-empty / solved), the solved-block coordinate, and the
+  submission counts the stage hooks and telemetry read. The stage hooks
+  stop poking the engine; the outcome carries what survives the cycle.
+_Avoid_: "solve loop" (the pump's block loop), "cycle" bare (ambiguous with
+detached-arm cycle states), "engine cycle" (the engine is registry +
+composition root, not the cycle owner).
+- **Path registry** — the solve engine's identity module: path_pools, the
+  pool_to_paths reverse index, signature dedup, next_id, cap. Deliberately
+  SHALLOW: no resolve, no solve, no deps beyond solver value types. The hot
+  cycle holds a SHARED borrow (cycles never mutate path identity);
+  registration is the only `&mut` caller. See
+  [ADR-044](docs/adr/ADR-044-solve-cycle-extraction.md).
+
 ## The worker fleet (FF-T5 glossary - epic OFQ2UW)
 
 The fleet's execution vocabulary - one meaning per word, closed set

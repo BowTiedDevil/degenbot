@@ -266,7 +266,7 @@ impl StageTelemetry {
             epoch.block = epoch.block(),
             epoch.seq = epoch.seq(),
             stall_secs = age.as_secs(),
-            "[pump] stage interval expired without a transition; stage span force-closed"
+            "stage interval expired without a transition; stage span force-closed"
         );
         if kind == OpenKind::Rewind {
             self.rewind_opened_at = None;

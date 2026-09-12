@@ -84,14 +84,14 @@ impl ArbitrageEngine {
                 expire_v3_work_us = v3_work_us,
                 expire_v4_lock_wait_us = v4_lock_wait_us,
                 expire_v4_work_us = v4_work_us,
-                "[solve-phase] buffered-event expiry (pre-cycle) complete"
+                "buffered-event expiry (pre-cycle) complete"
             );
         } else {
             diag!(
                 domain = solver,
                 block_number,
                 expiry_enabled = false,
-                "[solve-phase] buffered-event expiry skipped (max_age unset)"
+                "buffered-event expiry skipped (max_age unset)"
             );
         }
 
@@ -204,7 +204,7 @@ impl ArbitrageEngine {
             diag!(domain = solver, block_number = block,
                 apply.block_us = apply_us.iter().sum::<u128>() / 1_000,
                 apply.families = %parts.join(","),
-                "[apply-telemetry] block family split"
+                "block family split"
             );
         }
     }

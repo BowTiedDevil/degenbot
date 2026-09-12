@@ -899,7 +899,7 @@ impl BlockPump {
                                 // warning per silence episode (re-armed when
                                 // the next log resumes the sub).
                                 op_warn!(domain = pump, silence_secs = self.watchdog.log_silence.as_secs(),
-                                    "[pump] logs subscription silent: headers flowing but no log"
+                                    "logs subscription silent: headers flowing but no log"
                                 );
                                 self.watchdog.record_silence_alarm();
                             }
@@ -1032,7 +1032,7 @@ impl BlockPump {
                                             t.saturating_duration_since(hw).as_micros() as u64
                                         }),
                                         apply_stream_us = apply_us,
-                                        "[pump-overlap] per-block phase attribution (throttled)"
+                                        "per-block phase attribution (throttled)"
                                     );
                                 }
                                 let _ctx = block_span.as_ref().map(tracing::Span::enter);
@@ -2245,7 +2245,7 @@ impl BlockPump {
             // HARD and immediately. A contained worker-thread panic would
             // leave the bot half-alive (silent-ish), which is itself a failure
             // mode; `std::process::abort` guarantees termination.
-            op_error!(domain = pump, "[WS-INVARIANT] LIVE WEBSOCKET LOG DROP at block {block}: {} relevant on-chain log(s) missing from WS delivery: log_index {:?}. eth_getLogs={} logs, WS delivered={} logs. The websocket/pump delivery path dropped a relevant event — ABORT (DFQYM5/WS-DROP). Investigate the subscription/reconnect path; do NOT silence this.",
+            op_error!(domain = pump, "LIVE WEBSOCKET LOG DROP at block {block}: {} relevant on-chain log(s) missing from WS delivery: log_index {:?}. eth_getLogs={} logs, WS delivered={} logs. The websocket/pump delivery path dropped a relevant event — ABORT (DFQYM5/WS-DROP). Investigate the subscription/reconnect path; do NOT silence this.",
                 missing.len(),
                 missing,
                 onchain.len(),
@@ -2263,7 +2263,7 @@ impl BlockPump {
             #[expect(clippy::print_stderr)] // invariant-failure diagnostic before abort
             {
                 eprintln!(
-                    "[WS-INVARIANT] ABORT: live websocket log drop at block {block} ({} of {} relevant logs missing); eth_getLogs vs WS divergence — see the untraced log for the log_index list.",
+                    "ABORT: live websocket log drop at block {block} ({} of {} relevant logs missing); eth_getLogs vs WS divergence — see the untraced log for the log_index list.",
                     missing.len(),
                     onchain.len(),
                 );

@@ -253,7 +253,7 @@ pub fn record_exception_keyed(
             exception_type = kind,
             fingerprint = %primary_id,
             block_number = block,
-            "[error] repeat suppressed by cooldown"
+            "repeat suppressed by cooldown"
         );
     }
     admitted

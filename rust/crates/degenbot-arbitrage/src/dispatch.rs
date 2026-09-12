@@ -83,7 +83,7 @@ fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
                     diag!(domain = sim, path_id = sim_path.path_id,
                         pair = ?v2.pool_address,
                         %e,
-                        "[v2-calc-trace] slot8 read failed"
+                        "slot8 read failed"
                     );
                     break;
                 }
@@ -99,7 +99,7 @@ fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
                 fee = v2.fee,
                 reserve0 = reserve0,
                 reserve1 = reserve1,
-                "[v2-calc-trace] pair reserves slot8 before path execute"
+                "pair reserves slot8 before path execute"
             );
             break;
         }

@@ -354,7 +354,7 @@ fn log_invalidation(pool_ref: &MixedPoolRef, hop_index: usize, reason: MissingHo
     diag!(domain = state, ?pool_ref,
         hop = hop_index,
         %reason,
-        "[resolve-path] hop invalidates the path"
+        "hop invalidates the path"
     );
 }
 

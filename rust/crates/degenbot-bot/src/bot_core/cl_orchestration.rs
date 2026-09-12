@@ -129,7 +129,7 @@ impl BotState {
             seed_sqrt = %params.sqrt_price_x96,
             seed_tick = params.tick,
             coverage = ?params.coverage,
-            "[diag] register-v3-seed"
+            "register-v3-seed"
         );
 
         let pool_id = self.next_pool_id;
@@ -622,16 +622,16 @@ impl BotState {
         // drain-dbg gate is retired). Diagnoses same-block Mint+Burn
         // net-zero races where one half is lost between fetch and drain.
         let Some(&key) = self.pool_addresses.get(address) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill NOT REGISTERED");
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "backfill NOT REGISTERED");
             return;
         };
         let Some(buffered) = self.v3_buffer.drain_backfill(address) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill EMPTY");
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "backfill EMPTY");
             return;
         };
         diag!(domain = pump, pool_addr = %format!("{address:x}"),
             count = buffered.len(),
-            "[dbg-drain] backfill"
+            "backfill"
         );
         for update in buffered {
             match &update {
@@ -641,7 +641,7 @@ impl BotState {
                         tick_upper = u.tick_upper,
                         delta = u.liquidity_delta,
                         block = u.block_number,
-                        "[dbg-drain] backfill apply liq"
+                        "backfill apply liq"
                     );
                 }
                 BufferedV3PoolEvent::Swap(s) => {
@@ -649,7 +649,7 @@ impl BotState {
                         liquidity = s.liquidity,
                         tick = s.tick,
                         block = s.block_number,
-                        "[dbg-drain] backfill apply swap"
+                        "backfill apply swap"
                     );
                 }
             }
@@ -665,7 +665,7 @@ impl BotState {
                     op_warn!(domain = state, pool_addr = %format!("{address:x}"),
                         ub_before,
                         ub_after = state.update_block,
-                        "[dbg-drain] update_block REWIND (backfill)"
+                        "update_block REWIND (backfill)"
                     );
                 }
             }
@@ -679,7 +679,7 @@ impl BotState {
     /// [`apply_backfill_buffer_v3`] — see its docs.
     pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
         let Some(&key) = self.pool_addresses.get(address) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NOT REGISTERED");
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump NOT REGISTERED");
             return;
         };
         // YLYJM2: drain ONLY fully-completed blocks. The cutoff is the pump's
@@ -689,14 +689,14 @@ impl BotState {
         // in-progress block stay buffered.
         let cutoff = self.pump_complete_cutoff;
         if cutoff == 0 {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NO-COMPLETE (no tombstone yet)");
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump NO-COMPLETE (no tombstone yet)");
             return;
         }
         let Some(buffered) = self.v3_buffer.drain_pump_completed(address, cutoff) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] pump EMPTY (no completed blocks)");
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump EMPTY (no completed blocks)");
             return;
         };
-        diag!(domain = pump, pool_addr = %format!("{address:x}"), count = buffered.len(), "[dbg-drain] pump");
+        diag!(domain = pump, pool_addr = %format!("{address:x}"), count = buffered.len(), "pump");
         for update in buffered {
             match &update {
                 BufferedV3PoolEvent::Liquidity(u) => {
@@ -705,7 +705,7 @@ impl BotState {
                         tick_upper = u.tick_upper,
                         delta = u.liquidity_delta,
                         block = u.block_number,
-                        "[dbg-drain] pump apply liq"
+                        "pump apply liq"
                     );
                 }
                 BufferedV3PoolEvent::Swap(s) => {
@@ -713,7 +713,7 @@ impl BotState {
                         liquidity = s.liquidity,
                         tick = s.tick,
                         block = s.block_number,
-                        "[dbg-drain] pump apply swap"
+                        "pump apply swap"
                     );
                 }
             }
@@ -729,7 +729,7 @@ impl BotState {
                     op_warn!(domain = state, pool_addr = %format!("{address:x}"),
                         ub_before,
                         ub_after = state.update_block,
-                        "[dbg-drain] update_block REWIND (pump)"
+                        "update_block REWIND (pump)"
                     );
                 }
             }
@@ -967,7 +967,7 @@ impl BotState {
                         seed_block,
                         cutoff,
                         witnessed_horizon,
-                        "[provenance] V3 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
+                        "V3 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
                     );
                 }
                 PinProvenance::CorroboratedByDelivery
@@ -977,7 +977,7 @@ impl BotState {
                         seed_block,
                         cutoff,
                         verdict = ?verdict,
-                        "[provenance] V3 pin stamp classified"
+                        "V3 pin stamp classified"
                     );
                 }
             }
@@ -2135,7 +2135,7 @@ impl BotState {
                         seed_block,
                         cutoff,
                         witnessed_horizon,
-                        "[provenance] V4 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
+                        "V4 re-seed-after-activity: a fresher seed stamp arrived \n                         after the engine had already witnessed events for this pool                          (FUWYUR lie shape)"
                     );
                 }
                 PinProvenance::CorroboratedByDelivery
@@ -2146,7 +2146,7 @@ impl BotState {
                         seed_block,
                         cutoff,
                         verdict = ?verdict,
-                        "[provenance] V4 pin stamp classified"
+                        "V4 pin stamp classified"
                     );
                 }
             }

@@ -196,12 +196,14 @@ pub(crate) fn record_ride(role: BootRole, stamp: &BootStamp) {
             // DIFFERENT-cfg rider: prod = count + one warn per pair; test =
             // ILLEGAL by construction (the F2 fire drill).
             rides.push((stamp.engine_id, stamp.cfg_hash));
-            op_warn!(domain = solver, role = role.label(),
+            op_warn!(
+                domain = solver,
+                role = role.label(),
                 winner_engine = winner_engine,
                 winner_cfg = format_args!("{winner_cfg:016x}"),
                 rider_engine = stamp.engine_id,
                 rider_cfg = format_args!("{:016x}", stamp.cfg_hash),
-                "[fleet-boot-audit] mixed-boot fleet ride (YI5NGB): first-fleet-wins, rider cfg diverges"
+                "mixed-boot fleet ride (YI5NGB): first-fleet-wins, rider cfg diverges"
             );
             #[cfg(test)]
             panic_mixed_boot_ride_illegal_in_tests(*winner_cfg, stamp);
@@ -220,7 +222,7 @@ pub(crate) fn record_ride(role: BootRole, stamp: &BootStamp) {
 )]
 fn panic_mixed_boot_ride_illegal_in_tests(winner_cfg: u64, stamp: &BootStamp) {
     panic!(
-        "[fleet-boot-audit] (YI5NGB) mixed-boot rides are ILLEGAL in tests: engine {} (cfg_hash {winner_cfg:016x} won) rode a fleet booted for a different cfg (rider cfg_hash {:016x})",
+        "(YI5NGB) mixed-boot rides are ILLEGAL in tests: engine {} (cfg_hash {winner_cfg:016x} won) rode a fleet booted for a different cfg (rider cfg_hash {:016x})",
         stamp.engine_id,
         stamp.cfg_hash
     );

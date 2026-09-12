@@ -336,7 +336,7 @@ fn tx_to(addr: Address) -> TxEnv {
 fn spike_q1_log_capture_inside_call() {
     let contract = Address::repeat_byte(0x42);
     let bc = emit_v2_sync_bytecode(1000, 2000);
-    println!("[Q1] bytecode hex = 0x{}", hex_encode(bc.as_ref()));
+    println!("bytecode hex = 0x{}", hex_encode(bc.as_ref()));
     let db = db_with_contract(contract, Bytecode::new_raw(bc));
 
     // Build with a default (unused) inspector, then swap in the probe via
@@ -349,21 +349,21 @@ fn spike_q1_log_capture_inside_call() {
     let records = handle.drain();
 
     println!("\n[Q1] log_fired={}", records.log_fired);
-    println!("[Q1] log_full_fired={}", records.log_full_fired);
-    println!("[Q1] captured {} logs:", records.logs.len());
-    println!("[Q1] frames captured: {}", records.frames.len());
+    println!("log_full_fired={}", records.log_full_fired);
+    println!("captured {} logs:", records.logs.len());
+    println!("frames captured: {}", records.frames.len());
     println!(
-        "[Q1] result success={} gas_used={}",
+        "result success={} gas_used={}",
         result.is_success(),
         result.tx_gas_used()
     );
     match result.output() {
-        Some(o) => println!("[Q1] result output=0x{}", hex_encode(o)),
-        None => println!("[Q1] result output=<none>"),
+        Some(o) => println!("result output=0x{}", hex_encode(o)),
+        None => println!("result output=<none>"),
     }
     for (i, log) in records.logs.iter().enumerate() {
         println!(
-            "[Q1]   log[{i}] addr={} topic0={} data=0x{}",
+            "  log[{i}] addr={} topic0={} data=0x{}",
             log.address,
             log.topics()
                 .first()
@@ -372,7 +372,7 @@ fn spike_q1_log_capture_inside_call() {
             hex_encode(log.data.data.as_ref()),
         );
     }
-    println!("[Q1] inspect_one result success? {}", result.is_success());
+    println!("inspect_one result success? {}", result.is_success());
 
     assert!(
         result.is_success(),
@@ -410,18 +410,18 @@ fn spike_q1_log_capture_inside_call() {
         removed: false,
     };
     let decoded = decode_sync_log(&rpc_log).expect("decode must succeed");
-    println!("[Q1] decoded SyncEvent: {decoded:?}");
+    println!("decoded SyncEvent: {decoded:?}");
     assert_eq!(decoded.pool_address, contract);
     assert_eq!(decoded.reserve0.to::<u64>(), 1000);
     assert_eq!(decoded.reserve1.to::<u64>(), 2000);
 
-    println!("[Q1] ANSWER: for LOG opcodes, Inspector::log_full fires (with the");
-    println!("[Q1]   interpreter); Inspector::log does NOT fire for instruction-emitted");
-    println!("[Q1]   logs (it fires only for frame-init value-transfer logs, the");
-    println!("[Q1]   interpreter=None path in inspect_logs). The captured Log is a");
-    println!("[Q1]   primitives::Log; the decoders consume alloy::rpc::types::Log (an");
-    println!("[Q1]   RPC wrapper) — a wrap (all metadata None) is needed before");
-    println!("[Q1]   decode_sync_log. decode round-trips (addr + reserves match).");
+    println!("ANSWER: for LOG opcodes, Inspector::log_full fires (with the");
+    println!("  interpreter); Inspector::log does NOT fire for instruction-emitted");
+    println!("  logs (it fires only for frame-init value-transfer logs, the");
+    println!("  interpreter=None path in inspect_logs). The captured Log is a");
+    println!("  primitives::Log; the decoders consume alloy::rpc::types::Log (an");
+    println!("  RPC wrapper) — a wrap (all metadata None) is needed before");
+    println!("  decode_sync_log. decode round-trips (addr + reserves match).");
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -462,12 +462,9 @@ fn spike_q2_tuple_composition() {
         "\n[Q2] access list (collector alone): {} items",
         al_alone.len()
     );
+    println!("access list (composed tuple): {} items", al_composed.len());
     println!(
-        "[Q2] access list (composed tuple): {} items",
-        al_composed.len()
-    );
-    println!(
-        "[Q2] probe frames captured (composed): {}",
+        "probe frames captured (composed): {}",
         probe_records.frames.len()
     );
 
@@ -490,9 +487,9 @@ fn spike_q2_tuple_composition() {
         "probe captured frames in the composed tuple"
     );
 
-    println!("[Q2] ANSWER: (AccessListCollector, ProbeInspector) composes on one");
-    println!("[Q2]   inspect_one. Both handles drain independently. The AL is");
-    println!("[Q2]   parity-equal to the collector-alone case (slot sets match).");
+    println!("ANSWER: (AccessListCollector, ProbeInspector) composes on one");
+    println!("  inspect_one. Both handles drain independently. The AL is");
+    println!("  parity-equal to the collector-alone case (slot sets match).");
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -528,10 +525,10 @@ fn spike_q3_call_end_revert_at_depth() {
     let records = handle.drain();
 
     println!("\n[Q3] top-level success? {}", result.is_success());
-    println!("[Q3] captured {} call frames:", records.frames.len());
+    println!("captured {} call frames:", records.frames.len());
     for f in &records.frames {
         println!(
-            "[Q3]   depth={} caller={} target={} selector=0x{} gas_limit={} outcome={:?}",
+            "  depth={} caller={} target={} selector=0x{} gas_limit={} outcome={:?}",
             f.depth,
             f.caller,
             f.target,
@@ -550,13 +547,13 @@ fn spike_q3_call_end_revert_at_depth() {
         .find(|f| f.target == child)
         .expect("a frame targeting the child must be captured");
     println!(
-        "[Q3] child frame depth={} outcome={:?}",
+        "child frame depth={} outcome={:?}",
         child_frame.depth, child_frame.outcome
     );
     assert_eq!(child_frame.depth, 2, "child call is at depth 2 (parent=1)");
     match &child_frame.outcome {
         Some(FrameOutcome::Revert { data, .. }) => {
-            println!("[Q3] child revert data = 0x{}", hex_encode(data));
+            println!("child revert data = 0x{}", hex_encode(data));
             assert!(
                 data.ends_with(&[0xde, 0xad, 0xbe, 0xef]),
                 "revert data must end with 0xdeadbeef"
@@ -584,14 +581,14 @@ fn spike_q3_call_end_revert_at_depth() {
     let records2 = handle2.drain();
     let top = &records2.frames[0];
     println!(
-        "[Q3] top-level-only revert: depth={} target={} outcome={:?}",
+        "top-level-only revert: depth={} target={} outcome={:?}",
         top.depth, top.target, top.outcome
     );
 
-    println!("[Q3] ANSWER: call_end receives the CallOutcome of the DEEPEST");
-    println!("[Q3]   reverting frame (the child at depth 2), carrying its revert");
-    println!("[Q3]   data — not just the top-level bubble. The reverting target");
-    println!("[Q3]   + selector are visible at the reverting frame's call_end.");
+    println!("ANSWER: call_end receives the CallOutcome of the DEEPEST");
+    println!("  reverting frame (the child at depth 2), carrying its revert");
+    println!("  data — not just the top-level bubble. The reverting target");
+    println!("  + selector are visible at the reverting frame's call_end.");
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -604,8 +601,8 @@ fn spike_q3_call_end_revert_at_depth() {
 #[ignore = "spike probe (KCKGP4) — run with --ignored --nocapture"]
 fn spike_q4_v4_swap_event_deferred() {
     println!("\n[Q4] DEFERRED: V4 Swap-event capture requires the real V4");
-    println!("[Q4]   PoolManager bytecode over the production DB stack with the");
-    println!("[Q4]   transient seeder (task 5RI47E). This CacheDB<EmptyDB> probe");
-    println!("[Q4]   cannot emit a V4 Swap event. Recorded as blocked on the");
-    println!("[Q4]   production stack / 5RI47E in the spike doc.");
+    println!("  PoolManager bytecode over the production DB stack with the");
+    println!("  transient seeder (task 5RI47E). This CacheDB<EmptyDB> probe");
+    println!("  cannot emit a V4 Swap event. Recorded as blocked on the");
+    println!("  production stack / 5RI47E in the spike doc.");
 }

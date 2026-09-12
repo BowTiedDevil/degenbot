@@ -210,7 +210,7 @@ pub fn install_default_escalation_port(port: Arc<dyn EscalationPort>) {
     if guard.is_some() {
         warn!(
             target: "degenbot::fleet",
-            "[lane] default escalation port re-installed — the previous port is replaced"
+            "default escalation port re-installed — the previous port is replaced"
         );
     }
     *guard = Some(port);

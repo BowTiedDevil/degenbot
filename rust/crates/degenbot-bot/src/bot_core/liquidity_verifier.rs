@@ -176,14 +176,14 @@ fn log_tick_map_desync(
         total_ticks,
         divergence_count = divergences.len(),
         divergences = %serialize_divergences(divergences),
-        "[dbg-verify] TICK-MAP DESYNC (divergence set)"
+        "TICK-MAP DESYNC (divergence set)"
     );
     // Full engine/on-chain maps: forensic TRACE on `verify`.
     degenbot_core::diag_trace!(domain = verify, pool = %pool_ident,
         block_tag = %block_tag,
         engine_map = %serialize_liquidity_map(stored_map),
         observed_map = %serialize_liquidity_map(observed_map),
-        "[dbg-verify] TICK-MAP DESYNC full maps (UO3JM4 re-assembly aid)"
+        "TICK-MAP DESYNC full maps (UO3JM4 re-assembly aid)"
     );
 }
 
@@ -552,7 +552,7 @@ pub async fn verify_v3_pool<T: TickMap + ?Sized>(
                 update_block = pool.dbg_update_block(),
                 journal_len = pool.dbg_journal_len(),
                 total_ticks = tick_data.len(),
-                "[dbg-verify] LIQUIDITY MISMATCH"
+                "LIQUIDITY MISMATCH"
             );
             crate::telemetry::record_exception(
                 crate::telemetry::error_kind::VERIFY_MISMATCH,

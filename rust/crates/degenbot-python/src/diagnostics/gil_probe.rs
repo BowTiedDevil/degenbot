@@ -116,7 +116,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
     if PROBE_RUNNING.swap(true, Ordering::SeqCst) {
         op_warn!(
             domain = pump,
-            "[gil-probe] already running — start_gil_probe() call ignored (idempotent)"
+            "already running — start_gil_probe() call ignored (idempotent)"
         );
         return Ok(());
     }
@@ -142,7 +142,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
         .spawn(move || {
             op_info!(domain = pump, interval = ?interval,
                 threshold = ?threshold,
-                "[gil-probe] sampling"
+                "sampling"
             );
             let mut last_sample_ms: u64 = now_ms();
             loop {
@@ -164,21 +164,19 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                 if elapsed >= threshold {
                     op_warn!(domain = pump, acquire_ms = %elapsed.as_millis(),
                         gap,
-                        "[gil-probe] GIL held: acquire took ms — main thread holding GIL"
+                        "GIL held: acquire took ms — main thread holding GIL"
                     );
                 } else {
                     diag!(domain = pump, acquire_ms = %elapsed.as_millis(),
                         gap,
-                        "[gil-probe] GIL acquire"
+                        "GIL acquire"
                     );
                 }
                 thread::sleep(interval);
             }
         })
         .map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "[gil-probe] failed to spawn probe thread: {e}"
-            ))
+            pyo3::exceptions::PyRuntimeError::new_err(format!("failed to spawn probe thread: {e}"))
         })?;
 
     // ── Watchdog thread: detect main-loop stuck (no `mark_progress()`). ──
@@ -200,7 +198,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
         .name("gil-probe-watchdog".to_string())
         .spawn(move || {
             op_info!(domain = pump, stuck = ?stuck,
-                "[gil-probe] stuck-watchdog armed"
+                "stuck-watchdog armed"
             );
             let stuck_ms = u64::try_from(stuck.as_millis()).unwrap_or(u64::MAX);
             let mut alarm_count: u32 = 0;
@@ -221,7 +219,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                     } => {
                         op_info!(domain = pump, since_progress,
                             since_sample,
-                            "[gil-probe] main loop idle: no progress — busy, not a GIL deadlock \\
+                            "main loop idle: no progress — busy, not a GIL deadlock \\
                              (if this persists for minutes while sampling stays fresh, suspect a \
                              non-GIL wedge: a Rust lock held across an await)"
                         );
@@ -232,7 +230,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                             {
                                 op_error!(domain = pump, path = %p.display(),
                                     since_progress,
-                                    "[gil-probe] long-Busy episode: thread-registry + futex table dumped (non-GIL wedge suspect)"
+                                    "long-Busy episode: thread-registry + futex table dumped (non-GIL wedge suspect)"
                                 );
                             }
                         }
@@ -250,14 +248,14 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                         if alarm_count == 1 || alarm_count.is_multiple_of(10) {
                             if let Some(p) = crate::diagnostics::thread_registry::dump_to_file() {
                                 op_error!(domain = pump, path = %p.display(),
-                                    "[gil-probe] thread-registry + futex table dumped"
+                                    "thread-registry + futex table dumped"
                                 );
                             }
                         }
                         op_error!(domain = pump, since_progress,
                             since_sample,
                             stuck = ?stuck,
-                            "[gil-probe] GIL DEADLOCK confirmed"
+                            "GIL DEADLOCK confirmed"
                         );
                     }
                 }
@@ -265,7 +263,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
         })
         .map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "[gil-probe] failed to spawn watchdog thread: {e}"
+                "failed to spawn watchdog thread: {e}"
             ))
         })?;
 

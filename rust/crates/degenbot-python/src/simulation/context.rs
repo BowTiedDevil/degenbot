@@ -214,6 +214,6 @@ impl crate::bot::engine::PyArbitrageEngine {
         degenbot_workers::lane::install_default_escalation_port(escalation_port);
         // The soak's hook-wiring tell — one line at install, matching the
         // `[solve-phase] cycle complete` inline.* fields it pairs with.
-        op_info!(domain = sim, erc6909_profit, "[inline-sim] hook installed");
+        op_info!(domain = sim, erc6909_profit, "hook installed");
     }
 }

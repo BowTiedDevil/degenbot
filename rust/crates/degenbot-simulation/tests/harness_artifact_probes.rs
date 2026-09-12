@@ -258,23 +258,23 @@ fn reference_nonbatch_capture_stream_still_executes_with_mode2_floor() {
         "fixture starts from a zero ERC6909 position"
     );
     let res = run_raw_config(&mut h, &hops, &hop_outputs, &ref_payload, U256::from(2u32))
-        .unwrap_or_else(|e| panic!("[reference] run: {e}"));
+        .unwrap_or_else(|e| panic!("run: {e}"));
     let tol = tolerance(res.predicted);
     assert!(
         res.outcome.executed(2),
-        "[reference] non-batch capture must execute: {:?}",
+        "non-batch capture must execute: {:?}",
         res.outcome
     );
     assert!(
         res.erc6909_delta > 0 && (res.erc6909_delta - res.predicted).abs() <= tol,
-        "[reference] ERC6909 capture delta {} vs predicted {} (tol {})",
+        "ERC6909 capture delta {} vs predicted {} (tol {})",
         res.erc6909_delta,
         res.predicted,
         tol
     );
     assert!(
         res.weth_delta <= tol,
-        "[reference] custody WETH delta {} must not carry the profit (tol {})",
+        "custody WETH delta {} must not carry the profit (tol {})",
         res.weth_delta,
         tol
     );
@@ -307,23 +307,23 @@ fn probe_open_weth_batch_plus_mint_executes_with_mode2_floor_and_capture() {
     payload.extend(enc_v4_unlock(&inner).unwrap());
 
     let res = run_raw_config(&mut h, &hops, &hop_outputs, &payload, U256::from(2u32))
-        .unwrap_or_else(|e| panic!("[A] run: {e}"));
+        .unwrap_or_else(|e| panic!("run: {e}"));
     let tol = tolerance(res.predicted);
     assert!(
         res.outcome.executed(2),
-        "[A] open-weth batch + mint must execute: {:?}",
+        "open-weth batch + mint must execute: {:?}",
         res.outcome
     );
     assert!(
         res.erc6909_delta > 0 && (res.erc6909_delta - res.predicted).abs() <= tol,
-        "[A] expected the open batch to feed the mint: delta {} vs predicted {} (tol {})",
+        "expected the open batch to feed the mint: delta {} vs predicted {} (tol {})",
         res.erc6909_delta,
         res.predicted,
         tol
     );
     assert!(
         res.weth_delta <= tol,
-        "[A] custody WETH delta {} must not carry the profit (tol {})",
+        "custody WETH delta {} must not carry the profit (tol {})",
         res.weth_delta,
         tol
     );
@@ -351,16 +351,16 @@ fn probe_full_settle_batch_plus_mint_reverts_with_named_error() {
     payload.extend(enc_v4_unlock(&inner).unwrap());
 
     let res = run_raw_config(&mut h, &hops, &hop_outputs, &payload, U256::from(2u32))
-        .unwrap_or_else(|e| panic!("[B] run: {e}"));
+        .unwrap_or_else(|e| panic!("run: {e}"));
     let ExecOutcome::Reverted { raw, .. } = &res.outcome else {
-        panic!("[B] expected a revert, got {:?}", res.outcome);
+        panic!("expected a revert, got {:?}", res.outcome);
     };
     let sel: [u8; 4] = keccak256(b"InsufficientMintDelta(uint256,uint256)").0[..4]
         .try_into()
         .unwrap();
     assert!(
         raw.starts_with(&sel),
-        "[B] expected the named InsufficientMintDelta selector {sel:02x?}, got raw {:02x?}",
+        "expected the named InsufficientMintDelta selector {sel:02x?}, got raw {:02x?}",
         &raw[..raw.len().min(256)]
     );
     println!("── (B) 0x42 batch + mint reverts with named InsufficientMintDelta ── ok");
@@ -385,9 +385,9 @@ fn probe_open_batch_without_mint_reverts_unsettled_at_unlock() {
     payload.extend(enc_v4_unlock(&inner).unwrap());
 
     let res = run_raw_config(&mut h, &hops, &hop_outputs, &payload, U256::ZERO)
-        .unwrap_or_else(|e| panic!("[C] run: {e}"));
+        .unwrap_or_else(|e| panic!("run: {e}"));
     let ExecOutcome::Reverted { raw, .. } = &res.outcome else {
-        panic!("[C] expected a revert, got {:?}", res.outcome);
+        panic!("expected a revert, got {:?}", res.outcome);
     };
     // The stub models v4-core's unlock `CurrencyNotSettled` check with an
     // Error(string) revert of "DELTA" whenever a nonzero PM delta survives
@@ -400,7 +400,7 @@ fn probe_open_batch_without_mint_reverts_unsettled_at_unlock() {
     expected.extend_from_slice(&word);
     assert!(
         raw.starts_with(&expected),
-        "[C] expected the stub _checkDelta DELTA revert, got raw {raw:?}"
+        "expected the stub _checkDelta DELTA revert, got raw {raw:?}"
     );
     println!("── (C) 0x43 open batch without mint reverts DELTA at unlock ── ok");
 }

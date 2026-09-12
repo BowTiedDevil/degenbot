@@ -804,7 +804,7 @@ impl OwnedPathFinder {
                     #[expect(clippy::print_stderr)]
                     {
                         eprintln!(
-                            "[pathfinding] discovery heartbeat: elapsed={elapsed:?} \
+                            "discovery heartbeat: elapsed={elapsed:?} \
                              paths_yielded={} advances_since_yield={} max_stack_depth={}",
                             self.paths_yielded, self.advances_since_yield, self.max_stack_depth
                         );
@@ -997,7 +997,7 @@ impl OwnedPathFinder {
         #[expect(clippy::print_stderr)]
         {
             eprintln!(
-                "[pathfinding] discovery complete: elapsed={elapsed:?} paths_yielded={} max_stack_depth={}",
+                "discovery complete: elapsed={elapsed:?} paths_yielded={} max_stack_depth={}",
                 self.paths_yielded, self.max_stack_depth
             );
         }

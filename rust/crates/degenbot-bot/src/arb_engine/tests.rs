@@ -6831,7 +6831,7 @@ mod tests {
             .events
             .events
             .iter()
-            .any(|e| e.name == "[detached] straggler dropped (path deregistered)");
+            .any(|e| e.name == "straggler dropped (path deregistered)");
         assert!(
             merged_event,
             "the sidecar merge-time event must parent under the carried solve span; events: {:?}",
@@ -7168,7 +7168,7 @@ mod tests {
                 // undelivered pids NEVER arrive, so disposed < submitted.
                 assert_eq!(
                     disposed, path_ids.len() as u64,
-                    "[detached] outcome accounting undercount — exactness fuse \\\n                     (QR3NUS/43E3H3): a panicked bin must still disposition \\\n                     every owed pid as a typed Failed record"
+                    "outcome accounting undercount — exactness fuse \\\n                     (QR3NUS/43E3H3): a panicked bin must still disposition \\\n                     every owed pid as a typed Failed record"
                 );
                 break;
             }
@@ -7245,7 +7245,7 @@ mod tests {
             if applied >= path_ids.len() as u64 || std::time::Instant::now() > deadline {
                 assert_eq!(
                     gauge, g0,
-                    "[detached] in-flight gauge must return to its EXACT pre-cycle \\\n                     value g0={g0} through a panicking cycle (variant-gated pairing, \\\n                     design §4.6.1 REV 2) — got {gauge}"
+                    "in-flight gauge must return to its EXACT pre-cycle \\\n                     value g0={g0} through a panicking cycle (variant-gated pairing, \\\n                     design §4.6.1 REV 2) — got {gauge}"
                 );
                 break;
             }

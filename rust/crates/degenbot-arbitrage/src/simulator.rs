@@ -1140,7 +1140,7 @@ where
         if let Some(desc) = scan_for_v4_v2_boundary_bridge(&path.path_info.hops, ctx.weth_address) {
             op_info!(domain = sim, path_id = path.path_id,
                 desc = %desc,
-                "[bridge-probe] V4 native to V2 WETH boundary; 3-hop composer does not encode this"
+                "V4 native to V2 WETH boundary; 3-hop composer does not encode this"
             );
         }
     }

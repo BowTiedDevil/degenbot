@@ -236,7 +236,7 @@ pub fn submit(fn_work: Py<PyAny>) -> PyResult<PyIntakeReceipt> {
         if sig_tx.send(()).is_err() {
             op_warn!(
                 domain = ingest,
-                "[fleet-reg] intake unit completed with no waiting consumer"
+                "intake unit completed with no waiting consumer"
             );
         }
     }));

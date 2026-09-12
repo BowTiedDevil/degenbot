@@ -123,7 +123,7 @@ impl ArbitrageEngine {
                 domain = path,
                 path_id = existing_id,
                 hops.count = hops.len(),
-                "[path] duplicate registration skipped (dedup)"
+                "duplicate registration skipped (dedup)"
             );
             // PRG-4: the duplicate never crosses the FFI as a skip — the
             // engine counts it for the registration skip telemetry itself.
@@ -237,7 +237,7 @@ impl ArbitrageEngine {
             hops.count = hop_descs.len(),
             hops = %hop_descs.join(" -> "),
             valid = path_valid,
-            "[path] registered"
+            "registered"
         );
 
         Ok(path_id)

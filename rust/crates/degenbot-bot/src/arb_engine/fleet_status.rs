@@ -176,7 +176,7 @@ pub fn record_fleet_profile_at_install(boot: &FleetBoot) {
     if summary.binding == "serial" {
         op_warn!(domain = solver, profile = summary.profile,
             quota_cpus = boot.quota_cpus,
-            "[fleet-profile] PRODUCTION ALERT: this host resolved to the SERIAL tier              (2-5 cores: one cycle lane per host) - the small-host arm is a              degradation signal, never a silent narrow (FF-T5, NT7HJC)"
+            "PRODUCTION ALERT: this host resolved to the SERIAL tier              (2-5 cores: one cycle lane per host) - the small-host arm is a              degradation signal, never a silent narrow (FF-T5, NT7HJC)"
         );
     }
 }

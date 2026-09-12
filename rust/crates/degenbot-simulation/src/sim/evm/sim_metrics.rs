@@ -188,7 +188,7 @@ pub fn slow_total_ns(d: &SimLabSnapshot) -> u64 {
 #[must_use]
 pub fn format_delta(d: &SimLabSnapshot, candidates: usize) -> String {
     format!(
-        "[sim-lab] cands={candidates} sims={} sim_ms={} builds={} build_ms={} \
+        "cands={candidates} sims={} sim_ms={} builds={} build_ms={} \
          cold: b_fast={} b_slow={} b_ms={} code={} c_ms={} s_fast={} s_slow={} s_ms={} \
          bh={} warm_basic_hits={} slow_ms={}",
         d.sim_calls,

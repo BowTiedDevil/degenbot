@@ -334,11 +334,11 @@ impl PumpState {
             // runtime matches the existing `subscribe`/`backfill_from_snapshot`
             // sync discipline; the aborted task completes promptly.
             let _ = degenbot_core::runtime::get_runtime().block_on(handle);
-            op_info!(domain = pump, "[shutdown] BlockPump task aborted");
+            op_info!(domain = pump, "BlockPump task aborted");
         } else {
             op_info!(
                 domain = pump,
-                "[shutdown] BlockPump not running (no pump handle to abort)"
+                "BlockPump not running (no pump handle to abort)"
             );
         }
         // Drop half-built subscribe state so a later `subscribe()` is allowed
@@ -385,7 +385,7 @@ impl PumpState {
             Err(e) => {
                 #[expect(clippy::print_stderr)] // startup diagnostic
                 {
-                    eprintln!("[warn] Failed to create verification provider: {e}");
+                    eprintln!("Failed to create verification provider: {e}");
                 }
             }
         }
@@ -457,9 +457,9 @@ impl PumpState {
             .instrument(lifecycle_span)
             .await;
             if result.is_ok() {
-                diag!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
+                diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
             } else {
-                op_warn!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
+                op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
             }
             result.map_err(|err| match err {
                 RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -520,9 +520,9 @@ impl PumpState {
             .instrument(lifecycle_span)
             .await;
             if result.is_ok() {
-                diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
+                diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle complete");
             } else {
-                op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
+                op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle FAILED");
             }
             result.map_err(|err| match err {
                 RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -578,9 +578,9 @@ impl PumpState {
             .instrument(lifecycle_span),
         );
         if result.is_ok() {
-            diag!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle complete");
+            diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
         } else {
-            op_warn!(domain = pump, version = "v3", address = %address, "[pool] registration verify-lifecycle FAILED");
+            op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
         }
         result.map_err(|err| match err {
             RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -641,9 +641,9 @@ impl PumpState {
             .instrument(lifecycle_span),
         );
         if result.is_ok() {
-            diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle complete");
+            diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle complete");
         } else {
-            op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "[pool] registration verify-lifecycle FAILED");
+            op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle FAILED");
         }
         result.map_err(|err| match err {
             RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
@@ -699,14 +699,16 @@ impl Drop for PumpState {
     fn drop(&mut self) {
         let running = self.pump_handle.lock().is_some();
         if running {
-            op_warn!(domain = pump, pump_task_still_armed = true,
-                "[shutdown] PumpState dropped WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
+            op_warn!(
+                domain = pump,
+                pump_task_still_armed = true,
+                "PumpState dropped WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
             );
         } else {
             diag!(
                 domain = pump,
                 pump_task_still_armed = false,
-                "[shutdown] PumpState dropped after stop()"
+                "PumpState dropped after stop()"
             );
         }
     }

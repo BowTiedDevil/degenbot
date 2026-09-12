@@ -244,7 +244,7 @@ pub(crate) fn drain_death_response(
     if occurrence == 1 || occurrence.is_multiple_of(DRAIN_DEATH_LOG_EVERY) {
         op_error!(domain = exec, failure = ?failure,
             occurrence,
-            "[fleet-solve] merge drain DEAD — outcome lost and counted, sticky posture cordon set (FF-T4 lane death); the process lives, only a fresh process lifts it (AQV6EF)"
+            "merge drain DEAD — outcome lost and counted, sticky posture cordon set (FF-T4 lane death); the process lives, only a fresh process lifts it (AQV6EF)"
         );
     }
 }
@@ -388,7 +388,7 @@ pub(crate) fn lane_death_response(
     op_error!(domain = exec, unit,
         seat,
         patched,
-        "[fleet-solve] lane died mid-flight — terminal failure records patched, posture cordoned (sticky), the process lives (FF-T4)"
+        "lane died mid-flight — terminal failure records patched, posture cordoned (sticky), the process lives (FF-T4)"
     );
     patched
 }
@@ -438,7 +438,7 @@ pub(crate) fn run_solve_lane(
                 seat = lane.seat,
                 message = ?message,
                 patched,
-                "[fleet-solve] bin job panicked — seat survives with typed failure records (QR3NUS decision A)"
+                "bin job panicked — seat survives with typed failure records (QR3NUS decision A)"
             );
         }
         PanicAction::Abort => {

@@ -190,7 +190,7 @@ pub(crate) fn plan_bins(intended_bins: usize, structural_seats: usize) -> SeatPl
             domain = solver,
             intended = intended_bins,
             running = structural_seats,
-            "[seat-plan] capability drop under cordon — running the NAMED \
+            "capability drop under cordon — running the NAMED \
              narrower fallback (LW-T7; the serial arm remains a downstream decision)"
         );
         SeatPlan {
@@ -834,7 +834,7 @@ impl PipelinedSims {
             Err(err) => {
                 if !SIM_BOOT_REFUSAL_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     op_error!(domain = solver, error = %err,
-                        "[fleet-sim] sim dispatch skipped — the fleet boot was refused (typed, FF-T1); the item flushes un-simulated (None payload)"
+                        "sim dispatch skipped — the fleet boot was refused (typed, FF-T1); the item flushes un-simulated (None payload)"
                     );
                 }
                 return false;
@@ -1127,7 +1127,7 @@ impl ArbitrageEngine {
                 input = %result.optimal_input,
                 profit = %result.profit,
                 path.hops = %self.describe_path_cached(pid),
-                "[path] profitable solve"
+                "profitable solve"
             );
         });
         // SIMPIPE2 T3: the inline-sim payload — store it so the delivery
@@ -1153,7 +1153,7 @@ impl ArbitrageEngine {
             // observable as an event on the enclosing `degenbot.arb.merge`
             // OTel span. Re-enable with `RUST_LOG=degenbot_bot=debug`.
             diag!(domain = solver, { path.id = pid, verdict, expected_profit = %result.profit, sim.seam = "inline_payload_store" },
-                "[bundle] inline payload settle"
+                "inline payload settle"
             );
         }
         hotpath::measure_block!("merge.payload_store", {
@@ -1268,7 +1268,7 @@ impl ArbitrageEngine {
                 domain = solver,
                 path_id = solved.pid,
                 detached_seq = solved.cycle_seq,
-                "[detached] straggler dropped (path deregistered)"
+                "straggler dropped (path deregistered)"
             );
             return;
         };
@@ -1291,7 +1291,7 @@ impl ArbitrageEngine {
                 path_id = solved.pid,
                 detached_seq = solved.cycle_seq,
                 detached_age_cycles = age_cycles,
-                "[detached] straggler dropped (stale: pools moved during the solve)"
+                "straggler dropped (stale: pools moved during the solve)"
             );
             return;
         }
@@ -1340,7 +1340,7 @@ impl ArbitrageEngine {
                 path_id = log_pid,
                 detached_seq = log_seq,
                 detached_age_cycles = age_cycles,
-                "[detached] straggler merged (unchanged intake)"
+                "straggler merged (unchanged intake)"
             );
         }
         // ADR-021 publish-verifier scoping retired (task 2UVG3E): the
@@ -1454,9 +1454,11 @@ impl ArbitrageEngine {
                     if self.detached_cycle.claim((policy.ledger_seq, pid)).is_err() {
                         self.detached_cycle
                             .disposition(detached_cycle::Disposition::Duplicate);
-                        op_error!(domain = solver, path_id = pid,
+                        op_error!(
+                            domain = solver,
+                            path_id = pid,
                             ledger_seq = policy.ledger_seq,
-                            "[solve-merge] duplicate lane outcome for path — exactness fuse tripped (QR3NUS)"
+                            "duplicate lane outcome for path — exactness fuse tripped (QR3NUS)"
                         );
                         continue;
                     }
@@ -1473,7 +1475,7 @@ impl ArbitrageEngine {
                     if !solve_result.solver_pool_states.is_empty() {
                         diag!(
                             domain = solver,
-                            "[solver-st] path_id={pid} hops=[{}]",
+                            "path_id={pid} hops=[{}]",
                             solve_result.solver_pool_states.join(";")
                         );
                     }
@@ -1489,8 +1491,10 @@ impl ArbitrageEngine {
                 }
                 LaneOutcome::Suppressed { pid } => {
                     // CONTRACT 4: the pid-only witness NEVER claims.
-                    diag!(domain = solver, path_id = pid,
-                        "[detached] suppressed outcome delivered by the lane witness — no merge, no claim"
+                    diag!(
+                        domain = solver,
+                        path_id = pid,
+                        "suppressed outcome delivered by the lane witness — no merge, no claim"
                     );
                     counts.suppressed += 1;
                 }
@@ -1504,7 +1508,7 @@ impl ArbitrageEngine {
                         .disposition(detached_cycle::Disposition::DroppedDeregistered);
                     op_error!(domain = solver, path_id = pid,
                         failure = ?failure,
-                        "[solve-merge] path outcome lost to a seat panic — typed failure record (QR3NUS)"
+                        "path outcome lost to a seat panic — typed failure record (QR3NUS)"
                     );
                     counts.failed += 1;
                 }
@@ -1561,7 +1565,7 @@ impl ArbitrageEngine {
                         if !result.solver_pool_states.is_empty() {
                             diag!(
                                 domain = solver,
-                                "[solver-st] path_id={pid} hops=[{}]",
+                                "path_id={pid} hops=[{}]",
                                 result.solver_pool_states.join(";")
                             );
                         }
@@ -1585,7 +1589,7 @@ impl ArbitrageEngine {
                     if !result.solver_pool_states.is_empty() {
                         diag!(
                             domain = solver,
-                            "[solver-st] path_id={pid} hops=[{}]",
+                            "path_id={pid} hops=[{}]",
                             result.solver_pool_states.join(";")
                         );
                     }
@@ -1887,7 +1891,9 @@ impl ArbitrageEngine {
                     if let Some(p) = crate::instruments::pipeline() {
                         p.count_clamp();
                     }
-                    op_info!(domain = solver, "[clamp-cl] path_id={path_id} hop={i} family={:?} input requested={requested} \
+                    op_info!(
+                        domain = solver,
+                        "path_id={path_id} hop={i} family={:?} input requested={requested} \
                          clamped={clamped} reduction={}",
                         pool_ref.hop_type,
                         requested - clamped
@@ -1905,10 +1911,16 @@ impl ArbitrageEngine {
                     if let Some(p) = crate::instruments::pipeline() {
                         p.count_clamp();
                     }
-                    op_info!(domain = solver, "[clamp-cl-hop] path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
+                    op_info!(
+                        domain = solver,
+                        "path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
                          twin_out={out} delta={}",
                         pool_ref.hop_type,
-                        if *hop_out > out { *hop_out - out } else { out - *hop_out }
+                        if *hop_out > out {
+                            *hop_out - out
+                        } else {
+                            out - *hop_out
+                        }
                     );
                     *hop_out = out;
                 }
@@ -1926,7 +1938,7 @@ impl ArbitrageEngine {
                     }
                     op_info!(
                         domain = solver,
-                        "[clamp-cl-out] path_id={path_id} hop={i} family={:?} forward={forward} \
+                        "path_id={path_id} hop={i} family={:?} forward={forward} \
                          twin_out={out} reduction={}",
                         pool_ref.hop_type,
                         forward - out
@@ -1950,7 +1962,7 @@ impl ArbitrageEngine {
                     profit_before = %profit_before,
                     profit_after = %recomputed,
                     profit_delta = %profit_before.saturating_sub(recomputed),
-                    "[profit-clamp] recomputed selection profit from twin-aligned outputs"
+                    "recomputed selection profit from twin-aligned outputs"
                 );
                 result.profit = recomputed;
             }
@@ -2065,14 +2077,16 @@ impl ArbitrageEngine {
         if self.solve_admission && draw_zero {
             self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "shed");
             self.detached_cycle.shed();
-            op_info!(domain = solver, block_number = solve_block,
+            op_info!(
+                domain = solver,
+                block_number = solve_block,
                 paths.affected = affected_path_ids.len(),
                 in_flight = self
                     .detached_cycle
                     .outstanding
                     .load(std::sync::atomic::Ordering::Relaxed),
                 target_depth = self.admission_target_depth,
-                "[admission] SHED: draw-time zero budget — nothing submitted; keys retained for carry"
+                "SHED: draw-time zero budget — nothing submitted; keys retained for carry"
             );
             // 6XB6NJ: monotone advance on the block cursor (the
             // skipped_empty bookkeeping contract).
@@ -2122,7 +2136,7 @@ impl ArbitrageEngine {
                         path.id = path_id,
                         path.hops = %self.describe_path_cached(path_id),
                         dirty.keys = affected.len(),
-                        "[path] activated by dirty pool"
+                        "activated by dirty pool"
                     );
                 }
             }
@@ -2137,7 +2151,7 @@ impl ArbitrageEngine {
             paths.affected = affected_path_ids.len(),
             dirty.keys = affected.len(),
             phase_us = fanout_us,
-            "[solve-phase] fanned out to affected paths"
+            "fanned out to affected paths"
         );
         drop(fanout_ctx);
 
@@ -2253,7 +2267,9 @@ impl ArbitrageEngine {
                     }
                     if future {
                         out.deferred.push(path_id);
-                        op_error!(domain = solver, "[future-price] path_id={path_id} rejected at solve block {solve_block}: \
+                        op_error!(
+                            domain = solver,
+                            "path_id={path_id} rejected at solve block {solve_block}: \
                              a hop price clock runs AHEAD of the solve block (update_block > \
                              solve_block) — never legitimate"
                         );
@@ -2278,7 +2294,7 @@ impl ArbitrageEngine {
                             hop_type = ?d.hop_type,
                             pool_key = d.pool_key,
                             reason = %d.reason,
-                            "[resolve] path invalid at resolve"
+                            "path invalid at resolve"
                         );
                     }
                     out.resolved.push((path_id, std::sync::Arc::new(resolved)));
@@ -2438,7 +2454,7 @@ impl ArbitrageEngine {
             paths.deferred_future_price = deferred_paths.len(),
             invalid.reasons = %invalid_reasons.iter().map(|(r, c)| format!("{c}x {r}")).collect::<Vec<_>>().join(", "),
             phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
-            "[solve-phase] resolved hop snapshots"
+            "resolved hop snapshots"
         );
         drop(resolve_ctx);
 
@@ -2827,7 +2843,7 @@ impl ArbitrageEngine {
                 paths.invalid = invalid_count,
                 paths.deferred_future_price = deferred_paths.len(),
                 phase_us = u64::try_from(cycle_start.elapsed().as_micros()).unwrap_or(u64::MAX),
-                "[solve-phase] detached cycle enqueued (merge runs on the sidecar)"
+                "detached cycle enqueued (merge runs on the sidecar)"
             );
         });
         // WFF6MM test harness: direct `rebuild_and_solve_affected` /
@@ -2937,7 +2953,7 @@ impl ArbitrageEngine {
                         if !r.solver_pool_states.is_empty() {
                             diag!(
                                 domain = solver,
-                                "[solver-st] path_id={path_id} hops=[{}]",
+                                "path_id={path_id} hops=[{}]",
                                 r.solver_pool_states.join(";")
                             );
                         }

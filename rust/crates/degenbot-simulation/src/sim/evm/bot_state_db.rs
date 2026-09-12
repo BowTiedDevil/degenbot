@@ -251,7 +251,9 @@ where
                     "code-less (KECCAK_EMPTY)"
                 };
                 let provenance = self.code_probe_provenance(address, info.as_ref());
-                op_warn!(domain = sim, "[codeless-probe] tracked pool {address} resolved {state} @ block {:?}; {provenance}",
+                op_warn!(
+                    domain = sim,
+                    "tracked pool {address} resolved {state} @ block {:?}; {provenance}",
                     self.code_probe_block,
                 );
                 panic!(
