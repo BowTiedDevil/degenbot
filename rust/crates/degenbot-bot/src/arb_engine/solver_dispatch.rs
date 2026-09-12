@@ -55,11 +55,11 @@ static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
 /// before any cycle). Pipeline-free by design: a consumer without the meter
 /// installed is a no-op (pure-Rust/test seams).
 ///
-/// It also HANDS THE LABEL BACK: the caller latches it on the engine
-/// (`ArbitrageEngine::cycle_arm`), because the cycle's duration/Mutex hold are
-/// observed a frame up, in `EngineStages`, after `solve_dirty` returns —
-/// the span field alone is unreadable there.
-#[must_use = "the returned label is the engine's per-cycle latch — assign it to `self.cycle.cycle_arm`"]
+/// ADR-045 T5: the caller drives it with `CycleOutcome::arm_label()` — the
+/// cycle's duration/Mutex hold are observed a frame up, in `EngineStages`,
+/// after `solve_dirty` returns, so the OUTCOME (not a post-hoc engine stash)
+/// is the byte-stable source of the label.
+#[must_use = "returns the label it recorded; callers may name the cycle arm with it"]
 pub(crate) fn record_cycle_arm_telemetry(span: &tracing::Span, arm: &'static str) -> &'static str {
     span.record("cycle.arm", arm);
     // Handed back for the caller's per-cycle latch (see the doc above).
@@ -1694,23 +1694,19 @@ impl ArbitrageEngine {
     /// When the merged drain's outcome accounting undercounts (exactness
     /// fuse, QR3NUS/LW-T7): the cycle thread fails loudly, never silently
     /// mis-sizes.
-    pub fn rebuild_and_solve_affected(
+    pub(crate) fn rebuild_and_solve_affected(
         &mut self,
         affected: &[degenbot_solvers::affected_keys::AffectedKey],
         block_number: u64,
         metadata: &BlockMetadata,
-    ) {
-        let outcome = self.cycle.run_epoch(
-            super::solve_cycle::CycleEntry::Drain,
+    ) -> super::solve_cycle::CycleOutcome {
+        self.cycle.run_epoch(
             affected,
             block_number,
             metadata,
             &self.registry,
             &mut self.delivery,
-        );
-        let _ = outcome.solved_block();
-        let _ = outcome.arm_label();
-        let _ = outcome.census;
+        )
     }
 
     /// Solve all registered paths using `solve_path`.

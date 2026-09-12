@@ -52,6 +52,7 @@ use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
 
 use degenbot_solvers::affected_keys::AffectedKey;
 
+use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
 
 /// The arb engine's stage surface: the shared engine + the touched-pool
@@ -176,7 +177,7 @@ impl EngineStages {
         affected: &[degenbot_solvers::affected_keys::AffectedKey],
         block: u64,
         metadata: &BlockMetadata,
-    ) {
+    ) -> CycleOutcome {
         // P5FEOI / T0 / K4ETHF span-gate lineage preserved verbatim from the
         // dissolved wrapper: one Jaeger node for dirty solves, none for the
         // ~2µs empty pass, gate + work under ONE mutex acquisition.
@@ -192,13 +193,11 @@ impl EngineStages {
         if affected.is_empty() {
             // Kept for inner bookkeeping parity (last_processed_block et al);
             // provably cannot consume dirt under this continuous hold.
-            engine.solve_dirty(block, metadata, affected);
+            let outcome = engine.solve_dirty(block, metadata, affected);
             drop(engine);
             self.spawn_detached_sidecar_if_pending();
-            return;
+            return outcome;
         }
-        // REMED1 T2: the streaming (drain) entry tags its cycles.
-        engine.set_solve_entry("drain");
         let span = tracing::info_span!(
             "degenbot.arb.solve",
             block.number = block,
@@ -216,6 +215,9 @@ impl EngineStages {
         let _guard = span.enter();
         // T3: solve duration + registered-path gauge (dirty solves only).
         let solve_start = std::time::Instant::now();
+        // ADR-045 T5: the typed cycle outcome flows out of the engine and
+        // attributes the span + the duration/hold histograms below.
+        let cycle_outcome;
         {
             if let Some(p) = crate::instruments::pipeline() {
                 p.set_registered_paths(u64::try_from(engine.path_count()).unwrap_or(u64::MAX));
@@ -228,18 +230,29 @@ impl EngineStages {
             // detached stance the engine Mutex hold collapses to enqueue end
             // (µs); the in-cycle arm is the backpressure safety valve only.
             let hold_start = std::time::Instant::now();
-            if is_multi_thread_runtime() {
-                tokio::task::block_in_place(|| engine.solve_dirty(block, metadata, affected));
+            cycle_outcome = if is_multi_thread_runtime() {
+                tokio::task::block_in_place(|| engine.solve_dirty(block, metadata, affected))
             } else {
-                engine.solve_dirty(block, metadata, affected);
-            }
+                engine.solve_dirty(block, metadata, affected)
+            };
             // KNEUQX: surface the cycle's anchored block on the span.
             span.record("cycle.solve_block", engine.results_block());
-            // Cold-start trace: the arm the dispatch latched THIS cycle on
-            // (the span field is unreadable here) attributes the hold sample.
-            let cycle_arm = engine.cycle_arm();
+            // Cold-start trace (ADR-045 T5): attribute the cycle arm from the
+            // typed OUTCOME, never a post-hoc engine stash.
+            let _ = super::solver_dispatch::record_cycle_arm_telemetry(
+                &span,
+                cycle_outcome.arm_label(),
+            );
+            // ADR-045 T5: keep the outcome's full typed record live at the
+            // consumer seam (the census is the same resolve counts the cycle
+            // already emitted; the solved-block is the cycle's anchor).
+            let _ = cycle_outcome.solved_block();
+            let _ = cycle_outcome.census;
             if let Some(p) = crate::instruments::pipeline() {
-                p.observe_mutex_hold_duration(hold_start.elapsed().as_secs_f64(), cycle_arm);
+                p.observe_mutex_hold_duration(
+                    hold_start.elapsed().as_secs_f64(),
+                    cycle_outcome.arm_label(),
+                );
             }
             // SRQEK5 (WV62TX): spawn the detached merge sidecar at the FIRST
             // detached enqueue (rx take + spawn atomic under the held guard).
@@ -250,9 +263,13 @@ impl EngineStages {
             }
         }
         if let Some(p) = crate::instruments::pipeline() {
-            p.observe_solve_duration(solve_start.elapsed().as_secs_f64(), engine.cycle_arm());
+            p.observe_solve_duration(
+                solve_start.elapsed().as_secs_f64(),
+                cycle_outcome.arm_label(),
+            );
             p.count_solves_executed();
         }
+        cycle_outcome
     }
 
     /// SRQEK5 (WV62TX): if the empty-affected solve path took the parked

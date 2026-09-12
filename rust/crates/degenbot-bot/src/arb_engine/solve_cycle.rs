@@ -18,6 +18,12 @@
 //! `register_and_solve_path` / `solve_all_paths` / `merge_detached_item` /
 //! `forget`. The T1 vocabulary is consumed by that surface.
 //!
+//! **T5** (`DI4GJQ`) hard-cut the string stashes: [`run_epoch`] returns the
+//! typed [`CycleOutcome`], the `cycle_arm` / `solve_entry` string fields are
+//! deleted, and the stage hook records `cycle.arm` off the outcome. The
+//! `CycleEntry` enum existed only to feed the deleted `solve_entry`, so it is
+//! gone with it.
+//!
 //! ## Test ledger
 //!
 //! * **Green pins** (the ADR-043 vocabulary and the target type shape):
@@ -37,9 +43,8 @@
 //!   `register_and_solve_path_reports_registration_created`.
 //!
 //! There is no module-level `dead_code` expectation: the T1 vocabulary is
-//! consumed by the T4 surface. The remaining per-item expectations cover the
-//! test-only `CycleArm::is_dispatch` helper and the not-yet-constructed
-//! `CycleEntry::Finalize` variant in the non-test build.
+//! consumed by the T5 surface. The remaining per-item expectation covers the
+//! test-only `CycleArm::is_dispatch` helper.
 
 use std::sync::Arc;
 
@@ -59,9 +64,9 @@ use super::path_lifecycle::PathSolveStatus;
 use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry};
 use super::solver_dispatch::{
     gate_capture_from_cfg, lpt_partition, min_profit_floor, path_cost_proxy, plan_bins,
-    record_cycle_arm_telemetry, sims_aware_cost, solve_bin_count, HeavyClPathCapture,
-    HeavyMixedPathCapture, LaneArmPolicy, LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut,
-    SolveCycleShared, WalkSubmitCtx, INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
+    sims_aware_cost, solve_bin_count, HeavyClPathCapture, HeavyMixedPathCapture, LaneArmPolicy,
+    LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut, SolveCycleShared, WalkSubmitCtx,
+    INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
 };
 use super::ArbitrageEngine;
 use super::DeferredReRecordHook;
@@ -130,12 +135,12 @@ pub(crate) struct SolveCycle {
     /// `on_resolve` and the dispatch — `true` when the admission draw's
     /// budget was zero (the cycle SHEDS).
     pub(crate) admission_draw_zero: bool,
-    /// Cold-start trace: the CURRENT solve cycle's dispatch arm —
-    /// `detached` | `skipped_empty` | `shed` (the cycle-span vocabulary).
-    pub(crate) cycle_arm: &'static str,
-    /// REMED1 T2: which entry drove the CURRENT solve cycle - `drain`
-    /// (`EngineStages::solve_dirty`, per-log streaming) vs `finalize`.
-    pub(crate) solve_entry: &'static str,
+    /// The typed latch of the most recent cycle's arm (ADR-045 T5). The
+    /// string stash is gone: [`CycleOutcome`] is authoritative and the stage
+    /// hook records `cycle.arm` straight off it. This latch survives only so
+    /// the white-box probes and the latency histograms can name the arm AFTER
+    /// the cycle returns. `None` = no cycle dispatched yet (`"unset"`).
+    pub(crate) last_arm: Option<CycleArm>,
     /// Paths registered via `register_and_solve_path` that have been eagerly
     /// solved and appended to `results`, awaiting the next dirty-cycle merge.
     pub(crate) pending_new_paths: HashSet<u64>,
@@ -346,30 +351,6 @@ pub(crate) struct Registration {
     /// The freshly-resolved snapshot for a fresh registration; `None` on a
     /// dedup hit (the existing snapshot is reused).
     pub(crate) resolved: Option<Arc<ResolvedMixedPath>>,
-}
-
-/// The typed solve-cycle entry (ADR-045): `drain` = the streaming
-/// per-log entry (`EngineStages::solve_dirty`), `finalize` = the
-/// block-boundary entry. [`CycleEntry::label`] reproduces today's
-/// `solve_entry` strings byte-for-byte.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CycleEntry {
-    /// The streaming (drain) entry.
-    Drain,
-    /// The block-boundary (finalize) entry.
-    #[expect(dead_code)]
-    Finalize,
-}
-
-impl CycleEntry {
-    /// The `solve_entry` label, byte-for-byte.
-    #[must_use]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Drain => "drain",
-            Self::Finalize => "finalize",
-        }
-    }
 }
 
 // ===========================================================================
@@ -723,14 +704,12 @@ impl SolveCycle {
     #[expect(clippy::too_many_lines)]
     pub(crate) fn run_epoch(
         &mut self,
-        entry: CycleEntry,
         affected: &[degenbot_solvers::affected_keys::AffectedKey],
         block_number: u64,
         metadata: &BlockMetadata,
         registry: &PathRegistry,
         delivery: &mut DeliveryPolicy,
     ) -> CycleOutcome {
-        self.solve_entry = entry.label();
         let _ = &mut *delivery;
         let mut same_state_total;
         let mut projections_total;
@@ -807,7 +786,6 @@ impl SolveCycle {
         // -----------------------------------------------------------------
         let draw_zero = std::mem::take(&mut self.admission_draw_zero);
         if self.solve_admission && draw_zero {
-            self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "shed");
             self.detached_cycle.shed();
             op_info!(
                 domain = solver,
@@ -823,6 +801,15 @@ impl SolveCycle {
             // 6XB6NJ: monotone advance on the block cursor (the
             // skipped_empty bookkeeping contract).
             self.cursor.advance_solved(solve_block);
+            let arm = CycleArm::Shed {
+                keys_affected: affected_path_ids.len(),
+                in_flight: self
+                    .detached_cycle
+                    .outstanding
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                target_depth: self.admission_target_depth,
+            };
+            self.last_arm = Some(arm);
             return CycleOutcome {
                 solved_block: solve_block,
                 census: ResolveCensus {
@@ -831,14 +818,7 @@ impl SolveCycle {
                     same_state: 0,
                     projections: 0,
                 },
-                arm: CycleArm::Shed {
-                    keys_affected: affected_path_ids.len(),
-                    in_flight: self
-                        .detached_cycle
-                        .outstanding
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                    target_depth: self.admission_target_depth,
-                },
+                arm,
             };
         }
         // Also re-solve any paths registered via register_and_solve_path that
@@ -853,9 +833,10 @@ impl SolveCycle {
             // Cold-start trace: keys with NO registered paths reach here as a
             // bookkeeping-only pass (span exists, no dispatch) — stamp so the
             // cycle span never reads as arm-less.
-            self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "skipped_empty");
             // 6XB6NJ: monotone advance on the block cursor.
             self.cursor.advance_solved(solve_block);
+            let arm = CycleArm::SkippedEmpty { keys_affected: 0 };
+            self.last_arm = Some(arm);
             return CycleOutcome {
                 solved_block: solve_block,
                 census: ResolveCensus {
@@ -864,7 +845,7 @@ impl SolveCycle {
                     same_state: 0,
                     projections: 0,
                 },
-                arm: CycleArm::SkippedEmpty { keys_affected: 0 },
+                arm,
             };
         }
 
@@ -1447,9 +1428,6 @@ impl SolveCycle {
         // detaches (the draw already owns backpressure; there is no
         // post-begin race-shed).
         let arm = self.detached_cycle.begin_cycle();
-        // Cold-start trace: attribute the arm on the cycle span BEFORE the
-        // arms move ownership.
-        self.cycle_arm = record_cycle_arm_telemetry(&solve_span, "detached");
         let DetachedArm {
             cycle_seq,
             merge_tx,
@@ -1622,6 +1600,21 @@ impl SolveCycle {
 
         // Note: no compute_diff_and_send here — the pump controls when
         // batches are dispatched (debounce timer or block boundary).
+        let arm = if to_solve.is_empty() {
+            CycleArm::Dissolved {
+                invalid: usize::try_from(invalid_count).unwrap_or(usize::MAX),
+                deferred_future_price: deferred_paths.len(),
+            }
+        } else {
+            CycleArm::Solved {
+                seq: solved_seq,
+                bins: solved_bins,
+                staged: to_solve.len(),
+                invalid: usize::try_from(invalid_count).unwrap_or(usize::MAX),
+                deferred_future_price: deferred_paths.len(),
+            }
+        };
+        self.last_arm = Some(arm);
         CycleOutcome {
             solved_block: solve_block,
             census: ResolveCensus {
@@ -1630,20 +1623,7 @@ impl SolveCycle {
                 same_state: same_state_total,
                 projections: projections_total,
             },
-            arm: if to_solve.is_empty() {
-                CycleArm::Dissolved {
-                    invalid: usize::try_from(invalid_count).unwrap_or(usize::MAX),
-                    deferred_future_price: deferred_paths.len(),
-                }
-            } else {
-                CycleArm::Solved {
-                    seq: solved_seq,
-                    bins: solved_bins,
-                    staged: to_solve.len(),
-                    invalid: usize::try_from(invalid_count).unwrap_or(usize::MAX),
-                    deferred_future_price: deferred_paths.len(),
-                }
-            },
+            arm,
         }
     }
     pub(crate) fn solve_all(&self, registry: &PathRegistry) -> HashMap<u64, SolvePathResult> {
@@ -2350,7 +2330,6 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
         let metadata = BlockMetadata::default();
         let outcome = engine.cycle.run_epoch(
-            CycleEntry::Drain,
             &affected,
             11,
             &metadata,

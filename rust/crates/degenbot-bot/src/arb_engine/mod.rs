@@ -526,8 +526,7 @@ impl ArbitrageEngine {
                 resolved_update_snapshot: HashMap::new(),
                 cursor: BlockCursor::default(), // (0, None, 0, false) — the pre-cursor init, unchanged
                 admission_draw_zero: false,
-                cycle_arm: "unset",
-                solve_entry: "drain",
+                last_arm: None,
                 pending_new_paths: HashSet::new(),
                 paths_same_state_this_cycle: 0,
                 results: DashMap::new(),

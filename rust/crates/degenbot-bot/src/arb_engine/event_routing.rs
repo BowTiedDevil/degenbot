@@ -21,23 +21,13 @@ impl ArbitrageEngine {
     // (`LogDispatcher::dispatch` / `Bot::notify_pool_state_changed`), and
     // the affected-path derivation consumes the delta's taken keys.
 
-    /// call, but do NOT send a result batch to Python.
-    ///
-    /// The pump calls this eagerly after each WS log to keep engine state
-    /// current. The actual batch send is triggered by the pump's debounce
-    /// timer or block boundary logic.
-    /// REMED1 T2: tag the entry that drives the CURRENT solve cycle
-    /// (`drain` streaming vs `finalize` boundary catch) for the
-    /// cycle-complete telemetry line.
-    pub fn set_solve_entry(&mut self, entry: &'static str) {
-        self.cycle.solve_entry = entry;
-    }
-
-    /// The CURRENT cycle's dispatch arm (see the field note): the latency
+    /// The CURRENT cycle's dispatch arm (ADR-045 T5): the latency
     /// histograms' `arm` label, read by the caller that observes the cycle.
+    /// Backed by the typed `last_arm` latch, not a string stash; the stage
+    /// hook reads the `CycleOutcome` directly for its own span/duration.
     #[must_use]
     pub fn cycle_arm(&self) -> &'static str {
-        self.cycle.cycle_arm
+        self.cycle.last_arm.map_or("unset", |arm| arm.label())
     }
 
     /// KNEUQX: the block the MOST RECENT solve cycle ran anchored on - the
@@ -52,12 +42,12 @@ impl ArbitrageEngine {
         self.cycle.cursor.results_block()
     }
 
-    pub fn solve_dirty(
+    pub(crate) fn solve_dirty(
         &mut self,
         block_number: u64,
         metadata: &BlockMetadata,
         affected: &[degenbot_solvers::affected_keys::AffectedKey],
-    ) {
+    ) -> super::solve_cycle::CycleOutcome {
         // Expire stale buffered events in the V3/V4 buffers (ADR-003: both
         // now live on BotState).
         //
@@ -99,10 +89,11 @@ impl ArbitrageEngine {
         // (consumed by the stage surface's on_resolve hook); no engine-local
         // dirty-set intake remains.
         // Re-solve only paths containing updated pools (no batch send)
-        self.rebuild_and_solve_affected(affected, block_number, metadata);
+        let outcome = self.rebuild_and_solve_affected(affected, block_number, metadata);
 
         // 6XB6NJ: monotone advance on the block cursor.
         self.cycle.cursor.advance_processed(block_number);
+        outcome
     }
 
     /// One buffered-event expiry round under its own `degenbot.arb.expire`
