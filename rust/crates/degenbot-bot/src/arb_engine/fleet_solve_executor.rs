@@ -24,7 +24,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
-use crate::arb_engine::seat_host::{GrantContract, HostDiscipline, HostMsg, HostPump, SeatSink};
+use crate::arb_engine::seat_host::{
+    intake_backstop, GrantContract, HostDiscipline, HostMsg, HostPump, SeatSink,
+};
 use degenbot_workers::dispatcher::{
     BootError, FleetBoot, FleetHost, Grant, GrantKind, SubmitError, SubmitReceipt, Unit,
 };
@@ -378,6 +380,9 @@ fn host_loop(
         // stamp (spill or SeatDone) — the honest mirror note, 6HE6RF.
         mirror: Some(solver_queue_len),
         discipline: &discipline,
+        backstop: intake_backstop(),
+        #[cfg(test)]
+        ticks: None,
     }
     .run(rx);
 }

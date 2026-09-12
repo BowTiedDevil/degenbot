@@ -288,6 +288,8 @@ crate::config_schema! {
             doc = "Clean-window hysteresis (ms) required before cordon exits (design doc §6: 10 s of clean windows).";
         cordon_sim_intake_floor [opt usize] = None, env = "DEGENBOT_FLEET_CORDON_SIM_INTAKE_FLOOR", def = "(unset; half the slot cap)",
             doc = "SimDriver new-lease cap while cordoned; in-flight sims are never cancelled (default: half the slot cap).";
+        intake_backstop_ms [ms] = 250, env = "DEGENBOT_FLEET_INTAKE_BACKSTOP_MS", def = "250",
+            doc = "Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units (TB4QGX T2). Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin.";
     }
 
     capture CaptureConfig {

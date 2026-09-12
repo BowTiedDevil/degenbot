@@ -125,6 +125,7 @@ use std::collections::VecDeque;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
+use std::time::Duration;
 
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
 use degenbot_workers::budget::FleetBudget;
@@ -233,6 +234,19 @@ pub(crate) fn admission(inputs: AdmissionInputs) -> Admission {
         (false, true) => Admission::WaitPosture,
         (true, true) => Admission::WaitBoth,
     }
+}
+
+/// The host intake backstop interval (T2): the recv-timeout armed iff a
+/// backlog exists. Read from the installed typed config (schema defaults
+/// when none installed); clamped to >= 1 ms so a garbage value can never
+/// collapse into a busy-spin.
+pub(crate) fn intake_backstop() -> Duration {
+    Duration::from_millis(
+        crate::bot_core::stance::config()
+            .fleet
+            .intake_backstop_ms
+            .max(1),
+    )
 }
 
 /// The host intake's progress vocabulary. `Idle`/`Backed` are live in this
@@ -489,6 +503,15 @@ pub(crate) struct HostPump<'a> {
     pub(crate) mirror: Option<&'a AtomicUsize>,
     /// The per-host abort wording owner.
     pub(crate) discipline: &'a dyn HostDiscipline,
+    /// The recv-timeout backstop (T2): armed iff the backlog is non-empty,
+    /// so a guard change arriving with no message (a posture lift from the
+    /// block-pump thread) still re-runs the pump. Read once per host loop
+    /// from the typed config.
+    pub(crate) backstop: Duration,
+    /// Test seam (T2): counts timeout-driven backstop pumps so the tick rate
+    /// can be asserted bounded. Absent from production builds.
+    #[cfg(test)]
+    pub(crate) ticks: Option<&'a AtomicU64>,
 }
 
 impl HostPump<'_> {
@@ -525,8 +548,35 @@ impl HostPump<'_> {
         reason = "the host Receiver's ownership moves into the spawned host thread — a borrow cannot cross the thread boundary"
     )]
     pub(crate) fn run(mut self, rx: mpsc::Receiver<HostMsg>) {
-        while let Ok(msg) = rx.recv() {
-            self.apply_host_msg(msg);
+        loop {
+            // Arm the backstop IFF a backlog exists (T2): a held backlog is
+            // the only state whose guards can change with NO message (the
+            // posture owner is fed by the block-pump thread). A Backed host
+            // therefore wakes on the timer and re-runs the pump; an empty
+            // host keeps the blocking recv (no busy-spin when parked empty).
+            let msg = if self.progress() == ProgressState::Backed {
+                match rx.recv_timeout(self.backstop) {
+                    Ok(msg) => Some(msg),
+                    // The mandatory liveness input: re-evaluate every mutable
+                    // guard, then drain whatever the lift unblocked.
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        #[cfg(test)]
+                        if let Some(ticks) = self.ticks {
+                            ticks.fetch_add(1, Ordering::Relaxed);
+                        }
+                        None
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            } else {
+                match rx.recv() {
+                    Ok(msg) => Some(msg),
+                    Err(_) => break,
+                }
+            };
+            if let Some(msg) = msg {
+                self.apply_host_msg(msg);
+            }
             self.pump();
         }
     }
@@ -917,6 +967,9 @@ fn host_loop(
         // no typed receipt to inform, so no mirror.
         mirror: None,
         discipline: &discipline,
+        backstop: intake_backstop(),
+        #[cfg(test)]
+        ticks: None,
     }
     .run(rx);
 }
@@ -1034,8 +1087,9 @@ pub(crate) fn global_executor<T>(
 #[expect(clippy::expect_used, clippy::panic)]
 mod tests {
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use degenbot_workers::budget::BudgetOverrides;
     use degenbot_workers::dispatcher::{FleetBoot, FleetHost, Grant, GrantKind, Unit};
@@ -1090,6 +1144,18 @@ mod tests {
             }
             now += 1_000;
             assert!(now <= 60_000, "the cordon never lifted");
+        }
+    }
+
+    /// The hermetic fleet boot shared by the driven host and the real-thread
+    /// backstop test (T2).
+    fn hermetic_fleet_boot(owner: &'static PostureOwner) -> FleetBoot {
+        FleetBoot {
+            profile: degenbot_config::FleetProfile::Auto,
+            quota_cpus: 8.0,
+            overrides: BudgetOverrides::default(),
+            posture: PosturePolicy::doc_defaults(),
+            owner: Some(owner),
         }
     }
 
@@ -1195,6 +1261,8 @@ mod tests {
         cursor: usize,
         in_flight: VecDeque<u64>,
         unit_seq: u64,
+        /// T2: the recv-timeout backstop used by a real-thread drive.
+        backstop: Duration,
     }
 
     impl DrivenHost {
@@ -1203,14 +1271,7 @@ mod tests {
         }
 
         fn boot_with(kind: HostKind, owner: &'static PostureOwner) -> Self {
-            let boot = FleetBoot {
-                profile: degenbot_config::FleetProfile::Auto,
-                quota_cpus: 8.0,
-                overrides: BudgetOverrides::default(),
-                posture: PosturePolicy::doc_defaults(),
-                owner: Some(owner),
-            };
-            let host = FleetHost::boot(boot).expect("hermetic fleet boot");
+            let host = FleetHost::boot(hermetic_fleet_boot(owner)).expect("hermetic fleet boot");
             let recorder = Recorder::new();
             let mirror = match kind {
                 HostKind::Pooled => None,
@@ -1231,6 +1292,7 @@ mod tests {
                 cursor: 0,
                 in_flight: VecDeque::new(),
                 unit_seq: 0,
+                backstop: Duration::from_millis(50),
             }
         }
 
@@ -1278,6 +1340,9 @@ mod tests {
                 sink: &self.sink,
                 mirror: self.mirror.as_deref(),
                 discipline: &self.discipline,
+                backstop: self.backstop,
+                #[cfg(test)]
+                ticks: None,
             }
         }
 
@@ -1887,5 +1952,257 @@ mod tests {
             queued_before - 1,
             "the freed queue slot took the queued head, not a backlog unit"
         );
+    }
+
+    /// T2 RED-FIRST: the mandatory liveness input. A pooled host with a held
+    /// (Backed) backlog under a cordon, driven through the REAL
+    /// `HostPump::run` on a thread, must drain within the backstop after the
+    /// cordon lifts with ZERO further messages. Pre-fix `run` blocks in
+    /// `rx.recv()` forever here (the original 9,955-path deadlock); the
+    /// backstop tick re-runs the pump.
+    #[test]
+    fn backstop_drains_a_held_backlog_when_the_cordon_lifts_with_no_message() {
+        let owner = hermetic_owner();
+        force_cordoned(owner);
+        let recorder = Recorder::new();
+        let backstop = Duration::from_millis(50);
+
+        std::thread::scope(|scope| {
+            // The channel + backlog live INSIDE the scope body so the
+            // sender drops when this body exits (or unwinds). Holding the
+            // sender outside would keep the parked child alive and the
+            // scope join would block forever, masking any assertion.
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mut backlog = VecDeque::new();
+            let mut host = FleetHost::boot(hermetic_fleet_boot(owner)).expect("hermetic boot");
+            let sink = RecordingSink {
+                recorder: Arc::clone(&recorder),
+            };
+            let discipline = RecordingDiscipline {
+                recorder: Arc::clone(&recorder),
+            };
+            scope.spawn(move || {
+                HostPump {
+                    host: &mut host,
+                    backlog: &mut backlog,
+                    role: WorkerRole::PoolStateUpdater,
+                    grants: GrantContract::Single(GrantKind::PoolStateUpdate),
+                    sink: &sink,
+                    mirror: None,
+                    discipline: &discipline,
+                    backstop,
+                    ticks: None,
+                }
+                .run(rx);
+            });
+
+            // Seed one unit under the cordon: it is HELD in the backlog.
+            tx.send(HostMsg::Enqueue(Unit::new(
+                1,
+                WorkerRole::PoolStateUpdater,
+                None,
+                false,
+                Box::new(|_ctx| {}),
+            )))
+            .expect("submit");
+            // Let the host process the message and park with a Backed
+            // backlog (still cordoned: nothing may seat).
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                !recorder
+                    .snapshot()
+                    .iter()
+                    .any(|o| matches!(o, Outcome::Seated { .. })),
+                "the cordon must HOLD the unit (no seat before the lift)"
+            );
+
+            // Lift the cordon WITHOUT any further message.
+            lift_cordon(owner);
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                if recorder
+                    .snapshot()
+                    .iter()
+                    .any(|o| matches!(o, Outcome::Seated { unit: 1, .. }))
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the held unit never drained: the parked host did not wake via BackstopTick (RED-FIRST)"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+    }
+
+    /// T2: the backstop tick rate is bounded by TIME, not by message volume.
+    /// A cordoned backlog stays Backed while a flood of submissions arrives;
+    /// the timeout pumps over a window must be ~window/backstop (independent
+    /// of the flood size), nothing may seat before the lift, and the lift
+    /// must drain every unit exactly once.
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the end-to-end liveness/tick harness is one driven scenario"
+    )]
+    fn backstop_tick_rate_is_bounded_by_time_not_messages() {
+        let owner = hermetic_owner();
+        force_cordoned(owner);
+        let recorder = Recorder::new();
+        let ticks = Arc::new(AtomicU64::new(0));
+        let backstop = Duration::from_millis(40);
+
+        std::thread::scope(|scope| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mut backlog = VecDeque::new();
+            let mut host = FleetHost::boot(hermetic_fleet_boot(owner)).expect("hermetic boot");
+            let sink = RecordingSink {
+                recorder: Arc::clone(&recorder),
+            };
+            let discipline = RecordingDiscipline {
+                recorder: Arc::clone(&recorder),
+            };
+            let ticks_in = Arc::clone(&ticks);
+            scope.spawn(move || {
+                HostPump {
+                    host: &mut host,
+                    backlog: &mut backlog,
+                    role: WorkerRole::PoolStateUpdater,
+                    grants: GrantContract::Single(GrantKind::PoolStateUpdate),
+                    sink: &sink,
+                    mirror: None,
+                    discipline: &discipline,
+                    backstop,
+                    ticks: Some(&ticks_in),
+                }
+                .run(rx);
+            });
+
+            // Flood while cordoned: every submission is a MESSAGE, not a
+            // tick, and every unit must be held (none seated).
+            let n: u64 = 40;
+            for id in 1..=n {
+                tx.send(HostMsg::Enqueue(Unit::new(
+                    id,
+                    WorkerRole::PoolStateUpdater,
+                    None,
+                    false,
+                    Box::new(|_ctx| {}),
+                )))
+                .expect("submit");
+            }
+            let window = Duration::from_millis(400);
+            let start = std::time::Instant::now();
+            std::thread::sleep(window);
+            let elapsed = start.elapsed();
+            let observed = ticks.load(Ordering::Relaxed);
+            let allowed =
+                u64::try_from(elapsed.as_millis() / backstop.as_millis()).unwrap_or(u64::MAX) + 6;
+            assert!(
+                observed >= 1,
+                "the backstop must tick while a backlog is held"
+            );
+            assert!(
+                observed <= allowed && observed < n,
+                "ticks {observed} must be bounded by elapsed/backstop ({allowed}) and \
+                 far below the {n} messages — bounded by time, not message volume"
+            );
+            assert!(
+                !recorder
+                    .snapshot()
+                    .iter()
+                    .any(|o| matches!(o, Outcome::Seated { .. })),
+                "all units are held under the cordon (never dropped, never seated)"
+            );
+
+            // Lift: the backlog drains — every unit exactly once. The
+            // recording sink is not a real seat, so simulate its SeatDone
+            // completions to free slot capacity (the ticks also retry).
+            lift_cordon(owner);
+            let want = usize::try_from(n).unwrap_or(usize::MAX);
+            let mut completed: std::collections::HashSet<u64> = std::collections::HashSet::new();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let grants: Vec<(u64, u64)> = recorder
+                    .snapshot()
+                    .iter()
+                    .filter_map(|o| match o {
+                        Outcome::Seated { unit, slot } => Some((*slot, *unit)),
+                        Outcome::ForeignGrant(_) => None,
+                    })
+                    .collect();
+                let mut seated: Vec<u64> = grants.iter().map(|(_, unit)| *unit).collect();
+                seated.sort_unstable();
+                seated.dedup();
+                for (slot, unit) in &grants {
+                    if completed.insert(*unit) {
+                        tx.send(HostMsg::SeatDone { seat: *slot })
+                            .expect("complete");
+                    }
+                }
+                if seated.len() == want {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the held backlog never drained after the lift ({}/{} unique)",
+                    seated.len(),
+                    want
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert_eq!(
+                completed.len(),
+                want,
+                "every held unit was granted and completed exactly once"
+            );
+        });
+    }
+
+    /// T2 transition coverage: the backstop is armed ONLY in Backed. An Idle
+    /// host (empty backlog, open channel) must never tick — the
+    /// no-busy-spin-parked-empty contract; `(Idle, BackstopTick)` is a
+    /// non-transition by construction.
+    #[test]
+    fn idle_host_does_not_arm_the_backstop() {
+        let owner = hermetic_owner();
+        let ticks = Arc::new(AtomicU64::new(0));
+        let backstop = Duration::from_millis(30);
+        std::thread::scope(|scope| {
+            // The sender stays alive for the whole window so the host parks
+            // in the blocking recv (Idle) rather than observing a close.
+            let (_tx, rx) = std::sync::mpsc::channel();
+            let mut backlog = VecDeque::new();
+            let mut host = FleetHost::boot(hermetic_fleet_boot(owner)).expect("hermetic boot");
+            let recorder = Recorder::new();
+            let sink = RecordingSink {
+                recorder: Arc::clone(&recorder),
+            };
+            let discipline = RecordingDiscipline {
+                recorder: Arc::clone(&recorder),
+            };
+            let ticks_in = Arc::clone(&ticks);
+            scope.spawn(move || {
+                HostPump {
+                    host: &mut host,
+                    backlog: &mut backlog,
+                    role: WorkerRole::PoolStateUpdater,
+                    grants: GrantContract::Single(GrantKind::PoolStateUpdate),
+                    sink: &sink,
+                    mirror: None,
+                    discipline: &discipline,
+                    backstop,
+                    ticks: Some(&ticks_in),
+                }
+                .run(rx);
+            });
+            std::thread::sleep(Duration::from_millis(240));
+            assert_eq!(
+                ticks.load(Ordering::Relaxed),
+                0,
+                "an Idle host must not arm the backstop (no busy-spin parked empty)"
+            );
+        });
     }
 }

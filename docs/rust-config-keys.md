@@ -112,6 +112,7 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_FLEET_CORDON_DUTY_WINDOW_MS` | `fleet.cordon_duty_window_ms` | `duration-ms (u64)` | `5000` | Trailing window (ms) over which throttled-time duty is evaluated. |
 | `DEGENBOT_FLEET_CORDON_EXIT_CLEAN_MS` | `fleet.cordon_exit_clean_ms` | `duration-ms (u64)` | `10000` | Clean-window hysteresis (ms) required before cordon exits (design doc §6: 10 s of clean windows). |
 | `DEGENBOT_FLEET_CORDON_SIM_INTAKE_FLOOR` | `fleet.cordon_sim_intake_floor` | `Option<usize>` | `(unset; half the slot cap)` | SimDriver new-lease cap while cordoned; in-flight sims are never cancelled (default: half the slot cap). |
+| `DEGENBOT_FLEET_INTAKE_BACKSTOP_MS` | `fleet.intake_backstop_ms` | `duration-ms (u64)` | `250` | Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units (TB4QGX T2). Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin. |
 ## `capture`
 
 | Env var | TOML key | Type | Default | Description |
