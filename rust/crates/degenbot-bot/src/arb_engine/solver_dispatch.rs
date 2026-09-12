@@ -4021,6 +4021,84 @@ mod solve_path_span_tests {
     use opentelemetry_sdk::trace::InMemorySpanExporter;
     use tracing_subscriber::layer::SubscriberExt;
 
+    /// ADR-043 §8 behavioral volume gate (ergo ZJUEXH): one fixture solve
+    /// cycle over the committed heavy-CL corpus must stay within the INFO
+    /// volume budget, and every INFO+ record must land on a closed
+    /// `degenbot::<domain>` target.
+    ///
+    /// Runs the SERIAL path deliberately: a test-scoped `with_default`
+    /// subscriber does not reach the fleet's spawned seat threads, so a fleet
+    /// run would capture nothing and the gate would pass vacuously.
+    #[test]
+    #[expect(clippy::print_stdout)] // the measured distribution is the evidence
+    fn fixture_solve_stays_within_the_info_volume_budget() {
+        use std::sync::{Arc as StdArc, Mutex as StdMutex};
+        use tracing::Level;
+        use tracing_subscriber::layer::{Context, Layer};
+        use tracing_subscriber::Registry;
+
+        #[derive(Clone, Default)]
+        struct Capture(StdArc<StdMutex<Vec<(String, Level)>>>);
+        impl<S: tracing::Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+                self.0.lock().expect("capture lock").push((
+                    event.metadata().target().to_string(),
+                    *event.metadata().level(),
+                ));
+            }
+        }
+
+        let capture = Capture::default();
+        let subscriber = Registry::default().with(capture.clone());
+        let items = super::executor_ab_probe::load_corpus_fixture();
+        let ctx = super::executor_ab_probe::probe_ctx();
+        let solved = items.len();
+        tracing::subscriber::with_default(subscriber, || {
+            for (pid, item) in items.iter().enumerate() {
+                let solve = tracing::info_span!("degenbot.arb.solve", block.number = 1u64);
+                let _guard = solve.enter();
+                let _ = solve_one_path(&ctx, &tracing::Span::current(), pid as u64, item);
+            }
+        });
+
+        let records = capture.0.lock().expect("capture lock").clone();
+        let loud: Vec<(String, Level)> = records
+            .iter()
+            .filter(|(_, level)| *level <= Level::INFO)
+            .cloned()
+            .collect();
+
+        let mut histogram: std::collections::BTreeMap<(String, String), usize> =
+            std::collections::BTreeMap::new();
+        for (target, level) in &loud {
+            *histogram
+                .entry((target.clone(), level.to_string()))
+                .or_default() += 1;
+        }
+        println!("solved={solved} info+={} distribution:", loud.len());
+        for ((target, level), count) in &histogram {
+            println!("  {count:>6}  {level:<5} {target}");
+        }
+
+        // (a) Volume: steady-state INFO+ must be a small constant per solve.
+        let budget = 4 + solved / 20;
+        assert!(
+        loud.len() <= budget,
+        "ADR-043 §8 volume gate: {} INFO+ records over {solved} paths (budget {budget}); the histogram above names the offenders",
+        loud.len()
+    );
+
+        // (b) Every INFO+ record rides a closed `degenbot::<domain>` target.
+        let stray: Vec<&(String, Level)> = loud
+            .iter()
+            .filter(|(target, _)| !target.starts_with("degenbot::"))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "ADR-043 §8 target gate: INFO+ on non-domain targets: {stray:?}"
+        );
+    }
+
     /// `solve_one_path` emits one `degenbot.arb.path` child span parented
     /// under the (re-entered) cycle span, carrying `path.id`. Scoped LOCAL
     /// subscriber (`with_default`): no global-slot mutation, no leakage
@@ -4066,6 +4144,7 @@ mod solve_path_span_tests {
             paths[0].parent_span_id, solve_id,
             "degenbot.arb.path must parent under the re-entered cycle span"
         );
+
         assert!(
             paths[0]
                 .attributes
