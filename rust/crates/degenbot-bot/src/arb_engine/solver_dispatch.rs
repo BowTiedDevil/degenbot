@@ -345,7 +345,6 @@ pub fn solve_runtime_config_from_cfg(
         sampled_compose_lines: cfg.solve.envelope_sampled_compose_lines,
         memo_on: cfg.solve.solver_walk_memo,
         memo_stats: cfg.solve.solver_walk_memo_stats,
-        gate_trace: cfg.trace.gate_trace,
     }
 }
 

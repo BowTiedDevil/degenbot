@@ -1791,7 +1791,7 @@ async fn process_chunk_on_conn(
         events_applied_total += op_events.len();
 
         // (f.4) DEBUG: per-tx touched-position trace (env-gated). When
-        //     `DEGENBOT_AAVE_TX_TRACE=1`, emit one JSONL line per touched
+        //     `the aave tx trace=1`, emit one JSONL line per touched
         //     `position_id` to stderr, reading the POST-APPLY
         //     `(balance, last_index)` from `conn`. The per-tx differential-
         //     narrowing tool: a divergent (user, asset)'s trajectory pinpoints
@@ -1804,7 +1804,7 @@ async fn process_chunk_on_conn(
         //     deferring it to end-of-chunk. The end-of-chunk GREEN compare
         //     (exact-zero) remains the rigorous gate; this trace is the
         //     narrowing tool, not the gate.
-        if ::degenbot_config::holder::config().aave.aave_tx_trace {
+        if ::tracing::enabled!(::tracing::Level::DEBUG) {
             let mut seen: std::collections::HashSet<(bool, i64)> = std::collections::HashSet::new();
             for ev in &op_events {
                 match ev {
@@ -1866,18 +1866,16 @@ async fn process_chunk_on_conn(
                     })
                     .ok();
                 if let Some((bal, idx)) = row {
-                    #[expect(clippy::print_stderr)] // env-gated debug tx trace
-                    {
-                        eprintln!(
-                            "AAVE-TXTRACE {{\"block\":{},\"tx\":\"0x{}\",\"kind\":\"{}\",\"pos\":{},\"bal\":\"{}\",\"idx\":\"{}\"}}",
-                            block_number,
-                            txhex,
-                            table,
-                            pid,
-                            bal.unwrap_or_default(),
-                            idx.unwrap_or_default(),
-                        );
-                    }
+                    degenbot_core::diag!(
+                        domain = aave,
+                        block = block_number,
+                        tx = %txhex,
+                        kind = %table,
+                        pos = pid,
+                        bal = %bal.unwrap_or_default(),
+                        idx = %idx.unwrap_or_default(),
+                        "AAVE-TXTRACE"
+                    );
                 }
             }
         }

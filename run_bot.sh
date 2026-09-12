@@ -44,7 +44,7 @@ mkdir -p "$LOGDIR"
 #     log with block/log_index/tx_index/topic0/removed/decision — high-volume,
 #     but the catch-all for "did this log even arrive and apply before the
 #     solver-state check fired" desync investigations
-# Per-target/high-noise (still OFF): DEGENBOT_DRAIN_DBG, DEGENBOT_TRACE_REGISTER_SEED
+# Per-target/high-noise (still OFF): DEGENBOT_DRAIN_DBG
 #   DEGENBOT_DUMP_TICK_MAPS  (opt-in: dump full seed + verifier tick maps for the
 #     tick-map desync re-assembly aid; high volume, set only for an investigation)
 #

@@ -529,22 +529,18 @@ fn build_scaled_event_chunk_event(
     // `balance_increase`, `index`) can be audited per event — narrows the
     // exact rounding/raw_amount site for a divergent position. Keys via
     // `log_index` (cross-ref the per-tx balance trace).
-    if ::degenbot_config::holder::config().aave.aave_evtrace {
-        #[expect(clippy::print_stderr)] // env-gated event trace
-        {
-            eprintln!(
-                "AAVE-EVTRACE {{\"li\":{},\"op\":\"{:?}\",\"ev\":\"{:?}\",\"user\":\"0x{}\",\"raw\":\"{}\",\"value\":\"{}\",\"balinc\":\"{}\",\"idx\":\"{}\"}}",
-                ev.log_index,
-                op.operation_type,
-                ev.event_type,
-                alloy::hex::encode(ev.user_address),
-                raw_amount,
-                ev.amount,
-                balance_increase,
-                index,
-            );
-        }
-    }
+    degenbot_core::diag!(
+        domain = aave,
+        li = ev.log_index,
+        op = ?op.operation_type,
+        ev = ?ev.event_type,
+        user = %alloy::hex::encode(ev.user_address),
+        raw = %raw_amount,
+        value = %ev.amount,
+        balinc = %balance_increase,
+        idx = %index,
+        "AAVE-EVTRACE"
+    );
 
     // The `ScaledTokenProcessor` constructed below carries its OWN
     // `RoundingStrategy` (the post-decode None fallback path) — this is

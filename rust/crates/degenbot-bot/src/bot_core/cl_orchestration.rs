@@ -119,21 +119,19 @@ impl BotState {
 
         // [diag] registration-seed probe: log every V3 pool's seed scalar state
         // (update_block + sqrtPriceX96 + tick) so a solver-state mismatch can be
-        // traced to its seed. Gated on `DEGENBOT_TRACE_REGISTER_SEED=1` (off by
-        // default; run_bot.sh sets it for diagnosis). A pool seeded with an
+        // traced to its seed. Always-on DEBUG on the `state` domain (the
+        // the register-seed probe gate is retired). A pool seeded with an
         // `update_block` well behind the head + an old sqrt is the stale-seed
         // hypothesis; a head-fresh seed points the finger at a post-registration
         // rewind instead.
-        if crate::bot_core::stance::config().trace.trace_register_seed {
-            op_info!(domain = state, pool_addr = %format!("{:x}", params.address),
-                family = "V3",
-                seed_update_block = params.update_block,
-                seed_sqrt = %params.sqrt_price_x96,
-                seed_tick = params.tick,
-                coverage = ?params.coverage,
-                "[diag] register-v3-seed"
-            );
-        }
+        diag!(domain = state, pool_addr = %format!("{:x}", params.address),
+            family = "V3",
+            seed_update_block = params.update_block,
+            seed_sqrt = %params.sqrt_price_x96,
+            seed_tick = params.tick,
+            coverage = ?params.coverage,
+            "[diag] register-v3-seed"
+        );
 
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;

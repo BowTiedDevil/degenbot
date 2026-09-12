@@ -212,14 +212,10 @@ crate::config_schema! {
             doc = "Dump assembled tick maps for offline comparison (UO3JM4 re-assembly aid).";
         trace_liquidity [bool] = false, env = "DEGENBOT_TRACE_LIQUIDITY", def = "false",
             doc = "Global liquidity-events trace for EVERY V3/V4 liquidity mutation across all pools.";
-        trace_register_seed [bool] = false, env = "DEGENBOT_TRACE_REGISTER_SEED", def = "false",
-            doc = "Trace pool registration seeding progress.";
         trace_tick [opt i32] = None, env = "DEGENBOT_TRACE_TICK", def = "(unset)",
             doc = "Watch one known-divergent tick (signed decimal) across mutations in the pin/drain probes.";
         ws_trace [bool] = false, env = "DEGENBOT_WS_TRACE", def = "false",
             doc = "Catch-all WS-log trace (one line per relevant log; high volume by design).";
-        gate_trace [bool] = false, env = "DEGENBOT_GATE_TRACE", def = "false",
-        doc = "T5 profit-envelope compose tracing gate (profit_envelope TRACE).";
         hotpath [bool] = false, env = "DEGENBOT_HOTPATH", def = "false",
             doc = "Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too).";
     }
@@ -332,10 +328,6 @@ crate::config_schema! {
     }
 
     aave AaveConfig {
-        aave_evtrace [bool] = false, env = "DEGENBOT_AAVE_EVTRACE", def = "false",
-            doc = "Trace Aave transaction-processor events (`1` enables).";
-        aave_tx_trace [bool] = false, env = "DEGENBOT_AAVE_TX_TRACE", def = "false",
-            doc = "Trace Aave updater transaction application (`1` enables).";
         bridge_probe [bool] = false, env = "DEGENBOT_BRIDGE_PROBE", def = "false",
             doc = "In-tree bridge-probe observation surface in the arbitrage simulator (presence gates).";
     }

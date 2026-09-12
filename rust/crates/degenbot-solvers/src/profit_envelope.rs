@@ -156,23 +156,16 @@ impl Line {
     }
 }
 
-#[expect(clippy::print_stderr, reason = "opt-in dev diagnostics, off in prod")]
+/// T5 diagnostics: per-hop compose-boundary trace, emitted at DEBUG on the
+/// `solver` domain (the `gate_trace` runtime flag is retired).
 fn trace_boundary(hop_idx: usize, hop_lines: usize, survivors: usize, next: &[Line]) {
     let min0 = next
         .iter()
         .map(|l| l.eval(&U256::ZERO))
         .min()
         .unwrap_or(I512::ZERO);
-    eprintln!(
-        "[gate-trace] boundary {hop_idx}: hop_lines={hop_lines} next(post-prune/sample)={survivors} min-eval(0)={min0}"
-    );
-}
-
-/// T5 diagnostics: opt-in compose tracing (`trace.gate_trace` /
-/// `DEGENBOT_GATE_TRACE`), packed by the owner into the runtime config —
-/// the gate itself reads no environment anywhere.
-fn gate_trace_enabled(cfg: &SolveRuntimeConfig) -> bool {
-    cfg.gate_trace
+    diag!(domain = solver, hop_idx, hop_lines, survivors, min_eval_0 = %min0,
+        "[gate-trace] boundary");
 }
 
 /// Target coefficient width after sound-reduction: two operands of this
@@ -1785,9 +1778,7 @@ fn path_profit_bound_inner(
                 cache.map.insert(chain.clone(), next.clone());
             }
         }
-        if gate_trace_enabled(&deps.runtime) {
-            trace_boundary(hop_idx, hop_ls_len_dbg, next.len(), &next);
-        }
+        trace_boundary(hop_idx, hop_ls_len_dbg, next.len(), &next);
         lines2 = next;
     }
     gate_tls(|t| t.compose_ns += phase_compose.elapsed().as_nanos());
