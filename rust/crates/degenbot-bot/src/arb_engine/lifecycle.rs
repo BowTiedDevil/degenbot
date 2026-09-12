@@ -1,13 +1,7 @@
 //! Path registration, buffer management, and engine accessors.
 
-use super::path_registry::PathRegistration;
 use super::{Address, ArbitrageEngine, HashMap};
-use crate::bot_core::resolve::resolve_hops;
-use crate::bot_core::BotState;
-use ::degenbot_solvers::mixed::{
-    HopType, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
-};
-use degenbot_core::diag;
+use ::degenbot_solvers::mixed::{PoolHop, SolvePathResult};
 
 /// PRG-4 / IRUMXD: `PathRegistrationError` moved to
 /// [`super::path_registry`] (ADR-045 `C4UAFP`); re-exported here at its old
@@ -16,49 +10,7 @@ use degenbot_core::diag;
 pub use super::path_registry::PathRegistrationError;
 
 impl ArbitrageEngine {
-    /// Derive a hop's family from the `BotState`'s `PoolEntry` variant.
-    ///
-    /// Returns `None` if `pool_id` isn't registered in `core` — the caller
-    /// (`register_path`) rejects such hops with a clear error (ADR-006 D3:
-    /// the engine never constructs pools, so it learns each hop's family
-    /// from the `BotState` that owns it).
-    fn derive_hop_type(core: &BotState, pool_id: u64) -> Option<HopType> {
-        // Aerodrome stable pools route to the Solidly solve branch; volatile
-        // Aerodrome is constant-product and routes to the V2 (Möbius) branch
-        // (matching the Python `arbitrage.solvers.solidly_stable` classification:
-        // `AerodromeV2Pool(stable=True)` → `SolidlyStableHop`, else
-        // `ConstantProductHop`).
-        if let Some(id) = core.get_aerodrome_identity(pool_id) {
-            return Some(if id.stable {
-                HopType::SolidlyStable
-            } else {
-                HopType::V2
-            });
-        }
-        // Camelot stable_swap pools route to the Solidly solve branch;
-        // volatile Camelot is constant-product (V2). Same Python-faithful
-        // classification as Aerodrome.
-        if let Some(id) = core.get_v2_identity(pool_id) {
-            return Some(if id.stable_swap {
-                HopType::SolidlyStable
-            } else {
-                HopType::V2
-            });
-        }
-        if core.get_v3_pool(pool_id).is_some() {
-            Some(HopType::V3)
-        } else if core.get_v4_pool(pool_id).is_some() {
-            Some(HopType::V4)
-        } else if core.get_balancer_weighted_pool(pool_id).is_some() {
-            Some(HopType::BalancerWeighted)
-        } else if core.get_balancer_stable_pool(pool_id).is_some() {
-            Some(HopType::BalancerStable)
-        } else if core.get_curve_pool(pool_id).is_some() {
-            Some(HopType::CurveStableswap)
-        } else {
-            None
-        }
-    }
+    // `derive_hop_type` moved to `SolveCycle` (ADR-045 T4).
 
     /// Register a mixed path and return its ID.
     ///
@@ -74,138 +26,9 @@ impl ArbitrageEngine {
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState`.
     pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, PathRegistrationError> {
-        // R522XA: fewer than two hops is a structural caller bug, not a state —
-        // reject loudly at construction.
-        if hops.len() < 2 {
-            return Err(PathRegistrationError::Invalid(format!(
-                "register_path: path has {} hops (need >= 2) — structurally unroutable",
-                hops.len()
-            )));
-        }
-
-        // Telemetry: one Jaeger node per path registration (a root span on the
-        // registration worker thread — there is no ambient pump context during
-        // `build_paths`). The completion event below carries the CONCRETE hop
-        // list so the trace answers "which pools are in this path" directly.
-        // FPGOYX: dedup — if the same (pool_id, zero_for_one) sequence is
-        // already registered, return the existing path_id instead of creating
-        // a duplicate. Without this, `build_paths` re-entry accumulated
-        // hundreds of thousands of duplicate paths, OOM-killing the bot.
-        let sig: Vec<(u64, bool)> = hops.iter().map(|h| (h.pool_id, h.zero_for_one)).collect();
-        if let Some(existing_id) = self.registry.lookup(&sig) {
-            diag!(
-                domain = path,
-                path_id = existing_id,
-                hops.count = hops.len(),
-                "duplicate registration skipped (dedup)"
-            );
-            // PRG-4: the duplicate never crosses the FFI as a skip — the
-            // engine counts it for the registration skip telemetry itself.
-            self.registry.note_dedup();
-            if let Some(p) = crate::instruments::pipeline() {
-                p.count_registration_skip("dup");
-            }
-            return Ok(existing_id);
-        }
-
-        // PRG-4 / IRUMXD: the registered-path cap lives HERE, in the engine
-        // path registry (was the Python `MAX_REGISTERED_PATHS` counter +
-        // the `DiscoveryCrawlComplete` unwind). A new registration past the
-        // cap is refused with the typed benign-stop refusal — the crawl
-        // catches it and stops discovery; dedup hits above never reach this
-        // check (an existing path is not growth).
-        self.registry.ensure_capacity()?;
-
-        let reg_span = tracing::info_span!("degenbot.path.register", hops.count = hops.len());
-        let _reg_guard = reg_span.enter();
-        // Resolve each hop's family from the BotState + validate the pool_id
-        // exists there. The engine never constructs pools (ADR-006 D3), so
-        // hop_type is derived, not caller-supplied.
-        let mut pool_refs = Vec::with_capacity(hops.len());
-        let mut hop_descs = Vec::with_capacity(hops.len());
-        {
-            let core = self.core.read();
-            for hop in hops {
-                let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
-                    return Err(PathRegistrationError::Invalid(format!(
-                        "register_path: pool_id {} is not registered in the associated BotState",
-                        hop.pool_id
-                    )));
-                };
-                hop_descs.push(super::path_info::describe_hop(
-                    &core,
-                    hop_type,
-                    hop.pool_id,
-                    hop.zero_for_one,
-                ));
-                pool_refs.push(MixedPoolRef {
-                    hop_type,
-                    pool_key: hop.pool_id,
-                    zero_for_one: hop.zero_for_one,
-                });
-            }
-        }
-
-        // R522XA: resolve BEFORE storing so an unroutable hop rejects the
-        // registration loudly and leaves no half-registered state behind.
-        let mut resolved = ResolvedMixedPath::default();
-        let deficits = {
-            let core = self.core.read();
-            resolve_hops(
-                &core,
-                &pool_refs,
-                &mut resolved,
-                &self.cycle.hop_projection_cache,
-                Some(&mut self.cycle.hop_projection_count),
-                self.cycle.cl_projection_memo,
-            )
-        };
-        if let Some(unroutable) = deficits
-            .iter()
-            .find(|d| d.reason.is_structurally_unroutable())
-        {
-            return Err(PathRegistrationError::Invalid(format!(
-                "register_path: hop ({hop_type:?} pool {pool_key}) is structurally unroutable ({reason}) — rejecting path at construction",
-                hop_type = format!("{:?}", unroutable.hop_type),
-                pool_key = unroutable.pool_key,
-                reason = unroutable.reason,
-            )));
-        }
-
-        // Only now commit the path identity (all-or-nothing): allocate the
-        // path id (no gaps from rejected registrations), store the immutable
-        // pool refs, extend the reverse index, and record the dedup signature.
-        let path_id = self.registry.commit(PathRegistration {
-            signature: sig,
-            pool_refs,
-        });
-
-        // Store the resolve snapshot + drive the state machine. Arc-shared:
-        // the solve dispatch stages Arc clones (f701ccd3 staging fix).
-        let path_valid = resolved.valid;
         self.cycle
-            .path_resolved
-            .insert(path_id, std::sync::Arc::new(resolved));
-        self.cycle
-            .path_status
-            .entry(path_id)
-            .or_default()
-            .set_resolved(&deficits);
-
-        // DEBUG-gated (log-volume cut OPBD7L): one line per path registration
-        // was ~48% of a 10G run log (new pools/hop-combos register constantly
-        // on a live run). The registration itself stays fully observable via
-        // the `degenbot.path.register` OTel span (record filter uncapped) and
-        // the `path_pools` count metric; re-enable with
-        // `RUST_LOG=degenbot_bot=debug` for desync investigations.
-        diag!(domain = path, path_id = path_id,
-            hops.count = hop_descs.len(),
-            hops = %hop_descs.join(" -> "),
-            valid = path_valid,
-            "registered"
-        );
-
-        Ok(path_id)
+            .register_path(hops, &mut self.registry)
+            .map(|r| r.path_id)
     }
 
     /// Register a path and eagerly solve it.
@@ -223,27 +46,9 @@ impl ArbitrageEngine {
         &mut self,
         hops: Vec<PoolHop>,
     ) -> Result<u64, PathRegistrationError> {
-        let path_id = self.register_path(hops)?;
-
-        // Eagerly solve the newly registered path
-        if let Some(resolved) = self.cycle.path_resolved.get(&path_id) {
-            if resolved.valid {
-                if let Some(mut solve_result) = ::degenbot_solvers::mixed::solve_path(
-                    resolved,
-                    &::degenbot_solvers::profit_envelope::GateDeps::offline(),
-                )
-                .result
-                {
-                    if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                        self.clamp_cl_hop_capacity(path_id, &mut solve_result);
-                        self.cycle.results.insert(path_id, solve_result);
-                        self.cycle.pending_new_paths.insert(path_id);
-                    }
-                }
-            }
-        }
-
-        Ok(path_id)
+        self.cycle
+            .register_and_solve_path(hops, &mut self.registry)
+            .map(|r| r.path_id)
     }
 
     /// Set the maximum age for buffered events in the V3/V4 buffers
@@ -388,46 +193,7 @@ impl ArbitrageEngine {
     /// and `src/degenbot/`).
     #[tracing::instrument(name = "degenbot.arb.solve_all", skip(self), fields(block_number, path_count = self.registry.len()))]
     pub fn solve_all_paths(&mut self, block_number: u64) {
-        // Resolve all paths under the core lock (single consistent snapshot of
-        // all family state — ADR-003).
-        {
-            let core = self.core.read();
-            for (&path_id, path) in self.registry.iter() {
-                let mut resolved = ResolvedMixedPath::default();
-                let deficits = resolve_hops(
-                    &core,
-                    &path.pools,
-                    &mut resolved,
-                    &self.cycle.hop_projection_cache,
-                    Some(&mut self.cycle.hop_projection_count),
-                    self.cycle.cl_projection_memo,
-                );
-                self.cycle
-                    .path_resolved
-                    .insert(path_id, std::sync::Arc::new(resolved));
-                // R522XA: cold-start full sweep also refreshes the state machine.
-                self.cycle
-                    .path_status
-                    .entry(path_id)
-                    .or_default()
-                    .set_resolved(&deficits);
-            }
-        }
-
-        // Solve all paths
-        let results = self.solve_all();
-        self.cycle.results.clear();
-        for (pid, r) in results {
-            self.cycle.results.insert(pid, r);
-        }
-        // 6XB6NJ: monotone advance on the block cursor (the cold-start
-        // sweep can no longer drag a seeded resume anchor backwards).
-        self.cycle.cursor.advance_solved(block_number);
-
-        // Intentionally no compute_diff_and_send here: dispatching would
-        // advance `delivered` (claiming "Python has seen these") before any
-        // channel exists — poisoning the diff for the first real send. The
-        // pump owns dispatch via `send_result_batch`.
+        self.cycle.solve_all_paths(block_number, &self.registry);
     }
 
     /// Number of registered V2 pools (state lives in `BotState` under ADR-003).

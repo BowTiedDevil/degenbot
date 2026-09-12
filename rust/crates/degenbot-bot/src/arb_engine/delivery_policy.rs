@@ -381,20 +381,9 @@ impl ArbitrageEngine {
         let removed = self.registry.remove(path_id);
         let existed = removed.is_some();
 
-        // Remove from path_resolved
-        self.cycle.path_resolved.remove(&path_id);
-
-        // RLVDUP T3: the resolve bookkeeping follows the path everywhere
-        // else - leaving `path_status` / `resolved_update_snapshot` entries
-        // behind grew the maps unbounded on path churn.
-        self.cycle.path_status.remove(&path_id);
-        self.cycle.resolved_update_snapshot.remove(&path_id);
-
-        // Remove from results
-        self.cycle.results.remove(&path_id);
-
-        // Remove from pending_new_paths
-        self.cycle.pending_new_paths.remove(&path_id);
+        // ADR-045 T4: the path-deregistration coupling (resolve companions,
+        // results, pending-new carry) is the cycle's `forget`.
+        self.cycle.forget(path_id);
 
         // Record for the next batch (delivery-policy half)
         self.delivery.on_path_deregistered(path_id, existed);

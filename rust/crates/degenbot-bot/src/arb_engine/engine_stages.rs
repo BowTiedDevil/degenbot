@@ -313,22 +313,9 @@ impl StageHandlers for EngineStages {
     /// between the stash and the read.
     fn on_resolve(&self, work: &Resolve<'_>) -> Result<AffectedPaths, StageError> {
         let mut engine = self.engine.lock();
-        let admission = engine
-            .admission_budget_keys()
-            .map(|budget| (budget, engine.cycle.admission_retention_blocks));
-        let affected = if let Some((budget, retention)) = admission {
-            let cutoff = work.ctx.block().saturating_sub(retention);
-            let expired = work.delta.expire_older_than(cutoff);
-            engine.cycle.detached_cycle.note_leads_expired(expired);
-            // Stash the draw-time verdict BEFORE drawing: the drawn keys
-            // leave the ledger, so the dispatch must honor THIS cycle's
-            // decision, not a fresh gauge read.
-            engine.cycle.admission_draw_zero = budget == 0;
-            work.delta.draw_freshest(budget)
-        } else {
-            engine.cycle.admission_draw_zero = false;
-            work.delta.take_keys()
-        };
+        // ADR-045 T4: the admission draw is the cycle's `draw` (engine mutex
+        // held, ledger mutex inner - order unchanged).
+        let affected = engine.cycle.draw(work.delta, work.ctx.block());
         drop(engine);
         Ok(AffectedPaths(affected))
     }

@@ -358,11 +358,16 @@ pub(crate) type DeferredReRecordHook =
 pub struct ArbitrageEngine {
     /// KAHU5W: the owner-loaded typed bot config (one loader process-wide;
     /// never re-read from the environment). Construction stances + capture
-    /// config read from here.
+    /// config read from here. ADR-045 T4: the solve cycle owns its own clone
+    /// for the resolve/solve bodies; this field remains for the construction
+    /// stances.
+    #[expect(dead_code)]
     pub(crate) cfg: std::sync::Arc<::degenbot_config::BotConfig>,
     /// KAHU5W: the instance solver runtime stance, built at construction from
     /// [`Self::cfg`] and threaded down into every solve cycle. Replaces the
     /// solver crate's removed process-global RUNTIME `OnceLock`.
+    /// ADR-045 T4: the cycle owns its own copy.
+    #[expect(dead_code)]
     runtime_cfg: ::degenbot_solvers::runtime::SolveRuntimeConfig,
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
@@ -505,6 +510,7 @@ impl ArbitrageEngine {
         let fleet_boot_stamp =
             BootStamp::of(degenbot_workers::dispatcher::FleetBoot::from_config(cfg));
         solver_dispatch::install_engine_stances(cfg, &fleet_boot_stamp);
+        let cycle_core = Arc::clone(&core);
         Self {
             cfg: std::sync::Arc::clone(cfg),
             runtime_cfg: solver_dispatch::solve_runtime_config_from_cfg(cfg),
@@ -541,6 +547,10 @@ impl ArbitrageEngine {
                 streaming_delivery,
                 deferred_re_record: None,
                 resolve_par_stance,
+                core: cycle_core,
+                cfg: std::sync::Arc::clone(cfg),
+                runtime_cfg: solver_dispatch::solve_runtime_config_from_cfg(cfg),
+                inline_sim: None,
                 #[cfg(test)]
                 test_solve_delay: None,
                 #[cfg(test)]
@@ -754,26 +764,7 @@ impl ArbitrageEngine {
         self.cycle.test_sync_merge = on;
     }
 
-    /// WFF6MM test harness: drain up to `expected` items from the merge pipe
-    /// INLINE through the sidecar's own per-item merge path
-    /// (`merge_detached_item`), so a direct `solve_dirty` /
-    /// `rebuild_and_solve_affected` caller reads its results synchronously.
-    /// The Receiver is taken once and cached on the engine; the machine's
-    /// `take_merge_rx` is take-ONCE, so the sidecar is never spawned for
-    /// these engines.
-    pub(crate) fn drain_merge_inline(&mut self, expected: usize) {
-        if self.cycle.test_merge_rx.is_none() {
-            self.cycle.test_merge_rx = self.cycle.detached_cycle.take_merge_rx();
-        }
-        let Some(rx) = self.cycle.test_merge_rx.take() else {
-            return;
-        };
-        for _ in 0..expected {
-            let Ok(item) = rx.recv() else { break };
-            self.merge_detached_item(item);
-        }
-        self.cycle.test_merge_rx = Some(rx);
-    }
+    // ADR-045 T4: the inline merge drain moved to `SolveCycle::drain_merge_inline`.
 
     pub(crate) fn set_streaming_delivery(&mut self, on: bool) {
         self.cycle.streaming_delivery = on;

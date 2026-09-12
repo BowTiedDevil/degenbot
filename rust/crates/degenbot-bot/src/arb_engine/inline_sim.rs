@@ -236,7 +236,9 @@ impl ArbitrageEngine {
     /// Install the inline-sim hook (engine construction/wiring, from the
     /// outer driver; mirrors `set_result_channel`).
     pub fn set_inline_simulator(&mut self, sim: std::sync::Arc<dyn InlineSimulator>) {
-        self.inline_sim = Some(sim);
+        self.inline_sim = Some(std::sync::Arc::clone(&sim));
+        // ADR-045 T4: the cycle owns its own handle for the solve dispatch.
+        self.cycle.inline_sim = Some(sim);
     }
 
     /// Simulate one clamp-admitted path through the installed hook. `None` =

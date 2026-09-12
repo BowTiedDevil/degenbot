@@ -111,16 +111,7 @@ impl ArbitrageEngine {
     /// in the path"). Unresolvable identities degrade to the raw `pool_id`.
     #[must_use]
     pub fn describe_path(&self, path_id: u64) -> String {
-        let Some(path) = self.registry.get(path_id) else {
-            return format!("path_id={path_id} (unregistered)");
-        };
-        let core = self.core.read();
-        let hops: Vec<String> = path
-            .pools
-            .iter()
-            .map(|r| describe_hop(&core, r.hop_type, r.pool_key, r.zero_for_one))
-            .collect();
-        format!("path_id={path_id} [{}]", hops.join(" -> "))
+        self.cycle.describe_path(path_id, &self.registry)
     }
 
     /// [`Self::describe_path`] with a per-path cache: paths are immutable
@@ -128,15 +119,7 @@ impl ArbitrageEngine {
     /// every block when the activation telemetry formats span fields.
     #[must_use]
     pub fn describe_path_cached(&self, path_id: u64) -> std::sync::Arc<str> {
-        if let Some(hit) = self.cycle.path_description_cache.lock().get(&path_id) {
-            return std::sync::Arc::clone(hit);
-        }
-        let rendered: std::sync::Arc<str> = std::sync::Arc::from(self.describe_path(path_id));
-        self.cycle
-            .path_description_cache
-            .lock()
-            .insert(path_id, std::sync::Arc::clone(&rendered));
-        rendered
+        self.cycle.describe_path_cached(path_id, &self.registry)
     }
 }
 
