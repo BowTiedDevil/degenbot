@@ -1626,26 +1626,8 @@ fn decode_balance(data: &alloy::primitives::Bytes) -> U256 {
 // state-divergence-vs-composer-bug test for `CurrencyNotSettled`. Conservative
 // default ON (a single atomic load per failed path); set `=0` to disable.
 
-// KAHU5W: the reverted-swap diagnostic gate moved onto the typed schema
-// key 'simulation.sim_log_reverted_swaps' (DEGENBOT_SIM_LOG_REVERTED_SWAPS);
-// the env-name constant and the generic flag helpers are retired with it.
-
 /// The `[sim-revert-swap]` log prefix — verbatim so log greps return here.
 const SIM_REVERT_SWAP_LOG_PREFIX: &str = "[sim-revert-swap]";
-
-static LOG_REVERTED_SWAPS_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-/// `true` iff the reverted-swap diagnostic is enabled (conservative default
-/// ON via [`flag_default_on`]); cached so the per-failed-path cost is a single
-/// atomic load.
-fn log_reverted_swaps_enabled() -> bool {
-    // KAHU5W: typed schema key `simulation.sim_log_reverted_swaps`.
-    *LOG_REVERTED_SWAPS_ENABLED.get_or_init(|| {
-        ::degenbot_config::holder::config()
-            .simulation
-            .sim_log_reverted_swaps
-    })
-}
 
 /// The positive (output) side of a captured swap's signed amounts — the
 /// amount the swapper RECEIVED (the hop's output). `None` if neither side
@@ -1714,7 +1696,7 @@ fn negative_side_magnitude(
 /// hop 0 (the V4 swap) means the V4 swap diverged (solver calc or engine
 /// state); a match on hop 0 but mismatch on hop 1 means V3 hop B diverged;
 /// all-match-but-still-`CurrencyNotSettled` points at the composer/encoding.
-/// Conservative default ON (`DEGENBOT_SIM_LOG_REVERTED_SWAPS`); `=0` to disable.
+/// Conservative default ON (`the reverted-swap diagnostic`); `=0` to disable.
 /// One captured reverted swap attributed to its path hop. Built by
 /// [`match_reverted_swaps_to_hops`] so the log layer formats instead of
 /// re-deriving (and so the attribution is unit-tested independently of the
@@ -1851,7 +1833,7 @@ fn log_reverted_swaps_vs_hop_outputs(
     hops: &[HopInfo],
     hop_outputs: &[u128],
 ) {
-    if !log_reverted_swaps_enabled() || reverted_swaps.is_empty() {
+    if reverted_swaps.is_empty() {
         return;
     }
     let matches = match_reverted_swaps_to_hops(reverted_swaps, hops, hop_outputs);
@@ -2797,14 +2779,7 @@ mod tests {
 
     #[test]
     fn conservative_flag_default_on_and_parse() {
-        // Conservative default (Z4KQXF): unset ⇒ enabled (HARD/LOUD). The
-        // typed schema default is ON (KAHU5W: loader owns the env read).
-        assert!(
-            ::degenbot_config::holder::config()
-                .simulation
-                .sim_log_reverted_swaps
-        );
-        // The falsey/prase contract now lives in degenbot_config::parse_bool_flag.
+        // The falsey/parse contract lives in degenbot_config::parse_bool_flag.
         assert!(!::degenbot_config::parse_bool_flag("0").unwrap());
         assert!(::degenbot_config::parse_bool_flag("1").unwrap());
         assert!(::degenbot_config::parse_bool_flag("yes").unwrap());

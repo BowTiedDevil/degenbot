@@ -59,7 +59,7 @@ use crate::{
 // Diagnostics
 // ─────────────────────────────────────────────────────────────────────────
 
-/// `DEGENBOT_V2_CALC_TRACE` env-gated diagnostic: immediately before each
+/// `the V2-calc probe` env-gated diagnostic: immediately before each
 /// candidate path's sim, read every V2 hop's reserves slot (slot 8) from the
 /// SHARED per-block `CacheDB` and log the decoded `reserve0`/`reserve1` plus
 /// the hop's token orientation. `_v2_get_amount_out` (`V2_SWAP_CALC`, cmd
@@ -72,15 +72,8 @@ use crate::{
 ///
 /// The output is emitted at `debug` level, so it is gated behind the tracing
 /// filter (`RUST_LOG=...=debug` / `=trace`) rather than appearing on stderr by
-/// default. `DEGENBOT_V2_CALC_TRACE` (conservative default ON via
-/// `flag_default_on`) additionally gates the slot-8 read itself: set it to a
-/// falsey value to skip the read work entirely. The `debug` level is the
-/// primary noise gate — the env var only controls whether the (cheap) reads
-/// run.
+/// default — the `debug` level is the gate.
 fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
-    if !::degenbot_config::holder::config().trace.v2_calc_trace {
-        return;
-    }
     for hop in &sim_path.path_info.hops {
         if let HopInfo::V2(v2) = hop {
             let cache_db = &mut handle.evm_mut().ctx.journaled_state.database;
@@ -707,7 +700,7 @@ pub fn dispatch_profitable_results(
                     .map(|c| {
                         let pid = c.path_id;
                         let sim_path = c.to_simulate_path();
-                        // `DEGENBOT_V2_CALC_TRACE` — env-gated diagnostic that
+                        // `the V2-calc probe` — env-gated diagnostic that
                         // reads every V2 hop's reserves slot (slot 8) straight
                         // from the SHARED per-block CacheDB immediately before
                         // this candidate's `simulate_path_on_evm` run. This is

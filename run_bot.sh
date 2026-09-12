@@ -29,12 +29,11 @@ mkdir -p "$LOGDIR"
 #   (RETIRED: DEGENBOT_ASSERT_SOLVER_STATE — the ADR-021 per-solve solver-state
 #     tripwire is GONE with MROOY7 task 2UVG3E and the key no longer exists in
 #     the config schema (docs/rust-config-keys.md). Standing verification is
-#     on-demand: sim failures arm a divergence probe (DEGENBOT_SIM_DIVERGENCE_LOG)
-#     and DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD adds random ops spot-checks.)
-#   DEGENBOT_VERIFY_DBG          (structural verify diagnostics / divergence set)
+#     on-demand: sim failures arm the sim-divergence probe unconditionally, and
+#     DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD adds random ops spot-checks. The
+#     verify-dbg / V2-calc / reverted-swap diagnostics are now always-on DEBUG
+#     events on the sim/state OTel domains, gated only by the sink filter.)
 #   DEGENBOT_DUMP_CALL_TRACE     (full revm call trace on sim failure)
-#   DEGENBOT_V2_CALC_TRACE       (V2 reserves slot8 before each sim)
-#   DEGENBOT_SIM_LOG_REVERTED_SWAPS (per-hop actual-vs-predicted on revert)
 #   DEGENBOT_SIM_EXIT_ON_FAIL  (stop on first sim failure) - see below: this
 #     script DEFAULTS it to 0; failing sims are identified via OTel traces.
 #   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-
@@ -125,7 +124,7 @@ export DEGENBOT_PUMP_DEBOUNCE_MS="${DEGENBOT_PUMP_DEBOUNCE_MS:-15}"
 # seconds verify spans with zero caught desyncs in 6.5h, and the knob is no
 # longer in the config schema, so exporting it here would be a dead knob).
 # Standing verification: sim failures arm a divergence probe on the failing
-# path's next sim (DEGENBOT_SIM_DIVERGENCE_LOG=1 merges the engine-vs-RPC
+# path's next sim (the sim-divergence probe merges the engine-vs-RPC
 # divergence logs), DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD adds random spot-
 # checks for operators, and DEGENBOT_WS_COMPLETENESS (default ON) aborts
 # loudly on a dropped WS log before state can drift. Desync containment runs

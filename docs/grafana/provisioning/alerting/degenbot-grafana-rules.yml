@@ -169,7 +169,7 @@ groups:
             degenbot_quarantine_events_total counter and the
             solver_state_desync errors kind are gone: the ADR-021 publish
             tripwire was retired with MROOY7 task 2UVG3E. Urgent root-cause
-            work: enable DEGENBOT_SIM_DIVERGENCE_LOG for the engine-vs-RPC
+            work: enable the sim-divergence probe for the engine-vs-RPC
             divergence dump. The bot keeps trading its other paths.
         data:
           - refId: A

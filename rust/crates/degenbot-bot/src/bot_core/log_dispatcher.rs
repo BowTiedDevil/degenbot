@@ -617,11 +617,11 @@ impl LogDispatcher {
             p.count_log_undecoded();
         }
         let Some(decoded) = decoded else {
-            // [trace-dispatch] (DEGENBOT_TRACE_DISPATCH): a relevant-topic log that
+            // [trace-dispatch] (the dispatch trace): a relevant-topic log that
             // NO decoder recognized. Distinct from "apply miss". Zero-cost unless
             // the env is set. (The WS_COMPLETENESS assert below only fires in strict
             // loud mode; this surfaces the same miss in dry runs.)
-            // Telemetry: always-on DEBUG (was DEGENBOT_TRACE_DISPATCH-gated
+            // Telemetry: always-on DEBUG (was always-on
             // WARN — a decode miss on a pre-filtered relevant-topic log is
             // abnormal enough to keep visible whenever debug is enabled, and
             // the strict-mode assert below remains the loud gate).
@@ -771,15 +771,14 @@ impl LogDispatcher {
         let Some(subs) = self.subscribers.lock().get(&pool_id).cloned() else {
             // 42FL35: a state apply with NO subscriber means the engine never
             // learns the pool changed - solver reads stay stale forever while
-            // BotState advances (the frozen-update_block signature). Silent
-            // before this trace; env-gated like its siblings.
-            if crate::bot_core::stance::config().trace.dispatch {
-                op_warn!(
-                    domain = ingest,
-                    pool_id,
-                    "dispatch: NOTIFY MISS - state applied but no subscriber attached"
-                );
-            }
+            // BotState advances (the frozen-update_block signature). Always-on
+            // WARN: the gate flag was retired, and with no metric attached the
+            // integrity signal must not be demoted to the debug stream.
+            op_warn!(
+                domain = pump,
+                pool_id,
+                "dispatch: NOTIFY MISS - state applied but no subscriber attached"
+            );
             return;
         };
         for weak in subs {

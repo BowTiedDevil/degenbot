@@ -269,7 +269,7 @@ where
     /// Two env-gated diagnostics run here, both DEFAULT OFF so production
     /// behavior is unchanged (single atomic load each — zero per-SLOAD work):
     ///
-    /// - `DEGENBOT_SIM_DIVERGENCE_LOG=1` ([`super::divergence_probe`]): pure
+    /// - `arm the sim-divergence probe` ([`super::divergence_probe`]): pure
     ///   observation — compares the engine's packed typed state against the
     ///   RPC value, logs a `[sim-divergence]` line on mismatch, accumulates
     ///   the tally. Never changes what the sim reads.

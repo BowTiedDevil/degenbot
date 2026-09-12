@@ -204,8 +204,6 @@ crate::config_schema! {
     }
 
     trace TraceConfig {
-        dispatch [bool] = false, env = "DEGENBOT_TRACE_DISPATCH", def = "false",
-            doc = "Trace pump dispatch fan-out (presence historically enabled; loader parses a bool).";
         drain_dbg [opt string] = None, env = "DEGENBOT_DRAIN_DBG", def = "(unset)",
             doc = "Per-pool drain/pump debug trace for the given pool hex address (no 0x or with).";
         dump_call_trace [bool] = true, env = "DEGENBOT_DUMP_CALL_TRACE", def = "true",
@@ -222,8 +220,6 @@ crate::config_schema! {
             doc = "Catch-all WS-log trace (one line per relevant log; high volume by design).";
         gate_trace [bool] = false, env = "DEGENBOT_GATE_TRACE", def = "false",
         doc = "T5 profit-envelope compose tracing gate (profit_envelope TRACE).";
-        v2_calc_trace [bool] = true, env = "DEGENBOT_V2_CALC_TRACE", def = "true",
-            doc = "V2-calc slot-8 read probe in the arbitrage dispatcher (KAHU5W: added during the env migration — previously an undeclared key parsed by a generic presence/flag helper at the site; conservative default ON, falsey opts out).";
         hotpath [bool] = false, env = "DEGENBOT_HOTPATH", def = "false",
             doc = "Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too).";
     }
@@ -321,14 +317,10 @@ crate::config_schema! {
     }
 
     simulation SimulationConfig {
-        sim_divergence_log [bool] = false, env = "DEGENBOT_SIM_DIVERGENCE_LOG", def = "false",
-            doc = "Log engine-vs-RPC divergence probes on failed sims (`1` enables).";
         sim_execute_gas [opt u64] = None, env = "DEGENBOT_SIM_EXECUTE_GAS", def = "(unset; EIP-7825 TX_GAS_LIMIT_CAP)",
             doc = "Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating).";
         sim_exit_on_fail [bool] = false, env = "DEGENBOT_SIM_EXIT_ON_FAIL", def = "false",
             doc = "Abort the process when a sim fails (the live trap used to capture V3-hop fixtures).";
-        sim_log_reverted_swaps [bool] = true, env = "DEGENBOT_SIM_LOG_REVERTED_SWAPS", def = "true",
-            doc = "Log reverted-swap pools during sims (default ON; `0` disables).";
         sim_serve_engine_state [bool] = false, env = "DEGENBOT_SIM_SERVE_ENGINE_STATE", def = "false",
             doc = "Serve engine state to the sim/evm layer (`1` enables; behavior change, default off).";
         probe_fixture [opt path] = None, env = "DEGENBOT_PROBE_FIXTURE", def = "(unset)",

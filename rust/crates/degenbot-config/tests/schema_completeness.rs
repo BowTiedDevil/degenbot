@@ -61,8 +61,6 @@ const RETIRED_KEYS: &[&str] = &[
 /// matches expand to these full names).
 const SWEEP_EXPANSIONS: &[&str] = &[
     "DEGENBOT_JAEGER_E2E",
-    // KAHU5W: the V2 in DEGENBOT_V2_CALC_TRACE ends the artifact match.
-    "DEGENBOT_V2_CALC_TRACE",
     "DEGENBOT_V3_FIXTURE_RPC",
     "DEGENBOT_V3_FIXTURE_BLOCK",
 ];

@@ -41,7 +41,7 @@
 //! update_block=N` — the served engine word, the RPC fallback value, the
 //! XOR delta (which bits differ), and the engine's `update_block` (the lag
 //! signal). Independent of the divergence-observation gate
-//! (`DEGENBOT_SIM_DIVERGENCE_LOG`): serving is a behavior change, observation
+//! (`the sim-divergence probe`): serving is a behavior change, observation
 //! is not; both can be on together (dev) — the two log prefixes are distinct.
 
 #![cfg_attr(test, allow(clippy::unreadable_literal))]

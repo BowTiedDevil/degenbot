@@ -46,7 +46,7 @@
 //! # Cost model
 //!
 //! `BotStateDb.storage_ref` calls [`BotState::probe_tracked_storage_slot`]
-//! ONLY when the env gate `DEGENBOT_SIM_DIVERGENCE_LOG=1` is set (checked at
+//! ONLY when the env gate `arm the sim-divergence probe` is set (checked at
 //! the call site, before this method runs). Default runs pay zero. When on:
 //! - V2/V3: O(1) `pool_addresses.get(address)`.
 //! - V4: O(v4-pools-under-this-PoolManager) `keccak256` on PM cold reads;

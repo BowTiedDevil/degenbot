@@ -65,7 +65,6 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_TRACE_DISPATCH` | `trace.dispatch` | `bool` | `false` | Trace pump dispatch fan-out (presence historically enabled; loader parses a bool). |
 | `DEGENBOT_DRAIN_DBG` | `trace.drain_dbg` | `Option<string>` | `(unset)` | Per-pool drain/pump debug trace for the given pool hex address (no 0x or with). |
 | `DEGENBOT_DUMP_CALL_TRACE` | `trace.dump_call_trace` | `bool` | `true` | Dump simulator call traces (default ON; `0` disables). |
 | `DEGENBOT_DUMP_TICK_MAPS` | `trace.dump_tick_maps` | `bool` | `false` | Dump assembled tick maps for offline comparison (UO3JM4 re-assembly aid). |
@@ -74,7 +73,6 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 | `DEGENBOT_TRACE_TICK` | `trace.trace_tick` | `Option<i32>` | `(unset)` | Watch one known-divergent tick (signed decimal) across mutations in the pin/drain probes. |
 | `DEGENBOT_WS_TRACE` | `trace.ws_trace` | `bool` | `false` | Catch-all WS-log trace (one line per relevant log; high volume by design). |
 | `DEGENBOT_GATE_TRACE` | `trace.gate_trace` | `bool` | `false` | T5 profit-envelope compose tracing gate (profit_envelope TRACE). |
-| `DEGENBOT_V2_CALC_TRACE` | `trace.v2_calc_trace` | `bool` | `true` | V2-calc slot-8 read probe in the arbitrage dispatcher (KAHU5W: added during the env migration — previously an undeclared key parsed by a generic presence/flag helper at the site; conservative default ON, falsey opts out). |
 | `DEGENBOT_HOTPATH` | `trace.hotpath` | `bool` | `false` | Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too). |
 ## `solve`
 
@@ -136,10 +134,8 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_SIM_DIVERGENCE_LOG` | `simulation.sim_divergence_log` | `bool` | `false` | Log engine-vs-RPC divergence probes on failed sims (`1` enables). |
 | `DEGENBOT_SIM_EXECUTE_GAS` | `simulation.sim_execute_gas` | `Option<u64>` | `(unset; EIP-7825 TX_GAS_LIMIT_CAP)` | Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating). |
 | `DEGENBOT_SIM_EXIT_ON_FAIL` | `simulation.sim_exit_on_fail` | `bool` | `false` | Abort the process when a sim fails (the live trap used to capture V3-hop fixtures). |
-| `DEGENBOT_SIM_LOG_REVERTED_SWAPS` | `simulation.sim_log_reverted_swaps` | `bool` | `true` | Log reverted-swap pools during sims (default ON; `0` disables). |
 | `DEGENBOT_SIM_SERVE_ENGINE_STATE` | `simulation.sim_serve_engine_state` | `bool` | `false` | Serve engine state to the sim/evm layer (`1` enables; behavior change, default off). |
 | `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
 | `DEGENBOT_PROBE_NS` | `simulation.probe_ns` | `string` | `1,2,4,8,16` | Comma-separated thread-count arms for the offline executor A/B probe. |
