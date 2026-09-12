@@ -165,7 +165,11 @@ gut the preservation guarantee.
 ### 5. Behavior flags stay; verbosity flags retire
 
 **Behavior flags** keep their boolean config: `otel`, `metrics_addr`,
-`ws_completeness`, `sim_exit_on_fail`, `pump_debounce_ms`, `hotpath`.
+`ws_completeness`, `sim_exit_on_fail`, `pump_debounce_ms`, `hotpath`. The two
+`state_lock` diagnostics (`trace`, `diag`) also stay: they gate diagnostic
+*collection* cost (acquire-time backtrace capture; per-read-hold bookkeeping),
+not log emission, so they are behavior flags rather than verbosity knobs. The
+always-on slow-hold WARN is unaffected by either.
 
 **Verbosity flags retire hard** (no aliases). Each maps to exactly one closed
 domain or to the forensic sink, so the migration is mechanical and auditable:
@@ -184,8 +188,6 @@ domain or to the forensic sink, so the migration is mechanical and auditable:
 | `trace_register_seed` | `path` | DEBUG |
 | `trace_liquidity` | `state` | DEBUG |
 | `trace_tick` | `state` | DEBUG |
-| `lock_trace` | `state` | DEBUG |
-| `state_lock_diag` | `state` | DEBUG |
 | `gate_trace` | `solver` | DEBUG |
 | `aave_evtrace` | `aave` | DEBUG |
 | `aave_tx_trace` | `aave` | DEBUG |

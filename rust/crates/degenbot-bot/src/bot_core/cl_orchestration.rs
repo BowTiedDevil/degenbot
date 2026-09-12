@@ -13,7 +13,7 @@
 //! assembly + re-export hub.
 
 use degenbot_core::diag;
-use degenbot_core::{op_info, op_warn};
+use degenbot_core::op_warn;
 use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U256};
@@ -29,12 +29,11 @@ use degenbot_pools::v4_state::{
 };
 
 use super::{
-    drain_dbg_log_buf, drain_dbg_pool_match, trace_apply_route_v3, trace_apply_route_v4,
-    trace_apply_swap_v3, trace_apply_swap_v4, trace_watch_tick, BotState, BufferedV3PoolEvent,
-    BufferedV4PoolEvent, ConcentratedLiquidityPoolMut, PoolEntry, PoolTickCoverage,
-    RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError, RegisterV4PoolParams,
-    RegistrationLifecycle, TickInfo, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState,
-    V4SwapUpdate,
+    drain_dbg_log_buf, trace_apply_route_v3, trace_apply_route_v4, trace_apply_swap_v3,
+    trace_apply_swap_v4, BotState, BufferedV3PoolEvent, BufferedV4PoolEvent,
+    ConcentratedLiquidityPoolMut, PoolEntry, PoolTickCoverage, RegisterV3PoolError,
+    RegisterV3PoolParams, RegisterV4PoolError, RegisterV4PoolParams, RegistrationLifecycle,
+    TickInfo, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState, V4SwapUpdate,
 };
 
 /// RATR5A: the staged fetch plan captured under a SHORT write — pool, word,
@@ -124,7 +123,7 @@ impl BotState {
         // `update_block` well behind the head + an old sqrt is the stale-seed
         // hypothesis; a head-fresh seed points the finger at a post-registration
         // rewind instead.
-        diag!(domain = state, pool_addr = %format!("{:x}", params.address),
+        diag!(domain = path, pool_addr = %format!("{:x}", params.address),
             family = "V3",
             seed_update_block = params.update_block,
             seed_sqrt = %params.sqrt_price_x96,
@@ -619,48 +618,39 @@ impl BotState {
     /// to `restore_before_block` and `update_block` stayed frozen at the
     /// registration block.
     pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
-        // Debug-drain gate: log per-event apply when `DEGENBOT_DRAIN_DBG` is set
-        // to this pool's address. Diagnoses same-block Mint+Bun net-zero races
-        // where one half is lost between fetch and drain.
-        let dbg = crate::bot_core::drain_dbg_pool_match(*address);
+        // Drain diagnostics: per-event apply at DEBUG on `pump` (the
+        // drain-dbg gate is retired). Diagnoses same-block Mint+Burn
+        // net-zero races where one half is lost between fetch and drain.
         let Some(&key) = self.pool_addresses.get(address) else {
-            if dbg {
-                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill NOT REGISTERED");
-            }
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill NOT REGISTERED");
             return;
         };
         let Some(buffered) = self.v3_buffer.drain_backfill(address) else {
-            if dbg {
-                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill EMPTY");
-            }
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] backfill EMPTY");
             return;
         };
-        if dbg {
-            op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                count = buffered.len(),
-                "[dbg-drain] backfill"
-            );
-        }
+        diag!(domain = pump, pool_addr = %format!("{address:x}"),
+            count = buffered.len(),
+            "[dbg-drain] backfill"
+        );
         for update in buffered {
-            if dbg {
-                match &update {
-                    BufferedV3PoolEvent::Liquidity(u) => {
-                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                            tick_lower = u.tick_lower,
-                            tick_upper = u.tick_upper,
-                            delta = u.liquidity_delta,
-                            block = u.block_number,
-                            "[dbg-drain] backfill apply liq"
-                        );
-                    }
-                    BufferedV3PoolEvent::Swap(s) => {
-                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                            liquidity = s.liquidity,
-                            tick = s.tick,
-                            block = s.block_number,
-                            "[dbg-drain] backfill apply swap"
-                        );
-                    }
+            match &update {
+                BufferedV3PoolEvent::Liquidity(u) => {
+                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
+                        tick_lower = u.tick_lower,
+                        tick_upper = u.tick_upper,
+                        delta = u.liquidity_delta,
+                        block = u.block_number,
+                        "[dbg-drain] backfill apply liq"
+                    );
+                }
+                BufferedV3PoolEvent::Swap(s) => {
+                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
+                        liquidity = s.liquidity,
+                        tick = s.tick,
+                        block = s.block_number,
+                        "[dbg-drain] backfill apply swap"
+                    );
                 }
             }
             if let Some(state) = self
@@ -671,7 +661,7 @@ impl BotState {
             {
                 let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
-                if dbg && state.update_block < ub_before {
+                if state.update_block < ub_before {
                     op_warn!(domain = state, pool_addr = %format!("{address:x}"),
                         ub_before,
                         ub_after = state.update_block,
@@ -688,11 +678,8 @@ impl BotState {
     /// Same journal + `update_block` contract as
     /// [`apply_backfill_buffer_v3`] — see its docs.
     pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
-        let dbg = crate::bot_core::drain_dbg_pool_match(*address);
         let Some(&key) = self.pool_addresses.get(address) else {
-            if dbg {
-                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NOT REGISTERED");
-            }
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NOT REGISTERED");
             return;
         };
         // YLYJM2: drain ONLY fully-completed blocks. The cutoff is the pump's
@@ -702,40 +689,32 @@ impl BotState {
         // in-progress block stay buffered.
         let cutoff = self.pump_complete_cutoff;
         if cutoff == 0 {
-            if dbg {
-                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NO-COMPLETE (no tombstone yet)");
-            }
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] pump NO-COMPLETE (no tombstone yet)");
             return;
         }
         let Some(buffered) = self.v3_buffer.drain_pump_completed(address, cutoff) else {
-            if dbg {
-                op_info!(domain = state, pool_addr = %format!("{address:x}"), "[dbg-drain] pump EMPTY (no completed blocks)");
-            }
+            diag!(domain = pump, pool_addr = %format!("{address:x}"), "[dbg-drain] pump EMPTY (no completed blocks)");
             return;
         };
-        if dbg {
-            op_info!(domain = state, pool_addr = %format!("{address:x}"), count = buffered.len(), "[dbg-drain] pump");
-        }
+        diag!(domain = pump, pool_addr = %format!("{address:x}"), count = buffered.len(), "[dbg-drain] pump");
         for update in buffered {
-            if dbg {
-                match &update {
-                    BufferedV3PoolEvent::Liquidity(u) => {
-                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                            tick_lower = u.tick_lower,
-                            tick_upper = u.tick_upper,
-                            delta = u.liquidity_delta,
-                            block = u.block_number,
-                            "[dbg-drain] pump apply liq"
-                        );
-                    }
-                    BufferedV3PoolEvent::Swap(s) => {
-                        op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                            liquidity = s.liquidity,
-                            tick = s.tick,
-                            block = s.block_number,
-                            "[dbg-drain] pump apply swap"
-                        );
-                    }
+            match &update {
+                BufferedV3PoolEvent::Liquidity(u) => {
+                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
+                        tick_lower = u.tick_lower,
+                        tick_upper = u.tick_upper,
+                        delta = u.liquidity_delta,
+                        block = u.block_number,
+                        "[dbg-drain] pump apply liq"
+                    );
+                }
+                BufferedV3PoolEvent::Swap(s) => {
+                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
+                        liquidity = s.liquidity,
+                        tick = s.tick,
+                        block = s.block_number,
+                        "[dbg-drain] pump apply swap"
+                    );
                 }
             }
             if let Some(state) = self
@@ -746,7 +725,7 @@ impl BotState {
             {
                 let ub_before = state.update_block;
                 Self::apply_buffered_v3_event(state, update);
-                if dbg && state.update_block < ub_before {
+                if state.update_block < ub_before {
                     op_warn!(domain = state, pool_addr = %format!("{address:x}"),
                         ub_before,
                         ub_after = state.update_block,
@@ -913,9 +892,9 @@ impl BotState {
         // this pool — independent of the imported seed stamp — so the pin can
         // classify the stamp's freshness claim (the load-time tripwire).
         let witnessed = self.v3_event_horizon(&address);
-        // Capture the pin scalars + an optional watch-tick snapshot in an
-        // inner scope so the `&mut state` borrow of `self.pools` ends before
-        // the diagnostic reads `self.v3_buffer` (a second `&self` borrow).
+        // Capture the pin scalars in an inner scope so the `&mut state`
+        // borrow of `self.pools` ends before the diagnostic reads
+        // `self.v3_buffer` (a second `&self` borrow).
         let diag = {
             let Some(&pool_id) = self.pool_addresses.get(&address) else {
                 return;
@@ -929,9 +908,6 @@ impl BotState {
                 return;
             };
             if state.coverage == PoolTickCoverage::Tracked {
-                let watch = trace_watch_tick()
-                    .and_then(|t| state.tick_data.get(&t))
-                    .map(|info| (info.liquidity_gross, info.liquidity_net));
                 let liquidity_clock = state.tick_data_block;
                 // OB7UNY two-stamp: the pin pairs the TICK MAP with its own
                 // LIQUIDITY clock (`tick_data_block`), not the price clock —
@@ -962,15 +938,13 @@ impl BotState {
                     pinned_block,
                     liquidity_clock,
                     state.tick_data.len(),
-                    watch,
                     verdict,
                 ))
             } else {
                 None
             }
         };
-        if let Some((tick_data_block, seed_block, tick_count, watch, verdict)) = diag {
-            let pool_match = drain_dbg_pool_match(address);
+        if let Some((tick_data_block, seed_block, tick_count, verdict)) = diag {
             diag!(domain = verify, pool_addr = %format!("{address:x}"),
                 tick_data_block,
                 tick_count,
@@ -978,26 +952,6 @@ impl BotState {
                 last_complete_block = self.pump_complete_cutoff(),
                 "V3 pin"
             );
-            // Per-pool watch-tick probe: log (gross, net) at `DEGENBOT_TRACE_TICK`
-            // right at the pin, so a ghost-value tick (e.g. an un-burned Mint
-            // upper tick) is visible at the moment step-2 verify compares it.
-            if pool_match {
-                if let Some((g, n)) = watch {
-                    op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                        tick_data_block,
-                        watch_tick = ?trace_watch_tick(),
-                        gross = %g,
-                        net = %n,
-                        "[trace] pin watch-tick"
-                    );
-                } else {
-                    op_info!(domain = state, pool_addr = %format!("{address:x}"),
-                        tick_data_block,
-                        watch_tick = ?trace_watch_tick(),
-                        "[trace] pin watch-tick absent"
-                    );
-                }
-            }
             // FUWYUR stamp provenance (7HUYWM) — the load-time tripwire. The
             // seed stamp (`seed_block`) is honest only if independent of it,
             // something witnessed state at/beyond it: the tombstone-confirmed

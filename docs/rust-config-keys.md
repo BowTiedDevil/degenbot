@@ -65,12 +65,8 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_DRAIN_DBG` | `trace.drain_dbg` | `Option<string>` | `(unset)` | Per-pool drain/pump debug trace for the given pool hex address (no 0x or with). |
 | `DEGENBOT_DUMP_CALL_TRACE` | `trace.dump_call_trace` | `bool` | `true` | Dump simulator call traces (default ON; `0` disables). |
 | `DEGENBOT_DUMP_TICK_MAPS` | `trace.dump_tick_maps` | `bool` | `false` | Dump assembled tick maps for offline comparison (UO3JM4 re-assembly aid). |
-| `DEGENBOT_TRACE_LIQUIDITY` | `trace.trace_liquidity` | `bool` | `false` | Global liquidity-events trace for EVERY V3/V4 liquidity mutation across all pools. |
-| `DEGENBOT_TRACE_TICK` | `trace.trace_tick` | `Option<i32>` | `(unset)` | Watch one known-divergent tick (signed decimal) across mutations in the pin/drain probes. |
-| `DEGENBOT_WS_TRACE` | `trace.ws_trace` | `bool` | `false` | Catch-all WS-log trace (one line per relevant log; high volume by design). |
 | `DEGENBOT_HOTPATH` | `trace.hotpath` | `bool` | `false` | Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too). |
 ## `solve`
 

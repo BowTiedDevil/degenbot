@@ -38,13 +38,10 @@ mkdir -p "$LOGDIR"
 #     script DEFAULTS it to 0; failing sims are identified via OTel traces.
 #   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-
 #     check; NEW default-ON since B4GX7C, so a live WS log drop aborts loudly)
-# Script-defaulted high-noise traces (set =0 to opt out; the Rust gate is
-# presence-gated on "1"/"true", so these are OFF in hand-runs by default):
-#   DEGENBOT_WS_TRACE           # [trace] ws-log for EVERY relevant-topic WS
-#     log with block/log_index/tx_index/topic0/removed/decision — high-volume,
-#     but the catch-all for "did this log even arrive and apply before the
-#     solver-state check fired" desync investigations
-# Per-target/high-noise (still OFF): DEGENBOT_DRAIN_DBG
+# High-noise per-event traces (WS delivery, drain, apply-route, swap-apply,
+# register-seed) are now always-on DEBUG events on the ingest/pump/state/path
+# domains. They do not reach the console unless the Rust log level enables
+# `degenbot=debug` / `degenbot=trace`; see docs/logging.md.
 #   DEGENBOT_DUMP_TICK_MAPS  (opt-in: dump full seed + verifier tick maps for the
 #     tick-map desync re-assembly aid; high volume, set only for an investigation)
 #
@@ -75,9 +72,6 @@ mkdir -p "$LOGDIR"
 # ANSI-escaped copy) to a sink. RUST records still reach the log exactly
 # once via the Python-forwarding tunnel; without this every degenbot
 # line is written twice into bot_run.log.
-#   * DEGENBOT_WS_TRACE=0 silences the per-WS-log `[trace] ws-log` probe
-#     (it fires for EVERY relevant-topic log at info when =1).
-#
 # All values respect a pre-set environment: RUST_LOG=warn ./run_bot.sh opts
 # out; DEGENBOT_LOG_FMT=1 restores the stderr mirror.
 # --------------------------------------------------------------------------
@@ -90,9 +84,6 @@ export DEGENBOT_OTEL="${DEGENBOT_OTEL:-1}"
 # (legacy option-A FFI pipeline); the soak flips 0/1 across equal windows.
 export DEGENBOT_SOLVE_INLINE_SIM="${DEGENBOT_SOLVE_INLINE_SIM:-1}"
 export DEGENBOT_SIM_EXIT_ON_FAIL="${DEGENBOT_SIM_EXIT_ON_FAIL:-0}"
-# [trace] ws-log is a per-WS-log probe (one info line per relevant log);
-# OFF by default so the log is not flooded — desync investigations set =1.
-export DEGENBOT_WS_TRACE="${DEGENBOT_WS_TRACE:-0}"
 # Publish-debounce window (ms), last dirty log -> settle decision. A/B'd on
 # 2026-09-04 (telemetry-latency-playbook S7): bursts complete in 1.3-27.5 ms
 # while the 50 ms code default settled full-length on ~every block — a fixed

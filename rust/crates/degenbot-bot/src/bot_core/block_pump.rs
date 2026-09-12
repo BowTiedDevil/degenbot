@@ -1384,12 +1384,11 @@ impl BlockPump {
                     // each work item's epoch INLINE at its execution site
                     // (`reorg_flying_stale`), so a stale item cannot slip
                     // through a queue because its check happened pre-bump.
-                    // Per-pool trace: log EVERY relevant-topic WS log for the
-                    // `DEGENBOT_DRAIN_DBG` pool — block, log-index, tx-index,
-                    // topic0, removed, and the fsm decision — so the
-                    // delivery order of same-block Mint/Burn logs is visible
-                    // against the registration drain+pin that follows. No-op
-                    // for other pools / when the env var is unset.
+                    // WS delivery trace: log EVERY relevant-topic WS log —
+                    // block, log-index, tx-index, topic0, removed, and the fsm
+                    // decision — so the delivery order of same-block Mint/Burn
+                    // logs is visible against the registration drain+pin that
+                    // follows. Always-on DEBUG on `ingest`.
                     crate::bot_core::trace_ws_log_dispatch(
                         log.address(),
                         log.topics(),

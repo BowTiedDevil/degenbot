@@ -4,7 +4,7 @@
 //! live here. Python objects are thin `PyO3` handles carrying keys into
 //! `BotState`'s `HashMaps`.
 
-use degenbot_core::op_info;
+use degenbot_core::diag;
 use hashbrown::HashMap;
 
 use alloy::primitives::{Address, U256};
@@ -230,82 +230,13 @@ pub struct BotState {
     v4_event_horizons: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
 }
 
-/// Diagnostic: log every V3 pump-buffer INSERTION for the pool address named
-/// by `DEGENBOT_DRAIN_DBG` (a hex address, with or without `0x`). Companion
-/// to the drain-side `[dbg-drain]` logs in `apply_backfill_buffer_v3`/
+/// Diagnostic: log every V3 pump-buffer INSERTION. Companion to the
+/// drain-side `[dbg-drain]` logs in `apply_backfill_buffer_v3`/
 /// `apply_pump_buffer_v3` — diffing insertion vs drain logs reveals whether a
 /// Mint that on-chain shows at block N was (a) buffered-then-missed-by-drain
 /// (insertion logged, no matching drain apply) or (b) never buffered at all
 /// (no insertion log). `tag` ∈ {'L' (unregistered Live-eligible path),
-/// 'Q' (Quarantined deferral)}. Gated on the env var so it is a no-op in
-/// production runs that don't opt in.
-/// Whether `DEGENBOT_DRAIN_DBG` is set to `address` (hex, with or without
-/// `0x`). The single pool-match predicate shared by every per-pool trace probe
-/// — keeps the `[trace]` / `[dbg-buf]` / `[dbg-drain]` series gated on ONE
-/// env var so a single run surfaces the full event flow (WS delivery →
-/// decode → apply-route → buffer → drain → pin → verify) for the failing
-/// pool with no behavior change when unset.
-/// `42FL35`: V4-aware `DRAIN_DBG` match. For V4, `log.address()` is the shared
-/// `PoolManager` contract - every V4 pool carries it, so an address-shape match
-/// cannot attribute a Swap to a specific pool. The `PoolId` lives in the event's
-/// indexed topics (`topics[1]` for V4 Swap/ModifyLiquidity). This matcher
-/// accepts EITHER shape: the env value matches the address, or it matches any
-/// indexed topic (`PoolId` hex). Zero cost when the env is unset.
-fn drain_dbg_match_v4(address: Address, topics: &[alloy::primitives::B256]) -> bool {
-    let Some(env) = stance::config().trace.drain_dbg.as_deref() else {
-        return false;
-    };
-    let want = env.trim_start_matches("0x");
-    if format!("{address:x}").eq_ignore_ascii_case(want) {
-        return true;
-    }
-    topics
-        .iter()
-        .skip(1)
-        .any(|t| format!("{t:x}").eq_ignore_ascii_case(want))
-}
-
-pub(crate) fn drain_dbg_pool_match(address: Address) -> bool {
-    stance::config()
-        .trace
-        .drain_dbg
-        .as_deref()
-        .is_some_and(|v| format!("{address:x}").eq_ignore_ascii_case(v.trim_start_matches("0x")))
-}
-
-/// Whether the global liquidity-events trace is on (env
-/// `DEGENBOT_TRACE_LIQUIDITY=1`). When set, the `[trace] apply-route` and
-/// `[trace] ws-log` probes fire for EVERY V3 Mint/Burn + V4 `ModifyLiquidity`
-/// event across ALL pools (not just the `DEGENBOT_DRAIN_DBG` one). Liquidity
-/// events are rare vs Swaps, so the volume is bounded; the value is that a
-/// non-deterministic failure that HOPS pools (the add-applied/remove-buffered
-/// split of a same-block `ModifyLiquidity` pair) is captured for whichever
-/// pool it lands on. Pairs with `DEGENBOT_DRAIN_DBG` (per-pool) — either gate
-/// fires the probe.
-pub(crate) fn trace_liquidity_global() -> bool {
-    stance::config().trace.trace_liquidity
-}
-
-/// Whether the global WS-log pipeline trace is on (env
-/// `DEGENBOT_WS_TRACE=1`). When set, `[trace] ws-log` fires for EVERY
-/// relevant-topic log the live pump dispatches — the catch-all companion to
-/// the per-pool `DEGENBOT_DRAIN_DBG` and the liquidity-only
-/// `DEGENBOT_TRACE_LIQUIDITY` gates. High volume by design (one line per
-/// relevant WS log); opt-in for desync investigations that cannot be
-/// pinned to a single pool in advance.
-pub(crate) fn trace_ws_global() -> bool {
-    stance::config().trace.ws_trace
-}
-
-/// Optional watch tick for the per-pool trace (env `DEGENBOT_TRACE_TICK`, a
-/// signed decimal). When set, the pin summary + drain-apply probes log the
-/// value of THAT tick after each mutation, so a single known-divergent tick
-/// (e.g. the ghost-value upper tick of a same-block Mint+Burn) can be tracked
-/// across the rolling-start lifecycle. Unset = no per-tick watch.
-pub(crate) fn trace_watch_tick() -> Option<i32> {
-    stance::config().trace.trace_tick
-}
-
+/// 'Q' (Quarantined deferral)}. Always-on DEBUG on `pump`.
 /// The base-pool delegation port for metapool `get_dy_underlying` (task
 /// `V5X2YP`). Implements [`CurveBasePoolPort`] by delegating each op to a
 /// registered base `CurvePool` in the same `BotState` — the Rust twin of the
@@ -381,10 +312,7 @@ fn drain_dbg_log_buf(
     liquidity_delta: i128,
     block_number: u64,
 ) {
-    if !drain_dbg_pool_match(address) {
-        return;
-    }
-    op_info!(domain = state, %tag,
+    diag!(domain = pump, %tag,
         pool_addr = %format!("{address:x}"),
         tick_lower,
         tick_upper,
@@ -399,10 +327,8 @@ fn drain_dbg_log_buf(
 /// topic0, removed flag, and the ADR-008 clock decision — so the
 /// delivery order of same-block Mint/Burn/ModifyLiquidity logs is visible
 /// (a Burn arriving after the registration drain+pin is the rolling-start
-/// race this probe exists to catch). Fires when the pool matches
-/// `DEGENBOT_DRAIN_DBG` OR the global liquidity trace is on AND the topic is
-/// a liquidity-mutating one (V3 Mint/Burn, V4 `ModifyLiquidity`), or the
-/// global `DEGENBOT_WS_TRACE` catch-all is on (every relevant-topic log).
+/// race this probe exists to catch). Always-on DEBUG on `ingest`; high
+/// volume by design, filtered at the sink.
 pub(crate) fn trace_ws_log_dispatch(
     address: Address,
     topics: &[alloy::primitives::B256],
@@ -412,24 +338,11 @@ pub(crate) fn trace_ws_log_dispatch(
     removed: bool,
     decision: &str,
 ) {
-    use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
-    use degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
     let first_topic = topics
         .first()
         .copied()
         .unwrap_or(alloy::primitives::B256::ZERO);
-    let is_liquidity = first_topic == V3_MINT_TOPIC
-        || first_topic == V3_BURN_TOPIC
-        || first_topic == V4_MODIFY_LIQUIDITY_TOPIC;
-    // 42FL35: V4-aware match - for V4 events the address is the shared
-    // PoolManager, so attribution requires the indexed PoolId in topics[1].
-    let pool_match = drain_dbg_match_v4(address, topics);
-    let global_liquidity_hit = trace_liquidity_global() && is_liquidity;
-    let global_ws_hit = trace_ws_global();
-    if !pool_match && !global_liquidity_hit && !global_ws_hit {
-        return;
-    }
-    op_info!(domain = state, pool_addr = %format!("{address:x}"),
+    diag!(domain = ingest, pool_addr = %format!("{address:x}"),
         block = block_number,
         log_index = ?log_index,
         tx_index = ?tx_index,
@@ -441,19 +354,12 @@ pub(crate) fn trace_ws_log_dispatch(
     );
 }
 
-/// Per-pool apply-route trace: log how a V3 liquidity update was routed —
-///`(lifecycle, routed_to)` where `routed_to` ∈ {"buffer-pump",
-/// "buffer-pump-quarantined", "direct-live", "no-pool"}. Answers whether the
-/// Mint/Burn hit the pump buffer (then drained) or was direct-applied to a
-/// Live pool (then captured by the pin or missed it). Fires when the pool
-/// matches `DEGENBOT_DRAIN_DBG` OR the global liquidity trace is on.
-/// V3 `Swap`-arrival trace: log every swap the live pump dispatches for a
-/// `DEGENBOT_DRAIN_DBG`-named pool, with its on-chain `sqrt_price_x96`,
-/// `liquidity`, `tick`, and `block`. Answers whether a within-tick swap that
-/// should have advanced the pool's sqrtPrice actually ARRIVED (and with what
-/// value) — the discriminator between a swap that was never delivered and one
-/// that was delivered but not applied. Fires only when the pool matches
-/// `DEGENBOT_DRAIN_DBG`; zero cost otherwise.
+/// V3 `Swap`-arrival trace: log every swap the live pump dispatches, with
+/// its on-chain `sqrt_price_x96`, `liquidity`, `tick`, and `block`. Answers
+/// whether a within-tick swap that should have advanced the pool's sqrtPrice
+/// actually ARRIVED (and with what value) — the discriminator between a swap
+/// that was never delivered and one that was delivered but not applied.
+/// Always-on DEBUG on `state`.
 pub(crate) fn trace_apply_swap_v3(
     pool_address: Address,
     sqrt_price_x96: U256,
@@ -461,10 +367,7 @@ pub(crate) fn trace_apply_swap_v3(
     tick: i32,
     block_number: u64,
 ) {
-    if !drain_dbg_pool_match(pool_address) {
-        return;
-    }
-    op_info!(domain = state, pool_addr = %format!("{pool_address:x}"),
+    diag!(domain = state, pool_addr = %format!("{pool_address:x}"),
         family = "V3",
         sqrt_price_x96 = %sqrt_price_x96,
         liquidity,
@@ -475,8 +378,8 @@ pub(crate) fn trace_apply_swap_v3(
 }
 
 /// V4 twin of [`trace_apply_swap_v3`] — logs a V4 `Swap` dispatch keyed by
-/// `pool_id_hex` (the V4 analog of the pool address for `DEGENBOT_DRAIN_DBG`
-/// matching). Fires when `DEGENBOT_DRAIN_DBG` names this `pool_id_hex`.
+/// `pool_id_hex` (the V4 analog of the pool address). Always-on DEBUG on
+/// `state`.
 pub(crate) fn trace_apply_swap_v4(
     pool_manager: Address,
     pool_id_hex: &str,
@@ -485,10 +388,7 @@ pub(crate) fn trace_apply_swap_v4(
     tick: i32,
     block_number: u64,
 ) {
-    if !trace_pool_id_match(pool_id_hex) {
-        return;
-    }
-    op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
+    diag!(domain = state, pool_manager = %format!("{pool_manager:x}"),
         pool_id = %pool_id_hex,
         family = "V4",
         sqrt_price_x96 = %sqrt_price_x96,
@@ -499,6 +399,10 @@ pub(crate) fn trace_apply_swap_v4(
     );
 }
 
+/// V3 apply-route trace: log how a V3 liquidity update was routed —
+/// `(lifecycle, routed_to)` where `routed_to` ∈ {"buffer-pump",
+/// "buffer-pump-quarantined", "direct-live", "no-pool"}. Always-on DEBUG on
+/// `state`.
 pub(crate) fn trace_apply_route_v3(
     address: Address,
     tick_lower: i32,
@@ -508,10 +412,7 @@ pub(crate) fn trace_apply_route_v3(
     lifecycle: &str,
     routed_to: &str,
 ) {
-    if !drain_dbg_pool_match(address) && !trace_liquidity_global() {
-        return;
-    }
-    op_info!(domain = state, pool_addr = %format!("{address:x}"),
+    diag!(domain = state, pool_addr = %format!("{address:x}"),
         family = "V3",
         tick_lower,
         tick_upper,
@@ -527,8 +428,7 @@ pub(crate) fn trace_apply_route_v3(
 /// update was routed (`buffer-pump` / `buffer-pump-quarantined` /
 /// `direct-live` / `no-pool`). Keyed by `(pool_manager, pool_id_hex)` so the
 /// failing V4 pool's add/remove split is visible across the registration
-/// lifecycle transition. Fires on the global liquidity trace OR when
-/// `DEGENBOT_DRAIN_DBG` names this pool's `pool_id_hex`.
+/// lifecycle transition. Always-on DEBUG on `state`.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn trace_apply_route_v4(
     pool_manager: Address,
@@ -540,10 +440,7 @@ pub(crate) fn trace_apply_route_v4(
     lifecycle: &str,
     routed_to: &str,
 ) {
-    if !trace_liquidity_global() && !trace_pool_id_match(pool_id_hex) {
-        return;
-    }
-    op_info!(domain = state, pool_manager = %format!("{pool_manager:x}"),
+    diag!(domain = state, pool_manager = %format!("{pool_manager:x}"),
         pool_id = %pool_id_hex,
         family = "V4",
         tick_lower,
@@ -554,17 +451,6 @@ pub(crate) fn trace_apply_route_v4(
         routed_to = %routed_to,
         "[trace] apply-route"
     );
-}
-
-/// KAHU5W: trace probes gate on the typed config, not the environment. A
-/// per-pool trace fires when the configured `trace.drain_dbg` names the
-/// pool id hex (with or without a \`0x\` prefix).
-fn trace_pool_id_match(pool_id_hex: &str) -> bool {
-    stance::config()
-        .trace
-        .drain_dbg
-        .as_deref()
-        .is_some_and(|v| v.trim_start_matches("0x").eq_ignore_ascii_case(pool_id_hex))
 }
 
 /// Whether the verify-diagnostics probes are enabled.

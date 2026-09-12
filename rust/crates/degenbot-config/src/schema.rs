@@ -204,18 +204,10 @@ crate::config_schema! {
     }
 
     trace TraceConfig {
-        drain_dbg [opt string] = None, env = "DEGENBOT_DRAIN_DBG", def = "(unset)",
-            doc = "Per-pool drain/pump debug trace for the given pool hex address (no 0x or with).";
         dump_call_trace [bool] = true, env = "DEGENBOT_DUMP_CALL_TRACE", def = "true",
             doc = "Dump simulator call traces (default ON; `0` disables).";
         dump_tick_maps [bool] = false, env = "DEGENBOT_DUMP_TICK_MAPS", def = "false",
             doc = "Dump assembled tick maps for offline comparison (UO3JM4 re-assembly aid).";
-        trace_liquidity [bool] = false, env = "DEGENBOT_TRACE_LIQUIDITY", def = "false",
-            doc = "Global liquidity-events trace for EVERY V3/V4 liquidity mutation across all pools.";
-        trace_tick [opt i32] = None, env = "DEGENBOT_TRACE_TICK", def = "(unset)",
-            doc = "Watch one known-divergent tick (signed decimal) across mutations in the pin/drain probes.";
-        ws_trace [bool] = false, env = "DEGENBOT_WS_TRACE", def = "false",
-            doc = "Catch-all WS-log trace (one line per relevant log; high volume by design).";
         hotpath [bool] = false, env = "DEGENBOT_HOTPATH", def = "false",
             doc = "Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too).";
     }
