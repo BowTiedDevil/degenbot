@@ -15,6 +15,7 @@
 //!   `BotState`, v3/v4 snapshot stores, verify config) stays on
 //!   `PyArbitrageEngine`.
 
+use degenbot_core::diag;
 use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::Arc;
 
@@ -702,7 +703,8 @@ impl Drop for PumpState {
                 "[shutdown] PumpState dropped WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
             );
         } else {
-            tracing::debug!(
+            diag!(
+                domain = pump,
                 pump_task_still_armed = false,
                 "[shutdown] PumpState dropped after stop()"
             );

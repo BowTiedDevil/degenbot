@@ -18,6 +18,7 @@
 
 #![expect(clippy::doc_markdown)]
 
+use degenbot_core::diag;
 use degenbot_core::{op_info, op_warn};
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -593,9 +594,7 @@ impl LogDispatcher {
         // cost unless RUST_LOG enables debug for this target). Attaches to the
         // per-log dispatch span, which parents under `degenbot.epoch` (the
         // per-epoch root, BF43PM).
-        tracing::debug!(
-            target: "degenbot::dispatch",
-            block = log.block_number,
+        diag!(domain = ingest, block = log.block_number,
             address = format!("{:#x}", log.address()),
             topic0 = format!("{:#x}", log.topics().first().copied().unwrap_or_default()),
             tx = ?log.transaction_hash,
@@ -626,8 +625,8 @@ impl LogDispatcher {
             // WARN — a decode miss on a pre-filtered relevant-topic log is
             // abnormal enough to keep visible whenever debug is enabled, and
             // the strict-mode assert below remains the loud gate).
-            tracing::debug!(
-                target: "degenbot::dispatch",
+            diag!(
+                domain = ingest,
                 block = log.block_number,
                 topic0 = format!("{:#x}", log.topics().first().copied().unwrap_or_default()),
                 address = format!("{:#x}", log.address()),
@@ -682,9 +681,7 @@ impl LogDispatcher {
                     | DecodedPoolEvent::V4Swap { .. }
             );
         if confirmed_drop {
-            tracing::debug!(
-                target: "degenbot::state",
-                block = log.block_number,
+            diag!(domain = ingest, block = log.block_number,
                 pool = %identity,
                 "APPLY MISS - unregistered scalar refresh (row re-seed trust); skipped write lock"
             );
@@ -737,9 +734,7 @@ impl LogDispatcher {
                 });
             }
             ApplyOutcome::Buffered(kind) => {
-                tracing::debug!(
-                    target: "degenbot::state",
-                    block = log.block_number,
+                diag!(domain = ingest, block = log.block_number,
                     pool = %identity,
                     ?kind,
                     "APPLY MISS - staged into buffer for registration drain/set_live"
@@ -749,9 +744,7 @@ impl LogDispatcher {
                 }
             }
             ApplyOutcome::NoOp(_) => {
-                tracing::debug!(
-                    target: "degenbot::state",
-                    block = log.block_number,
+                diag!(domain = ingest, block = log.block_number,
                     pool = %identity,
                     "APPLY MISS - no-op"
                 );

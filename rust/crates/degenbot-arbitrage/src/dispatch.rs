@@ -32,6 +32,7 @@
 //!   from `simulator` at this crate's root) the companion renders.
 //!   the companion renders.
 
+use degenbot_core::diag;
 use degenbot_core::op_info;
 // Solidity/EVM + Rust-ecosystem identifiers (tokio, JoinSet, bps, PathSuppression,
 // MAX_SIMULATE_CONCURRENT, etc.) are ubiquitous here.
@@ -86,8 +87,7 @@ fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
             let word = match cache_db.storage_ref(v2.pool_address, U256::from(8u64)) {
                 Ok(w) => w,
                 Err(e) => {
-                    tracing::debug!(
-                        path_id = sim_path.path_id,
+                    diag!(domain = sim, path_id = sim_path.path_id,
                         pair = ?v2.pool_address,
                         %e,
                         "[v2-calc-trace] slot8 read failed"
@@ -98,8 +98,7 @@ fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
             let mask112 = (U256::from(1_u128) << U256::from(112)) - U256::from(1_u128);
             let reserve0 = (word & mask112).to::<u128>(); // low 112 = token0 reserve
             let reserve1 = ((word >> U256::from(112)) & mask112).to::<u128>(); // next 112
-            tracing::debug!(
-                path_id = sim_path.path_id,
+            diag!(domain = sim, path_id = sim_path.path_id,
                 pair = ?v2.pool_address,
                 token0 = ?v2.token0_address,
                 token1 = ?v2.token1_address,

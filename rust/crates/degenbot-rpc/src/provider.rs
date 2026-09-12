@@ -23,6 +23,7 @@ use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::{WebSocketConfig, WsConnect};
 use alloy::transports::{RpcError, TransportErrorKind};
+use degenbot_core::diag;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::{op_error, op_warn};
 use rand::RngExt;
@@ -109,9 +110,7 @@ where
         let sleep_ms = delay_ms + jitter;
 
         if attempt <= 1 {
-            tracing::debug!(
-                target: "degenbot_rpc::provider",
-                attempt,
+            diag!(domain = rpc, attempt,
                 max_attempts,
                 sleep_ms,
                 %outcome,
@@ -211,9 +210,7 @@ where
                             // Receipt present → the tx was already broadcast
                             // (and mined). Return the locally-computed hash;
                             // do NOT rebroadcast.
-                            tracing::debug!(
-                                target: "degenbot_rpc::provider",
-                                %e,
+                            diag!(domain = rpc, %e,
                                 %tx_hash,
                                 "eth_sendRawTransaction: ambiguous outcome reconciled — receipt present"
                             );
@@ -2180,7 +2177,7 @@ mod tests {
         // label "eth_call failed" is baked into the message via Display.
         let result: ProviderResult<u64> =
             retry_with_backoff_loop(max_attempts, Duration::from_secs(30), move || async move {
-                tracing::debug!(target: "degenbot_rpc::provider", attempt, "invocation attempt");
+                diag!(domain = rpc, attempt, "invocation attempt");
                 Err(ProviderError::RateLimited {
                     message: "eth_call failed: rate limited".to_string(),
                 })

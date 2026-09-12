@@ -23,6 +23,7 @@
 //!
 //! See individual module documentation for usage examples.
 
+use degenbot_core::diag;
 use degenbot_core::op_info;
 // Opt-in allocator swap for churn-heavy workloads (missed-WS-pong follow-up,
 // RSS-growth investigation). The measured pathology was glibc free-page
@@ -311,7 +312,10 @@ fn _ffi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ONE runtime, created deterministically at import.
     if pyo3_async_runtimes::tokio::init_with_runtime(degenbot_core::runtime::get_runtime()).is_err()
     {
-        tracing::debug!("[init] pyo3_async_runtimes already bound to a runtime");
+        diag!(
+            domain = pump,
+            "[init] pyo3_async_runtimes already bound to a runtime"
+        );
     }
 
     // Soak-2026-08-22 forensics + ADR-043 §2: the panic hook lives in the

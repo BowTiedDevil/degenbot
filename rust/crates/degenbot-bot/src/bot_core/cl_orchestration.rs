@@ -12,6 +12,7 @@
 //! these are inherent methods on `BotState`, and `bot_core/mod.rs` remains the
 //! assembly + re-export hub.
 
+use degenbot_core::diag;
 use degenbot_core::{op_info, op_warn};
 use hashbrown::{HashMap, HashSet};
 
@@ -1022,8 +1023,7 @@ impl BotState {
                 PinProvenance::CorroboratedByDelivery
                 | PinProvenance::WitnessedBeyondCutoff
                 | PinProvenance::SeedTrustOnly { .. } => {
-                    tracing::debug!(
-                        pool_addr = %format!("{address:x}"),
+                    diag!(domain = state, pool_addr = %format!("{address:x}"),
                         seed_block,
                         cutoff,
                         verdict = ?verdict,
@@ -2195,8 +2195,7 @@ impl BotState {
                 PinProvenance::CorroboratedByDelivery
                 | PinProvenance::WitnessedBeyondCutoff
                 | PinProvenance::SeedTrustOnly { .. } => {
-                    tracing::debug!(
-                        pool_manager = %format!("{pool_manager:x}"),
+                    diag!(domain = state, pool_manager = %format!("{pool_manager:x}"),
                         pool_id = %degenbot_core::hex_utils::encode_hex(pool_id),
                         seed_block,
                         cutoff,

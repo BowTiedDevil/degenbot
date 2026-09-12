@@ -4,6 +4,7 @@
 //! relocates the other `bot` / `bot::pool` wrappers alongside.
 //! (ergo UG6FKN task WXHGOH.)
 
+use degenbot_core::diag;
 use degenbot_core::op_warn;
 pub mod build_flights;
 pub mod deployments;
@@ -717,8 +718,7 @@ impl PyBot {
                 match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
                     Ok((db, _state)) => std::sync::Arc::new(DegenbotDbConstruction::new(db)),
                     Err(e) => {
-                        tracing::debug!(
-                            path = %path,
+                        diag!(domain = state, path = %path,
                             %e,
                             "Construction-I/O DB open failed; falling back to NoDb"
                         );

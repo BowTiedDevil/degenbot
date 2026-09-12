@@ -22,6 +22,7 @@
 //! shared surface is only the file + the thin `ResolvedHop` wrap + nonce
 //! return.
 
+use degenbot_core::diag;
 use degenbot_core::op_error;
 pub(crate) mod balancer_stable;
 pub(crate) mod balancer_weighted;
@@ -350,8 +351,7 @@ impl MissingHopReason {
 
 /// Log a hop invalidation at `debug` (path context + hop index + reason).
 fn log_invalidation(pool_ref: &MixedPoolRef, hop_index: usize, reason: MissingHopReason) {
-    tracing::debug!(
-        ?pool_ref,
+    diag!(domain = state, ?pool_ref,
         hop = hop_index,
         %reason,
         "[resolve-path] hop invalidates the path"

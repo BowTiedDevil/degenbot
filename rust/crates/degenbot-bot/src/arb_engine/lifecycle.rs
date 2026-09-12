@@ -6,6 +6,7 @@ use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{
     HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
 };
+use degenbot_core::diag;
 
 /// Typed refusal from [`ArbitrageEngine::register_path`] (PRG-4 / IRUMXD —
 /// was a bare `String`).
@@ -98,7 +99,6 @@ impl ArbitrageEngine {
     ///
     /// Returns `Err` if any `pool_id` is not registered in the associated
     /// `BotState`.
-    #[expect(clippy::too_many_lines)] // one path registration: dedup + cap gate + resolve + store in one contract
     pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, PathRegistrationError> {
         // R522XA: fewer than two hops is a structural caller bug, not a state —
         // reject loudly at construction.
@@ -119,8 +119,8 @@ impl ArbitrageEngine {
         // hundreds of thousands of duplicate paths, OOM-killing the bot.
         let sig: Vec<(u64, bool)> = hops.iter().map(|h| (h.pool_id, h.zero_for_one)).collect();
         if let Some(&existing_id) = self.path_signatures.get(&sig) {
-            tracing::debug!(
-                target: "degenbot::path",
+            diag!(
+                domain = path,
                 path_id = existing_id,
                 hops.count = hops.len(),
                 "[path] duplicate registration skipped (dedup)"
@@ -233,9 +233,7 @@ impl ArbitrageEngine {
         // the `degenbot.path.register` OTel span (record filter uncapped) and
         // the `path_pools` count metric; re-enable with
         // `RUST_LOG=degenbot_bot=debug` for desync investigations.
-        tracing::debug!(
-            target: "degenbot::path",
-            path_id = path_id,
+        diag!(domain = path, path_id = path_id,
             hops.count = hop_descs.len(),
             hops = %hop_descs.join(" -> "),
             valid = path_valid,

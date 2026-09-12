@@ -80,6 +80,10 @@ pub fn guard_diag(context: &str) {
     if in_engine_span() {
         return;
     }
+    // The abort-on-regression form is opt-in (`strict-engine-spans`): a
+    // diagnostic regression must not take down a live worker thread. The
+    // one-shot WARN below is the always-on signal (ADR-043 §3).
+    #[cfg(feature = "strict-engine-spans")]
     debug_assert!(
         false,
         "diagnostic emitted outside an engine span from {context} (ADR-043 §3)"

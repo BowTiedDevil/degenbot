@@ -39,6 +39,7 @@
 //! and dumps the probe's last sample — confirming permanent deadlock
 //! independently of the GIL (this thread never acquires the GIL).
 
+use degenbot_core::diag;
 use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -166,8 +167,7 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                         "[gil-probe] GIL held: acquire took ms — main thread holding GIL"
                     );
                 } else {
-                    tracing::debug!(
-                        acquire_ms = %elapsed.as_millis(),
+                    diag!(domain = pump, acquire_ms = %elapsed.as_millis(),
                         gap,
                         "[gil-probe] GIL acquire"
                     );

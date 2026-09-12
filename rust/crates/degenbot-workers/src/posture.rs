@@ -11,6 +11,7 @@
 //! monotonic milliseconds so the FSM is deterministic under test; callers
 //! feed `Instant::now()` deltas from their throttle poller.
 
+use degenbot_core::diag;
 use degenbot_core::{op_info, op_warn};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -778,9 +779,7 @@ static PROCESS_OWNER: OnceLock<PostureOwner> = OnceLock::new();
 #[must_use]
 pub fn install_process_owner(policy: PosturePolicy) -> &'static PostureOwner {
     if PROCESS_OWNER.set(PostureOwner::new(policy)).is_err() {
-        tracing::debug!(
-            target: "degenbot::fleet",
-            "[fleet-posture] process owner already installed — first-wins, keeping the existing owner"
+        diag!(domain = pump, "[fleet-posture] process owner already installed — first-wins, keeping the existing owner"
         );
     }
     process()

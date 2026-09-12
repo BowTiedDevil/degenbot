@@ -1,6 +1,7 @@
 //! Path resolution, solver dispatch, and rebuild logic.
 
 use alloy::primitives::{I256, U256};
+use degenbot_core::diag;
 use degenbot_core::{op_error, op_info, op_warn};
 use std::sync::PoisonError;
 
@@ -1152,9 +1153,7 @@ impl ArbitrageEngine {
             // the Python-side `[sim]` summary; the settle verdict is also
             // observable as an event on the enclosing `degenbot.arb.merge`
             // OTel span. Re-enable with `RUST_LOG=degenbot_bot=debug`.
-            tracing::debug!(
-                target: "degenbot::solver",
-                { path.id = pid, verdict, expected_profit = %result.profit, sim.seam = "inline_payload_store" },
+            diag!(domain = solver, { path.id = pid, verdict, expected_profit = %result.profit, sim.seam = "inline_payload_store" },
                 "[bundle] inline payload settle"
             );
         }
@@ -1266,8 +1265,8 @@ impl ArbitrageEngine {
         let Some(registered) = self.path_pools.get(&solved.pid) else {
             self.detached_cycle
                 .disposition(detached_cycle::Disposition::DroppedDeregistered);
-            tracing::debug!(
-                target: crate::telemetry::DIAGNOSTIC_TARGET,
+            diag!(
+                domain = solver,
                 path_id = solved.pid,
                 detached_seq = solved.cycle_seq,
                 "[detached] straggler dropped (path deregistered)"
@@ -1337,8 +1336,8 @@ impl ArbitrageEngine {
         if counts.solved > 0 {
             self.detached_cycle
                 .disposition(detached_cycle::Disposition::Applied);
-            tracing::debug!(
-                target: crate::telemetry::DIAGNOSTIC_TARGET,
+            diag!(
+                domain = solver,
                 path_id = log_pid,
                 detached_seq = log_seq,
                 detached_age_cycles = age_cycles,
@@ -1473,7 +1472,8 @@ impl ArbitrageEngine {
                         ..
                     } = o;
                     if !solve_result.solver_pool_states.is_empty() {
-                        tracing::debug!(
+                        diag!(
+                            domain = solver,
                             "[solver-st] path_id={pid} hops=[{}]",
                             solve_result.solver_pool_states.join(";")
                         );
@@ -1490,9 +1490,7 @@ impl ArbitrageEngine {
                 }
                 LaneOutcome::Suppressed { pid } => {
                     // CONTRACT 4: the pid-only witness NEVER claims.
-                    tracing::debug!(
-                        target: crate::telemetry::DIAGNOSTIC_TARGET,
-                        path_id = pid,
+                    diag!(domain = solver, path_id = pid,
                         "[detached] suppressed outcome delivered by the lane witness — no merge, no claim"
                     );
                     counts.suppressed += 1;
@@ -1562,7 +1560,8 @@ impl ArbitrageEngine {
                 if let Some((pid, result, twins)) = outcome {
                     if result.optimal_input.is_zero() || result.profit.is_zero() {
                         if !result.solver_pool_states.is_empty() {
-                            tracing::debug!(
+                            diag!(
+                                domain = solver,
                                 "[solver-st] path_id={pid} hops=[{}]",
                                 result.solver_pool_states.join(";")
                             );
@@ -1585,7 +1584,8 @@ impl ArbitrageEngine {
                         continue;
                     }
                     if !result.solver_pool_states.is_empty() {
-                        tracing::debug!(
+                        diag!(
+                            domain = solver,
                             "[solver-st] path_id={pid} hops=[{}]",
                             result.solver_pool_states.join(";")
                         );
@@ -2119,9 +2119,7 @@ impl ArbitrageEngine {
             // diagnostic remains reachable via RUST_LOG degenbot::engine=debug.
             if tracing::enabled!(target: "degenbot::engine", tracing::Level::DEBUG) {
                 for &path_id in &affected_path_ids {
-                    tracing::debug!(
-                        target: "degenbot::engine",
-                        block_number = solve_block,
+                    diag!(domain = solver, block_number = solve_block,
                         path.id = path_id,
                         path.hops = %self.describe_path_cached(path_id),
                         dirty.keys = affected.len(),
@@ -2277,8 +2275,7 @@ impl ArbitrageEngine {
                         *out.invalid_reasons
                             .entry(d.reason.to_string())
                             .or_insert(0u64) += 1u64;
-                        tracing::debug!(
-                            %path_id,
+                        diag!(domain = solver, %path_id,
                             hop_type = ?d.hop_type,
                             pool_key = d.pool_key,
                             reason = %d.reason,
@@ -2939,7 +2936,8 @@ impl ArbitrageEngine {
                     .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
                     .inspect(|r| {
                         if !r.solver_pool_states.is_empty() {
-                            tracing::debug!(
+                            diag!(
+                                domain = solver,
                                 "[solver-st] path_id={path_id} hops=[{}]",
                                 r.solver_pool_states.join(";")
                             );

@@ -29,6 +29,7 @@
 use crate::mobius_v3_int::{build_cl_crossing_table, ClCrossingTable};
 use crate::runtime::SolveRuntimeConfig;
 use alloy::primitives::{aliases::I512, U256, U512};
+use degenbot_core::diag;
 #[cfg(not(feature = "hotpath"))]
 use degenbot_core::op_warn;
 use degenbot_math::v2::IntHopState;
@@ -1608,9 +1609,7 @@ fn path_profit_bound_inner(
                     format!("ReserveCap(zero={})", reserve_out.is_zero())
                 }
             };
-            tracing::debug!(
-                target: "degenbot_solvers::profit_envelope",
-                hop_index = hop_idx,
+            diag!(domain = solver, hop_index = hop_idx,
                 family = %family,
                 "[gate] degenerate hop rejected (impossible to bound — solved unscreened)"
             );
@@ -2113,8 +2112,8 @@ fn compose_boundary_merged(
                 MergeFallbackReason::CmpOverflow => t.merge_fb_cmp_overflow += 1,
             }
         });
-        tracing::debug!(
-            target: "degenbot_solvers::profit_envelope",
+        diag!(
+            domain = solver,
             reason = reason.key(),
             "[gate] compose merge fell back to legacy pair product"
         );
