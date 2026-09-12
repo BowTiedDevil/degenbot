@@ -1,19 +1,19 @@
 //! ADR-043 §7 naming gate: spans and metric instruments are normalized.
 //!
-//! * span    — \`degenbot.<area>.<verb>\` (the \`degenbot.\` root plus at least two
+//! * span    — `degenbot.<area>.<verb>` (the `degenbot.` root plus at least two
 //!   non-empty snake segments);
-//! * metric  — \`degenbot.<area>.<noun>\` instrument name (the Prometheus
-//!   renderer maps \`.\` to \`_\`, so the exposed series stays
-//!   \`degenbot_<area>_<noun>_<unit>\`).
+//! * metric  — `degenbot.<area>.<noun>` instrument name (the Prometheus
+//!   renderer maps `.` to `_`, so the exposed series stays
+//!   `degenbot_<area>_<noun>_<unit>`).
 //!
 //! The sweep is source-based because the rule is about what maintainers
 //! write: a name that is only normalized at the export boundary drifts back.
-//! \`#[cfg(test)]\` modules and \`tests/\` trees are exempt — they name spans to
+//! `#[cfg(test)]` modules and `tests/` trees are exempt — they name spans to
 //! MATCH the production names they assert on, not to be discovered in Jaeger.
 
 use std::path::{Path, PathBuf};
 
-/// Byte ranges covered by a \`#[cfg(test)]\` (or \`#[cfg(all(test, ...))]\`)
+/// Byte ranges covered by a `#[cfg(test)]` (or `#[cfg(all(test, ...))]`)
 /// module: the attribute, its module, and everything inside its braces.
 fn test_regions(text: &str) -> Vec<(usize, usize)> {
     let mut regions: Vec<(usize, usize)> = Vec::new();
@@ -71,7 +71,7 @@ fn in_test_region(regions: &[(usize, usize)], offset: usize) -> bool {
         .any(|(start, end)| offset >= *start && offset < *end)
 }
 
-/// Span names in \`text\`, paired with their byte offset.
+/// Span names in `text`, paired with their byte offset.
 fn span_names(text: &str) -> Vec<(usize, String)> {
     let mut out: Vec<(usize, String)> = Vec::new();
     let needle = "span!(";
@@ -92,8 +92,8 @@ fn span_names(text: &str) -> Vec<(usize, String)> {
     out
 }
 
-/// Metric instrument names in \`text\`: the literal passed to an
-/// \`opentelemetry\` instrument builder.
+/// Metric instrument names in `text`: the literal passed to an
+/// `opentelemetry` instrument builder.
 fn instrument_names(text: &str) -> Vec<(usize, String)> {
     const BUILDERS: &[&str] = &[
         ".u64_counter(",
@@ -128,7 +128,7 @@ fn instrument_names(text: &str) -> Vec<(usize, String)> {
     out
 }
 
-/// Every \`.\`-separated segment is non-empty lowercase snake.
+/// Every `.`-separated segment is non-empty lowercase snake.
 fn snake_segments(rest: &str) -> bool {
     let segs: Vec<&str> = rest.split('.').collect();
     !segs.is_empty()
@@ -139,7 +139,7 @@ fn snake_segments(rest: &str) -> bool {
         })
 }
 
-/// Span: \`degenbot.\` + at least two more snake segments.
+/// Span: `degenbot.` + at least two more snake segments.
 fn span_conforms(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("degenbot.") else {
         return false;
@@ -147,7 +147,7 @@ fn span_conforms(name: &str) -> bool {
     rest.split('.').count() >= 2 && snake_segments(rest)
 }
 
-/// Metric: \`degenbot.\` + at least one more snake segment.
+/// Metric: `degenbot.` + at least one more snake segment.
 fn metric_conforms(name: &str) -> bool {
     name.strip_prefix("degenbot.").is_some_and(snake_segments)
 }
