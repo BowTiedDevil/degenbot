@@ -42,8 +42,9 @@ mkdir -p "$LOGDIR"
 # register-seed) are now always-on DEBUG events on the ingest/pump/state/path
 # domains. They do not reach the console unless the Rust log level enables
 # `degenbot=debug` / `degenbot=trace`; see docs/logging.md.
-#   DEGENBOT_DUMP_TICK_MAPS  (opt-in: dump full seed + verifier tick maps for the
-#     tick-map desync re-assembly aid; high volume, set only for an investigation)
+# Forensic full-field dumps (sim call traces, seed/verifier tick maps) are
+# TRACE-level events on the sim/state/verify domains; enable with
+# `degenbot=trace` in RUST_LOG for an investigation (high volume).
 #
 # Sim-failure policy: this script DEFAULTS DEGENBOT_SIM_EXIT_ON_FAIL=0 (keep
 # running through thin-margin/no-profit reverts - the routine arb-filter

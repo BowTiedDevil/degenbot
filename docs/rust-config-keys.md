@@ -65,8 +65,6 @@ The loader is fail-closed: unparsable values and unknown file keys are reported,
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_DUMP_CALL_TRACE` | `trace.dump_call_trace` | `bool` | `true` | Dump simulator call traces (default ON; `0` disables). |
-| `DEGENBOT_DUMP_TICK_MAPS` | `trace.dump_tick_maps` | `bool` | `false` | Dump assembled tick maps for offline comparison (UO3JM4 re-assembly aid). |
 | `DEGENBOT_HOTPATH` | `trace.hotpath` | `bool` | `false` | Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too). |
 ## `solve`
 

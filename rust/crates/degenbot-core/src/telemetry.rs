@@ -196,6 +196,17 @@ macro_rules! diag {
     }};
 }
 
+/// A TRACE forensic diagnostic under a closed domain target (full-field
+/// dumps: call traces, tick maps). Never on the console by default — the sink
+/// must enable `degenbot=trace`; the phase-4 forensic file sink captures it.
+#[macro_export]
+macro_rules! diag_trace {
+    (domain = $domain:ident, $($rest:tt)*) => {{
+        $crate::telemetry::guard_diag(::core::module_path!());
+        ::tracing::trace!(target: $crate::telemetry_target!($domain), $($rest)*)
+    }};
+}
+
 /// An INFO lifecycle event under a closed domain target.
 #[macro_export]
 macro_rules! op_info {

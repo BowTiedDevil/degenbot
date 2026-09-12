@@ -204,10 +204,6 @@ crate::config_schema! {
     }
 
     trace TraceConfig {
-        dump_call_trace [bool] = true, env = "DEGENBOT_DUMP_CALL_TRACE", def = "true",
-            doc = "Dump simulator call traces (default ON; `0` disables).";
-        dump_tick_maps [bool] = false, env = "DEGENBOT_DUMP_TICK_MAPS", def = "false",
-            doc = "Dump assembled tick maps for offline comparison (UO3JM4 re-assembly aid).";
         hotpath [bool] = false, env = "DEGENBOT_HOTPATH", def = "false",
             doc = "Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too).";
     }

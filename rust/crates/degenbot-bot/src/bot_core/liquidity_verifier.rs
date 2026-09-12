@@ -111,7 +111,7 @@ impl From<VerificationMismatch> for LiquidityVerifyError {
 /// ascending tick order into a compact, byte-stable `tick:lg,ln;...` string, so
 /// two dumps of the same map are directly comparable and the exact map that
 /// went into a consumer (the verifier) can be rebuilt. Used for the
-/// `DEGENBOT_DUMP_TICK_MAPS` desync aid.
+/// tick-map desync forensic dump.
 fn serialize_liquidity_map<S: std::hash::BuildHasher>(
     map: &HashMap<i32, (u128, i128), S>,
 ) -> String {
@@ -148,8 +148,8 @@ fn serialize_divergences(ds: &[TickDivergence]) -> String {
 }
 
 /// Emit the `[dbg-verify] TICK-MAP DESYNC` diagnostic on ANY divergence: the
-/// full divergence set (always) + the full engine/on-chain maps (gated behind
-/// `DEGENBOT_DUMP_TICK_MAPS=1`). UO3JM4/ADR-021 re-assembly aid — lets an
+/// full divergence set as an INFO event, plus the full engine/on-chain maps as
+/// a forensic TRACE event. UO3JM4/ADR-021 re-assembly aid — lets an
 /// investigation re-assemble the exact map that went into the verifier.
 //
 // The argument list mirrors the tracing event's field-for-field diagnostic
@@ -167,7 +167,6 @@ fn log_tick_map_desync(
     observed_map: &HashMap<i32, (u128, i128)>,
     divergences: &[TickDivergence],
 ) {
-    let dump_maps = crate::bot_core::stance::config().trace.dump_tick_maps;
     op_info!(domain = verify, pool = %pool_ident,
         block_tag = %block_tag,
         tick_spacing,
@@ -177,9 +176,14 @@ fn log_tick_map_desync(
         total_ticks,
         divergence_count = divergences.len(),
         divergences = %serialize_divergences(divergences),
-        engine_map = %(if dump_maps { serialize_liquidity_map(stored_map) } else { "omitted; set DEGENBOT_DUMP_TICK_MAPS=1".to_string() }),
-        observed_map = %(if dump_maps { serialize_liquidity_map(observed_map) } else { "omitted; set DEGENBOT_DUMP_TICK_MAPS=1".to_string() }),
-        "[dbg-verify] TICK-MAP DESYNC (full divergence set + engine/on-chain maps; UO3JM4 re-assembly aid)"
+        "[dbg-verify] TICK-MAP DESYNC (divergence set)"
+    );
+    // Full engine/on-chain maps: forensic TRACE on `verify`.
+    degenbot_core::diag_trace!(domain = verify, pool = %pool_ident,
+        block_tag = %block_tag,
+        engine_map = %serialize_liquidity_map(stored_map),
+        observed_map = %serialize_liquidity_map(observed_map),
+        "[dbg-verify] TICK-MAP DESYNC full maps (UO3JM4 re-assembly aid)"
     );
 }
 

@@ -30,7 +30,7 @@
 // WETH9, PoolManager, Multicall3, balanceOf, getEthBalance, ERC6909, etc.) are
 // ubiquitous here — match the degenbot-simulation convention.
 #![expect(clippy::doc_markdown)]
-use degenbot_core::{diag, op_info};
+use degenbot_core::{diag, diag_trace, op_info};
 
 use std::collections::BTreeMap;
 
@@ -1307,24 +1307,17 @@ where
         // fall back to the plain `record` (top-level revert data, no deep
         // attribution).
         if let Some(frame) = captured_call_trace.failing_frame() {
-            // Env-gated FULL call-trace dump (2LTKVO / W2UWZO): when a sim
-            // fails, print every frame (depth/target/selector/outcome) so the
-            // exact nested call sequence leading to the failing frame is
-            // attributable against the executor Vyper source — e.g. the
-            // `execute → v3c.swap → callback → v3a.swap → callback →
-            // V4_UNLOCK → unlockCallback → swap → …` chain that ends in a
-            // depth-8 empty-calldata PoolManager Halt.
-            if ::degenbot_config::holder::config().trace.dump_call_trace {
-                #[expect(clippy::print_stderr)] // env-gated diagnostic call-trace dump
-                {
-                    eprintln!(
-                        "[sim-trace] path={} first_fail_call={} full_call_trace\n{}",
-                        path.path_id,
-                        fail_idx,
-                        captured_call_trace.render_debug()
-                    );
-                }
-            }
+            // FULL call-trace dump (2LTKVO / W2UWZO): when a sim fails, emit
+            // every frame (depth/target/selector/outcome) so the exact nested
+            // call sequence leading to the failing frame is attributable
+            // against the executor Vyper source — e.g. the `execute → v3c.swap
+            // → callback → v3a.swap → callback → V4_UNLOCK → unlockCallback →
+            // swap → …` chain that ends in a depth-8 empty-calldata
+            // PoolManager Halt. TRACE on `sim` (forensic).
+            diag_trace!(domain = sim, path_id = path.path_id, first_fail_call = fail_idx,
+                full_call_trace = %captured_call_trace.render_debug(),
+                "[sim-trace]"
+            );
             let frame_revert_data = match &frame.outcome {
                 Some(degenbot_simulation::FrameOutcome::Revert { data, .. }) => data.clone(),
                 _ => alloy::primitives::Bytes::new(),
