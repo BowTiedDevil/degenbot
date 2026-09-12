@@ -100,6 +100,10 @@ pub mod fleet_wake;
 mod seat_host;
 mod snapshot_verify;
 mod solver_dispatch;
+// ADR-045 T1 (`E7V2S6`): the solve-cycle data-type seam (`CycleOutcome` /
+// `CycleArm` / `ResolveCensus` / `Registration`) — T3/T4 assemble
+// `SolveCycle` on top of it; nothing consumes the types yet.
+mod solve_cycle;
 #[cfg(test)]
 mod tests;
 
