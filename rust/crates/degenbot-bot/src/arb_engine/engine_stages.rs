@@ -304,8 +304,15 @@ impl StageHandlers for EngineStages {
     /// this engine cycle (`solve_dirty` → solver dispatch + inline sim);
     /// results stream on the delivery channel, not on the hook return.
     fn on_solve(&self, work: &Solve) -> Result<SolveOutcome, StageError> {
-        self.run_solve_cycle(&work.paths.0, work.ctx.block(), work.ctx.metadata());
-        Ok(SolveOutcome::default())
+        // The cycle's typed outcome carries the anchor epoch it solved; pack
+        // that cursor fact onto the Solved row's outcome so the driver can
+        // derive the engine cursor from the product rather than re-poking
+        // the seam after the hook returns.
+        let outcome = self.run_solve_cycle(&work.paths.0, work.ctx.block(), work.ctx.metadata());
+        Ok(SolveOutcome {
+            candidates: Vec::new(),
+            solved: Epoch::at(outcome.solved_block()),
+        })
     }
 
     /// Simulated row: in-process revm simulation ran inside the Solved

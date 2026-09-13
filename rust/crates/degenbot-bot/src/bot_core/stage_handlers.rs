@@ -194,11 +194,27 @@ pub struct CandidateId(pub u64);
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AffectedPaths(pub Vec<degenbot_solvers::affected_keys::AffectedKey>);
 
-/// The Solved row's output: candidates risen from the affected paths.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The Solved row's output: the cursor fact AND the product. The seam now
+/// carries the epoch the cycle was anchored at ('solved', required - a cycle
+/// always knows its anchor) alongside the candidates risen from the affected
+/// paths.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SolveOutcome {
     /// Candidates the solver produced for this epoch.
     pub candidates: Vec<CandidateId>,
+    /// The epoch the solve cycle was anchored at. Required, never optional:
+    /// a cycle always knows its anchor, and the driver derives the engine
+    /// cursor from this fact rather than re-poking the seam.
+    pub solved: Epoch,
+}
+
+impl Default for SolveOutcome {
+    fn default() -> Self {
+        Self {
+            candidates: Vec::new(),
+            solved: Epoch::at(0),
+        }
+    }
 }
 
 /// Tri-state simulation verdict (ADR-030).
@@ -338,8 +354,6 @@ pub struct Publish {
 pub struct Finalize {
     /// The epoch being closed.
     pub ctx: BlockContext,
-    /// The publish outcome for this cycle.
-    pub published: PublishOutcome,
 }
 
 /// Rewind work item.
@@ -882,13 +896,13 @@ mod conformance {
             })?;
 
             self.advance(Stage::Publish, None)?;
-            let published = self.drive(Stage::Publish, epoch, |engine, _| {
+            let _published = self.drive(Stage::Publish, epoch, |engine, _| {
                 engine.on_publish(&Publish { ctx, gated })
             })?;
 
             self.advance(Stage::Finalize, None)?;
             let finalized = self.drive(Stage::Finalize, epoch, |engine, _| {
-                engine.on_finalize(&Finalize { ctx, published })
+                engine.on_finalize(&Finalize { ctx })
             })?;
             if finalized.cutoff != epoch {
                 return Err(ConformanceError::EpochEchoMismatch {
@@ -1208,6 +1222,7 @@ mod conformance {
             }
             Ok(SolveOutcome {
                 candidates: Vec::new(),
+                solved: work.ctx.epoch(),
             })
         }
 

@@ -79,7 +79,7 @@ use tracing::Instrument;
 
 use crate::bot_core::LogDecision;
 use crate::bot_core::{
-    stage_handlers::{Finalize, GateOutcome, Publish, PublishOutcome, Resolve, Solve},
+    stage_handlers::{Finalize, GateOutcome, Publish, Resolve, Solve},
     BlockMetadata, Bot, Epoch, PumpControl, StageHandlers,
 };
 // (the topic-import list, the backfill/idle + handshake constants, and the
@@ -1634,11 +1634,7 @@ impl BlockPump {
                                 block_span.as_ref().unwrap_or(&tracing::Span::none()),
                                 Epoch::with_generation(prev, fsm.rewind_seq()),
                             );
-                            self.drive_finalize(
-                                &fsm,
-                                fsm.context_for(prev, prev_meta),
-                                &PublishOutcome::default(),
-                            );
+                            self.drive_finalize(&fsm, fsm.context_for(prev, prev_meta));
                         }
                         LogDecision::DispatchForward => {}
                         LogDecision::LateForward(b) => {
@@ -1986,12 +1982,18 @@ impl BlockPump {
                 return;
             }
         };
-        if let Err(error) = self.engine.on_solve(&Solve { ctx, paths }) {
-            op_error!(domain = pump, %error, "stage Solve failed");
-        } else {
-            // LEZJAS: engine owns `last_solved_block` — mark this block
-            // solved so the next finalize guard no-ops.
-            self.control.set_last_solved_block(ctx.epoch());
+        match self.engine.on_solve(&Solve { ctx, paths }) {
+            Ok(outcome) => {
+                // LEZJAS: the engine owns `last_solved_block`. The cursor
+                // fact now crosses the seam ON the outcome (the Solved row
+                // knows its anchor epoch), so the driver derives the cursor
+                // from the product instead of re-poking the seam with
+                // `ctx.epoch()`.
+                self.control.set_last_solved_block(outcome.solved);
+            }
+            Err(error) => {
+                op_error!(domain = pump, %error, "stage Solve failed");
+            }
         }
     }
 
@@ -2026,19 +2028,11 @@ impl BlockPump {
 
     /// Drive the Finalized row: the tombstone boundary catch (VTWCIG
     /// metadata; terminal publish supersedes the pending quiesce publish).
-    fn drive_finalize(
-        &self,
-        fsm: &StageMachine,
-        ctx: crate::bot_core::BlockContext,
-        published: &crate::bot_core::PublishOutcome,
-    ) {
+    fn drive_finalize(&self, fsm: &StageMachine, ctx: crate::bot_core::BlockContext) {
         if self.reorg_flying_stale(fsm, &ctx) {
             return;
         }
-        if let Err(error) = self.engine.on_finalize(&Finalize {
-            ctx,
-            published: *published,
-        }) {
+        if let Err(error) = self.engine.on_finalize(&Finalize { ctx }) {
             op_error!(domain = pump, %error, "stage Finalize failed — boundary not stamped");
         }
     }
@@ -2126,11 +2120,7 @@ impl BlockPump {
                 match fsm.on_log(block, log.removed) {
                     LogDecision::TombstonePrevious(prev) => {
                         let prev_meta = fsm.block_metadata_for(prev).unwrap_or_default();
-                        self.drive_finalize(
-                            fsm,
-                            fsm.context_for(prev, prev_meta),
-                            &crate::bot_core::PublishOutcome::default(),
-                        );
+                        self.drive_finalize(fsm, fsm.context_for(prev, prev_meta));
                         self.bot.dispatch_log(log);
                         fsm.on_log_applied(block);
                     }
@@ -2740,7 +2730,7 @@ mod tests {
             work: &Publish,
         ) -> Result<crate::bot_core::PublishOutcome, crate::bot_core::StageError> {
             self.sent.lock().unwrap().push(*work.ctx.metadata());
-            Ok(crate::bot_core::PublishOutcome::default())
+            Ok(crate::bot_core::PublishOutcome { published: None })
         }
         fn on_finalize(
             &self,
@@ -4566,7 +4556,6 @@ mod tests {
                 crate::bot_core::Epoch::with_generation(100, 0),
                 BlockMetadata::default(),
             ),
-            &crate::bot_core::PublishOutcome::default(),
         );
         assert!(
             sink.finalized.lock().unwrap().is_empty(),
@@ -4584,7 +4573,6 @@ mod tests {
                 crate::bot_core::Epoch::with_generation(100, 1),
                 BlockMetadata::default(),
             ),
-            &crate::bot_core::PublishOutcome::default(),
         );
         assert_eq!(sink.finalized.lock().unwrap().len(), 1);
         assert_eq!(sink.finalized.lock().unwrap().first().unwrap().0, 100);
@@ -7169,14 +7157,14 @@ mod tests {
         }
 
         /// Pin 5 (RED: runs and fails until T2). Finalize takes no
-        /// PublishOutcome and the pump never fabricates
-        /// `PublishOutcome::default()` as a carrier at the tombstones
-        /// (block_pump.rs:1633 / 2122 today).
+        /// PublishOutcome and the pump never fabricates a default
+        /// PublishOutcome as a carrier at the tombstones (block_pump.rs:1633
+        /// / 2122 today).
         #[test]
         fn candidate2_finalize_and_pump_carry_no_publish_outcome() {
             let pump_src = include_str!("block_pump.rs");
             assert!(
-                !pump_src.contains("PublishOutcome::default()"),
+                !pump_src.contains(concat!("PublishOutcome::", "default()")),
                 "the pump must not fabricate a default PublishOutcome carrier"
             );
             let seam_src = include_str!("stage_handlers.rs");
