@@ -23,7 +23,10 @@ impl PyArbitrageEngine {
     /// Returns `None` if no block has been processed yet (before the first
     /// solve / before resume).
     fn last_processed_block(&self) -> Option<u64> {
-        self.pump.stages.last_processed_block()
+        // ZE67AE: route through the PumpControl trait (the inherent
+        // `EngineStages` twin was hard-cut); the trait cursor is Epoch-typed.
+        use degenbot_bot::bot_core::PumpControl;
+        PumpControl::last_processed_block(self.pump.stages.as_ref()).map(|e| e.block())
     }
 
     /// Set the last processed block manually after Python backfill.

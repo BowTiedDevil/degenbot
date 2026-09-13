@@ -5493,7 +5493,7 @@ mod tests {
                 // keys, solve exactly what the take returned.
                 let keys = marker_delta.take_keys();
                 if !keys.is_empty() {
-                    handle.solve_dirty(&keys, block + i, &BlockMetadata::default());
+                    handle.run_solve_cycle(&keys, block + i, &BlockMetadata::default());
                 }
             }
         });
@@ -5589,10 +5589,12 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         engine.set_result_channel(tx);
         let engine_state = Arc::new(parking_lot::Mutex::new(engine));
-        let handle = EngineStages::new(Arc::clone(&engine_state));
+        let _handle = EngineStages::new(Arc::clone(&engine_state));
 
         tracing::subscriber::with_default(subscriber, || {
-            handle.finalize_block(5, &BlockMetadata::default());
+            engine_state
+                .lock()
+                .finalize_block(5, &BlockMetadata::default());
         });
 
         let spans = log
@@ -5722,12 +5724,12 @@ mod tests {
             // (1) Exact hit: solve of the PUBLISHED block 100 re-attaches to
             // the published epoch(100) span, not the ambient 101 span.
             let h100 = Arc::clone(&handles[0]);
-            h100.solve_dirty(&oracle.to_affected_keys(), 100, &BlockMetadata::default());
+            h100.run_solve_cycle(&oracle.to_affected_keys(), 100, &BlockMetadata::default());
 
             // (2) Exact miss: solve of block 101 (never published) keeps the
             // ambient parent - no fallback re-parenting, no orphan.
             let h101 = Arc::clone(&handles[1]);
-            h101.solve_dirty(&oracle.to_affected_keys(), 101, &BlockMetadata::default());
+            h101.run_solve_cycle(&oracle.to_affected_keys(), 101, &BlockMetadata::default());
         });
 
         provider.force_flush().expect("flush");
@@ -5799,7 +5801,7 @@ mod tests {
         let engine_arc = Arc::clone(&engine);
         let handle = EngineStages::new(engine);
         tracing::subscriber::with_default(subscriber, || {
-            handle.solve_dirty(
+            handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
                 MY_SOLVE_BLOCK,
                 &BlockMetadata::default(),
@@ -5850,7 +5852,7 @@ mod tests {
         oracle.insert(0x0BAD_F00D, HopType::V2);
         let handle = EngineStages::new(engine);
         tracing::subscriber::with_default(subscriber, || {
-            handle.solve_dirty(
+            handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
                 MY_SOLVE_BLOCK,
                 &BlockMetadata::default(),
@@ -5907,7 +5909,7 @@ mod tests {
         oracle.insert(0x0BAD_F00D, HopType::V2);
         let handle = EngineStages::new(engine);
         tracing::subscriber::with_default(subscriber, || {
-            handle.solve_dirty(
+            handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
                 0x0BAD_F00D,
                 &BlockMetadata::default(),
@@ -6036,7 +6038,7 @@ mod tests {
         engine.lock().set_event_buffer_max_age(Some(100));
         let handle = EngineStages::new(engine);
         tracing::subscriber::with_default(subscriber, || {
-            handle.solve_dirty(
+            handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
                 0x0BAD_F00D,
                 &BlockMetadata::default(),
@@ -6105,7 +6107,7 @@ mod tests {
 
         let handle = EngineStages::new(Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())));
         tracing::subscriber::with_default(subscriber, || {
-            handle.solve_dirty(&[], 1, &BlockMetadata::default());
+            handle.run_solve_cycle(&[], 1, &BlockMetadata::default());
         });
 
         provider.force_flush().expect("flush");
@@ -6492,7 +6494,7 @@ mod tests {
         let handle = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine));
 
         let t0 = std::time::Instant::now();
-        handle.solve_dirty(&affected_keys_v2, 100, &BlockMetadata::default());
+        handle.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
         let returned = t0.elapsed();
 
         // RETURNS before the merge lands: strictly inside the injected 400ms
@@ -6935,12 +6937,12 @@ mod tests {
         let t0 = std::time::Instant::now();
         // The detached cycle: the solve call RETURNS (enqueue-end) while the
         // 400ms slow solve still runs — no in-cycle multi-second hold.
-        stages.solve_dirty(&affected_keys_v2, 100, &meta);
+        stages.run_solve_cycle(&affected_keys_v2, 100, &meta);
         // The shipped cadence continues UNCHANGED mid-merge: a debounce publish
         // + further block cycles interleave with the sidecar's merges.
-        stages.send_result_batch(&meta);
-        stages.solve_dirty(&[], 101, &meta);
-        stages.solve_dirty(&[], 102, &meta);
+        engine.lock().send_result_batch(&meta);
+        stages.run_solve_cycle(&[], 101, &meta);
+        stages.run_solve_cycle(&[], 102, &meta);
 
         assert!(
             t0.elapsed() < std::time::Duration::from_millis(390),
@@ -7166,7 +7168,7 @@ mod tests {
         }
         let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine));
         stages.set_delta(delta);
-        stages.solve_dirty(&affected_keys_v2, 100, &BlockMetadata::default());
+        stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
 
         // Wait for the dispositions to land (the sidecar merges async).
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2_000);
@@ -7246,7 +7248,7 @@ mod tests {
         }
         let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine));
         stages.set_delta(delta);
-        stages.solve_dirty(&affected_keys_v2, 100, &BlockMetadata::default());
+        stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
 
         // After all dispositions land, the gauge must be back at g0 EXACTLY
         // (a leaked count OR a sagged count both move it off g0 — only the

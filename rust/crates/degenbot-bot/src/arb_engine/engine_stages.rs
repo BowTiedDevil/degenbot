@@ -50,8 +50,6 @@ use crate::bot_core::{
 };
 use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
 
-use degenbot_solvers::affected_keys::AffectedKey;
-
 use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
 
@@ -129,50 +127,14 @@ impl EngineStages {
 
     /// The engine's solve cycle — the behavior port of the dissolved
     /// `EngineHandle::solve_dirty` hold/spans/sidecar logic, verbatim.
-    /// Public: the solve-shaped tests and the registration eager-solve
-    /// path drive it directly; the driver arrives via `StageHandlers::on_solve`.
-    pub fn solve_dirty(&self, affected: &[AffectedKey], block: u64, metadata: &BlockMetadata) {
-        self.run_solve_cycle(affected, block, metadata);
-    }
-
-    /// The drained-cursor read (the engine's own `last_processed_block`).
-    #[must_use]
-    pub fn last_processed_block(&self) -> Option<u64> {
-        self.engine.lock().last_processed_block()
-    }
-
-    /// Flush a debounced result batch (the Published-edge delivery).
-    pub fn send_result_batch(&self, metadata: &BlockMetadata) {
-        self.engine.lock().send_result_batch(metadata);
-    }
-
-    /// The tombstone boundary catch (advance + terminal publish).
-    pub fn finalize_block(&self, block: u64, metadata: &BlockMetadata) {
-        self.engine.lock().finalize_block(block, metadata);
-    }
-
-    /// Mark `block` solved (engine-owned bookkeeping since LEZJAS).
-    pub fn set_last_solved_block(&self, block: u64) {
-        self.engine.lock().set_last_solved_block(block);
-    }
-
-    /// Seed the cold-start `results_block` anchor (resume boundary).
-    pub fn set_solve_anchor(&self, block: u64) {
-        self.engine.lock().set_solve_anchor(block);
-    }
-
-    /// Record a forward-log apply this block (LEZJAS bookkeeping).
-    pub fn record_logs_this_block(&self) {
-        self.engine.lock().record_logs_this_block();
-    }
-
-    /// Pump death: close the block clock + the delivery channels.
-    pub fn on_pump_ended(&self) {
-        self.block_clock.lock().close();
-        self.engine.lock().on_pump_ended();
-    }
-
-    fn run_solve_cycle(
+    ///
+    /// ADR-046 / ZE67AE: this is the **cycle surface** on `EngineStages`
+    /// (the solve entry that deliberately bypasses pump semantics). The
+    /// driver arrives via `StageHandlers::on_solve`; the stage-span and
+    /// detached-sidecar unit-test harnesses drive it directly. The
+    /// engine-level `ArbitrageEngine::solve_dirty` remains the internal
+    /// cycle fn. The eight inherent twins were hard-cut (no shims).
+    pub(crate) fn run_solve_cycle(
         &self,
         affected: &[degenbot_solvers::affected_keys::AffectedKey],
         block: u64,
@@ -486,19 +448,63 @@ mod fleet_stance_tests {
 mod candidate2_seam_pins {
     use std::sync::Arc;
 
-    /// Pin 2 (RED: compile-fails until T2). The eight `EngineStages`
-    /// inherent twins are killed HARD: `solve_dirty`,
-    /// `last_processed_block`, `send_result_batch`, `finalize_block`,
-    /// `set_last_solved_block(u64)`, `set_solve_anchor(u64)`,
+    /// Pin 2 (GREEN after T2; extended at ZE67AE so it cannot quietly rot).
+    ///
+    /// The eight `EngineStages` inherent twins are killed HARD:
+    /// `solve_dirty`, `last_processed_block`, `send_result_batch`,
+    /// `finalize_block`, `set_last_solved_block(u64)`, `set_solve_anchor(u64)`,
     /// `record_logs_this_block`, `on_pump_ended`. The seven pokes survive
-    /// only as the `PumpControl` impl (Epoch-typed cursors); `solve_dirty`
-    /// moves DOWN to the SolveCycle surface. Binding `EngineStages` to
-    /// `PumpControl` cannot compile until the trait impl lands and the
-    /// inherent twins are gone — the pin can no longer name them.
+    /// only as the `PumpControl` impl (Epoch-typed cursors) and
+    /// `solve_dirty` is gone (the cycle surface is `run_solve_cycle`).
+    ///
+    /// Two halves:
+    /// 1. binding `EngineStages` to `PumpControl` proves the trait impl.
+    /// 2. `NoInherentTwinProbe` names all eight twin methods with a token
+    ///    argument. Rust prefers an inherent method over any trait method
+    ///    during method resolution, so if ANY twin reappears as an inherent
+    ///    `EngineStages` method the probe call below resolves to it and
+    ///    fails to compile (arity/type mismatch) — the pin is a
+    ///    compile-time inherent-absence check, not a textual one.
     #[test]
     fn candidate2_enginestages_has_no_inherent_poke_twins() {
+        // Absence probe: each probe method shadows nothing while the twin is
+        // gone; an inherent re-introduction would shadow the probe. Defined
+        // ahead of the statements to keep the module clippy-clean.
+        struct TwinProbeToken;
+        trait NoInherentTwinProbe {
+            fn solve_dirty(&self, _t: TwinProbeToken);
+            fn last_processed_block(&self, _t: TwinProbeToken);
+            fn send_result_batch(&self, _t: TwinProbeToken);
+            fn finalize_block(&self, _t: TwinProbeToken);
+            fn set_last_solved_block(&self, _t: TwinProbeToken);
+            fn set_solve_anchor(&self, _t: TwinProbeToken);
+            fn record_logs_this_block(&self, _t: TwinProbeToken);
+            fn on_pump_ended(&self, _t: TwinProbeToken);
+        }
+        impl NoInherentTwinProbe for super::EngineStages {
+            fn solve_dirty(&self, _t: TwinProbeToken) {}
+            fn last_processed_block(&self, _t: TwinProbeToken) {}
+            fn send_result_batch(&self, _t: TwinProbeToken) {}
+            fn finalize_block(&self, _t: TwinProbeToken) {}
+            fn set_last_solved_block(&self, _t: TwinProbeToken) {}
+            fn set_solve_anchor(&self, _t: TwinProbeToken) {}
+            fn record_logs_this_block(&self, _t: TwinProbeToken) {}
+            fn on_pump_ended(&self, _t: TwinProbeToken) {}
+        }
         fn is_pump_control<T: crate::bot_core::PumpControl>() {}
         is_pump_control::<super::EngineStages>();
+
+        let stages = super::EngineStages::new(Arc::new(parking_lot::Mutex::new(
+            super::ArbitrageEngine::new(),
+        )));
+        stages.solve_dirty(TwinProbeToken);
+        stages.last_processed_block(TwinProbeToken);
+        stages.send_result_batch(TwinProbeToken);
+        stages.finalize_block(TwinProbeToken);
+        stages.set_last_solved_block(TwinProbeToken);
+        stages.set_solve_anchor(TwinProbeToken);
+        stages.record_logs_this_block(TwinProbeToken);
+        stages.on_pump_ended(TwinProbeToken);
     }
 
     /// Minimal `tracing_subscriber::Layer` that records ERROR events
