@@ -62,6 +62,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [043](ADR-043-observability-standard.md) | The observability standard — four channels, a level rubric, one target taxonomy | **proposed** |
 | [044](ADR-044-fleet-intake-liveness.md) | Fleet intake liveness — BackstopTick + PostureEdge complete the host transition relation | **accepted** |
 | [045](ADR-045-solve-cycle-extraction.md) | The solve cycle as a deep module — ArbEngine regroups into registry + cycle + config | **accepted** |
+| [046](ADR-046-stage-handlers-pump-control-split.md) | StageHandlers stays the pure product seam; PumpControl is the driver-facing control seam | accepted |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 

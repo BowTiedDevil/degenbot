@@ -737,6 +737,31 @@ roles with the stage-machine vocabulary above. The engine **Mutex sharding**
 ADR-037 sections below predate this cutover and remain accurate for the
 sharding mechanics only.
 
+**The stage seam and its control plane (ADR-046, epic `KLLYHS`).** The ONE
+pipeline seam carries two layers and must not mix them: **`StageHandlers`**
+is the *product/facts* seam — exactly the eight required `on_*` stage hooks
+whose outcomes carry the facts the driver used to re-poke for
+(`SolveOutcome.solved: Epoch`, `FinalizeOutcome.cutoff`); **`PumpControl`**
+(`bot_core/pump_control.rs`) is the *driver-facing control* seam — a separate
+required trait injected beside `Arc<dyn StageHandlers>` owning the seven
+pokes (`has_dirty_paths`, `set_last_solved_block`, `set_solve_anchor`,
+`record_logs_this_block`, `last_processed_block`, `notify_block`,
+`on_pump_ended`). Engine cursors on `PumpControl` are `Epoch`-typed;
+`notify_block` stays raw `u64` because a `newHeads` tick is a chain fact
+forwarded to the delivery-to-Python clock, not engine epoch work. Every
+symbol deletion is judged by which layer's vocabulary its callers speak —
+provenance/execution talk lives on the ADR-045 `SolveCycle` surface, never up
+on `on_solve`. **Outcome-carrier discipline:** an outcome field must be read
+by a driver; no field exists only to pass a fabricated value through (the
+`Finalize` `PublishOutcome::default()` pass-through is gone). The eight
+`EngineStages` inherent twins (`solve_dirty`, `last_processed_block`,
+`send_result_batch`, `finalize_block`, `set_last_solved_block(u64)`,
+`set_solve_anchor(u64)`, `record_logs_this_block`, `on_pump_ended`) are
+**retired names** — hard-cut, no shims. The split changed no Python surface:
+the FFI sweep found **no Python-visible `solve_dirty` exposure**, and
+`degenbot-python` gained only parameter plumbing (the `control` Arc clone)
+plus `PumpControl` routing in the solve wrapper.
+
 ## The `_ffi` seam (Pydantic barrier — DECIDED)
 
 **Decision:** `degenbot._ffi` is **private** — a raw Rust extension imported by ONE barrier per domain, never by leaf code. Model: pydantic-core (`_pydantic_core` is imported only by `pydantic_core/__init__.py`; the companion `pydantic` never touches it). Replaces degenbot's prior mixed state (ban test + allowlist back-door + direct `_ffi.<sub>` leaf imports).
