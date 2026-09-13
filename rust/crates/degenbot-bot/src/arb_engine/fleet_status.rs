@@ -233,4 +233,90 @@ mod tests {
         };
         assert!(tier_refused_string(&clean).is_none());
     }
+
+    /// candidate4 pin 2 - RED at HEAD (the registry does not exist yet;
+    /// `fleet_runtime_status` reads `fleet_registration_executor`'s module
+    /// statics). TARGET (post-T2): `fleet_status` reads the ONE
+    /// `seat_host::FleetBootRegistry`; whichever role installs first owns the
+    /// canonical process boot, stamped exactly once, and
+    /// `fleet_runtime_status()` reports the SAME boot facts regardless of
+    /// install order.
+    #[test]
+    fn candidate4_runtime_status_ignores_install_order_first_wins_once() {
+        let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
+        // The keyed accessors expose each role's descriptor (the boot stamp
+        // rides `BootRole`), so the registry owns both rows.
+        assert_eq!(
+            registry.sim().descriptor().boot_role,
+            crate::arb_engine::boot_stamp::BootRole::Sim
+        );
+        assert_eq!(
+            registry.registration().descriptor().boot_role,
+            crate::arb_engine::boot_stamp::BootRole::Registration
+        );
+        // First-wins, stamped exactly once: the registry's canonical boot is
+        // the SAME value `fleet_runtime_status()` reports - never the
+        // registration module's private static.
+        let status = fleet_runtime_status();
+        assert_eq!(
+            status.fleet_booted,
+            registry.boot_installed(),
+            "the runtime status must read the registry's first-wins latch"
+        );
+        if let Some(canonical) = registry.process_boot() {
+            assert_eq!(status.quota_cpus, canonical.quota_cpus);
+            assert_eq!(status.profile, canonical.profile);
+        }
+    }
+
+    /// candidate4 pin 4 - ADAPTER: GREEN at HEAD and GREEN after T2. It pins
+    /// the runtime_status PRG-5 gate semantics source-independently (both sides
+    /// must read the same owner after the T2 reroute): the status
+    /// `fleet_booted` mirrors the registration-boot latch, the projected
+    /// budget co-varies with the resolved binding, and the `tier_refused`
+    /// renderer keeps the typed family NAME + floor sentence (the port of the
+    /// existing `the_tier_refused_string_names_the_family_it_fell_from`).
+    #[test]
+    fn candidate4_preserve_runtime_status_semantics() {
+        // PRG-5 gate: `fleet_runtime_status().fleet_booted` mirrors the
+        // process registration-boot latch, pre- and post-install.
+        let gate = crate::arb_engine::fleet_intake::registration_boot_installed();
+        let status = fleet_runtime_status();
+        assert_eq!(
+            status.fleet_booted, gate,
+            "the runtime status must mirror the PRG-5 registration-boot gate"
+        );
+        // A resolved binding implies a projected budget; a refused plan
+        // carries neither (the status never panics on an unhostable view).
+        assert_eq!(
+            status.binding.is_some(),
+            status.budget.is_some(),
+            "binding and projected budget co-vary"
+        );
+        // The tier-refusal renderer (ported so it survives the T2 reroute).
+        let refused = FleetPlan {
+            id: degenbot_workers::plan::PLAN_ID,
+            binding: Binding::Pinned,
+            oversubscribed: true,
+            budget_cpus: 4.0,
+            tier_refusal: Some(BudgetError::QuotaTooSmallForPinnedRoles {
+                quota: 4.0,
+                required: 6,
+            }),
+        };
+        let rendered = tier_refused_string(&refused).expect("the refusal renders");
+        assert!(
+            rendered.contains("QuotaTooSmallForPinnedRoles"),
+            "the string names the typed family: {rendered}"
+        );
+        assert!(
+            rendered.contains("pinned-role floor"),
+            "the string keeps the floor sentence: {rendered}"
+        );
+        let clean = FleetPlan {
+            tier_refusal: None,
+            ..refused
+        };
+        assert!(tier_refused_string(&clean).is_none());
+    }
 }

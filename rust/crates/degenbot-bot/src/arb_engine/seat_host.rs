@@ -3144,3 +3144,112 @@ mod tests {
         }
     }
 }
+
+// ======================================================================
+// ergo G5YDRH - RED pins for the candidate-4 FleetBootRegistry contract.
+// Written against the TARGET contract; production code is NOT changed.
+// ======================================================================
+#[cfg(test)]
+mod candidate4_seam_pins {
+    use crate::arb_engine::boot_stamp::BootRole;
+    use crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor;
+    use crate::arb_engine::fleet_sim_executor::FleetSimExecutor;
+
+    use super::{BootSlot, BootSlotView, FleetBootRegistry, SeatRoleDesc};
+
+    /// candidate4 pin 1 - RED at HEAD (compile: `seat_host` owns no
+    /// `FleetBootRegistry`). TARGET (post-T2): ONE keyed boot owner carrying
+    /// a per-`BootRole` accessor (`sim()` / `registration()`) that exposes
+    /// the role descriptor AND the TYPED executor slot, plus registry-level
+    /// `boot_installed()` / `process_boot()` first-wins process facts.
+    #[test]
+    fn candidate4_registry_is_the_keyed_boot_owner() {
+        type Registry = FleetBootRegistry;
+        let _process: fn() -> &'static Registry = Registry::process;
+        // The keyed role accessor per `BootRole` returns the typed slot.
+        let _sim: fn(&Registry) -> &BootSlot<FleetSimExecutor> = Registry::sim;
+        let _registration: fn(&Registry) -> &BootSlot<FleetRegistrationExecutor> =
+            Registry::registration;
+        // The `BootRole`-keyed view exposes the descriptor uniformly.
+        let _role: fn(&Registry, BootRole) -> &dyn BootSlotView = Registry::role;
+        // Registry-level first-wins process boot facts.
+        let _installed: fn(&Registry) -> bool = Registry::boot_installed;
+        let _process_boot: fn(&Registry) -> Option<degenbot_workers::dispatcher::FleetBoot> =
+            Registry::process_boot;
+        // The descriptor is reachable THROUGH the keyed accessor.
+        let _descriptor: fn(&BootSlot<FleetSimExecutor>) -> &'static SeatRoleDesc =
+            BootSlot::descriptor;
+        // The TYPED executor slot is reachable THROUGH the keyed accessor.
+        let _executor: fn(&BootSlot<FleetSimExecutor>) -> Option<&'static FleetSimExecutor> =
+            BootSlot::executor;
+    }
+
+    /// candidate4 pin 3 - RED at HEAD (compile: the registry path is absent)
+    /// and GREEN after T2. TARGET: the role modules shrink to descriptor rows
+    /// + thin boot fns; the process boot/global wiring lives on the registry.
+    ///
+    /// DOCUMENTATION LATCH (a module-private static has no compile-observable
+    /// method signature, so absence of the role-module wiring cannot be probed
+    /// by method resolution - this is the explicit human half):
+    /// post-T2 `fleet_sim_executor` must NOT own `static SIM_ROLE`,
+    /// `static FLEET_SIM_BOOT: OnceLock<BootStamp>`, `static
+    /// FLEET_SIM_EXECUTOR: OnceLock<Result<..>>`, or its own
+    /// `install_boot`/`global_fleet_sim_executor`; likewise
+    /// `fleet_registration_executor` must NOT own `static REG_ROLE`,
+    /// `static FLEET_REGISTRATION_BOOT`, `static FLEET_REGISTRATION_EXECUTOR`,
+    /// or `install_boot`/`boot_installed`/`stamped_boot`/
+    /// `global_fleet_registration_executor`. The forward probe below catches
+    /// any REINTRODUCTION of that wiring as an INHERENT method.
+    #[test]
+    fn candidate4_role_modules_are_descriptor_rows() {
+        // The post-T2 registry path that REPLACES the per-role statics and
+        // global wiring (RED half - compile errors until T2).
+        fn sim_slot() -> &'static BootSlot<FleetSimExecutor> {
+            FleetBootRegistry::process().sim()
+        }
+        fn registration_slot() -> &'static BootSlot<FleetRegistrationExecutor> {
+            FleetBootRegistry::process().registration()
+        }
+
+        // GREEN half (forward absence probe, candidate2's `NoInherentTwinProbe`
+        // pattern): if any retired per-role wiring reappears as an INHERENT
+        // `FleetSimExecutor`/`FleetRegistrationExecutor` method, the probe
+        // call below resolves to it and fails to compile (arity/type mismatch).
+        struct WiringProbeToken;
+        trait NoInherentWiringProbe {
+            fn install_boot(&self, _t: WiringProbeToken);
+            fn global_fleet_sim_executor(&self, _t: WiringProbeToken);
+            fn global_fleet_registration_executor(&self, _t: WiringProbeToken);
+            fn boot_installed(&self, _t: WiringProbeToken);
+            fn stamped_boot(&self, _t: WiringProbeToken);
+        }
+        impl NoInherentWiringProbe for FleetSimExecutor {
+            fn install_boot(&self, _t: WiringProbeToken) {}
+            fn global_fleet_sim_executor(&self, _t: WiringProbeToken) {}
+            fn global_fleet_registration_executor(&self, _t: WiringProbeToken) {}
+            fn boot_installed(&self, _t: WiringProbeToken) {}
+            fn stamped_boot(&self, _t: WiringProbeToken) {}
+        }
+        impl NoInherentWiringProbe for FleetRegistrationExecutor {
+            fn install_boot(&self, _t: WiringProbeToken) {}
+            fn global_fleet_sim_executor(&self, _t: WiringProbeToken) {}
+            fn global_fleet_registration_executor(&self, _t: WiringProbeToken) {}
+            fn boot_installed(&self, _t: WiringProbeToken) {}
+            fn stamped_boot(&self, _t: WiringProbeToken) {}
+        }
+        #[allow(dead_code)]
+        fn wiring_must_stay_off_the_role_modules(
+            sim: &FleetSimExecutor,
+            registration: &FleetRegistrationExecutor,
+        ) {
+            sim.install_boot(WiringProbeToken);
+            sim.global_fleet_sim_executor(WiringProbeToken);
+            registration.global_fleet_registration_executor(WiringProbeToken);
+            registration.boot_installed(WiringProbeToken);
+            registration.stamped_boot(WiringProbeToken);
+        }
+
+        let _ = sim_slot as fn() -> &'static BootSlot<FleetSimExecutor>;
+        let _ = registration_slot as fn() -> &'static BootSlot<FleetRegistrationExecutor>;
+    }
+}
