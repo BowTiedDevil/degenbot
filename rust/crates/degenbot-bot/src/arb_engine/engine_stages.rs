@@ -46,7 +46,7 @@ use crate::bot_core::{
         AffectedPaths, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish, PublishOutcome,
         QuiesceOutcome, Resolve, Simulate, SimulateOutcome, Solve, SolveOutcome, StageError,
     },
-    BlockMetadata, Epoch, EpochDelta, Rewind, RewindOutcome,
+    BlockMetadata, Epoch, EpochDelta, PumpControl, Rewind, RewindOutcome,
 };
 use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
 
@@ -386,7 +386,12 @@ impl StageHandlers for EngineStages {
             restored_to: work.to_epoch,
         })
     }
+}
 
+/// ADR-046: the driver-facing control seam, split OFF `StageHandlers` so the
+/// stage trait carries only the eight pure hooks. `EngineStages` implements
+/// both; the pump injects both Arcs at construction.
+impl PumpControl for EngineStages {
     fn has_dirty_paths(&self) -> bool {
         !self.delta.read().is_empty()
     }
@@ -403,8 +408,8 @@ impl StageHandlers for EngineStages {
         self.engine.lock().record_logs_this_block();
     }
 
-    fn last_processed_block(&self) -> Option<u64> {
-        self.engine.lock().last_processed_block()
+    fn last_processed_block(&self) -> Option<Epoch> {
+        self.engine.lock().last_processed_block().map(Epoch::at)
     }
 
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
@@ -563,7 +568,7 @@ mod candidate2_seam_pins {
         let capture = LoudCloseCapture::default();
         let subscriber = tracing_subscriber::registry().with(capture.clone());
         tracing::subscriber::with_default(subscriber, || {
-            crate::bot_core::StageHandlers::on_pump_ended(&stages);
+            crate::bot_core::PumpControl::on_pump_ended(&stages);
         });
         assert!(
             capture.saw_loud_close(),

@@ -1,7 +1,8 @@
 //! `BlockPump` — `Bot`'s WS transport + drain loop (ADR-006 D4), now the
 //! thin driver of the unified stage machine (epic MROOY7, 7NFYQW + SZJUKL).
 //!
-//! Holds `Arc<Bot>` + `Arc<dyn StageHandlers>` — the ONE engine seam. Per WS
+//! Holds `Arc<Bot>` + the two ADR-046 engine seams (`Arc<dyn StageHandlers>`
+//! stage hooks, `Arc<dyn PumpControl>` driver pokes). Per WS
 //! log, the pump calls `bot.dispatch_log(log)` (decode → apply to `BotState`
 //! → `EpochDelta` byproduct; the retired `EngineSubscriber` classification is
 //! GONE — touched-pool tracking is the ledger's job since LXDY4C). At the
@@ -79,7 +80,7 @@ use tracing::Instrument;
 use crate::bot_core::LogDecision;
 use crate::bot_core::{
     stage_handlers::{Finalize, GateOutcome, Publish, PublishOutcome, Resolve, Solve},
-    BlockMetadata, Bot, Epoch, StageHandlers,
+    BlockMetadata, Bot, Epoch, PumpControl, StageHandlers,
 };
 // (the topic-import list, the backfill/idle + handshake constants, and the
 // header/log watchdog windows all live in degenbot-ingestion now — 5WTYYQ.)
@@ -171,6 +172,10 @@ pub struct BlockPump {
     /// `SolveCoordinator`/`DrainSink` fan-out collapsed onto the arb
     /// engine's `StageHandlers` implementation; no `drain_lock`, no FIFO).
     engine: Arc<dyn StageHandlers>,
+    /// ADR-046: the driver-facing control seam — the seven pokes split off
+    /// `StageHandlers` so that trait carries only the eight pure stage
+    /// hooks. Injected beside `engine` at construction.
+    control: Arc<dyn PumpControl>,
     /// The per-event reorg coordinator (slice 7). Owned by the pump (not
     /// routed through the engine seam — reorg is a `Bot` concern, parallel
     /// to `dispatch_log`).
@@ -258,6 +263,7 @@ impl BlockPump {
         rpc_url: &str,
         bot: Arc<Bot>,
         engine: Arc<dyn StageHandlers>,
+        control: Arc<dyn PumpControl>,
         reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<(Self, SubscribeState), String> {
@@ -269,6 +275,7 @@ impl BlockPump {
         let pump = Self {
             bot,
             engine,
+            control,
             reorg_coordinator,
             ingestor,
             shutdown: Arc::clone(&shutdown),
@@ -567,7 +574,7 @@ impl BlockPump {
         // coordinator cursor — `last_drained_block` under `drain_lock` — is
         // gone; work runs inline in this single-writer driver, so the engine
         // cursor IS the drained cursor.)
-        let mut current_block: u64 = self.engine.last_processed_block().unwrap_or(0);
+        let mut current_block: u64 = self.control.last_processed_block().map_or(0, Epoch::block);
 
         let snapshot_seed = self.bot.state_arc().read().snapshot_seed_block();
         if current_block == 0 && first_observed_block > 0 {
@@ -604,7 +611,7 @@ impl BlockPump {
         // guard fires only on a genuine advance (matching the prior local
         // init). A mid-flight-joining engine inherits via `set_last_solved_block`
         // (ADR-006 D4).
-        self.engine.set_last_solved_block(Epoch::at(current_block));
+        self.control.set_last_solved_block(Epoch::at(current_block));
         // Seed the cold-start solve-results anchor to the settled resume
         // boundary (`current_block` = `first_observed_block` = backfill end):
         // `results_block` is 0 until the first real `on_drain` solve, but
@@ -615,7 +622,7 @@ impl BlockPump {
         // candidates deliver immediately at a valid, verification-safe solve
         // block — NOT the chain head, which a partially-applied live event could
         // race past the backfill window.
-        self.engine.set_solve_anchor(Epoch::at(current_block));
+        self.control.set_solve_anchor(Epoch::at(current_block));
         // Whether we're past the first header after resume. The first
         // Epic A1: the pump's decision state now lives in the StageMachine; the
         // driver routes the decision arms through it. `current_block` seeds the FSM.
@@ -1223,14 +1230,14 @@ impl BlockPump {
                                 // to `block` already — mark it solved so the
                                 // first `finalize_block` guard no-ops.
                                 let _ctx = new_block_span.enter();
-                                self.engine.set_last_solved_block(Epoch::at(block));
+                                self.control.set_last_solved_block(Epoch::at(block));
                             }
                             StageDecision::Notify { block, metadata } => {
                                 // Python's block fsm tracks `newHeads` — the
                                 // block-clock pipe (delivery-to-Python at the
                                 // async boundary; never queued behind solve work).
                                 let _ctx = new_block_span.enter();
-                                self.engine.notify_block(block, &metadata);
+                                self.control.notify_block(block, &metadata);
                             }
                             other => {
                                 unreachable!("on_header only emits Backfill|SetLastSolved|Notify, got {other:?}")
@@ -1722,7 +1729,7 @@ impl BlockPump {
 
                     // LEZJAS: engine owns `has_logs_this_block` now — routed
                     // through the sink so the next `finalize_block` sees it.
-                    self.engine.record_logs_this_block();
+                    self.control.record_logs_this_block();
 
                     // [DIAG] count logs + emit periodic stats so we can see,
                     // during a freeze, that the pump IS polling logs while
@@ -1769,7 +1776,7 @@ impl BlockPump {
                     // forever (the "deadlock" operators observed).
                     op_error!(domain = pump, "BlockPump: WS subscription streams ended - pump is STOPPED. The bot will no longer process blocks (no reconnect). Check the WS endpoint / restart."
                     );
-                    self.engine.on_pump_ended();
+                    self.control.on_pump_ended();
                     return;
                 }
             }
@@ -1797,7 +1804,7 @@ impl BlockPump {
             // the solve fires — coalescing all logs in the burst into one
             // solve. 50ms is well within the 12s block interval (same
             // `DEBOUNCE_MS` as the publish gate).
-            let dirty_now = self.engine.has_dirty_paths();
+            let dirty_now = self.control.has_dirty_paths();
             // PWPPAZ T2 — designed first-slice trigger: remember when the
             // window's unsolved dirt was first observed. While the burst
             // outlives `early_slice_ms`, ONE bounded early Drain fires
@@ -1984,7 +1991,7 @@ impl BlockPump {
         } else {
             // LEZJAS: engine owns `last_solved_block` — mark this block
             // solved so the next finalize guard no-ops.
-            self.engine.set_last_solved_block(ctx.epoch());
+            self.control.set_last_solved_block(ctx.epoch());
         }
     }
 
@@ -2060,7 +2067,7 @@ impl BlockPump {
             fsm.on_backfill_range_done(latest_block);
             // LEZJAS: engine owns `last_solved_block` now — mark the backfilled
             // range solved through the engine seam.
-            self.engine.set_last_solved_block(Epoch::at(latest_block));
+            self.control.set_last_solved_block(Epoch::at(latest_block));
         }
     }
 
@@ -2425,6 +2432,7 @@ impl BlockPump {
     pub fn for_test(
         bot: Arc<Bot>,
         engine: Arc<dyn StageHandlers>,
+        control: Arc<dyn PumpControl>,
         reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
         provider: Arc<AlloyProvider>,
         shutdown: Arc<AtomicBool>,
@@ -2436,6 +2444,7 @@ impl BlockPump {
         Self {
             bot,
             engine,
+            control,
             reorg_coordinator,
             // (5WTYYQ) The injected mock provider rides inside the ingestion
             // transport handle; tests that avoid timeouts never touch it.
@@ -2685,9 +2694,6 @@ mod tests {
                 verdict: crate::bot_core::stage_handlers::QuiesceVerdict::Settled,
             })
         }
-        fn has_dirty_paths(&self) -> bool {
-            self.dirty.load(Ordering::Relaxed)
-        }
         fn on_resolve(
             &self,
             _work: &Resolve<'_>,
@@ -2756,29 +2762,6 @@ mod tests {
                 restored_to: crate::bot_core::Epoch::at(0),
             })
         }
-        fn set_last_solved_block(&self, solved: Epoch) {
-            self.solved.lock().unwrap().push(solved.block());
-        }
-        fn set_solve_anchor(&self, _anchor: Epoch) {}
-        fn record_logs_this_block(&self) {
-            self.logs_recorded
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        fn on_pump_ended(&self) {
-            self.pump_ended
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            self.stage_seam_ends
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        fn last_processed_block(&self) -> Option<u64> {
-            let v = self.last_processed.load(Ordering::Relaxed);
-            (v != 0).then_some(v)
-        }
-        fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
-            // Record the forwarded newHeads tick so task 22Y7AB can assert the
-            // pump emits one BlockNotification per accepted header.
-            self.notified.lock().unwrap().push((block, *metadata));
-        }
     }
 
     /// Candidate-2 seam pin (ergo 2KQZSC): the TARGET `PumpControl` surface.
@@ -2845,7 +2828,7 @@ mod tests {
         ));
         let shutdown = Arc::new(AtomicBool::new(false));
         let sink = Arc::new(FakeStageEngine::new(last_processed));
-        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, shutdown);
+        let pump = BlockPump::for_test(bot, sink.clone(), sink.clone(), reorg, provider, shutdown);
         (pump, sink)
     }
 
@@ -2997,7 +2980,14 @@ mod tests {
         ));
         let shutdown = Arc::new(AtomicBool::new(false));
         let sink = Arc::new(FakeStageEngine::new(last_processed));
-        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, Arc::clone(&shutdown));
+        let pump = BlockPump::for_test(
+            bot,
+            sink.clone(),
+            sink.clone(),
+            reorg,
+            provider,
+            Arc::clone(&shutdown),
+        );
         (pump, sink, asserter, shutdown)
     }
 
@@ -4492,7 +4482,7 @@ mod tests {
         });
         assert_eq!(
             sink.last_processed_block(),
-            Some(w),
+            Some(Epoch::at(w)),
             "solve(W) must anchor the cursor (mirrors the old SolveCoordinator drain)"
         );
 
@@ -4823,7 +4813,14 @@ mod tests {
         ));
         let shutdown = Arc::new(AtomicBool::new(false));
         let sink = Arc::new(FakeStageEngine::new(last_processed));
-        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, Arc::clone(&shutdown));
+        let pump = BlockPump::for_test(
+            bot,
+            sink.clone(),
+            sink.clone(),
+            reorg,
+            provider,
+            Arc::clone(&shutdown),
+        );
         (pump, sink, shutdown)
     }
 
@@ -6450,7 +6447,14 @@ mod tests {
         ));
         let shutdown = Arc::new(AtomicBool::new(false));
         let sink = Arc::new(FakeStageEngine::new(last_processed));
-        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, Arc::clone(&shutdown));
+        let pump = BlockPump::for_test(
+            bot,
+            sink.clone(),
+            sink.clone(),
+            reorg,
+            provider,
+            Arc::clone(&shutdown),
+        );
         (pump, sink, shutdown, asserter)
     }
 
@@ -7114,8 +7118,8 @@ mod tests {
         /// Pin 3 (RED: compile-fails until T2). The BEHAVIORAL half: drive
         /// the WS-streams-ended branch (block_pump.rs:1772) and prove the
         /// loud close actually fires. At the target the pump drives the close
-        /// through `PumpControl::on_pump_ended`; at HEAD it still calls
-        /// `self.engine.on_pump_ended()` on the `StageHandlers` seam, so the
+        /// through `PumpControl::on_pump_ended`; at HEAD it still called the
+        /// old direct stage-seam close, so the
         /// `pump_control_ends` count is 0 and the `stage_seam_ends` count is
         /// 1 — the assertion below fails rather than passing vacuously. The
         /// `PumpControl` reference is the compile-red (trait lands in T2).
@@ -7146,7 +7150,7 @@ mod tests {
         fn candidate2_pump_ended_old_stage_call_absent_documentation() {
             let src = include_str!("block_pump.rs");
             assert!(
-                !src.contains("self.engine.on_pump_ended()"),
+                !src.contains(concat!("self.engine.", "on_pump_ended()")),
                 "documentation latch: the pump is intended to reach the loud close through PumpControl"
             );
         }

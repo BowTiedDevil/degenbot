@@ -43,7 +43,7 @@ use std::fmt;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::bot_core::{BlockContext, BlockMetadata, Epoch};
+use crate::bot_core::{BlockContext, Epoch};
 
 // ----------------------------------------------------------------------
 // Stage
@@ -538,58 +538,6 @@ pub trait StageHandlers: Send + Sync {
     /// # Errors
     /// [`StageError::Failed`] on a hard hook failure.
     fn on_rewind(&self, work: &Rewind) -> Result<RewindOutcome, StageError>;
-
-    // ---------------------------------------------------------------------
-    // Driver-facing lifecycle surface (SZJUKL seam retirement)
-    //
-    // The dissolved `DrainSink`/`Engine`/`SolveCoordinator` fan-out had two
-    // halves: the drain seam (deleted — its work is the stage hooks above)
-    // and the pump↔engine coordination the driver still needs. That
-    // coordination lands HERE as required methods of the ONE seam — no
-    // second trait, no fan-out, no wrapper lock layer:
-    //
-    // - `has_dirty_paths` — the driver's drained-settle gate (Streaming →
-    //   Resolved readiness: ledger emptiness, LXDY4C).
-    // - `set_last_solved_block` / `set_solve_anchor` / `record_logs_this_block`
-    //   — engine-owned bookkeeping since LEZJAS, coordinated from the
-    //   driver's decisions (SetLastSolved, resume seeding, forward logs).
-    // - `last_processed_block` — the engine's own cursor (drain-consistent
-    //   by construction: work runs inline in the driver, single-writer).
-    // - `notify_block` — the block-clock pipe (delivery-to-Python at the
-    //   async boundary; never queued behind solver work, B2/B4GX7C lineage).
-    // - `on_pump_ended` — the liveness answer (incident 2026-08-20 #2):
-    //   delivery channels END so Python fails loudly instead of idling.
-    // ---------------------------------------------------------------------
-
-    /// Are there unsolved dirty pool keys accumulated since the last solve?
-    #[must_use]
-    fn has_dirty_paths(&self) -> bool;
-
-    /// Mark `solved` as solved (engine-owned bookkeeping since LEZJAS).
-    fn set_last_solved_block(&self, solved: Epoch);
-
-    /// Seed the cold-start `results_block` anchor to a settled block (the
-    /// pump's resume/backfill boundary). Only fills while it is 0.
-    fn set_solve_anchor(&self, anchor: Epoch);
-
-    /// Record that at least one forward log applied this block (cleared by
-    /// the next finalize — LEZJAS).
-    fn record_logs_this_block(&self);
-
-    /// The last block this engine solved. The resume path reads it to seed
-    /// the machine's starting cursor.
-    #[must_use]
-    fn last_processed_block(&self) -> Option<u64>;
-
-    /// Forward a `newHeads` tick to the delivery-to-Python block clock
-    /// (the one non-FIFO dispatch: a chain fact never queues behind solver
-    /// work; every accepted header delivered 1:1).
-    fn notify_block(&self, block: u64, metadata: &BlockMetadata);
-
-    /// The pump ended (WS stream dead or pump task exited): make the
-    /// Python-facing streams END so the bot fails loudly (no default —
-    /// every engine answers the liveness question explicitly).
-    fn on_pump_ended(&self);
 }
 
 // ======================================================================
@@ -1310,8 +1258,12 @@ mod conformance {
                 restored_to: work.to_epoch,
             })
         }
+    }
 
-        // Lifecycle surface — the stub computes nothing and owns no channels.
+    // Lifecycle surface — the stub computes nothing and owns no channels.
+    // Separate required trait (ADR-046): the pokes are the driver's control
+    // seam, never stage hooks.
+    impl crate::bot_core::PumpControl for NoopStubEngine {
         fn has_dirty_paths(&self) -> bool {
             false
         }
@@ -1322,11 +1274,11 @@ mod conformance {
 
         fn record_logs_this_block(&self) {}
 
-        fn last_processed_block(&self) -> Option<u64> {
+        fn last_processed_block(&self) -> Option<Epoch> {
             None
         }
 
-        fn notify_block(&self, _block: u64, _metadata: &BlockMetadata) {}
+        fn notify_block(&self, _block: u64, _metadata: &crate::bot_core::BlockMetadata) {}
 
         fn on_pump_ended(&self) {}
     }
@@ -1686,7 +1638,8 @@ mod candidate2_seam_pins {
         let _set_anchor: fn(&dyn PumpControl, Epoch) = PumpControl::set_solve_anchor;
         let _record_logs: fn(&dyn PumpControl) = PumpControl::record_logs_this_block;
         let _last: fn(&dyn PumpControl) -> Option<Epoch> = PumpControl::last_processed_block;
-        let _notify: fn(&dyn PumpControl, u64, &BlockMetadata) = PumpControl::notify_block;
+        let _notify: fn(&dyn PumpControl, u64, &crate::bot_core::BlockMetadata) =
+            PumpControl::notify_block;
         let _ended: fn(&dyn PumpControl) = PumpControl::on_pump_ended;
 
         // The eight hooks stay on `StageHandlers`; the pokes above must not.

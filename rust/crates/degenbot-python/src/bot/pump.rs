@@ -24,7 +24,7 @@ use degenbot_bot::arb_engine::{ArbitrageEngine, EnginePhase, EngineStages};
 // IngestEvent; the PyO3 layer consumes it like any other sink-side event.
 use degenbot_bot::bot_core::block_pump::BlockPump;
 use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
-use degenbot_bot::bot_core::{Bot, StageHandlers};
+use degenbot_bot::bot_core::{Bot, PumpControl, StageHandlers};
 use degenbot_ingestion::IngestEvent as WsEvent;
 use parking_lot::Mutex;
 use pyo3::exceptions::PyRuntimeError;
@@ -171,6 +171,7 @@ impl PumpState {
         }
         let bot = Arc::clone(&self.bot);
         let engine_stage: Arc<dyn StageHandlers> = self.stages.clone();
+        let control: Arc<dyn PumpControl> = self.stages.clone();
         let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
         let shutdown = Arc::clone(&self.shutdown);
         let runtime = degenbot_core::runtime::get_runtime();
@@ -184,8 +185,15 @@ impl PumpState {
         let subscribe_result = py
             .detach(|| {
                 runtime.block_on(async {
-                    BlockPump::subscribe(rpc_url, bot, engine_stage, reorg_coordinator, shutdown)
-                        .await
+                    BlockPump::subscribe(
+                        rpc_url,
+                        bot,
+                        engine_stage,
+                        control,
+                        reorg_coordinator,
+                        shutdown,
+                    )
+                    .await
                 })
             })
             .map_err(PyRuntimeError::new_err)?;

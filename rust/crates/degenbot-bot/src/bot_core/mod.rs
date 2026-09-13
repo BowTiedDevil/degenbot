@@ -29,6 +29,7 @@ pub mod epoch_delta;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
 pub mod pool_builder;
+pub mod pump_control;
 pub mod pump_telemetry;
 /// PRG-2 / IRUMXD: the keyed registration-gate table for immutable V4
 /// admission verdicts (see [registration_gate] docs).
@@ -90,6 +91,7 @@ use degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use epoch::{BlockContext, Epoch, StaleEpoch};
 pub use epoch_delta::EpochDelta;
+pub use pump_control::PumpControl;
 pub use registration_lifecycle::{
     run_cl_v3_lifecycle, run_cl_v4_lifecycle, run_v3_registration_lifecycle,
     run_v4_registration_lifecycle, RegistrationLifecycleError,
