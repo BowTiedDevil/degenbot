@@ -13,6 +13,13 @@ see "Deferred" — only the topology is decided.
 > `EpochDelta` ledger and solve triggering is the `StageHandlers` hooks driven inline by
 > the pump. The `Bot` / `BotState` / `LogDispatcher` / `BlockPump` / `ReorgCoordinator`
 > rows remain accurate.
+>
+> **Partial supersession (epic `Y4VMWH`, [ADR-047](ADR-047-retire-subscriber-bus.md), 2026-09-12):**
+> D4's per-state-subject publisher/subscriber event bus — the `LogDispatcher`
+> `PoolStateSubscriber` registry and the Python subscriber bridge, i.e. the Deferred
+> "solve-notification protocol" below — is **retired**. ADR-041 removed its engine
+> consumer, the `EpochDelta` ledger owns dirt, and `notify_pool_state_changed` became
+> `record_pool_state_changed`. The orchestrator rows remain accurate.
 
 ## Update (ADR-006 D3+D4 follow-up completion)
 

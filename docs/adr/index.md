@@ -63,6 +63,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [044](ADR-044-fleet-intake-liveness.md) | Fleet intake liveness — BackstopTick + PostureEdge complete the host transition relation | **accepted** |
 | [045](ADR-045-solve-cycle-extraction.md) | The solve cycle as a deep module — ArbEngine regroups into registry + cycle + config | **accepted** |
 | [046](ADR-046-stage-handlers-pump-control-split.md) | StageHandlers stays the pure product seam; PumpControl is the driver-facing control seam | accepted |
+| [047](ADR-047-retire-subscriber-bus.md) | Retire the ADR-006 D4 subscriber bus — compile is the guard for retired modules | accepted |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 

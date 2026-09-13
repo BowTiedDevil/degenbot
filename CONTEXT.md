@@ -733,7 +733,19 @@ only. The current terms:
 **Retired-name discipline:** do not reintroduce `DrainSink`, `Engine` (as a
 per-block fan-out type), `SolveCoordinator`, `DispatchOwner`, `DrainWork`,
 `DirtySets`, or `EngineSubscriber` in new code or docs; describe the same
-roles with the stage-machine vocabulary above. The engine **Mutex sharding**
+roles with the stage-machine vocabulary above.
+
+**Retired-name discipline (subscriber bus — ADR-047, 2026-09-12; epic `Y4VMWH`):**
+do not reintroduce `PoolStateSubscriber`, `attach_engine`,
+`subscribe_pool_state_change`, `PySubscriberAdapter`, `PySubscription`,
+`register_subscriber`, the subscriber-drainer thread, or `notify_pool_state_changed`
+in new code or docs. ADR-041 retired the bus's only engine consumer and the
+`EpochDelta` ledger is the sole dirt owner; the bus paid a subscribers `Mutex` plus
+a `NOTIFY-MISS` warn on every applied forward log to zero production
+subscribers. `notify_pool_state_changed` is superseded by
+**`record_pool_state_changed`** (the `EpochDelta` ledger append, not a fan-out).
+Compile is the guard for the deleted module: no resurrection-scan test exists or
+should be added (ADR-047 settled policy — source scans guard LIVE invariants only). The engine **Mutex sharding**
 ADR-037 sections below predate this cutover and remain accurate for the
 sharding mechanics only.
 
@@ -796,7 +808,7 @@ plus `PumpControl` routing in the solve wrapper.
 ### Dead / test-only submodules (un-homed, lazy)
 
 - **`executor`** — 0 callers anywhere (production or test). Truly dead surface. Stays un-homed; a `degenbot.executor` home appears only if a Python consumer lands. (The `contracts/` Vyper executor + `degenbot-executor` Rust crate exist, but no Python leaf reaches `_ffi.executor`.)
-- **`subscriber`** — 0 production callers; test-only (`tests/fakes/subscribers.py`, `tests/test_pubsub_seam_parity.py` reach `_ffi.subscriber` for `PySubscription` / `register_subscriber`). Un-homed for production; when a production consumer appears it gets `degenbot.subscriber`. The test fakes import directly from `_ffi.subscriber` — under the strict Pydantic barrier, test code is leaf code and must import from the home once it exists; until then the test imports are the signal that a home is needed.
+- **`subscriber`** — **RETIRED** (ADR-047, 2026-09-12; epic `Y4VMWH`). The `_ffi.subscriber` bridge (`PySubscription` / `register_subscriber` / `PySubscriberAdapter` / the subscriber-drainer thread) and its test-only fakes were deleted hard. It was always test-only (0 production callers); no production consumer appeared, and no `degenbot.subscriber` home will be created. Dirt is owned solely by the `EpochDelta` ledger (`record_pool_state_changed`).
 
 ### Clean single-home submodules (reroute only)
 
