@@ -31,14 +31,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from degenbot._ffi import FleetIntakeFaultedError
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import UniswapV3PoolTable, UniswapV4PoolTable
 from degenbot.exceptions import (
+    DynamicFeePoolRejectedError,
+    HighFeePoolRejectedError,
     HookedPoolRejectedError,
     PathRejectedError,
     VerificationMismatchError,
 )
-from degenbot._ffi import FleetIntakeFaultedError
 from degenbot.runner.build_paths import (
     REG_INTAKE_WINDOW,
     PathRegistrationPipeline,
@@ -766,3 +768,162 @@ async def test_intake_fault_propagates_through_run_registration() -> None:
     with pytest.raises(FleetIntakeFaultedError):
         await pipeline.run_registration(producer=_producer([_ScriptedPath("p")]))
     assert pipeline.path_count == 0
+
+
+# ---------------------------------------------------------------------------
+# N3IRYT: the cockpit-private registration outcome ledger owns the one memo
+# concept. The four ad-hoc collections retire from the pipeline; build-refusal
+# stability is classified by exception TYPE (never the exception class name),
+# and the metric tag path draws from a bounded outcome vocabulary.
+# ---------------------------------------------------------------------------
+
+
+def test_registration_ledger_owns_the_four_memo_concepts() -> None:
+    """The four memo collections live on ONE ledger, not on the pipeline.
+
+    FALSIFICATION: any retired instance attribute still answering, or a
+    concept the unit uses but the ledger does not own.
+    """
+    from degenbot.runner._registration_ledger import RegistrationLedger
+
+    pipeline, _bot = _pipeline_with_bot(_FleetBot())
+    assert isinstance(pipeline._ledger, RegistrationLedger)
+    for retired in (
+        "_registered_paths_seen",
+        "_verified_once",
+        "_unregistrable_pools",
+        "_rejected_paths_seen",
+    ):
+        assert not hasattr(pipeline, retired), f"{retired} must be owned by the ledger"
+
+    # Registered-path + verify-once concepts, after one real unit.
+    registry = _RecordingRegistry()
+    pipeline = _pipeline_over_registry(registry)
+    steps = _closed_v3_cycle_steps()
+    first = pipeline._registration_unit(steps)
+    assert first.kind == "registered"
+    hop_sig = ((101, True), (202, True))
+    assert pipeline._ledger.path_registered(hop_sig), "registered-path memo"
+    assert pipeline._ledger.pool_verified(f"v3:{POOL_A}"), "verify-once memo"
+    assert pipeline._ledger.pool_verified(f"v3:{POOL_B}")
+
+    # Rejected-path concept (the D7KMQO deny memoizes per hop signature).
+    denied = _RecordingRegistry()
+    denied.path_predicate = SimpleNamespace(evaluate=_raise_path_rejected)
+    pipeline2 = _pipeline_over_registry(denied)
+    assert pipeline2._registration_unit(_closed_v3_cycle_steps()).kind == "reject"
+    assert pipeline2._ledger.path_rejected(hop_sig), "rejected-path memo"
+
+    # Unregistrable-pool concept (a stable V4 admission refusal).
+    def _build_managed_pool(**_kwargs: object) -> None:
+        raise HookedPoolRejectedError
+
+    bot = SimpleNamespace(
+        registration_fleet_hosted=lambda: True,
+        build_managed_pool=_build_managed_pool,
+    )
+    pipeline3, _ = _pipeline_with_bot(bot)
+    v4_steps = [_OpaqueStep(type=UniswapV4PoolTable, address=None, hash=0xDEAD)]
+    assert pipeline3._registration_unit(v4_steps).tag == "v4-hook-rejected"
+    key = pipeline3._ledger.pool_memo_key(v4_steps[0], "V4")
+    assert pipeline3._ledger.unregistrable_record(key) is not None, "unregistrable-pool memo"
+
+
+def _raise_path_rejected(_pools_and_zfos: object) -> None:
+    raise PathRejectedError(message="policy deny")
+
+
+def test_build_refusal_classification_is_typed_not_class_name_based() -> None:
+    """Stability matches exception TYPE; a same-named class stays transient.
+
+    FALSIFICATION: classification on the class name — the impostor
+    below would be judged stable.
+    """
+    from degenbot.runner._registration_ledger import RegistrationLedger
+
+    impostor = type("HighFeePoolRejectedError", (RuntimeError,), {})
+    transient = RegistrationLedger.classify_build_refusal(impostor("x"), pool_type="V3")
+    assert transient.stable is False
+
+    high_fee = RegistrationLedger.classify_build_refusal(HighFeePoolRejectedError(), pool_type="V3")
+    assert high_fee.stable is True
+    assert high_fee.counts_as_skip is True
+
+    hooked = RegistrationLedger.classify_build_refusal(HookedPoolRejectedError(), pool_type="V4")
+    assert hooked.stable is True
+    assert hooked.counts_as_skip is False
+
+    dynamic = RegistrationLedger.classify_build_refusal(
+        DynamicFeePoolRejectedError(), pool_type="V4"
+    )
+    assert dynamic.stable is True
+    assert dynamic.counts_as_skip is False
+
+
+def test_impostor_class_name_is_never_memoized() -> None:
+    """A name-only stable match stays retryable (build re-attempted).
+
+    FALSIFICATION: the retired class-name set would have memoized the
+    impostor, answering the second sighting without a build.
+    """
+    impostor = type("HighFeePoolRejectedError", (RuntimeError,), {})
+    builds: list[str] = []
+
+    def _build_pool(address: str, *, silent: bool = True) -> None:
+        builds.append(address)
+        msg = "name matches, type does not"
+        raise impostor(msg)
+
+    bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
+    pipeline, _ = _pipeline_with_bot(bot)
+    steps = [_OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None)]
+
+    assert pipeline._registration_unit(steps).kind == "skip"
+    assert pipeline._registration_unit(steps).kind == "skip"
+    assert builds == [POOL_A, POOL_A], "a name-only match must never be memoized"
+    assert (
+        pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(steps[0], "V3"))
+        is None
+    )
+
+
+def test_real_typed_stable_refusal_is_memoized() -> None:
+    """The real typed refusal IS a pool fact: the second sighting memoizes."""
+    builds: list[str] = []
+
+    def _build_pool(address: str, *, silent: bool = True) -> None:
+        builds.append(address)
+        raise HighFeePoolRejectedError
+
+    bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
+    pipeline, _ = _pipeline_with_bot(bot)
+    steps = [_OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None)]
+
+    assert pipeline._registration_unit(steps).kind == "skip"
+    assert pipeline._registration_unit(steps).kind == "skip"
+    assert builds == [POOL_A], "the typed stable refusal memoizes the pool"
+
+
+def test_transient_build_skip_tag_uses_the_bounded_vocabulary() -> None:
+    """Every production skip tag is a member of the bounded vocabulary.
+
+    FALSIFICATION: an interpolated class-name tag (build-v3:ConnectionError)
+    reaching the metric path; the tag must be closed-set, the class name
+    log-only in the detail.
+    """
+    from degenbot.runner._registration_ledger import RegistrationOutcome
+
+    def _build_pool(address: str, *, silent: bool = True) -> None:
+        msg = "rpc blip"
+        raise ConnectionError(msg)
+
+    bot = SimpleNamespace(registration_fleet_hosted=lambda: True, build_pool=_build_pool)
+    pipeline, _ = _pipeline_with_bot(bot)
+    outcome = pipeline._registration_unit([
+        _OpaqueStep(type=UniswapV3PoolTable, address=POOL_A, hash=None)
+    ])
+    assert outcome.tag in {member.value for member in RegistrationOutcome}
+    assert outcome.detail is not None
+    assert "ConnectionError" in outcome.detail
+    pipeline._absorb_outcome(outcome)
+    assert pipeline._skip_reasons[outcome.tag] == 1

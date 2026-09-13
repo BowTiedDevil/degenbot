@@ -62,6 +62,14 @@ and not the PyO3 wrapper (ADR-005).
 _Avoid_: "driver shell" (that is the whole Python-companion layer), "backrun
 session" (legacy name, ADR-026).
 
+**Registration outcome ledger** — the cockpit-private owner
+(`degenbot.runner._registration_ledger`) of the registration memo concept:
+the hop-identity key, the typed stable-vs-transient build-refusal
+classification (by exception TYPE, never class name), the four memos
+(registered path, verified pool, unregistrable pool, rejected path), and the
+bounded outcome vocabulary the metric tag path draws from.
+_Avoid_: "skip gate", "class-name refusal set".
+
 **Session state** — the cockpit's one owner of a pump session's
 coordination state (dispatcher, sim context, current block, provider,
 operator credentials); the block loop and the dispatch leaf read the same
