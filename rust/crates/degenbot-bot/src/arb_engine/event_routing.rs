@@ -18,7 +18,7 @@ impl ArbitrageEngine {
     // (NOTE, LXDY4C): the former `insert_dirty` (BotState-bucket
     // classification into the shared dirty sets) is retired — touched pools
     // are recorded into the block's `EpochDelta` by log application
-    // (`LogDispatcher::dispatch` / `Bot::notify_pool_state_changed`), and
+    // (`LogDispatcher::dispatch` / `Bot::record_pool_state_changed`), and
     // the affected-path derivation consumes the delta's taken keys.
 
     /// The CURRENT cycle's dispatch arm (ADR-045 T5): the latency

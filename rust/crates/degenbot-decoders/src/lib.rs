@@ -8,7 +8,7 @@
 //! log without pulling the engine, the pump, or the RPC stack.
 //!
 //! The state-coupled dispatch layer (`LogDecoder` trait,
-//! `DecodedPoolEvent`, `LogDispatcher` bus, `PoolStateSubscriber`) stays in
+//! `DecodedPoolEvent`, `LogDispatcher` bus) stays in
 //! `degenbot-bot`'s `bot_core::log_dispatcher` — those reach `BotState`. This
 //! crate holds only the leaf decode functions + their plain return structs +
 //! the keccak256 topic constants (one per decoded event signature).

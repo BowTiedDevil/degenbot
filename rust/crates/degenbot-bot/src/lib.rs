@@ -6,8 +6,8 @@
 //! path/solve/dispatch + delivery layer) are a **mutually coupled pair** —
 //! ~30 cross-references each way (`BotState` needs the solver value types
 //! `IntHopState`/`IntV3TickRangeSequence` from `degenbot-solvers` and the
-//! decoders; the engine needs `BotState`/`V3PoolState`/`TickInfo`/
-//! `PoolStateSubscriber` from `bot_core`). ADR-003 explicitly refuses to
+//! decoders; the engine needs `BotState`/`V3PoolState`/`TickInfo`
+//! from `bot_core`). ADR-003 explicitly refuses to
 //! extract a `LiquidityMap` generic against this sample-of-one, so the two
 //! live in one crate here rather than behind an artificial shared-trait
 //! seam.

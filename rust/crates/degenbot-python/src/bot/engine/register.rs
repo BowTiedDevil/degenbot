@@ -135,12 +135,9 @@ impl PyArbitrageEngine {
             let created = engine.path_count() != registered_before;
             Ok::<(u64, bool), pyo3::PyErr>((path_id, created))
         })?;
-        // SZJUKL: no engine-side PoolStateSubscriber registration. The
-        // retired `EngineSubscriber` adapter was only ever a liveness probe
-        // (LXDY4C): touched-pool dirty tracking is BYPRODUCT of log
-        // application (`Bot::dispatch_log` records the block's
-        // `EpochDelta`, which `on_resolve` consumes). The dispatcher's
-        // `Weak` fan-out now carries only Python's own subscribers.
+        // SZJUKL: no engine-side registration. Touched-pool dirty tracking
+        // is a BYPRODUCT of log application (`Bot::dispatch_log` records the
+        // block's `EpochDelta`, which `on_resolve` consumes).
         Ok((path_id, created))
     }
 

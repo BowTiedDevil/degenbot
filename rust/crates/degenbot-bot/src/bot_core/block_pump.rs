@@ -4592,9 +4592,10 @@ mod tests {
     // sake).
     // -----------------------------------------------------------------
 
-    use crate::bot_core::log_dispatcher::PoolStateSubscriber;
     use crate::bot_core::{BlockContext, RegisterV2PoolParams};
     use alloy::primitives::{aliases::U112, Address, Bytes, U256};
+    use degenbot_solvers::affected_keys::AffectedKey;
+    use degenbot_solvers::mixed::HopType;
 
     /// Build a V2 `Sync` log for `pool_address` carrying
     /// `(reserve0, reserve1)`, at `block_number`, with `removed` set.
@@ -4729,26 +4730,10 @@ mod tests {
         }
     }
 
-    /// Counting subscriber — records `on_pool_state_updated` invocations so a
-    /// pump-level reorg test can assert the restore fired the SAME notify
-    /// path as a forward `dispatch_log`. `Fake` prefix per AGENTS.md.
-    struct FakeCountingSubscriber {
-        notifies: Mutex<u32>,
-    }
-    impl PoolStateSubscriber for FakeCountingSubscriber {
-        fn on_pool_state_updated(&self, _pool_id: u64) {
-            *self.notifies.lock().unwrap() += 1;
-        }
-    }
-
-    /// Register a V2 pool on a fresh `Bot` with a counting subscriber attached,
-    /// returning `(bot, pool_id, counting_subscriber)`. Genesis reserves are
-    /// anchored at `update_block`, seeding the reorg journal so an in-journal
-    /// reorg can roll back to them.
-    fn bot_with_registered_v2(
-        pool_addr: Address,
-        update_block: u64,
-    ) -> (Arc<Bot>, u64, Arc<FakeCountingSubscriber>) {
+    /// Register a V2 pool on a fresh `Bot`, returning `(bot, pool_id)`. Genesis
+    /// reserves are anchored at `update_block`, seeding the reorg journal so an
+    /// in-journal reorg can roll back to them.
+    fn bot_with_registered_v2(pool_addr: Address, update_block: u64) -> (Arc<Bot>, u64) {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
@@ -4769,12 +4754,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V2 registration");
-        let counting = Arc::new(FakeCountingSubscriber {
-            notifies: Mutex::new(0),
-        });
-        let sub: Arc<dyn PoolStateSubscriber> = counting.clone();
-        bot.attach_engine(pool_id, Arc::downgrade(&sub));
-        (bot, pool_id, counting)
+        (bot, pool_id)
     }
 
     /// Build a `BlockPump` over a caller-provided `Arc<Bot>` (rather than a
@@ -4830,9 +4810,9 @@ mod tests {
 
     /// A `removed: true` V2 Sync log for a registered pool, when its block is
     /// within the reorg journal's depth, drives the pump's reorg branch to
-    /// restore the pool to its pre-fork state via the `ReorgCoordinator` —
-    /// firing the SAME `on_pool_state_updated` notify as a forward Sync —
-    /// and the pump does NOT shut down (it continues processing).
+    /// restore the pool to its pre-fork state via the `ReorgCoordinator` and
+    /// record it into the epoch `EpochDelta`, and the pump does NOT shut down
+    /// (it continues processing).
     ///
     /// This pins the pump-level wiring of ADR-006 slice 7: the coordinator's
     /// restore+notify (covered in `reorg_coordinator.rs`) is the downstream
@@ -4846,7 +4826,7 @@ mod tests {
     #[tokio::test]
     async fn stream_end_notifies_sink_on_pump_ended() {
         let pool_addr = Address::from([0x22u8; 20]);
-        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (bot, _pool_id) = bot_with_registered_v2(pool_addr, 5);
         let (mut pump, sink, _shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
         assert!(!sink.pump_ended(), "no premature pump-ended signal");
         let forward = make_v2_sync_log(pool_addr, U256::from(1_000), U256::from(2_000), 7, false);
@@ -4886,7 +4866,7 @@ mod tests {
     #[tokio::test]
     async fn late_forward_after_tombstone_is_benign_late_admit() {
         let pool_addr = Address::from([0x33u8; 20]);
-        let (bot, pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (bot, pool_id) = bot_with_registered_v2(pool_addr, 5);
         let (mut pump, sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
 
         // Stream: Sync@7 (opens block 7), Sync@8 (tombstones 7, cutoff → 7),
@@ -5001,7 +4981,7 @@ mod tests {
             // and a `return` inside an async block cannot reach it).
             let check = async {
                 let pool_addr = Address::from([0x34u8; 20]);
-                let (bot, pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+                let (bot, pool_id) = bot_with_registered_v2(pool_addr, 5);
                 let (mut pump, sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
 
                 let base = 100u64;
@@ -5114,8 +5094,7 @@ mod tests {
     #[tokio::test]
     async fn reorg_log_restores_pool_via_coordinator_and_pump_continues() {
         let pool_addr = Address::from([0x11u8; 20]);
-        let (bot, pool_id, sub) = bot_with_registered_v2(pool_addr, 5);
-        let notify_count = || *sub.notifies.lock().unwrap();
+        let (bot, pool_id) = bot_with_registered_v2(pool_addr, 5);
 
         // Forward Sync at block 7 — misprices the pool and seeds the journal
         // genesis(5) → transition(7). Drive through the *pump* (not
@@ -5129,7 +5108,12 @@ mod tests {
         let combined = stream::iter(vec![WsEvent::Pool(PoolEvent::from_log(forward))]).boxed();
         pump.run_test_loop(combined, 5).await;
 
-        assert_eq!(notify_count(), 1, "forward Sync through the pump notified");
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V2, pool_id)),
+            "forward Sync through the pump recorded the pool into the EpochDelta"
+        );
         assert_eq!(
             bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_500), U256::from(2_500), 7)),
@@ -5154,10 +5138,11 @@ mod tests {
         let combined = stream::iter(vec![WsEvent::Pool(PoolEvent::from_log(reorg_log))]).boxed();
         pump.run_test_loop(combined, 5).await;
 
-        assert_eq!(
-            notify_count(),
-            2,
-            "reorg fired the SAME notify path as a forward Sync",
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V2, pool_id)),
+            "reorg re-recorded the restored pool into the EpochDelta"
         );
         assert_eq!(
             bot.state_arc().read().v2_snapshot(pool_id),
@@ -5180,7 +5165,7 @@ mod tests {
         let pool_addr = Address::from([0x22u8; 20]);
         // Genesis anchored at block 5 — restore_before_block(5) is too deep
         // (nothing the journal can land on prior to the genesis delta).
-        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (bot, _pool_id) = bot_with_registered_v2(pool_addr, 5);
 
         let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
         // Removed-flag Sync at block 5 → coordinator restores before 5, which
@@ -5208,8 +5193,7 @@ mod tests {
     async fn reorg_contiguous_chunk_closes_on_first_forward_and_continues() {
         let pool_addr = Address::from([0x33u8; 20]);
         // Genesis anchored at block 5: reserves (1000, 2000).
-        let (bot, pool_id, sub) = bot_with_registered_v2(pool_addr, 5);
-        let notify_count = || *sub.notifies.lock().unwrap();
+        let (bot, pool_id) = bot_with_registered_v2(pool_addr, 5);
         let snapshot = || bot.state_arc().read().v2_snapshot(pool_id);
 
         // Drive 5 -> 7 (forward sync at 7) -> tombstone 7 via a forward sync
@@ -5223,7 +5207,12 @@ mod tests {
         ])
         .boxed();
         pump.run_test_loop(combined, 5).await;
-        assert_eq!(notify_count(), 2, "two forward syncs applied");
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V2, pool_id)),
+            "forward syncs recorded the pool into the EpochDelta"
+        );
         assert_eq!(snapshot(), Some((U256::from(1_600), U256::from(2_600), 8)));
         assert!(!shutdown.load(Ordering::Relaxed));
 
@@ -5261,7 +5250,7 @@ mod tests {
     #[tokio::test]
     async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
         let pool_addr = Address::from([0x44u8; 20]);
-        let (bot, pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (bot, pool_id) = bot_with_registered_v2(pool_addr, 5);
 
         // Single pump session: forward sync(7) opens block 7; forward sync(8)
         // tombstones 7 (open block becomes 8); THEN a forward (removed:false)
@@ -5315,7 +5304,7 @@ mod tests {
     #[tokio::test]
     async fn recovery_single_writer_discards_stale_forward_after_backfill() {
         let pool_addr = Address::from([0x44u8; 20]);
-        let (_bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (_bot, _pool_id) = bot_with_registered_v2(pool_addr, 5);
 
         let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
         pump.set_header_staleness_for_test(Duration::from_millis(100));
@@ -5375,7 +5364,7 @@ mod tests {
     #[tokio::test]
     async fn recovery_anchor_stale_forward_above_anchor_is_benign_late_admit() {
         let pool_addr = Address::from([0x44u8; 20]);
-        let (_bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+        let (_bot, _pool_id) = bot_with_registered_v2(pool_addr, 5);
 
         let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
         pump.set_header_staleness_for_test(Duration::from_millis(100));

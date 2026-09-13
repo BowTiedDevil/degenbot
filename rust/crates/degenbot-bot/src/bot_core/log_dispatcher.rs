@@ -1,27 +1,17 @@
-//! Per-state-subject publisher/subscriber event bus (ADR-006 D4).
+//! Per-state-subject log dispatch (ADR-006 D4).
 //!
-//! `LogDispatcher` owns a decoder registry + a `Weak<dyn PoolStateSubscriber>`
-//! registry keyed by `pool_id`. `Bot` drives `dispatch(log)`: decode the log,
-//! apply the decoded event to `BotState` under a **write** guard, **release the
-//! guard**, record the touched key into the epoch's `EpochDelta` ledger (the
-//! dirty-tracking mechanism since LXDY4C — the retired engine-subscriber
-//! classification is gone), then notify each subscriber of the affected
-//! `pool_id` (`on_pool_state_updated`). Subscribers take only their own lock —
-//! the core write is already released, so D2's engine-then-core order is
-//! preserved by not nesting.
+//! `LogDispatcher` owns a decoder registry. `Bot` drives `dispatch(log)`:
+//! decode the log, apply the decoded event to `BotState` under a **write**
+//! guard, **release the guard**, then record the touched key into the epoch's
+//! `EpochDelta` ledger (the sole dirty-tracking mechanism since LXDY4C).
 //!
-//! This module ships the bus + subscriber seam in isolation (ADR-006 slice 4).
-//! The pump driving the dispatcher lands in slice 5; the live `apply_log` hot
-//! loop is untouched until then (rewiring it through `engine.apply_log` would
-//! self-notify under the engine's non-reentrant `Mutex` — a deadlock; the
-//! pump-side relocation in slice 5 avoids that).
+//! This module ships the dispatcher in isolation (ADR-006 slice 4). The pump
+//! driving the dispatcher lands in slice 5.
 
 #![expect(clippy::doc_markdown)]
 
 use degenbot_core::diag;
-use degenbot_core::op_warn;
-use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use alloy::rpc::types::Log;
 
@@ -42,22 +32,6 @@ use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
 /// skipping (the WS-decoder-drop failure mode).
 fn is_known_pool_topic(topic0: Option<&alloy::primitives::B256>) -> bool {
     matches!(topic0, Some(t) if crate::bot_core::RELEVANT_TOPICS.contains(t))
-}
-
-/// A subscriber to pool-state updates (ADR-006 D4).
-///
-/// `on_pool_state_updated` fires after `BotState` has been mutated and the
-/// write guard released (touched-pool tracking itself is the `EpochDelta`
-/// ledger's byproduct of the apply — LXDY4C). The implementer reacts taking
-/// only its own lock — never the `BotState` lock synchronously (that would
-/// re-nest against D2's engine-then-core order).
-///
-/// Ships as `PoolStateSubscriber` until a second state-subject type proves
-/// generality (then rename to `StateSubscriber`).
-pub trait PoolStateSubscriber: Send + Sync {
-    /// `pool_id`'s state in the associated `BotState` just changed; re-solve
-    /// dirtied paths at the drain tick (slice 6).
-    fn on_pool_state_updated(&self, pool_id: u64);
 }
 
 /// A decoded pool-state event ready to apply to `BotState`.
@@ -419,19 +393,16 @@ impl LogDecoder for V4ModifyLiquidityDecoder {
     }
 }
 
-/// The per-`Bot` event bus: decoder registry + `pool_id` → subscribers.
+/// The per-`Bot` event bus: the decoder registry.
 ///
 /// `Bot` owns one and mediates the registry (cleaner than per-`PoolEntry`
 /// callback vecs in Rust). `dispatch` is the single entry point the pump
 /// (slice 5) calls per WS log.
 ///
-/// Decoders are frozen after construction (read-only `&self` access). The
-/// subscriber registry uses interior mutability so [`subscribe`](Self::subscribe)
-/// (registration-time) and [`dispatch`](Self::dispatch) (hot loop) both take
-/// `&self` — `Bot` is shared across threads.
+/// Decoders are frozen after construction (read-only `&self` access); `Bot`
+/// is shared across threads.
 pub struct LogDispatcher {
     decoders: Vec<Box<dyn LogDecoder>>,
-    subscribers: parking_lot::Mutex<HashMap<u64, Vec<Weak<dyn PoolStateSubscriber>>>>,
     /// KAHU5W: strict decode-miss hard-fault gate. Historically the
     /// presence-gated `DEGENBOT_WS_COMPLETENESS` env var; now the typed
     /// `pump.ws_completeness` schema default AND'ed with the owning pump's
@@ -495,7 +466,6 @@ impl LogDispatcher {
     pub fn new() -> Self {
         Self {
             decoders: Vec::new(),
-            subscribers: parking_lot::Mutex::new(HashMap::new()),
             strict_decode_fault: std::sync::atomic::AtomicBool::new(
                 crate::bot_core::stance::config().pump.ws_completeness,
             ),
@@ -546,30 +516,15 @@ impl LogDispatcher {
         self.decoders.push(decoder);
     }
 
-    /// Subscribe `subscriber` to updates for `pool_id`. `Bot` calls this when
-    /// an engine registers a path touching `pool_id` (ADR-006 D4).
-    pub fn subscribe(&self, pool_id: u64, subscriber: Weak<dyn PoolStateSubscriber>) {
-        self.subscribers
-            .lock()
-            .entry(pool_id)
-            .or_default()
-            .push(subscriber);
-    }
-
-    /// Decode `log`, apply it to `state`, release the write guard, then notify
-    /// every live subscriber of the affected `pool_id`. Dead `Weak`s are
-    /// skipped (no panic). No-op if no decoder recognizes the log or the pool
-    /// isn't registered.
+    /// Decode `log`, apply it to `state`, release the write guard, then record
+    /// the touched pool into the epoch `EpochDelta`. No-op if no decoder
+    /// recognizes the log or the pool isn't registered.
     ///
     /// # Panics
     ///
     /// Panics (in strict `DEGENBOT_WS_COMPLETENESS` mode) if a log carrying a
     /// KNOWN pool-event topic0 fails every decoder — malformed event data that
     /// must fail loudly rather than be silently dropped.
-    ///
-    /// **Lock order:** the `state` write guard is acquired and released BEFORE
-    /// any subscriber notify — subscribers take only their own lock (D2's
-    /// engine-then-core order preserved by not nesting).
     #[tracing::instrument(name = "degenbot.log.dispatch", skip(self, log, state, delta), fields(block = %log.block_number.unwrap_or_default()))]
     #[expect(clippy::too_many_lines)]
     pub fn dispatch(
@@ -580,8 +535,7 @@ impl LogDispatcher {
     ) {
         // Phase-labeled `measure_block!` for the rolling-start dirty-path
         // diagnostic: distinguishes "decode miss" (no decoder recognized the
-        // log) from "apply miss" (pool not registered in BotState → no-op)
-        // from "notify miss" (pool registered but no subscriber attached).
+        // log) from "apply miss" (pool not registered in BotState → no-op).
         // Each appears as its own row in the hotpath functions-timing table
         // with a per-phase call count — zero-cost no-ops when the `hotpath`
         // feature is off. See `src/profiling.rs`.
@@ -730,9 +684,6 @@ impl LogDispatcher {
                 if let Some(delta) = delta {
                     delta.record_affected(event_hop, pool_id, event_block);
                 }
-                hotpath::measure_block!("dispatch.notify", {
-                    self.notify(pool_id);
-                });
             }
             ApplyOutcome::Buffered(kind) => {
                 diag!(domain = ingest, block = log.block_number,
@@ -763,31 +714,6 @@ impl LogDispatcher {
     pub fn try_decode_log(&self, log: &Log) -> Option<DecodedPoolEvent> {
         self.decoders.iter().find_map(|d| d.try_decode(log))
     }
-
-    /// Notify every live subscriber of `pool_id` (skipping dropped `Weak`s).
-    /// `ReorgCoordinator` calls this after a per-pool `restore_before_block` —
-    /// the SAME notify path forward `dispatch` uses, so the engine dirties +
-    /// re-solves at the next drain tick with no distinct reorg path.
-    pub fn notify(&self, pool_id: u64) {
-        let Some(subs) = self.subscribers.lock().get(&pool_id).cloned() else {
-            // 42FL35: a state apply with NO subscriber means the engine never
-            // learns the pool changed - solver reads stay stale forever while
-            // BotState advances (the frozen-update_block signature). Always-on
-            // WARN: the gate flag was retired, and with no metric attached the
-            // integrity signal must not be demoted to the debug stream.
-            op_warn!(
-                domain = pump,
-                pool_id,
-                "dispatch: NOTIFY MISS - state applied but no subscriber attached"
-            );
-            return;
-        };
-        for weak in subs {
-            if let Some(sub) = weak.upgrade() {
-                sub.on_pool_state_updated(pool_id);
-            }
-        }
-    }
 }
 
 impl Default for LogDispatcher {
@@ -799,7 +725,7 @@ impl Default for LogDispatcher {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use super::*;
 
@@ -829,36 +755,6 @@ mod tests {
     /// Sentinel topic (arbitrary nonzero value).
     const SENTRY_TOPIC: [u8; 32] = [0xff; 32];
 
-    /// A recording subscriber that notes the order of events: did the
-    /// `BotState` write guard appear released by the time notify fired?
-    #[derive(Clone)]
-    struct RecordingSubscriber {
-        calls: Arc<Mutex<Vec<SubObservation>>>,
-        /// Probes the state lock at notify time to assert it's free.
-        state: Arc<StateLock<BotState>>,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    enum SubObservation {
-        Notified {
-            pool_id: u64,
-            write_guard_free: bool,
-        },
-    }
-
-    impl PoolStateSubscriber for RecordingSubscriber {
-        fn on_pool_state_updated(&self, pool_id: u64) {
-            // If the dispatcher held the write guard across notify, this
-            // `try_write` would fail (guard not free). D4 requires the guard
-            // released first.
-            let write_guard_free = self.state.try_write().is_some();
-            self.calls.lock().unwrap().push(SubObservation::Notified {
-                pool_id,
-                write_guard_free,
-            });
-        }
-    }
-
     fn sentinel_log() -> Log {
         use alloy::primitives::B256;
         let inner = alloy::primitives::Log::new_unchecked(
@@ -876,58 +772,6 @@ mod tests {
             log_index: None,
             removed: false,
         }
-    }
-
-    /// RED→GREEN tracer (ADR-006 slice 4): dispatch decodes via a registered
-    /// decoder, applies to `BotState` under a write guard, RELEASES the guard,
-    /// then notifies subscribers. The subscriber observes the guard is free.
-    #[test]
-    fn dispatch_decodes_applies_then_notifies_after_write_release() {
-        let pool_address = alloy::primitives::Address::from([0x11u8; 20]);
-        let state = Arc::new(StateLock::new(BotState::new()));
-        // Register the pool so apply produces a pool_id (apply_v2_sync returns
-        // None for unregistered addresses).
-        state
-            .write()
-            .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
-                address: pool_address,
-                token0: alloy::primitives::Address::ZERO,
-                token1: alloy::primitives::Address::ZERO,
-                reserve0: alloy::primitives::aliases::U112::from(1000),
-                reserve1: alloy::primitives::aliases::U112::from(2000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
-                factory: alloy::primitives::Address::ZERO,
-                update_block: 0,
-                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-                stable_swap: false,
-                fee_denominator: None,
-                ..Default::default()
-            })
-            .expect("test setup: V2 registration");
-
-        let mut dispatcher = LogDispatcher::new();
-        dispatcher.register_decoder(Box::new(FakeDecoder { pool_address }));
-
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = RecordingSubscriber {
-            calls: Arc::clone(&calls),
-            state: Arc::clone(&state),
-        };
-        let subscriber: Arc<dyn PoolStateSubscriber> = Arc::new(subscriber);
-        dispatcher.subscribe(1, Arc::downgrade(&subscriber));
-
-        dispatcher.dispatch(&sentinel_log(), &state, None);
-
-        let observed = calls.lock().unwrap().clone();
-        assert_eq!(
-            observed,
-            vec![SubObservation::Notified {
-                pool_id: 1,
-                write_guard_free: true,
-            }],
-            "subscriber must be notified exactly once for pool_id=1, after the write guard released"
-        );
     }
 
     /// RED: the apply-miss funnel pre-check (a read-side `resolve_pool_id`)
@@ -1068,78 +912,20 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_unregistered_pool_is_apply_miss_no_notify() {
+    fn dispatch_unregistered_pool_is_apply_miss_no_delta() {
         let pool_address = alloy::primitives::Address::from([0x55u8; 20]);
         let state = Arc::new(StateLock::new(BotState::new()));
         // NOTE: the pool is intentionally NOT registered.
         let mut dispatcher = LogDispatcher::new();
         dispatcher.register_decoder(Box::new(FakeDecoder { pool_address }));
 
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = RecordingSubscriber {
-            calls: Arc::clone(&calls),
-            state: Arc::clone(&state),
-        };
-        let subscriber: Arc<dyn PoolStateSubscriber> = Arc::new(subscriber);
-        dispatcher.subscribe(1, Arc::downgrade(&subscriber));
-
-        dispatcher.dispatch(&sentinel_log(), &state, None);
+        let delta = crate::bot_core::EpochDelta::new(0u64);
+        dispatcher.dispatch(&sentinel_log(), &state, Some(&delta));
 
         assert!(
-            calls.lock().unwrap().is_empty(),
-            "apply-miss must not notify any subscriber"
+            delta.is_empty(),
+            "apply-miss must not record any touched pool into the EpochDelta"
         );
-    }
-
-    /// Dead subscribers (dropped `Weak`) are silently skipped — no panic.
-    #[test]
-    fn dispatch_skips_dropped_subscribers() {
-        let pool_address = alloy::primitives::Address::from([0x22u8; 20]);
-        let state = Arc::new(StateLock::new(BotState::new()));
-        state
-            .write()
-            .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
-                address: pool_address,
-                token0: alloy::primitives::Address::ZERO,
-                token1: alloy::primitives::Address::ZERO,
-                reserve0: alloy::primitives::aliases::U112::from(1000),
-                reserve1: alloy::primitives::aliases::U112::from(2000),
-                fee_token0: (997, 1000),
-                fee_token1: (997, 1000),
-                factory: alloy::primitives::Address::ZERO,
-                update_block: 0,
-                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-                stable_swap: false,
-                fee_denominator: None,
-                ..Default::default()
-            })
-            .expect("test setup: V2 registration");
-
-        let mut dispatcher = LogDispatcher::new();
-        dispatcher.register_decoder(Box::new(FakeDecoder { pool_address }));
-
-        // Subscribe a live + a (soon-dropped) subscriber.
-        let live_calls = Arc::new(Mutex::new(Vec::new()));
-        let live = RecordingSubscriber {
-            calls: Arc::clone(&live_calls),
-            state: Arc::clone(&state),
-        };
-        let live_strong: Arc<dyn PoolStateSubscriber> = Arc::new(live);
-        dispatcher.subscribe(1, Arc::downgrade(&live_strong));
-        {
-            let tmp = RecordingSubscriber {
-                calls: Arc::new(Mutex::new(Vec::new())),
-                state: Arc::clone(&state),
-            };
-            let tmp_strong: Arc<dyn PoolStateSubscriber> = Arc::new(tmp);
-            dispatcher.subscribe(1, Arc::downgrade(&tmp_strong));
-            // tmp_strong drops here → Weak goes dead.
-        }
-
-        dispatcher.dispatch(&sentinel_log(), &state, None);
-
-        // The live subscriber still fires exactly once; the dead one skipped.
-        assert_eq!(live_calls.lock().unwrap().len(), 1);
     }
 
     /// RED-CAPABLE LOOP (V3 tick-map desync, perm logs): a real Mint event for

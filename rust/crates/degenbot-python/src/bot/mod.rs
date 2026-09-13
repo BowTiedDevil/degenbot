@@ -69,7 +69,7 @@ use pyo3::Bound;
 /// `alloy::rpc::types::Log` the `BlockPump` feeds `Bot::dispatch_log`. Hex
 /// strings accept an optional `0x` prefix. This is the marshalling seam for
 /// the Python-facing `dispatch_log` (ADR-006, deferred §17 closure): it lets
-/// an offline test drive the full pump→dispatch→notify→solve loop without a
+/// an offline test drive the full pump→dispatch→solve loop without a
 /// live WS node, reusing the existing pure-logic dispatcher untouched.
 fn build_rpc_log(
     address: &str,
@@ -1830,13 +1830,12 @@ impl PyBot {
     /// This is the Python-facing mirror of the `BlockPump`'s per-log call to
     /// `Bot::dispatch_log`: decode via the registered `LogDecoder`s, apply the
     /// decoded event to the shared `BotState` under a write guard, release it,
-    /// then notify every attached `PoolStateSubscriber` (touched-pool tracking
-    /// is the `EpochDelta` ledger's byproduct of the same apply — LXDY4C) so
+    /// then record the touched pool into the `EpochDelta` ledger (LXDY4C) so
     /// the next solve reads fresh keys.
     ///
     /// Reconstructs an `alloy::rpc::types::Log` from the WS-log shape Python
     /// passes — `(address, topics, data, block_number)` — so an offline test
-    /// can drive the full pump→dispatch→notify→solve loop without a live node.
+    /// can drive the full pump→dispatch→solve loop without a live node.
     /// No-op if no decoder recognizes the log or the pool isn't registered.
     ///
     /// Args:

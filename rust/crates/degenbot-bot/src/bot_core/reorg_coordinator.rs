@@ -15,8 +15,7 @@
 //!   `v4_pool_id_by_key`), RESTORES that pool's state via
 //!   `BotState::restore_before_block` (V2 path returns `Result`; V3/V4 via
 //!   pre-checked `*_restore_before_block`), releases the write guard, then
-//!   `dispatcher.notify(pool_id)` — the **same** notify path slice 4 uses for
-//!   forward updates. No separate `on_reorg` method on subscribers.
+//!   records the pool into the `EpochDelta` (the sole dirt owner).
 //!
 //! **Optimistic + order-insensitive.** The WS `removed: true` replay ordering
 //! is unspecified by any standard. `ReorgJournal::restore_before_block` is
@@ -38,9 +37,8 @@
 //!
 //! **Lock order (D2):** `ReorgCoordinator` holds `Arc<Bot>`; restore takes
 //! the `BotState` write guard (under the `Bot`'s shared `RwLock`), applies +
-//! writes the landed-at state, RELEASES, then `notify` (subscribers take only
-//! their own lock — same as `dispatch_log`). Never nests a subscriber lock
-//! under the state write.
+//! writes the landed-at state, then RELEASES before recording the touched
+//! pool into the `EpochDelta`.
 
 use alloy::rpc::types::Log;
 use degenbot_core::{op_error, op_warn};
@@ -71,7 +69,7 @@ pub enum ReorgOutcome {
 impl ReorgCoordinator {
     /// Decode `log` (reusing the dispatch decoders), resolve its `pool_id`
     /// WITHOUT applying it forward, restore that pool's state to just before
-    /// `log`'s block, then notify subscribers.
+    /// `log`'s block, then record it into the epoch `EpochDelta`.
     ///
     /// WAJEQP T-R1 telemetry: every resolved event emits a
     /// `degenbot.reorg.restore` span parented under `parent` (the pump's open
@@ -122,9 +120,9 @@ impl ReorgCoordinator {
         let _guard = span.enter();
         let Some(pool_id) = bot.resolve_pool_id(&decoded) else {
             // Pool not registered → no-op (parallel to forward dispatch's
-            // `apply returns None` path). Subscribers can't be notified about
-            // a pool that isn't in the registry. Visible on the event span —
-            // an untracked-pool replay is itself diagnostic.
+            // `apply returns None` path). A pool outside the registry has no
+            // epoch-ledger entry to record. Visible on the event span — an
+            // untracked-pool replay is itself diagnostic.
             span.record("reorg.action", "unregistered_noop");
             return Ok(ReorgOutcome::IdempotentNoop);
         };
@@ -156,13 +154,13 @@ impl ReorgCoordinator {
             span.record("reorg.action", "idempotent_noop");
             // LXDY4C: restored pool re-enters the epoch ledger (its family
             // comes from the decode — no BotState classification).
-            bot.notify_pool_state_changed(pool_id, decoded.hop_type(), block);
+            bot.record_pool_state_changed(pool_id, decoded.hop_type(), block);
             return Ok(ReorgOutcome::IdempotentNoop);
         }
         span.record("reorg.action", "restored");
         // `restore_pool_before_block` released the write guard internally;
-        // notify subscribers (engine dirties + re-solves at the next drain
-        // tick; no separate reorg path in the engine).
+        // record the pool into the epoch ledger (the engine re-solves at the
+        // next drain tick; no separate reorg path in the engine).
         //
         // Visible per-pool unwind signal: confirms the coordinator did work —
         // without this the only observable symptom was a cancelled publish,
@@ -173,16 +171,16 @@ impl ReorgCoordinator {
             domain = pump,
             pool_id,
             block,
-            "ReorgCoordinator: restored pool to its pre-block state + notified subscribers"
+            "ReorgCoordinator: restored pool to its pre-block state + recorded it in the epoch ledger"
         );
-        bot.notify_pool_state_changed(pool_id, decoded.hop_type(), block);
+        bot.record_pool_state_changed(pool_id, decoded.hop_type(), block);
         Ok(ReorgOutcome::Restored)
     }
 }
 
 /// Thin struct wrapping `Arc<Bot>` — gives the ADR-006-named helper a real
 /// home + its own test seam. Holds no own state; restoration delegates to
-/// `BotState`, decode+notify to `LogDispatcher`.
+/// `BotState`, decode to `LogDispatcher`.
 pub struct ReorgCoordinator {
     bot: Arc<Bot>,
 }
@@ -198,13 +196,14 @@ impl ReorgCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot_core::log_dispatcher::PoolStateSubscriber;
     use crate::bot_core::{Bot, RegisterV2PoolParams};
     use ::degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
     use alloy::primitives::{aliases::U112, Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
+    use degenbot_solvers::affected_keys::AffectedKey;
+    use degenbot_solvers::mixed::HopType;
     use hashbrown::HashMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     // Journal-level invariants the coordinator relies on. These are
     // restatements of existing `state_history.rs` semantics at the coordinator
@@ -307,9 +306,10 @@ mod tests {
         ));
     }
 
-    // --- Coordinator end-to-end: decode → restore → notify (the real slice-7
-    //     wiring). A registered V2 pool + a real Sync log + a removed-flag
-    //     variant. Verifies the per-event restore + the subscriber notify.
+    // --- Coordinator end-to-end: decode → restore → record delta (the real
+    //     slice-7 wiring). A registered V2 pool + a real Sync log + a
+    //     removed-flag variant. Verifies the per-event restore + the epoch
+    //     ledger record.
 
     /// The V2 `Sync` topic, duplicated here from `degenbot_decoders::v2_sync_decoder`
     /// to keep the test self-contained.
@@ -353,24 +353,9 @@ mod tests {
         }
     }
 
-    /// A counting fake subscriber — verifies the reorg notify path mirrors
-    /// forward `on_pool_state_updated` (the engine dirties + re-solves at the
-    /// next drain tick, with no distinct reorg path).
-    struct CountingSubscriber {
-        notifies: Mutex<u32>,
-    }
-    impl PoolStateSubscriber for CountingSubscriber {
-        fn on_pool_state_updated(&self, _pool_id: u64) {
-            *self.notifies.lock().unwrap() += 1;
-        }
-    }
-
-    /// Build a `Bot` with a V2 pool registered at `update_block`, a counting
-    /// subscriber attached, returning `(bot, pool_id, counting_subscriber)`.
-    fn bot_with_v2(
-        pool_addr: Address,
-        update_block: u64,
-    ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
+    /// Build a `Bot` with a V2 pool registered at `update_block`, returning
+    /// `(bot, pool_id)`.
+    fn bot_with_v2(pool_addr: Address, update_block: u64) -> (Arc<Bot>, u64) {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
@@ -391,24 +376,18 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V2 registration");
-        let counting = Arc::new(CountingSubscriber {
-            notifies: Mutex::new(0),
-        });
-        let sub: Arc<dyn PoolStateSubscriber> = counting.clone();
-        bot.attach_engine(pool_id, Arc::downgrade(&sub));
-        (bot, pool_id, counting)
+        (bot, pool_id)
     }
 
     /// ADR-006 slice 7 (coordinator e2e): a `removed: true` V2 Sync log at
     /// block 7 restores the pool's state to the genesis reserves (block 5),
-    /// then fires the SAME `on_pool_state_updated` notify as a forward Sync.
-    /// The per-event path lands at the same state as the bulk `handle_reorg`
-    /// would have, but for just the targeted pool + via the normal notify.
+    /// then records the restored pool into the SAME epoch ledger a forward
+    /// Sync records into. The per-event path lands at the same state as the
+    /// bulk `handle_reorg` would have, but for just the targeted pool.
     #[test]
-    fn dispatch_reorg_log_restores_pool_and_notifies() {
+    fn dispatch_reorg_log_restores_pool_and_records_delta() {
         let pool_addr = Address::from([0x11u8; 20]);
-        let (bot, pool_id, sub) = bot_with_v2(pool_addr, 5);
-        let count = || *sub.notifies.lock().unwrap();
+        let (bot, pool_id) = bot_with_v2(pool_addr, 5);
 
         // Forward Sync at block 7 — misprices the pool (reserves change).
         // This seeds the journal: genesis(5) → transition(7).
@@ -419,7 +398,12 @@ mod tests {
             7,
             false,
         ));
-        assert_eq!(count(), 1, "forward dispatch notified once");
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V2, pool_id)),
+            "forward dispatch recorded the pool into the EpochDelta"
+        );
         assert_eq!(
             bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_500), U256::from(2_500), 7)),
@@ -440,7 +424,12 @@ mod tests {
                 None,
             )
             .expect("restore before 7 succeeds");
-        assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V2, pool_id)),
+            "reorg re-recorded the restored pool into the EpochDelta"
+        );
         assert_eq!(
             bot.state_arc().read().v2_snapshot(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
@@ -455,7 +444,7 @@ mod tests {
     #[test]
     fn dispatch_reorg_log_too_deep_returns_err_and_leaves_state_unchanged() {
         let pool_addr = Address::from([0x22u8; 20]);
-        let (bot, pool_id, _sub) = bot_with_v2(pool_addr, 5);
+        let (bot, pool_id) = bot_with_v2(pool_addr, 5);
         // No forward dispatch → journal has only the genesis(5) delta.
         let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
 
@@ -490,12 +479,9 @@ mod tests {
     // state. The pre-check must reflect that, not the V2 rule.
 
     /// Build a `Bot` with a V3 pool registered at `update_block` (no tick data,
-    /// `Sparse` coverage) + a counting subscriber. Registration scalars:
+    /// `Sparse` coverage). Registration scalars:
     /// `sqrt_price` = 1<<96, liquidity = `1_000_000`, tick = 0.
-    fn bot_with_v3(
-        pool_addr: Address,
-        update_block: u64,
-    ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
+    fn bot_with_v3(pool_addr: Address, update_block: u64) -> (Arc<Bot>, u64) {
         use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
@@ -519,12 +505,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: V3 registration");
-        let counting = Arc::new(CountingSubscriber {
-            notifies: Mutex::new(0),
-        });
-        let sub: Arc<dyn PoolStateSubscriber> = counting.clone();
-        bot.attach_engine(pool_id, Arc::downgrade(&sub));
-        (bot, pool_id, counting)
+        (bot, pool_id)
     }
 
     /// Build a V3 `Swap` log. `sender`/`recipient`/`amount0`/`amount1` are
@@ -583,8 +564,7 @@ mod tests {
     #[test]
     fn dispatch_reorg_log_v3_single_delta_at_target_restores_to_registration() {
         let pool_addr = Address::from([0x33u8; 20]);
-        let (bot, pool_id, sub) = bot_with_v3(pool_addr, 5);
-        let count = || *sub.notifies.lock().unwrap();
+        let (bot, pool_id) = bot_with_v3(pool_addr, 5);
 
         let reg_sqrt = U256::from(1u128) << 96;
 
@@ -594,7 +574,12 @@ mod tests {
         bot.dispatch_log(&make_v3_swap_log(
             pool_addr, new_sqrt, 2_000_000, 50, 7, false,
         ));
-        assert_eq!(count(), 1, "forward swap notified once");
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V3, pool_id)),
+            "forward swap recorded the pool into the EpochDelta"
+        );
         {
             let state = bot.state_arc();
             let guard = state.read();
@@ -617,7 +602,12 @@ mod tests {
                 None,
             )
             .expect("single-delta-at-target restores, is NOT too-deep");
-        assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V3, pool_id)),
+            "reorg re-recorded the restored pool into the EpochDelta"
+        );
         {
             let state = bot.state_arc();
             let guard = state.read();
@@ -652,7 +642,7 @@ mod tests {
     #[test]
     fn dispatch_reorg_log_v3_empty_journal_is_too_deep() {
         let pool_addr = Address::from([0x34u8; 20]);
-        let (bot, pool_id, _sub) = bot_with_v3(pool_addr, 5);
+        let (bot, pool_id) = bot_with_v3(pool_addr, 5);
         // No forward dispatch → V3 journal is empty (registration pushes no
         // genesis delta, unlike V2).
         assert!(bot
@@ -694,14 +684,13 @@ mod tests {
     // the same empty-journal guard must hold.
 
     /// Build a `Bot` with a V4 pool registered under `pool_manager` + `pool_id`
-    /// at `update_block` (no tick data, `Sparse` coverage) + a counting
-    /// subscriber. Registration scalars: `sqrt_price` = 1<<96, liq = `1_000_000`,
-    /// tick = 0.
+    /// at `update_block` (no tick data, `Sparse` coverage). Registration
+    /// scalars: `sqrt_price` = 1<<96, liq = `1_000_000`, tick = 0.
     fn bot_with_v4(
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         update_block: u64,
-    ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
+    ) -> (Arc<Bot>, u64) {
         use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams, V4PoolKey};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
@@ -729,12 +718,7 @@ mod tests {
                 fetcher: None,
             })
             .expect("V4 pool registers");
-        let counting = Arc::new(CountingSubscriber {
-            notifies: Mutex::new(0),
-        });
-        let sub: Arc<dyn PoolStateSubscriber> = counting.clone();
-        bot.attach_engine(pool_id, Arc::downgrade(&sub));
-        (bot, pool_id, counting)
+        (bot, pool_id)
     }
 
     /// Build a V4 `Swap` log emitted by `pool_manager`. `sender`/`amount0`/
@@ -796,8 +780,7 @@ mod tests {
     fn dispatch_reorg_log_v4_single_delta_at_target_restores_to_registration() {
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xeeu8; 32];
-        let (bot, pool_id, sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
-        let count = || *sub.notifies.lock().unwrap();
+        let (bot, pool_id) = bot_with_v4(pool_manager, pool_id_bytes, 5);
 
         let reg_sqrt = U256::from(1u128) << 96;
         let new_sqrt = U256::from(2u128) << 96;
@@ -812,7 +795,12 @@ mod tests {
             7,
             false,
         ));
-        assert_eq!(count(), 1);
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V4, pool_id)),
+            "forward swap recorded the pool into the EpochDelta"
+        );
         {
             let state = bot.state_arc();
             let guard = state.read();
@@ -837,7 +825,12 @@ mod tests {
                 None,
             )
             .expect("V4 single-delta-at-target restores, is NOT too-deep");
-        assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
+        assert!(
+            bot.active_delta()
+                .snapshot_keys()
+                .contains(&AffectedKey::new(HopType::V4, pool_id)),
+            "reorg re-recorded the restored pool into the EpochDelta"
+        );
         {
             let state = bot.state_arc();
             let guard = state.read();
@@ -858,7 +851,7 @@ mod tests {
     fn dispatch_reorg_log_v4_empty_journal_is_too_deep() {
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xefu8; 32];
-        let (bot, pool_id, _sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
+        let (bot, pool_id) = bot_with_v4(pool_manager, pool_id_bytes, 5);
         assert!(bot
             .state_arc()
             .read()

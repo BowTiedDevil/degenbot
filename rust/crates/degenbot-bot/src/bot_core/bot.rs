@@ -46,8 +46,7 @@ pub struct Bot {
     /// The shared pure-data state. Handles clone this `Arc`.
     state: Arc<StateLock<BotState>>,
     /// The per-`Bot` event bus (ADR-006 D4). The pump (slice 5) drives
-    /// [`dispatch_log`](Self::dispatch_log) per WS log; engine subscriber
-    /// adapters attach via [`attach_engine`](Self::attach_engine).
+    /// [`dispatch_log`](Self::dispatch_log) per WS log.
     dispatcher: log_dispatcher::LogDispatcher,
     /// The epoch's touched-pool ledger (epic MROOY7, task LXDY4C): every
     /// successful log application records its touched `(HopType, pool_id)`
@@ -212,7 +211,8 @@ impl Bot {
 
     /// Drive one WS log through the event bus (ADR-006 D4). Decode via a
     /// registered decoder, apply to `BotState` under a write guard, release,
-    /// then notify subscribers. The pump (slice 5) calls this per log.
+    /// then record the touched pool into the epoch `EpochDelta`. The pump
+    /// (slice 5) calls this per log.
     #[hotpath::measure(impl_type = "Bot")]
     pub fn dispatch_log(&self, log: &alloy::rpc::types::Log) {
         self.dispatcher
@@ -269,34 +269,20 @@ impl Bot {
         Arc::clone(&self.delta)
     }
 
-    /// Notify every live subscriber of `pool_id` (ADR-006 slice 7) and
-    /// record the touched pool into the epoch ledger (LXDY4C).
-    /// `ReorgCoordinator` calls this after a per-pool restore — the same
-    /// notify path `dispatch_log` uses, so the re-restored pool re-enters
-    /// the delta + re-solves at the next drain tick with no distinct reorg
-    /// path. `hop` is the restored event's family (the coordinator reads it
+    /// Record `pool_id` as touched in the epoch ledger (LXDY4C).
+    /// `ReorgCoordinator` calls this after a per-pool restore so the
+    /// re-restored pool re-enters the delta + re-solves at the next drain
+    /// tick. `hop` is the restored event's family (the coordinator reads it
     /// off the decoded log — no classification lookup) and `block` is the
     /// block the recorded dirt pertains to (forward: the decoded log's
     /// block; reorg: the rewind target) — the ledger buckets by it.
-    pub fn notify_pool_state_changed(
+    pub fn record_pool_state_changed(
         &self,
         pool_id: u64,
         hop: degenbot_solvers::mixed::HopType,
         block: u64,
     ) {
         self.delta.record_affected(hop, pool_id, block);
-        self.dispatcher.notify(pool_id);
-    }
-
-    /// Subscribe `engine` to updates for `pool_id` (ADR-006 D4). `Bot` calls
-    /// this when an engine registers a path touching `pool_id`. `engine` is a
-    /// `Weak` so a de-registered engine is silently skipped (no leak).
-    pub fn attach_engine(
-        &self,
-        pool_id: u64,
-        engine: std::sync::Weak<dyn log_dispatcher::PoolStateSubscriber>,
-    ) {
-        self.dispatcher.subscribe(pool_id, engine);
     }
 
     /// Start the block pump. Placeholder — the `BlockPump` wiring lands in
