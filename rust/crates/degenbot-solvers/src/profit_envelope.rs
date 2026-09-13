@@ -806,7 +806,7 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
 /// degenerate-path capture harness (M6776W). Each range carries the 8
 /// primitive fields the offline replay harness needs to reconstruct an
 /// `IntV3TickRangeSequence` (decimal-string big-ints, matching the
-/// `HeavyClPathCapture` JSONL schema in `solver_dispatch.rs`).
+/// `HeavyPathCapture` JSONL schema in `solver_dispatch.rs`).
 fn cl_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
     serde_json::Value::Array(
         seq.ranges
@@ -846,7 +846,7 @@ fn cl_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
 /// Serialize-to-string happens BEFORE the lock so the critical section is
 /// just the open + write.
 ///
-/// The JSONL schema matches `HeavyClPathCapture`'s format so the existing
+/// The JSONL schema matches `HeavyPathCapture`'s format so the existing
 /// offline replay harness (
 /// `degenbot-solvers/tests/profit_envelope_tests.rs` golden-capture suite)
 /// can load these fixtures directly.

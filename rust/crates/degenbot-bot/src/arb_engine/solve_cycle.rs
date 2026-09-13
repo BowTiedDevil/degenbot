@@ -64,7 +64,7 @@ use super::path_lifecycle::PathSolveStatus;
 use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry};
 use super::solver_dispatch::{
     gate_capture_from_cfg, lpt_partition, min_profit_floor, path_cost_proxy, plan_bins,
-    sims_aware_cost, solve_bin_count, HeavyClPathCapture, HeavyMixedPathCapture, LaneArmPolicy,
+    sims_aware_cost, solve_bin_count, CaptureVariant, HeavyPathCapture, LaneArmPolicy,
     LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut, SolveCycleShared, WalkSubmitCtx,
     INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
 };
@@ -1325,13 +1325,14 @@ impl SolveCycle {
         // Optional offline CL-solver capture (DEGENBOT_SOLVER_CAPTURE=1): dump
         // the exact all-CL pool state the solver consumed for heavy paths so
         // the CL solver can be optimized offline. None (no-op) unless gated.
-        let capture = HeavyClPathCapture::from_capture(&self.cfg.capture);
+        let capture = HeavyPathCapture::from_capture(&self.cfg.capture, CaptureVariant::HeavyCl);
         // Optional mixed V2+CL solver capture (same gate): heavy
         // mixed paths (e.g. path 7042 V2->V3->V3) dispatch to
         // `exact_solve_mixed_path_n_cached`, which the all-CL capture skips.
         // Defaults OUT of the fixtures dir (loop-18: working rows never
         // accrete there; goldens are produced only by cl_capture_gen).
-        let capture_mixed = HeavyMixedPathCapture::from_capture(&self.cfg.capture);
+        let capture_mixed =
+            HeavyPathCapture::from_capture(&self.cfg.capture, CaptureVariant::HeavyMixed);
         // SIMPIPE2 T2: pool-ref snapshot aligned to `to_solve` order (the
         // worker clamp's pool list) — captured under this cycle's engine
         // Mutex so it cannot interleave with a re-registration.
