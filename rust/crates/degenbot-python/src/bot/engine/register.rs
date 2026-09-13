@@ -47,10 +47,10 @@ impl PyArbitrageEngine {
         // (`last_processed_block`): stage work runs INLINE in the
         // single-writer driver, so the cursor is drain-consistent by
         // construction (no `drain_lock` to wait on).
-        let stages = Arc::new(EngineStages::new(Arc::clone(&engine)));
         // The stage surface consumes the SAME epoch ledger `Bot::dispatch_log`
-        // records into — one dirty-tracking mechanism (LXDY4C).
-        stages.set_delta(bot.active_delta());
+        // records into — one dirty-tracking mechanism (LXDY4C). The ledger
+        // is injected at construction; the stage surface owns no swap.
+        let stages = Arc::new(EngineStages::new(Arc::clone(&engine), bot.active_delta()));
         // The block-clock pipe lives on the stage surface — header ticks
         // never touch the engine's solve state (a chain fact, not engine
         // business; B2/ADR-027 lineage). The receiver lives on the shared

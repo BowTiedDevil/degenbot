@@ -801,7 +801,10 @@ mod tests {
         let (result_tx, _result_rx) = mpsc::unbounded_channel();
         engine.set_result_channel(result_tx);
         let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
-        let stages = std::sync::Arc::new(EngineStages::new(std::sync::Arc::clone(&engine)));
+        let stages = std::sync::Arc::new(EngineStages::new(
+            std::sync::Arc::clone(&engine),
+            std::sync::Arc::new(degenbot_bot::bot_core::EpochDelta::new(0u64)),
+        ));
         let (block_tx, _block_rx) = mpsc::unbounded_channel();
         stages.set_block_channel(block_tx);
         let reorg_coordinator =

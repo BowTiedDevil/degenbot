@@ -5484,7 +5484,10 @@ mod tests {
             }
         });
 
-        let handle = EngineStages::new(std::sync::Arc::clone(&engine));
+        let handle = EngineStages::new(
+            std::sync::Arc::clone(&engine),
+            std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         starter.wait();
         let block = 5000u64;
         tracing::subscriber::with_default(subscriber, || {
@@ -5589,7 +5592,10 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         engine.set_result_channel(tx);
         let engine_state = Arc::new(parking_lot::Mutex::new(engine));
-        let _handle = EngineStages::new(Arc::clone(&engine_state));
+        let _handle = EngineStages::new(
+            Arc::clone(&engine_state),
+            Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
 
         tracing::subscriber::with_default(subscriber, || {
             engine_state
@@ -5704,7 +5710,10 @@ mod tests {
             .map(|_| {
                 let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
                 oracle.insert(0x0BAD_F00D, HopType::V2);
-                Arc::new(EngineStages::new(engine))
+                Arc::new(EngineStages::new(
+                    engine,
+                    Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+                ))
             })
             .collect();
 
@@ -5799,7 +5808,10 @@ mod tests {
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         oracle.insert(0x0BAD_F00D, HopType::V2);
         let engine_arc = Arc::clone(&engine);
-        let handle = EngineStages::new(engine);
+        let handle = EngineStages::new(
+            engine,
+            std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         tracing::subscriber::with_default(subscriber, || {
             handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
@@ -5850,7 +5862,10 @@ mod tests {
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         oracle.insert(0x0BAD_F00D, HopType::V2);
-        let handle = EngineStages::new(engine);
+        let handle = EngineStages::new(
+            engine,
+            std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         tracing::subscriber::with_default(subscriber, || {
             handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
@@ -5907,7 +5922,10 @@ mod tests {
         let mut oracle = crate::arb_engine::tests::test_keys::DirtyKeys::new();
         let engine = Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new()));
         oracle.insert(0x0BAD_F00D, HopType::V2);
-        let handle = EngineStages::new(engine);
+        let handle = EngineStages::new(
+            engine,
+            std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         tracing::subscriber::with_default(subscriber, || {
             handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
@@ -6036,7 +6054,10 @@ mod tests {
         oracle.insert(0x0BAD_F00D, HopType::V2);
         // Gate ON: only a configured max_age justifies the core write.
         engine.lock().set_event_buffer_max_age(Some(100));
-        let handle = EngineStages::new(engine);
+        let handle = EngineStages::new(
+            engine,
+            std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         tracing::subscriber::with_default(subscriber, || {
             handle.run_solve_cycle(
                 &oracle.to_affected_keys(),
@@ -6105,7 +6126,10 @@ mod tests {
         let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
         let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
 
-        let handle = EngineStages::new(Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())));
+        let handle = EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(ArbitrageEngine::new())),
+            std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         tracing::subscriber::with_default(subscriber, || {
             handle.run_solve_cycle(&[], 1, &BlockMetadata::default());
         });
@@ -6491,7 +6515,10 @@ mod tests {
             .iter()
             .map(|&p| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p))
             .collect();
-        let handle = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine));
+        let handle = crate::arb_engine::EngineStages::new(
+            std::sync::Arc::clone(&engine),
+            std::sync::Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
 
         let t0 = std::time::Instant::now();
         handle.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
@@ -6923,8 +6950,7 @@ mod tests {
         for &p in &pool_ids {
             delta.record_affected(HopType::V2, p, 0u64);
         }
-        let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine));
-        stages.set_delta(delta);
+        let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
         let meta = BlockMetadata::default();
 
         // The affected keys the dissolved coordinator would have taken from
@@ -7166,8 +7192,7 @@ mod tests {
         for &p in &pool_ids {
             delta.record_affected(HopType::V2, p, 0u64);
         }
-        let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine));
-        stages.set_delta(delta);
+        let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
         stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
 
         // Wait for the dispositions to land (the sidecar merges async).
@@ -7246,8 +7271,7 @@ mod tests {
         for &p in &pool_ids {
             delta.record_affected(HopType::V2, p, 0u64);
         }
-        let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine));
-        stages.set_delta(delta);
+        let stages = crate::arb_engine::EngineStages::new(std::sync::Arc::clone(&engine), delta);
         stages.run_solve_cycle(&affected_keys_v2, 100, &BlockMetadata::default());
 
         // After all dispositions land, the gauge must be back at g0 EXACTLY
@@ -7508,9 +7532,8 @@ mod tests {
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed);
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-        let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
         for &p in &pool_ids {
             delta.record(
                 degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p),
@@ -7623,9 +7646,8 @@ mod tests {
             .outstanding
             .store(8, std::sync::atomic::Ordering::Relaxed);
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-        let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
         delta.record(
             degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, a),
             10,
@@ -7733,9 +7755,8 @@ mod tests {
         // shed would be the F2 data-loss class.
         engine.cycle.pending_new_paths.insert(path_ids[1]);
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-        let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
         for &p in &pool_ids {
             delta.record(
                 degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, p),
@@ -7838,9 +7859,8 @@ mod tests {
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         engine.lock().set_solve_admission(true);
         engine.lock().set_admission_target_depth(2);
-        let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
 
         let keys: Vec<_> = (1..=3u64)
             .map(|id| degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, id))
@@ -7930,9 +7950,8 @@ mod tests {
         engine.lock().set_solve_admission(true);
         engine.lock().set_admission_target_depth(4);
         engine.lock().set_admission_retention_blocks(5);
-        let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
 
         let stale = degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, 1);
         let fresh = degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, 2);
@@ -8005,9 +8024,8 @@ mod tests {
         );
         // And the draw path take-alls regardless of the gauge.
         let engine_arc = Arc::new(parking_lot::Mutex::new(engine));
-        let stages = EngineStages::new(Arc::clone(&engine_arc));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine_arc), Arc::clone(&delta));
         for id in 1..=5u64 {
             delta.record(
                 degenbot_solvers::affected_keys::AffectedKey::new(HopType::V2, id),
@@ -8251,8 +8269,9 @@ mod tests {
     // head floor (only a mid-solve state advance can trip it), so these tests
     // install the `test_force_deferred` seam to exercise the carry
     // deterministically. The re-record hook itself is the production seam
-    // `EngineStages::set_delta` installs (`set_deferred_re_record`); with
-    // the hook unset (direct engine drives) the deferral keeps today's drop.
+    // the `EngineStages` constructor installs (`set_deferred_re_record`);
+    // with the hook unset (direct engine drives) the deferral keeps today's
+    // drop.
     // -------------------------------------------------------------------
 
     fn kjwik5_key(pool_id: u64) -> degenbot_solvers::affected_keys::AffectedKey {
@@ -8447,9 +8466,8 @@ mod tests {
         let deferred_keys = kjwik5_path_keys(&engine, deferred);
         engine.set_force_deferred_for_test(HashSet::from([deferred]));
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-        let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
         for &p in &pool_ids {
             delta.record(kjwik5_key(p), 10);
         }
@@ -8547,9 +8565,8 @@ mod tests {
         engine.set_admission_retention_blocks(200);
         engine.set_force_deferred_for_test(HashSet::from([deferred]));
         let engine = Arc::new(parking_lot::Mutex::new(engine));
-        let stages = EngineStages::new(Arc::clone(&engine));
         let delta = Arc::new(EpochDelta::new(0u64));
-        stages.set_delta(Arc::clone(&delta));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
         for &p in &pool_ids {
             delta.record(kjwik5_key(p), 10);
         }

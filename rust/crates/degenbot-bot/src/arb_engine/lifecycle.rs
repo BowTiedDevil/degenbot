@@ -151,7 +151,8 @@ impl ArbitrageEngine {
     }
 
     /// KJWIK5: install the deferred-path re-record hook (the ledger carry).
-    /// `EngineStages::set_delta` is the production installer — it captures
+    /// The `EngineStages` constructor is the production installer — it
+    /// captures
     /// the shared `EpochDelta` and re-records a deferred path's hop-pool
     /// keys at the cycle's solve block. Direct engine drives (unit tests, the
     /// cold-start `solve_all`) leave it unset, and the deferral falls back

@@ -38,7 +38,7 @@
 use degenbot_core::op_error;
 use std::sync::Arc;
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 
 use crate::bot_core::stage_handlers::StageHandlers;
 use crate::bot_core::{
@@ -60,10 +60,12 @@ pub struct EngineStages {
     /// holds). The stage hooks lock per call — the SRQEK5 detached-solve
     /// posture keeps the steady-state hold at enqueue length (µs).
     engine: Arc<Mutex<ArbitrageEngine>>,
-    /// The epoch ledger the hooks take keys from (wired to
-    /// `Bot::active_delta` so log application records into the SAME ledger
-    /// `on_resolve` consumes — LXDY4C shared dirty tracking).
-    delta: RwLock<Arc<EpochDelta>>,
+    /// The epoch ledger the hooks take keys from — the ONE Bot-owned
+    /// ledger (`Bot::active_delta`) injected at construction, so log
+    /// application records into the SAME ledger `on_resolve` consumes
+    /// (LXDY4C shared dirty tracking). Identity is structural: there is no
+    /// swap surface and no second handle.
+    delta: Arc<EpochDelta>,
     /// The block-clock pipe (delivery-to-Python at the async boundary).
     /// Header ticks never touch the engine (a chain fact, not engine
     /// business — B2/ADR-027 lineage; the pipe moved here from the
@@ -72,39 +74,37 @@ pub struct EngineStages {
 }
 
 impl EngineStages {
-    /// Construct over a strong clone of the shared engine handle.
+    /// Construct over a strong clone of the shared engine handle and the
+    /// ONE Bot-owned epoch ledger (the wiring layer passes
+    /// `Bot::active_delta`).
+    ///
+    /// KJWIK5: construction is also the installer for the engine's
+    /// deferred-path re-record hook — the ledger carry for
+    /// `paths.deferred_future_price` deferrals. The engine's dispatch maps a
+    /// deferred path's pid to its hop-pool keys and calls the hook with the
+    /// cycle's solve block; the closure re-records them into THIS shared
+    /// ledger, so the next draw re-includes the path through the same
+    /// freshness ordering, admission budget, and retention window (one
+    /// deferral concept). This is the ONE engine access to the ledger
+    /// (engine-side ownership was deliberately avoided — LXDY4C); lock order
+    /// stays engine mutex outer, ledger mutex inner, matching `on_resolve`.
     #[must_use]
-    pub fn new(engine: Arc<Mutex<ArbitrageEngine>>) -> Self {
+    pub fn new(engine: Arc<Mutex<ArbitrageEngine>>, delta: Arc<EpochDelta>) -> Self {
+        {
+            let ledger = Arc::clone(&delta);
+            engine
+                .lock()
+                .set_deferred_re_record(Arc::new(move |keys, block| {
+                    for &key in keys {
+                        ledger.record(key, block);
+                    }
+                }));
+        }
         Self {
             engine,
-            delta: RwLock::new(Arc::new(EpochDelta::new(0u64))),
+            delta,
             block_clock: Mutex::new(BlockClockPipe::default()),
         }
-    }
-
-    /// Hand the stage surface the shared epoch ledger (the wiring layer
-    /// passes `Bot::active_delta`).
-    ///
-    /// KJWIK5: this is also the installer for the engine's deferred-path
-    /// re-record hook — the ledger carry for `paths.deferred_future_price`
-    /// deferrals. The engine's dispatch maps a deferred path's pid to its
-    /// hop-pool keys and calls the hook with the cycle's solve block; the
-    /// closure re-records them into THIS shared ledger, so the next draw
-    /// re-includes the path through the same freshness ordering, admission
-    /// budget, and retention window (one deferral concept). This is the ONE
-    /// engine access to the ledger (engine-side ownership was deliberately
-    /// avoided — LXDY4C); lock order stays engine mutex outer, ledger mutex
-    /// inner, matching `on_resolve`.
-    pub fn set_delta(&self, delta: Arc<EpochDelta>) {
-        *self.delta.write() = Arc::clone(&delta);
-        let ledger = delta;
-        self.engine
-            .lock()
-            .set_deferred_re_record(Arc::new(move |keys, block| {
-                for &key in keys {
-                    ledger.record(key, block);
-                }
-            }));
     }
 
     /// Attach the block-clock channel sender (the wiring layer creates the
@@ -116,13 +116,6 @@ impl EngineStages {
         tx: tokio::sync::mpsc::UnboundedSender<crate::bot_core::BlockNotification>,
     ) {
         self.block_clock.lock().set_channel(tx);
-    }
-
-    /// Test probe: clone of the actively-shared delta ledger.
-    #[cfg(test)]
-    #[must_use]
-    pub fn delta_for_test(&self) -> Arc<EpochDelta> {
-        Arc::clone(&self.delta.read())
     }
 
     /// The engine's solve cycle — the behavior port of the dissolved
@@ -362,7 +355,7 @@ impl StageHandlers for EngineStages {
 /// both; the pump injects both Arcs at construction.
 impl PumpControl for EngineStages {
     fn has_dirty_paths(&self) -> bool {
-        !self.delta.read().is_empty()
+        !self.delta.is_empty()
     }
 
     fn set_last_solved_block(&self, solved: Epoch) {
@@ -501,9 +494,10 @@ mod candidate2_seam_pins {
         fn is_pump_control<T: crate::bot_core::PumpControl>() {}
         is_pump_control::<super::EngineStages>();
 
-        let stages = super::EngineStages::new(Arc::new(parking_lot::Mutex::new(
-            super::ArbitrageEngine::new(),
-        )));
+        let stages = super::EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
+            Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         stages.solve_dirty(TwinProbeToken);
         stages.last_processed_block(TwinProbeToken);
         stages.send_result_batch(TwinProbeToken);
@@ -575,9 +569,10 @@ mod candidate2_seam_pins {
     #[test]
     fn candidate2_enginestages_pump_ended_logs_loudly() {
         use tracing_subscriber::layer::SubscriberExt;
-        let stages = super::EngineStages::new(Arc::new(parking_lot::Mutex::new(
-            super::ArbitrageEngine::new(),
-        )));
+        let stages = super::EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
+            Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
         let capture = LoudCloseCapture::default();
         let subscriber = tracing_subscriber::registry().with(capture.clone());
         tracing::subscriber::with_default(subscriber, || {
@@ -587,5 +582,59 @@ mod candidate2_seam_pins {
             capture.saw_loud_close(),
             "EngineStages::on_pump_ended must emit the op_error loud-close log (it must survive T2/T3)"
         );
+    }
+}
+
+// ======================================================================
+// ergo 3FA7CN — RED pin for the construction-injected epoch ledger.
+// Written against the TARGET contract; production code is NOT changed.
+// ======================================================================
+#[cfg(test)]
+mod construction_ledger_pins {
+    use std::sync::Arc;
+
+    /// Pin A (behavioral): `EngineStages` takes the ONE Bot-owned ledger at
+    /// construction. The injected Arc IS the handle the stage surface reads
+    /// (`PumpControl::has_dirty_paths`) — recording into it is visible
+    /// through the stage surface with no `set_delta` swap.
+    #[test]
+    fn construction_injects_the_one_ledger() {
+        let delta = Arc::new(crate::bot_core::EpochDelta::new(0u64));
+        let stages = super::EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
+            Arc::clone(&delta),
+        );
+        assert!(
+            !crate::bot_core::PumpControl::has_dirty_paths(&stages),
+            "a fresh injected ledger is empty"
+        );
+        delta.record_affected(degenbot_solvers::mixed::HopType::V2, 1u64, 1u64);
+        assert!(
+            crate::bot_core::PumpControl::has_dirty_paths(&stages),
+            "the injected ledger must be the one the stage surface reads"
+        );
+    }
+
+    /// Pin B (compile-time absence, candidate2's `NoInherentTwinProbe`
+    /// pattern): `set_delta` / `delta_for_test` are the swap surface this
+    /// task retires. An inherent re-introduction would shadow the probe and
+    /// fail to compile (arity/type mismatch).
+    #[test]
+    fn construction_has_no_swap_surface() {
+        struct SwapProbeToken;
+        trait NoSwapSurfaceProbe {
+            fn set_delta(&self, _t: SwapProbeToken);
+            fn delta_for_test(&self, _t: SwapProbeToken);
+        }
+        impl NoSwapSurfaceProbe for super::EngineStages {
+            fn set_delta(&self, _t: SwapProbeToken) {}
+            fn delta_for_test(&self, _t: SwapProbeToken) {}
+        }
+        let stages = super::EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
+            Arc::new(crate::bot_core::EpochDelta::new(0u64)),
+        );
+        stages.set_delta(SwapProbeToken);
+        stages.delta_for_test(SwapProbeToken);
     }
 }

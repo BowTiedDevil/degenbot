@@ -337,7 +337,7 @@ pub struct ResultBatch {
 
 /// KJWIK5: the deferred-path re-record hook (the ledger carry). The
 /// dispatch calls it with the deferred paths' hop-pool keys and the cycle's
-/// solve block; `EngineStages::set_delta` installs the
+/// solve block; the `EngineStages` constructor installs the
 /// `EpochDelta::record` closure so a deferred path re-enters through the
 /// next draw (same freshness ordering, admission budget, retention window —
 /// one deferral concept). `None` on direct engine drives (unit tests, the
