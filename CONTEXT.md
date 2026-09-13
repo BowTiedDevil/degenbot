@@ -1074,6 +1074,16 @@ The fleet's execution vocabulary - one meaning per word, closed set
   (thread-name pattern, sizing rule, count, binding). Boot-dumped as
   one structured log line; exported as the degenbot.worker.census
   metric; visible per row through runtime_status().
+- **Boot registry** - the ONE keyed owner of the two pooled roles' boot
+  facts ([ADR-048](docs/adr/ADR-048-fleet-boot-registry.md)):
+  `seat_host::FleetBootRegistry` carries one typed slot per pooled role
+  (sim, registration) holding that role's descriptor, its
+  construction-stamped boot courier, and its process executor courier,
+  plus the FIRST-WINS canonical `process_boot`. Whichever pooled role
+  installs first owns the canonical boot; runtime_status() and the intake
+  read the registry's latch, never a role module's private static. The
+  solve host is out of registry scope (different seat model - keyed
+  mailboxes, typed receipts).
 - **Intake receipt** - the awaiting caller's join on a submitted intake
   unit (registration builds). Held in the unbounded section-10 backlog
   under a cordon - never dropped; the submitter is never stranded.
@@ -1091,4 +1101,6 @@ The fleet's execution vocabulary - one meaning per word, closed set
   projection (fleet_booted: false).
 
 _Avoid_: "worker pool" for fleet seats (the legacy incumbent pool was
-the ThreadPoolExecutor the fleet replaced), "mode" for binding.
+the ThreadPoolExecutor the fleet replaced), "mode" for binding;
+cross-module static reach for a role's boot (RETIRED - read the boot
+registry, ADR-048).

@@ -144,10 +144,10 @@ use crate::arb_engine::fleet_intake::InnerWork;
 /// The role descriptor: everything that differs between the two pooled
 /// `WorkQueue` executors, and nothing else. The executors are THIN over
 /// this — the machinery (queue, seat loop, host loop, admission, boot
-/// boilerplate) lives once, here. (JCI2FW Part A: the old `cordon`
-/// descriptor arm — `CordonAdmission::Admit`/`Hold` — is dissolved; the
-/// role's own cordon class + the ONE shared posture owner ARE the
-/// admission policy, read through `FleetHost::posture_admits_role`.)
+/// boilerplate) lives once, here. (JCI2FW Part A dissolved the per-role
+/// `cordon` descriptor field; admission derives from the role's own
+/// `cordon_class()` plus the ONE shared posture owner, read through
+/// `FleetHost::posture_admits_role`.)
 pub(crate) struct SeatRoleDesc {
     /// The pooled [`WorkerRole`] — drives the seat thread names
     /// (`thread_name()`), the per-role queue len/cap keys, and the

@@ -51,7 +51,7 @@ use crate::arb_engine::seat_host::{self, SeatHost};
 /// process (the registry's global slot hands out `&'static`, mirroring the
 /// fleet sim/solve executors' construction-once contract: warm pooled seats
 /// for the process lifetime).
-pub struct FleetRegistrationExecutor {
+pub(crate) struct FleetRegistrationExecutor {
     /// The shared pooled-seat host (the channel submit end + the unit
     /// sequence).
     host: SeatHost,
@@ -76,7 +76,7 @@ impl FleetRegistrationExecutor {
     ///
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
-    pub fn boot(boot: FleetBoot) -> Result<Self, BootError> {
+    pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
         Self::boot_with_watch(boot, None)
     }
 
@@ -107,7 +107,7 @@ impl FleetRegistrationExecutor {
     /// Test-facing (the intake submits without asking the cap).
     #[cfg(test)]
     #[must_use]
-    pub fn seat_count(&self) -> usize {
+    pub(crate) fn seat_count(&self) -> usize {
         self.seats
     }
 }
