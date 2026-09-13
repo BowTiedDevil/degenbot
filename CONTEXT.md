@@ -774,6 +774,18 @@ the FFI sweep found **no Python-visible `solve_dirty` exposure**, and
 `degenbot-python` gained only parameter plumbing (the `control` Arc clone)
 plus `PumpControl` routing in the solve wrapper.
 
+**Epoch-ledger ownership (ADR-041 §3.2, epic `YMXT4D`, cutover `e277b011e`).** The `Arc<EpochDelta>`
+ledger has exactly ONE owner — the `Bot` (its `active_delta`) — and
+`EngineStages` receives it as a **construction injection at `new()`**; there is
+no post-construction install path. The swappable `RwLock` slot, `set_delta`, and
+`delta_for_test` are **retired names** (retired-name discipline: no shims, no
+re-introduction). The rationale is the wiring-convention trap ADR-041 removed: a
+variant built without the post-construction `set_delta` call silently lost dirt —
+the `EpochDelta` dropped with **no compile signal**, only behavioral drift. With
+the Arc injected, that forget-to-wire bug is structurally unrepresentable, and the
+`KJWIK5` re-record hook now installs at construction too, so the carry can never
+be forgotten.
+
 ## The `_ffi` seam (Pydantic barrier — DECIDED)
 
 **Decision:** `degenbot._ffi` is **private** — a raw Rust extension imported by ONE barrier per domain, never by leaf code. Model: pydantic-core (`_pydantic_core` is imported only by `pydantic_core/__init__.py`; the companion `pydantic` never touches it). Replaces degenbot's prior mixed state (ban test + allowlist back-door + direct `_ffi.<sub>` leaf imports).
