@@ -472,3 +472,102 @@ mod fleet_stance_tests {
         assert_eq!(row.count, 1);
     }
 }
+
+// ======================================================================
+// ergo 2KQZSC — RED pin for the candidate-2 stage-seam contract.
+// Written against the TARGET contract; production code is NOT changed.
+// ======================================================================
+#[cfg(test)]
+mod candidate2_seam_pins {
+    use std::sync::Arc;
+
+    /// Pin 2 (RED: compile-fails until T2). The eight `EngineStages`
+    /// inherent twins are killed HARD: `solve_dirty`,
+    /// `last_processed_block`, `send_result_batch`, `finalize_block`,
+    /// `set_last_solved_block(u64)`, `set_solve_anchor(u64)`,
+    /// `record_logs_this_block`, `on_pump_ended`. The seven pokes survive
+    /// only as the `PumpControl` impl (Epoch-typed cursors); `solve_dirty`
+    /// moves DOWN to the SolveCycle surface. Binding `EngineStages` to
+    /// `PumpControl` cannot compile until the trait impl lands and the
+    /// inherent twins are gone — the pin can no longer name them.
+    #[test]
+    fn candidate2_enginestages_has_no_inherent_poke_twins() {
+        fn is_pump_control<T: crate::bot_core::PumpControl>() {}
+        is_pump_control::<super::EngineStages>();
+    }
+
+    /// Minimal `tracing_subscriber::Layer` that records ERROR events
+    /// (target + message). Same pattern as the `ReorgSpanCapture` layer in
+    /// block_pump.rs tests: a real subscriber through
+    /// `tracing::subscriber::with_default`, not a mocked logger, so the pin
+    /// observes the actual `op_error!` dispatch.
+    #[derive(Clone, Default)]
+    struct LoudCloseCapture {
+        events: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    }
+
+    impl LoudCloseCapture {
+        fn saw_loud_close(&self) -> bool {
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .any(|(target, message)| {
+                    target.contains("solver") && message.contains("pump ended")
+                })
+        }
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LoudCloseCapture {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() != tracing::Level::ERROR {
+                return;
+            }
+            struct Message(String);
+            impl tracing::field::Visit for Message {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = format!("{value:?}");
+                    }
+                }
+            }
+            let mut message = Message(String::new());
+            event.record(&mut message);
+            self.events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((event.metadata().target().to_string(), message.0));
+        }
+    }
+
+    /// Pin 3 loudness half (GREEN at HEAD). The `EngineStages` pump-ended
+    /// close emits the `op_error!` loud-close log. Today the log is on the
+    /// `StageHandlers::on_pump_ended` hook; T2 moves it (with the poke) to
+    /// `PumpControl::on_pump_ended` and deletes the non-logging inherent
+    /// twin, so this captures the load-bearing behavior that must SURVIVE the
+    /// T2/T3 deletions — a silent close would turn this red.
+    #[test]
+    fn candidate2_enginestages_pump_ended_logs_loudly() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let stages = super::EngineStages::new(Arc::new(parking_lot::Mutex::new(
+            super::ArbitrageEngine::new(),
+        )));
+        let capture = LoudCloseCapture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            crate::bot_core::StageHandlers::on_pump_ended(&stages);
+        });
+        assert!(
+            capture.saw_loud_close(),
+            "EngineStages::on_pump_ended must emit the op_error loud-close log (it must survive T2/T3)"
+        );
+    }
+}

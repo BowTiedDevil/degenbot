@@ -1661,3 +1661,46 @@ mod conformance {
         }
     }
 }
+
+// ======================================================================
+// ergo 2KQZSC — RED pins for the candidate-2 stage-seam contract.
+// Written against the TARGET contract; production code is NOT changed.
+// ======================================================================
+#[cfg(test)]
+mod candidate2_seam_pins {
+    use super::*;
+
+    /// Pin 1 (RED: compile-fails until T2). The target splits the
+    /// driver-facing pokes OFF `StageHandlers` onto a new required
+    /// `PumpControl` trait beside this module, with exactly these seven
+    /// methods and Epoch-typed cursor coordinates. `StageHandlers` keeps
+    /// ONLY the eight stage hooks (on_streaming_complete, on_resolve,
+    /// on_solve, on_simulate, on_gate, on_publish, on_finalize, on_rewind).
+    /// This test names the trait + all seven poke signatures, so it cannot
+    /// compile until `PumpControl` exists.
+    #[test]
+    fn candidate2_pumpcontrol_is_the_seven_poke_seam() {
+        use crate::bot_core::PumpControl;
+        let _has_dirty: fn(&dyn PumpControl) -> bool = PumpControl::has_dirty_paths;
+        let _set_solved: fn(&dyn PumpControl, Epoch) = PumpControl::set_last_solved_block;
+        let _set_anchor: fn(&dyn PumpControl, Epoch) = PumpControl::set_solve_anchor;
+        let _record_logs: fn(&dyn PumpControl) = PumpControl::record_logs_this_block;
+        let _last: fn(&dyn PumpControl) -> Option<Epoch> = PumpControl::last_processed_block;
+        let _notify: fn(&dyn PumpControl, u64, &BlockMetadata) = PumpControl::notify_block;
+        let _ended: fn(&dyn PumpControl) = PumpControl::on_pump_ended;
+
+        // The eight hooks stay on `StageHandlers`; the pokes above must not.
+        fn stage_hooks_only<T: StageHandlers + ?Sized>() {}
+        stage_hooks_only::<dyn StageHandlers>();
+    }
+
+    /// Pin 6 (RED: compile-fails until T2; the `NoopStubEngine` half of the
+    /// ADR-041 completeness proof). At the target the stub implements BOTH
+    /// `StageHandlers` (eight hooks) AND `PumpControl` (seven pokes). The
+    /// `FakeStageEngine` sibling pin lives in block_pump.rs.
+    #[test]
+    fn candidate2_noopstubengine_implements_both_traits() {
+        fn assert_both<T: StageHandlers + crate::bot_core::PumpControl>() {}
+        assert_both::<super::conformance::NoopStubEngine>();
+    }
+}

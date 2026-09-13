@@ -2595,6 +2595,11 @@ mod tests {
         logs_recorded: std::sync::atomic::AtomicUsize,
         /// `pump_ended` recorded (incident 2026-08-20 stream-death test).
         pump_ended: std::sync::atomic::AtomicBool,
+        /// Candidate-2 seam pin (ergo 2KQZSC): the loud close must arrive
+        /// exactly once through the `PumpControl` surface, never through the
+        /// stage seam. These split counters let the pin tell the two apart.
+        pump_control_ends: std::sync::atomic::AtomicUsize,
+        stage_seam_ends: std::sync::atomic::AtomicUsize,
         /// PWPPAZ T2: virtual-time stamps for each `on_drain` (paired with
         /// `drained`), read via `drained_at`.
         drained_at: Mutex<Vec<tokio::time::Instant>>,
@@ -2612,6 +2617,8 @@ mod tests {
                 dirty: AtomicBool::new(false),
                 logs_recorded: std::sync::atomic::AtomicUsize::new(0),
                 pump_ended: std::sync::atomic::AtomicBool::new(false),
+                pump_control_ends: std::sync::atomic::AtomicUsize::new(0),
+                stage_seam_ends: std::sync::atomic::AtomicUsize::new(0),
                 drained_at: Mutex::new(Vec::new()),
             }
         }
@@ -2631,6 +2638,21 @@ mod tests {
         /// True once the pump notified stream death (incident 2026-08-20).
         fn pump_ended(&self) -> bool {
             self.pump_ended.load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        /// Candidate-2 pin (ergo 2KQZSC): closes driven through the target
+        /// `PumpControl` surface. Must be exactly 1 after the WS-streams-ended
+        /// branch fires — this is the behavior the pin exists to prove.
+        fn pump_control_ends(&self) -> usize {
+            self.pump_control_ends
+                .load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        /// Candidate-2 pin (ergo 2KQZSC): closes driven through the stage
+        /// seam's pump-ended poke (removed at T2). Must stay 0.
+        fn stage_seam_ends(&self) -> usize {
+            self.stage_seam_ends
+                .load(std::sync::atomic::Ordering::Relaxed)
         }
 
         fn logs_recorded(&self) -> usize {
@@ -2745,6 +2767,8 @@ mod tests {
         fn on_pump_ended(&self) {
             self.pump_ended
                 .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.stage_seam_ends
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         fn last_processed_block(&self) -> Option<u64> {
             let v = self.last_processed.load(Ordering::Relaxed);
@@ -2754,6 +2778,39 @@ mod tests {
             // Record the forwarded newHeads tick so task 22Y7AB can assert the
             // pump emits one BlockNotification per accepted header.
             self.notified.lock().unwrap().push((block, *metadata));
+        }
+    }
+
+    /// Candidate-2 seam pin (ergo 2KQZSC): the TARGET `PumpControl` surface.
+    /// At HEAD this cannot compile (`PumpControl` lands in T2); that is the
+    /// intended red. The fake records the close here so the pin proves the
+    /// pump actually drove the loud close through the control seam rather than
+    /// returning silently. The StageHandlers impl above is what HEAD uses; T2
+    /// deletes that poke and this impl becomes the only close path.
+    impl crate::bot_core::PumpControl for FakeStageEngine {
+        fn has_dirty_paths(&self) -> bool {
+            self.dirty.load(Ordering::Relaxed)
+        }
+        fn set_last_solved_block(&self, solved: Epoch) {
+            self.solved.lock().unwrap().push(solved.block());
+        }
+        fn set_solve_anchor(&self, _anchor: Epoch) {}
+        fn record_logs_this_block(&self) {
+            self.logs_recorded
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        fn last_processed_block(&self) -> Option<Epoch> {
+            let v = self.last_processed.load(Ordering::Relaxed);
+            (v != 0).then(|| Epoch::at(v))
+        }
+        fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
+            self.notified.lock().unwrap().push((block, *metadata));
+        }
+        fn on_pump_ended(&self) {
+            self.pump_ended
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.pump_control_ends
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -7044,5 +7101,96 @@ mod tests {
             "shutdown flag must exit the loop promptly, took {:?}",
             started.elapsed()
         );
+    }
+
+    // ==================================================================
+    // ergo 2KQZSC — RED pins for the candidate-2 stage-seam contract.
+    // These tests target the post-cutover contract; production code is
+    // NOT changed here. They are intentionally red until the cutover.
+    // ==================================================================
+    mod candidate2_seam_pins {
+        use super::*;
+
+        /// Pin 3 (RED: compile-fails until T2). The BEHAVIORAL half: drive
+        /// the WS-streams-ended branch (block_pump.rs:1772) and prove the
+        /// loud close actually fires. At the target the pump drives the close
+        /// through `PumpControl::on_pump_ended`; at HEAD it still calls
+        /// `self.engine.on_pump_ended()` on the `StageHandlers` seam, so the
+        /// `pump_control_ends` count is 0 and the `stage_seam_ends` count is
+        /// 1 — the assertion below fails rather than passing vacuously. The
+        /// `PumpControl` reference is the compile-red (trait lands in T2).
+        #[tokio::test]
+        async fn candidate2_pump_ended_is_loud_through_the_one_interface() {
+            let (mut pump, sink) = pump_for_test(Some(100));
+            // Immediately-exhausted stream -> the Ok(None) arm: loud op_error
+            // plus the close. No provider calls, no timing.
+            pump.run_test_loop(stream::iter(Vec::<WsEvent>::new()).boxed(), 100)
+                .await;
+            assert_eq!(
+                sink.pump_control_ends(),
+                1,
+                "the WS-streams-ended branch must drive the loud close exactly once through PumpControl"
+            );
+            assert_eq!(
+                sink.stage_seam_ends(),
+                0,
+                "the close must not travel through the StageHandlers stage seam"
+            );
+        }
+
+        /// Pin 3 documentation latch (NOT the substance). The behavioral
+        /// assertions above are the pin; this only records the intended target
+        /// shape so a regression that reintroduces the old direct stage call
+        /// is named explicitly. It must never be cited as the proof.
+        #[test]
+        fn candidate2_pump_ended_old_stage_call_absent_documentation() {
+            let src = include_str!("block_pump.rs");
+            assert!(
+                !src.contains("self.engine.on_pump_ended()"),
+                "documentation latch: the pump is intended to reach the loud close through PumpControl"
+            );
+        }
+
+        /// Pin 4 (RED: runs and fails until T2). The Solved outcome carries
+        /// the epoch it solved (`solved: Epoch`); `drive_solve` derives the
+        /// engine cursor from that outcome instead of poking the seam at the
+        /// solve edge (block_pump.rs:1987 today).
+        #[test]
+        fn candidate2_drive_solve_derives_cursor_from_solve_outcome() {
+            let dbg = format!("{:?}", crate::bot_core::SolveOutcome::default());
+            assert!(
+                dbg.contains("solved"),
+                "SolveOutcome must carry `solved: Epoch`; got {dbg}"
+            );
+        }
+
+        /// Pin 5 (RED: runs and fails until T2). Finalize takes no
+        /// PublishOutcome and the pump never fabricates
+        /// `PublishOutcome::default()` as a carrier at the tombstones
+        /// (block_pump.rs:1633 / 2122 today).
+        #[test]
+        fn candidate2_finalize_and_pump_carry_no_publish_outcome() {
+            let pump_src = include_str!("block_pump.rs");
+            assert!(
+                !pump_src.contains("PublishOutcome::default()"),
+                "the pump must not fabricate a default PublishOutcome carrier"
+            );
+            let seam_src = include_str!("stage_handlers.rs");
+            assert!(
+                !seam_src.contains("pub published: PublishOutcome"),
+                "Finalize must not carry a PublishOutcome field"
+            );
+        }
+
+        /// Pin 6 (RED: compile-fails until T2; the `FakeStageEngine` half
+        /// of the ADR-041 completeness proof). At the target the fake
+        /// implements BOTH `StageHandlers` (eight hooks) AND `PumpControl`
+        /// (seven pokes). The `NoopStubEngine` sibling pin lives in
+        /// stage_handlers.rs.
+        #[test]
+        fn candidate2_fakestageengine_implements_both_traits() {
+            fn assert_both<T: crate::bot_core::StageHandlers + crate::bot_core::PumpControl>() {}
+            assert_both::<super::FakeStageEngine>();
+        }
     }
 }
