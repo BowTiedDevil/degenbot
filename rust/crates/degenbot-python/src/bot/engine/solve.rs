@@ -108,7 +108,9 @@ impl PyArbitrageEngine {
         // no Python objects.
         py.detach(move || {
             let engine = engine.lock();
-            let mut core = engine.core().write();
+            let mut core = engine
+                .core()
+                .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             core.apply_backfill_buffer_v3(&addr);
             core.apply_pump_buffer_v3(&addr);
             core.pin_v3_post_drain_snapshot(addr);
@@ -137,7 +139,9 @@ impl PyArbitrageEngine {
         // OUTSIDE.
         py.detach(move || {
             let engine = engine.lock();
-            let mut core = engine.core().write();
+            let mut core = engine
+                .core()
+                .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             core.apply_backfill_buffer_v4(pm, pool_id);
             core.apply_pump_buffer_v4(pm, pool_id);
             core.pin_v4_post_drain_snapshot(pm, &pool_id);

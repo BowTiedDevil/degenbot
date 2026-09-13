@@ -410,7 +410,9 @@ impl InlineSimulator for InlineSimHook {
         //    the T2 clamp's read. Unknown/unresolvable hops degrade to `None`
         //    (the batch entry stays payload-less -> the legacy FFI path).
         let path_info = {
-            let core = self.bot_state.read();
+            let core = self
+                .bot_state
+                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             match degenbot_bot::arb_engine::build_path_info(&core, &req.hops) {
                 Ok(pi) => pi,
                 Err(_) => return None,
@@ -420,7 +422,9 @@ impl InlineSimulator for InlineSimHook {
         // 2. The sim anchor — SHORT core read, dropped before any provider
         //    I/O (ULUWNI discipline).
         let anchor = {
-            let guard = self.bot_state.read();
+            let guard = self
+                .bot_state
+                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             SimAnchorState::snapshot(&guard)
         };
 

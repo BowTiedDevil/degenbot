@@ -91,7 +91,9 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn path_info_for(&self, path_id: u64) -> Option<Result<PathInfo, PathInfoBuildError>> {
         let path = self.registry.get(path_id)?;
-        let core = self.core.read();
+        let core = self
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
         let mut hops = Vec::with_capacity(path.pools.len());
         for pool_ref in &path.pools {
             match build_hop_info(&core, pool_ref) {

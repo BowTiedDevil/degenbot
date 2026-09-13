@@ -223,8 +223,13 @@ impl PumpState {
         // GIL hygiene: read guard acquired inside py.detach (inversion class).
         // (PumpState holds the pyo3-free `Arc<Bot>`, so there is no PyBot
         // accessor here — detach directly.)
-        let core_has_snapshot =
-            py.detach(|| self.bot.state_arc().read().snapshot_seed_block().is_some());
+        let core_has_snapshot = py.detach(|| {
+            self.bot
+                .state_arc()
+                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python)
+                .snapshot_seed_block()
+                .is_some()
+        });
         self.set_phase(EnginePhase::after_subscribe(phase, core_has_snapshot));
         Ok(state.first_block)
     }

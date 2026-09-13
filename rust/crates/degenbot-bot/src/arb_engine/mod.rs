@@ -690,7 +690,7 @@ impl ArbitrageEngine {
             ..Default::default()
         };
         self.core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v2_pool(&params)
             .expect("test setup: V2 registration")
     }
@@ -707,7 +707,7 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
         self.core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v3_pool(params)
             .expect("test setup: V3 registration")
     }
@@ -722,7 +722,9 @@ impl ArbitrageEngine {
         &self,
         params: &crate::bot_core::RegisterV4PoolParams,
     ) -> Result<u64, crate::bot_core::RegisterV4PoolError> {
-        self.core.write().register_v4_pool(params)
+        self.core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_v4_pool(params)
     }
 }
 

@@ -149,31 +149,42 @@ fn advance_clock_ms(ms: u64) {
     CLOCK_OFFSET_MS.fetch_add(ms, Ordering::Relaxed);
 }
 
-/// Epic K4ETHF T2: classify an acquire site into a small closed set for the
-/// `degenbot.state_lock` wait/hold histograms. Pure on the file string so
-/// unit tests can pin the taxonomy; the line is logged raw by the warn
-/// paths above (location strings are unstable - never a metric label).
-pub(crate) fn site_class_for(file: &str) -> &'static str {
-    if file.contains("bot/mod.rs") {
-        "python"
-    } else if file.contains("block_pump.rs") {
-        "pump"
-    } else if file.contains("registration_lifecycle.rs") || file.contains("cl_orchestration.rs") {
-        "reg"
-    } else if file.contains("solver_dispatch.rs") || file.contains("engine_handle.rs") {
-        // BEFORE the dispatch.rs branch: solver_dispatch.rs contains it.
-        "solver"
-    } else if file.contains("dispatch.rs") {
-        "sim"
-    } else if file.contains("state_lock.rs") {
-        "core"
-    } else {
-        "other"
-    }
+/// Epic K4ETHF T2: closed-set acquire-site taxonomy for the
+/// `degenbot.state_lock` wait/hold histograms. The label IS the enum: a call
+/// site passes a `LockSite` (never a string), so a metric label cannot drift
+/// from the taxonomy and a new site must be classified deliberately. The raw
+/// `#[track_caller]` location is still logged by the warn paths above
+/// (location strings are unstable - never a metric label).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockSite {
+    /// Python-facing `PyBot` internals (degenbot-python FFI pymethods).
+    Python,
+    /// Block pump (`bot_core/block_pump.rs`) acquisition.
+    Pump,
+    /// Pool/registration lifecycle (`registration_lifecycle.rs`, `cl_orchestration.rs`).
+    Registration,
+    /// Arbitrage-engine solver paths (`arb_engine/*`).
+    Solver,
+    /// Simulation dispatch (`degenbot-arbitrage/src/dispatch.rs` and sim paths).
+    Sim,
+    /// General bot-core machinery (incl. the lock's own internals).
+    Core,
 }
 
-fn site_class(loc: &Location) -> &'static str {
-    site_class_for(loc.file())
+impl LockSite {
+    /// Histogram label for this site. Exhaustive match: a new variant cannot
+    /// compile until it names its label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Python => "python",
+            Self::Pump => "pump",
+            Self::Registration => "reg",
+            Self::Solver => "solver",
+            Self::Sim => "sim",
+            Self::Core => "core",
+        }
+    }
 }
 
 /// Emit the wait observation if the metrics pipeline is up (K4ETHF T2;
@@ -433,11 +444,10 @@ impl<T> StateLock<T> {
     /// (`DEGENBOT_STATE_LOCK_DIAG=1`) the hold is registered for slow-hold
     /// forensics.
     #[track_caller]
-    pub fn read(&self) -> StateReadGuard<'_, T> {
+    pub fn read_at(&self, site: LockSite) -> StateReadGuard<'_, T> {
         let t0 = Instant::now();
         let guard = self.inner.read();
-        let site = site_class(Location::caller());
-        record_wait(site, "read", t0);
+        record_wait(site.label(), "read", t0);
         if !diag_enabled() {
             // Gated-off steady state: no registry traffic, no allocation.
             // Keep the blocked-wait warning (rare; no per-hold bookkeeping
@@ -494,14 +504,13 @@ impl<T> StateLock<T> {
     /// immediately after acquisition (the readers we were waiting for); long
     /// HOLDS warn on drop naming the hold site (XC7SWD).
     #[track_caller]
-    pub fn write(&self) -> StateWriteGuard<'_, T> {
+    pub fn write_at(&self, site: LockSite) -> StateWriteGuard<'_, T> {
         let location = Location::caller();
         let t0 = Instant::now();
         let guard = self.inner.write();
         let waited = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
         let key = self.key_of();
-        let site = site_class(location);
-        record_wait(site, "write", t0);
+        record_wait(site.label(), "write", t0);
         if waited >= warn_threshold_ms() {
             let holders = snapshot_holds(key);
             op_warn!(
@@ -526,7 +535,7 @@ impl<T> StateLock<T> {
     /// Try to acquire a write guard without blocking (`None` when contended).
     /// Mirrors `parking_lot::RwLock::try_write` for callers that only probe.
     #[track_caller]
-    pub fn try_write(&self) -> Option<StateWriteGuard<'_, T>> {
+    pub fn try_write_at(&self, site: LockSite) -> Option<StateWriteGuard<'_, T>> {
         self.inner.try_write().map(|guard| {
             let key = self.key_of();
             let mut seq = 0;
@@ -537,7 +546,7 @@ impl<T> StateLock<T> {
                 inner: guard,
                 key,
                 seq,
-                site: site_class(Location::caller()),
+                site,
                 acquired: Instant::now(),
             }
         })
@@ -575,7 +584,7 @@ pub struct StateReadGuard<'a, T> {
     seq: u64,
     /// K4ETHF T2: closed-set acquire-site class + acquire instant for the
     /// hold histogram (recorded at drop regardless of the diag gate).
-    site: &'static str,
+    site: LockSite,
     acquired: Instant,
 }
 
@@ -589,7 +598,7 @@ impl<T> Deref for StateReadGuard<'_, T> {
 impl<T> Drop for StateReadGuard<'_, T> {
     fn drop(&mut self) {
         // Hold telemetry rides the guard in both diag modes (K4ETHF T2).
-        record_hold(self.site, "read", self.acquired);
+        record_hold(self.site.label(), "read", self.acquired);
         // seq == 0 is the gated-off sentinel (never registered; no removal).
         if self.seq != 0 {
             let removed = remove_read(self.key, self.seq);
@@ -623,7 +632,7 @@ pub struct StateWriteGuard<'a, T> {
     seq: u64,
     /// K4ETHF T2: closed-set acquire-site class + acquire instant for the
     /// hold histogram (recorded at drop).
-    site: &'static str,
+    site: LockSite,
     acquired: Instant,
 }
 
@@ -643,7 +652,7 @@ impl<T> DerefMut for StateWriteGuard<'_, T> {
 impl<T> Drop for StateWriteGuard<'_, T> {
     fn drop(&mut self) {
         // Hold telemetry rides the guard in both diag modes (K4ETHF T2).
-        record_hold(self.site, "write", self.acquired);
+        record_hold(self.site.label(), "write", self.acquired);
         if self.seq == 0 {
             return; // gated-off sentinel: never registered
         }
@@ -732,24 +741,30 @@ mod tests {
     // ---- K4ETHF T2 telemetry taxonomy --------------------------------------
 
     #[test]
-    fn site_class_taxonomy_is_pinned() {
-        assert_eq!(
-            site_class_for("x/src/degenbot-python/src/bot/mod.rs"),
-            "python"
-        );
-        assert_eq!(site_class_for("x/bot_core/block_pump.rs"), "pump");
-        assert_eq!(
-            site_class_for("x/bot_core/registration_lifecycle.rs"),
-            "reg"
-        );
-        assert_eq!(site_class_for("x/bot_core/cl_orchestration.rs"), "reg");
-        assert_eq!(
-            site_class_for("x/degenbot-arbitrage/src/dispatch.rs"),
-            "sim"
-        );
-        assert_eq!(site_class_for("x/arb_engine/solver_dispatch.rs"), "solver");
-        assert_eq!(site_class_for("x/arb_engine/engine_handle.rs"), "solver");
-        assert_eq!(site_class_for("x/anything/else.rs"), "other");
+    fn lock_site_taxonomy_is_exhaustive_and_pinned() {
+        // The histogram label comes exactly from `LockSite::label`, never a
+        // string built at the acquire site (K4ETHF T2). Pinning every variant
+        // here keeps the closed set exhaustive and rename-proof: a new variant
+        // fails the `label` match at compile time, and this test fails if a
+        // label is changed without a deliberate review.
+        let all = [
+            LockSite::Python,
+            LockSite::Pump,
+            LockSite::Registration,
+            LockSite::Solver,
+            LockSite::Sim,
+            LockSite::Core,
+        ];
+        assert_eq!(LockSite::Python.label(), "python");
+        assert_eq!(LockSite::Pump.label(), "pump");
+        assert_eq!(LockSite::Registration.label(), "reg");
+        assert_eq!(LockSite::Solver.label(), "solver");
+        assert_eq!(LockSite::Sim.label(), "sim");
+        assert_eq!(LockSite::Core.label(), "core");
+        let mut labels: Vec<&str> = all.iter().map(|s| s.label()).collect();
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), all.len(), "labels must be distinct");
     }
 
     #[test]
@@ -775,7 +790,7 @@ mod tests {
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
         {
-            let guard = lock.read();
+            let guard = lock.read_at(LockSite::Core);
             assert_eq!(*guard, 0);
             let map = ACTIVE_READS.lock();
             let records = map.get(&key).expect("hold registered");
@@ -801,7 +816,7 @@ mod tests {
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
         {
-            let guard = lock.write();
+            let guard = lock.write_at(LockSite::Core);
             assert_eq!(*guard, 0);
             let map = ACTIVE_WRITES.lock();
             let record = map.get(&key).expect("write hold registered");
@@ -827,7 +842,7 @@ mod tests {
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
         {
-            let guard = lock.write();
+            let guard = lock.write_at(LockSite::Core);
             let _ = *guard;
             advance_clock_ms(600);
             // Drop happens here with 600ms held - over the 500ms default.
@@ -854,8 +869,8 @@ mod tests {
         set_diag_enabled_for_tests(true);
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
-        let g1 = lock.read();
-        let g2 = lock.read();
+        let g1 = lock.read_at(LockSite::Core);
+        let g2 = lock.read_at(LockSite::Core);
         {
             let map = ACTIVE_READS.lock();
             assert_eq!(map.get(&key).map_or(0, Vec::len), 2);
@@ -875,10 +890,10 @@ mod tests {
     fn write_access_works_through_wrapper() {
         let lock: StateLock<String> = StateLock::new("a".into());
         {
-            let mut guard = lock.write();
+            let mut guard = lock.write_at(LockSite::Core);
             guard.push('b');
         }
-        assert_eq!(*lock.read(), "ab");
+        assert_eq!(*lock.read_at(LockSite::Core), "ab");
     }
 
     #[test]
@@ -887,7 +902,7 @@ mod tests {
         set_diag_enabled_for_tests(true);
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
-        let guard = lock.read();
+        let guard = lock.read_at(LockSite::Core);
         let dump = dump_active_holds();
         assert!(dump.contains("active read holds"));
         assert!(dump.contains("state_lock.rs"), "dump names the site");
@@ -914,7 +929,7 @@ mod tests {
         set_warn_threshold_ms(1);
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
-        let holder = lock.read();
+        let holder = lock.read_at(LockSite::Core);
         // Age the existing hold synthetically (no sleeping in tests).
         {
             let mut map = ACTIVE_READS.lock();
@@ -925,7 +940,7 @@ mod tests {
         // timestamp stays where it was, so its hold age now exceeds the 1ms
         // threshold.
         advance_clock_ms(60_000);
-        let second = lock.read(); // must flag-and-warn the aged first hold
+        let second = lock.read_at(LockSite::Core); // must flag-and-warn the aged first hold
         let map = ACTIVE_READS.lock();
         let records = map.get(&key).expect("both holds registered");
         assert_eq!(records.len(), 2);
@@ -953,7 +968,7 @@ mod tests {
         clear_recent_slow_read_drops();
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
-        let holder = lock.read();
+        let holder = lock.read_at(LockSite::Core);
         // Age the hold synthetically (no sleeping in tests). Matches the
         // observed stall shape: holder releases first, waiters arrive after.
         {
@@ -1000,7 +1015,7 @@ mod tests {
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
         {
-            let guard = lock.read();
+            let guard = lock.read_at(LockSite::Core);
             let _ = *guard;
             // held ~0ms — under threshold: silent drop
         }
@@ -1011,14 +1026,14 @@ mod tests {
         // A hold already flagged by the aged-check must NOT be re-reported
         // at drop (warn once, whichever path fires first).
         set_warn_threshold_ms(1);
-        let holder = lock.read();
+        let holder = lock.read_at(LockSite::Core);
         {
             let mut map = ACTIVE_READS.lock();
             let records = map.get_mut(&key).expect("holder registered");
             records[0].acquired_ms = now_ms().saturating_sub(10_000);
         }
         advance_clock_ms(60_000);
-        let second = lock.read(); // aged-check flags + warns the first hold
+        let second = lock.read_at(LockSite::Core); // aged-check flags + warns the first hold
         let flagged = recent_slow_read_drops().len();
         drop(second);
         drop(holder);
@@ -1037,7 +1052,7 @@ mod tests {
         set_diag_enabled_for_tests(false);
         let lock: StateLock<u8> = StateLock::new(0);
         let key = lock.key_of();
-        let guard = lock.read();
+        let guard = lock.read_at(LockSite::Core);
         assert_eq!(*guard, 0);
         {
             let map = ACTIVE_READS.lock();
@@ -1055,6 +1070,6 @@ mod tests {
         // An uncontended write waits < 1ms virtually always, so the quiet path
         // runs (log-content assertions belong to an integration harness).
         let lock: StateLock<u16> = StateLock::new(3);
-        assert_eq!(*lock.write(), 3);
+        assert_eq!(*lock.write_at(LockSite::Core), 3);
     }
 }

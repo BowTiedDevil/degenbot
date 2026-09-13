@@ -1910,7 +1910,9 @@ mod tests {
         // Prove the path IS profitable when fresh: advance both clocks to a block
         // within the window of the solve block, rebuild, and confirm a result.
         {
-            let mut core = engine.core.write();
+            let mut core = engine
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver);
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 498);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 498);
         }
@@ -1933,7 +1935,9 @@ mod tests {
         // / missed-event class, e.g. the 166k-block-behind live SushiSwap-V3 pool)
         // and rebuild at 500 again. Quiet-but-current → MUST be solved, not deferred.
         {
-            let mut core = engine.core.write();
+            let mut core = engine
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver);
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 10);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 10);
         }
@@ -2009,7 +2013,9 @@ mod tests {
 
         // Exactly at the old 10-block window edge is tolerated — still solved.
         {
-            let mut core = engine.core.write();
+            let mut core = engine
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver);
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 490);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 490);
         }
@@ -2030,7 +2036,9 @@ mod tests {
 
         // 11 blocks past the old window edge — still solved (quiet, not stale).
         {
-            let mut core = engine.core.write();
+            let mut core = engine
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver);
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 489);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 489);
         }
@@ -2130,7 +2138,9 @@ mod tests {
 
         // Resolve and solve all paths (replaces start() + initial_solve())
         {
-            let core = engine.core.read();
+            let core = engine
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             for (&path_id, path) in &engine.registry.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
                 let _ = crate::bot_core::resolve::resolve_hops(
@@ -2292,7 +2302,9 @@ mod tests {
 
         // The terminal V2 hop's REPORTED output must equal its byte-exact
         // twin at the CLAMPED input (zfo=false → reserve_in=token1, fee_token1).
-        let core = engine.core.read();
+        let core = engine
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
         let state = core.get_v2_pool_state(v2).unwrap();
         let identity = core.get_v2_identity(v2).unwrap();
         let expected = IntHopState::new(
@@ -2421,7 +2433,9 @@ mod tests {
         // Compute the pools twin's input_consumed at the requested input to
         // assert the clamped value equals `input_consumed - 1` exactly.
         let input_consumed = {
-            let core = engine.core.read();
+            let core = engine
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             let state = core.get_v4_pool(v4_id).unwrap();
             let identity = core.get_v4_identity(v4_id).unwrap();
             let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
@@ -2441,7 +2455,9 @@ mod tests {
         // The twin's output-token amount (zfo=false → output = amount0) — the
         // byte-exact value the clamp aligns hop_outputs[1] to.
         let twin_out = {
-            let core = engine.core.read();
+            let core = engine
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             let state = core.get_v4_pool(v4_id).unwrap();
             let identity = core.get_v4_identity(v4_id).unwrap();
             let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
@@ -2569,7 +2585,9 @@ mod tests {
         // Compute the V4 twin's amount1 (zfo=true → output = amount1) at the
         // requested input — the byte-exact value hop_outputs[0] must align to.
         let twin_out = {
-            let core = engine.core.read();
+            let core = engine
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             let state = core.get_v4_pool(v4_id).unwrap();
             let identity = core.get_v4_identity(v4_id).unwrap();
             let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
@@ -2802,12 +2820,14 @@ mod tests {
         // Verify we can resolve pool addresses via BotState (V2) / sub-engines (V3/V4)
         let v2_addr = engine
             .core
-            .read()
+            .read_at(crate::bot_core::state_lock::LockSite::Solver)
             .get_v2_identity(v2_fwd)
             .map(|p| p.address);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
-        let core = engine.core.read();
+        let core = engine
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
         let v3_pool = core.get_v3_identity(v3_key);
         assert_eq!(
             v3_pool.map(|p| p.address),
@@ -3207,7 +3227,10 @@ mod tests {
         // restore+re-dirty — `engine.handle_reorg` is deleted in slice 7
         // (replaced by per-event `ReorgCoordinator::dispatch_reorg_log`);
         // this test verifies the engine-level outcome holds under the restore.
-        engine.core.write().restore_all_pools_before_block(5);
+        engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .restore_all_pools_before_block(5);
         engine.cycle.path_resolved.clear();
         // LXDY4C: the re-restored pools re-enter the epoch delta; the solve
         // consumes the delta's taken keys (all registered hop keys here).
@@ -3293,7 +3316,10 @@ mod tests {
         // DFQYM5: Tracked pools register `Quarantined`; the driver's post-verify
         // `set_live` is what makes it apply directly. Transition to `Live` so
         // this test's swap/Mint direct-apply (its model).
-        engine.core.write().set_v3_pool_live(pool_addr);
+        engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .set_v3_pool_live(pool_addr);
 
         // Capture the registration scalar state.
         let reg_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
@@ -3308,7 +3334,7 @@ mod tests {
         let swapped_tick = 60i32;
         engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .apply_v3_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
 
         // Mint at block 6: adds liquidity at [+60, +120] — in-range because the
@@ -3316,11 +3342,13 @@ mod tests {
         // +500 (parity with on-chain + the concentrated-liquidity-math pure reference).
         engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
 
         {
-            let core = engine.core.read();
+            let core = engine
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
             assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
             assert_eq!(
@@ -3340,11 +3368,16 @@ mod tests {
         // Reorg back to block 5: rolls the block-6 Mint (removes ticks 60/120)
         // AND the block-5 Swap (restores registration scalars). Restore is
         // idempotent for pools untouched by the fork.
-        let restored = engine.core.write().restore_all_pools_before_block(5);
+        let restored = engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .restore_all_pools_before_block(5);
         assert_eq!(restored, 1, "the single registered V3 pool was rolled back");
 
         {
-            let core = engine.core.read();
+            let core = engine
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             let s = core.get_v3_pool(pool_id).expect("v3 pool still registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sp,
@@ -3390,7 +3423,7 @@ mod tests {
             ..Default::default()
         };
         let _pool_id = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v2_pool(&params)
             .expect("test setup: V2 registration");
 
@@ -3418,7 +3451,7 @@ mod tests {
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
         // Register one real V2 pool so the engine has *some* valid id.
         let real_pool_id = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v2_pool(&RegisterV2PoolParams {
                 address: Address::from([0x11u8; 20]),
                 token0: Address::from([0x01u8; 20]),
@@ -3551,7 +3584,10 @@ mod tests {
         });
         // DFQYM5: Tracked pools register `Quarantined`; this test drives
         // backfill swaps that must direct-apply + journal, so release to Live.
-        engine.core.write().set_v3_pool_live(pool_addr);
+        engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .set_v3_pool_live(pool_addr);
 
         // Two swaps at distinct blocks inside one backfill chunk.
         let b1 = 10u64;
@@ -3568,9 +3604,14 @@ mod tests {
         // (the pump calls `BotState::process_backfill_logs` directly). The test
         // only asserts on journal/state, so call the BotState method directly
         // — the same path the production backfill uses.
-        engine.core.write().process_backfill_logs(&logs, chunk_end);
+        engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .process_backfill_logs(&logs, chunk_end);
 
-        let core = engine.core.read();
+        let core = engine
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
         let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
         // Two distinct-block swaps must produce two journal deltas — NOT one
         // collapsed delta stamped at chunk_end.
@@ -3602,11 +3643,13 @@ mod tests {
         drop(core);
         engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .restore_pool_before_block(pool_id, b2)
             .expect("restore returns Some")
             .expect("restore succeeds");
-        let core = engine.core.read();
+        let core = engine
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
         let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
         assert_eq!(
             s.sqrt_price_x96, sp_b1,
@@ -3699,7 +3742,7 @@ mod tests {
             let done = Arc::clone(&done);
             readers.push(thread::spawn(move || {
                 while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                    let r = core.read();
+                    let r = core.read_at(crate::bot_core::state_lock::LockSite::Solver);
                     // Read is coherent under one guard — no torn state.
                     let _pool = r.get_v2_pool_state(pool_id);
                 }
@@ -3886,7 +3929,7 @@ mod tests {
             let done = Arc::clone(&done);
             readers.push(thread::spawn(move || {
                 while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _r = core.read();
+                    let _r = core.read_at(crate::bot_core::state_lock::LockSite::Solver);
                     // Optional pool-state read; spurious empty reads on the
                     // V2 registry are fine (the registered pool_ids are stable).
                 }
@@ -4038,22 +4081,24 @@ mod tests {
         }
 
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
-        core.write().register_token(
-            Address::from([0x01u8; 20]),
-            "Token0".into(),
-            "T0".into(),
-            18,
-            1,
-        );
-        core.write().register_token(
-            Address::from([0x02u8; 20]),
-            "Token1".into(),
-            "T1".into(),
-            18,
-            1,
-        );
+        core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_token(
+                Address::from([0x01u8; 20]),
+                "Token0".into(),
+                "T0".into(),
+                18,
+                1,
+            );
+        core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_token(
+                Address::from([0x02u8; 20]),
+                "Token1".into(),
+                "T1".into(),
+                18,
+                1,
+            );
         let aero_a = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
                 token0_decimals: 18,
                 token1_decimals: 18,
@@ -4069,7 +4114,7 @@ mod tests {
                 update_block: 0,
             });
         let aero_b = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
                 token0_decimals: 18,
                 token1_decimals: 18,
@@ -4165,26 +4210,28 @@ mod tests {
         }
 
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
-        core.write().register_token(
-            Address::from([0x01u8; 20]),
-            "Token0".into(),
-            "T0".into(),
-            18,
-            1,
-        );
-        core.write().register_token(
-            Address::from([0x02u8; 20]),
-            "Token1".into(),
-            "T1".into(),
-            18,
-            1,
-        );
+        core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_token(
+                Address::from([0x01u8; 20]),
+                "Token0".into(),
+                "T0".into(),
+                18,
+                1,
+            );
+        core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_token(
+                Address::from([0x02u8; 20]),
+                "Token1".into(),
+                "T1".into(),
+                18,
+                1,
+            );
         // Mixed path: Solidly hop0 (token0→token1), V2 hop1 (token1→token0).
         // Mirrors the profitable all-Solidly fixture but with the second hop
         // as V2 constant-product (more slippage than Solidly, but the cycle
         // is still profitable because Solidly hop0 emits ample token1).
         let aero_id = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
                 token0_decimals: 18,
                 token1_decimals: 18,
@@ -4200,7 +4247,7 @@ mod tests {
                 update_block: 0,
             });
         let v2_id = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v2_pool(&RegisterV2PoolParams {
                 address: Address::from([0xb2u8; 20]),
                 token0: Address::from([0x01u8; 20]),
@@ -4296,22 +4343,24 @@ mod tests {
         use std::sync::Arc;
 
         let core = Arc::new(crate::bot_core::state_lock::StateLock::new(BotState::new()));
-        core.write().register_token(
-            Address::from([0x01u8; 20]),
-            "Token0".into(),
-            "T0".into(),
-            18,
-            1,
-        );
-        core.write().register_token(
-            Address::from([0x02u8; 20]),
-            "Token1".into(),
-            "T1".into(),
-            18,
-            1,
-        );
+        core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_token(
+                Address::from([0x01u8; 20]),
+                "Token0".into(),
+                "T0".into(),
+                18,
+                1,
+            );
+        core.write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_token(
+                Address::from([0x02u8; 20]),
+                "Token1".into(),
+                "T1".into(),
+                18,
+                1,
+            );
         let aero = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
                 token0_decimals: 18,
                 token1_decimals: 18,
@@ -4331,7 +4380,7 @@ mod tests {
         // Register a minimal V3 pool for the second hop using the same
         // ..Default::default() pattern as the existing V3 tests.
         let v3_id = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v3_pool(&RegisterV3PoolParams {
                 address: Address::from([0xc1u8; 20]),
                 token0: Address::from([0x02u8; 20]),
@@ -4434,25 +4483,23 @@ mod tests {
         let _ = one; // reserved for future reserve-scale assertions
 
         // Pool A: 1000 token0 / 2000 token1 (50/50 — reduces to constant product)
-        let pool_a =
-            engine
-                .core
-                .write()
-                .register_balancer_weighted_pool(&balancer_weighted_5050_params(
-                    Address::from([0xd1u8; 20]),
-                    1000,
-                    2000,
-                ));
+        let pool_a = engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_balancer_weighted_pool(&balancer_weighted_5050_params(
+                Address::from([0xd1u8; 20]),
+                1000,
+                2000,
+            ));
         // Pool B: 1000 token0 / 1950 token1 (mispriced — cheaper token1 here)
-        let pool_b =
-            engine
-                .core
-                .write()
-                .register_balancer_weighted_pool(&balancer_weighted_5050_params(
-                    Address::from([0xd2u8; 20]),
-                    1000,
-                    1950,
-                ));
+        let pool_b = engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_balancer_weighted_pool(&balancer_weighted_5050_params(
+                Address::from([0xd2u8; 20]),
+                1000,
+                1950,
+            ));
 
         // Path: token0 → token1 (pool A) → token0 (pool B)
         engine
@@ -4486,24 +4533,22 @@ mod tests {
         let mut engine = ArbitrageEngine::new();
 
         // 80/20 pools with a mispricing to create an arb cycle.
-        let pool_a =
-            engine
-                .core
-                .write()
-                .register_balancer_weighted_pool(&balancer_weighted_8020_params(
-                    Address::from([0xe1u8; 20]),
-                    800_000,
-                    200_000,
-                ));
-        let pool_b =
-            engine
-                .core
-                .write()
-                .register_balancer_weighted_pool(&balancer_weighted_8020_params(
-                    Address::from([0xe2u8; 20]),
-                    800_000,
-                    195_000,
-                ));
+        let pool_a = engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_balancer_weighted_pool(&balancer_weighted_8020_params(
+                Address::from([0xe1u8; 20]),
+                800_000,
+                200_000,
+            ));
+        let pool_b = engine
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_balancer_weighted_pool(&balancer_weighted_8020_params(
+                Address::from([0xe2u8; 20]),
+                800_000,
+                195_000,
+            ));
 
         engine
             .register_path(vec![
@@ -4574,11 +4619,11 @@ mod tests {
         };
         let bw_a = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&bw_params(Address::from([0xf3u8; 20]), 1000, 2000));
         let bw_b = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&bw_params(Address::from([0xf4u8; 20]), 1000, 1950));
 
         // Solve V2-V2 path
@@ -4598,7 +4643,11 @@ mod tests {
         let v2_profit = v2_results.values().next().unwrap().profit;
 
         // Solve Balancer-V2-V2 path (clear and re-solve)
-        drop(engine.core.write());
+        drop(
+            engine
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver),
+        );
         let bw_path = engine
             .register_path(vec![
                 PoolHop {
@@ -4671,7 +4720,7 @@ mod tests {
         };
         let bw = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&bw_params);
 
         // V2 → Balancer weighted path
@@ -4701,7 +4750,7 @@ mod tests {
 
         // Register a Balancer weighted pool
         let bw = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_weighted_pool(&balancer_weighted_5050_params(
                 Address::from([0xb1u8; 20]),
                 1000,
@@ -4709,7 +4758,7 @@ mod tests {
             ));
         // Register a V3 pool
         let v3 = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v3_pool(&RegisterV3PoolParams {
                 address: Address::from([0xc1u8; 20]),
                 token0: Address::repeat_byte(0x01),
@@ -4898,7 +4947,7 @@ mod tests {
         // Pool A: 1000 token0 / 2000 token1 (amp=200 — stable curve)
         let pool_a = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_stable_pool(&balancer_stable_params(
                 Address::from([0xe1u8; 20]),
                 1000,
@@ -4907,7 +4956,7 @@ mod tests {
         // Pool B: 1000 token0 / 1950 token1 (mispriced)
         let pool_b = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_stable_pool(&balancer_stable_params(
                 Address::from([0xe2u8; 20]),
                 1000,
@@ -4948,7 +4997,7 @@ mod tests {
         // Two identical pools — no arb possible.
         let pool_a = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_stable_pool(&balancer_stable_params(
                 Address::from([0xf1u8; 20]),
                 1000,
@@ -4956,7 +5005,7 @@ mod tests {
             ));
         let pool_b = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_stable_pool(&balancer_stable_params(
                 Address::from([0xf2u8; 20]),
                 1000,
@@ -4999,7 +5048,7 @@ mod tests {
         // Balancer stable pool: 1000/1950 (mispriced), 0.01% fee
         let bs = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_stable_pool(&balancer_stable_params(
                 Address::from([0xa4u8; 20]),
                 1000,
@@ -5035,14 +5084,14 @@ mod tests {
         ));
 
         let bs = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_balancer_stable_pool(&balancer_stable_params(
                 Address::from([0xb3u8; 20]),
                 1000,
                 2000,
             ));
         let v3 = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v3_pool(&RegisterV3PoolParams {
                 address: Address::from([0xc3u8; 20]),
                 token0: Address::repeat_byte(0x01),
@@ -5142,7 +5191,7 @@ mod tests {
 
         let pool_a = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_curve_pool(&curve_stable_params(
                 Address::from([0xe1u8; 20]),
                 1000,
@@ -5150,7 +5199,7 @@ mod tests {
             ));
         let pool_b = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_curve_pool(&curve_stable_params(
                 Address::from([0xe2u8; 20]),
                 1000,
@@ -5190,7 +5239,7 @@ mod tests {
 
         let pool_a = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_curve_pool(&curve_stable_params(
                 Address::from([0xf1u8; 20]),
                 1000,
@@ -5198,7 +5247,7 @@ mod tests {
             ));
         let pool_b = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_curve_pool(&curve_stable_params(
                 Address::from([0xf2u8; 20]),
                 1000,
@@ -5239,7 +5288,7 @@ mod tests {
         );
         let cs = engine
             .core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_curve_pool(&curve_stable_params(
                 Address::from([0xa6u8; 20]),
                 1000,
@@ -5270,13 +5319,15 @@ mod tests {
             crate::bot_core::BotState::new(),
         ));
 
-        let cs = core.write().register_curve_pool(&curve_stable_params(
-            Address::from([0xb4u8; 20]),
-            1000,
-            2000,
-        ));
+        let cs = core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .register_curve_pool(&curve_stable_params(
+                Address::from([0xb4u8; 20]),
+                1000,
+                2000,
+            ));
         let v3 = core
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
             .register_v3_pool(&RegisterV3PoolParams {
                 address: Address::from([0xc4u8; 20]),
                 token0: Address::repeat_byte(0x01),

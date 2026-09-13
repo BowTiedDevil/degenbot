@@ -187,7 +187,9 @@ impl Bot {
     ) -> Result<(), SnapshotLoadError> {
         let chain = i64::try_from(chain_id)
             .map_err(|_| SnapshotLoadError::Range(format!("chain_id {chain_id} exceeds i64")))?;
-        let mut state = self.state.write();
+        let mut state = self
+            .state
+            .write_at(crate::bot_core::state_lock::LockSite::Core);
         let now_v3 = db
             .fetch_newest_update_block(chain, degenbot_db::read::ExchangeFamily::V3)
             .map_err(SnapshotLoadError::from)?;
@@ -232,7 +234,11 @@ impl Bot {
     /// Resolve a decoded event's `pool_id` against `BotState` (ADR-006 slice 7).
     /// V2/V3 by address, V4 by `(pool_manager, pool_id)` key.
     pub fn resolve_pool_id(&self, event: &log_dispatcher::DecodedPoolEvent) -> Option<u64> {
-        event.resolve_pool_id(&self.state.read())
+        event.resolve_pool_id(
+            &self
+                .state
+                .read_at(crate::bot_core::state_lock::LockSite::Core),
+        )
     }
 
     /// Restore `pool_id`'s state to just before `block` (ADR-006 slice 7).
@@ -242,7 +248,10 @@ impl Bot {
     pub fn restore_pool_before_block(&self, pool_id: u64, block: u64) {
         // Discard the trait result — the reorg coordinator path is fire-and-
         // forget (too-deep was pre-checked via `has_state_prior_to`).
-        let _ = self.state.write().restore_pool_before_block(pool_id, block);
+        let _ = self
+            .state
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
+            .restore_pool_before_block(pool_id, block);
     }
 
     /// Peek the newest reorg-journal delta block for `pool_id` (WAJEQP T-R1:
@@ -250,7 +259,9 @@ impl Bot {
     /// `None` when unregistered or the journal is empty.
     #[must_use]
     pub fn newest_journal_block(&self, pool_id: u64) -> Option<u64> {
-        self.state.read().newest_journal_block(pool_id)
+        self.state
+            .read_at(crate::bot_core::state_lock::LockSite::Core)
+            .newest_journal_block(pool_id)
     }
 
     /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
@@ -258,7 +269,9 @@ impl Bot {
     /// `Err(NoStatePriorToBlock)` and the pump shuts down gracefully.
     #[must_use]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
-        self.state.read().has_state_prior_to(pool_id, block)
+        self.state
+            .read_at(crate::bot_core::state_lock::LockSite::Core)
+            .has_state_prior_to(pool_id, block)
     }
 
     /// The shared epoch-delta ledger: log application records touched
@@ -334,16 +347,20 @@ mod tests {
             ..Default::default()
         };
         state
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
             .register_v2_pool(&params)
             .expect("test setup: V2 registration");
 
         let state2 = bot.state_arc();
         assert_eq!(
-            state2.read().pool_count(),
+            state2
+                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .pool_count(),
             1,
             "state_arc() must share one BotState"
         );
-        assert!(state2.read().has_pool(1));
+        assert!(state2
+            .read_at(crate::bot_core::state_lock::LockSite::Core)
+            .has_pool(1));
     }
 }

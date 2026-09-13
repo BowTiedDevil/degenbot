@@ -117,12 +117,27 @@ fn v4v4v2_path182449_terminal_v2_is_byte_exact() {
     assert_recorded_incident(&fx);
 
     let mut engine = ArbitrageEngine::new();
-    let pid_a = register_v4(&mut engine.core().write(), &fx.pools["v4_a"])
-        .unwrap_or_else(|e| panic!("{e}"));
-    let pid_b = register_v4(&mut engine.core().write(), &fx.pools["v4_b"])
-        .unwrap_or_else(|e| panic!("{e}"));
-    let pid_c = register_v2(&mut engine.core().write(), &fx.pools["v2_c"])
-        .unwrap_or_else(|e| panic!("{e}"));
+    let pid_a = register_v4(
+        &mut engine
+            .core()
+            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &fx.pools["v4_a"],
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let pid_b = register_v4(
+        &mut engine
+            .core()
+            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &fx.pools["v4_b"],
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let pid_c = register_v2(
+        &mut engine
+            .core()
+            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &fx.pools["v2_c"],
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
     let hops: Vec<PoolHop> = fx
         .path
         .iter()
@@ -200,12 +215,27 @@ fn v3v4v2_path110302_terminal_v2_is_byte_exact() {
     assert_recorded_incident(&fx);
 
     let mut engine = ArbitrageEngine::new();
-    let pid_a = register_v3(&mut engine.core().write(), &fx.pools["v3_0"])
-        .unwrap_or_else(|e| panic!("{e}"));
-    let pid_b =
-        register_v4(&mut engine.core().write(), &fx.pools["v4"]).unwrap_or_else(|e| panic!("{e}"));
-    let pid_c = register_v2(&mut engine.core().write(), &fx.pools["v2_2"])
-        .unwrap_or_else(|e| panic!("{e}"));
+    let pid_a = register_v3(
+        &mut engine
+            .core()
+            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &fx.pools["v3_0"],
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let pid_b = register_v4(
+        &mut engine
+            .core()
+            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &fx.pools["v4"],
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let pid_c = register_v2(
+        &mut engine
+            .core()
+            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core),
+        &fx.pools["v2_2"],
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
     let hops: Vec<PoolHop> = fx
         .path
         .iter()

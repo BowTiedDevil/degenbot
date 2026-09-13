@@ -43,7 +43,7 @@ pub fn state_write_park_cycle(
     let holder = thread::spawn(move || {
         // T1-scan-exempt: pure-Rust test seam — this thread holds no GIL by
         // design; the cycle repro constructs the inversion deliberately.
-        let guard = arc.read();
+        let guard = arc.read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
         thread::sleep(Duration::from_millis(read_hold_ms));
         // The reader's next GIL touch (a Python-backed data source). Under
         // the pre-fix shape this is where the cycle closes forever.
@@ -78,7 +78,7 @@ pub fn update_v3_park_cycle(
     let holder = thread::spawn(move || {
         // T1-scan-exempt: pure-Rust test seam — this thread holds no GIL by
         // design; the cycle repro constructs the inversion deliberately.
-        let guard = arc.read();
+        let guard = arc.read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
         thread::sleep(Duration::from_millis(read_hold_ms));
         Python::attach(|_p| ());
         drop(guard);

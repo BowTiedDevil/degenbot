@@ -172,7 +172,10 @@ fn fixture_snapshot_seed_block() -> Option<u64> {
     snapshot_bot
         .load_snapshot_from_db(&snap.0, 8453)
         .expect("load_snapshot_from_db on the fixture DB returns Ok");
-    let seed_block = snapshot_bot.state_arc().read().snapshot_seed_block();
+    let seed_block = snapshot_bot
+        .state_arc()
+        .read_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
+        .snapshot_seed_block();
     // Fixture DB has V3 ticks at chain 8453 (aerodrome_v3, last_update_block
     // = 12_345_000) AND an empty V4 family (uniswap_v4 exchange row,
     // last_update_block = 12_340_000) → S = MIN(V3, V4) = 12_340_000
@@ -473,7 +476,7 @@ fn registration_lifecycle_standalone_slice() {
         },
     );
     let pid = core
-        .write()
+        .write_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
         .register_v3_pool(&RegisterV3PoolParams {
             address: addr,
             token0: address!("000000000000000000000000000000000000000A"),
@@ -489,7 +492,10 @@ fn registration_lifecycle_standalone_slice() {
         })
         .expect("standalone: Tracked V3 registration");
     assert_eq!(
-        core.read().get_v3_pool(pid).unwrap().registration_lifecycle,
+        core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
+            .get_v3_pool(pid)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Quarantined,
         "Tracked registers Quarantined (DFQYM5)"
     );
@@ -508,7 +514,10 @@ fn registration_lifecycle_standalone_slice() {
         ))
         .expect("standalone: lifecycle must pass");
     assert_eq!(
-        core.read().get_v3_pool(pid).unwrap().registration_lifecycle,
+        core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Core)
+            .get_v3_pool(pid)
+            .unwrap()
+            .registration_lifecycle,
         RegistrationLifecycle::Live,
         "Tracked lands Live only after verification"
     );

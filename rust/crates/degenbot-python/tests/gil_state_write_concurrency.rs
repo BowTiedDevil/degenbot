@@ -101,8 +101,11 @@ fn update_v3_pool_write_does_not_invert_with_reader_gil() {
 /// (log_dispatcher state.write()), and a reader that then wants the GIL
 /// (result-channel anext, Python log forwarding) closes the cycle.
 ///
-/// Each `.read()`/`.write()` line must have `py.detach` within the 8 preceding
+/// Each `.read_at()`/`.write_at()` line (and legacy bare `.read()`/`.write()`
+/// on other BotState guards) must have `py.detach` within the 8 preceding
 /// lines, or carry a `T1-scan-exempt` marker (pure-Rust test seams only).
+/// Non-blocking `try_write_at` probes are out of scope, matching the
+/// pre-cutover scan (which never matched `.try_write()`).
 #[test]
 fn no_gil_held_botstate_locks_in_bot_sources() {
     let src_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/bot");
@@ -131,7 +134,11 @@ fn no_gil_held_botstate_locks_in_bot_sources() {
             if trimmed.starts_with("//") || trimmed.starts_with('#') {
                 continue;
             }
-            if !line.contains(".read()") && !line.contains(".write()") {
+            let is_lock_site = line.contains(".read_at(")
+                || line.contains(".write_at(")
+                || line.contains(".read()")
+                || line.contains(".write()");
+            if !is_lock_site {
                 continue;
             }
             checked_in_file += 1;

@@ -116,7 +116,9 @@ impl ArbitrageEngine {
         );
         let ctx = span.enter();
         let lock_t0 = Instant::now();
-        let mut core = self.core.write();
+        let mut core = self
+            .core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver);
         let lock_wait_us = u64::try_from(lock_t0.elapsed().as_micros()).unwrap_or(u64::MAX);
         let work_t0 = Instant::now();
         expire(&mut core);
@@ -213,7 +215,9 @@ impl ArbitrageEngine {
         let mut v2_affected = HashSet::new();
         let mut v3_affected = HashSet::new();
         {
-            let mut core = self.core.write();
+            let mut core = self
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver);
             for &(addr, r0, r1) in v2_updates {
                 if let Some(pool_id) = core.apply_v2_sync(addr, r0, r1, block_number) {
                     v2_affected.insert(pool_id);
@@ -253,7 +257,9 @@ impl ArbitrageEngine {
     ) {
         let mut v4_affected = HashSet::new();
         {
-            let mut core = self.core.write();
+            let mut core = self
+                .core
+                .write_at(crate::bot_core::state_lock::LockSite::Solver);
             for update in v4_updates {
                 if let Some(pool_id) = core.apply_v4_swap(update, block_number) {
                     v4_affected.insert(pool_id);

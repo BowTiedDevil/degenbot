@@ -450,7 +450,9 @@ impl PyLiquidityPool {
     /// depth (it never parks).
     #[must_use]
     pub fn state_write_is_free(&self) -> bool {
-        self.core.try_write().is_some()
+        self.core
+            .try_write_at(degenbot_bot::bot_core::state_lock::LockSite::Python)
+            .is_some()
     }
 
     /// RATR5A/CXRHW3 pre-pass: discover the missing bitmap words for
@@ -530,7 +532,9 @@ impl PyLiquidityPool {
     {
         py.detach(|| {
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = self.core.read();
+            let guard = self
+                .core
+                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&guard)
         })
     }
@@ -542,7 +546,9 @@ impl PyLiquidityPool {
     {
         py.detach(move || {
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let mut guard = self.core.write();
+            let mut guard = self
+                .core
+                .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&mut guard)
         })
     }
@@ -3662,7 +3668,9 @@ impl PyPool {
     {
         py.detach(|| {
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = self.core.read();
+            let guard = self
+                .core
+                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&guard)
         })
     }

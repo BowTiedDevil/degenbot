@@ -647,7 +647,9 @@ fn clamp_result_in_worker(
     if !ctx.worker_clamp || idx >= ctx.pool_refs.len() {
         return 0;
     }
-    let core = ctx.core.read();
+    let core = ctx
+        .core
+        .read_at(crate::bot_core::state_lock::LockSite::Solver);
     ArbitrageEngine::clamp_result_with_state(&core, pid, &ctx.pool_refs[idx].pools, result)
 }
 

@@ -126,7 +126,7 @@ impl PyArbitrageEngine {
             let engine = self.engine.lock();
             let core = engine.core();
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = core.read();
+            let guard = core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&guard)
         })
     }
@@ -144,7 +144,7 @@ impl PyArbitrageEngine {
             let engine = self.engine.lock();
             let core = engine.core();
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let mut guard = core.write();
+            let mut guard = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&mut guard)
         })
     }

@@ -438,7 +438,11 @@ impl BlockPump {
     /// Returns `Err(String)` if a chunk's `eth_getLogs` call fails (message
     /// includes the offending block range + provider error).
     pub async fn backfill_to_ws_block(&self, ws_block: u64) -> Result<u64, String> {
-        let s = self.bot.state_arc().read().snapshot_seed_block();
+        let s = self
+            .bot
+            .state_arc()
+            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .snapshot_seed_block();
         let Some(seed) = s else { return Ok(0) };
         if seed == 0 || ws_block == 0 || seed >= ws_block {
             return Ok(0);
@@ -576,7 +580,11 @@ impl BlockPump {
         // cursor IS the drained cursor.)
         let mut current_block: u64 = self.control.last_processed_block().map_or(0, Epoch::block);
 
-        let snapshot_seed = self.bot.state_arc().read().snapshot_seed_block();
+        let snapshot_seed = self
+            .bot
+            .state_arc()
+            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .snapshot_seed_block();
         if current_block == 0 && first_observed_block > 0 {
             current_block = first_observed_block;
             // One resume/cold-start line either way (audit: the two identical
@@ -1578,7 +1586,7 @@ impl BlockPump {
                             // `set_last_solved_block` steps).
                             self.bot
                                 .state_arc()
-                                .write()
+                                .write_at(crate::bot_core::state_lock::LockSite::Pump)
                                 .advance_pump_complete_cutoff(prev);
                             // First removed:false log for N+1 → tombstone N.
                             // Finalize N with N's OWN metadata (snapshotted
@@ -1732,7 +1740,11 @@ impl BlockPump {
                     // headers are gone. This is the liveness signal the loop
                     // otherwise lacks — owned by the `PumpTelemetry` seam.
                     telemetry.on_log();
-                    let pool_state_head = self.bot.state_arc().read().pool_state_head();
+                    let pool_state_head = self
+                        .bot
+                        .state_arc()
+                        .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                        .pool_state_head();
                     telemetry.maybe_stats(fsm.current_block(), pool_state_head);
                 }
 
@@ -1911,7 +1923,11 @@ impl BlockPump {
         _now_ms: u64, // the retired header→solved stamp consumed it; the epoch race is stamped in drive_publish
     ) {
         let _solve_ctx = block_span.map(tracing::Span::enter);
-        let state_head = self.bot.state_arc().read().pool_state_head();
+        let state_head = self
+            .bot
+            .state_arc()
+            .read_at(crate::bot_core::state_lock::LockSite::Pump)
+            .pool_state_head();
         let StageDecision::Drain { block, metadata } = fsm.drain_decision(state_head) else {
             unreachable!("drain_decision always drains when called");
         };
@@ -2308,7 +2324,7 @@ impl BlockPump {
         let w = ws_block;
         let s = {
             let arc = self.bot.state_arc();
-            let state = arc.read();
+            let state = arc.read_at(crate::bot_core::state_lock::LockSite::Pump);
             state.snapshot_seed_block()
         };
         let Some(s) = s else {
@@ -2386,7 +2402,7 @@ impl BlockPump {
             // (which advance `last_processed_block`) stay atomic per chunk.
             self.bot
                 .state_arc()
-                .write()
+                .write_at(crate::bot_core::state_lock::LockSite::Pump)
                 .process_backfill_logs(&logs, chunk_end);
             op_info!(
                 domain = pump,
@@ -2857,7 +2873,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         {
             let arc = bot.state_arc();
-            let mut core = arc.write();
+            let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.register_v2_pool(&RegisterV2PoolParams {
                 address: A::from([0xccu8; 20]),
                 token0: A::from([0xa0u8; 20]),
@@ -3285,7 +3301,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         {
             let arc = bot.state_arc();
-            let mut core = arc.write();
+            let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.register_v2_pool(&RegisterV2PoolParams {
                 address: A::from([0xabu8; 20]),
                 token0: A::from([0xa0u8; 20]),
@@ -3304,7 +3320,9 @@ mod tests {
             .expect("test setup: V2 registration");
         }
         assert_eq!(
-            bot.state_arc().read().pool_state_head(),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .pool_state_head(),
             500,
             "state clock is ahead of the header clock (the stall)"
         );
@@ -3421,7 +3439,7 @@ mod tests {
     fn register_burst_pool(bot: &Arc<Bot>) {
         use alloy::primitives::{aliases::U112, Address as A};
         let arc = bot.state_arc();
-        let mut core = arc.write();
+        let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
         core.register_v2_pool(&RegisterV2PoolParams {
             address: A::from([0xccu8; 20]),
             token0: A::from([0xa0u8; 20]),
@@ -3924,7 +3942,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         {
             let arc = bot.state_arc();
-            let mut core = arc.write();
+            let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.register_v2_pool(&RegisterV2PoolParams {
                 address: A::from([0xccu8; 20]),
                 token0: A::from([0xa0u8; 20]),
@@ -4130,7 +4148,9 @@ mod tests {
         ];
         pump1.run_test_loop(stream::iter(events).boxed(), w).await;
         assert_eq!(
-            bot.state_arc().read().pump_complete_cutoff(),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .pump_complete_cutoff(),
             w,
             "run 1's tombstone of w must reach the state-owned cutoff"
         );
@@ -4142,7 +4162,9 @@ mod tests {
             .run_test_loop(stream::iter(vec![header(w + 1)]).boxed(), w)
             .await;
         assert_eq!(
-            bot.state_arc().read().pump_complete_cutoff(),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .pump_complete_cutoff(),
             w,
             "a resume must NOT reset the cutoff — the value outlives the run"
         );
@@ -4170,7 +4192,7 @@ mod tests {
         let pool = Address::from([0xc0u8; 20]);
         let pool_id = {
             let arc = bot.state_arc();
-            let mut core = arc.write();
+            let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
             let pool_id = core
                 .register_v2_pool(&RegisterV2PoolParams {
                     address: pool,
@@ -4219,7 +4241,7 @@ mod tests {
         .await;
 
         let arc = bot.state_arc();
-        let core = arc.read();
+        let core = arc.read_at(crate::bot_core::state_lock::LockSite::Pump);
         let st = core.get_v2_pool_state(pool_id).expect("v2 state");
         assert_eq!(
             st.reserve0,
@@ -4248,7 +4270,7 @@ mod tests {
         let pool = Address::from([0xc1u8; 20]);
         let pool_id = {
             let arc = bot.state_arc();
-            let mut core = arc.write();
+            let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
             let pool_id = core
                 .register_v2_pool(&RegisterV2PoolParams {
                     address: pool,
@@ -4299,7 +4321,7 @@ mod tests {
             "a reorg inside the backfilled range is recoverable — no shutdown"
         );
         let arc = bot.state_arc();
-        let core = arc.read();
+        let core = arc.read_at(crate::bot_core::state_lock::LockSite::Pump);
         let st = core.get_v2_pool_state(pool_id).expect("v2 state");
         assert_eq!(
             st.reserve0,
@@ -4328,7 +4350,7 @@ mod tests {
         let pool = Address::from([0xc2u8; 20]);
         {
             let arc = bot.state_arc();
-            let mut core = arc.write();
+            let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
             let _ = core
                 .register_v2_pool(&RegisterV2PoolParams {
                     address: pool,
@@ -4737,7 +4759,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Pump)
             .register_v2_pool(&RegisterV2PoolParams {
                 address: pool_addr,
                 token0: Address::from([0xa0u8; 20]),
@@ -4931,7 +4953,9 @@ mod tests {
         // Delivery cutoff monotone: advanced to the LAST tombstoned block;
         // the late log for 7 must not regress it (I7).
         assert_eq!(
-            bot.state_arc().read().pump_complete_cutoff(),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .pump_complete_cutoff(),
             8,
             "cutoff must rest at the last tombstone (8), untouched by the late log"
         );
@@ -4946,7 +4970,9 @@ mod tests {
         // the late log's reserves — either applying the late log after 9's
         // or counting it into the applies would trip this.
         assert_eq!(
-            bot.state_arc().read().v2_snapshot(pool_id),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .v2_snapshot(pool_id),
             Some((U256::from(7_000), U256::from(8_000), 9)),
             "pool state reflects only Streaming-window applies; late reserves dropped"
         );
@@ -5063,7 +5089,7 @@ mod tests {
                     ));
                 }
                 // I7: cutoff monotone at the last tombstone.
-                let cutoff = bot.state_arc().read().pump_complete_cutoff();
+                let cutoff = bot.state_arc().read_at(crate::bot_core::state_lock::LockSite::Pump).pump_complete_cutoff();
                 if cutoff != base + plan.len() as u64 - 2 {
                     return Err(format!(
                         "delivery cutoff must rest at the last tombstone: got {cutoff}"
@@ -5077,7 +5103,7 @@ mod tests {
                     ));
                 }
                 // The last LEGITIMATELY applied log owns pool state.
-                let snap = bot.state_arc().read().v2_snapshot(pool_id);
+                let snap = bot.state_arc().read_at(crate::bot_core::state_lock::LockSite::Pump).v2_snapshot(pool_id);
                 if snap != Some((last_reserves.0, last_reserves.1, last_block)) {
                     return Err(format!(
                         "pool state holds the last in-window apply, not a late tail: got {snap:?}"
@@ -5115,7 +5141,9 @@ mod tests {
             "forward Sync through the pump recorded the pool into the EpochDelta"
         );
         assert_eq!(
-            bot.state_arc().read().v2_snapshot(pool_id),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .v2_snapshot(pool_id),
             Some((U256::from(1_500), U256::from(2_500), 7)),
             "forward Sync applied through the pump",
         );
@@ -5145,7 +5173,9 @@ mod tests {
             "reorg re-recorded the restored pool into the EpochDelta"
         );
         assert_eq!(
-            bot.state_arc().read().v2_snapshot(pool_id),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .v2_snapshot(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "reorg rolled back to genesis reserves",
         );
@@ -5194,7 +5224,11 @@ mod tests {
         let pool_addr = Address::from([0x33u8; 20]);
         // Genesis anchored at block 5: reserves (1000, 2000).
         let (bot, pool_id) = bot_with_registered_v2(pool_addr, 5);
-        let snapshot = || bot.state_arc().read().v2_snapshot(pool_id);
+        let snapshot = || {
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .v2_snapshot(pool_id)
+        };
 
         // Drive 5 -> 7 (forward sync at 7) -> tombstone 7 via a forward sync
         // at 8 (advance_to_drained(7) follows the tombstone).
@@ -5282,12 +5316,16 @@ mod tests {
         // Cutoff rests at the last tombstone — the late log for 7 moved
         // neither the cutoff nor the pool state (I7).
         assert_eq!(
-            bot.state_arc().read().pump_complete_cutoff(),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .pump_complete_cutoff(),
             7,
             "cutoff rests at the tombstoned block 7"
         );
         assert_eq!(
-            bot.state_arc().read().v2_snapshot(pool_id),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .v2_snapshot(pool_id),
             Some((U256::from(1_600), U256::from(2_600), 8)),
             "pool state holds the last in-window apply, never the late survivor"
         );
@@ -5438,7 +5476,7 @@ mod tests {
         let bot = pump.bot_arc_for_test();
         {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.register_v2_pool(&RegisterV2PoolParams {
                 address: pool_addr,
                 token0: Address::from([0xa0u8; 20]),
@@ -5508,7 +5546,7 @@ mod tests {
         // The stale Sync@103 must NOT have been re-asserted: final reserves are
         // those of the last applied forward (Sync@104), not the stale 9999/9999.
         let state = bot.state_arc();
-        let core = state.read();
+        let core = state.read_at(crate::bot_core::state_lock::LockSite::Pump);
         let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
         if let Some(crate::bot_core::PoolEntry::V2(p)) = core.pools.get(&pool_id) {
             let pool = &p.1;
@@ -5559,7 +5597,7 @@ mod tests {
         );
         {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.register_v3_pool(&RegisterV3PoolParams {
                 address: pool_addr,
                 token0: Address::from([0xa0u8; 20]),
@@ -5638,7 +5676,7 @@ mod tests {
         // The tombstone@N+1 set `last_complete_block = N`. Drain + pin.
         let (tick_data, pinned_block) = {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.apply_backfill_buffer_v3(&pool_addr);
             core.apply_pump_buffer_v3(&pool_addr);
             core.pin_v3_post_drain_snapshot(pool_addr);
@@ -5680,7 +5718,7 @@ mod tests {
         // lower tick to mutate (mirrors on-chain where tick 6 is initialized).
         {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
             if let Some(crate::bot_core::PoolEntry::V3(p)) = core.pools.get_mut(&pool_id) {
                 use alloy::primitives::U128;
@@ -5714,7 +5752,7 @@ mod tests {
 
         let (tick_data, pinned_block) = {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.apply_backfill_buffer_v3(&pool_addr);
             core.apply_pump_buffer_v3(&pool_addr);
             core.pin_v3_post_drain_snapshot(pool_addr);
@@ -5771,7 +5809,7 @@ mod tests {
 
         let (tick_data, pinned_block) = {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.apply_backfill_buffer_v3(&pool_addr);
             core.apply_pump_buffer_v3(&pool_addr);
             core.pin_v3_post_drain_snapshot(pool_addr);
@@ -5866,7 +5904,7 @@ mod tests {
                     );
                 }
                 let state = bot.state_arc();
-                let mut core = state.write();
+                let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
                 core.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
                     address: *addr,
                     token0: Address::from([0xa0u8; 20]),
@@ -5977,7 +6015,7 @@ mod tests {
                     continue;
                 }
                 let state = bot.state_arc();
-                let mut core = state.write();
+                let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
                 let mut tick_data = hashbrown::HashMap::new();
                 for &t in &FUZZ_TICKS {
                     tick_data.insert(
@@ -6010,7 +6048,7 @@ mod tests {
             }
             for addr in &addrs {
                 let state = bot.state_arc();
-                let mut core = state.write();
+                let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
                 core.apply_backfill_buffer_v3(addr);
                 core.apply_pump_buffer_v3(addr);
                 core.set_v3_pool_live(*addr);
@@ -6019,7 +6057,7 @@ mod tests {
             // ORACLE COMPARISON.
             for (i, addr) in addrs.iter().enumerate() {
                 let state = bot.state_arc();
-                let core = state.read();
+                let core = state.read_at(crate::bot_core::state_lock::LockSite::Pump);
                 let pool_id = *core.pool_addresses.get(addr).unwrap();
                 let pool = core.get_v3_pool(pool_id).unwrap();
                 for &t in &FUZZ_TICKS {
@@ -6082,7 +6120,7 @@ mod tests {
         // Tracked pool loads stale DB data and starts Quarantined.
         {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             let mut tick_data = hashbrown::HashMap::new();
             tick_data.insert(
                 7,
@@ -6116,7 +6154,7 @@ mod tests {
         // tail — the standard staged-application contract.
         let tick_data = {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.apply_backfill_buffer_v3(&pool_addr);
             core.apply_pump_buffer_v3(&pool_addr);
             core.set_v3_pool_live(pool_addr);
@@ -6201,7 +6239,7 @@ mod tests {
         // NOT drained). The pin captures the backfill seed state.
         let pin_after_mint1 = {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.apply_backfill_buffer_v3(&pool_addr);
             core.apply_pump_buffer_v3(&pool_addr);
             core.pin_v3_post_drain_snapshot(pool_addr);
@@ -6231,7 +6269,7 @@ mod tests {
         // just not drained into the pin.
         let live_gross = {
             let state = bot.state_arc();
-            let mut core = state.write();
+            let mut core = state.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.apply_pump_buffer_v3(&pool_addr);
             let pool_id = *core.pool_addresses.get(&pool_addr).unwrap();
             core.get_v3_pool(pool_id)
@@ -6308,7 +6346,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         {
             let arc = bot.state_arc();
-            let mut core = arc.write();
+            let mut core = arc.write_at(crate::bot_core::state_lock::LockSite::Pump);
             core.register_v2_pool(&RegisterV2PoolParams {
                 address: A::from([0xccu8; 20]),
                 token0: A::from([0xa0u8; 20]),
@@ -6377,7 +6415,9 @@ mod tests {
         // Inject S = W (snapshot caught up to the WS block).
         {
             let bot = pump.bot_arc_for_test();
-            bot.state_arc().write().set_snapshot_seed_block(Some(100));
+            bot.state_arc()
+                .write_at(crate::bot_core::state_lock::LockSite::Pump)
+                .set_snapshot_seed_block(Some(100));
         }
         let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
         assert_eq!(n, 0, "S >= W → nothing to backfill");
@@ -6390,7 +6430,9 @@ mod tests {
         let (pump, _sink) = pump_for_test(None);
         {
             let bot = pump.bot_arc_for_test();
-            bot.state_arc().write().set_snapshot_seed_block(Some(0));
+            bot.state_arc()
+                .write_at(crate::bot_core::state_lock::LockSite::Pump)
+                .set_snapshot_seed_block(Some(0));
         }
         let n = pump.backfill_from_snapshot(100, 10).await.unwrap();
         assert_eq!(n, 0, "S = 0 → skip (degenerate)");
@@ -6442,7 +6484,9 @@ mod tests {
     #[tokio::test]
     async fn auto_backfill_runs_inside_resume_when_s_lt_w() {
         let bot = Arc::new(Bot::new(1));
-        bot.state_arc().write().set_snapshot_seed_block(Some(85));
+        bot.state_arc()
+            .write_at(crate::bot_core::state_lock::LockSite::Pump)
+            .set_snapshot_seed_block(Some(85));
         let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
 
         // The single eth_getLogs chunk (blocks 86..99, ≤ DEFAULT_BACKFILL_CHUNK_SIZE)
@@ -6478,7 +6522,9 @@ mod tests {
     async fn backfill_to_ws_block_populates_buffer_before_return() {
         let pool_addr = alloy::primitives::Address::from([0xc2u8; 20]);
         let bot = Arc::new(Bot::new(1));
-        bot.state_arc().write().set_snapshot_seed_block(Some(85));
+        bot.state_arc()
+            .write_at(crate::bot_core::state_lock::LockSite::Pump)
+            .set_snapshot_seed_block(Some(85));
         let (pump, _sink, _shutdown, asserter) =
             pump_for_test_with_asserter(Arc::clone(&bot), None);
 
@@ -6496,7 +6542,9 @@ mod tests {
         // branch). Pre-fix: this method did not exist and `resume` returned
         // before the spawned task buffered → count 0 → race.
         assert_eq!(
-            bot.state_arc().read().buffered_v3_event_count(&pool_addr),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .buffered_v3_event_count(&pool_addr),
             1,
             "backfill_to_ws_block must buffer the V3 burn before returning (race regression)"
         );
@@ -6519,7 +6567,9 @@ mod tests {
     async fn backfill_with_drain_reinjects_events_present_during_backfill() {
         let pool_addr = alloy::primitives::Address::from([0xc3u8; 20]);
         let bot = Arc::new(Bot::new(1));
-        bot.state_arc().write().set_snapshot_seed_block(Some(85));
+        bot.state_arc()
+            .write_at(crate::bot_core::state_lock::LockSite::Pump)
+            .set_snapshot_seed_block(Some(85));
         let (pump, _sink, _shutdown, asserter) =
             pump_for_test_with_asserter(Arc::clone(&bot), None);
 
@@ -6559,7 +6609,9 @@ mod tests {
         // J3FMDO invariant preserved: the backfill buffer is populated on
         // return (the synchronous contract `PumpState::resume` relies on).
         assert_eq!(
-            bot.state_arc().read().buffered_v3_event_count(&pool_addr),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Pump)
+                .buffered_v3_event_count(&pool_addr),
             1,
             "backfill_with_drain must buffer the V3 burn before returning (J3FMDO)"
         );
@@ -6616,7 +6668,9 @@ mod tests {
     #[tokio::test]
     async fn auto_backfill_skipped_when_s_ge_w_in_resume() {
         let bot = Arc::new(Bot::new(1));
-        bot.state_arc().write().set_snapshot_seed_block(Some(100));
+        bot.state_arc()
+            .write_at(crate::bot_core::state_lock::LockSite::Pump)
+            .set_snapshot_seed_block(Some(100));
         let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
 
         let combined = stream::iter(Vec::<WsEvent>::new()).boxed();

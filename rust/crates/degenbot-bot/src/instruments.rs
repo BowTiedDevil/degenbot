@@ -206,7 +206,7 @@ pub struct PipelineInstruments {
     detached_leads_expired: Counter<u64>,
     /// Epic K4ETHF T2: time an acquisition waited for the core `BotState`
     /// lock, labeled by `site` (closed set from
-    /// `bot_core::state_lock::site_class_for`) + `mode` (read|write).
+    /// `bot_core::state_lock::crate::bot_core::state_lock::LockSite::label`) + `mode` (read|write).
     state_lock_wait: Histogram<f64>,
     /// Epic K4ETHF T2: time a guard was held after acquisition, same labels.
     state_lock_hold: Histogram<f64>,
@@ -989,7 +989,7 @@ impl PipelineInstruments {
     }
 
     /// Epic K4ETHF T2: one state-lock acquisition wait. `site` is a small
-    /// closed set (see `bot_core::state_lock::site_class_for`); `mode` is
+    /// closed set (see `bot_core::state_lock::crate::bot_core::state_lock::LockSite::label`); `mode` is
     /// `read` | `write`.
     pub fn observe_state_lock_wait(&self, site: &str, mode: &str, secs: f64) {
         self.state_lock_wait.record(

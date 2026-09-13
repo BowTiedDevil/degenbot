@@ -129,11 +129,13 @@ where
     // must still be drained onto the pool — draining is not verification and
     // preserves the perm-V2-V2-V3 apply-buffer behavior. An unregistered /
     // non-V3 pool → no-op Ok.
-    let coverage = core.read().v3_pool_coverage(address);
+    let coverage = core
+        .read_at(crate::bot_core::state_lock::LockSite::Registration)
+        .v3_pool_coverage(address);
     match coverage {
         None => return Ok(()),
         Some(PoolTickCoverage::Sparse) => {
-            let mut guard = core.write();
+            let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             guard.apply_backfill_buffer_v3(&address);
             guard.apply_pump_buffer_v3(&address);
             return Ok(());
@@ -144,7 +146,8 @@ where
     // Quarantine BEFORE the first RPC await (6N7XVR): defers the pool's live
     // Swap/Mint/Burn to the pump buffer so the pin's `update_block` cannot
     // outrun `last_complete_block` during the drain+pin+verify window.
-    core.write().set_v3_pool_quarantined(address);
+    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+        .set_v3_pool_quarantined(address);
 
     // Step-1: verify the pinned snapshot SEED @ snapshot block (CBCH6H). Only
     // when a snapshot block is supplied (the seam's gated-skip posture); the
@@ -161,7 +164,10 @@ where
     // (passes), not @ `S` (fabricated mismatch on any tick that moved in
     // between). Falls back to `S` only when the pool clock is unset (0).
     if let Some(snapshot_block) = snapshot_block {
-        let seed = { core.write().take_v3_snapshot_seed(address) };
+        let seed = {
+            core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+                .take_v3_snapshot_seed(address)
+        };
         if let Some(seed) = seed {
             // S53STH-soak follow-up: the previous single-expression form held
             // read#1 as the expression temporary while the `map_or` closure
@@ -173,8 +179,14 @@ where
             // read#2 acquires; the second acquisition can still park behind
             // a writer, but that is benign backpressure, not a cycle.
             let own = {
-                let id = { core.read().pool_id_by_address(&address) };
-                id.map_or(0, |id| core.read().pool_tick_data_block(id))
+                let id = {
+                    core.read_at(crate::bot_core::state_lock::LockSite::Registration)
+                        .pool_id_by_address(&address)
+                };
+                id.map_or(0, |id| {
+                    core.read_at(crate::bot_core::state_lock::LockSite::Registration)
+                        .pool_tick_data_block(id)
+                })
             };
             let seed_block = if own > 0 { own } else { snapshot_block };
             verify_seed(seed, seed_block).await?;
@@ -185,7 +197,7 @@ where
     // pump buffer, then capture the frozen post-drain `(tick_data, block)`
     // pair atomically with the drain (the step-2 rolling-start race fix).
     {
-        let mut guard = core.write();
+        let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
         guard.apply_backfill_buffer_v3(&address);
         guard.apply_pump_buffer_v3(&address);
         guard.pin_v3_post_drain_snapshot(address);
@@ -195,7 +207,10 @@ where
     // (the `tick_data_block` — liquidity clock, two-stamp OB7UNY). Comparing
     // against a caller-supplied constant would fabricate a mismatch on active
     // pools (the 2026-06-29 crash). The pin is consumed exactly once.
-    let pin = { core.write().take_v3_post_drain_snapshot(address) };
+    let pin = {
+        core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+            .take_v3_post_drain_snapshot(address)
+    };
     if let Some((tick_data, pinned_block)) = pin {
         verify_post_drain(tick_data, pinned_block).await?;
     }
@@ -203,7 +218,8 @@ where
     // Tripwire passed (ADR-022 D2) — the final gate before `Live`. Reaching
     // here means a Tracked pool's verification succeeded; `Live` is the last
     // transition.
-    core.write().set_v3_pool_live(address);
+    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+        .set_v3_pool_live(address);
     Ok(())
 }
 
@@ -235,11 +251,13 @@ where
     // Coverage branch up-front (DFQYM5). A Sparse V4 pool stays `Live`, no
     // verification deferral / RPC, but its buffered events are still drained;
     // unregistered / non-V4 → no-op Ok.
-    let coverage = core.read().v4_pool_coverage(pool_manager, &pool_id);
+    let coverage = core
+        .read_at(crate::bot_core::state_lock::LockSite::Registration)
+        .v4_pool_coverage(pool_manager, &pool_id);
     match coverage {
         None => return Ok(()),
         Some(PoolTickCoverage::Sparse) => {
-            let mut guard = core.write();
+            let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             guard.apply_backfill_buffer_v4(pool_manager, pool_id);
             guard.apply_pump_buffer_v4(pool_manager, pool_id);
             return Ok(());
@@ -248,22 +266,32 @@ where
     }
 
     // Quarantine before the first RPC await (6N7XVR).
-    core.write().set_v4_pool_quarantined(pool_manager, pool_id);
+    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+        .set_v4_pool_quarantined(pool_manager, pool_id);
 
     // Step-1: verify the pinned snapshot seed @ snapshot block (CBCH6H).
     // Anchored at the pool's OWN liquidity clock (task 4TWM7C/B1), falling back
     // to the aggregate `S` only when the pool clock is unset — see the V3
     // commentary above.
     if let Some(snapshot_block) = snapshot_block {
-        let seed = { core.write().take_v4_snapshot_seed(pool_manager, &pool_id) };
+        let seed = {
+            core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+                .take_v4_snapshot_seed(pool_manager, &pool_id)
+        };
         if let Some(seed) = seed {
             // Same nested-read self-deadlock shape as the V3 site (see the
             // scoped fix there / soak-2026-08-22): read#1 held as the expression
             // temporary while the closure acquires read#2; a queued writer
             // between them cycles the lock. Scope read#1 so it drops first.
             let own = {
-                let id = { core.read().v4_pool_id_by_key(pool_manager, &pool_id) };
-                id.map_or(0, |id| core.read().pool_tick_data_block(id))
+                let id = {
+                    core.read_at(crate::bot_core::state_lock::LockSite::Registration)
+                        .v4_pool_id_by_key(pool_manager, &pool_id)
+                };
+                id.map_or(0, |id| {
+                    core.read_at(crate::bot_core::state_lock::LockSite::Registration)
+                        .pool_tick_data_block(id)
+                })
             };
             let seed_block = if own > 0 { own } else { snapshot_block };
             verify_seed(seed, seed_block).await?;
@@ -272,7 +300,7 @@ where
 
     // Drain + pin under a SINGLE `core.write()` hold (step-2 race fix).
     {
-        let mut guard = core.write();
+        let mut guard = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
         guard.apply_backfill_buffer_v4(pool_manager, pool_id);
         guard.apply_pump_buffer_v4(pool_manager, pool_id);
         guard.pin_v4_post_drain_snapshot(pool_manager, &pool_id);
@@ -280,7 +308,7 @@ where
 
     // Step-2: verify the pinned post-drain pair @ the pin's OWN block.
     let pin = {
-        core.write()
+        core.write_at(crate::bot_core::state_lock::LockSite::Registration)
             .take_v4_post_drain_snapshot(pool_manager, &pool_id)
     };
     if let Some((tick_data, pinned_block)) = pin {
@@ -288,7 +316,8 @@ where
     }
 
     // Tripwire passed → Live.
-    core.write().set_v4_pool_live(pool_manager, pool_id);
+    core.write_at(crate::bot_core::state_lock::LockSite::Registration)
+        .set_v4_pool_live(pool_manager, pool_id);
     Ok(())
 }
 
@@ -499,7 +528,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x10u8; 20]);
         let pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Sparse)
         };
         // Both closures `unreachable!` — the invariant is that Sparse never
@@ -513,7 +542,7 @@ mod tests {
         )
         .await;
         assert!(result.is_ok(), "sparse lifecycle must be Ok");
-        let c = core.read();
+        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         assert_eq!(lifecycle_v3(&c, pid), RegistrationLifecycle::Live);
     }
 
@@ -524,7 +553,7 @@ mod tests {
         let pm = Address::from([0x44u8; 20]);
         let pid = [0xabu8; 32];
         {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Sparse);
         }
         let result = run_cl_v4_lifecycle::<_, _, _, _, ()>(
@@ -547,7 +576,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x20u8; 20]);
         let pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -574,7 +603,7 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
-        let c = core.read();
+        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         assert_eq!(lifecycle_v3(&c, pid), RegistrationLifecycle::Live);
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 2, "both verify closures must run for Tracked");
@@ -606,7 +635,7 @@ mod tests {
             },
         );
         let _pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             // DB-seeded Tracked pool whose liquidity clock is 100 (the DB
             // `liquidity_update_block`), far behind the global S = 200.
             c.register_v3_pool(&RegisterV3PoolParams {
@@ -661,7 +690,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x30u8; 20]);
         let pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         let result = run_cl_v3_lifecycle::<_, _, _, _, String>(
@@ -673,7 +702,7 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        let c = core.read();
+        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         assert_eq!(
             lifecycle_v3(&c, pid),
             RegistrationLifecycle::Quarantined,
@@ -688,7 +717,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x31u8; 20]);
         let pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         let result = run_cl_v3_lifecycle::<_, _, _, _, String>(
@@ -700,7 +729,7 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        let c = core.read();
+        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         assert_eq!(
             lifecycle_v3(&c, pid),
             RegistrationLifecycle::Quarantined,
@@ -719,14 +748,14 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x50u8; 20]);
         let pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             // Seed tick -201000 with gross/net 100 (a snapshot seed).
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
         // A Burn during backfill, BEFORE the pool is live-registered: the pool
         // is Quarantined (Tracked) so this BUFFERS rather than applies.
         {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             c.buffer_backfill_v3_liquidity_update(addr, -201_000, -200_990, -100, 5);
             // Verify it buffered (Quarantined → not applied yet).
             assert_eq!(
@@ -744,7 +773,7 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
-        let c = core.read();
+        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         let state = c.get_v3_pool(pid).unwrap();
         // The burn zeroed gross → tick removed (not stranded in the buffer).
         assert!(
@@ -761,7 +790,7 @@ mod tests {
         let pm = Address::from([0x44u8; 20]);
         let pid = [0xbu8; 32];
         {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Tracked);
         }
         // Emulate the production adapter's closure: no state_view → Err.
@@ -778,7 +807,7 @@ mod tests {
             result,
             Err(RegistrationLifecycleError::MissingStateView)
         ));
-        let c = core.read();
+        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         assert_eq!(
             c.v4_pool_id_by_key(pm, &pid).map(|id| lifecycle_v4(&c, id)),
             Some(RegistrationLifecycle::Quarantined),
@@ -799,13 +828,13 @@ mod tests {
         // A tracked V3 pool released per-path via the lifecycle.
         let tracked_addr = Address::from([0x60u8; 20]);
         let tracked_pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v3(&mut c, tracked_addr, PoolTickCoverage::Tracked)
         };
         // A sparse V3 pool (already Live, never quarantined).
         let sparse_addr = Address::from([0x61u8; 20]);
         let sparse_pid = {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v3(&mut c, sparse_addr, PoolTickCoverage::Sparse)
         };
         // A genuinely orphaned tracked V4 (never released by any per-path
@@ -813,7 +842,7 @@ mod tests {
         let orphan_vm = Address::from([0x62u8; 20]);
         let orphan_pid = [0xcu8; 32];
         {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v4(&mut c, orphan_vm, orphan_pid, PoolTickCoverage::Tracked);
         }
 
@@ -830,7 +859,7 @@ mod tests {
 
         // Confirm the productive pools are Live BEFORE any batch runs.
         {
-            let c = core.read();
+            let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
             assert_eq!(lifecycle_v3(&c, tracked_pid), RegistrationLifecycle::Live);
             assert_eq!(lifecycle_v3(&c, sparse_pid), RegistrationLifecycle::Live);
         }
@@ -839,11 +868,11 @@ mod tests {
         // discovery completes). It must NOT re-touch the per-path Live pools
         // and must flush only the orphaned quarantined V4.
         {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             c.release_all_v3_v4_quarantined();
         }
 
-        let c = core.read();
+        let c = core.read_at(crate::bot_core::state_lock::LockSite::Registration);
         // The per-path gate held: both productive pools are still Live (the
         // batch did not duplicate release nor silently quarantine them).
         assert_eq!(lifecycle_v3(&c, tracked_pid), RegistrationLifecycle::Live);
@@ -865,7 +894,7 @@ mod tests {
         let core = new_core();
         let addr = Address::from([0x40u8; 20]);
         {
-            let mut c = core.write();
+            let mut c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked);
         }
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -893,7 +922,7 @@ mod tests {
         let _ = started_rx.await;
         // Concurrent write must complete promptly (no guard held across await).
         let write = tokio::time::timeout(std::time::Duration::from_millis(500), async {
-            let c = core.write();
+            let c = core.write_at(crate::bot_core::state_lock::LockSite::Registration);
             let n = c.v4_pool_count();
             std::hint::black_box(n);
         })
@@ -905,7 +934,12 @@ mod tests {
         let _ = release_tx.send(());
         assert!(task.await.is_ok(), "lifecycle must complete Ok");
         assert_eq!(
-            lifecycle_v3(&core.read(), core.read().pool_id_by_address(&addr).unwrap()),
+            lifecycle_v3(
+                &core.read_at(crate::bot_core::state_lock::LockSite::Registration),
+                core.read_at(crate::bot_core::state_lock::LockSite::Registration)
+                    .pool_id_by_address(&addr)
+                    .unwrap()
+            ),
             RegistrationLifecycle::Live
         );
     }

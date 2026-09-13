@@ -359,7 +359,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
             .register_v2_pool(&RegisterV2PoolParams {
                 address: pool_addr,
                 token0: Address::from([0xa0u8; 20]),
@@ -405,7 +405,9 @@ mod tests {
             "forward dispatch recorded the pool into the EpochDelta"
         );
         assert_eq!(
-            bot.state_arc().read().v2_snapshot(pool_id),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .v2_snapshot(pool_id),
             Some((U256::from(1_500), U256::from(2_500), 7)),
             "forward Sync applied"
         );
@@ -431,7 +433,9 @@ mod tests {
             "reorg re-recorded the restored pool into the EpochDelta"
         );
         assert_eq!(
-            bot.state_arc().read().v2_snapshot(pool_id),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .v2_snapshot(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "reorg rolled back to genesis reserves"
         );
@@ -463,7 +467,9 @@ mod tests {
         }
         // State untouched (the genesis reserves).
         assert_eq!(
-            bot.state_arc().read().v2_snapshot(pool_id),
+            bot.state_arc()
+                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .v2_snapshot(pool_id),
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "too-deep reorg left state unchanged"
         );
@@ -486,7 +492,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
             .register_v3_pool(&RegisterV3PoolParams {
                 address: pool_addr,
                 token0: Address::from([0xa0u8; 20]),
@@ -582,7 +588,7 @@ mod tests {
         );
         {
             let state = bot.state_arc();
-            let guard = state.read();
+            let guard = state.read_at(crate::bot_core::state_lock::LockSite::Core);
             let s = guard.get_v3_pool(pool_id).expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.liquidity, 2_000_000);
@@ -610,7 +616,7 @@ mod tests {
         );
         {
             let state = bot.state_arc();
-            let guard = state.read();
+            let guard = state.read_at(crate::bot_core::state_lock::LockSite::Core);
             let s = guard.get_v3_pool(pool_id).expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
@@ -647,7 +653,7 @@ mod tests {
         // genesis delta, unlike V2).
         assert!(bot
             .state_arc()
-            .read()
+            .read_at(crate::bot_core::state_lock::LockSite::Core)
             .get_v3_pool(pool_id)
             .unwrap()
             .journal
@@ -668,7 +674,7 @@ mod tests {
         }
         // State untouched — the registration scalars survive.
         let state = bot.state_arc();
-        let guard = state.read();
+        let guard = state.read_at(crate::bot_core::state_lock::LockSite::Core);
         let s = guard.get_v3_pool(pool_id).expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert_eq!(s.liquidity, 1_000_000);
@@ -695,7 +701,7 @@ mod tests {
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
             .register_v4_pool(&RegisterV4PoolParams {
                 pool_manager,
                 pool_id,
@@ -803,7 +809,7 @@ mod tests {
         );
         {
             let state = bot.state_arc();
-            let guard = state.read();
+            let guard = state.read_at(crate::bot_core::state_lock::LockSite::Core);
             let s = guard.get_v4_pool(pool_id).expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.journal.len(), 1, "V4 registration pushes no genesis");
@@ -833,7 +839,7 @@ mod tests {
         );
         {
             let state = bot.state_arc();
-            let guard = state.read();
+            let guard = state.read_at(crate::bot_core::state_lock::LockSite::Core);
             let s = guard.get_v4_pool(pool_id).expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
@@ -854,7 +860,7 @@ mod tests {
         let (bot, pool_id) = bot_with_v4(pool_manager, pool_id_bytes, 5);
         assert!(bot
             .state_arc()
-            .read()
+            .read_at(crate::bot_core::state_lock::LockSite::Core)
             .get_v4_pool(pool_id)
             .unwrap()
             .journal
@@ -882,7 +888,7 @@ mod tests {
             }
         }
         let state = bot.state_arc();
-        let guard = state.read();
+        let guard = state.read_at(crate::bot_core::state_lock::LockSite::Core);
         let s = guard.get_v4_pool(pool_id).expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert!(s.journal.is_empty());

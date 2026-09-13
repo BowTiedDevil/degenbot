@@ -530,7 +530,9 @@ impl SolveCycle {
         // since the enqueue resolve invalidates the straggler's
         // intake.
         let live_stamp: Vec<u64> = {
-            let core = self.core.read();
+            let core = self
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             registered
                 .pools
                 .iter()
@@ -698,7 +700,9 @@ impl SolveCycle {
         let Some(path) = registry.get(path_id) else {
             return 0; // Unknown path → nothing to clamp
         };
-        let core = self.core.read();
+        let core = self
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
         ArbitrageEngine::clamp_result_with_state(&core, path_id, &path.pools, result)
     }
     #[expect(clippy::too_many_lines)]
@@ -762,8 +766,12 @@ impl SolveCycle {
         // `block_number` here is already >= the head and the re-anchor is a
         // defensive no-op on the pump path — it stays the guard for callers
         // that bypass the pump (e.g. tests driving `solve_dirty` directly).
-        let anchor =
-            crate::bot_core::solve_anchor::SolveAnchor::resolve(block_number, &self.core.read());
+        let anchor = crate::bot_core::solve_anchor::SolveAnchor::resolve(
+            block_number,
+            &self
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver),
+        );
         let solve_block = anchor.block();
         // Cross-block walk-composition census: advance the epoch BEFORE the
         // per-path probes so a path solved both this block and the previous
@@ -947,7 +955,11 @@ impl SolveCycle {
         hotpath::measure_block!("arb_solve.resolve", {
             // Violated only while a writer is queued (parking_lot read acquire):
             // nonzero = core-lock congestion, not compute.
-            let core = hotpath::measure_block!("resolve.core_read_acquire", self.core.read());
+            let core = hotpath::measure_block!(
+                "resolve.core_read_acquire",
+                self.core
+                    .read_at(crate::bot_core::state_lock::LockSite::Solver)
+            );
             let resolve_chunk = |path_ids: &[u64]| -> ResolveChunkOut {
                 let mut out = ResolveChunkOut {
                     resolved: Vec::new(),
@@ -1702,7 +1714,8 @@ impl SolveCycle {
                         }
                     }) {
                         if let Some(path) = path_pools.get(path_id) {
-                            let core_read = core.read();
+                            let core_read =
+                                core.read_at(crate::bot_core::state_lock::LockSite::Solver);
                             let _ = ArbitrageEngine::clamp_result_with_state(
                                 &core_read,
                                 *path_id,
@@ -1823,7 +1836,9 @@ impl SolveCycle {
         let mut pool_refs = Vec::with_capacity(hops.len());
         let mut hop_descs = Vec::with_capacity(hops.len());
         {
-            let core = self.core.read();
+            let core = self
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             for hop in hops {
                 let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
                     return Err(PathRegistrationError::Invalid(format!(
@@ -1849,7 +1864,9 @@ impl SolveCycle {
         // registration loudly and leaves no half-registered state behind.
         let mut resolved = ResolvedMixedPath::default();
         let deficits = {
-            let core = self.core.read();
+            let core = self
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             resolve_hops(
                 &core,
                 &pool_refs,
@@ -1948,7 +1965,9 @@ impl SolveCycle {
         // Resolve all paths under the core lock (single consistent snapshot of
         // all family state — ADR-003).
         {
-            let core = self.core.read();
+            let core = self
+                .core
+                .read_at(crate::bot_core::state_lock::LockSite::Solver);
             for (&path_id, path) in registry.iter() {
                 let mut resolved = ResolvedMixedPath::default();
                 let deficits = resolve_hops(
@@ -1988,7 +2007,9 @@ impl SolveCycle {
         let Some(path) = registry.get(path_id) else {
             return format!("path_id={path_id} (unregistered)");
         };
-        let core = self.core.read();
+        let core = self
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
         let hops: Vec<String> = path
             .pools
             .iter()

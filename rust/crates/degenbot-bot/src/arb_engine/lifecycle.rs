@@ -59,14 +59,22 @@ impl ArbitrageEngine {
     /// write bought a ~2.9s writer-queue slot under the block-apply stream).
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.event_buffer_expiry_enabled = max_age.is_some();
-        self.core.write().set_v3_buffer_max_age(max_age);
-        self.core.write().set_v4_buffer_max_age(max_age);
+        self.core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .set_v3_buffer_max_age(max_age);
+        self.core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .set_v4_buffer_max_age(max_age);
     }
 
     /// Flush all buffered events in the V3/V4 buffers on `BotState` (ADR-003).
     pub fn flush_event_buffer(&mut self) {
-        self.core.write().flush_v3_buffer();
-        self.core.write().flush_v4_buffer();
+        self.core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .flush_v3_buffer();
+        self.core
+            .write_at(crate::bot_core::state_lock::LockSite::Solver)
+            .flush_v4_buffer();
     }
 
     /// Read the last solved results and block number.
@@ -200,19 +208,25 @@ impl ArbitrageEngine {
     /// Number of registered V2 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
-        self.core.read().v2_pool_count()
+        self.core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver)
+            .v2_pool_count()
     }
 
     /// Number of registered V3 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v3_pool_count(&self) -> usize {
-        self.core.read().v3_pool_count()
+        self.core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver)
+            .v3_pool_count()
     }
 
     /// Number of registered V4 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
-        self.core.read().v4_pool_count()
+        self.core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver)
+            .v4_pool_count()
     }
 
     /// Number of registered mixed paths.
@@ -246,6 +260,8 @@ impl ArbitrageEngine {
     /// Return the list of registered V4 `PoolManager` addresses.
     #[must_use]
     pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
-        self.core.read().v4_registered_pool_managers()
+        self.core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver)
+            .v4_registered_pool_managers()
     }
 }

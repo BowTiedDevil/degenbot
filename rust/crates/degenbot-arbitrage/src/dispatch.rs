@@ -582,7 +582,7 @@ pub fn dispatch_profitable_results(
     //      time — the result is stale and would revert on-chain.
     let stale_before = candidates.len();
     if let Some(ref arc) = bot_state {
-        let guard = arc.read();
+        let guard = arc.read_at(degenbot_bot::bot_core::state_lock::LockSite::Sim);
         candidates.retain(|c| !candidate_is_stale(&guard, c));
     }
     outcome.stale_dropped = stale_before - candidates.len();
@@ -653,7 +653,7 @@ pub fn dispatch_profitable_results(
             // DO NOT re-point the projection at the arbitrary-key probe, and
             // do not extend this guard across anything below it.
             let anchor = {
-                let guard = arc.read();
+                let guard = arc.read_at(degenbot_bot::bot_core::state_lock::LockSite::Sim);
                 degenbot_bot::bot_core::SimAnchorState::snapshot(&guard)
             };
             // The warm-code cache arc; degrade to a fresh per-call cache if
@@ -1347,7 +1347,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel::<std::time::Duration>();
         let writer = std::thread::spawn(move || {
             let start = std::time::Instant::now();
-            let _guard = writer_state.write(); // parks behind the fan-out's read (pre-fix)
+            let _guard = writer_state.write_at(degenbot_bot::bot_core::state_lock::LockSite::Sim); // parks behind the fan-out's read (pre-fix)
             tx.send(start.elapsed()).expect("report wait");
         });
 

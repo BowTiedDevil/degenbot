@@ -5989,7 +5989,7 @@ mod tests {
         bot.load_snapshot_from_db(&snap, 8453).unwrap();
 
         let state = bot.state_arc();
-        let core = state.read();
+        let core = state.read_at(crate::bot_core::state_lock::LockSite::Core);
         // S = min(newest V3, newest V4). The parity fixture records both; the
         // exact S is whatever the fixture DB carries (we assert it's Some and
         // matches the per-family min computed independently inside the SAME
@@ -6020,7 +6020,7 @@ mod tests {
         let bot = Bot::new(1);
         bot.load_snapshot_from_db(&snap, 1).unwrap();
         let state = bot.state_arc();
-        let core = state.read();
+        let core = state.read_at(crate::bot_core::state_lock::LockSite::Core);
         // No pools → no seed block (cold-start path: the pump anchors on
         // `first_observed_block`).
         assert_eq!(

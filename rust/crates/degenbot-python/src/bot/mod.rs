@@ -191,7 +191,7 @@ impl PyBot {
             // thread's last_span for the pymethod name.
             note_state_intent("with_state", StateLockMode::Read, StateLockPhase::Wants);
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = core.read();
+            let guard = core.read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             let _intent = StateIntentGuard::held("with_state", StateLockMode::Read);
             f(&guard)
         })
@@ -215,7 +215,7 @@ impl PyBot {
                 StateLockPhase::Wants,
             );
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let mut guard = core.write();
+            let mut guard = core.write_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             let _intent = StateIntentGuard::held("with_state_mut", StateLockMode::Write);
             f(&mut guard)
         })
@@ -1628,7 +1628,7 @@ impl PyBot {
         // T1-scan-exempt: test-only seam (pure-Rust test callers, no GIL held).
         self.bot
             .state_arc()
-            .write()
+            .write_at(degenbot_bot::bot_core::state_lock::LockSite::Python)
             .register_v2_pool(&RegisterV2PoolParams {
                 address: addr,
                 token0: t0,

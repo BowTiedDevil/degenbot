@@ -36,7 +36,9 @@ impl PyErc20Token {
     {
         py.detach(|| {
             // T1-scan-exempt: sanctioned accessor — guard inside py.detach by definition.
-            let guard = self.core.read();
+            let guard = self
+                .core
+                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python);
             f(&guard)
         })
     }

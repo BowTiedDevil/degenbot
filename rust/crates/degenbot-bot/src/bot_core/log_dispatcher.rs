@@ -627,7 +627,9 @@ impl LogDispatcher {
         // unregistered TICK-MUTATION events which must stage into a buffer
         // (FUWYUR: these were silently lost when this pre-check used to
         // decide their fate itself).
-        let confirmed_drop = decoded.resolve_pool_id(&state.read()).is_none()
+        let confirmed_drop = decoded
+            .resolve_pool_id(&state.read_at(crate::bot_core::state_lock::LockSite::Core))
+            .is_none()
             && matches!(
                 decoded,
                 DecodedPoolEvent::V2Sync { .. }
@@ -654,7 +656,10 @@ impl LogDispatcher {
         // decoded event's block into the record (read before `apply` consumes it).
         let event_block = decoded.block_number();
         let apply_start = std::time::Instant::now();
-        let outcome = hotpath::measure_block!("dispatch.apply", decoded.apply(&mut state.write()));
+        let outcome = hotpath::measure_block!(
+            "dispatch.apply",
+            decoded.apply(&mut state.write_at(crate::bot_core::state_lock::LockSite::Core))
+        );
         if let Some(p) = crate::instruments::pipeline() {
             p.observe_state_apply(apply_start.elapsed().as_secs_f64());
         }
@@ -785,7 +790,7 @@ mod tests {
         let unregistered = alloy::primitives::Address::from([0x44u8; 20]);
         let state = Arc::new(StateLock::new(BotState::new()));
         state
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
             .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
                 address: registered,
                 token0: alloy::primitives::Address::ZERO,
@@ -813,12 +818,12 @@ mod tests {
         // Registered pool: read-side resolve finds it AND apply mutates.
         let ev = mk(registered, 1);
         assert_eq!(
-            ev.resolve_pool_id(&state.read()),
+            ev.resolve_pool_id(&state.read_at(crate::bot_core::state_lock::LockSite::Core)),
             Some(1),
             "resolve must find the registered pool"
         );
         assert_eq!(
-            ev.apply(&mut state.write()),
+            ev.apply(&mut state.write_at(crate::bot_core::state_lock::LockSite::Core)),
             ApplyOutcome::Applied(1),
             "apply must apply the registered pool"
         );
@@ -828,7 +833,7 @@ mod tests {
         // real apply.
         let miss = mk(unregistered, 1);
         assert_eq!(
-            miss.resolve_pool_id(&state.read()),
+            miss.resolve_pool_id(&state.read_at(crate::bot_core::state_lock::LockSite::Core)),
             None,
             "resolve must miss the unregistered pool"
         );
@@ -836,7 +841,7 @@ mod tests {
         // confirmed-Drop row (unregistered + scalar refresh): absence of work
         // is the semantics. Tick mutations must never land here.
         assert_eq!(
-            miss.apply(&mut state.write()),
+            miss.apply(&mut state.write_at(crate::bot_core::state_lock::LockSite::Core)),
             ApplyOutcome::NoOp(crate::bot_core::cl_route::NoOpReason::ScalarReseedAtRegistration),
             "apply must no-op (named Drop) for the unregistered scalar refresh"
         );
@@ -859,7 +864,7 @@ mod tests {
         dispatcher.dispatch(&sentinel_log(), &state, None); // apply miss (pool unregistered)
 
         state
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
             .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
                 address: applied_addr,
                 token0: alloy::primitives::Address::ZERO,
@@ -1000,7 +1005,10 @@ mod tests {
         dispatcher.dispatch(&log, &state, None);
 
         assert!(
-            state.read().buffered_v3_event_count(&pool_addr) > 0,
+            state
+                .read_at(crate::bot_core::state_lock::LockSite::Core)
+                .buffered_v3_event_count(&pool_addr)
+                > 0,
             "FUWYUR: an unregistered pool's Mint must be buffered for staged \
              application at registration — the APPLY-MISS funnel must not drop it"
         );
@@ -1042,7 +1050,7 @@ mod tests {
 
         let state = Arc::new(StateLock::new(BotState::new()));
         let pool_id = state
-            .write()
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
             .register_v3_pool(&RegisterV3PoolParams {
                 address: pool_addr,
                 token0: Address::ZERO,
@@ -1064,7 +1072,9 @@ mod tests {
         // DFQYM5: Tracked pools register `Quarantined`; transition to `Live`
         // (the driver's post-verify `set_live`) so the dispatched Mint
         // direct-applies as this test models.
-        state.write().set_v3_pool_live(pool_addr);
+        state
+            .write_at(crate::bot_core::state_lock::LockSite::Core)
+            .set_v3_pool_live(pool_addr);
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).
         // topics[1]=owner, topics[2]=tickLower=0x03113c=201020,
@@ -1124,7 +1134,7 @@ mod tests {
         let dispatcher = LogDispatcher::with_uniswap_decoders();
         dispatcher.dispatch(&log, &state, None);
 
-        let s = state.read();
+        let s = state.read_at(crate::bot_core::state_lock::LockSite::Core);
         let pool = s.get_v3_pool(pool_id).expect("pool registered");
         let t201020 = pool.tick_data.get(&201_020).cloned().expect("tick 201020");
         let t203350 = pool.tick_data.get(&203_350).cloned().expect("tick 203350");
