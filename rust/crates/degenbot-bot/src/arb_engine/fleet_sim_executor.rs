@@ -23,8 +23,9 @@
 //! RZEWTX: the pooled-seat machinery (`WorkQueue`, `seat_loop`,
 //! `host_loop`, `apply_host_msg`/`pump` admission, the boot install/global
 //! boilerplate) is SHARED with the registration executor — ONE seat host
-//! (`arb_engine::seat_host`) parameterized by this module's [`SIM_ROLE`]
-//! descriptor. 6HE6RF: the solve executor's host-MESSAGE triple joins
+//! (`arb_engine::seat_host`) parameterized by the `FleetBootRegistry`'s
+//! `SIM_ROLE` descriptor (candidate 4 moved the descriptor row there; this
+//! module owns only the executor + boot fn). 6HE6RF: the solve executor's host-MESSAGE triple joins
 //! that machinery too (the ONE [`HostPump`] behind all three fleet
 //! hosts); its SEAT MODEL (per-seat keyed mailboxes, warm arenas) and
 //! typed submit seam stay in `fleet_solve_executor.rs` — the RZEWTX
@@ -44,45 +45,13 @@
 //! fleet seats crosses the FFI only at the existing install/delivery
 //! seams (design doc §8: simulation never round-trips Python).
 
-use std::sync::OnceLock;
+use degenbot_workers::dispatcher::{BootError, FleetBoot};
 
-use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
-use degenbot_workers::budget::FleetBudget;
-use degenbot_workers::dispatcher::{BootError, FleetBoot, GrantKind};
-use degenbot_workers::role::WorkerRole;
-
-use crate::arb_engine::fleet_intake::{FleetIntake, InnerWork};
-use crate::arb_engine::seat_host::{self, SeatHost, SeatRoleDesc};
-
-/// The sim executor's seat-host role descriptor — this module IS the role
-/// now; the machinery lives once in `seat_host`. `SimDriver` pooled seats
-/// granted `GrantKind::Sim` units, the budget's `sim_slot_cap` as the seat
-/// count, and the design-gate admission policy `Admit`: a Cordoned posture
-/// still admits sim leases (`SimPool` class — floored, not held; the floor
-/// is the host FSM's sim-intake lane, dispatcher-side). The seat pool is
-/// the pacing contract: a seat IS the granted slot.
-static SIM_ROLE: SeatRoleDesc = SeatRoleDesc {
-    role: WorkerRole::SimDriver,
-    grant: GrantKind::Sim,
-    boot_role: BootRole::Sim,
-    abort_tag: "[fleet-sim]",
-    noun: "sim",
-    host_thread: "work-fleet-sim-host",
-    stamp_missing:
-        "fleet sim boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
-    seats: sim_seats_of,
-};
-
-/// The queue-cap source: the budget's `SimDriver` slot cap (design doc §5 —
-/// today's `SimSlots` cap, `fleet.sim_slot_cap` terminal override).
-fn sim_seats_of(budget: &FleetBudget) -> usize {
-    budget.sim_slot_cap
-}
+use crate::arb_engine::seat_host::{self, SeatHost};
 
 /// The fleet-hosted inline-sim executor. Shared by all engine cycles (the
-/// global static hands out `&'static`, mirroring the fleet solve
-/// executor's construction-once contract: warm pooled seats across
-/// cycles).
+/// registry's global slot hands out `&'static`, mirroring the fleet solve
+/// executor's construction-once contract: warm pooled seats across cycles).
 pub(crate) struct FleetSimExecutor {
     /// The shared pooled-seat host (the channel submit end + the unit
     /// sequence).
@@ -99,10 +68,18 @@ impl FleetSimExecutor {
     /// run the dispatch loop on the host thread. Fail-loud (the typed
     /// [`BootError`]) when the declared shares cannot host the quota.
     ///
+    /// candidate 4 (YUMQU3): the seat descriptor is read from the
+    /// `FleetBootRegistry` slot — this module owns no role static. Sim hosts
+    /// carry NO intake fault watch (`None`): their receipts are not
+    /// pyo3-owned (S2 scope cut), so they never enter Faulted.
+    ///
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        let host = SeatHost::boot(&SIM_ROLE, boot, None)?;
+        let desc = crate::arb_engine::seat_host::FleetBootRegistry::process()
+            .sim()
+            .descriptor();
+        let host = SeatHost::boot(desc, boot, None)?;
         Ok(Self {
             #[cfg(test)]
             sim_seats: host.seat_count(),
@@ -123,70 +100,9 @@ impl FleetSimExecutor {
     pub(crate) fn host_plan_binding(&self) -> degenbot_workers::plan::Binding {
         self.host.plan_binding()
     }
-
-    /// The pre-existing submit body, RENAMED (was the inherent `spawn`,
-    /// sim:158-174): wraps into `Unit::new(.., Box::new(move |_ctx| work()))`
-    /// and `tx.send(HostMsg::Enqueue(unit))`, typed to `Err(())` on a closed
-    /// channel — the send VALUE carries the close arm; the abort lives in
-    /// the trait impl below — same process-exit semantics, one owner of the
-    /// abort (the shared seat host's `intake_spawn`). Private fn, in-crate.
-    fn try_send(&self, work: InnerWork) -> Result<(), ()> {
-        self.host.try_send(work)
-    }
-
-    /// Test-venue shim: the OLD name `spawn`, `#[cfg(test)]`-only, so the
-    /// in-file fixtures (sim:415..:546) keep compiling VERBATIM. Outside test
-    /// builds the inherent fn does not EXIST — the inherent-priority shadow
-    /// (§6 risk 6) is confined to test code that calls no port path, and the
-    /// port is the only `spawn` production callers can name.
-    #[cfg(test)]
-    fn spawn(&self, work: impl FnOnce() + Send + 'static) {
-        let _ = self.try_send(Box::new(work));
-    }
 }
 
-impl FleetIntake for FleetSimExecutor {
-    fn spawn(&self, work: InnerWork) {
-        if self.try_send(work).is_err() {
-            seat_host::intake_close_abort(&self.host);
-        }
-    }
-}
-
-static FLEET_SIM_BOOT: OnceLock<BootStamp> = OnceLock::new();
-// FF-T1 (BPHR6F): the slot parks the sticky boot OUTCOME — a refused
-// boot stores its typed BootError and every later submission re-surfaces
-// it (never a process abort, never a retry loop).
-static FLEET_SIM_EXECUTOR: OnceLock<Result<FleetSimExecutor, BootError>> = OnceLock::new();
-
-/// Install the CONSTRUCTION-STAMPED boot (YI5NGB): the engine's own typed
-/// boot descriptor (fleet quota + overrides + posture) parsed at ITS
-/// construction from the CALLER cfg, stamped with the engine id + a
-/// deterministic cfg hash. Never overrides an installed value (first
-/// engine wins, like the other stance statics) — every construction after
-/// the first RIDES, and the ride is ledgered (a divergent-cfg rider is
-/// counted + warned in prod, ILLEGAL in tests) on the `BootRole::Sim` row
-/// (the shared installer: `seat_host::install_boot`).
-pub(crate) fn install_boot(stamp: BootStamp) {
-    seat_host::install_boot(&FLEET_SIM_BOOT, &SIM_ROLE, stamp);
-}
-
-/// The process-wide fleet sim executor, built lazily on the first
-/// fleet-stance sim submission and persisting for the process lifetime
-/// (the shared materializer: `seat_host::global_executor` — the YI5NGB
-/// absence window stays closed by construction).
-///
-/// FF-T1 (BPHR6F): a refused boot surfaces the TYPED, STICKY `BootError`
-/// (every submission re-surfaces the same refusal) — the library never
-/// aborts the host process on the boot-refusal arm.
-pub(crate) fn global_fleet_sim_executor() -> Result<&'static FleetSimExecutor, BootError> {
-    seat_host::global_executor(
-        &SIM_ROLE,
-        &FLEET_SIM_BOOT,
-        &FLEET_SIM_EXECUTOR,
-        FleetSimExecutor::boot,
-    )
-}
+seat_host::impl_seat_hosted!(FleetSimExecutor, host);
 
 #[cfg(test)]
 // The panic-survival fixture panics deliberately (loud-assert test style;
@@ -202,20 +118,15 @@ mod tests {
     /// directly so the expect fires WITHOUT a real `FleetHost` boot.
     #[test]
     fn fleet_sim_materializer_without_a_stamp_is_loud() {
-        if super::FLEET_SIM_BOOT.get().is_some() {
+        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().sim();
+        if slot.boot_installed() {
             eprintln!(
                 "skipping: another test already installed the sim boot stamp in this process"
             );
             return;
         }
         let closure = || {
-            let stamp = super::FLEET_SIM_BOOT.get().expect(
-                "fleet sim boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
-            );
-            match FleetSimExecutor::boot(stamp.boot()) {
-                Ok(_executor) => (),
-                Err(_err) => (),
-            }
+            let _ = slot.global_executor(FleetSimExecutor::boot);
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(closure));
         let err = result.expect_err("a stamp-less materialization must abort loud");

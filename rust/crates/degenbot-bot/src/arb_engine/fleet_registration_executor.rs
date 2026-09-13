@@ -17,8 +17,9 @@
 //! RZEWTX: the pooled-seat machinery (`WorkQueue`, `seat_loop`,
 //! `host_loop`, `apply_host_msg`/`pump` admission, the boot install/global
 //! boilerplate) is SHARED with the sim executor — ONE seat host
-//! (`arb_engine::seat_host`) parameterized by this module's [`REG_ROLE`]
-//! descriptor. 6HE6RF: the solve executor's host-MESSAGE triple joins
+//! (`arb_engine::seat_host`) parameterized by the `FleetBootRegistry`'s
+//! `REG_ROLE` descriptor (candidate 4 moved the descriptor row there; this
+//! module owns only the executor + boot fn). 6HE6RF: the solve executor's host-MESSAGE triple joins
 //! that machinery too (the ONE [`HostPump`] behind all three fleet
 //! hosts); its SEAT MODEL (per-seat keyed mailboxes, warm arenas) and
 //! typed submit seam stay in `fleet_solve_executor.rs` — the RZEWTX
@@ -39,51 +40,17 @@
 //! caveat (ADR-042 §8) is unchanged: build callables already enter the
 //! installed hooks via the existing seams.
 
-use std::sync::OnceLock;
-
-use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
-use degenbot_workers::budget::FleetBudget;
-use degenbot_workers::dispatcher::{BootError, FleetBoot, GrantKind};
-use degenbot_workers::role::WorkerRole;
-
 use std::sync::Arc;
 
-use crate::arb_engine::fleet_intake::{FleetIntake, InnerWork, IntakeFaultWatch};
-use crate::arb_engine::seat_host::{self, SeatHost, SeatRoleDesc};
+use degenbot_workers::dispatcher::{BootError, FleetBoot};
 
-/// The intake executor's seat-host role descriptor — this module IS the
-/// role now; the machinery lives once in `seat_host`. `PoolStateUpdater`
-/// pooled seats granted `GrantKind::PoolStateUpdate` units and the
-/// budget's `pool_state_updater_slots` as the seat count. Admission is
-/// the role's own cordon class through the ONE shared posture owner
-/// (JCI2FW Part A — the dissolved `CordonAdmission::Hold` descriptor
-/// arm): a Cordoned posture HOLDS Deferrable intake — held units wait in
-/// the unbounded backlog (never dropped), in-flight units are never
-/// cancelled.
-static REG_ROLE: SeatRoleDesc = SeatRoleDesc {
-    role: WorkerRole::PoolStateUpdater,
-    grant: GrantKind::PoolStateUpdate,
-    boot_role: BootRole::Registration,
-    abort_tag: "[fleet-reg]",
-    noun: "intake",
-    host_thread: "work-fleet-poolupd-host",
-    stamp_missing:
-        "fleet registration boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
-    seats: reg_seats_of,
-};
-
-/// The queue-cap source: the budget's `pool_state_updater_slots` (default
-/// 4, `fleet.pool_state_updater_slots` terminal override — the `SimDriver`
-/// billing model exactly: duty-counted, spendable from the fractional
-/// remainder, never part of the declared integer sum).
-fn reg_seats_of(budget: &FleetBudget) -> usize {
-    budget.pool_state_updater_slots
-}
+use crate::arb_engine::fleet_intake::IntakeFaultWatch;
+use crate::arb_engine::seat_host::{self, SeatHost};
 
 /// The fleet-hosted registration intake executor. Shared by the whole
-/// process (the global static hands out `&'static`, mirroring the fleet
-/// sim/solve executors' construction-once contract: warm pooled seats for
-/// the process lifetime).
+/// process (the registry's global slot hands out `&'static`, mirroring the
+/// fleet sim/solve executors' construction-once contract: warm pooled seats
+/// for the process lifetime).
 pub struct FleetRegistrationExecutor {
     /// The shared pooled-seat host (the channel submit end + the unit
     /// sequence).
@@ -103,17 +70,25 @@ impl FleetRegistrationExecutor {
     /// and run the dispatch loop on the host thread. Fail-loud (the typed
     /// [`BootError`]) when the declared shares cannot host the quota.
     ///
+    /// candidate 4 (YUMQU3): the registration role's `IntakeFaultWatch` is
+    /// an OPTION parameter on the shared boot path; `boot` supplies a fresh
+    /// watch (the sim host passes `None`).
+    ///
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        Self::boot_with_watch(boot, Arc::new(IntakeFaultWatch::new()))
+        Self::boot_with_watch(boot, None)
     }
 
     fn boot_with_watch(
         boot: FleetBoot,
-        fault_watch: Arc<IntakeFaultWatch>,
+        fault_watch: Option<Arc<IntakeFaultWatch>>,
     ) -> Result<Self, BootError> {
-        let host = SeatHost::boot(&REG_ROLE, boot, Some(Arc::clone(&fault_watch)))?;
+        let fault_watch = fault_watch.unwrap_or_else(|| Arc::new(IntakeFaultWatch::new()));
+        let desc = crate::arb_engine::seat_host::FleetBootRegistry::process()
+            .registration()
+            .descriptor();
+        let host = SeatHost::boot(desc, boot, Some(Arc::clone(&fault_watch)))?;
         Ok(Self {
             #[cfg(test)]
             seats: host.seat_count(),
@@ -135,104 +110,9 @@ impl FleetRegistrationExecutor {
     pub fn seat_count(&self) -> usize {
         self.seats
     }
-
-    /// The port's unit body (the pre-existing submit, renamed from the
-    /// inherent `spawn`, reg:155-174): wraps into `Unit::new(.., Box::new(
-    /// move |_ctx| work()))` and enqueues over `tx.send(HostMsg::Enqueue(
-    /// unit))`, typed to the port's `Result<(), ()>` close vocabulary - the
-    /// send VALUE carries the close arm; the abort lives in the trait impl
-    /// (reg:173-175's `abort_executor` - today's "intake submission" /
-    /// "fleet intake host channel closed" - moved there; same process-exit
-    /// semantics, one owner of the abort — now the shared seat host's
-    /// `intake_spawn`). `pub(crate)` fn, in-crate (T3's
-    /// cross-module pin in `fleet_intake`'s tests binds the `Result<(), ()>`
-    /// shape by calling it - the surface stays crate-internal, invisible to
-    /// the §4.3 pub-surface grep).
-    pub(crate) fn try_send(&self, work: InnerWork) -> Result<(), ()> {
-        self.host.try_send(work)
-    }
-
-    /// Test-venue shim: the OLD name `spawn`, `#[cfg(test)]`-only, so the
-    /// in-file fixtures keep compiling VERBATIM. Outside test builds the
-    /// inherent fn does not EXIST - the inherent-priority shadow (§6 risk 6)
-    /// is confined to test code that calls no port path, and the port is the
-    /// only `spawn` production callers can name.
-    #[cfg(test)]
-    fn spawn(&self, work: impl FnOnce() + Send + 'static) {
-        let _ = self.try_send(Box::new(work));
-    }
 }
 
-impl FleetIntake for FleetRegistrationExecutor {
-    fn spawn(&self, work: InnerWork) {
-        if self.try_send(work).is_err() {
-            seat_host::intake_close_abort(&self.host);
-        }
-    }
-}
-
-static FLEET_REGISTRATION_BOOT: OnceLock<BootStamp> = OnceLock::new();
-// FF-T1 (BPHR6F): the slot parks the sticky boot OUTCOME — a refused
-// boot stores its typed BootError and every later submission re-surfaces
-// it (never a process abort, never a retry loop).
-static FLEET_REGISTRATION_EXECUTOR: OnceLock<Result<FleetRegistrationExecutor, BootError>> =
-    OnceLock::new();
-
-/// Install the CONSTRUCTION-STAMPED boot (YI5NGB): the engine's own typed
-/// boot descriptor (fleet quota + overrides + posture) parsed at ITS
-/// construction from the CALLER cfg, stamped with the engine id + a
-/// deterministic cfg hash. Never overrides an installed value (first
-/// engine wins, like the other stance statics) — every construction after
-/// the first RIDES, and the ride is ledgered (a divergent-cfg rider is
-/// counted + warned in prod, ILLEGAL in tests) on the
-/// `BootRole::Registration` row (the shared installer:
-/// `seat_host::install_boot`).
-pub fn install_boot(stamp: BootStamp) {
-    seat_host::install_boot(&FLEET_REGISTRATION_BOOT, &REG_ROLE, stamp);
-}
-
-/// Whether an engine installed a fleet boot STAMP (YI5NGB: the stamp is
-/// the boot descriptor + its construction identity) — the intake is
-/// hosted ONLY under the fleet stance (the legacy stance keeps the
-/// incumbent `ThreadPoolExecutor` byte-for-byte). Presence semantics
-/// unchanged: the construction latch and its process-level visibility
-/// are the PRG-5 probe contract.
-#[must_use]
-pub fn boot_installed() -> bool {
-    FLEET_REGISTRATION_BOOT.get().is_some()
-}
-
-/// The installed stamp's BOOT value (FF-T5, NT7HJC — the runtime
-/// status's authoritative source: the boot the FIRST engine
-/// construction derived from ITS OWN config). `None` pre-construction.
-#[must_use]
-pub fn stamped_boot() -> Option<degenbot_workers::dispatcher::FleetBoot> {
-    FLEET_REGISTRATION_BOOT
-        .get()
-        .map(crate::arb_engine::boot_stamp::BootStamp::boot)
-}
-
-/// The process-wide fleet registration intake executor, built lazily on the
-/// first fleet-stance intake submission and persisting for the process
-/// lifetime. Crate-internal (LNQDOA §4.2): its only callers are the
-/// `fleet_intake` facade hand-outs — the executor TYPE crosses a boundary
-/// exactly once, as an anonymous trait object (the shared materializer:
-/// `seat_host::global_executor` — the YI5NGB absence window stays closed
-/// by construction).
-///
-/// FF-T1 (BPHR6F): a refused boot surfaces the TYPED, STICKY `BootError`
-/// (every submission re-surfaces the same refusal) — the library never
-/// aborts the host process on the boot-refusal arm; the pyo3 leaf maps
-/// it onto the `BootRefused` exception and the binary owns the loud exit.
-pub(crate) fn global_fleet_registration_executor(
-) -> Result<&'static FleetRegistrationExecutor, BootError> {
-    seat_host::global_executor(
-        &REG_ROLE,
-        &FLEET_REGISTRATION_BOOT,
-        &FLEET_REGISTRATION_EXECUTOR,
-        FleetRegistrationExecutor::boot,
-    )
-}
+seat_host::impl_seat_hosted!(FleetRegistrationExecutor, host);
 
 #[cfg(test)]
 // The panic-survival fixture panics deliberately (loud-assert test style;
@@ -249,20 +129,15 @@ mod tests {
     /// directly so the expect fires WITHOUT a real `FleetHost` boot.
     #[test]
     fn fleet_registration_materializer_without_a_stamp_is_loud() {
-        if super::FLEET_REGISTRATION_BOOT.get().is_some() {
+        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().registration();
+        if slot.boot_installed() {
             eprintln!(
                 "skipping: another test already installed the registration boot stamp in this process"
             );
             return;
         }
         let closure = || {
-            let stamp = super::FLEET_REGISTRATION_BOOT.get().expect(
-                "fleet registration boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
-            );
-            match FleetRegistrationExecutor::boot(stamp.boot()) {
-                Ok(_executor) => (),
-                Err(_err) => (),
-            }
+            let _ = slot.global_executor(FleetRegistrationExecutor::boot);
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(closure));
         let err = result.expect_err("a stamp-less materialization must abort loud");
@@ -308,7 +183,8 @@ mod tests {
     )]
     #[test]
     fn a_refused_boot_is_typed_and_sticky_never_an_abort() {
-        if super::FLEET_REGISTRATION_BOOT.get().is_some() {
+        let slot = crate::arb_engine::seat_host::FleetBootRegistry::process().registration();
+        if slot.boot_installed() {
             eprintln!(
                 "skipping: another test already installed the registration boot stamp in this process"
             );
@@ -321,8 +197,8 @@ mod tests {
             posture: PosturePolicy::doc_defaults(),
             owner: None,
         });
-        let _ = super::FLEET_REGISTRATION_BOOT.set(stamp);
-        let first = super::global_fleet_registration_executor();
+        slot.set_boot_for_test(stamp);
+        let first = slot.global_executor(FleetRegistrationExecutor::boot);
         let Err(err) = first else {
             panic!("a sub-floor boot must refuse, typed")
         };
@@ -336,7 +212,7 @@ mod tests {
         );
         // Sticky: the second call re-surfaces the SAME typed refusal —
         // every later submit sees it, no retry loop, no abort.
-        let second = super::global_fleet_registration_executor();
+        let second = slot.global_executor(FleetRegistrationExecutor::boot);
         assert!(
             second.is_err(),
             "the boot refusal is sticky at every submit (FF-T1)"

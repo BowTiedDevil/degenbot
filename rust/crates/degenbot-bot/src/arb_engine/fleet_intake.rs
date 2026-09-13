@@ -83,7 +83,11 @@ impl IntakeFaultWatch {
 /// executors isolate completely (7KAPBB).
 #[must_use]
 pub fn registration_fault_watch() -> Option<Arc<IntakeFaultWatch>> {
-    crate::arb_engine::fleet_registration_executor::global_fleet_registration_executor()
+    crate::arb_engine::seat_host::FleetBootRegistry::process()
+        .registration()
+        .global_executor(
+            crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::boot,
+        )
         .ok()
         .map(crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::fault_watch)
 }
@@ -116,7 +120,9 @@ pub trait FleetIntake: Send + Sync {
 /// FF-T1 (BPHR6F): the typed, sticky fleet boot refusal — the sticky
 /// `BootError` the materializer parked (never a process abort).
 pub(crate) fn sim_intake() -> Result<&'static dyn FleetIntake, BootError> {
-    crate::arb_engine::fleet_sim_executor::global_fleet_sim_executor()
+    crate::arb_engine::seat_host::FleetBootRegistry::process()
+        .sim()
+        .global_executor(crate::arb_engine::fleet_sim_executor::FleetSimExecutor::boot)
         .map(|exec| exec as &'static dyn FleetIntake)
 }
 
@@ -135,7 +141,11 @@ pub(crate) fn sim_intake() -> Result<&'static dyn FleetIntake, BootError> {
 /// the submit seam BEFORE any unit is enqueued (never a process abort;
 /// the pyo3 leaf maps it onto the `BootRefused` exception).
 pub fn registration_intake() -> Result<&'static dyn FleetIntake, BootError> {
-    crate::arb_engine::fleet_registration_executor::global_fleet_registration_executor()
+    crate::arb_engine::seat_host::FleetBootRegistry::process()
+        .registration()
+        .global_executor(
+            crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::boot,
+        )
         .map(|exec| exec as &'static dyn FleetIntake)
 }
 
@@ -144,7 +154,10 @@ pub fn registration_intake() -> Result<&'static dyn FleetIntake, BootError> {
 /// the commit-2 module-private flip.
 #[must_use]
 pub fn registration_boot_installed() -> bool {
-    crate::arb_engine::fleet_registration_executor::boot_installed()
+    // candidate 4 (YUMQU3): the PRG-5 gate reads the registry's first-wins
+    // process latch, so it stays byte-equivalent with
+    // `fleet_status::fleet_runtime_status().fleet_booted`.
+    crate::arb_engine::seat_host::FleetBootRegistry::process().boot_installed()
 }
 
 #[cfg(test)]

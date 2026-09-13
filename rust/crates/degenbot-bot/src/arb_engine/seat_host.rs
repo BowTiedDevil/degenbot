@@ -129,6 +129,8 @@ use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
 
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
+use crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor;
+use crate::arb_engine::fleet_sim_executor::FleetSimExecutor;
 use crate::arb_engine::fleet_wake;
 use degenbot_workers::budget::FleetBudget;
 use degenbot_workers::dispatcher::{
@@ -1275,6 +1277,279 @@ pub(crate) fn global_executor<T>(
     .as_ref()
     .map_err(Clone::clone)
 }
+
+// ======================================================================
+// candidate 4 (DQA7YL / YUMQU3): the FleetBootRegistry.
+//
+// The ONE keyed owner of the two POOLED roles' boot facts. The solve host
+// is deliberately absent: it has a different seat model (per-seat keyed
+// mailboxes, typed receipts) and installs its own boot; candidate 4 is two
+// rows, not three.
+// ======================================================================
+
+/// The sim role's seat descriptor. candidate 4 MOVED this here from
+/// `fleet_sim_executor`: the registry owns the pooled-role descriptor rows
+/// now; the role module owns only its executor + thin boot fn.
+static SIM_ROLE: SeatRoleDesc = SeatRoleDesc {
+    role: WorkerRole::SimDriver,
+    grant: GrantKind::Sim,
+    boot_role: BootRole::Sim,
+    abort_tag: "[fleet-sim]",
+    noun: "sim",
+    host_thread: "work-fleet-sim-host",
+    stamp_missing:
+        "fleet sim boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
+    seats: sim_seats_of,
+};
+
+/// The queue-cap source: the budget's `SimDriver` slot cap.
+fn sim_seats_of(budget: &FleetBudget) -> usize {
+    budget.sim_slot_cap
+}
+
+/// The registration role's seat descriptor (moved here from
+/// `fleet_registration_executor`, same rationale).
+static REG_ROLE: SeatRoleDesc = SeatRoleDesc {
+    role: WorkerRole::PoolStateUpdater,
+    grant: GrantKind::PoolStateUpdate,
+    boot_role: BootRole::Registration,
+    abort_tag: "[fleet-reg]",
+    noun: "intake",
+    host_thread: "work-fleet-poolupd-host",
+    stamp_missing:
+        "fleet registration boot stamp missing: an engine must construct before the first fleet submit (YI5NGB)",
+    seats: reg_seats_of,
+};
+
+/// The queue-cap source: the budget's `pool_state_updater_slots`.
+fn reg_seats_of(budget: &FleetBudget) -> usize {
+    budget.pool_state_updater_slots
+}
+
+/// The sim boot courier (the registry slot's `&'static` storage).
+static SIM_BOOT: OnceLock<BootStamp> = OnceLock::new();
+/// The sim executor courier (first-wins, sticky boot outcome).
+static SIM_EXECUTOR: OnceLock<Result<FleetSimExecutor, BootError>> = OnceLock::new();
+/// The registration boot courier.
+static REG_BOOT: OnceLock<BootStamp> = OnceLock::new();
+/// The registration executor courier.
+static REG_EXECUTOR: OnceLock<Result<FleetRegistrationExecutor, BootError>> = OnceLock::new();
+
+/// One typed executor slot in the [`FleetBootRegistry`]: the role
+/// descriptor, the construction-stamped boot courier, and the process-wide
+/// executor courier. The couriers are `&'static` references into the
+/// registry's static storage, so [`BootSlot::executor`] can hand out a
+/// truly `'static` reference (the process-global executor outlives every
+/// caller).
+pub(crate) struct BootSlot<T: 'static> {
+    desc: &'static SeatRoleDesc,
+    boot: &'static OnceLock<BootStamp>,
+    executor: &'static OnceLock<Result<T, BootError>>,
+}
+
+impl<T: 'static> BootSlot<T> {
+    const fn new(
+        desc: &'static SeatRoleDesc,
+        boot: &'static OnceLock<BootStamp>,
+        executor: &'static OnceLock<Result<T, BootError>>,
+    ) -> Self {
+        Self {
+            desc,
+            boot,
+            executor,
+        }
+    }
+
+    /// The role's seat descriptor (the `BootRole`-keyed row).
+    #[must_use]
+    pub(crate) fn descriptor(&self) -> &'static SeatRoleDesc {
+        self.desc
+    }
+
+    /// Whether an engine installed this role's construction-stamped boot.
+    /// Test-facing (the pinned registry contract); production reads the
+    /// registry's canonical first-wins latch.
+    #[cfg_attr(not(test), expect(dead_code))]
+    #[must_use]
+    pub(crate) fn boot_installed(&self) -> bool {
+        self.boot.get().is_some()
+    }
+
+    /// The process-wide executor, if it already materialized (the sticky
+    /// boot-outcome slot: a refused boot is `Ok(None)` here, not a panic).
+    /// Test-facing (the pinned registry contract).
+    #[cfg_attr(not(test), expect(dead_code))]
+    #[must_use]
+    pub(crate) fn executor(&self) -> Option<&'static T> {
+        self.executor
+            .get()
+            .and_then(|outcome| outcome.as_ref().ok())
+    }
+
+    /// Install the CONSTRUCTION-STAMPED boot through the ONE shared
+    /// installer ([`install_boot`]): ledger the identified ride, record the
+    /// first-wins fleet profile, courier the stamp. Never overrides.
+    pub(crate) fn install(&self, stamp: BootStamp) {
+        install_boot(self.boot, self.desc, stamp);
+    }
+
+    /// Test-only: park a boot stamp WITHOUT the shared install side effects
+    /// (the FF-T1 unhostable-boot refusal fixture).
+    #[cfg(test)]
+    pub(crate) fn set_boot_for_test(&self, stamp: BootStamp) {
+        let _ = self.boot.set(stamp);
+    }
+
+    /// The process-wide materializer (the shared [`global_executor`]
+    /// boilerplate), keyed to this slot's couriers.
+    ///
+    /// # Errors
+    /// FF-T1 (BPHR6F): the typed, sticky fleet boot refusal.
+    pub(crate) fn global_executor(
+        &self,
+        boot: fn(FleetBoot) -> Result<T, BootError>,
+    ) -> Result<&'static T, BootError> {
+        global_executor(self.desc, self.boot, self.executor, boot)
+    }
+}
+
+/// The uniform, [`BootRole`]-keyed view of a registry slot.
+pub(crate) trait BootSlotView {
+    /// The role's seat descriptor.
+    fn descriptor(&self) -> &'static SeatRoleDesc;
+    /// Install the role's construction boot (first-wins).
+    fn install(&self, stamp: BootStamp);
+}
+
+impl<T: 'static> BootSlotView for BootSlot<T> {
+    fn descriptor(&self) -> &'static SeatRoleDesc {
+        BootSlot::descriptor(self)
+    }
+
+    fn install(&self, stamp: BootStamp) {
+        BootSlot::install(self, stamp);
+    }
+}
+
+/// The candidate-4 pooled-role boot registry: the ONE keyed owner of the
+/// two pooled roles' boot facts. Each typed slot carries the role
+/// descriptor + boot/executor couriers; the registry carries the first-wins
+/// canonical process boot (whichever role installs first — sim before
+/// registration in `install_engine_stances`). `fleet_status` and
+/// `fleet_intake` read THIS, never a role-module static.
+pub(crate) struct FleetBootRegistry {
+    sim: BootSlot<FleetSimExecutor>,
+    registration: BootSlot<FleetRegistrationExecutor>,
+    /// The canonical process boot: the FIRST registry role to install owns
+    /// it, stamped exactly once.
+    process_boot: OnceLock<FleetBoot>,
+}
+
+impl FleetBootRegistry {
+    /// The process registry singleton.
+    #[must_use]
+    pub(crate) fn process() -> &'static Self {
+        static REGISTRY: OnceLock<FleetBootRegistry> = OnceLock::new();
+        REGISTRY.get_or_init(|| Self {
+            sim: BootSlot::new(&SIM_ROLE, &SIM_BOOT, &SIM_EXECUTOR),
+            registration: BootSlot::new(&REG_ROLE, &REG_BOOT, &REG_EXECUTOR),
+            process_boot: OnceLock::new(),
+        })
+    }
+
+    /// The sim role's typed slot.
+    #[must_use]
+    pub(crate) fn sim(&self) -> &BootSlot<FleetSimExecutor> {
+        &self.sim
+    }
+
+    /// The registration role's typed slot.
+    #[must_use]
+    pub(crate) fn registration(&self) -> &BootSlot<FleetRegistrationExecutor> {
+        &self.registration
+    }
+
+    /// The `BootRole`-keyed uniform view.
+    ///
+    /// # Panics
+    /// `BootRole::Solve` is out of registry scope: candidate 4 registers the
+    /// TWO pooled roles (sim + registration); the solve host's seat model is
+    /// different by design and has no slot here.
+    #[must_use]
+    pub(crate) fn role(&self, role: BootRole) -> &dyn BootSlotView {
+        match role {
+            BootRole::Sim => &self.sim,
+            BootRole::Registration => &self.registration,
+            BootRole::Solve => unreachable!(
+                "FleetBootRegistry covers the two pooled roles (sim, registration); the solve role is out of registry scope"
+            ),
+        }
+    }
+
+    /// Whether ANY registry role installed its construction boot (the
+    /// first-wins process latch).
+    #[must_use]
+    pub(crate) fn boot_installed(&self) -> bool {
+        self.process_boot.get().is_some()
+    }
+
+    /// The canonical process boot — whichever registry role installed FIRST.
+    /// `None` pre-construction.
+    #[must_use]
+    pub(crate) fn process_boot(&self) -> Option<FleetBoot> {
+        self.process_boot.get().copied()
+    }
+
+    /// Install the construction-stamped boot for `role` through the ONE
+    /// shared installer: the canonical process boot is first-wins, then the
+    /// role slot ledgers the ride + records the first-wins profile.
+    pub(crate) fn install_boot(&self, role: BootRole, stamp: BootStamp) {
+        // First-wins canonical: the first registry role to install owns it.
+        let _ = self.process_boot.set(stamp.boot());
+        let slot = self.role(role);
+        debug_assert_eq!(
+            slot.descriptor().boot_role,
+            role,
+            "registry slot/role mismatch"
+        );
+        slot.install(stamp);
+    }
+}
+
+/// The shared per-role submit / port / test-shim surface, defined ONCE and
+/// instantiated per pooled executor. `self.$host` names the executor's
+/// seat-host field at the invocation site; the `FleetIntake` port impl, the
+/// inherent `try_send`, and the test-only `spawn` shim all live here — the
+/// role modules no longer carry byte-identical copies.
+macro_rules! impl_seat_hosted {
+    ($executor:ty, $host:ident) => {
+        impl $executor {
+            /// The shared host's submit end (the port's `Result<(), ()>`
+            /// close vocabulary).
+            pub(crate) fn try_send(
+                &self,
+                work: $crate::arb_engine::fleet_intake::InnerWork,
+            ) -> Result<(), ()> {
+                self.$host.try_send(work)
+            }
+
+            /// Test-venue shim: the OLD name `spawn`, `#[cfg(test)]`-only.
+            #[cfg(test)]
+            fn spawn(&self, work: impl FnOnce() + Send + 'static) {
+                let _ = self.try_send(Box::new(work));
+            }
+        }
+
+        impl $crate::arb_engine::fleet_intake::FleetIntake for $executor {
+            fn spawn(&self, work: $crate::arb_engine::fleet_intake::InnerWork) {
+                if self.try_send(work).is_err() {
+                    $crate::arb_engine::seat_host::intake_close_abort(&self.$host);
+                }
+            }
+        }
+    };
+}
+pub(crate) use impl_seat_hosted;
 
 // ---------------------------------------------------------------------------
 // 6HE6RF: the cross-host property suite. The unified HostPump is driven

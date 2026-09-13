@@ -72,9 +72,12 @@ pub struct FleetRuntimeStatus {
 /// caller-reachable arm.
 #[must_use]
 pub fn fleet_runtime_status() -> FleetRuntimeStatus {
-    let boot: FleetBoot = crate::arb_engine::fleet_registration_executor::stamped_boot()
-        .unwrap_or_else(live_default_boot);
-    let fleet_booted = crate::arb_engine::fleet_registration_executor::boot_installed();
+    let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
+    // candidate 4 (YUMQU3): the canonical process boot is the registry's
+    // first-wins latch — whichever registry role (sim/registration) installed
+    // first — never a role module's private static.
+    let boot: FleetBoot = registry.process_boot().unwrap_or_else(live_default_boot);
+    let fleet_booted = registry.boot_installed();
     // The status NEVER panics: an unhostable boot (below the host floor
     // - possible only on the pre-construction live view) is DATA (the
     // refused view: no binding, no budget, the refusal string).

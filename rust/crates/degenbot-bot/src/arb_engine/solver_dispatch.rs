@@ -364,13 +364,21 @@ pub fn install_engine_stances(
     // YI5NGB: the engine's OWN construction boot, stamped — each role's
     // install records the identified ride (first-fleet-wins per role).
     crate::arb_engine::fleet_solve_executor::install_boot(boot_stamp.clone());
-    // ADR-042 F4: the SimDriver seat pool shares the boot descriptor
-    // (same quota + overrides + posture as the Solver-side host).
-    crate::arb_engine::fleet_sim_executor::install_boot(boot_stamp.clone());
-    // PRG-3: the registration intake station shares the same boot
-    // descriptor (duty-counted PoolStateUpdater slots, Deferrable
-    // cordon class).
-    crate::arb_engine::fleet_registration_executor::install_boot(boot_stamp.clone());
+    // candidate 4 (YUMQU3): the two POOLED roles install through the ONE
+    // registry. Sim installs BEFORE registration, so the registry's
+    // first-wins canonical process boot is sim's (same descriptor value as
+    // registration's — the boot is shared). ADR-042 F4: the SimDriver seat
+    // pool shares the boot descriptor; PRG-3: registration shares it too
+    // (duty-counted PoolStateUpdater slots, Deferrable cordon class).
+    let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
+    registry.install_boot(
+        crate::arb_engine::boot_stamp::BootRole::Sim,
+        boot_stamp.clone(),
+    );
+    registry.install_boot(
+        crate::arb_engine::boot_stamp::BootRole::Registration,
+        boot_stamp.clone(),
+    );
     STREAMING_DELIVERY_ENABLED.store(
         cfg.pump.streaming_delivery,
         std::sync::atomic::Ordering::Relaxed,
@@ -3385,7 +3393,10 @@ mod fleet_sim_stance_tests {
         // the pinned seat-shape assertion can only bind on a pinned-tier
         // host. Skip there (the F-suite's documented self-skip channel)
         // rather than asserting a topology this host cannot host.
-        match crate::arb_engine::fleet_sim_executor::global_fleet_sim_executor() {
+        match crate::arb_engine::seat_host::FleetBootRegistry::process()
+            .sim()
+            .global_executor(crate::arb_engine::fleet_sim_executor::FleetSimExecutor::boot)
+        {
             Ok(executor)
                 if executor.host_plan_binding() == degenbot_workers::plan::Binding::Serial =>
             {
