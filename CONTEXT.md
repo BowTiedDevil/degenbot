@@ -1083,7 +1083,11 @@ The fleet's execution vocabulary - one meaning per word, closed set
   its own.
 - **Budget** - the seat/share table (H reserve, A ambient I/O, R
   resolve, M merge, the solver pins, the SimDriver and PoolStateUpdater
-  slot caps), sum-checked against floor(quota).
+  slot caps), sum-checked against floor(quota). ONE owner
+  (`FleetBudget::project` in `budget.rs`) derives all three tier
+  projections — the pin tier is mode data (`BudgetMode::Pinned |
+  PinnedMarked | Serial`), never a second derivation; `plan.rs` and
+  every other consumer only SELECT a mode and read the table.
 - **Census** - the worker registry: one row per execution resource
   (thread-name pattern, sizing rule, count, binding). Boot-dumped as
   one structured log line; exported as the degenbot.worker.census

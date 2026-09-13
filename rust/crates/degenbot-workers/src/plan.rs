@@ -40,10 +40,7 @@
 
 use degenbot_config::FleetProfile;
 
-use crate::budget::{
-    self, BudgetError, BudgetOverrides, FleetBudget, DEFAULT_POOL_STATE_UPDATER_SLOTS,
-    DEFAULT_SIM_SLOT_CAP, MIN_SOLVER_CPUS,
-};
+use crate::budget::{BudgetError, BudgetMode, BudgetOverrides, FleetBudget};
 use crate::dispatcher::BootError;
 
 /// The plan algebra's name + version (named and versioned by contract: the
@@ -52,7 +49,9 @@ pub const PLAN_ID: &str = "fleetplan/1";
 
 /// The minimum usable host (the epic's goal state): one core for I/O
 /// work, one core for solve work. Below this the plan refuses TYPED.
-pub const HOST_FLOOR_CORES: u64 = 2;
+/// Canonically owned by budget.rs (GAXX2Z) — re-exported for the plan's
+/// tier gate.
+pub use crate::budget::HOST_FLOOR_CORES;
 
 /// The fleet host binding (the adapter that maps lanes to threads; the
 /// FLEETFLOOR design contract). The census/log label is
@@ -129,24 +128,25 @@ pub struct FleetPlan {
 
 impl FleetPlan {
     /// The per-binding budget projection: the [`FleetBudget`] the binding
-    /// boots under. The PINNED eligible path is the ONE derivation
-    /// ([`FleetBudget::derive`], byte-stable); the marked and serial
-    /// projections build their tables directly (the sum invariant is void
-    /// there by contract — oversubscribed / shared threads).
+    /// boots under. Every binding selects a [`BudgetMode`] and the ONE
+    /// owner ([`FleetBudget::project`]) produces the table (GAXX2Z) — this
+    /// module holds no budget arithmetic. The PINNED eligible path is the
+    /// sum-checked derivation (byte-stable); the marked and serial modes
+    /// are total (the sum invariant is void there by contract —
+    /// oversubscribed / shared threads).
     ///
     /// # Errors
-    /// [`BootError`] — the pinned eligible derivation's typed refusal. The
-    /// serial projection is total; its layout legality is
+    /// [`BootError`] — the pinned eligible projection's typed refusal. The
+    /// marked/serial projections are total; their layout legality is
     /// `SlotLayout::of`'s dead-station check, asserted by the
     /// plan-tier invariant tests.
     pub fn projected_budget(&self, overrides: &BudgetOverrides) -> Result<FleetBudget, BootError> {
-        match self.binding {
-            Binding::Pinned if !self.oversubscribed => {
-                FleetBudget::derive(self.budget_cpus, overrides).map_err(BootError::from)
-            }
-            Binding::Pinned => Ok(pinned_budget_marked(self.budget_cpus, overrides)),
-            Binding::Serial => Ok(serial_budget(self.budget_cpus, overrides)),
-        }
+        let mode = match self.binding {
+            Binding::Pinned if !self.oversubscribed => BudgetMode::Pinned,
+            Binding::Pinned => BudgetMode::PinnedMarked,
+            Binding::Serial => BudgetMode::Serial,
+        };
+        FleetBudget::project(self.budget_cpus, overrides, mode).map_err(BootError::from)
     }
 
     /// The typed refusal the BOOT raises while the serial arm is pending
@@ -283,104 +283,6 @@ fn validate_io_workers(binding: Binding, overrides: &BudgetOverrides) -> Result<
     }))
 }
 
-/// The forced-pinned-below-floor projection: the pinned table with
-/// saturating arithmetic and NO sum enforcement — the oversubscription
-/// is DECLARED (the plan's `oversubscribed` mark), not refused. Station
-/// legality (every hosted range non-empty) still holds: the pin count
-/// floors at 1 and the slot caps keep their override semantics (a
-/// zeroed station still dies at `SlotLayout::of`, the dead-station family).
-fn pinned_budget_marked(quota_cpus: f64, overrides: &BudgetOverrides) -> FleetBudget {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "quota floors are small positive values (core counts)"
-    )]
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "the quota is floored at 1.0 before the cast"
-    )]
-    let quota_floor = quota_cpus.max(1.0).floor() as u64;
-    let reserve_cpus = overrides
-        .reserve_cpus
-        .unwrap_or(budget::DEFAULT_RESERVE_CPUS);
-    let ambient_cpus = overrides
-        .ambient_io_workers
-        .unwrap_or_else(|| ((quota_floor.saturating_sub(reserve_cpus)) / 4).max(1));
-    let (resolve_cpus, merge_cpus) = (1, 1);
-    let base = reserve_cpus + ambient_cpus + resolve_cpus + merge_cpus;
-    let solver_cpus = overrides
-        .solver_cpus
-        .unwrap_or_else(|| quota_floor.saturating_sub(base).max(MIN_SOLVER_CPUS));
-    let solve_headroom = overrides
-        .solve_headroom
-        .unwrap_or(degenbot_core::cpu_budget::DEFAULT_SOLVE_HEADROOM);
-    FleetBudget {
-        quota_cpus,
-        quota_floor,
-        reserve_cpus,
-        ambient_cpus,
-        resolve_cpus,
-        merge_cpus,
-        solver_cpus,
-        solver_pin_count: usize::try_from(quota_floor)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(solve_headroom)
-            .max(1),
-        sim_slot_cap: overrides.sim_slot_cap.unwrap_or(DEFAULT_SIM_SLOT_CAP),
-        pool_state_updater_slots: overrides
-            .pool_state_updater_slots
-            .unwrap_or(DEFAULT_POOL_STATE_UPDATER_SLOTS),
-        // Oversubscribed: no spendable remainder exists (the deficit is
-        // the plan's mark, not a budget field) — clamp at zero.
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "share sums are small core counts, exact in f64"
-        )]
-        fractional_remainder: (quota_cpus - (base + solver_cpus) as f64).max(0.0),
-    }
-}
-
-/// The serial projection (FF-T4's topology, projected here): ONE ambient
-/// I/O lane plus one cycle thread running reserve -> resolve -> solve ->
-/// merge, exactly one solve seat (`serial-0`). The role shares are
-/// LOGICAL — the pinned sum invariant does not apply (the roles share
-/// two threads); station legality is the layout's dead-station check.
-fn serial_budget(quota_cpus: f64, overrides: &BudgetOverrides) -> FleetBudget {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "quota floors are small positive values (core counts)"
-    )]
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "the quota is floored at 1.0 before the cast"
-    )]
-    let quota_floor = quota_cpus.max(1.0).floor() as u64;
-    FleetBudget {
-        quota_cpus,
-        quota_floor,
-        reserve_cpus: overrides
-            .reserve_cpus
-            .unwrap_or(budget::DEFAULT_RESERVE_CPUS),
-        // Exactly one ambient I/O lane (validated by the plan).
-        ambient_cpus: 1,
-        resolve_cpus: 1,
-        merge_cpus: 1,
-        // The logical 2-core solve minimum: the serial cycle thread runs
-        // solve work on the second core.
-        solver_cpus: MIN_SOLVER_CPUS,
-        // serial-0: exactly one solve seat (the FF-T4 contract).
-        solver_pin_count: 1,
-        sim_slot_cap: overrides.sim_slot_cap.unwrap_or(DEFAULT_SIM_SLOT_CAP),
-        pool_state_updater_slots: overrides
-            .pool_state_updater_slots
-            .unwrap_or(DEFAULT_POOL_STATE_UPDATER_SLOTS),
-        // The binding owns two threads; everything above is spendable.
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "the host floor is a tiny core count, exact in f64"
-        )]
-        fractional_remainder: (quota_cpus - HOST_FLOOR_CORES as f64).max(0.0),
-    }
-}
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {

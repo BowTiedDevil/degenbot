@@ -236,6 +236,29 @@ pub struct FleetBudget {
     pub fractional_remainder: f64,
 }
 
+/// The per-tier projection mode (GAXX2Z): ONE owner
+/// (`FleetBudget::project`) derives all three tier tables. The tier is MODE
+/// DATA, not a second derivation — plan.rs's pinned/marked/serial arms
+/// select a mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BudgetMode {
+    /// The pinned-role derivation: integer shares sum-checked against
+    /// `floor(Q)`, failing fast with the typed [`BudgetError`]s.
+    Pinned,
+    /// The forced-pinned-below-floor projection: pinned arithmetic with no
+    /// sum enforcement (the plan's `oversubscribed` mark declares the
+    /// deficit).
+    PinnedMarked,
+    /// The serial (2-5 core) projection: one ambient I/O lane, one cycle
+    /// thread, exactly one solve seat.
+    Serial,
+}
+
+/// The 2-core host floor: one core for I/O work, one core for solve work.
+/// The plan's tier gate and the serial projection's logical thread count
+/// share this ONE owner.
+pub const HOST_FLOOR_CORES: u64 = 2;
+
 impl FleetBudget {
     /// Derive the table for `quota_cpus` under the terminal overrides.
     /// Fails loudly (the typed [`BudgetError`]s) on over-subscription or a
@@ -244,7 +267,145 @@ impl FleetBudget {
     /// # Errors
     /// Any of the [`BudgetError`] fail-fast conditions.
     pub fn derive(quota_cpus: f64, overrides: &BudgetOverrides) -> Result<Self, BudgetError> {
-        derive_table(quota_cpus, overrides)
+        Self::project(quota_cpus, overrides, BudgetMode::Pinned)
+    }
+
+    /// The ONE tier projection (GAXX2Z): `mode` selects the pinned,
+    /// forced-pinned-marked, or serial table, all built from the SAME shared
+    /// formulas (H, A, R, M, the structural pin count, the slot caps). Only
+    /// the pinned arm enforces the sum check; the other two are total by
+    /// contract (the mark / the shared-thread topology carry the deficit).
+    ///
+    /// # Errors
+    /// Any of the [`BudgetError`] fail-fast conditions — produced only by
+    /// [`BudgetMode::Pinned`].
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "quota floors are small positive values (core counts)"
+    )]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "core counts are exact in f64 at any realistic quota"
+    )]
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "the floor is clamped to >= 1.0 before the cast"
+    )]
+    pub(crate) fn project(
+        quota_cpus: f64,
+        overrides: &BudgetOverrides,
+        mode: BudgetMode,
+    ) -> Result<Self, BudgetError> {
+        let quota_floor = quota_cpus.max(1.0).floor() as u64;
+
+        // H — fixed default 1, terminal override.
+        let reserve_cpus = overrides.reserve_cpus.unwrap_or(DEFAULT_RESERVE_CPUS);
+
+        // A — the leftover-share rule, terminal DEGENBOT_IO_WORKERS override.
+        let ambient_cpus = overrides
+            .ambient_io_workers
+            .unwrap_or_else(|| ((quota_floor.saturating_sub(reserve_cpus)) / 4).max(1));
+
+        // R, M — fixed v1 consumers.
+        let (resolve_cpus, merge_cpus) = (1, 1);
+        let base = reserve_cpus + ambient_cpus + resolve_cpus + merge_cpus;
+
+        let solve_headroom = overrides
+            .solve_headroom
+            .unwrap_or(degenbot_core::cpu_budget::DEFAULT_SOLVE_HEADROOM);
+        let sim_slot_cap = overrides.sim_slot_cap.unwrap_or(DEFAULT_SIM_SLOT_CAP);
+        let pool_state_updater_slots = overrides
+            .pool_state_updater_slots
+            .unwrap_or(DEFAULT_POOL_STATE_UPDATER_SLOTS);
+        // Pin seats are STRUCTURAL (P6YXA6 reconciliation): one per LPT
+        // bin, the bin count following cpu_budget's solve-bin POLICY —
+        // minus the solve headroom, floored at 1 — but FLOORING the quota:
+        // cpu_budget ceils fractional quotas for worker-existence; Solver
+        // threads never spend the fractional remainder (§5).
+        // Walk admission stays the share S — a gated bin parks (§5).
+        let pinned_pin_count = usize::try_from(quota_floor)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(solve_headroom)
+            .max(1);
+
+        match mode {
+            BudgetMode::Pinned => {
+                if base + MIN_SOLVER_CPUS > quota_floor {
+                    return Err(BudgetError::QuotaTooSmallForPinnedRoles {
+                        quota: quota_cpus,
+                        required: base + MIN_SOLVER_CPUS,
+                    });
+                }
+                // S — the leftover of the floor after the fixed consumers
+                // (or the terminal override, checked against the same sum).
+                let solver_cpus = overrides.solver_cpus.unwrap_or(quota_floor - base);
+                if base + solver_cpus > quota_floor {
+                    return Err(BudgetError::Oversubscribed {
+                        quota: quota_cpus,
+                        floor: quota_floor,
+                        declared: base + solver_cpus,
+                    });
+                }
+                if solver_cpus < MIN_SOLVER_CPUS {
+                    return Err(BudgetError::TooFewSolverCpus {
+                        solver: solver_cpus,
+                        min: MIN_SOLVER_CPUS,
+                    });
+                }
+                Ok(Self {
+                    quota_cpus,
+                    quota_floor,
+                    reserve_cpus,
+                    ambient_cpus,
+                    resolve_cpus,
+                    merge_cpus,
+                    solver_cpus,
+                    solver_pin_count: pinned_pin_count,
+                    sim_slot_cap,
+                    pool_state_updater_slots,
+                    fractional_remainder: quota_cpus - (base + solver_cpus) as f64,
+                })
+            }
+            BudgetMode::PinnedMarked => {
+                let solver_cpus = overrides
+                    .solver_cpus
+                    .unwrap_or_else(|| quota_floor.saturating_sub(base).max(MIN_SOLVER_CPUS));
+                Ok(Self {
+                    quota_cpus,
+                    quota_floor,
+                    reserve_cpus,
+                    ambient_cpus,
+                    resolve_cpus,
+                    merge_cpus,
+                    solver_cpus,
+                    solver_pin_count: pinned_pin_count,
+                    sim_slot_cap,
+                    pool_state_updater_slots,
+                    // Oversubscribed: no spendable remainder exists (the
+                    // deficit is the plan's mark, not a budget field) —
+                    // clamp at zero.
+                    fractional_remainder: (quota_cpus - (base + solver_cpus) as f64).max(0.0),
+                })
+            }
+            BudgetMode::Serial => Ok(Self {
+                quota_cpus,
+                quota_floor,
+                reserve_cpus,
+                // Exactly one ambient I/O lane (validated by the plan).
+                ambient_cpus: 1,
+                resolve_cpus,
+                merge_cpus,
+                // The logical 2-core solve minimum: the serial cycle thread
+                // runs solve work on the second core.
+                solver_cpus: MIN_SOLVER_CPUS,
+                // serial-0: exactly one solve seat (the FF-T4 contract).
+                solver_pin_count: 1,
+                sim_slot_cap,
+                pool_state_updater_slots,
+                // The binding owns two threads; everything above is spendable.
+                fractional_remainder: (quota_cpus - HOST_FLOOR_CORES as f64).max(0.0),
+            }),
+        }
     }
 
     /// H + A + R + M + S — the declared sum the authority bounds.
@@ -325,91 +486,6 @@ pub fn detected_quota_cpus(cfg: &FleetConfig) -> f64 {
     cfg.quota_cpus
         .filter(|q| *q >= 1.0)
         .unwrap_or_else(crate::quota::fractional_cpu_budget)
-}
-
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "quota floors are small positive values (core counts)"
-)]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "core counts are exact in f64 at any realistic quota"
-)]
-#[expect(
-    clippy::cast_sign_loss,
-    reason = "the floor is clamped to >= 1.0 before the cast"
-)]
-fn derive_table(quota_cpus: f64, overrides: &BudgetOverrides) -> Result<FleetBudget, BudgetError> {
-    let quota_floor = quota_cpus.max(1.0).floor() as u64;
-
-    // H — fixed default 1, terminal override.
-    let reserve_cpus = overrides.reserve_cpus.unwrap_or(DEFAULT_RESERVE_CPUS);
-
-    // A — the leftover-share rule, terminal DEGENBOT_IO_WORKERS override.
-    let ambient_cpus = overrides
-        .ambient_io_workers
-        .unwrap_or_else(|| ((quota_floor.saturating_sub(reserve_cpus)) / 4).max(1));
-
-    // R, M — fixed v1 consumers.
-    let (resolve_cpus, merge_cpus) = (1, 1);
-    let base = reserve_cpus + ambient_cpus + resolve_cpus + merge_cpus;
-
-    if base + MIN_SOLVER_CPUS > quota_floor {
-        return Err(BudgetError::QuotaTooSmallForPinnedRoles {
-            quota: quota_cpus,
-            required: base + MIN_SOLVER_CPUS,
-        });
-    }
-
-    // S — the leftover of the floor after the fixed consumers (or the
-    // terminal override, checked against the same sum).
-    let solver_cpus = overrides.solver_cpus.unwrap_or(quota_floor - base);
-
-    if base + solver_cpus > quota_floor {
-        return Err(BudgetError::Oversubscribed {
-            quota: quota_cpus,
-            floor: quota_floor,
-            declared: base + solver_cpus,
-        });
-    }
-    if solver_cpus < MIN_SOLVER_CPUS {
-        return Err(BudgetError::TooFewSolverCpus {
-            solver: solver_cpus,
-            min: MIN_SOLVER_CPUS,
-        });
-    }
-
-    let sim_slot_cap = overrides.sim_slot_cap.unwrap_or(DEFAULT_SIM_SLOT_CAP);
-    let solve_headroom = overrides
-        .solve_headroom
-        .unwrap_or(degenbot_core::cpu_budget::DEFAULT_SOLVE_HEADROOM);
-    let pool_state_updater_slots = overrides
-        .pool_state_updater_slots
-        .unwrap_or(DEFAULT_POOL_STATE_UPDATER_SLOTS);
-    let fractional_remainder = quota_cpus - (base + solver_cpus) as f64;
-
-    Ok(FleetBudget {
-        quota_cpus,
-        quota_floor,
-        reserve_cpus,
-        ambient_cpus,
-        resolve_cpus,
-        merge_cpus,
-        solver_cpus,
-        // Pin seats are STRUCTURAL (P6YXA6 reconciliation): one per LPT
-        // bin, the bin count following cpu_budget's solve-bin POLICY —
-        // minus the solve headroom, floored at 1 — but FLOORING the quota:
-        // cpu_budget ceils fractional quotas for worker-existence; Solver
-        // threads never spend the fractional remainder (§5).
-        // Walk admission stays the share S — a gated bin parks (§5).
-        solver_pin_count: usize::try_from(quota_floor)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(solve_headroom)
-            .max(1),
-        sim_slot_cap,
-        pool_state_updater_slots,
-        fractional_remainder,
-    })
 }
 
 #[cfg(test)]
@@ -817,6 +893,174 @@ mod tests {
             BudgetOverrides::from_config(&degenbot_config::BotConfig::default()).solve_headroom,
             None
         );
+    }
+
+    /// GAXX2Z helper: the shared ambient formula A = max(1, (floor(Q)-H)/4).
+    fn ambient_formula(floor: u64, reserve: u64) -> u64 {
+        ((floor.saturating_sub(reserve)) / 4).max(1)
+    }
+
+    /// GAXX2Z helper: the structural pin formula floor(Q) - headroom, >= 1.
+    fn pin_formula(floor: u64, headroom: usize) -> usize {
+        usize::try_from(floor)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(headroom)
+            .max(1)
+    }
+
+    /// GAXX2Z helper: the pinned arm's sum-checked invariants.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "test quotas and small share sums are exact in f64"
+    )]
+    fn assert_pinned_projection(
+        quota: f64,
+        floor: u64,
+        ov: &BudgetOverrides,
+        reserve: u64,
+        ambient: u64,
+        pins: usize,
+    ) {
+        let base = reserve + ambient + 2;
+        match FleetBudget::project(quota, ov, BudgetMode::Pinned) {
+            Ok(b) => {
+                assert_eq!(b.reserve_cpus, reserve, "pinned reserve H");
+                assert_eq!(
+                    b.ambient_cpus, ambient,
+                    "pinned ambient A = max(1, (Q-H)/4)"
+                );
+                assert_eq!(
+                    b.solver_cpus,
+                    ov.solver_cpus.unwrap_or(floor - base),
+                    "pinned solver S = floor(Q) - H - A - R - M"
+                );
+                assert_eq!(
+                    b.solver_pin_count, pins,
+                    "pinned pins = floor(Q) - headroom"
+                );
+                assert!(
+                    b.declared_sum() <= floor,
+                    "pinned sum-check never oversubscribes floor(quota)"
+                );
+                if ov.solver_cpus.is_none() {
+                    assert_eq!(b.declared_sum(), floor, "pinned default fills floor(quota)");
+                }
+                assert!(
+                    (b.fractional_remainder - (quota - b.declared_sum() as f64)).abs() < 1e-9,
+                    "pinned remainder banks Q - declared_sum"
+                );
+            }
+            Err(refusal) => assert!(
+                matches!(
+                    refusal,
+                    BudgetError::QuotaTooSmallForPinnedRoles { .. }
+                        | BudgetError::Oversubscribed { .. }
+                        | BudgetError::TooFewSolverCpus { .. }
+                ),
+                "pinned refusal is a typed budget error, got {refusal:?}"
+            ),
+        }
+    }
+
+    /// GAXX2Z helper: the marked arm's total pinned arithmetic.
+    fn assert_marked_projection(
+        quota: f64,
+        floor: u64,
+        ov: &BudgetOverrides,
+        reserve: u64,
+        ambient: u64,
+        pins: usize,
+    ) {
+        let base = reserve + ambient + 2;
+        let b = FleetBudget::project(quota, ov, BudgetMode::PinnedMarked).expect("marked total");
+        assert_eq!(b.reserve_cpus, reserve, "marked reserve H");
+        assert_eq!(
+            b.ambient_cpus, ambient,
+            "marked ambient A = max(1, (Q-H)/4)"
+        );
+        assert_eq!(
+            b.solver_cpus,
+            ov.solver_cpus
+                .unwrap_or_else(|| floor.saturating_sub(base).max(MIN_SOLVER_CPUS)),
+            "marked solver S = max(floor(Q) - base, MIN)"
+        );
+        assert_eq!(
+            b.solver_pin_count, pins,
+            "marked pins = floor(Q) - headroom"
+        );
+        assert!(
+            b.fractional_remainder >= 0.0,
+            "marked remainder clamps at zero"
+        );
+    }
+
+    /// GAXX2Z helper: the serial arm's one-lane / one-seat topology.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the host floor is a tiny core count, exact in f64"
+    )]
+    fn assert_serial_projection(quota: f64, ov: &BudgetOverrides, reserve: u64) {
+        let b = FleetBudget::project(quota, ov, BudgetMode::Serial).expect("serial total");
+        assert_eq!(b.reserve_cpus, reserve, "serial reserve H");
+        assert_eq!(
+            b.ambient_cpus, 1,
+            "serial owns exactly one ambient I/O lane"
+        );
+        assert_eq!(
+            b.solver_cpus, MIN_SOLVER_CPUS,
+            "serial logical 2-core solve"
+        );
+        assert_eq!(b.solver_pin_count, 1, "serial-0: exactly one solve seat");
+        assert!(
+            (b.fractional_remainder - (quota - HOST_FLOOR_CORES as f64).max(0.0)).abs() < 1e-9,
+            "serial remainder is Q - the 2-core host floor"
+        );
+    }
+
+    /// GAXX2Z: ONE projection owner. All three tier projections are produced
+    /// by `FleetBudget::project(mode)` from the SAME shared formulas; this
+    /// pin walks representative quotas and override shapes and asserts each
+    /// mode's invariants against the derive formulas (the sum-check vs
+    /// floor(quota), the reserve/ambient/solver/pin relationships) — not
+    /// against the function's own output.
+    #[test]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "quota floors are small positive values (core counts)"
+    )]
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "the test quota is floored at 1.0 before the cast"
+    )]
+    fn every_projection_mode_shares_the_derive_formulas() {
+        let cases: [BudgetOverrides; 3] = [
+            BudgetOverrides::default(),
+            BudgetOverrides {
+                ambient_io_workers: Some(2),
+                ..BudgetOverrides::default()
+            },
+            BudgetOverrides {
+                reserve_cpus: Some(2),
+                solver_cpus: Some(3),
+                ..BudgetOverrides::default()
+            },
+        ];
+        for quota in [2.0_f64, 2.5, 4.0, 5.99, 6.0, 6.5, 8.0, 24.0, 33.25] {
+            let floor = quota.max(1.0).floor() as u64;
+            for ov in &cases {
+                let reserve = ov.reserve_cpus.unwrap_or(DEFAULT_RESERVE_CPUS);
+                let ambient = ov
+                    .ambient_io_workers
+                    .unwrap_or_else(|| ambient_formula(floor, reserve));
+                let headroom = ov
+                    .solve_headroom
+                    .unwrap_or(degenbot_core::cpu_budget::DEFAULT_SOLVE_HEADROOM);
+                let pins = pin_formula(floor, headroom);
+                assert_pinned_projection(quota, floor, ov, reserve, ambient, pins);
+                assert_marked_projection(quota, floor, ov, reserve, ambient, pins);
+                assert_serial_projection(quota, ov, reserve);
+            }
+        }
     }
 
     mod cross_authority {
