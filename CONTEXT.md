@@ -426,6 +426,7 @@ the `for_test` knobs, and the FSM mutation points (`fsm.set_quiesce_params`,
   line under `src/bot/` must have `py.detach` within the 8 preceding lines
   or carry a `T1-scan-exempt` marker (sanctioned accessors + pure-Rust
   test seams). Unenforced locality decays. (Shipped: UX66EM `ZFZSEQ`.)
+- **LockSite — typed acquire site (ADR-043 §9 bounded-stable-labels; ergo `YRZY2Y` T1, cutover `e8008fd42`).** The `degenbot.state_lock` wait/hold histogram label is owned by the closed `LockSite` enum (`state_lock.rs`), whose variants carry the entire label set — `python`/`pump`/`reg`/`solver`/`sim`/`core`. Acquires name their site *through the type* (`read_at`/`write_at`/`try_write_at(site)`), never a string, so the `label()` match is exhaustive and a label is structurally incapable of drifting from the enum; this realizes ADR-043 §9's bounded-stable-labels rule (closed `&'static` value sets, `telemetry::error_kind`-style) directly at the acquire seam. **Retired shapes — do not re-suggest:** the `site_class_for(file)` file-substring taxonomy that classified callers by matching path fragments (its `engine_handle.rs → solver` arm outlived the file, dissolved in the `SZJUKL`/`MROOY7` retirement); its `site_class_taxonomy_is_pinned` test, which pinned the substrings by feeding synthetic fake paths; and the raw `#[track_caller]` `Location` as a *metric* label (location strings are unstable and stay in warn/log output only).
 
 ## Delivery lifecycle + block-clock relocation (2026-08-20 architecture review)
 
