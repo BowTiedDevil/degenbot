@@ -59,7 +59,6 @@ from . import simulation as simulation
 from . import solady as solady
 from . import solidly_math as solidly_math
 from . import submission as submission
-from . import subscriber as subscriber
 from . import v2_math as v2_math
 from .db import (
     ExchangeRow,
@@ -1473,18 +1472,14 @@ class BalanceVectorView:
 # ------------------------------------------------------------------
 # Drainer lifecycle pyfunctions (top-level, module-lifecycle). Registered
 # outside c_api::register: shutdown_log_drainer by the tracing log layer
-# (python_log_layer::register_pyfunction, called from the module init)
-# and shutdown_subscriber_drainer by the pub/sub subscriber seam.
-# Both are idempotent; call before interpreter finalization.
+# (python_log_layer::register_pyfunction, called from the module init).
+# The drainer is idempotent; call before interpreter finalization.
 # ------------------------------------------------------------------
 def shutdown_log_drainer() -> None:
     """Flush + stop the batched Python log drainer thread (idempotent)."""
 
 def flush_telemetry() -> None:
     """Flush telemetry providers (spans + metrics) before teardown (ADR-043)."""
-
-def shutdown_subscriber_drainer() -> None:
-    """Stop the pool-state subscriber drainer thread (idempotent)."""
 
 # ------------------------------------------------------------------
 # Simulation seam (per-block profitability pipeline)
@@ -1564,12 +1559,10 @@ __all__ = [
     "runtime_status",
     "flush_telemetry",
     "shutdown_log_drainer",
-    "shutdown_subscriber_drainer",
     "simulation",
     "solady",
     "solidly_math",
     "solve_balancer_weighted_basket",
     "submission",
-    "subscriber",
     "to_checksum_address",
 ]

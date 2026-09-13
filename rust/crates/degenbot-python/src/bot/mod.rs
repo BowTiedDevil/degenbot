@@ -14,7 +14,6 @@ pub mod intake;
 pub mod pool;
 pub mod pump;
 pub mod py_bot_io;
-pub mod subscriber;
 #[cfg(feature = "auto-initialize")]
 pub mod test_gil;
 pub mod token;

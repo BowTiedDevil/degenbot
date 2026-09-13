@@ -36,7 +36,7 @@
 //! `solve_probe_executor`, `fleet_solver_slots`, `fleet_simdriver_slots`,
 //! `fleet_resolve_slots`, `fleet_merge_slots`,
 //! `fleet_pool_state_updater_slots`,
-//! `detached_solve_bins`, `subscriber_drainer`, `metrics_scrape`,
+//! `detached_solve_bins`, `metrics_scrape`,
 //! `rust_log_drainer`, `gil_probe`.
 //!
 //! # Future fleet crate

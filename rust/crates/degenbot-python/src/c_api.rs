@@ -322,11 +322,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "simulation")]
     crate::fleet::add_fleet_module(m)?;
 
-    // Pub/sub seam: register a Python callback as a `PoolStateSubscriber`
-    // against the Rust `LogDispatcher` fan-out (ZBD4MS) (feature = "bot")
-    #[cfg(feature = "bot")]
-    crate::bot::subscriber::add_subscriber_module(m)?;
-
     // `QuantAMM` closed-form N-token Balancer weighted basket solver
     // (feature = "bot") — `solve_balancer_weighted_basket`.
     #[cfg(feature = "bot")]
