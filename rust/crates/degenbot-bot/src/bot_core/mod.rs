@@ -1223,5 +1223,4 @@ pub struct BlockMetadata {
     clippy::print_stderr
 )]
 #[cfg(test)]
-#[rustfmt::skip]
 mod tests;
