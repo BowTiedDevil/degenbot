@@ -68,13 +68,9 @@ pub(crate) fn install_engine_stances(
         crate::arb_engine::boot_stamp::BootRole::Registration,
         boot_stamp.clone(),
     );
-    STREAMING_DELIVERY_ENABLED.store(
-        cfg.pump.streaming_delivery,
-        std::sync::atomic::Ordering::Relaxed,
-    );
     // J4HN66: streaming/detached stances are per-engine cfg values now
     // (packed at construction); this install keeps only the statics that
-    // still have non-construction consumers (STREAMING; INLINE_SIM).
+    // still have non-construction consumers (INLINE_SIM).
     INLINE_SIM_ENABLED.store(
         cfg.solve.solve_inline_sim,
         std::sync::atomic::Ordering::Relaxed,
@@ -87,22 +83,6 @@ pub(crate) fn install_engine_stances(
     // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
     // trajectory); no installer store remains here.
 }
-
-/// T3 (epic BXUSGL): `DEGENBOT_STREAMING_DELIVERY` — emit each clamp-passed
-/// above-threshold result as an immediate single-entry `ResultBatch` during the
-/// solve drain instead of waiting for the pump debounce. Parsed ONCE at
-/// engine construction ([`install_engine_env_stances`]); engines copy the
-/// parsed static into their construction field.
-///
-/// **Default flipped ON by epic SRQEK5 T3 (SF3QLP):** with detached cycles the
-/// streaming mode is the intended shipped behaviour — each clamp-passed result
-/// arrives at Python the moment its own solve completes (per-path
-/// micro-batches composed with the end-of-cycle debounce sweep, per the
-/// V6TOMQ coarse proof: 1360 single-candidate batches / 0 errors / 10-min
-/// mainnet). `DEGENBOT_STREAMING_DELIVERY=0` opts out to the debounce sweep
-/// (A/B); any other value (or unset) streams.
-static STREAMING_DELIVERY_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
 
 /// PRG-4 / IRUMXD: `PathRegistrationError` moved to
 /// [`super::path_registry`] (ADR-045 `C4UAFP`); re-exported here at its old
@@ -377,14 +357,6 @@ impl ArbitrageEngine {
 /// in-flight cap.
 #[cfg(test)]
 mod streaming_stance_tests {
-    /// KAHU5W (presence-gated bools resolved): `pump.streaming_delivery` is
-    /// now a plain schema bool; the env-parse policy matrix above is obsolete
-    /// (the loader owns the words). The static default stays streaming.
-    #[test]
-    fn streaming_delivery_static_default_is_streaming() {
-        assert!(super::STREAMING_DELIVERY_ENABLED.load(std::sync::atomic::Ordering::Relaxed,));
-    }
-
     // WFF6MM: the detached-solve stance key retired from the schema; there
     // is no opt-out — the one solve arm is unconditional.
 }

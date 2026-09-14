@@ -549,9 +549,6 @@ mod candidate2_seam_pins {
             event: &tracing::Event<'_>,
             _ctx: tracing_subscriber::layer::Context<'_, S>,
         ) {
-            if *event.metadata().level() != tracing::Level::ERROR {
-                return;
-            }
             struct Message(String);
             impl tracing::field::Visit for Message {
                 fn record_debug(
@@ -563,6 +560,9 @@ mod candidate2_seam_pins {
                         self.0 = format!("{value:?}");
                     }
                 }
+            }
+            if *event.metadata().level() != tracing::Level::ERROR {
+                return;
             }
             let mut message = Message(String::new());
             event.record(&mut message);

@@ -245,6 +245,10 @@ mod tests {
     /// `fleet_runtime_status()` reports the SAME boot facts regardless of
     /// install order.
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "exact equality is intended: both sides read the same canonical FleetBoot"
+    )]
     fn candidate4_runtime_status_ignores_install_order_first_wins_once() {
         let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
         // The keyed accessors expose each role's descriptor (the boot stamp

@@ -2233,32 +2233,7 @@ impl SolveCycle {
         // Resolve each hop's family from the BotState + validate the pool_id
         // exists there. The engine never constructs pools (ADR-006 D3), so
         // hop_type is derived, not caller-supplied.
-        let mut pool_refs = Vec::with_capacity(hops.len());
-        let mut hop_descs = Vec::with_capacity(hops.len());
-        {
-            let core = self
-                .core
-                .read_at(crate::bot_core::state_lock::LockSite::Solver);
-            for hop in hops {
-                let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
-                    return Err(PathRegistrationError::Invalid(format!(
-                        "register_path: pool_id {} is not registered in the associated BotState",
-                        hop.pool_id
-                    )));
-                };
-                hop_descs.push(super::path_info::describe_hop(
-                    &core,
-                    hop_type,
-                    hop.pool_id,
-                    hop.zero_for_one,
-                ));
-                pool_refs.push(MixedPoolRef {
-                    hop_type,
-                    pool_key: hop.pool_id,
-                    zero_for_one: hop.zero_for_one,
-                });
-            }
-        }
+        let (pool_refs, hop_descs) = self.resolve_hop_refs(hops)?;
 
         // R522XA: resolve BEFORE storing so an unroutable hop rejects the
         // registration loudly and leaves no half-registered state behind.
@@ -2326,6 +2301,46 @@ impl SolveCycle {
             resolved: Some(resolved_arc),
         })
     }
+    /// Derive each hop's family from the `BotState` and build the register
+    /// refs — split out of `register_path` so the resolve-before-store
+    /// ordering stays intact without tripping the `too_many_lines` ceiling
+    /// (ADR-006 D3: the engine derives `hop_type`, never the caller).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` for any hop whose `pool_id` is not registered in the
+    /// associated `BotState`.
+    fn resolve_hop_refs(
+        &self,
+        hops: Vec<PoolHop>,
+    ) -> Result<(Vec<MixedPoolRef>, Vec<String>), PathRegistrationError> {
+        let mut pool_refs = Vec::with_capacity(hops.len());
+        let mut hop_descs = Vec::with_capacity(hops.len());
+        let core = self
+            .core
+            .read_at(crate::bot_core::state_lock::LockSite::Solver);
+        for hop in hops {
+            let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
+                return Err(PathRegistrationError::Invalid(format!(
+                    "register_path: pool_id {} is not registered in the associated BotState",
+                    hop.pool_id
+                )));
+            };
+            hop_descs.push(super::path_info::describe_hop(
+                &core,
+                hop_type,
+                hop.pool_id,
+                hop.zero_for_one,
+            ));
+            pool_refs.push(MixedPoolRef {
+                hop_type,
+                pool_key: hop.pool_id,
+                zero_for_one: hop.zero_for_one,
+            });
+        }
+        Ok((pool_refs, hop_descs))
+    }
+
     /// Register a path and eagerly solve it (cycle layer, ADR-045).
     ///
     /// # Errors

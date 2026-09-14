@@ -1648,18 +1648,19 @@ mod candidate2_seam_pins {
     #[test]
     fn candidate2_pumpcontrol_is_the_seven_poke_seam() {
         use crate::bot_core::PumpControl;
-        let _has_dirty: fn(&dyn PumpControl) -> bool = PumpControl::has_dirty_paths;
-        let _set_solved: fn(&dyn PumpControl, Epoch) = PumpControl::set_last_solved_block;
-        let _set_anchor: fn(&dyn PumpControl, Epoch) = PumpControl::set_solve_anchor;
-        let _record_logs: fn(&dyn PumpControl) = PumpControl::record_logs_this_block;
-        let _last: fn(&dyn PumpControl) -> Option<Epoch> = PumpControl::last_processed_block;
-        let _notify: fn(&dyn PumpControl, u64, &crate::bot_core::BlockMetadata) =
-            PumpControl::notify_block;
-        let _ended: fn(&dyn PumpControl) = PumpControl::on_pump_ended;
 
-        // The eight hooks stay on `StageHandlers`; the pokes above must not.
+        // The eight hooks stay on `StageHandlers`; the pokes below must not.
         fn stage_hooks_only<T: StageHandlers + ?Sized>() {}
         stage_hooks_only::<dyn StageHandlers>();
+
+        let _: fn(&dyn PumpControl) -> bool = PumpControl::has_dirty_paths;
+        let _: fn(&dyn PumpControl, Epoch) = PumpControl::set_last_solved_block;
+        let _: fn(&dyn PumpControl, Epoch) = PumpControl::set_solve_anchor;
+        let _: fn(&dyn PumpControl) = PumpControl::record_logs_this_block;
+        let _: fn(&dyn PumpControl) -> Option<Epoch> = PumpControl::last_processed_block;
+        let _: fn(&dyn PumpControl, u64, &crate::bot_core::BlockMetadata) =
+            PumpControl::notify_block;
+        let _: fn(&dyn PumpControl) = PumpControl::on_pump_ended;
     }
 
     /// Pin 6 (RED: compile-fails until T2; the `NoopStubEngine` half of the

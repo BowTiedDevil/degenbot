@@ -2085,6 +2085,10 @@ mod tests {
     /// exceeds `int128_max`, V4 reverts with `SafeCastOverflow` — the swap cannot
     /// execute on-chain. The solver must not report such paths as profitable.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "int128-overflow setup + assertions are one regression narrative"
+    )]
     fn v4_int128_overflow_path_rejected() {
         let mut engine = ArbitrageEngine::new();
 
@@ -2526,6 +2530,10 @@ mod tests {
     /// `hop_outputs[0]`, so this sweeps them to exactness with no composer
     /// change.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "V4-first hop fixture setup + alignment assertions read as one scenario"
+    )]
     fn clamp_cl_hop_capacity_aligns_v4_first_hop0_outputs() {
         use crate::arb_engine::PoolTickCoverage;
         use crate::bot_core::TickInfo;

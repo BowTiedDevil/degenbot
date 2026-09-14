@@ -3440,22 +3440,20 @@ mod candidate4_seam_pins {
     #[test]
     fn candidate4_registry_is_the_keyed_boot_owner() {
         type Registry = FleetBootRegistry;
-        let _process: fn() -> &'static Registry = Registry::process;
+        let _: fn() -> &'static Registry = Registry::process;
         // The keyed role accessor per `BootRole` returns the typed slot.
-        let _sim: fn(&Registry) -> &BootSlot<FleetSimExecutor> = Registry::sim;
-        let _registration: fn(&Registry) -> &BootSlot<FleetRegistrationExecutor> =
-            Registry::registration;
+        let _: fn(&Registry) -> &BootSlot<FleetSimExecutor> = Registry::sim;
+        let _: fn(&Registry) -> &BootSlot<FleetRegistrationExecutor> = Registry::registration;
         // The `BootRole`-keyed view exposes the descriptor uniformly.
-        let _role: fn(&Registry, BootRole) -> &dyn BootSlotView = Registry::role;
+        let _: fn(&Registry, BootRole) -> &dyn BootSlotView = Registry::role;
         // Registry-level first-wins process boot facts.
-        let _installed: fn(&Registry) -> bool = Registry::boot_installed;
-        let _process_boot: fn(&Registry) -> Option<degenbot_workers::dispatcher::FleetBoot> =
+        let _: fn(&Registry) -> bool = Registry::boot_installed;
+        let _: fn(&Registry) -> Option<degenbot_workers::dispatcher::FleetBoot> =
             Registry::process_boot;
         // The descriptor is reachable THROUGH the keyed accessor.
-        let _descriptor: fn(&BootSlot<FleetSimExecutor>) -> &'static SeatRoleDesc =
-            BootSlot::descriptor;
+        let _: fn(&BootSlot<FleetSimExecutor>) -> &'static SeatRoleDesc = BootSlot::descriptor;
         // The TYPED executor slot is reachable THROUGH the keyed accessor.
-        let _executor: fn(&BootSlot<FleetSimExecutor>) -> Option<&'static FleetSimExecutor> =
+        let _: fn(&BootSlot<FleetSimExecutor>) -> Option<&'static FleetSimExecutor> =
             BootSlot::executor;
     }
 
