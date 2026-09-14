@@ -59,13 +59,14 @@ use super::block_cursor::BlockCursor;
 use super::delivery_policy::DeliveryPolicy;
 use super::detached_cycle::DetachedCycle;
 use super::inline_sim::SimulatedPathResult;
+use super::lane_walk::{drive_lane_walk, LaneArmPolicy, LaneWalkBinPlan, WalkSubmitCtx};
 use super::path_info::describe_hop;
 use super::path_lifecycle::PathSolveStatus;
 use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry};
 use super::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapture};
 use super::solver_dispatch::{
-    min_profit_floor, LaneArmPolicy, LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut,
-    WalkSubmitCtx, INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
+    min_profit_floor, PathTimesHeap, ResolveChunkOut, INLINE_SIM_ENABLED, RESOLVE_CHUNK,
+    RESOLVE_PAR_MIN,
 };
 use super::workload_partition::{
     lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
@@ -1589,7 +1590,7 @@ impl SolveCycle {
                         update_stamps: Some(std::sync::Arc::clone(&stamps_bin)),
                         solve_span: Some(solve_span_bin.clone()),
                     };
-                    let reads = ArbitrageEngine::drive_lane_walk(
+                    let reads = drive_lane_walk(
                         &shared_bin,
                         &solve_span_bin,
                         &walk_plan,

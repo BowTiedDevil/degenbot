@@ -1,18 +1,16 @@
 //! Path resolution, solver dispatch, and rebuild logic.
 
 use alloy::primitives::{I256, U256};
-use degenbot_core::diag;
 use degenbot_core::op_info;
 
 use ::degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
 use ::degenbot_pools::v4_state::v4_simulate_swap;
 
 use super::{ArbitrageEngine, BlockMetadata, HashMap};
-// 5WCRWZ T3: `solve_one_path` moved to `arb_engine::lane_walk`; the cycle
-// context moved to `arb_engine::solve_cycle`; the pipelined sim scheduler
-// moved to `arb_engine::inline_sim` (`PipelinedSims`). This grab file
-// imports all three.
-use super::lane_walk::solve_one_path;
+// 5WCRWZ T3: the cycle context moved to `arb_engine::solve_cycle`; the
+// pipelined sim scheduler moved to `arb_engine::inline_sim`; T4 moved the
+// lane walk + `solve_one_path` to `arb_engine::lane_walk`. This grab file
+// imports the cycle context it still needs.
 use super::solve_cycle::SolveCycleShared;
 
 // There is deliberately NO solve-time "staleness" pre-gate here (ergo YXHHKR,
@@ -34,19 +32,10 @@ use super::solve_cycle::SolveCycleShared;
 // it: solve-on-quiet is correct by construction under the stage-separated
 // data plane; stale results are dropped by the Q1a merge gate, never applied.
 
-use crate::arb_engine::executor::{LaneOutcome, SolveLane, SolveOutcome};
-use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
+use crate::arb_engine::executor::{LaneOutcome, SolveOutcome};
+use crate::arb_engine::inline_sim::SimulatedPathResult;
 use crate::bot_core::BotState;
 use ::degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
-
-/// How many slowest-path entries the solve-cycle completion event names
-/// (D63GSE intra-solve visibility).
-pub(crate) const SLOWEST_PATHS_K: usize = 5;
-
-/// Q3 dense one-shot alert flag — the CONSUMER side of the moved alert: the
-/// walk reports `WalkStats::max_dense_words`; this logs once per process.
-pub(crate) static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
 
 // FF-T1 (BPHR6F): one loud line for the sticky sim-fleet boot refusal — the
 // materializer surfaces the typed Err on EVERY dispatch; the log rides a
@@ -239,15 +228,11 @@ pub fn install_engine_stances(
     // trajectory); no installer store remains here.
 }
 
-/// K-slowest-path attribution record: (`time_us`, `pieces_visited`,
-/// `path_sims`, `word_steps`, `refine_sims`, `gate_us`, `gate_derive_us`,
-/// `gate_compose_us`, `gate_search_us`, `path_id`) — lets the completion
-/// event name the cost driver of the slowest routes: gate-envelope bound
-/// composition (with its derive/compose/search phase split) vs the walk
-/// proper, not just wall time.
-type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 /// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
-pub(crate) type PathTimesHeap = std::collections::BinaryHeap<std::cmp::Reverse<PathTimeRecord>>;
+/// The record tuple now lives with the walk (`arb_engine::lane_walk`,
+/// 5WCRWZ T4); T5 retires the heap itself.
+pub(crate) type PathTimesHeap =
+    std::collections::BinaryHeap<std::cmp::Reverse<super::lane_walk::PathTimeRecord>>;
 
 /// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB):
 /// relocate the CL-hop clamp from the engine-Mutex merge site INTO the
@@ -277,7 +262,7 @@ pub(crate) static INLINE_SIM_ENABLED: std::sync::atomic::AtomicBool =
 /// runs its twin first) — the merge site treats twins > 0 as
 /// already-clamped and never re-clamps (a second pass would re-apply the
 /// margin and corrupt the committed inputs).
-fn clamp_result_in_worker(
+pub(crate) fn clamp_result_in_worker(
     ctx: &SolveCycleShared,
     idx: usize,
     pid: u64,
@@ -368,7 +353,7 @@ fn inline_sim_payload(
 /// the detached arm's closure sends on the merge pipe AND bumps its
 /// in-flight gauge at SEND success (a bin that dies before sending
 /// never leaks a count); the in-cycle arm's closure is `lane.solved`.
-fn flush_solved_item(
+pub(crate) fn flush_solved_item(
     held: &mut Vec<(u64, Option<SolveOutcome>)>,
     submit: &mut dyn FnMut(SolveOutcome),
     done_pid: u64,
@@ -584,255 +569,11 @@ impl ArbitrageEngine {
     }
 }
 
-// --------------------------------------------------------------------------
-// THE arm policy + THE one drain (WNH5OL, epic BPZUCM fold).
-// --------------------------------------------------------------------------
-// The two walk arms (
-//  - detached enqueue, `run_bin` at ~:2291 (tip), 90 code lines,
-//  - in-cycle dispatch, `run_bin` at ~:2528 (tip), 102 code lines
-// ) shared ~64 code lines at the adversarial review (6b281ee49 measured
-// similarity 0.667). The fold deletes them by making every difference DATA:
-// an arm-policy value below (`LaneArmPolicy`) + the one drain consuming
-// `LaneOutcome` exactly once (`drain_lane_outcomes`), so the lane walk body
-// (`drive_lane_walk`) is parameterized entirely by the policy.
-//
-// --------------------------------------------------------------------------
-// THE FOUR SEQUENCING CONTRACTS — each named at its enforcement site below
-// (search "contract 1..4"; the accept conditions of WNH5OL).
-// --------------------------------------------------------------------------
-// Contract 1 — admission-draw backpressure: WFF6MM retired the cap-based
-//   enqueue gate (and its in-cycle degrade). Backpressure is now the
-//   admission draw (`budget = max(0, admission_target_depth − in-flight)` in
-//   `on_resolve`); a zero-budget draw SHEDS the cycle before any begin. The
-//   walk's flush path still bumps the gauge at Solved SEND success (never
-//   for Suppressed/Failed), and the sidecar's drain decrements for Solved
-//   only (variant-gated pair — the REV2-Defect-1 rule), which is what the
-//   draw reads.
-// Contract 2 — enqueue-end return: the detached walk runs from 'static bin
-//   threads; the enqueue loop submits and RETURNS with the engine Mutex
-//   released. The merged stragglers re-acquire the Mutex per item on the
-//   sidecar thread.
-// Contract 3 — single lock context (WFF6MM): the only drain caller left is
-//   the detached sidecar, which acquires the engine Mutex PER straggler
-//   item. The drain stays a plain `&mut self` method that NEVER locks (the
-//   compile-time `&mut self` signature proves no second lock); the
-//   in-cycle whole-cycle hold, its `LaneDrainLockContext` name plate, and
-//   the lock-context duality retired with the in-cycle arm.
-// Contract 4 — keyless Suppressed/Failed witness: the detached Suppressed
-//   (and Failed) no-claim semantics are the ONLY semantics now. Those
-//   witnesses carry `pid` at `suppressed()`/`failed()` but NO faithful
-//   cycle_seq, so a proxy key would either false-trip the fuse against a
-//   same-pid Solved of the next cycle or mask a duplicate. The per-cycle
-//   Suppressed/Failed claim divergence (`claim_all_lanes`) retired with the
-//   in-cycle arm.
-// --------------------------------------------------------------------------
-
-/// The arm policy (WNH5OL; WFF6MM trimmed to the ONE detached arm): the
-/// lane walk body is ONE function; every per-arm behavior rides this value
-/// (the carrier stamps and the drain's ledger seq). The detached gauge hook
-/// stays on the lane itself — `SolveLane::set_on_solved_send`, contract 1's
-/// send-success-only bump.
-pub(crate) struct LaneArmPolicy {
-    /// The ledger key half (the ONE-domain rule of 43E3H3): the exact
-    /// `solve_seq` tick the drain claims `(seq, pid)` with on the shared ONE
-    /// ledger for carrier-keyed outcomes (Solved always; Suppressed/Failed
-    /// never claim — contract 4). P37YJG: the seq half is MACHINE-ISSUED —
-    /// the detached arm's `DetachedArm.cycle_seq` — and the claim itself
-    /// runs through the machine's one ledger door (`DetachedCycle::claim`).
-    pub(crate) ledger_seq: u64,
-    /// The solve block this cycle is solving (the drain's anchor for the
-    /// carrier's `solve_block` debug assert and the merge call).
-    pub(crate) solve_block: u64,
-    /// The cycle's block metadata ('static bins cannot borrow `&metadata`,
-    /// so the walk copies it and the drain reads it through the policy).
-    pub(crate) metadata: BlockMetadata,
-}
-
-// (the drain body + its impl block moved to `SolveCycle::drain_lane_outcomes`, ADR-045 T4)
-
-// P37YJG: the drain's counter aggregate moved with the disposition
-// counters into the machine — detached_cycle::LaneDrainCounts.
-
-impl ArbitrageEngine {
-    /// THE ONE LANE WALK (WNH5OL): the shared body of the two former `run_bin`
-    /// closures (the ~64-common-line fold). Arm differences are the two
-    /// parameters: the bin's items (`Arc<Vec>` indexed by the bin plan)
-    /// and the policy value.
-    pub(crate) fn drive_lane_walk(
-        shared: &std::sync::Arc<SolveCycleShared>,
-        solve_span: &tracing::Span,
-        bin_plan: &LaneWalkBinPlan,
-        policy: &LaneArmPolicy,
-        ws_ctx: &WalkSubmitCtx,
-        lane: &mut SolveLane,
-    ) -> LaneWalkReads {
-        // 7LV6VN T5 (pipelined arm): results park until their sim lands;
-        // the walk never waits on a sim. Sims pace on the fleet
-        // SimDriver seat pool (the budget's sim slot cap), so walk + sim
-        // demand never exceeds the CPU quota by construction.
-        let mut held: Vec<(u64, Option<SolveOutcome>)> = Vec::new();
-        let mut pending = PipelinedSims::default();
-        let mut suppressed_but_unsent: Vec<u64> = Vec::new();
-        for &i in &bin_plan.indices {
-            let (pid, resolved) = &bin_plan.items[i];
-            let outcome =
-                solve_one_path(shared, solve_span, *pid, resolved).map(|(pid, mut result)| {
-                    // SIMPIPE2 T2: clamp in the worker (stance-gated) BEFORE
-                    // the profitless filter — the clamp recompute can zero a
-                    // candidate, and the filter must see the commit-ready
-                    // values.
-                    let twins = clamp_result_in_worker(shared, i, pid, &mut result);
-                    (pid, result, twins)
-                });
-            {
-                // The profitless filter runs BEFORE the sim is scheduled —
-                // a clamp-zeroed candidate never needs its payload.
-                // WNH5OL ACCEPTANCE NOTE (arm-as-data): the pre-fold arms
-                // DIFFERED here by delivery-shape only (the detached arm
-                // suppressed pre-filter `continue` skips; the in-cycle arm
-                // suppressed post-solve `None` arms). Both reductions
-                // converge at the same exact delivery contract: exactly one
-                // outcome per submitted pid.
-                if let Some((pid, result, twins)) = outcome {
-                    if result.optimal_input.is_zero() || result.profit.is_zero() {
-                        if !result.solver_pool_states.is_empty() {
-                            diag!(
-                                domain = solver,
-                                "path_id={pid} hops=[{}]",
-                                result.solver_pool_states.join(";")
-                            );
-                        }
-                        // The pre-filter skip IS one delivered outcome
-                        // (this IS the detached arm's live record —
-                        // QR3NUS): no gauge (contract 1's pairing — it
-                        // never bumped), keyless → no claim (contract 4).
-                        lane.suppressed(pid);
-                        continue;
-                    }
-                    if !pending.schedule_one(shared, i, pid, &result, solve_span) {
-                        // No sim rides this item (no hook / clamp
-                        // off) — flush immediately.
-                        held.push((
-                            pid,
-                            Some(stamp_outcome(pid, result, twins, None, policy, ws_ctx)),
-                        ));
-                        flush_solved_item(&mut held, &mut |o| lane.solved(o), pid, None);
-                        continue;
-                    }
-                    if !result.solver_pool_states.is_empty() {
-                        diag!(
-                            domain = solver,
-                            "path_id={pid} hops=[{}]",
-                            result.solver_pool_states.join(";")
-                        );
-                    }
-                    held.push((
-                        pid,
-                        Some(stamp_outcome(pid, result, twins, None, policy, ws_ctx)),
-                    ));
-                    // Fan while walking: send every sim that landed
-                    // during this iteration's solve.
-                    for (done_pid, payload) in pending.drain_ready() {
-                        flush_solved_item(&mut held, &mut |o| lane.solved(o), done_pid, payload);
-                    }
-                } else {
-                    // A None IS an outcome (QR3NUS): exactly one
-                    // Suppressed record through the LANE (both arms
-                    // delivered this arm on the lane in the unfused
-                    // code; the reads vector is the walk's silent
-                    // label — no gauge, no claim, no merge).
-                    lane.suppressed(*pid);
-                    suppressed_but_unsent.push(*pid);
-                }
-            }
-        }
-        // Tail: join every outstanding sim and send.
-        if !pending.is_empty() {
-            for (done_pid, payload) in pending.join_all() {
-                flush_solved_item(&mut held, &mut |o| lane.solved(o), done_pid, payload);
-            }
-        }
-        LaneWalkReads {
-            suppressed_unsent: suppressed_but_unsent,
-            held_unflushed: held.len(),
-        }
-    }
-}
-
-/// The walk's per-bin plan: the items eligible for solving (aligned to
-/// cycle order) and the bin's index window into them (the LPT bin's owned
-/// indices). Same byte shape both arms compute today.
-pub(crate) struct LaneWalkBinPlan {
-    pub(crate) items: std::sync::Arc<Vec<(u64, std::sync::Arc<ResolvedMixedPath>)>>,
-    pub(crate) indices: Vec<usize>,
-}
-
-/// The walk's stamp context (contract 2's 'static carry): the detached
-/// arm hands the enqueue-time stamping halves — the issuing `cycle_seq`,
-/// the Q1a per-hop resolve snapshot, and the cycle span — so `stamp_outcome`
-/// can fill the envelopes inside the 'static bin. The in-cycle arm passes
-/// the inert carrier defaults (seq 0 / no stamps / no span) its drain has
-/// always expected. The Solved DELIVERY itself never rides here: both
-/// arms submit through the ONE lane (`SolveLane::solved`), so contract 1's
-/// gauge hook (a detached-lane setting) stays lane-borne.
-pub(crate) struct WalkSubmitCtx {
-    /// The issuing cycle's seq (`0` = the in-cycle arm's inert stamp).
-    pub(crate) cycle_seq: u64,
-    /// The enqueue resolve's per-hop `pool_update_block` snapshot (the
-    /// Q1a oracle); `None` on the inert in-cycle stamps.
-    pub(crate) update_stamps: Option<std::sync::Arc<HashMap<u64, Vec<u64>>>>,
-    /// The enqueue cycle span; `None` on the in-cycle arm.
-    pub(crate) solve_span: Option<tracing::Span>,
-}
-
-/// What the walk reports to the arm that drove it:
-/// - `suppressed_unsent`: the post-solve None arms (the CONVERGENT
-///   ancestral shape — the DETACHED arm delivered its profitless skips ON
-///   the lane instead, per the in-walk record comment; Suppressed never
-///   claims/bumps in either arm).
-/// - `held_unflushed`: Solved envelopes pushed but not yet handed to the
-///   lane (always 0 — the tail flush drains every sim; both arms debug-
-///   assert it).
-pub(crate) struct LaneWalkReads {
-    #[expect(
-        dead_code,
-        reason = "consumed per-arm by tests asserting which arm delivered a skipped solve"
-    )]
-    pub(crate) suppressed_unsent: Vec<u64>,
-    pub(crate) held_unflushed: usize,
-}
-
-/// Stamp ONE outcome from the policy (the carrier-stamp half of the arm
-/// difference). The detached arm fills `cycle_seq`/`update_stamp`/
-/// `solve_span` from the enqueue; the in-cycle arm fills the inert
-/// values its drain never reads (unchanged semantics).
-fn stamp_outcome(
-    pid: u64,
-    result: SolvePathResult,
-    worker_clamp_twins: u64,
-    payload: Option<SimulatedPathResult>,
-    policy: &LaneArmPolicy,
-    ws_ctx: &WalkSubmitCtx,
-) -> SolveOutcome {
-    SolveOutcome {
-        pid,
-        result,
-        worker_clamp_twins,
-        payload,
-        solve_block: policy.solve_block,
-        metadata: policy.metadata,
-        cycle_seq: ws_ctx.cycle_seq,
-        update_stamp: ws_ctx
-            .update_stamps
-            .as_ref()
-            .and_then(|s| s.get(&pid).cloned())
-            .unwrap_or_default(),
-        solve_span: ws_ctx
-            .solve_span
-            .clone()
-            .unwrap_or_else(tracing::Span::none),
-    }
-}
+// THE lane walk and its policy/context/result types moved to
+// arb_engine::lane_walk (5WCRWZ T4). The wrap-up half of the
+// fold (the drain + disposition table) lives in
+// SolveCycle::drain_lane_outcomes (ADR-045 T4); the drain-side
+// counter aggregate is detached_cycle::LaneDrainCounts (P37YJG).
 
 impl ArbitrageEngine {
     // P37YJG: the merge-pipe take moved into the machine
@@ -1742,150 +1483,6 @@ mod profit_clamp_recompute_tests {
             attr("sim.path").as_deref(),
             Some("worker_inline"),
             "seam discriminator distinguishes worker sims from the FFI seam"
-        );
-    }
-}
-
-// ----------------- PER-PATH SPAN TELEMETRY (MQUKB6-T2) -----------------
-#[cfg(all(test, feature = "otel"))]
-#[expect(clippy::expect_used)] // otel tests assert loudly, per telemetry.rs otel_tests
-mod solve_path_span_tests {
-    use super::*;
-    use crate::otel;
-    use degenbot_solvers::mixed::ResolvedMixedPath;
-    use opentelemetry_sdk::trace::InMemorySpanExporter;
-    use tracing_subscriber::layer::SubscriberExt;
-
-    /// ADR-043 §8 behavioral volume gate (ergo ZJUEXH): one fixture solve
-    /// cycle over the committed heavy-CL corpus must stay within the INFO
-    /// volume budget, and every INFO+ record must land on a closed
-    /// `degenbot::<domain>` target.
-    ///
-    /// Runs the SERIAL path deliberately: a test-scoped `with_default`
-    /// subscriber does not reach the fleet's spawned seat threads, so a fleet
-    /// run would capture nothing and the gate would pass vacuously.
-    #[test]
-    #[expect(clippy::print_stdout)] // the measured distribution is the evidence
-    fn fixture_solve_stays_within_the_info_volume_budget() {
-        use std::sync::{Arc as StdArc, Mutex as StdMutex};
-        use tracing::Level;
-        use tracing_subscriber::layer::{Context, Layer};
-        use tracing_subscriber::Registry;
-
-        #[derive(Clone, Default)]
-        struct Capture(StdArc<StdMutex<Vec<(String, Level)>>>);
-        impl<S: tracing::Subscriber> Layer<S> for Capture {
-            fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
-                self.0.lock().expect("capture lock").push((
-                    event.metadata().target().to_string(),
-                    *event.metadata().level(),
-                ));
-            }
-        }
-
-        let capture = Capture::default();
-        let subscriber = Registry::default().with(capture.clone());
-        let items = super::executor_ab_probe::load_corpus_fixture();
-        let ctx = super::executor_ab_probe::probe_ctx();
-        let solved = items.len();
-        tracing::subscriber::with_default(subscriber, || {
-            for (pid, item) in items.iter().enumerate() {
-                let solve = tracing::info_span!("degenbot.arb.solve", block.number = 1u64);
-                let _guard = solve.enter();
-                let _ = solve_one_path(&ctx, &tracing::Span::current(), pid as u64, item);
-            }
-        });
-
-        let records = capture.0.lock().expect("capture lock").clone();
-        let loud: Vec<(String, Level)> = records
-            .iter()
-            .filter(|(_, level)| *level <= Level::INFO)
-            .cloned()
-            .collect();
-
-        let mut histogram: std::collections::BTreeMap<(String, String), usize> =
-            std::collections::BTreeMap::new();
-        for (target, level) in &loud {
-            *histogram
-                .entry((target.clone(), level.to_string()))
-                .or_default() += 1;
-        }
-        println!("solved={solved} info+={} distribution:", loud.len());
-        for ((target, level), count) in &histogram {
-            println!("  {count:>6}  {level:<5} {target}");
-        }
-
-        // (a) Volume: steady-state INFO+ must be a small constant per solve.
-        let budget = 4 + solved / 20;
-        assert!(
-        loud.len() <= budget,
-        "ADR-043 §8 volume gate: {} INFO+ records over {solved} paths (budget {budget}); the histogram above names the offenders",
-        loud.len()
-    );
-
-        // (b) Every INFO+ record rides a closed `degenbot::<domain>` target.
-        let stray: Vec<&(String, Level)> = loud
-            .iter()
-            .filter(|(target, _)| !target.starts_with("degenbot::"))
-            .collect();
-        assert!(
-            stray.is_empty(),
-            "ADR-043 §8 target gate: INFO+ on non-domain targets: {stray:?}"
-        );
-    }
-
-    /// `solve_one_path` emits one `degenbot.arb.path` child span parented
-    /// under the (re-entered) cycle span, carrying `path.id`. Scoped LOCAL
-    /// subscriber (`with_default`): no global-slot mutation, no leakage
-    /// from other suites' spans into this exporter.
-    #[test]
-    fn solve_one_path_emits_child_path_span_under_the_cycle_span() {
-        let exporter = InMemorySpanExporter::default();
-        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
-        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
-
-        let ctx = super::executor_ab_probe::probe_ctx();
-        let resolved = ResolvedMixedPath {
-            hops: Vec::new(),
-            valid: true,
-            state_nonces: Vec::new(),
-            max_update_block: 0,
-        };
-        tracing::subscriber::with_default(subscriber, || {
-            let solve = tracing::info_span!("degenbot.arb.solve", block.number = 7u64);
-            let _guard = solve.enter();
-            let _ = solve_one_path(&ctx, &tracing::Span::current(), 77, &resolved);
-        });
-
-        provider.force_flush().expect("flush");
-        let spans = exporter.get_finished_spans().expect("spans");
-
-        let solve_id = spans
-            .iter()
-            .find(|sp| sp.name.as_ref() == "degenbot.arb.solve")
-            .map(|sp| sp.span_context.span_id())
-            .expect("solve span must be exported");
-        let paths: Vec<_> = spans
-            .iter()
-            .filter(|sp| sp.name.as_ref() == "degenbot.arb.path")
-            .collect();
-        assert_eq!(
-            paths.len(),
-            1,
-            "exactly one per-path span; got: {:?}",
-            spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            paths[0].parent_span_id, solve_id,
-            "degenbot.arb.path must parent under the re-entered cycle span"
-        );
-
-        assert!(
-            paths[0]
-                .attributes
-                .iter()
-                .any(|kv| kv.key == opentelemetry::Key::from_static_str("path.id")),
-            "path.id must ride as a span attribute"
         );
     }
 }
