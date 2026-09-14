@@ -6,8 +6,8 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Arc, Bot, DynamicFeePoolRejectedError, EngineStages, HookedPoolRejectedError, PoolHop,
-    PyArbEngine, PyBot, PyList, ReorgCoordinator,
+    Arc, Bot, DynamicFeePoolRejectedError, EngineStages, HookedPoolRejectedError, PoolHop,
+    PyArbEngine, PyBot, PyList,
 };
 use crate::prelude::*;
 
@@ -20,7 +20,6 @@ impl PyArbEngine {
     #[expect(clippy::needless_pass_by_value)]
     fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let py_bot_ref = py_bot.as_ref();
-        let (result_tx, result_rx) = mpsc::unbounded_channel();
         // ADR-006 D1+D4: if a `PyBot` is supplied, adopt its shared
         // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
         // `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — and clone its `Arc<Bot>`
@@ -36,7 +35,6 @@ impl PyArbEngine {
             let bot = Arc::new(Bot::with_core(Arc::clone(&core)));
             (core, bot)
         };
-        let (block_tx, block_rx) = mpsc::unbounded_channel();
         // SZJUKL seam retirement / 5TBT7L Q2b: the stage surface IS the engine
         // seam — it builds the engine internally from the shared core, so this
         // crate never names the engine type. The pump drives it through the
@@ -48,19 +46,17 @@ impl PyArbEngine {
         // records into — one dirty-tracking mechanism (LXDY4C). The ledger
         // is injected at construction; the stage surface owns no swap.
         let stages = Arc::new(EngineStages::with_core(core, bot.active_delta()));
-        stages.set_result_channel(result_tx);
-        // The block-clock pipe lives on the stage surface — header ticks
-        // never touch the engine's solve state (a chain fact, not engine
-        // business; B2/ADR-027 lineage). The receiver lives on the shared
-        // `PumpState`; `PyBot::block_stream` hands it to Python once.
-        stages.set_block_channel(block_tx);
-        let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
-        let pump = Arc::new(crate::bot::pump::PumpState::new(
-            Arc::clone(&stages),
-            Arc::clone(&reorg_coordinator),
+        // ADR-050 D7: the public Rust `EngineDriver` owns the pump session
+        // (result/block channels, reorg coordinator, shutdown, subscribe
+        // state, verify provider); the PyO3 wrapper is a second adapter onto
+        // it, exactly like a pure-Rust consumer. The block-clock receiver is
+        // taken by `PyBot::block_stream` through the shared `PumpState`.
+        let driver = Arc::new(degenbot_bot::arb_engine::EngineDriver::from_stages(
             Arc::clone(&bot),
-            parking_lot::Mutex::new(Some(block_rx)),
+            Arc::clone(&stages),
         ));
+        let result_rx = driver.take_result_receiver();
+        let pump = Arc::new(crate::bot::pump::PumpState::new(Arc::clone(&driver)));
         if let Some(parent) = py_bot_ref {
             parent.borrow(py).attach_pump_state(Arc::clone(&pump));
         }
@@ -72,7 +68,7 @@ impl PyArbEngine {
         Self {
             stages,
             pump,
-            result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
+            result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
             warm_code_cache,
         }
     }

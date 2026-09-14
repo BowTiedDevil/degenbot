@@ -21,7 +21,7 @@ impl PyArbEngine {
     fn run_v3_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
-        address: String,
+        address: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.pump
@@ -35,8 +35,8 @@ impl PyArbEngine {
     fn run_v4_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
-        pool_manager_address: String,
-        pool_id_hex: String,
+        pool_manager_address: &str,
+        pool_id_hex: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.pump.run_v4_registration_lifecycle(
@@ -61,7 +61,7 @@ impl PyArbEngine {
         snapshot_block: Option<u64>,
     ) -> PyResult<()> {
         self.pump
-            .run_v3_registration_lifecycle_blocking(py, address.to_string(), snapshot_block)
+            .run_v3_registration_lifecycle_blocking(py, address, snapshot_block)
     }
 
     /// Blocking (seat-thread) V4 twin of `run_v3_registration_lifecycle_sync`.
@@ -75,8 +75,8 @@ impl PyArbEngine {
     ) -> PyResult<()> {
         self.pump.run_v4_registration_lifecycle_blocking(
             py,
-            pool_manager_address.to_string(),
-            pool_id_hex.to_string(),
+            pool_manager_address,
+            pool_id_hex,
             snapshot_block,
         )
     }

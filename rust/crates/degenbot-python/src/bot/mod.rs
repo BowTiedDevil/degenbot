@@ -822,7 +822,7 @@ impl PyBot {
     fn run_v3_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
-        address: String,
+        address: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.pump_state()?
@@ -836,8 +836,8 @@ impl PyBot {
     fn run_v4_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
-        pool_manager_address: String,
-        pool_id_hex: String,
+        pool_manager_address: &str,
+        pool_id_hex: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.pump_state()?.run_v4_registration_lifecycle(

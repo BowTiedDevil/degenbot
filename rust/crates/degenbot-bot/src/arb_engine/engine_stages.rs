@@ -343,6 +343,21 @@ impl EngineStages {
         self.engine.lock().cycle.inline_sim = Some(sim);
     }
 
+    /// Close the delivery channels — the result-batch stream and the block
+    /// clock — so a pending receiver observes the natural end-of-stream
+    /// exactly once (the incident-2026-08-20 #2 contract owned by
+    /// `DeliveryLifecycle` + the block-clock pipe). Idempotent: a later
+    /// close is a quiet no-op and a post-close send reports not-sent.
+    ///
+    /// The block pump calls this from `PumpControl::on_pump_ended` when the
+    /// live loop terminates cooperatively; the public `EngineDriver::stop`
+    /// calls it too, because an aborted pump task never reaches the loop end
+    /// (ADR-050 D3/D6).
+    pub fn close_delivery_channels(&self) {
+        self.block_clock.lock().close();
+        self.engine.lock().delivery.lifecycle.close();
+    }
+
     /// The engine's solve cycle — the behavior port of the dissolved
     /// `EngineHandle::solve_dirty` hold/spans/sidecar logic, verbatim.
     ///
@@ -758,8 +773,7 @@ impl PumpControl for EngineStages {
     fn on_pump_ended(&self) {
         op_error!(domain = solver, "EngineStages: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
-        self.block_clock.lock().close();
-        self.engine.lock().delivery.lifecycle.close();
+        self.close_delivery_channels();
     }
 }
 #[cfg(test)]

@@ -17,12 +17,13 @@
 //! compile wall here — recorded as a numbered gap in the ledger.
 //!
 //! Slice 1 (this file) covers ledger rows 1–5 (CLI, driver config,
-//! RPC-URI cascade, DB path, snapshot-load boot slice) and advertises the
-//! gap-gated rows 6–20 in its boot report. The engine handshake
-//! (subscribe → S → resume+auto-backfill → consume → register paths) is
-//! gated on **Gap G1** (ergo task 5XOGRK): the settlement engine is
-//! `pub(crate)` in `degenbot-bot`, so a pure-Rust consumer cannot subscribe,
-//! resume, register paths, or consume `ResultBatch` today.
+//! RPC-URI cascade, DB path, snapshot-load boot slice). Rows 6–8 (the engine
+//! handshake, the result-batch stream, and path registration) are now driven
+//! through the public `degenbot::EngineDriver` (ADR-050 / Gap G1, ergo
+//! 5XOGRK): `EngineDriver::start` → `take_result_receiver` → `resume` (the
+//! driver owns the `S+1..W` auto-backfill) → `stop`. The live handshake is
+//! gated behind `SMOKE_RPC_URL` so the example stays CI-runnable; without it
+//! (or with `--smoke-offline`) it stops after the parity-ledger print.
 //!
 //! Parity sources (constants + error semantics mirrored byte-for-byte):
 //!   - `src/degenbot/runner/cli.py`       — CLI flags
@@ -97,10 +98,11 @@ struct Cli {
     node_http: Option<String>,
     node_ws: Option<String>,
     operator_socket: Option<String>,
+    smoke_offline: bool,
 }
 
 const USAGE: &str = "usage: settlement-bot [--live] [--permutation V2-V3-V4] \
-[--node-http URL] [--node-ws URL] [--operator-socket PATH]";
+[--node-http URL] [--node-ws URL] [--operator-socket PATH] [--smoke-offline]";
 
 fn parse_cli(args: &[String]) -> Result<Cli, String> {
     let mut cli = Cli {
@@ -109,6 +111,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
         node_http: None,
         node_ws: None,
         operator_socket: None,
+        smoke_offline: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -131,6 +134,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
             "--node-http" => cli.node_http = Some(take_value(&mut i)?),
             "--node-ws" => cli.node_ws = Some(take_value(&mut i)?),
             "--operator-socket" => cli.operator_socket = Some(take_value(&mut i)?),
+            "--smoke-offline" => cli.smoke_offline = true,
             "--help" | "-h" => {
                 println!("{USAGE}");
                 return Err("help".to_string());
@@ -434,17 +438,17 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("03-rpc-cascade", "REACHABLE", "cascade_rpc_uri (mirrors resolve_rpc_uris)"),
         ("04-db-path", "REACHABLE", "resolve_db_path (+DEGENBOT_FIXTURE_DB seam)"),
         ("05-snapshot-load", "REACHABLE", "SnapshotDb::open + Bot::load_snapshot_from_db"),
-        ("06-engine-subscribe-resume", "BLOCKED-G1(ergo=5XOGRK)", "ArbitrageEngine is pub(crate); BlockPump needs the engine as Arc<dyn StageHandlers>"),
-        ("07-result-batch-stream", "BLOCKED-G1(ergo=5XOGRK)", "ResultBatch public; no public producer"),
-        ("08-register-and-solve-path", "BLOCKED-G1(ergo=5XOGRK)", "crate-private engine method"),
-        ("09-verify-lifecycles", "PARTIAL(ergo=XFEJUG)", "run_v3/v4_registration_lifecycle exported; engine-side lifecycle + VerifyClaims G1/G3"),
+        ("06-engine-subscribe-resume", "REACHED-via-EngineDriver", "EngineDriver::start → subscribe → verify-config (stops pre-resume); resume owns the S+1..W auto-backfill via BlockPump::backfill_with_drain"),
+        ("07-result-batch-stream", "REACHED-via-EngineDriver", "EngineDriver::take_result_receiver (attach pre-resume); ResultBatch over the existing unbounded channel"),
+        ("08-register-and-solve-path", "REACHED-via-EngineDriver", "EngineDriver::register_and_solve_path delegates to EngineStages"),
+        ("09-verify-lifecycles", "PARTIAL(ergo=XFEJUG)", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) reach engine-stages; VerifyClaims claim/TOCTOU discipline remains XFEJUG"),
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
         ("11-discovery-db-enumeration", "PARTIAL(ergo=YFIOSF)", "SQLAlchemy enumeration has no verified degenbot-db twin"),
         ("12-path-discovery-batching", "PARTIAL(ergo=XFEJUG)", "PathGraph reachable; async batched find_paths wrapper Python-side"),
         ("13-path-policy", "DRIVER-POLICY", "allowlist mirrored in SettlementBotConfig"),
         ("14-in-process-sim", "REACHABLE", "simulate_in_process_with_db + SimulateContext"),
         ("15-dispatch-selection", "REACHABLE", "degenbot::arbitrage::dispatch_profitable_results"),
-        ("16-sim-fanout-submitter", "DRIVER-POLICY-BLOCKED-G1(ergo=L4E7RI)", "tokio pipeline; feeds from blocked row 7"),
+        ("16-sim-fanout-submitter", "DRIVER-POLICY(ergo=L4E7RI)", "tokio pipeline; consumes the now-reachable EngineDriver result stream (row 7)"),
         ("17-fee-determination", "PARTIAL(ergo=L4E7RI)", "eip_1559 reachable; eth_feeHistory reachability unverified"),
         ("18-live-submission", "PARTIAL(ergo=L4E7RI)", "degenbot-submission reachable; TxSigner reachability unverified"),
         ("19-session-watch", "DRIVER-POLICY(ergo=KPLWUM)", "tokio watchdog, not yet wired"),
@@ -475,6 +479,10 @@ fn main() -> ExitCode {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "linear boot + ledger + EngineDriver handshake driver; splitting obscures the phase order"
+)]
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = parse_cli(&args)?;
@@ -564,14 +572,54 @@ fn run() -> Result<(), String> {
     if cli.operator_socket.is_some() {
         println!("[operator] --operator-socket accepted; channel not yet wired (G5, ergo KPLWUM)");
     }
-    // Gap G1 wall (ergo 5XOGRK): the next phases — engine.subscribe(ws),
-    // resume()+auto-backfill, register_and_solve_path, ResultBatch
-    // consumption, dispatch — have no public Rust entry points today
-    // (ArbitrageEngine is `pub(crate)` in degenbot-bot). This binary exits
-    // here until the facade lands; each new slice will retract this tail.
+
+    // ── Engine handshake (ledger rows 6–8): the public Rust-native driver ──
+    // Offline by default (CI-safe): with no `SMOKE_RPC_URL`, stop after the
+    // ledger print. `SMOKE_RPC_URL` (a ws:// endpoint) opts into the live
+    // ritual; `--smoke-offline` forces offline even when it is set.
+    let smoke_rpc = std::env::var("SMOKE_RPC_URL").ok();
+    if cli.smoke_offline || smoke_rpc.is_none() {
+        println!(
+            "[smoke-offline] engine handshake skipped: set SMOKE_RPC_URL='ws://...' to drive \
+             EngineDriver::start → take_result_receiver → resume (--smoke-offline forces offline)"
+        );
+        return Ok(());
+    }
+    let ws = smoke_rpc.unwrap_or_else(|| cfg.node_ws.clone());
+    let http = if cfg.node_http.is_empty() {
+        ws.clone()
+    } else {
+        cfg.node_http.clone()
+    };
+    let bot = std::sync::Arc::new(bot);
+    let driver = degenbot::EngineDriver::new(
+        std::sync::Arc::clone(&bot),
+        degenbot::config::holder::config_arc(),
+    );
+    // Attach the result consumer BEFORE resume — the BotRunner ordering
+    // invariant (`BotRunner.run`: create the consumer, THEN resume). The
+    // receiver is held so the channel stays open across the handshake.
+    let _result_rx = driver
+        .take_result_receiver()
+        .ok_or_else(|| "EngineDriver result receiver already taken".to_string())?;
+    let outcome = degenbot::runtime::get_runtime().block_on(async {
+        let w = driver
+            .start(&http, &ws, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        let phase_after_start = driver.current_phase();
+        // resume is the single gate after which batches flow; the driver owns
+        // the S+1..W auto-backfill before it spawns the live loop.
+        driver.resume().await.map_err(|e| e.to_string())?;
+        let phase_after_resume = driver.current_phase();
+        Ok::<_, String>((w, phase_after_start, phase_after_resume))
+    })?;
+    // stop outside the block_on (its join parks on the shared runtime).
+    driver.stop().map_err(|e| e.to_string())?;
+    let (w, phase_after_start, phase_after_resume) = outcome;
     println!(
-        "[gap G1] engine handshake not wired (ergo 5XOGRK): subscribe → resume+backfill → \
-         consume → dispatch all require the crate-private ArbitrageEngine. Exiting after boot."
+        "[engine] EngineDriver handshake OK: W={w} phase_after_start={phase_after_start:?} \
+         phase_after_resume={phase_after_resume:?}"
     );
     Ok(())
 }

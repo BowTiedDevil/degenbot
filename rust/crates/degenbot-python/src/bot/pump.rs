@@ -1,425 +1,124 @@
-//! Bot-owned pump / lifecycle state (ADR-006 D4).
+//! Bot-owned pump / lifecycle state (ADR-006 D4; ADR-050 D7 re-parent).
 //!
-//! D4 relocates the pump lifecycle (`subscribe`, `backfill_from_snapshot`,
-//! `resume`) onto `PyBot`. Today these live on `PyArbEngine` and touch
-//! a cluster of fields also accessed by `snapshot.rs` (phase) and `solve.rs`
-//! (coordinator). Rather than move every fieldsite in one go, this module
-//! defines a shared [`PumpState`] that BOTH `PyBot` and `PyArbEngine`
-//! hold — so the three pump methods can move to `PyBot` (owning the pump, per
-//! D4) while the engine's snapshot/solve slices keep reading the same shared
-//! state through their own `Arc<PumpState>` handle.
+//! **ADR-050 D7 re-parent:** the pump lifecycle ritual — `subscribe`,
+//! `resume` (which owns the `S+1..W` auto-backfill), `stop`, the snapshot
+//! seed, the verify config, and the registration lifecycles — now lives ONCE
+//! in `degenbot-bot`'s public `EngineDriver`. This module's `PumpState` is
+//! the thin PyBot-side adapter that holds `Arc<EngineDriver>` and delegates.
 //!
-//! `PumpState` is the lifecycle layer: engine phase, the pump handle, the
-//! subscribe state held between `subscribe` and `resume`, the engine stage
-//! surface + reorg coordinator + shutdown flag. The pure solve core (the
-//!   shared `BotState`, v3/v4 snapshot stores, verify config) stays on
-//!   `PyArbEngine`, reached through the stage surface.
+//! Open-question resolution (ADR-050): `PumpState` was NOT fully dissolved into
+//! `PyBot` + `EngineDriver` in this cutover. It survives as the shared
+//! `Arc<PumpState>` vessel that `PyBot` (for `block_stream` / the pump
+//! lifecycle methods) and `PyArbEngine` co-own; every ritual method is a
+//! one-line delegation, so the session fields have collapsed into the driver
+//! and the adapter carries no engine logic. Full dissolution is a mechanical
+//! follow-up once every `PyBot` call site is touched.
 
-use degenbot_core::diag;
-use degenbot_core::{op_error, op_info, op_warn};
-use std::sync::Arc;
-
-use degenbot_bot::arb_engine::{EnginePhase, EngineStages};
-// (5WTYYQ) The pump’s stream element type is the ingestion crate’s
-// IngestEvent; the PyO3 layer consumes it like any other sink-side event.
-use degenbot_bot::bot_core::block_pump::BlockPump;
-use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
-use degenbot_bot::bot_core::{Bot, PumpControl, StageHandlers};
-use degenbot_ingestion::IngestEvent as WsEvent;
-use parking_lot::Mutex;
-use pyo3::exceptions::PyRuntimeError;
+use degenbot_bot::arb_engine::{DriverError, EngineDriver, EngineStages};
+use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::Bound;
-use tokio::sync::mpsc;
-
-/// Python-facing subscribe state, held between `subscribe()` and `resume()`.
-pub(crate) struct PySubscribeState {
-    /// The pump instance (holds `Arc<Bot>` + `Arc<dyn StageHandlers>`, provider, shutdown)
-    pub(crate) pump: BlockPump,
-    /// First block number observed during subscribe
-    pub(crate) first_block: u64,
-    /// Live WS stream for the resume phase
-    pub(crate) combined_stream: futures_util::stream::BoxStream<'static, WsEvent>,
-}
+use std::sync::Arc;
 
 /// Shared lifecycle state for the pump (ADR-006 D4).
 ///
 /// Held by both `PyBot` (the D4 pump owner) and `PyArbEngine` (whose
-/// snapshot/solve slices still read `phase` / `coordinator`). One allocation
-/// per chain — both wrappers carry `Arc<PumpState>` to the same instance.
-///
-/// T3 also relocates the verify-config fields + the engine handle here so the
-/// three pump methods (`subscribe`/`backfill_from_snapshot`/`resume`) — which
-/// touch the engine for `process_backfill_logs`/`last_processed_block` and
-/// write the verify snapshot/backfill blocks — can live entirely on
-/// `PumpState` and be driven from `PyBot`. (T5 will delete `verify_on_register`
-/// + the `verify_*_block` fields; T6 re-stashes the blocks on the registry.)
+/// snapshot/solve slices still read `phase` / the stage surface). One
+/// allocation per chain — both wrappers carry `Arc<PumpState>` to the same
+/// instance. ADR-050 D7: the session state itself now lives on
+/// [`EngineDriver`]; this adapter only forwards.
 pub(crate) struct PumpState {
-    /// The engine's stage surface (SZJUKL seam retirement / 5TBT7L Q2b): the
-    /// ONE `StageHandlers` seam the pump drives — no coordinator, no fan-out;
-    /// the engine type is `pub(crate)` machinery behind it.
-    pub(crate) stages: Arc<EngineStages>,
-    /// The per-event reorg coordinator (ADR-006 slice 7).
-    pub(crate) reorg_coordinator: Arc<ReorgCoordinator>,
-    /// The per-chain `Bot` orchestrator (ADR-006 D4). `BlockPump` clones this
-    /// `Arc` so its `dispatch_log` writes flow through to the engine's reads.
-    pub(crate) bot: Arc<Bot>,
-    /// Shutdown flag for the pump.
-    pub(crate) shutdown: Arc<std::sync::atomic::AtomicBool>,
-    /// Handle for the pump task (None until `subscribe`/`resume` is called).
-    pub(crate) pump_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// Subscribe state held between `subscribe()` and `resume()` calls.
-    pub(crate) subscribe_state: Mutex<Option<PySubscribeState>>,
-    /// When True, verify each V3/V4 pool's tick data against on-chain state
-    /// immediately after registration (T5 deletes this — the verify gate moves
-    /// to the registry drain seam in T6).
-    pub(crate) verify_rpc_url: Mutex<Option<String>>,
-    /// Cached Alloy provider for verification RPCs.
-    pub(crate) verify_provider: Mutex<Option<degenbot_rpc::provider::AlloyProvider>>,
-    /// Optional `StateView` contract address for V4 verification.
-    pub(crate) verify_state_view: Mutex<Option<alloy::primitives::Address>>,
-    /// Receiver for the coordinator-owned block-clock pipe (ADR-027
-    /// completion). Lives HERE — beside the coordinator that owns the pipe's
-    /// sender — not on the engine; `PyBot::block_stream` hands it to Python
-    /// once. Wrapped in Arc so the async coroutine can share it.
-    pub(crate) block_rx: parking_lot::Mutex<
-        Option<mpsc::UnboundedReceiver<degenbot_bot::bot_core::BlockNotification>>,
-    >,
+    /// The public Rust driver seam (ADR-050) — the ONE owner of the pump
+    /// session (bot, stages, reorg coordinator, shutdown, handle, subscribe
+    /// state, verify provider, result/block channel ends).
+    driver: Arc<EngineDriver>,
 }
 
 impl PumpState {
     #[must_use]
-    pub(crate) fn new(
-        stages: Arc<EngineStages>,
-        reorg_coordinator: Arc<ReorgCoordinator>,
-        bot: Arc<Bot>,
-        block_rx: parking_lot::Mutex<
-            Option<mpsc::UnboundedReceiver<degenbot_bot::bot_core::BlockNotification>>,
-        >,
-    ) -> Self {
-        Self {
-            stages,
-            reorg_coordinator,
-            bot,
-            shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            pump_handle: Mutex::new(None),
-            subscribe_state: Mutex::new(None),
-            verify_rpc_url: Mutex::new(None),
-            verify_provider: Mutex::new(None),
-            verify_state_view: Mutex::new(None),
-            block_rx,
-        }
+    pub(crate) fn new(driver: Arc<EngineDriver>) -> Self {
+        Self { driver }
+    }
+
+    /// The engine's ONE stage surface (the observer/registration escape
+    /// hatch) — `solve.rs` routes `PumpControl` through it.
+    #[must_use]
+    pub(crate) fn stages(&self) -> &Arc<EngineStages> {
+        self.driver.stages()
     }
 
     /// Hand the block-clock receiver to Python (`PyBot::block_stream`) —
     /// once-only take; a second call finds `None`.
     pub(crate) fn take_block_receiver(
         &self,
-    ) -> Option<mpsc::UnboundedReceiver<degenbot_bot::bot_core::BlockNotification>> {
-        self.block_rx.lock().take()
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<degenbot_bot::arb_engine::BlockNotification>>
+    {
+        self.driver.take_block_receiver()
     }
 
-    /// Read the current engine lifecycle phase (delegates to the stage
-    /// surface's core-owned source of truth — ZU7RAF).
-    ///
-    /// GIL-hygiene note: `PumpState` is shared between GIL-holding pymethod
-    /// threads and the pure-Rust pump task, so the `PyArbEngine` accessors
-    /// are not reachable here. These two are sanctioned short lock visits:
-    /// non-blocking phase flips, never extended across provider I/O (the
-    /// YLYJM2 rule). Anything heavier must go through a detached scope.
-    pub(crate) fn current_phase(&self) -> EnginePhase {
-        self.stages.current_phase()
-    }
-
-    /// Advance to `phase` (no ordering check — the caller validates).
-    /// Delegates to the stage surface (ZU7RAF). Same sanctioned short-lock
-    /// note as [`Self::current_phase`].
-    pub(crate) fn set_phase(&self, phase: EnginePhase) {
-        self.stages.set_phase(phase);
-    }
-
-    /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
-    ///
-    /// This is the Bot-owned pump entry point: `PyBot::subscribe` delegates here.
-    /// The engine's own `subscribe` (kept for the engine-only test seam) also
-    /// delegates here. The body touches only `PumpState` fields (bot,
-    /// coordinator, `reorg_coordinator`, shutdown, `pump_handle`, `subscribe_state`,
-    /// phase) — no engine reference — so it lives on the shared state both
-    /// wrappers reach.
+    /// Subscribe to the WS `newHeads` + logs streams (delegates to the
+    /// driver's `subscribe`).
     ///
     /// # Errors
-    /// `PyRuntimeError` if the pump is already started/subscribed, or the WS
-    /// subscribe fails.
+    /// `PyRuntimeError` if the pump is already started/subscribed, the phase
+    /// is wrong, or the WS subscribe fails.
     #[tracing::instrument(name = "degenbot.pump.subscribe", skip(self, py), fields(rpc_url = %rpc_url))]
     pub(crate) fn subscribe(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
-        let phase = self.current_phase();
-        phase
-            .allow_subscribe("subscribe")
-            .map_err(PyRuntimeError::new_err)?;
-        if self.pump_handle.lock().is_some() {
-            return Err(PyRuntimeError::new_err(
-                "Cannot subscribe: pump is already started. Call stop() first.",
-            ));
-        }
-        if self.subscribe_state.lock().is_some() {
-            return Err(PyRuntimeError::new_err(
-                "Cannot subscribe: already subscribed. Call resume() first.",
-            ));
-        }
-        let bot = Arc::clone(&self.bot);
-        let engine_stage: Arc<dyn StageHandlers> = self.stages.clone();
-        let control: Arc<dyn PumpControl> = self.stages.clone();
-        let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
-        let shutdown = Arc::clone(&self.shutdown);
-        let runtime = degenbot_core::runtime::get_runtime();
+        let driver = Arc::clone(&self.driver);
         // GIL-release across the WS handshake `block_on`: the handshake future
-        // (BlockPump::subscribe -> observe_complete_block — pure Rust async:
-        // WS subscribe + header polling) does NOT need the GIL to complete, so
-        // `py.detach` is safe (no re-entry deadlock). Without it the calling
-        // (asyncio main) thread holds the GIL for the whole handshake (~12s,
-        // one block time) — the `gil-probe` recorded a 16.6s `GIL held`
-        // acquire here. PyO3 0.29 renamed `allow_threads` to `detach`.
-        let subscribe_result = py
-            .detach(|| {
-                runtime.block_on(async {
-                    BlockPump::subscribe(
-                        rpc_url,
-                        bot,
-                        engine_stage,
-                        control,
-                        reorg_coordinator,
-                        shutdown,
-                    )
-                    .await
-                })
-            })
-            .map_err(PyRuntimeError::new_err)?;
-        let (pump, state) = subscribe_result;
-        #[expect(clippy::expect_used)] // subscribe() guarantees a stream (documented)
-        {
-            *self.subscribe_state.lock() = Some(PySubscribeState {
-                pump,
-                first_block: state.first_block,
-                combined_stream: state
-                    .combined_stream
-                    .expect("subscribe() always returns a stream"),
-            });
-        }
-        // J3FMDO regression fix: reflect whether the core already has a
-        // snapshot loaded (the construction-time-load path —
-        // `Bot::load_snapshot_from_db` at `Bot` construction writes the
-        // snapshot into the shared core `BotState` but never advances the
-        // engine phase). An unconditional `set_phase(Subscribed)` left the
-        // phase at `Subscribed` (1) and `resume()`'s `require(SnapshotLoaded)`
-        // guard crashed the production settlement-arbitrage bot:
-        //   RuntimeError: Cannot call resume: engine is in phase Subscribed,
-        //                 but requires SnapshotLoaded
-        // `after_subscribe` lands at `SnapshotLoaded` when the core has a
-        // snapshot (so `resume()` is reachable) and `Subscribed` otherwise
-        // (the legacy path that loads the snapshot after subscribe).
-        // GIL hygiene: read guard acquired inside py.detach (inversion class).
-        // (PumpState holds the pyo3-free `Arc<Bot>`, so there is no PyBot
-        // accessor here — detach directly.)
-        let core_has_snapshot = py.detach(|| {
-            self.bot
-                .state_arc()
-                .read_at(degenbot_bot::bot_core::state_lock::LockSite::Python)
-                .snapshot_seed_block()
-                .is_some()
-        });
-        self.set_phase(EnginePhase::after_subscribe(phase, core_has_snapshot));
-        Ok(state.first_block)
+        // (WS subscribe + header polling) does NOT need the GIL to complete,
+        // so `py.detach` is safe (no re-entry deadlock). PyO3 0.29 renamed
+        // `allow_threads` to `detach`.
+        py.detach(|| degenbot_core::runtime::get_runtime().block_on(driver.subscribe(rpc_url)))
+            .map_err(map_driver_err)
     }
 
-    /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
+    /// Resume the pump — begin normal WS processing (delegates to the
+    /// driver, which owns the synchronous `S+1..W` auto-backfill before it
+    /// spawns the live loop).
     ///
     /// # Errors
-    /// `PyRuntimeError` if the phase is wrong or subscribe wasn't called.
+    /// `PyRuntimeError` if the phase is wrong, subscribe wasn't called, the
+    /// driver is stopped, or it was already resumed.
     #[tracing::instrument(name = "degenbot.pump.resume", skip(self, py))]
     pub(crate) fn resume(&self, py: Python<'_>) -> PyResult<()> {
-        let phase = self.current_phase();
-        phase
-            .require(EnginePhase::SnapshotLoaded, "resume")
-            .map_err(PyRuntimeError::new_err)?;
-        if phase == EnginePhase::Resumed {
-            return Err(PyRuntimeError::new_err(
-                "Cannot resume: engine is already in Resumed phase.",
-            ));
-        }
-        let subscribe_state = self.subscribe_state.lock().take();
-        let state = subscribe_state.ok_or_else(|| {
-            PyRuntimeError::new_err(
-                "Cannot resume: subscribe() has not been called. Call subscribe() first.",
-            )
-        })?;
-        let mut pump = state.pump;
-        let first_block = state.first_block;
-        let combined_stream = state.combined_stream;
-        // J3FMDO race fix: run the snapshot→WS backfill SYNCHRONOUSLY before
-        // spawning the live loop, so Python's `build_paths` (which drains the
-        // per-pool backfill buffer via `apply_backfill_buffer_v3`) cannot race
-        // the backfill. Pre-fix the backfill ran inside the spawned
-        // `resume_from_subscribe` task and `resume` returned immediately — an
-        // active pool's burn was not yet buffered when `build_paths` drained,
-        // so the post-drain verify mismatched on-chain and crashed the settlement-arbitrage
-        // bot (`VerificationMismatchError`, 2026-07-12). `block_on` on the
-        // shared runtime mirrors `subscribe`'s sync discipline.
-        //
-        // GIL-release across the backfill `block_on`: `backfill_with_drain`
-        // -> `backfill_from_snapshot` -> `process_backfill_logs` is pure Rust
-        // async (eth_getLogs RPC + BotState mutation — no `Python::attach`,
-        // no `sink.notify_block` which fires only in `run_with_stream`). It
-        // does NOT need the GIL to complete, so `py.detach` is safe (no
-        // re-entry deadlock). Without it the asyncio main thread holds the GIL
-        // for the whole backfill (~168k logs) — the `gil-probe` recorded 8.4s
-        // + 5.0s `GIL held` acquires here. J3FMDO invariant preserved: `block_on`
-        // still awaits the backfill synchronously before `resume` returns; only
-        // the GIL is released during the wait. PyO3 0.29 renamed `allow_threads`
-        // to `detach`.
-        let pump_ref = &pump;
-        // DFQYM5/WS-DROP: drain the WS stream DURING the synchronous backfill
-        // (alloy's capacity-16 subscription broadcast ring drops the OLDEST
-        // messages for a lagging receiver — an undrained backfill loses the
-        // first live block's logs permanently and trips the WS-completeness
-        // abort). The core helper returns the stream re-injected with the
-        // drained events ahead of the live tail (arrival order, MJXP5Z); the
-        // J3FMDO contract is unchanged — `block_on` still awaits the
-        // backfill synchronously before `resume` returns.
-        let (backfill_res, combined_stream) = py.detach(|| {
-            degenbot_core::runtime::get_runtime().block_on(async {
-                pump_ref
-                    .backfill_with_drain(first_block, combined_stream)
-                    .await
-            })
-        });
-        if let Err(e) = backfill_res {
-            op_error!(domain = pump, first_block,
-                %e,
-                "BlockPump: auto-backfill failed — starting live loop with gap"
-            );
-        }
-        let handle = degenbot_core::runtime::get_runtime().spawn(async move {
-            pump.run_with_stream(combined_stream, first_block).await;
-        });
-        *self.pump_handle.lock() = Some(handle);
-        self.set_phase(EnginePhase::Resumed);
-        Ok(())
+        let driver = Arc::clone(&self.driver);
+        // GIL-release across the backfill `block_on`: the backfill
+        // (`eth_getLogs` + `BotState` mutation) is pure Rust async and does
+        // not need the GIL. PyO3 0.29 renamed `allow_threads` to `detach`.
+        py.detach(|| degenbot_core::runtime::get_runtime().block_on(driver.resume()))
+            .map_err(map_driver_err)
     }
 
-    /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
-    ///
-    /// The cooperative path (`subscribe` → `backfill_from_snapshot` → `resume`)
-    /// has no symmetric teardown — a `keyboard interrupt` in Python leaves the
-    /// `BlockPump` task blocking on the WS stream, so process exit blocks for
-    /// up to `BACKFILL_TIMEOUT_SECS` (60s) of idle before the loop re-checks
-    /// its `shutdown` flag (and indefinitely if the WS subscription never
-    /// delivers a final frame). `stop()` closes that gap: it sets the flag so
-    /// any in-flight loop visit notices, *then* aborts the spawned task so the
-    /// `combined.next().await` unblocks immediately — dropping the WS
-    /// subscription futures (which closes the transport) and all pump-held
-    /// resources before returning. Idempotent — dropping the `pump_handle`
-    /// (taken on the first call) makes a second call a no-op `Ok(())`.
-    ///
-    /// Aborting mid-`on_drain`/`on_send` is safe: those acquire internal
-    /// `parking_lot` locks (non-poisoning) which release on cancellation, and
-    /// `shutdown` is already `true` so no further drain tick matters. Mirror of
-    /// the legacy `PyV2ArbEngine::stop()` (sets the shutdown flag and aborts
-    /// the pump task).
+    /// Stop the pump (delegates to the driver's any-phase, idempotent stop).
     ///
     /// # Errors
-    /// Currently always returns `Ok(())` — the abort + `JoinHandle` await
-    /// never fails in a way the caller can recover from. Typed `PyResult` keeps
-    /// the surface symmetric with `subscribe`/`resume` and leaves room for a
-    /// future timed-join error.
-    #[expect(clippy::unnecessary_wraps)]
+    /// Currently always `Ok`; the typed result keeps the surface symmetric.
     pub(crate) fn stop(&self) -> PyResult<()> {
-        self.shutdown
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        let handle = self.pump_handle.lock().take();
-        if let Some(handle) = handle {
-            handle.abort();
-            // Drive the cancelled task to completion so its held resources
-            // (WS subscription futures, `Arc<dyn StageHandlers>` clones) drop
-            // before Python tears the runtime down. `block_on` on the shared
-            // runtime matches the existing `subscribe`/`backfill_from_snapshot`
-            // sync discipline; the aborted task completes promptly.
-            let _ = degenbot_core::runtime::get_runtime().block_on(handle);
-            op_info!(domain = pump, "BlockPump task aborted");
-        } else {
-            op_info!(
-                domain = pump,
-                "BlockPump not running (no pump handle to abort)"
-            );
-        }
-        // Drop half-built subscribe state so a later `subscribe()` is allowed
-        // (the phase guard + the `subscribe_state.is_some()` check would
-        // otherwise reject it).
-        *self.subscribe_state.lock() = None;
-        Ok(())
+        self.driver.stop().map_err(map_driver_err)
     }
 
-    /// `true` when the spawned pump task (`BlockPump::run_with_stream`) has
-    /// finished — the cooperative timed exit (`HOTPATH_SHUTDOWN_MS`), WS
-    /// stream end, or an abort/panic. Lets the Python runner NOTICE a
-    /// completed pump and shut down gracefully: without it a timed-exit
-    /// unwind writes the hotpath report and returns, but the runner's idle
-    /// main loop keeps the process alive on a dead engine (the post-unwind
-    /// wedge — `run_bot.sh` still reported "running" while nothing
-    /// progressed).
+    /// `true` when the spawned pump task has finished (cooperative timed
+    /// exit, WS stream end, or abort/panic).
+    #[must_use]
     pub(crate) fn pump_finished(&self) -> bool {
-        self.pump_handle
-            .lock()
-            .as_ref()
-            .is_some_and(tokio::task::JoinHandle::is_finished)
+        self.driver.pump_finished()
     }
 
-    // -- Verify config (ADR-006 D4 T4) --------------------------------------
-    //
-    // The whole-batch liquidity-map verifier (`verify_liquidity_maps` and its
-    // V3/V4 twins) was REMOVED as redundant + racy (the per-pool two-step
-    // registration lifecycle below is the verify authority; the
-    // dev-run-solver-state-findings.md Addendum 3 evidence lived only under
-    // logs/ and was removed in the stale-docs cleanup `71ec78b2`). What remains here is only
-    // the verify CONFIG the per-pool lifecycle consumes.
+    // -- Verify config (ADR-006 D4 T4, re-parented onto the driver) ---------
 
-    /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
+    /// Set the HTTP RPC URL used for verification.
     pub(crate) fn set_verify_rpc_url(&self, rpc_url: &str) {
-        let runtime = degenbot_core::runtime::get_runtime();
-        match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(
-            rpc_url,
-            degenbot_rpc::provider::DEFAULT_MAX_RETRIES,
-        )) {
-            Ok(provider) => {
-                *self.verify_provider.lock() = Some(provider);
-            }
-            Err(e) => {
-                #[expect(clippy::print_stderr)] // startup diagnostic
-                {
-                    eprintln!("Failed to create verification provider: {e}");
-                }
-            }
-        }
-        *self.verify_rpc_url.lock() = Some(rpc_url.to_string());
+        self.driver.set_verify_rpc_url(rpc_url);
     }
 
-    /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
+    /// Set the `StateView` contract address for V4 verification.
     pub(crate) fn set_verify_state_view(&self, state_view_address: &str) {
-        let addr: alloy::primitives::Address = state_view_address
-            .parse()
-            .unwrap_or(alloy::primitives::Address::ZERO);
-        *self.verify_state_view.lock() = Some(addr);
+        self.driver.set_verify_state_view(state_view_address);
     }
 
-    /// Run a single V3 pool's registration verify-lifecycle end-to-end — the
-    /// core-owned `quarantine → seed-verify → drain+pin → post-drain-verify →
-    /// set_live` choreography (ADR-022 D1) that the Python driver previously
-    /// performed as separate `set_*_quarantined` + `verify_*_snapshot_seed` +
-    /// `apply_buffer` + `verify_*_post_drain` + `set_*_live` round-trips.
-    ///
-    /// **Sparse** → immediate no-op (`Live`, no RPC). **Tracked** → verified
-    /// with the mismatch tripwire before `Live` (never released unverified).
-    /// Uses the bot's single verify provider (D-B — one provider per
-    /// bot/chain); a missing provider fails fast (D-C no-config posture).
+    /// Run a V3 pool's core-owned registration verify-lifecycle end-to-end.
     ///
     /// # Errors
     ///
@@ -429,231 +128,126 @@ impl PumpState {
     pub(crate) fn run_v3_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
-        address: String,
+        address: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let pool_addr: alloy::primitives::Address = address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid V3 address: {e}"))
-        })?;
-        // Clone the single provider + the core handle under short locks; the
-        // lifecycle re-acquires core.write() per step (no guard across await).
-        // The provider is `Option`: it is resolved lazily inside the core, so
-        // a missing provider only fails fast (D-C) for a TRACKED pool that
-        // actually reaches a verify step — Sparse / unregistered no-op paths
-        // (and the sparse buffer drain) never need one.
-        let core = self.stages.core();
-        let provider = self.verify_provider.lock().clone();
+        let pool_addr: alloy::primitives::Address = address
+            .parse()
+            .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?;
+        let driver = Arc::clone(&self.driver);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            use tracing::Instrument as _;
-
-            use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-            // Telemetry: the whole quarantine→seed-verify→drain+pin→post-drain-
-            // verify→set_live choreography is ONE Jaeger span (`.instrument`
-            // carries context across awaits / worker threads).
-            let lifecycle_span = tracing::info_span!(
-                "degenbot.pool.verify_lifecycle",
-                pool.version = "v3",
-                pool.address = %address,
-            );
-            let result = degenbot_bot::bot_core::run_v3_registration_lifecycle(
-                &core,
-                provider.as_ref(),
-                pool_addr,
-                snapshot_block,
-            )
-            .instrument(lifecycle_span)
-            .await;
-            if result.is_ok() {
-                diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
-            } else {
-                op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
-            }
-            result.map_err(|err| match err {
-                RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
-                RegistrationLifecycleError::MissingProvider => {
-                    crate::bot::engine::VerificationRpcError::new_err(err.to_string())
-                }
-                RegistrationLifecycleError::MissingStateView => {
-                    pyo3::exceptions::PyValueError::new_err(err.to_string())
-                }
-            })
+            driver
+                .run_v3_registration_lifecycle(pool_addr, snapshot_block)
+                .await
+                .map_err(map_driver_lifecycle_err)
         })
     }
 
-    /// V4 twin of [`run_v3_registration_lifecycle`] — runs the core-owned V4
-    /// registration verify-lifecycle, keyed by (`pool_manager`, `pool_id`),
-    /// using the stored `verify_state_view` contract address. A **tracked** V4
-    /// pool with no `state_view` surfaced as `PyValueError` (D-C no-config
-    /// fail-fast); Sparse pools never require `state_view`.
+    /// V4 twin of [`run_v3_registration_lifecycle`].
+    ///
+    /// # Errors
+    ///
+    /// As V3; a tracked V4 pool with no `state_view` surfaces as
+    /// `PyValueError` (D-C no-config fail-fast).
     pub(crate) fn run_v4_registration_lifecycle<'py>(
         &self,
         py: Python<'py>,
-        pool_manager_address: String,
-        pool_id_hex: String,
+        pool_manager_address: &str,
+        pool_id_hex: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let pool_manager: alloy::primitives::Address =
-            pool_manager_address.parse().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager: {e}"))
-            })?;
-        let pool_id = crate::bot::engine::hex_string_to_pool_id(&pool_id_hex).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_id: {e}"))
-        })?;
-        let state_view = *self.verify_state_view.lock();
-        let core = self.stages.core();
-        let provider = self.verify_provider.lock().clone();
+        let pool_manager: alloy::primitives::Address = pool_manager_address
+            .parse()
+            .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
+        let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)
+            .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
+        let driver = Arc::clone(&self.driver);
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            use tracing::Instrument as _;
-
-            use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-            // Telemetry: V4 twin of the V3 verify-lifecycle span.
-            let lifecycle_span = tracing::info_span!(
-                "degenbot.pool.verify_lifecycle",
-                pool.version = "v4",
-                pool.manager = %pool_manager_address,
-                pool.id = %pool_id_hex,
-            );
-            let result = degenbot_bot::bot_core::run_v4_registration_lifecycle(
-                &core,
-                provider.as_ref(),
-                pool_manager,
-                pool_id,
-                state_view,
-                snapshot_block,
-            )
-            .instrument(lifecycle_span)
-            .await;
-            if result.is_ok() {
-                diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle complete");
-            } else {
-                op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle FAILED");
-            }
-            result.map_err(|err| match err {
-                RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
-                RegistrationLifecycleError::MissingProvider => {
-                    crate::bot::engine::VerificationRpcError::new_err(err.to_string())
-                }
-                RegistrationLifecycleError::MissingStateView => {
-                    pyo3::exceptions::PyValueError::new_err(err.to_string())
-                }
-            })
+            driver
+                .run_v4_registration_lifecycle(pool_manager, pool_id, snapshot_block)
+                .await
+                .map_err(map_driver_lifecycle_err)
         })
     }
 
     /// Blocking (GIL-detached) V3 verify-lifecycle — the seat-thread twin of
-    /// [`Self::run_v3_registration_lifecycle`] (PRG-5 / IRUMXD): the crawl units
-    /// run on fleet `PoolStateUpdater` seats, which own no asyncio loop, so the
-    /// choreography parks on the shared tokio runtime via `block_on` INSIDE
-    /// `py.detach` (the build-adapter GIL cadence — incident 2026-08-20 #2's
-    /// inversion class is preserved against: the detach spans the whole park).
-    /// Telemetry + typed-error mapping are IDENTICAL to the async twin.
+    /// [`Self::run_v3_registration_lifecycle`] (PRG-5 / IRUMXD).
+    ///
+    /// # Errors
+    ///
+    /// As the async twin.
     pub(crate) fn run_v3_registration_lifecycle_blocking(
         &self,
         py: Python<'_>,
-        address: String,
+        address: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<()> {
-        let pool_addr: alloy::primitives::Address = address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid V3 address: {e}"))
-        })?;
-        let core = self.stages.core();
-        let provider = self.verify_provider.lock().clone();
-        let result = py.detach(move || {
-        use tracing::Instrument as _;
-
-        use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-        // Telemetry: the same Jaeger span shape as the async twin — the seat
-        // thread plants the root span (no ambient pump context).
-        let lifecycle_span = tracing::info_span!(
-            "degenbot.pool.verify_lifecycle",
-            pool.version = "v3",
-            pool.address = %address,
-        );
-        let result = degenbot_core::runtime::get_runtime().block_on(
-            degenbot_bot::bot_core::run_v3_registration_lifecycle(
-                &core,
-                provider.as_ref(),
-                pool_addr,
-                snapshot_block,
-            )
-            .instrument(lifecycle_span),
-        );
-        if result.is_ok() {
-            diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
-        } else {
-            op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
-        }
-        result.map_err(|err| match err {
-            RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
-            RegistrationLifecycleError::MissingProvider => {
-                crate::bot::engine::VerificationRpcError::new_err(err.to_string())
-            }
-            RegistrationLifecycleError::MissingStateView => {
-                pyo3::exceptions::PyValueError::new_err(err.to_string())
-            }
+        let pool_addr: alloy::primitives::Address = address
+            .parse()
+            .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?;
+        let driver = Arc::clone(&self.driver);
+        py.detach(move || {
+            driver
+                .run_v3_registration_lifecycle_sync(pool_addr, snapshot_block)
+                .map_err(map_driver_lifecycle_err)
         })
-    });
-        result
     }
 
     /// Blocking (GIL-detached) V4 verify-lifecycle — the seat-thread twin of
-    /// [`Self::run_v4_registration_lifecycle`] (see the V3 twin for the GIL
-    /// cadence and telemetry parity contract).
+    /// [`Self::run_v4_registration_lifecycle`].
+    ///
+    /// # Errors
+    ///
+    /// As the async twin.
     pub(crate) fn run_v4_registration_lifecycle_blocking(
         &self,
         py: Python<'_>,
-        pool_manager_address: String,
-        pool_id_hex: String,
+        pool_manager_address: &str,
+        pool_id_hex: &str,
         snapshot_block: Option<u64>,
     ) -> PyResult<()> {
-        let pool_manager: alloy::primitives::Address =
-            pool_manager_address.parse().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager: {e}"))
-            })?;
-        let pool_id = crate::bot::engine::hex_string_to_pool_id(&pool_id_hex).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_id: {e}"))
-        })?;
-        let state_view = *self.verify_state_view.lock();
-        let core = self.stages.core();
-        let provider = self.verify_provider.lock().clone();
-        let result = py.detach(move || {
-        use tracing::Instrument as _;
+        let pool_manager: alloy::primitives::Address = pool_manager_address
+            .parse()
+            .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
+        let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)
+            .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
+        let driver = Arc::clone(&self.driver);
+        py.detach(move || {
+            driver
+                .run_v4_registration_lifecycle_sync(pool_manager, pool_id, snapshot_block)
+                .map_err(map_driver_lifecycle_err)
+        })
+    }
+}
 
-        use degenbot_bot::bot_core::registration_lifecycle::RegistrationLifecycleError;
-        // Telemetry: V4 twin of the V3 verify-lifecycle span.
-        let lifecycle_span = tracing::info_span!(
-            "degenbot.pool.verify_lifecycle",
-            pool.version = "v4",
-            pool.manager = %pool_manager_address,
-            pool.id = %pool_id_hex,
-        );
-        let result = degenbot_core::runtime::get_runtime().block_on(
-            degenbot_bot::bot_core::run_v4_registration_lifecycle(
-                &core,
-                provider.as_ref(),
-                pool_manager,
-                pool_id,
-                state_view,
-                snapshot_block,
-            )
-            .instrument(lifecycle_span),
-        );
-        if result.is_ok() {
-            diag!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle complete");
-        } else {
-            op_warn!(domain = pump, version = "v4", pool_id = %pool_id_hex, "registration verify-lifecycle FAILED");
-        }
-        result.map_err(|err| match err {
+/// Map a core [`DriverError`] to a Python exception.
+fn map_driver_err(err: DriverError) -> PyErr {
+    // Every non-lifecycle variant (phase/session/subscribe/resume/registration)
+    // surfaces as the legacy `RuntimeError` with the driver's message; the
+    // registration lifecycles route their verify errors through the typed
+    // `map_driver_lifecycle_err` instead.
+    let message = err.to_string();
+    drop(err);
+    PyRuntimeError::new_err(message)
+}
+
+/// Map a lifecycle [`DriverError`] to the typed Python exception the verify
+/// surface has always raised.
+fn map_driver_lifecycle_err(err: DriverError) -> PyErr {
+    match err {
+        DriverError::Verify(e) => match e {
             RegistrationLifecycleError::Verify(v) => map_liquidity_verify_error(v),
             RegistrationLifecycleError::MissingProvider => {
-                crate::bot::engine::VerificationRpcError::new_err(err.to_string())
+                crate::bot::engine::VerificationRpcError::new_err(
+                    "registration verify requires an RPC provider for tracked pools — configure the bot's single provider"
+                        .to_string(),
+                )
             }
-            RegistrationLifecycleError::MissingStateView => {
-                pyo3::exceptions::PyValueError::new_err(err.to_string())
-            }
-        })
-    });
-        result
+            RegistrationLifecycleError::MissingStateView => PyValueError::new_err(
+                "registration verify requires a StateView contract address for V4 pools".to_string(),
+            ),
+        },
+        other => PyRuntimeError::new_err(other.to_string()),
     }
 }
 
@@ -664,13 +258,6 @@ impl PumpState {
 ///   disagrees with the engine).
 /// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure — the
 ///   caller may retry/backoff; NOT evidence of a mismatch).
-///
-/// Pre-AGVGNH the per-family `verify_v3/v4_liquidity_maps` methods mapped both
-/// variants to a plain `PyRuntimeError`, which `build_paths`' broad
-/// `except RuntimeError` arm silently swallowed as a skipped path — masking
-/// genuine mismatches. Routing through this seam restores fail-fast: a
-/// mismatch surfaces as `VerificationMismatchError`, the fatal arm in
-/// `build_paths`.
 pub(crate) fn map_liquidity_verify_error(
     err: degenbot_bot::bot_core::liquidity_verifier::LiquidityVerifyError,
 ) -> PyErr {
@@ -689,21 +276,19 @@ pub(crate) fn map_liquidity_verify_error(
 /// `stop()` - exactly the silent-exit shape we are hunting.
 ///
 /// Leveling: only the bypassed-`stop()` shape is WARN — it is the anomaly this
-/// drop hook exists to catch. A post-`stop()` drop (`pump_task_still_armed =
-/// false`) is the *healthy* path every session takes at exit; warning there
+/// drop hook exists to catch. A post-`stop()` drop (`driver.pump_handle_armed()
+/// == false`) is the *healthy* path every session takes at exit; warning there
 /// trains operators to dismiss the log line and buries the real signal.
-/// Healthy teardowns stay visible at `debug`.
 impl Drop for PumpState {
     fn drop(&mut self) {
-        let running = self.pump_handle.lock().is_some();
-        if running {
-            op_warn!(
+        if self.driver.pump_handle_armed() {
+            degenbot_core::op_warn!(
                 domain = pump,
                 pump_task_still_armed = true,
                 "PumpState dropped WITHOUT stop() - Python-side unwind bypassed graceful shutdown"
             );
         } else {
-            diag!(
+            degenbot_core::diag!(
                 domain = pump,
                 pump_task_still_armed = false,
                 "PumpState dropped after stop()"
@@ -712,7 +297,6 @@ impl Drop for PumpState {
     }
 }
 
-#[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     //! AGVGNH: pin the per-family verify exception mapping. The
@@ -738,7 +322,6 @@ mod tests {
                 err.is_instance_of::<VerificationMismatchError>(py),
                 "LiquidityVerifyError::Mismatch must surface as VerificationMismatchError (fatal), not PyRuntimeError"
             );
-            // Distinct from the RPC-error category.
             assert!(
                 !err.is_instance_of::<VerificationRpcError>(py),
                 "genuine mismatch is NOT an Rpc error (distinct types)"
@@ -761,152 +344,5 @@ mod tests {
                 "RPC transport failure is NOT a mismatch (distinct types)"
             );
         });
-    }
-
-    // ── PumpState::stop() contract tests ─────────────────────────────
-    //
-    // A `stop()` is the symmetric teardown half of `subscribe()`/`resume()`:
-    // it must set the shutdown flag (the cooperative signal the pump loop
-    // checks each iteration), abort the spawned pump task (so the
-    // `combined.next().await` — which would otherwise block up to 60s —
-    // unblocks immediately), and be idempotent (a second call is a no-op
-    // `Ok(())` because the handle is `take()`n on the first). Building a
-    // real `PumpState` mirrors the standalone (no-`py_bot`) path of
-    // `PyArbEngine::new` — a fresh `Bot`/`BotState`/`EngineStages`/
-    // `ReorgCoordinator`. No WS connection is opened;
-    // the running-handle test installs a never-completing dummy task so
-    // `stop()`'s abort path is exercised without the real pump.
-
-    use super::PumpState;
-    use degenbot_bot::arb_engine::EngineStages;
-    use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
-    use degenbot_bot::bot_core::state_lock::StateLock;
-    use degenbot_bot::bot_core::{Bot, BotState};
-    use tokio::sync::mpsc;
-
-    fn pump_state_for_test() -> std::sync::Arc<PumpState> {
-        let core = std::sync::Arc::new(StateLock::new(BotState::new()));
-        let bot = std::sync::Arc::new(Bot::with_core(std::sync::Arc::clone(&core)));
-        let stages = std::sync::Arc::new(EngineStages::with_core(
-            core,
-            std::sync::Arc::new(degenbot_bot::bot_core::EpochDelta::new(0u64)),
-        ));
-        let (result_tx, _result_rx) = mpsc::unbounded_channel();
-        stages.set_result_channel(result_tx);
-        let (block_tx, _block_rx) = mpsc::unbounded_channel();
-        stages.set_block_channel(block_tx);
-        let reorg_coordinator =
-            std::sync::Arc::new(ReorgCoordinator::new(std::sync::Arc::clone(&bot)));
-        std::sync::Arc::new(PumpState::new(
-            stages,
-            reorg_coordinator,
-            bot,
-            parking_lot::Mutex::new(None),
-        ))
-    }
-
-    #[test]
-    fn stop_pre_resume_sets_shutdown_flag_and_clears_subscribe_state() {
-        // Red-first: with no pump running (pre-`resume()`), `stop()` must
-        // still flip the cooperative shutdown flag and clear any
-        // half-built subscribe state, returning `Ok(())`. The pump handle
-        // is `None` so the abort path is skipped — the flag is the only
-        // observable effect.
-        let pump = pump_state_for_test();
-        assert!(
-            pump.pump_handle.lock().is_none(),
-            "pre-resume: no pump task spawned"
-        );
-        assert!(
-            !pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
-            "shutdown flag starts false"
-        );
-
-        pyo3::Python::attach(|_| {
-            pump.stop().expect("stop() before resume must not error");
-        });
-
-        assert!(
-            pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
-            "stop() must set the shutdown flag"
-        );
-        assert!(
-            pump.pump_handle.lock().is_none(),
-            "stop() must leave pump_handle None"
-        );
-        assert!(
-            pump.subscribe_state.lock().is_none(),
-            "stop() must clear subscribe_state"
-        );
-    }
-
-    #[test]
-    fn stop_is_idempotent() {
-        // Calling stop() twice must not panic or error — the handle is
-        // `take()`n on the first call so the second is a bare flag store +
-        // no-op. This is the contract the Python `__aexit__` /
-        // KeyboardInterrupt handler relies on (both may call stop()).
-        let pump = pump_state_for_test();
-        pyo3::Python::attach(|_| {
-            pump.stop().expect("first stop() must not error");
-            pump.stop().expect("second stop() must be a no-op Ok");
-        });
-        assert!(
-            pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
-            "shutdown flag stayed set across both calls"
-        );
-    }
-
-    #[test]
-    fn stop_aborts_a_running_pump_handle() {
-        // The pump loop blocks on `combined.next().await`, which can hang up
-        // to `BACKFILL_TIMEOUT_SECS` (60s) idle before the loop revisits its
-        // shutdown check. `stop()` must abort the spawned task so the await
-        // unblocks immediately, not wait for the flag to be observed at the
-        // next loop iteration. We install a never-completing dummy task (a
-        // pending oneshot receiver) as the `pump_handle`, then assert stop()
-        // resolves it and returns promptly — a regression guard for the
-        // "Ctrl-C hangs for a minute" bug.
-        let pump = pump_state_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let handle = runtime.spawn(async move {
-            // Never receives — only an abort unblocks this. Mirrors a pump
-            // blocked on a silent WS subscription.
-            let _ = rx.await;
-        });
-        *pump.pump_handle.lock() = Some(handle);
-        assert!(
-            pump.pump_handle.lock().is_some(),
-            "fixture installed a pump handle"
-        );
-
-        // Run stop() on a worker thread (mirrors production: Python calls it
-        // from the main thread, NOT inside a `block_on` — nesting block_on on
-        // the same runtime would panic). A join timeout surfaces a regression
-        // (forgot abort → stop() blocks on the pump task) as a test failure
-        // instead of an indefinite hang.
-        let pump_clone = std::sync::Arc::clone(&pump);
-        let (done_tx, done_rx) = std::sync::mpsc::channel::<pyo3::PyResult<()>>();
-        std::thread::spawn(move || {
-            pyo3::Python::attach(|_| {
-                let _ = done_tx.send(pump_clone.stop());
-            });
-        });
-        let stop_result = done_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect(
-                "stop() must return within 5s (abort must unblock the pump task) — it timed out",
-            );
-        stop_result.expect("stop() with a running handle must not error");
-
-        assert!(
-            pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
-            "stop() set the shutdown flag"
-        );
-        assert!(
-            pump.pump_handle.lock().is_none(),
-            "stop() must consume the pump handle"
-        );
     }
 }

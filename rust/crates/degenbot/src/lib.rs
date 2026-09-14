@@ -17,6 +17,11 @@ pub mod investigation;
 /// The per-chain state owner + the unified multi-DEX arb engine (`bot_core`,
 /// `arb_engine`); the stateless solver math lives in [`crate::solvers`].
 pub use degenbot_bot as bot;
+/// ADR-050 / Gap G1 (`5XOGRK`): the public Rust driver seam over the
+/// crate-private engine. `cargo add degenbot` reaches the full
+/// subscribe→resume(+auto-backfill)→stop ritual (also available as
+/// `degenbot::bot::arb_engine::EngineDriver`).
+pub use degenbot_bot::arb_engine::{DriverError, EngineDriver, PhaseError};
 /// `BotState` state-owner surface, re-exported alongside [`crate::bot`].
 pub use degenbot_bot::bot_core;
 /// WS ingestion (subscriptions, topic filter, backfill fetch, watchdog
