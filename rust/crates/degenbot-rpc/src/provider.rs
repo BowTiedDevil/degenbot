@@ -51,6 +51,18 @@ const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 /// which formats `{context}: {self}`), so the emitted `{error}` carries the
 /// context verbatim.
 ///
+/// Adoption verdict (spike, 2026-09, ergo YHVOJS): alloy 2.4.2's
+/// `transports::layers::RetryBackoffLayer` was evaluated as the
+/// transport-idiomatic replacement for this loop and rejected: it only
+/// `trace!`s retries (no E2B542 leveled records, no provider `{context}`
+/// labels), has no per-attempt deadline knob (EO75JH), its
+/// `initial_backoff` is a fixed base that is explicitly "not an exponential
+/// base", and exhaustion collapses typed errors into a `custom_str`. It is
+/// also replay-unsafe for the non-idempotent `eth_sendRawTransaction` path
+/// (see the broadcast comment further down). Do not re-litigate without
+/// alloy API changes (per-attempt observer hooks, policy flexibility,
+/// error-preserving exhaustion).
+///
 /// Emission policy (the E2B542 decision):
 /// - First retry (attempt 1): `log::debug!` — transient, often benign.
 /// - Subsequent retries (attempt >= 2): `log::warn!` — sustained backoff.
