@@ -144,6 +144,13 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v4
 
+      # The engine impl-block gate shells out to ripgrep. ubuntu-latest no
+      # longer preinstalls it (a missing rg made the gate misreport a tool
+      # error as "impl not consolidated"), so provision it explicitly - same
+      # dependency the .devcontainer/Dockerfile installs.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 

@@ -123,6 +123,7 @@ lint-rust-check: check-no-inner-allow check-engine-impl-blocks
 # misses. One reasoned outer #[allow(..., reason = "...")] remains permitted for
 # the legitimate cross-target conditional suppressions #[expect] cannot express.
 check-no-inner-allow:
+    @command -v rg >/dev/null 2>&1 || { echo "ERROR: ripgrep (rg) is required for check-no-inner-allow" >&2; exit 1; }
     @if rg -n '#!\[allow\(' rust/crates -g '*.rs'; then \
         echo "ERROR: inner #![allow] is forbidden - use #[expect], or a reasoned outer #[allow] for cross-target conditionals" >&2; \
         exit 1; \
@@ -163,6 +164,7 @@ check-no-pyo3-in-cores:
 check-engine-impl-blocks:
     #!/usr/bin/env bash
     set -euo pipefail
+    command -v rg >/dev/null 2>&1 || { echo "ERROR: ripgrep (rg) is required for check-engine-impl-blocks" >&2; exit 1; }
     matches=$(rg -n 'impl ArbitrageEngine\s*\{' rust/crates/degenbot-bot/src || true)
     count=$(printf '%s\n' "$matches" | grep -c 'impl ArbitrageEngine' || true)
     if [ "$count" -ne 1 ] || ! printf '%s\n' "$matches" | grep -q 'arb_engine/mod.rs'; then
