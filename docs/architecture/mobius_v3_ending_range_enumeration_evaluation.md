@@ -40,7 +40,7 @@ walker, after `7J22EQ`).
 
 ## 1. Where the design lives today
 
-Hot path: `arb_engine/solver_dispatch.rs` resolves each hop; V3/V4 hops call
+Hot path: `arb_engine/solve_cycle.rs` resolves each hop; V3/V4 hops call
 `V3PoolState::build_int_v3_sequence(tick_spacing, fee, zfo, 10)`
 (`rust/crates/degenbot-pools/src/v3_state.rs`), which slices
 `get_cached_tick_ranges(..., max_ranges=15)` (`compute_tick_ranges` in

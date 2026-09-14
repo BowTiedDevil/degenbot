@@ -3,8 +3,7 @@
 //! property draw on (the heavy-CL capture-corpus loader, the shared
 //! solve-cycle fixture, and the production LPT bin packer).
 //!
-//! Extracted from `arb_engine/solver_dispatch.rs` (the solve path's grab
-//! file) so the fixtures live in the module tree (test-only) rather than
+//! Extracted from the retired grab file so the fixtures live in the module tree (test-only) rather than
 //! inside the twin-collapse residue.
 // Fixture + harness support for the fleet probe surface (LW-T9: the
 // legacy-stance A/B probe arms are DELETED with the stance — the fleet

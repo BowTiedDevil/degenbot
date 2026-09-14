@@ -175,7 +175,7 @@ impl EngineStages {
             cycle.solve_block = tracing::field::Empty,
             // Cold-start trace: the dispatch arm ("detached" |
             // "skipped_empty" | "shed"), recorded at the machine's begin_cycle
-            // verdict (or the admission shed) in solver_dispatch.
+            // verdict (or the admission shed) in the solve cycle.
             cycle.arm = tracing::field::Empty,
         );
         // ZZS6CG: exact-match reparent onto this block's published pump
@@ -649,5 +649,115 @@ mod construction_ledger_pins {
         );
         stages.set_delta(SwapProbeToken);
         stages.delta_for_test(SwapProbeToken);
+    }
+}
+
+// ======================================================================
+// ergo 5WCRWZ T7 — THE final structural gate for the solver_dispatch
+// dissolution (epic 5WCRWZ, slices T1–T7).
+//
+// Provenance: T1 moved the heavy-path capture diagnostics to
+// `arb_engine::solver_capture`; T2 the workload partition to
+// `arb_engine::workload_partition`; T3/T4 the lane walk to
+// `arb_engine::lane_walk`; T5 the statics/ride consumers to their
+// consuming modules; T6 the detached-merge sidecar to
+// `arb_engine::detached_cycle` and the executor A/B fixtures to
+// `arb_engine::executor_ab_probe`; T7 collapses the engine twins and
+// DELETES `arb_engine/solver_dispatch.rs` outright (hard cutover).
+//
+// This replaces the four per-slice `include_str!("solver_dispatch.rs")`
+// honesty probes: a single `include_str!("mod.rs")` absence check (the
+// module tree owns no such module) plus spot checks that the surviving
+// homes define the items T7 reallocated. Textual include_str! keeps the pin
+// compile-error-free (the prior hard-cutover probe form).
+// ======================================================================
+#[cfg(test)]
+mod dissolution_complete {
+    const MOD_RS: &str = include_str!("mod.rs");
+    const EVENT_ROUTING: &str = include_str!("event_routing.rs");
+    const LANE_WALK: &str = include_str!("lane_walk.rs");
+    const SOLVE_CYCLE: &str = include_str!("solve_cycle.rs");
+
+    /// The module tree no longer declares (or even names) `solver_dispatch`.
+    #[test]
+    fn solver_dispatch_is_gone_from_the_module_tree() {
+        assert!(
+            !MOD_RS.contains("mod solver_dispatch;"),
+            "the arb_engine module tree still declares solver_dispatch (5WCRWZ T7)"
+        );
+        assert!(
+            !MOD_RS.contains("solver_dispatch"),
+            "arb_engine/mod.rs still names solver_dispatch — T7 owns the final cleanup"
+        );
+    }
+
+    /// Every reallocated item is owned by its surviving home.
+    #[test]
+    fn survivors_own_their_reallocated_items() {
+        // The walk-adjacent helpers moved to lane_walk.
+        for marker in [
+            "pub(crate) fn clamp_result_in_worker(",
+            "pub(crate) fn flush_solved_item(",
+        ] {
+            assert!(
+                LANE_WALK.contains(marker),
+                "lane_walk.rs must own {marker:?} (5WCRWZ T7)"
+            );
+        }
+        // The clamp body + its profit recompute moved to solve_cycle.
+        for marker in [
+            "fn clamp_result_with_state(",
+            "fn recompute_clamped_profit(",
+        ] {
+            assert!(
+                SOLVE_CYCLE.contains(marker),
+                "solve_cycle.rs must own {marker:?} (5WCRWZ T7)"
+            );
+        }
+        // The detached-merge engine surface moved to event_routing, which
+        // now chains directly to the cycle (no engine twin).
+        for marker in [
+            "pub(crate) fn merge_detached_item(",
+            "self.cycle.run_epoch(",
+        ] {
+            assert!(
+                EVENT_ROUTING.contains(marker),
+                "event_routing.rs must own {marker:?} (5WCRWZ T7)"
+            );
+        }
+        // The Default impl moved beside the engine struct.
+        assert!(
+            MOD_RS.contains("impl Default for ArbitrageEngine"),
+            "arb_engine/mod.rs must own the ArbitrageEngine Default impl (5WCRWZ T7)"
+        );
+    }
+
+    /// Compile-time inherent-absence probe (the candidate2 `NoInherentTwinProbe`
+    /// pattern): the collapsed engine twins must not reappear as inherent
+    /// `ArbitrageEngine` methods. An inherent re-introduction would shadow
+    /// the probe and fail to compile (arity/type mismatch).
+    #[test]
+    fn arbitrage_engine_has_no_inherent_twin_surface() {
+        struct ModelTwinProbeToken;
+        trait NoInherentTwinProbe {
+            fn rebuild_and_solve_affected(&self, _t: ModelTwinProbeToken);
+            fn solve_all(&self, _t: ModelTwinProbeToken);
+            fn admission_budget_keys(&self, _t: ModelTwinProbeToken);
+            fn clamp_cl_hop_capacity(&self, _t: ModelTwinProbeToken);
+            fn clamp_result_with_state(&self, _t: ModelTwinProbeToken);
+        }
+        impl NoInherentTwinProbe for super::ArbitrageEngine {
+            fn rebuild_and_solve_affected(&self, _t: ModelTwinProbeToken) {}
+            fn solve_all(&self, _t: ModelTwinProbeToken) {}
+            fn admission_budget_keys(&self, _t: ModelTwinProbeToken) {}
+            fn clamp_cl_hop_capacity(&self, _t: ModelTwinProbeToken) {}
+            fn clamp_result_with_state(&self, _t: ModelTwinProbeToken) {}
+        }
+        let engine = super::ArbitrageEngine::new();
+        engine.rebuild_and_solve_affected(ModelTwinProbeToken);
+        engine.solve_all(ModelTwinProbeToken);
+        engine.admission_budget_keys(ModelTwinProbeToken);
+        engine.clamp_cl_hop_capacity(ModelTwinProbeToken);
+        engine.clamp_result_with_state(ModelTwinProbeToken);
     }
 }

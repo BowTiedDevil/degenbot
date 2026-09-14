@@ -67,7 +67,6 @@ use super::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapt
 use super::workload_partition::{
     lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
 };
-use super::ArbitrageEngine;
 use super::DeferredReRecordHook;
 use crate::arb_engine::detached_cycle::{self, DetachedArm, LaneDrainCounts};
 use crate::arb_engine::executor::{run_solve_lane, LaneOutcome, SolveLane, SolveOutcome};
@@ -75,16 +74,18 @@ use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
 use crate::bot_core::resolve::resolve_hops;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::{BlockMetadata, BotState, EpochDelta};
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U256};
 use degenbot_core::diag;
 use degenbot_core::{op_error, op_info};
+use degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
+use degenbot_pools::v4_state::v4_simulate_swap;
 use degenbot_solvers::affected_keys::AffectedKey;
 use degenbot_workers::dispatcher::SeatSurvivesPolicy;
 use degenbot_workers::lane::LaneCtx;
 use std::sync::PoisonError;
 
 // ---------------------------------------------------------------------------
-// 5WCRWZ T5: statics/fns from the retired solver_dispatch grab file, each
+// 5WCRWZ T5: statics/fns from the retired grab file, each
 // moved beside its sole production consumer (or its near consumers).
 // ---------------------------------------------------------------------------
 
@@ -468,8 +469,296 @@ pub(crate) struct Registration {
 }
 
 // ===========================================================================
+// 5WCRWZ T7: the CL-hop clamp and its profit recompute, moved off the
+// deleted `ArbitrageEngine` twins onto their real owner. `SolveCycle::
+// clamp_cl_hop_capacity` and the worker-side `lane_walk::clamp_result_in_
+// worker` both drive the same `clamp_result_with_state`; there is exactly
+// one clamp body (ADR-046 "no inherent twins").
+// ===========================================================================
+/// The CL-hop clamp margin (absolute wei, subtracted from `input_consumed`
+/// before it is committed). VAASFM decision: 1 wei — commit
+/// `input_consumed - 1` so the exact-in loop converts nearly everything and
+/// stops on `amountRemaining==0` at the last funded tick. 1 wei is the
+/// maximum-extraction choice; a larger margin can be revisited if runaway
+/// swaps recur. Override via the `CLAMP_MARGIN` env var for sensitivity
+/// sweeps (twin of the `path5000_v2v4v3_solver_fixture` fixture).
+///
+/// ## Measured basis (ergo 7E5D7W)
+///
+/// The margin must be strictly larger than the worst solver-vs-engine
+/// (solver `hop_outputs[i]` vs the tier-3-proven `v4_simulate_swap`/
+/// `v3_simulate_swap` pool twin) OVER-prediction, so the clamp never lands
+/// exactly on an over-predicted tight value and re-enters the EMPTY march
+/// (UO3JM4). The `v4_crossing_solver_vs_sim_parity`/
+/// `v4_word_boundary_solver_divergence`/`v4_fee1_solver_path_matches_v4_simulate_swap`
+/// suites assert byte-exact solver==twin across the fee-3000/ts-60 multi-tick
+/// corpus AND the fee-1/ts-1 low-fee topology in both swap directions — i.e.
+/// the worst observed over-prediction is **0 wei**. The historical live
+/// `+1..+3` wei residuals (fee-1, ts=1) were localized to crossing-math
+/// rounding and fixed (the zfo step-0 current-tick flooring), not absorbed
+/// by margin. A dedicated sweep
+/// (`cl_hop_clamp_margin_exceeds_worst_solver_over_prediction`) measures the
+/// strict over-prediction direction across the corpus and asserts
+/// `margin > worst`, guarding this choice against regression. 1 wei is the
+/// smallest positive integer > 0, giving zero extraction loss (path-5000
+/// fixture: clamped output == solver output byte-identical).
+fn cl_hop_clamp_margin() -> U256 {
+    std::env::var("CLAMP_MARGIN")
+        .ok()
+        .and_then(|s| s.parse::<u128>().ok())
+        .map_or_else(|| U256::from(1u128), U256::from)
+}
+
+/// The clamp shared by the merge-site gate and the SIMPIPE2 T2 worker
+/// relocation — the pool list is a parameter so the WORKER can drive the
+/// identical logic from its `to_solve`-aligned snapshot. The worker takes
+/// the SAME short core read the merge-site clamp took (MQUKB6-T3 intact:
+/// engine-then-core, short read, no guard across awaits).
+#[expect(clippy::too_many_lines)] // multi-hop CL twin loop + post-clamp profit recompute
+pub(crate) fn clamp_result_with_state(
+    core: &BotState,
+    path_id: u64,
+    pools: &[MixedPoolRef],
+    result: &mut SolvePathResult,
+) -> u64 {
+    if pools.len() != result.consumed_inputs.len() {
+        return 0; // Index misalignment — never clamp a wrong hop
+    }
+    let margin = cl_hop_clamp_margin();
+    // D63GSE: successful twin simulations executed this call (returned to
+    // the caller for the solve-cycle completion event).
+    let mut twins_executed: u64 = 0;
+    for (i, pool_ref) in pools.iter().enumerate() {
+        let requested = result.consumed_inputs[i];
+        // Run the tier-3-validated twin once per clamped family so we can
+        // (a) clamp this hop's INPUT (CL marching empty-word EMPTY-HALT
+        // class), (b) clamp this hop's FORWARD (`consumed_inputs[i+1]` =
+        // the next hop's input, which the composer's V4 take/exchange
+        // derives from this hop's OUTPUT) to the byte-exact twin output,
+        // and (c) re-align this hop's REPORTED output. (b)/(c) close the
+        // path-73385 class: the solver OVer-predicted the V4 output by
+        // 3 wei, so the take (`consumed_inputs[i+1]`) over-took the pool's
+        // actual output and the trailing V4_SETTLE_ALL repaid the 3-wei
+        // residual via a `USDT.transfer(PM,3)` that halted (0xfe). (c) is
+        // equally load-bearing for a V2 hop whose INPUT the upstream hop's
+        // (b) just reduced: the walk-frozen `hop_outputs[i]` would
+        // otherwise keep the pre-clamp input's output — the
+        // path-182449/110302 1-wei over-prediction that failed on-chain
+        // with `UniswapV2: K`.
+        let (out, input_clamp): (U256, Option<U256>) = match pool_ref.hop_type {
+            HopType::V3 => {
+                let (Some(state), Some(identity)) = (
+                    core.get_v3_pool(pool_ref.pool_key),
+                    core.get_v3_identity(pool_ref.pool_key),
+                ) else {
+                    continue; // Pool state unavailable → can't clamp
+                };
+                let Ok(amount) = I256::try_from(requested) else {
+                    continue; // Input too large for i256 → skip
+                };
+                let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
+                let Some(twin) = v3_simulate_swap(
+                    state,
+                    identity.fee,
+                    identity.tick_spacing,
+                    pool_ref.zero_for_one,
+                    amount,
+                    limit,
+                )
+                .ok() else {
+                    continue;
+                };
+                let out = if pool_ref.zero_for_one {
+                    twin.amount1
+                } else {
+                    twin.amount0
+                };
+                twins_executed += 1;
+                (out, twin.exact_input_clamp_bound(requested, margin))
+            }
+            HopType::V4 => {
+                let (Some(state), Some(identity)) = (
+                    core.get_v4_pool(pool_ref.pool_key),
+                    core.get_v4_identity(pool_ref.pool_key),
+                ) else {
+                    continue;
+                };
+                let Ok(amount) = I256::try_from(requested) else {
+                    continue;
+                };
+                // V4 exact-in passes a NEGATIVE amount (opposite sign to V3).
+                let Some(neg) = amount.checked_neg() else {
+                    continue; // MIN_i256 (no positive twin) → skip
+                };
+                let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
+                let Some(twin) = v4_simulate_swap(
+                    state,
+                    identity.pool_key.fee,
+                    identity.pool_key.tick_spacing,
+                    pool_ref.zero_for_one,
+                    neg,
+                    limit,
+                )
+                .ok() else {
+                    continue;
+                };
+                let out = if pool_ref.zero_for_one {
+                    twin.amount1
+                } else {
+                    twin.amount0
+                };
+                twins_executed += 1;
+                (out, twin.exact_input_clamp_bound(requested, margin))
+            }
+            HopType::V2 => {
+                // V2 has no empty-march class (no input clamp), but its
+                // byte-exact twin output must still be the authoritative
+                // report once (b) has forward-clamped its input upstream.
+                // Orientation mirrors `simulate_swap`'s V2 arm.
+                let (Some(state), Some(identity)) = (
+                    core.get_v2_pool_state(pool_ref.pool_key),
+                    core.get_v2_identity(pool_ref.pool_key),
+                ) else {
+                    continue; // Pool state unavailable → can't clamp
+                };
+                let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
+                    (
+                        state.reserve0.to::<U256>(),
+                        state.reserve1.to::<U256>(),
+                        identity.fee_token0.0,
+                        identity.fee_token0.1,
+                    )
+                } else {
+                    (
+                        state.reserve1.to::<U256>(),
+                        state.reserve0.to::<U256>(),
+                        identity.fee_token1.0,
+                        identity.fee_token1.1,
+                    )
+                };
+                let Some(out) = degenbot_math::v2::IntHopState::new(
+                    reserve_in,
+                    reserve_out,
+                    gamma_numer,
+                    fee_denom,
+                )
+                .swap(requested)
+                .ok() else {
+                    continue; // overflow reverts on-chain → nothing to align
+                };
+                twins_executed += 1;
+                (out, None)
+            }
+            // Curve / Balancer / Solidly — no byte-exact twin at this
+            // seam; their reported outputs stand (see module note).
+            _ => continue,
+        };
+        // (a) Input clamp: cap this CL hop's committed input at
+        // `input_consumed - margin` when over-fed (the empty-march class).
+        if let Some(clamped) = input_clamp {
+            if clamped < requested {
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_clamp();
+                }
+                op_info!(
+                    domain = solver,
+                    "path_id={path_id} hop={i} family={:?} input requested={requested} \
+                     clamped={clamped} reduction={}",
+                    pool_ref.hop_type,
+                    requested - clamped
+                );
+                result.consumed_inputs[i] = clamped;
+            }
+        }
+        // (c) Align the solver's REPORTED output (`hop_outputs[i]`) to the
+        // byte-exact twin output, so the solver is exact (not merely the
+        // consumed forward). This is the path-73385 fix: the solver
+        // over-predicted the V4 output by 3 wei; the twin is the on-chain
+        // truth, so the published hop_outputs become byte-exact too.
+        if let Some(hop_out) = result.hop_outputs.get_mut(i) {
+            if *hop_out != out {
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_clamp();
+                }
+                op_info!(
+                    domain = solver,
+                    "path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
+                     twin_out={out} delta={}",
+                    pool_ref.hop_type,
+                    if *hop_out > out {
+                        *hop_out - out
+                    } else {
+                        out - *hop_out
+                    }
+                );
+                *hop_out = out;
+            }
+        }
+        // (b) Forward clamp: the next hop's executable input
+        // (`consumed_inputs[i+1]` — what the composer's V4 take/exchange
+        // withdraws from this hop's output) must not exceed this hop's
+        // actual yield, or the pool is over-taken and a residual delta is
+        // repaid via a failing USDT transfer (path-73385).
+        if i + 1 < pools.len() {
+            let forward = result.consumed_inputs[i + 1];
+            if out < forward {
+                if let Some(p) = crate::instruments::pipeline() {
+                    p.count_clamp();
+                }
+                op_info!(
+                    domain = solver,
+                    "path_id={path_id} hop={i} family={:?} forward={forward} \
+                     twin_out={out} reduction={}",
+                    pool_ref.hop_type,
+                    forward - out
+                );
+                result.consumed_inputs[i + 1] = out;
+            }
+        }
+    }
+
+    // BUG-B FIX (path-142603 `no-profit` crash): the solver's `profit` is
+    // computed on its RAW (over-predicted) hop outputs; the CL clamp above
+    // realigns execution to the twin but was not feeding back a recomputed
+    // profit, so an actually-unprofitable path stayed `> min_profit` and was
+    // dispatched → executed to a loss → `no-profit` abort. Recompute the
+    // selection profit from the clamped values (see `recompute_clamped_profit`);
+    // a post-clamp loss saturates to 0 and is dropped.
+    if let Some(recomputed) = recompute_clamped_profit(result) {
+        let profit_before = result.profit;
+        if recomputed != profit_before {
+            op_info!(domain = solver, path_id,
+                profit_before = %profit_before,
+                profit_after = %recomputed,
+                profit_delta = %profit_before.saturating_sub(recomputed),
+                "recomputed selection profit from twin-aligned outputs"
+            );
+            result.profit = recomputed;
+        }
+    }
+    twins_executed
+}
+
+/// Recompute a path result's selection profit from its CLAMPED
+/// (twin-aligned) outputs, per the documented `SolvePathResult::profit`
+/// semantics `final_output - consumed_inputs[0]` (with
+/// `final_output = hop_outputs[last]`), evaluated on the corrected values
+/// so it reflects the executable state rather than the solver's pre-clamp
+/// over-prediction. A post-clamp loss saturates to `0`, which is dropped by
+/// the `profit > min_profit` delivery gate. Returns `None` for a degenerate
+/// path (no `hop_outputs` / `consumed_inputs`). Pure (no env, no `core`
+/// lock) so it is directly unit-testable independent of the CL-twin
+/// machinery.
+#[must_use]
+fn recompute_clamped_profit(result: &SolvePathResult) -> Option<U256> {
+    let final_output = result.hop_outputs.last().copied()?;
+    let first_consumed = result.consumed_inputs.first().copied()?;
+    Some(final_output.saturating_sub(first_consumed))
+}
+
+// ===========================================================================
 // ADR-045 T4: the moved solve-cycle behavior. Bodies moved verbatim from
-// `solver_dispatch.rs` / `lifecycle.rs`; only the receiver (`self` is the
+// the retired grab file / `lifecycle.rs`; only the receiver (`self` is the
 // cycle) and the identity/delivery borrows changed. Lock discipline, span
 // names and event names are byte-identical.
 // ===========================================================================
@@ -817,7 +1106,7 @@ impl SolveCycle {
         let core = self
             .core
             .read_at(crate::bot_core::state_lock::LockSite::Solver);
-        ArbitrageEngine::clamp_result_with_state(&core, path_id, &path.pools, result)
+        clamp_result_with_state(&core, path_id, &path.pools, result)
     }
     #[expect(clippy::too_many_lines)]
     pub(crate) fn run_epoch(
@@ -1831,12 +2120,8 @@ impl SolveCycle {
                         if let Some(path) = path_pools.get(path_id) {
                             let core_read =
                                 core.read_at(crate::bot_core::state_lock::LockSite::Solver);
-                            let _ = ArbitrageEngine::clamp_result_with_state(
-                                &core_read,
-                                *path_id,
-                                &path.pools,
-                                &mut r,
-                            );
+                            let _ =
+                                clamp_result_with_state(&core_read, *path_id, &path.pools, &mut r);
                         }
                         let _ = tx.send((*path_id, r));
                     }
@@ -2388,7 +2673,13 @@ mod tests {
             &HashSet::new(),
             &HashSet::new(),
         );
-        engine.rebuild_and_solve_affected(&empty, 1, &BlockMetadata::default());
+        engine.cycle.run_epoch(
+            &empty,
+            1,
+            &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
+        );
 
         assert!(
             engine.cycle.pending_new_paths.is_empty(),
@@ -2501,46 +2792,95 @@ mod tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// HONESTY PROBE (5WCRWZ T5 red pin): the leftover plumbing items are OWNED by
-// their consuming modules, not in the retired grab file. While
-// `solver_dispatch.rs` still defines them, this probe fails; at cutover it
-// passes. Same technique as T1's capture probe, T2's workload probe, and T3/T4's
-// lane-walk probe.
-// ---------------------------------------------------------------------------
 #[cfg(test)]
-mod dissolution_t5_probe {
-    const GRAB_FILE: &str = include_str!("solver_dispatch.rs");
+mod clamp_recompute_tests {
+    #![expect(clippy::expect_used)] // tests assert recompute invariants
+    use super::recompute_clamped_profit;
+    use ::degenbot_solvers::mixed::SolvePathResult;
+    use alloy::primitives::U256;
 
+    /// Path-142603 (V4-V4-V3 @25723658) regression: the solver reported a
+    /// phantom +346,369,630 wei profit because its V3 hop2 output
+    /// (351,476,391,576,684) over-predicted the byte-exact twin
+    /// (351,475,872,056,229) by 519,520,455 wei. After the CL clamp aligns
+    /// `hop_outputs`/`consumed_inputs` to the twin, the selection profit MUST
+    /// be recomputed from the clamped values: the round trip nets
+    /// -173,150,825 wei -> saturates to 0 -> dropped by the `profit > min_profit`
+    /// delivery gate instead of being selected and executing to a `no-profit`
+    /// trap. (Regression for the BUG-B fix in `clamp_cl_hop_capacity`.)
     #[test]
-    fn solver_dispatch_no_longer_defines_the_statics_ride_consumers_items() {
-        const RETIRED_DEFINITIONS: [&str; 15] = [
-            "pub(crate) static SIM_BOOT_REFUSAL_LOGGED",
-            "pub(crate) fn record_cycle_arm_telemetry(",
-            "pub(crate) const RESOLVE_CHUNK",
-            "pub(crate) const RESOLVE_PAR_MIN",
-            "pub(crate) struct ResolveChunkOut",
-            "pub(crate) fn min_profit_floor(",
-            "static MIN_PROFIT_FLOOR_WEI",
-            "pub(crate) static STREAMING_DELIVERY_ENABLED",
-            "pub fn solve_runtime_config_from_cfg(",
-            "pub fn install_engine_stances(",
-            "pub(crate) type PathTimesHeap",
-            "pub(crate) static INLINE_SIM_ENABLED",
-            // 5WCRWZ T6: the detached-merge sidecar moves to
-            // `arb_engine::detached_cycle` (which already owns the sidecar
-            // spawn story) and the executor A/B probe fixtures move to
-            // `arb_engine::executor_ab_probe` (the module their consumers
-            // exercise).
-            "pub(crate) fn detached_merge_sidecar(",
-            "pub(super) mod executor_ab_probe {",
-            "pub(in crate::arb_engine) fn prod_lpt_bins(",
-        ];
-        for marker in RETIRED_DEFINITIONS {
-            assert!(
-                !GRAB_FILE.contains(marker),
-                "solver_dispatch.rs still defines: {marker:?} — the T5 items must be owned by their consuming modules (5WCRWZ T5)"
-            );
-        }
+    fn post_clamp_last_hop_loss_saturates_profit_to_zero() {
+        let mut r = SolvePathResult {
+            optimal_input: U256::from(351_476_045_207_054u64),
+            // Profit the SOLVER computed on its over-predicted raw hop2 output
+            // (= 351_476_391_576_684 - 351_476_045_207_054 = +346,369,630).
+            profit: U256::from(346_369_630u64),
+            // Twin-aligned outputs after the CL clamp: hop2 (last) clamped
+            // DOWN to the byte-exact twin 351,475,872,056,229.
+            hop_outputs: vec![
+                U256::from(676_293u64),
+                U256::from(676_607u64),
+                U256::from(351_475_872_056_229u64),
+            ],
+            consumed_inputs: vec![U256::from(351_476_045_207_054u64)],
+            ..Default::default()
+        };
+        let recomputed = recompute_clamped_profit(&r).expect("has outputs");
+        // final_output - consumed_inputs[0] = -173,150,825 -> saturating 0.
+        assert_eq!(recomputed, U256::ZERO, "post-clamp loss must saturate to 0");
+        // The clamp writes the recomputed value back (the fix).
+        r.profit = recomputed;
+        assert!(
+            r.profit.is_zero(),
+            "selection profit must be zero (dropped)"
+        );
+    }
+
+    /// The recompute is a no-op safety for a genuinely-profitable path whose
+    /// outputs were twin-aligned with no net change: profit is preserved.
+    #[test]
+    fn genuine_profit_preserved_after_clamp() {
+        let r = SolvePathResult {
+            optimal_input: U256::from(1000u64),
+            profit: U256::from(50u64),
+            hop_outputs: vec![U256::from(200u64), U256::from(1050u64)],
+            consumed_inputs: vec![U256::from(1000u64), U256::from(200u64)],
+            ..Default::default()
+        };
+        let recomputed = recompute_clamped_profit(&r).expect("has outputs");
+        assert_eq!(
+            recomputed,
+            U256::from(50u64),
+            "genuine profit must be preserved"
+        );
+    }
+
+    /// `profit = final_output - consumed_inputs[0]` (the documented semantics):
+    /// a first hop that partial-fills at a range boundary consumes less than the
+    /// full `optimal_input`, so the recompute must key off `consumed_inputs[0]`.
+    #[test]
+    fn recompute_uses_consumed_inputs_zero_not_optimal_input() {
+        let r = SolvePathResult {
+            optimal_input: U256::from(1000u64),
+            profit: U256::from(0u64),
+            hop_outputs: vec![U256::from(300u64), U256::from(1050u64)],
+            // hop0 consumes 900, not the full 1000 (partial fill at boundary).
+            consumed_inputs: vec![U256::from(900u64), U256::from(300u64)],
+            ..Default::default()
+        };
+        let recomputed = recompute_clamped_profit(&r).expect("has outputs");
+        assert_eq!(
+            recomputed,
+            U256::from(150u64),
+            "1050 - 900, not 1050 - 1000"
+        );
+    }
+
+    /// A degenerate path (no hop outputs / consumed inputs) recomputes to None
+    /// and is left untouched by the clamp.
+    #[test]
+    fn degenerate_path_returns_none() {
+        let r = SolvePathResult::default();
+        assert!(recompute_clamped_profit(&r).is_none());
     }
 }

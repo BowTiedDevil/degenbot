@@ -348,7 +348,7 @@ mod tests {
         );
 
         // Re-solve at block 111: pool A trails by 11 blocks — quiet, not stale.
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2_fwd_a]),
                 &HashSet::new(),
@@ -356,6 +356,8 @@ mod tests {
             ),
             111,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
 
         let (results, _block) = engine.latest_results();
@@ -429,7 +431,7 @@ mod tests {
         // clear the resolve stamp and prove the cycle does not re-derive the
         // path (no snapshot re-insertion).
         engine.cycle.resolved_update_snapshot.clear();
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2]),
                 &HashSet::new(),
@@ -437,6 +439,8 @@ mod tests {
             ),
             5,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         assert!(
             !engine.cycle.resolved_update_snapshot.contains_key(&path_id),
@@ -452,7 +456,7 @@ mod tests {
 
         // Dirtying the path's OWN responsible empty pool clears the container
         // and re-checks it (still empty → Invalid again, but it WAS re-checked).
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::new(),
                 &HashSet::from([empty_v3]),
@@ -460,6 +464,8 @@ mod tests {
             ),
             6,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         assert!(
             engine.cycle.resolved_update_snapshot.contains_key(&path_id),
@@ -759,7 +765,7 @@ mod tests {
             ])
             .unwrap();
 
-        // Should be tracked as pending so rebuild_and_solve_affected can merge
+        // Should be tracked as pending so run_epoch can merge
         assert!(engine.cycle.pending_new_paths.contains(&path_id));
 
         // Results should already contain the eagerly-solved path
@@ -811,9 +817,9 @@ mod tests {
             ])
             .unwrap();
 
-        // Process an empty block (no affected pools) — rebuild_and_solve_affected
+        // Process an empty block (no affected pools) — run_epoch
         // should still include the pending path and not drop it
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::new(),
                 &HashSet::new(),
@@ -821,6 +827,8 @@ mod tests {
             ),
             1,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
 
         // Pending set should be cleared
@@ -831,7 +839,7 @@ mod tests {
         assert_eq!(block, 1);
         assert!(
             results.contains_key(&path_id),
-            "pending new path result should survive rebuild_and_solve_affected"
+            "pending new path result should survive run_epoch"
         );
     }
 
@@ -900,7 +908,7 @@ mod tests {
     fn solve_does_not_send_result_batch_only_send_does() {
         // Contract (lock granularity, 3HYYGQ): solving
         // (`solve_all_paths` / `solve_dirty` / `process_updates` — all through
-        // `rebuild_and_solve_affected`) recomputes `results` but must NOT push
+        // `run_epoch`) recomputes `results` but must NOT push
         // a batch onto the result channel. Only `send_result_batch`
         // (→ `compute_diff_and_send`) sends.
         //
@@ -1151,7 +1159,7 @@ mod tests {
     /// 6XB6NJ pin (the review's Q6 strengthening): the solve-stamp path is
     /// MONOTONE - a late/stale stamp can no longer regress the results
     /// anchor. Both stamps below go through the REAL solve-stamp path
-    /// (`solve_dirty` -> `rebuild_and_solve_affected`'s anchor re-stamp):
+    /// (`solve_dirty` -> `run_epoch`'s anchor re-stamp):
     /// block 10 anchors first, then a stale block-5 cycle (a lagging drain
     /// entry, a re-fired boundary, a detached straggler) must NOT pull the
     /// anchor backwards - delivery would re-emit at a regressed
@@ -1440,7 +1448,7 @@ mod tests {
             .unwrap();
 
         // Solve
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         // Should find a profitable arbitrage
         assert!(!results.is_empty(), "should find profitable V2-V2 arb");
         let solve_result = results.values().next().unwrap();
@@ -1545,7 +1553,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         // V3-V3 arb depends on the exact price divergence — the important thing
         // is that the path resolves and the solver runs without panicking.
         // With a single tick spacing of 60 and 0.6% total fees, the arb may
@@ -1615,7 +1623,7 @@ mod tests {
 
         // Even if no profit found (depends on exact numbers),
         // solve_all should run without panicking
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         // Just verify it doesn't crash
         let _ = results;
     }
@@ -1713,7 +1721,7 @@ mod tests {
         // at 100 (head). The solve block must re-anchor to head = 100, and the
         // path is solved (never skipped): a future-vs-drain-clock block is live
         // state, not a poison to drop.
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2_a, v2_b]),
                 &HashSet::from([v3_future]),
@@ -1721,6 +1729,8 @@ mod tests {
             ),
             50,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         let (results, block) = engine.latest_results();
         assert_eq!(
@@ -1848,7 +1858,7 @@ mod tests {
             .unwrap();
 
         // Initial solve
-        let results_before = engine.solve_all();
+        let results_before = engine.cycle.solve_all(&engine.registry);
 
         // Apply V2 update to make pool A even more mispriced
         engine.process_updates(
@@ -1916,7 +1926,7 @@ mod tests {
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 498);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 498);
         }
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2_a, v2_b]),
                 &HashSet::new(),
@@ -1924,6 +1934,8 @@ mod tests {
             ),
             500,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         let (fresh, _) = engine.latest_results();
         assert!(
@@ -1941,7 +1953,7 @@ mod tests {
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 10);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 10);
         }
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2_a, v2_b]),
                 &HashSet::new(),
@@ -1949,6 +1961,8 @@ mod tests {
             ),
             500,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         let (stale_results, block) = engine.latest_results();
         assert_eq!(block, 500, "solve block anchors at max(drain, head) = 500");
@@ -1996,7 +2010,7 @@ mod tests {
 
         // Never-advanced pools (`update_block == 0`) at a far solve block are
         // NOT deferred — the ADR-021 verifier diffs them at the solve block.
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2_a, v2_b]),
                 &HashSet::new(),
@@ -2004,6 +2018,8 @@ mod tests {
             ),
             500,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         let (r0, _) = engine.latest_results();
         assert!(
@@ -2019,7 +2035,7 @@ mod tests {
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 490);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 490);
         }
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2_a, v2_b]),
                 &HashSet::new(),
@@ -2027,6 +2043,8 @@ mod tests {
             ),
             500,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         let (r1, _) = engine.latest_results();
         assert!(
@@ -2042,7 +2060,7 @@ mod tests {
             let _ = core.apply_sync_by_pool_id(v2_a, usdc(1_500_000), weth(800), 489);
             let _ = core.apply_sync_by_pool_id(v2_b, weth(800), usdc(1_600_000), 489);
         }
-        engine.rebuild_and_solve_affected(
+        engine.cycle.run_epoch(
             &crate::arb_engine::tests::test_keys::affected_keys(
                 &HashSet::from([v2_a, v2_b]),
                 &HashSet::new(),
@@ -2050,6 +2068,8 @@ mod tests {
             ),
             500,
             &BlockMetadata::default(),
+            &engine.registry,
+            &mut engine.delivery,
         );
         let (r2, _) = engine.latest_results();
         assert!(
@@ -2157,7 +2177,7 @@ mod tests {
                     .insert(path_id, std::sync::Arc::new(resolved));
             }
         }
-        let results_map = engine.solve_all();
+        let results_map = engine.cycle.solve_all(&engine.registry);
         engine.cycle.results.clear();
         for (pid, r) in results_map {
             engine.cycle.results.insert(pid, r);
@@ -2291,7 +2311,9 @@ mod tests {
             solver_pool_states: Vec::new(),
         };
 
-        engine.clamp_cl_hop_capacity(path_id, &mut result);
+        engine
+            .cycle
+            .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
 
         // Test premise: the forward into the V2 hop was actually clamped.
         let clamped = result.consumed_inputs[1];
@@ -2428,7 +2450,9 @@ mod tests {
             solver_pool_states: Vec::new(),
         };
 
-        engine.clamp_cl_hop_capacity(path_id, &mut result);
+        engine
+            .cycle
+            .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
 
         // Compute the pools twin's input_consumed at the requested input to
         // assert the clamped value equals `input_consumed - 1` exactly.
@@ -2580,7 +2604,9 @@ mod tests {
             state_nonces: vec![0, 0],
             solver_pool_states: Vec::new(),
         };
-        engine.clamp_cl_hop_capacity(path_id, &mut result);
+        engine
+            .cycle
+            .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
 
         // Compute the V4 twin's amount1 (zfo=true → output = amount1) at the
         // requested input — the byte-exact value hop_outputs[0] must align to.
@@ -2697,7 +2723,9 @@ mod tests {
             solver_pool_states: Vec::new(),
         };
 
-        engine.clamp_cl_hop_capacity(path_id, &mut result);
+        engine
+            .cycle
+            .clamp_cl_hop_capacity(path_id, &mut result, &engine.registry);
 
         assert_eq!(
             result.consumed_inputs[0], small,
@@ -3905,7 +3933,7 @@ mod tests {
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         // Writer: `solve_dirty` invokes `solve_all_paths` semantically via
-        // `rebuild_and_solve_affected` → `par_iter` of `Self::solve_path`. The
+        // `run_epoch` → `par_iter` of `Self::solve_path`. The
         // writer holds the engine `Mutex` then (inside) `core.read()` (path
         // resolution) and briefly `core.write()` (V3/V4 buffer expiry). The bins'
         // internal workers touch no engine/core state.
@@ -4515,7 +4543,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
             "should find profitable 50/50 weighted arb"
@@ -4563,7 +4591,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
             "should find profitable 80/20 weighted arb"
@@ -4639,7 +4667,7 @@ mod tests {
                 },
             ])
             .unwrap();
-        let v2_results = engine.solve_all();
+        let v2_results = engine.cycle.solve_all(&engine.registry);
         let v2_profit = v2_results.values().next().unwrap().profit;
 
         // Solve Balancer-V2-V2 path (clear and re-solve)
@@ -4736,7 +4764,7 @@ mod tests {
                 },
             ])
             .unwrap();
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         // V2+Balancer-weighted is all-V2-or-weighted with no CL — should solve
         assert!(!results.is_empty(), "should find V2+Balancer-weighted arb");
     }
@@ -4977,7 +5005,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
             "should find profitable Balancer stable arb"
@@ -5025,7 +5053,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             results.is_empty(),
             "identical stable pools should not produce an arb"
@@ -5069,7 +5097,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             !results.is_empty(),
             "should find V2+Balancer-stable mixed arb"
@@ -5219,7 +5247,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         eprintln!("results: {}", results.len());
         assert!(
             !results.is_empty(),
@@ -5267,7 +5295,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         assert!(
             results.is_empty(),
             "identical Curve pools should not produce an arb"
@@ -5308,7 +5336,7 @@ mod tests {
             ])
             .unwrap();
 
-        let results = engine.solve_all();
+        let results = engine.cycle.solve_all(&engine.registry);
         assert!(!results.is_empty(), "should find V2+Curve mixed arb");
     }
 
@@ -6008,7 +6036,7 @@ mod tests {
     #[cfg(feature = "otel")]
     #[test]
     #[expect(clippy::expect_used)]
-    fn rebuild_and_solve_affected_emits_stage_span_with_paths_staged() {
+    fn run_epoch_emits_stage_span_with_paths_staged() {
         use crate::otel;
         use hashbrown::HashSet;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
@@ -6049,7 +6077,7 @@ mod tests {
             .expect("path registers");
 
         tracing::subscriber::with_default(subscriber, || {
-            engine.rebuild_and_solve_affected(
+            engine.cycle.run_epoch(
                 &crate::arb_engine::tests::test_keys::affected_keys(
                     &HashSet::from([a]),
                     &HashSet::new(),
@@ -6057,6 +6085,8 @@ mod tests {
                 ),
                 5,
                 &BlockMetadata::default(),
+                &engine.registry,
+                &mut engine.delivery,
             );
         });
 
@@ -6334,7 +6364,7 @@ mod tests {
 
         let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
         let joiner = std::thread::spawn(move || {
-            engine.rebuild_and_solve_affected(
+            engine.cycle.run_epoch(
                 &crate::arb_engine::tests::test_keys::affected_keys(
                     &pool_set,
                     &HashSet::new(),
@@ -6342,6 +6372,8 @@ mod tests {
                 ),
                 100,
                 &BlockMetadata::default(),
+                &engine.registry,
+                &mut engine.delivery,
             );
             engine
         });
@@ -6446,7 +6478,7 @@ mod tests {
 
         let pool_set: HashSet<u64> = pool_ids.iter().copied().collect();
         let joiner = std::thread::spawn(move || {
-            engine.rebuild_and_solve_affected(
+            engine.cycle.run_epoch(
                 &crate::arb_engine::tests::test_keys::affected_keys(
                     &pool_set,
                     &HashSet::new(),
@@ -6454,6 +6486,8 @@ mod tests {
                 ),
                 100,
                 &BlockMetadata::default(),
+                &engine.registry,
+                &mut engine.delivery,
             );
             engine
         });
@@ -6549,7 +6583,7 @@ mod tests {
     }
 
     /// Structural acceptance (red/green): with the one (detached) arm and an
-    /// injected 400ms slow path, `rebuild_and_solve_affected` — driven via
+    /// injected 400ms slow path, `run_epoch` — driven via
     /// the production `EngineStages` solve seam, which also spawns the
     /// merge sidecar — RETURNS before the merge lands, and the sidecar
     /// populates the results within ~500ms of enqueue.
@@ -7494,14 +7528,14 @@ mod tests {
         let (mut engine, _pool_ids, _path_ids) = detached_fixture(0);
         // Stance OFF: no budget — the caller take-alls (byte-identical).
         assert_eq!(
-            engine.admission_budget_keys(),
+            engine.cycle.admission_budget_keys(),
             None,
             "flag OFF must yield no budget (the take_keys path)"
         );
         engine.set_solve_admission(true);
         engine.set_admission_target_depth(3);
         assert_eq!(
-            engine.admission_budget_keys(),
+            engine.cycle.admission_budget_keys(),
             Some(3),
             "empty pipe: full headroom"
         );
@@ -7511,7 +7545,7 @@ mod tests {
             .outstanding
             .store(1, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(
-            engine.admission_budget_keys(),
+            engine.cycle.admission_budget_keys(),
             Some(2),
             "one straggler: target − 1"
         );
@@ -7521,7 +7555,7 @@ mod tests {
             .outstanding
             .store(3, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(
-            engine.admission_budget_keys(),
+            engine.cycle.admission_budget_keys(),
             Some(0),
             "at target: zero budget = the SHED verdict"
         );
@@ -7531,7 +7565,7 @@ mod tests {
             .outstanding
             .store(99, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(
-            engine.admission_budget_keys(),
+            engine.cycle.admission_budget_keys(),
             Some(0),
             "an overshoot saturates at zero (no unsigned wrap)"
         );
@@ -7543,7 +7577,7 @@ mod tests {
             .store(0, std::sync::atomic::Ordering::Relaxed);
         engine.set_admission_target_depth(usize::MAX);
         assert_eq!(
-            engine.admission_budget_keys(),
+            engine.cycle.admission_budget_keys(),
             Some(
                 usize::try_from(crate::arb_engine::detached_cycle::DETACHED_INFLIGHT_CAP)
                     .expect("cap fits usize")
@@ -7552,7 +7586,7 @@ mod tests {
         );
         engine.set_admission_target_depth(0);
         assert_eq!(
-            engine.admission_budget_keys(),
+            engine.cycle.admission_budget_keys(),
             Some(1),
             "a zero target clamps up to 1 (a target of 0 would never submit)"
         );
@@ -8240,7 +8274,7 @@ mod tests {
                 500,
                 &BlockMetadata::default(),
             );
-            engine.rebuild_and_solve_affected(
+            engine.cycle.run_epoch(
                 &crate::arb_engine::tests::test_keys::affected_keys(
                     &HashSet::from([hub_a, hub_b]),
                     &HashSet::new(),
@@ -8248,6 +8282,8 @@ mod tests {
                 ),
                 500,
                 &BlockMetadata::default(),
+                &engine.registry,
+                &mut engine.delivery,
             );
 
             // Cycle 2: dirty hub_b only -> 600 affected paths again; hub_a must
@@ -8259,7 +8295,7 @@ mod tests {
                 501,
                 &BlockMetadata::default(),
             );
-            engine.rebuild_and_solve_affected(
+            engine.cycle.run_epoch(
                 &crate::arb_engine::tests::test_keys::affected_keys(
                     &HashSet::from([hub_b]),
                     &HashSet::new(),
@@ -8267,6 +8303,8 @@ mod tests {
                 ),
                 501,
                 &BlockMetadata::default(),
+                &engine.registry,
+                &mut engine.delivery,
             );
             let projections_delta = engine.cycle.hop_projection_count - projections_before;
 
@@ -8686,7 +8724,7 @@ pub(crate) mod test_keys {
     /// Test-side affected-key plumbing (the trivial remainder of the deleted
     /// (`EpochDelta` is sole authority), so the per-family sets below are
     /// just a sorted `AffectedKey` builder the solve-shaped tests use to
-    /// call `rebuild_and_solve_affected` / `solve_dirty`. No production
+    /// call `run_epoch` / `solve_dirty`. No production
     /// caller, no parity claim.
     use hashbrown::HashSet;
 
@@ -8751,7 +8789,7 @@ pub(crate) mod test_keys {
 
     // Cold-start trace (detached-cycle arm attribution): the cycle span must
     // carry `cycle.arm`, derivable WITHOUT log archaeology. The helper below
-    // is the ONE wiring site (solver_dispatch, at the machine's begin_cycle
+    // is the ONE wiring site (the solve cycle, at the machine's begin_cycle
     // verdict). WFF6MM: one arm remains, so one stamp.
     #[cfg(feature = "otel")]
     #[test]
@@ -8807,4 +8845,548 @@ pub(crate) mod test_keys {
     }
 
     // -------------------------------------------------------------------
+}
+
+// =======================================================================
+// 5WCRWZ T7: the fixture-driven clamp/merge/worker tests, moved here from
+// the deleted grab file's test island. They exercise the `SolveCycle`
+// clamp + merge surfaces through a real engine, so they live with the
+// engine-parity tests.
+// =======================================================================
+#[cfg(test)]
+mod clamp_merge_worker_tests {
+    #![expect(clippy::expect_used)] // tests assert clamp/merge invariants
+    use crate::arb_engine::lane_walk::clamp_result_in_worker;
+    use crate::arb_engine::solve_cycle::{PathTimesHeap, SolveCycleShared};
+    use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
+    use crate::bot_core::{TickInfo, V4PoolKey};
+    use ::degenbot_solvers::mixed::{MixedPath, SolvePathResult};
+    use alloy::primitives::U256;
+    use hashbrown::HashMap;
+    use std::sync::Arc;
+
+    /// Narrow single-position V4 pool (±60 ticks, 1e6 liquidity) + a one-hop
+    /// path: the over-fed committed input is the empty-march class. Returns
+    /// (engine, `path_id`, the to_solve-aligned pool-ref snapshot).
+    fn overfed_v4_engine() -> (ArbitrageEngine, u64, Vec<std::sync::Arc<MixedPath>>) {
+        use crate::arb_engine::PoolTickCoverage;
+        use crate::bot_core::RegisterV4PoolParams;
+        fn usdc_local(amount: u64) -> alloy::primitives::Uint<112, 2> {
+            (U256::from(amount) * U256::from(10u64).pow(U256::from(6)))
+                .to::<alloy::primitives::Uint<112, 2>>()
+        }
+        fn weth_local(amount: u64) -> alloy::primitives::Uint<112, 2> {
+            (U256::from(amount) * U256::from(10u64).pow(U256::from(18)))
+                .to::<alloy::primitives::Uint<112, 2>>()
+        }
+        const GAMMA_03: u64 = 997;
+        const FEE_DENOM_03: u64 = 1000;
+        let mut engine = ArbitrageEngine::new();
+        // V2 pool: large reserves so its output dwarfs the V4 hop's capacity —
+        // the V4 hop is the over-fed one (this isolates hop1's input clamp).
+        let v2 = engine.register_v2_pool(
+            alloy::primitives::Address::from([0x11u8; 20]),
+            usdc_local(1_500_000),
+            weth_local(20_000_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(300),
+                liquidity_net: 150i128,
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(200),
+                liquidity_net: -100i128,
+                block: 0,
+            },
+        );
+        let v4_id = engine
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: alloy::primitives::Address::from([0x44u8; 20]),
+                pool_id: [0xabu8; 32],
+                pool_key: V4PoolKey {
+                    currency0: alloy::primitives::Address::from([0x30u8; 20]),
+                    currency1: alloy::primitives::Address::from([0x31u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: alloy::primitives::Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
+            })
+            .expect("V4 registration failed");
+        let path_id = engine
+            .register_path(vec![
+                ::degenbot_solvers::mixed::PoolHop {
+                    pool_id: v2,
+                    zero_for_one: true,
+                },
+                ::degenbot_solvers::mixed::PoolHop {
+                    pool_id: v4_id,
+                    zero_for_one: false,
+                },
+            ])
+            .expect("two-hop path registers");
+        let pool_refs = std::iter::once(engine.registry.get(path_id).expect("registered").clone())
+            .collect::<Vec<_>>();
+        (engine, path_id, pool_refs)
+    }
+
+    fn worker_probe_ctx(
+        core: Arc<crate::bot_core::state_lock::StateLock<crate::bot_core::BotState>>,
+        pool_refs: Vec<std::sync::Arc<MixedPath>>,
+    ) -> Arc<SolveCycleShared> {
+        Arc::new(SolveCycleShared {
+            core,
+            pool_refs,
+            worker_clamp: true,
+            inline_sim: None,
+            solve_block: 0,
+            epoch: 0,
+            metadata: BlockMetadata::default(),
+            runtime: ::degenbot_solvers::runtime::SolveRuntimeConfig::default(),
+            gate_capture: None,
+            walk_memo: Arc::new(::degenbot_solvers::mobius_v3_int::WalkMemo::new(
+                false, false,
+            )),
+            capture: None,
+            capture_mixed: None,
+            path_times: parking_lot::Mutex::new(PathTimesHeap::new()),
+            gate_total: parking_lot::Mutex::new(
+                ::degenbot_solvers::profit_envelope::GateStats::default(),
+            ),
+            solve_cpu_us: std::sync::atomic::AtomicU64::new(0),
+            walk_pieces_total: std::sync::atomic::AtomicU64::new(0),
+            walk_sims_total: std::sync::atomic::AtomicU64::new(0),
+            walk_word_steps_total: std::sync::atomic::AtomicU64::new(0),
+            walk_refine_sims_total: std::sync::atomic::AtomicU64::new(0),
+            walk_ternary_total: std::sync::atomic::AtomicU64::new(0),
+            walk_grid_total: std::sync::atomic::AtomicU64::new(0),
+            sims_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            gate_recorder: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            test_solve_delay: None,
+            #[cfg(test)]
+            test_solve_panic: None,
+        })
+    }
+
+    /// The engine clamp and the WORKER clamp are the same computation from
+    /// two call sites: byte-identical result + twin count on identical input.
+    #[test]
+    fn worker_clamp_matches_engine_clamp_bit_for_bit() {
+        use ::degenbot_solvers::mixed::MixedPoolRef;
+        let (engine, path_id, pool_refs) = overfed_v4_engine();
+        let mk = || {
+            let committed = U256::from(1u128) << 120;
+            SolvePathResult {
+                optimal_input: U256::from(1_000_000_000u64),
+                profit: U256::from(1_000u64),
+                hop_outputs: vec![committed, committed],
+                consumed_inputs: vec![committed, committed],
+                state_nonces: vec![],
+                solver_pool_states: Vec::new(),
+            }
+        };
+        let (mut r_engine, mut r_worker) = (mk(), mk());
+        let twins_engine =
+            engine
+                .cycle
+                .clamp_cl_hop_capacity(path_id, &mut r_engine, &engine.registry);
+        assert!(twins_engine > 0, "premise: the over-fed input must clamp");
+        assert!(
+            r_engine.consumed_inputs[1] < U256::from(1u128) << 120,
+            "premise: the V4 hop input clamp fired"
+        );
+        let ctx = worker_probe_ctx(Arc::clone(engine.core()), pool_refs);
+        let twins_worker = clamp_result_in_worker(&ctx, 0, path_id, &mut r_worker);
+        assert_eq!(twins_worker, twins_engine, "twin count must match");
+        assert_eq!(r_engine, r_worker, "clamped result must be byte-identical");
+        // The pool-ref SNAPSHOT path (worker side) is exercised; the MixedPoolRef _ unused is intentional.
+        let _: Vec<Vec<MixedPoolRef>> = Vec::new();
+    }
+
+    // The merge honors the worker's twin report: twins > 0 = the result is
+    // already clamp-committed (no second clip); twins = 0 = the merge clips
+    // the over-fed input itself (the legacy path — bit-identical).
+
+    /// SIMPIPE2 T3: a payload riding `merge_one_result` is stored at the
+    /// engine (`inline_payloads`) and a re-merge WITHOUT the payload drops the
+    /// stale entry — per-entry presence decides Python-side. (The delivery
+    /// drain into `ResultBatch.payloads` is covered by the `delivery_policy`
+    /// tests + the FFI conversion; this pins the merge-site store/drop.)
+    #[test]
+    fn merge_stores_payload_and_drops_it_without_one() {
+        use crate::arb_engine::inline_sim::{InlineSwapFamily, SimulatedPathResult};
+        use alloy::primitives::{Address, I256, U256};
+
+        let (mut engine, path_id, _pool_refs) = overfed_v4_engine();
+        let metadata = BlockMetadata::default();
+        let mk = || SolvePathResult {
+            optimal_input: U256::from(1_000_000_000u64),
+            profit: U256::from(1_000u64),
+            hop_outputs: vec![U256::from(1u64)],
+            consumed_inputs: vec![U256::from(1u64)],
+            state_nonces: vec![0],
+            solver_pool_states: Vec::new(),
+        };
+        let payload = SimulatedPathResult {
+            path_id,
+            gross_profit: U256::from(1_000u64),
+            net_profit: U256::from(900u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: vec![1, 2, 3],
+            access_list: None,
+            captured_swaps: vec![crate::arb_engine::inline_sim::CapturedSwapRow {
+                emitter: Address::from([0x11u8; 20]),
+                family: InlineSwapFamily::V4,
+                amount0: I256::MINUS_ONE,
+                amount1: I256::ONE,
+                sqrt_price_x96: U256::ZERO,
+                liquidity: U256::ZERO,
+                tick: 0,
+            }],
+            hop_count: 1,
+            failure: None,
+        };
+
+        engine.cycle.merge_one_result(
+            42,
+            &metadata,
+            path_id,
+            mk(),
+            0,
+            Some(payload),
+            &engine.registry,
+            &mut engine.delivery,
+        );
+        assert!(
+            engine.cycle.inline_payloads.contains_key(&path_id),
+            "the payload must be stored at merge"
+        );
+
+        // The path re-solves WITHOUT a payload (stance off or hook silence):
+        // the stale entry must drop — presence decides per entry.
+        engine.cycle.merge_one_result(
+            43,
+            &metadata,
+            path_id,
+            mk(),
+            0,
+            None,
+            &engine.registry,
+            &mut engine.delivery,
+        );
+        assert!(
+            !engine.cycle.inline_payloads.contains_key(&path_id),
+            "a payload-less re-merge must drop the stale payload"
+        );
+    }
+
+    #[test]
+    fn merge_reports_worker_twins_and_never_reclips() {
+        let (mut engine, path_id, pool_refs) = overfed_v4_engine();
+        let metadata = BlockMetadata::default();
+        let overfed = || {
+            let committed = U256::from(1u128) << 120;
+            SolvePathResult {
+                optimal_input: U256::from(1_000_000_000u64),
+                profit: U256::from(1_000u64),
+                hop_outputs: vec![committed, committed],
+                consumed_inputs: vec![committed, committed],
+                state_nonces: vec![],
+                solver_pool_states: Vec::new(),
+            }
+        };
+
+        // Worker arm: clamp once (the worker report = committed truth), then
+        // merge with twins > 0 — the stored result stays byte-identical.
+        let mut worker_result = overfed();
+        let ctx = worker_probe_ctx(Arc::clone(engine.core()), pool_refs);
+        let twins = clamp_result_in_worker(&ctx, 0, path_id, &mut worker_result);
+        assert!(twins > 0, "premise: worker clamp fired");
+        let committed = worker_result.clone();
+        engine.cycle.merge_one_result(
+            42,
+            &metadata,
+            path_id,
+            worker_result,
+            twins,
+            None,
+            &engine.registry,
+            &mut engine.delivery,
+        );
+        {
+            let stored = engine.cycle.results.get(&path_id).expect("worker-merged");
+            assert_eq!(
+                stored.consumed_inputs, committed.consumed_inputs,
+                "twins>0 must not re-clip the committed inputs"
+            );
+            assert_eq!(stored.profit, committed.profit, "profit untouched on skip");
+        }
+
+        // Legacy arm (twins=0): the merge clips the over-fed V4 hop input
+        // itself (index 1 — the V2 hop has no input clamp by design).
+        let legacy = overfed();
+        let pre = legacy.consumed_inputs[1];
+        engine.cycle.merge_one_result(
+            42,
+            &metadata,
+            path_id,
+            legacy,
+            0,
+            None,
+            &engine.registry,
+            &mut engine.delivery,
+        );
+        let stored = engine.cycle.results.get(&path_id).expect("legacy-merged");
+        assert_ne!(
+            stored.consumed_inputs[1], pre,
+            "twins=0 must run the merge-site clamp"
+        );
+    }
+
+    // ----------------- RKXN5Z / IJUBV3: bundle.simulate span hygiene -----------------
+
+    /// RED-gate (IJUBV3): the merge-site microsecond `degenbot.bundle.simulate`
+    /// "verdict bookmark" spans collided with the REAL per-path EVM sim spans
+    /// of the same name (traces 98f7cf52 / ab13f75fad50: 90-300 markers per
+    /// block drowned the ms-scale sims). The merge must create NO span with
+    /// that name - the verdict is an `info!` event on the enclosing merge
+    /// span, and the span name now belongs solely to simulation work.
+    ///
+    /// DEFAULT-GATE VISIBLE (no otel cfg), on the K4ETHF pattern: the marker
+    /// flood was what made Jaeger unreadable, so the regression gate must not
+    /// hide behind --features otel.
+    #[test]
+    fn merge_payload_store_emits_no_bundle_simulate_span() {
+        use std::sync::Mutex;
+
+        struct SpanNameCapture {
+            names: std::sync::Arc<Mutex<Vec<String>>>,
+        }
+        impl<S> tracing_subscriber::Layer<S> for SpanNameCapture
+        where
+            S: tracing::Subscriber,
+        {
+            fn on_new_span(
+                &self,
+                attrs: &tracing::span::Attributes<'_>,
+                _id: &tracing::span::Id,
+                _ctx: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                self.names
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(attrs.metadata().name().to_string());
+            }
+        }
+
+        use tracing_subscriber::layer::SubscriberExt as _;
+        let names = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+        let capture = SpanNameCapture {
+            names: std::sync::Arc::clone(&names),
+        };
+        let subscriber = tracing_subscriber::registry().with(capture);
+
+        let (mut engine, path_id, _pool_refs) = overfed_v4_engine();
+        let metadata = BlockMetadata::default();
+        let mk = || SolvePathResult {
+            optimal_input: U256::from(1_000_000_000u64),
+            profit: U256::from(1_000u64),
+            hop_outputs: vec![U256::from(1u64)],
+            consumed_inputs: vec![U256::from(1u64)],
+            state_nonces: vec![0],
+            solver_pool_states: Vec::new(),
+        };
+        let payload = crate::arb_engine::inline_sim::SimulatedPathResult {
+            path_id,
+            gross_profit: U256::from(1_000u64),
+            net_profit: U256::from(900u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: vec![1, 2, 3],
+            access_list: None,
+            captured_swaps: Vec::new(),
+            hop_count: 1,
+            failure: None,
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            // Enclosing merge span, as in both production arms.
+            let merge = tracing::info_span!("degenbot.arb.merge", merge.paths = 1u64);
+            let _ctx = merge.enter();
+            engine.cycle.merge_one_result(
+                42,
+                &metadata,
+                path_id,
+                mk(),
+                0,
+                Some(payload),
+                &engine.registry,
+                &mut engine.delivery,
+            );
+        });
+
+        let created = names
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let offenders: Vec<_> = created
+            .iter()
+            .filter(|n| *n == "degenbot.bundle.simulate")
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "merge must not create bundle.simulate markers (the name belongs to real sims); \
+             spans created: {created:?}"
+        );
+    }
+
+    /// GREEN-gate (IJUBV3): the WORKER-side inline sim gets the honest
+    /// `degenbot.bundle.simulate` span - a real ms-class EVM sim on the solve
+    /// path, parented under the cycle span, with the terminal verdict.
+    #[cfg(feature = "otel")]
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "single end-to-end span-emission assertion: stub + emit + export + attribute checks read best as one sequence"
+    )]
+    fn inline_sim_payload_emits_worker_sim_span_with_verdict() {
+        use crate::arb_engine::lane_walk::inline_sim_payload;
+        use crate::otel;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        struct StubSim {
+            fail: bool,
+            path_id: u64,
+        }
+        impl crate::arb_engine::inline_sim::InlineSimulator for StubSim {
+            fn simulate_path(
+                &self,
+                request: crate::arb_engine::inline_sim::InlineSimRequest,
+            ) -> Option<crate::arb_engine::inline_sim::SimulatedPathResult> {
+                assert_eq!(
+                    request.path_id, self.path_id,
+                    "stub receives the merged path id"
+                );
+                Some(crate::arb_engine::inline_sim::SimulatedPathResult {
+                    path_id: request.path_id,
+                    gross_profit: U256::from(1_000u64),
+                    net_profit: U256::from(900u64),
+                    gas_used: 300_000,
+                    priority_fee: 2,
+                    base_fee_next: 30,
+                    execute_calldata: vec![7, 8, 9],
+                    access_list: None,
+                    captured_swaps: Vec::new(),
+                    hop_count: 1,
+                    failure: self
+                        .fail
+                        .then(|| crate::arb_engine::inline_sim::InlineSimFailure {
+                            fail_index: None,
+                            revert_data: Vec::new(),
+                            bucket: "test".to_string(),
+                        }),
+                })
+            }
+        }
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        let (engine, path_id, pool_refs) = overfed_v4_engine();
+        let mut ctx = worker_probe_ctx(Arc::clone(engine.core()), pool_refs);
+        // Fresh Arc (refcount 1): install the stub via get_mut.
+        Arc::get_mut(&mut ctx)
+            .expect("probe ctx exclusively owned")
+            .inline_sim = Some(Arc::new(StubSim {
+            fail: false,
+            path_id,
+        }));
+
+        let result = SolvePathResult {
+            optimal_input: U256::from(1_000_000_000u64),
+            profit: U256::from(1_000u64),
+            hop_outputs: vec![U256::from(1u64)],
+            consumed_inputs: vec![U256::from(1u64)],
+            state_nonces: vec![0],
+            solver_pool_states: Vec::new(),
+        };
+
+        tracing::subscriber::with_default(subscriber, || {
+            let solve = tracing::info_span!("degenbot.arb.solve", block.number = 7u64);
+            let _guard = solve.enter();
+            let payload = inline_sim_payload(&ctx, 0, path_id, &result, &tracing::Span::current());
+            assert!(
+                payload.is_some(),
+                "stub hook returns a payload; None only when the seam is off"
+            );
+        });
+
+        provider.force_flush().expect("flush");
+        let spans = exporter.get_finished_spans().expect("spans");
+        let solve_id = spans
+            .iter()
+            .find(|sp| sp.name.as_ref() == "degenbot.arb.solve")
+            .map(|sp| sp.span_context.span_id())
+            .expect("solve span must be exported");
+        let sims: Vec<_> = spans
+            .iter()
+            .filter(|sp| sp.name.as_ref() == "degenbot.bundle.simulate")
+            .collect();
+        assert_eq!(
+            sims.len(),
+            1,
+            "exactly one worker-side sim span; all: {:?}",
+            spans.iter().map(|sp| sp.name.as_ref()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            sims[0].parent_span_id, solve_id,
+            "the worker sim span must parent under the cycle span"
+        );
+        let attr = |k: &'static str| {
+            sims[0]
+                .attributes
+                .iter()
+                .find(|kv| kv.key == opentelemetry::Key::from_static_str(k))
+                .map(|kv| kv.value.to_string())
+        };
+        assert_eq!(
+            attr("path_id").as_deref(),
+            Some(path_id.to_string().as_str()),
+            "path_id attribute"
+        );
+        assert_eq!(
+            attr("simulate.verdict").as_deref(),
+            Some("profitable"),
+            "verdict recorded at span close; attrs: {:?}",
+            sims[0].attributes
+        );
+        assert_eq!(
+            attr("sim.path").as_deref(),
+            Some("worker_inline"),
+            "seam discriminator distinguishes worker sims from the FFI seam"
+        );
+    }
 }

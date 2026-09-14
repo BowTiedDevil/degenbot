@@ -1,43 +1,12 @@
-//! Pure workload-analysis cluster (from the `solver_dispatch` dissolution,
+//! Pure workload-analysis cluster (from the retired grab-file dissolution,
 //! ergo epic `5WCRWZ` task 2): the solve-bin sizing seam (`solve_bin_count`,
 //! P6YXA6), the LPT pre-balanced partition (`lpt_partition`, RAYPAR T3), the
 //! named cordon-fallback seat plan (`plan_bins` + `SeatPlan` +
 //! `CordonFallbackDecision`, LW-T7), and the resolve-time cost proxies
 //! (`path_cost_proxy`, `sims_aware_cost`).
 //!
-//! Extracted from `arb_engine/solver_dispatch.rs` (the solve path's grab
-//! file) so the pure binning/costing seams and their invariants live at their
+//! Extracted from the retired grab file so the pure binning/costing seams and their invariants live at their
 //! own interface, independently of the lane walk.
-
-// ---------------------------------------------------------------------------
-// HONESTY PROBE (5WCRWZ T2 red pin): the workload-analysis items are OWNED
-// here, not in the retired grab file. While `solver_dispatch.rs` still
-// defines them, this probe fails; at cutover it passes. Same technique as the
-// grammar-walker shape modules' zero-PlanStep probes and T1's capture probe.
-// ---------------------------------------------------------------------------
-#[cfg(test)]
-mod ownership_probe {
-    const GRAB_FILE: &str = include_str!("solver_dispatch.rs");
-
-    #[test]
-    fn solver_dispatch_no_longer_defines_the_workload_items() {
-        const RETIRED_DEFINITIONS: [&str; 7] = [
-            "pub(crate) fn solve_bin_count(",
-            "pub(crate) fn lpt_partition(",
-            "pub(crate) fn plan_bins(",
-            "pub(crate) struct SeatPlan",
-            "pub(crate) enum CordonFallbackDecision",
-            "pub(crate) fn path_cost_proxy(",
-            "pub(crate) fn sims_aware_cost(",
-        ];
-        for marker in RETIRED_DEFINITIONS {
-            assert!(
-                !GRAB_FILE.contains(marker),
-            "solver_dispatch.rs still defines: {marker:?} — the workload items must be owned by arb_engine::workload_partition (5WCRWZ T2)"
-            );
-        }
-    }
-}
 
 use ::degenbot_solvers::mixed::ResolvedMixedPath;
 use degenbot_core::op_info;

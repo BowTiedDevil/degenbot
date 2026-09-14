@@ -12,6 +12,7 @@ use super::HashSet;
 #[cfg(test)]
 use crate::arb_engine::tests::test_keys::affected_keys;
 
+use super::executor::LaneOutcome;
 use super::{ArbitrageEngine, BlockMetadata};
 
 impl ArbitrageEngine {
@@ -88,8 +89,24 @@ impl ArbitrageEngine {
         // LXDY4C: the affected keys arrive from the block's EpochDelta
         // (consumed by the stage surface's on_resolve hook); no engine-local
         // dirty-set intake remains.
-        // Re-solve only paths containing updated pools (no batch send)
-        let outcome = self.rebuild_and_solve_affected(affected, block_number, metadata);
+        //
+        // 5WCRWZ T7 carry (the doc that lived on the deleted
+        // `rebuild_and_solve_affected`): re-resolve and re-solve only paths
+        // that contain updated pools, using the `pool_to_paths` reverse index
+        // to identify `affected_path_ids`; unaffected paths carry their
+        // previous results forward.
+        //
+        // # Panics
+        // When the merged drain's outcome accounting undercounts (exactness
+        // fuse, QR3NUS/LW-T7): the cycle thread fails loudly, never silently
+        // mis-sizes.
+        let outcome = self.cycle.run_epoch(
+            affected,
+            block_number,
+            metadata,
+            &self.registry,
+            &mut self.delivery,
+        );
 
         // 6XB6NJ: monotone advance on the block cursor.
         self.cycle.cursor.advance_processed(block_number);
@@ -238,10 +255,12 @@ impl ArbitrageEngine {
         }
 
         // Re-solve only paths containing updated pools (test-only intake)
-        self.rebuild_and_solve_affected(
+        self.cycle.run_epoch(
             &affected_keys(&v2_affected, &v3_affected, &HashSet::new()),
             block_number,
             metadata,
+            &self.registry,
+            &mut self.delivery,
         );
         // 6XB6NJ: monotone advance on the block cursor.
         self.cycle.cursor.advance_processed(block_number);
@@ -266,10 +285,45 @@ impl ArbitrageEngine {
                 }
             }
         }
-        self.rebuild_and_solve_affected(
+        self.cycle.run_epoch(
             &affected_keys(&HashSet::new(), &HashSet::new(), &v4_affected),
             block_number,
             metadata,
+            &self.registry,
+            &mut self.delivery,
         );
+    }
+
+    /// Terminal disposition of ONE detached straggler, under the single
+    /// engine-Mutex acquisition the sidecar makes per item (epic SRQEK5
+    /// WV62TX). Q1a policy: apply-if-unchanged, drop-on-touched — ANY live
+    /// stamp advance since enqueue (swap OR price-neutral liquidity event)
+    /// drops the straggler; a deregistered path drops too.
+    ///
+    /// The carrier is the unified [`LaneOutcome`] (QR3NUS 43E3H3): a
+    /// lane-witnessed detached bin also delivers `Suppressed`/`Failed`
+    /// records here. GAUGE PAIRING (REV 2 Defect 1, design §4.6.1): ONLY
+    /// the `Solved` arm touches the in-flight gauge —
+    /// `flush_solved_item`'s send-success is the ONLY bump site, so
+    /// `Solved` is the only variant that may decrement. `Failed`/
+    /// `Suppressed` never bumped (their lane sends bypass the
+    /// gauge-bumping submit closure); decrementing them instead would SAG
+    /// the gauge and silently defeat `DETACHED_INFLIGHT_CAP`.
+    // Deliberate: this IS the disposition table (design §4.4) — one match
+    // over the three LaneOutcome arms with the variant-gated gauge rule,
+    // kept as a single table so the pairing invariant is readable in one
+    // place. The pre-merge twin was similarly long for the same reason.
+    // THE FOLD (WNH5OL): the three-variant disposition table itself is
+    // now `drain_lane_outcomes` below. This envelope keeps ONLY what is
+    // inherently per-item and Solved-arm-only — the in-flight gauge
+    // decrement (the variant-gated pairing: only the Solved arm ever
+    // bumped, see the gauge notes above) and the Q1a freshness oracle
+    // (a Solved straggler vs its enqueue-time stamps) — then hands the
+    // item to THE ONE drain under the sidecar's per-item Mutex
+    // acquisition (contract 3: SidecarPerItemHold; the drain never
+    // locks for itself).
+    pub(crate) fn merge_detached_item(&mut self, item: LaneOutcome) {
+        self.cycle
+            .merge_detached_item(item, &self.registry, &mut self.delivery);
     }
 }

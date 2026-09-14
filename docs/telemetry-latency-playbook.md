@@ -8,7 +8,7 @@ the Jaeger-side investigation guide.
 
 Sources of truth:
 
-- Spans/events: `rust/crates/degenbot-bot/src/arb_engine/solver_dispatch.rs`
+- Spans/events: `rust/crates/degenbot-bot/src/arb_engine/solve_cycle.rs`
   (the `[solve-phase]` family), `bot_core/block_pump.rs` (`degenbot.epoch.run` root + pre-solve
   gap fields), `bot_core/stage_telemetry.rs` (`degenbot.stage.*` per-transition spans),
   `arb_engine/engine_handle.rs` (`degenbot.arb.solve`).
@@ -137,7 +137,7 @@ Diagnose by reading the phase split before touching code:
 4. **Resolve wall grows superlinearly** with resolved count → re-projection of
    structurally-invalid paths (see S3).
 
-Tracing locations: `solver_dispatch.rs::rebuild_and_solve_affected` (all four
+Tracing locations: `solve_cycle.rs::run_epoch` (all four
 phase events); `engine_handle.rs:129` (span open); per-path timing already in
 the closure (`t0`/`micros`, feeds `slowest.paths`).
 
@@ -152,7 +152,7 @@ Hypotheses ranked:
    `ResolvedMixedPath` per work item). Profile allocations if cpu_us itself is
    fine but wall balloons only at large sets.
 3. Something inside `solve_path` taking a lock — audit any new code for
-   `Mutex`/`RwLock` under the par_iter in `solver_dispatch.rs`.
+   `Mutex`/`RwLock` under the par_iter in `solve_cycle.rs`.
 
 ### S3. Invalidity rate > ~50% of resolved
 

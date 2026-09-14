@@ -32,7 +32,8 @@
 //! | Module | Concern |
 //! |--------|---------|
 //! | [`event_routing`] | Log event routing, block processing, backfill |
-//! | [`solver_dispatch`] | Path resolution, solver dispatch, rebuild logic |
+//! | [`lane_walk`] | THE ONE lane walk: per-bin solve, the pipelined-sim pacing, and the walk-adjacent clamp/flush helpers |
+//! | [`solve_cycle`] | The solve cycle as a deep module (ADR-045): the CL-hop clamp + profit recompute live here |
 //! | [`delivery_lifecycle`] | Delivery lifecycle: channel open/send/close + the end-of-stream contract (incident 2026-08-20 #2) |
 //! | [`delivery_policy`] | Delivery policy: diff computation, thresholds, delivered-bookkeeping (BI7UZV) |
 //! | [`block_cursor`] | The engine block cursor — one owner of the engine-side block-coordinate residue (6XB6NJ) |
@@ -104,17 +105,16 @@ mod path_registry;
 pub mod fleet_wake;
 mod seat_host;
 mod snapshot_verify;
-mod solver_dispatch;
 // 5WCRWZ T3: the per-bin lane walk's home — `solve_one_path` (the per-path
 // solve + diagnostics body the Solver seats' bins execute) lives here; the
 // walk driver and Lane* policy types are later tasks' inhabitants.
 mod lane_walk;
-// 5WCRWZ T1: heavy-path capture diagnostics, extracted from the solver_dispatch
+// 5WCRWZ T1: heavy-path capture diagnostics, extracted from the retired
 // grab file (import-only move; the module owns its honesty probe + test island).
 mod solver_capture;
 // 5WCRWZ T2: the pure workload-analysis cluster (solve-bin sizing, LPT
 // partition, named cordon-fallback seat plan, resolve-time cost proxies),
-// extracted from the solver_dispatch grab file (import-only move; the module
+// extracted from the retired grab file (import-only move; the module
 // owns its honesty probe + test islands).
 mod workload_partition;
 // ADR-045 T1 (`E7V2S6`): the solve-cycle data-type seam (`CycleOutcome` /
@@ -443,6 +443,12 @@ pub struct ArbitrageEngine {
     /// [`ArbitrageEngine::set_inline_simulator`]; `None` = stance-relevant
     /// callers fall back to the batch FFI sim (module `inline_sim` doc).
     inline_sim: Option<std::sync::Arc<dyn inline_sim::InlineSimulator>>,
+}
+
+impl Default for ArbitrageEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ArbitrageEngine {

@@ -1,4 +1,4 @@
-//! The per-bin lane walk (from the `solver_dispatch` dissolution, ergo epic
+//! The per-bin lane walk (from the retired grab-file dissolution, ergo epic
 //! `5WCRWZ`; T3 created the module for `solve_one_path`; T4 moved the walk
 //! driver in): home of `solve_one_path` — the per-path solve + diagnostics
 //! body every Solver seat's bin executes (epic BXUSGL T1) — and of THE ONE
@@ -7,17 +7,16 @@
 //! `LaneWalkReads`) and the walk-side telemetry statics/record
 //! (`SLOWEST_PATHS_K`, `WALK_DENSE_ALERTED`, `PathTimeRecord`).
 //!
-//! Direction of dependency is `lane_walk -> {solve_cycle, solver_dispatch
-//! residue, executor, inline_sim}`: the walk reads the cycle context and
-//! `min_profit_floor` from `solve_cycle`, the still-unretired grab-file
-//! helpers (`clamp_result_in_worker`, `flush_solved_item`) from
-//! `solver_dispatch`, and the lane/pipelined-sim seams from `executor`/
-//! `inline_sim`. Those grab-file helpers re-point when the later tasks
-//! retire the grab file.
+//! Direction of dependency is `lane_walk -> {solve_cycle, executor,
+//! inline_sim}`: the walk reads the cycle context, `min_profit_floor`, and
+//! the shared clamp body (`clamp_result_with_state`) from `solve_cycle`, and
+//! the lane/pipelined-sim seams from `executor`/`inline_sim`. The
+//! walk-adjacent helpers (`clamp_result_in_worker`, `flush_solved_item`,
+//! `inline_sim_payload`) are defined HERE (5WCRWZ T7).
 
+use super::solve_cycle::clamp_result_with_state;
 use super::solve_cycle::min_profit_floor;
 use super::solve_cycle::SolveCycleShared;
-use super::solver_dispatch::{clamp_result_in_worker, flush_solved_item};
 use super::{BlockMetadata, HashMap};
 use crate::arb_engine::executor::{SolveLane, SolveOutcome};
 use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
@@ -42,6 +41,139 @@ static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
 /// proper, not just wall time. `pub(crate)` because `solve_cycle::PathTimesHeap`
 /// aliases it (5WCRWZ T5 relocated the heap; NO re-export shim remains).
 pub(crate) type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
+
+// ===========================================================================
+// 5WCRWZ T7: the walk-adjacent helpers, moved here with the walk they
+// serve (the retired grab file is deleted outright).
+// ===========================================================================
+/// SIMPIPE2 T2: the WORKER-side clamp — drive the merge-site-identical
+/// clamp from the solve worker's `to_solve`-aligned pool-ref snapshot, so a
+/// result is clamp-committed BEFORE the streaming handoff (the T1/T3 seam
+/// simulates on a payload whose `consumed_inputs` are the merge-committed
+/// values with no engine-lock round-trip). Stance-gated: with
+/// `DEGENBOT_SOLVE_INLINE_SIM` unset the merge-site clamp runs exactly as
+/// before (this fn is a no-op returning 0).
+/// Invariant: twins > 0 ⟺ the clamp mutated the result (every clamp path
+/// runs its twin first) — the merge site treats twins > 0 as
+/// already-clamped and never re-clamps (a second pass would re-apply the
+/// margin and corrupt the committed inputs).
+pub(crate) fn clamp_result_in_worker(
+    ctx: &SolveCycleShared,
+    idx: usize,
+    pid: u64,
+    result: &mut SolvePathResult,
+) -> u64 {
+    if !ctx.worker_clamp || idx >= ctx.pool_refs.len() {
+        return 0;
+    }
+    let core = ctx
+        .core
+        .read_at(crate::bot_core::state_lock::LockSite::Solver);
+    clamp_result_with_state(&core, pid, &ctx.pool_refs[idx].pools, result)
+}
+
+/// SIMPIPE2 T3: the WORKER-side inline sim — resolve the per-path payload
+/// from the clamp-committed result on the SAME worker context the T2 clamp
+/// opened (shared core + to_solve-aligned pool refs; stance + hook gated).
+/// The payload rides the result handoff so the merge never calls out — the
+/// merge only stores/forwards. `None` = stance off, no hook, or the hook
+/// reported failure-without-payload.
+#[cfg(all(test, feature = "otel"))]
+pub(crate) fn inline_sim_payload(
+    ctx: &SolveCycleShared,
+    idx: usize,
+    pid: u64,
+    result: &SolvePathResult,
+    parent_span: &tracing::Span,
+) -> Option<crate::arb_engine::inline_sim::SimulatedPathResult> {
+    if !ctx.worker_clamp || idx >= ctx.pool_refs.len() {
+        return None;
+    }
+    let sim = ctx.inline_sim.as_ref()?;
+    // RKXN5Z/IJUBV3 (G6HSIS parity): the REAL per-path EVM sim rides the
+    // `degenbot.bundle.simulate` span, parented under the entered cycle span
+    // (both executor arms re-enter solve_span around `solve_one_path`), with
+    // the terminal verdict recorded at close. This is the only remaining
+    // owner of the name - the merge-site marker that used to borrow it is a
+    // merge-span event now, so Jaeger's `bundle.simulate` spans are all
+    // genuine ms-class simulations again.
+    // 7LV6VN T1b: EXPLICIT parent at creation. TLS re-entry alone proved
+    // insufficient on the detached bin threads (worker-side spans still
+    // forked their own trace with a dangling parent id - 1041 roots/60s
+    // live-probed). The macro `parent:` form binds the identity directly,
+    // independent of the thread-local current span.
+    let span = tracing::info_span!(
+        parent: parent_span.clone(),
+        "degenbot.bundle.simulate",
+        sim.path = "worker_inline",
+        path_id = pid,
+        sim_block = ctx.solve_block,
+        simulate.verdict = tracing::field::Empty,
+        simulate.expected_profit = tracing::field::Empty,
+        // SIMSPANDUP: declared so the seam-reused span keeps the ADR-040
+        // error classification on the inline arm too.
+        simulate.error_reason = tracing::field::Empty,
+    );
+    let _enter = span.enter();
+    let payload = sim.simulate_path(crate::arb_engine::inline_sim::InlineSimRequest {
+        path_id: pid,
+        hops: std::clone::Clone::clone(&ctx.pool_refs[idx].pools),
+        optimal_input: result.optimal_input,
+        consumed_inputs: std::clone::Clone::clone(&result.consumed_inputs),
+        hop_outputs: std::clone::Clone::clone(&result.hop_outputs),
+        state_nonces: std::clone::Clone::clone(&result.state_nonces),
+        sim_block: ctx.solve_block,
+        block_timestamp: ctx.metadata.timestamp,
+        parent_base_fee: ctx.metadata.base_fee_per_gas.unwrap_or(0),
+        parent_gas_used: ctx.metadata.gas_used,
+        parent_gas_limit: ctx.metadata.gas_limit,
+    })?;
+    // SIMSPANDUP: on failure the seam's SimSpanVerdict Drop (inside the
+    // inline hook's task) already stamped this span with
+    // `not_profitable`/`error` (+ error_reason) before the payload returns -
+    // don't clobber the richer classification with the bare string.
+    if payload.failure.is_none() {
+        span.record("simulate.verdict", "profitable");
+    }
+    span.record(
+        "simulate.expected_profit",
+        tracing::field::display(result.profit),
+    );
+    Some(payload)
+}
+
+/// Stamp the sim payload onto the held Solved outcome and submit it —
+/// ONE flush shape for BOTH solve arms (7LV6VN T5 carry; unified by
+/// QR3NUS 43E3H3). The arms differ only in the `submit` closure:
+/// the detached arm's closure sends on the merge pipe AND bumps its
+/// in-flight gauge at SEND success (a bin that dies before sending
+/// never leaks a count); the in-cycle arm's closure is `lane.solved`.
+pub(crate) fn flush_solved_item(
+    held: &mut Vec<(u64, Option<SolveOutcome>)>,
+    submit: &mut dyn FnMut(SolveOutcome),
+    done_pid: u64,
+    payload: Option<SimulatedPathResult>,
+) {
+    let Some(ix) = held.iter().position(|(pid, _)| *pid == done_pid) else {
+        // The outcome already left `held` (the releasing flush ran — its
+        // last sim landed and the walk's final `drain_ready` handed it
+        // over). A LATER `drain_ready`/`join_all` receipt for the same
+        // pid (an aliased or duplicate scheduler receipt accessor) must
+        // NOT resurrect it: a second release would re-bump the detached
+        // gauge and false-trip the exactness fuse. The late payload (if
+        // any) has no carrier — drop it silently (same contract the
+        // former twin helpers' "already flushed" arm kept).
+        return;
+    };
+    let Some(o) = held[ix].1.as_mut() else {
+        return; // already flushed
+    };
+    o.payload = payload;
+    let (_, outcome) = held.remove(ix);
+    if let Some(outcome) = outcome {
+        submit(outcome);
+    }
+}
 
 /// Per-path solve + diagnostics (epic BXUSGL T1): the former `solve_fn`
 /// closure moved out verbatim so every dispatch arm (the legacy
@@ -627,42 +759,5 @@ mod solve_path_span_tests {
                 .any(|kv| kv.key == opentelemetry::Key::from_static_str("path.id")),
             "path.id must ride as a span attribute"
         );
-    }
-}
-
-// HONESTY PROBE (5WCRWZ T3 red pin): the lane-walk items are OWNED here, not
-// in the retired grab file. While `solver_dispatch.rs` still defines them,
-// this probe fails; at cutover it passes. Same technique as T1's capture
-// probe and T2's workload probe.
-// ---------------------------------------------------------------------------
-#[cfg(test)]
-mod ownership_probe {
-    const GRAB_FILE: &str = include_str!("solver_dispatch.rs");
-
-    #[test]
-    fn solver_dispatch_no_longer_defines_the_lane_walk_items() {
-        const RETIRED_DEFINITIONS: [&str; 13] = [
-            "pub(crate) struct SolveCycleShared",
-            "pub(crate) fn solve_one_path(",
-            "struct PipelinedSims {",
-            "impl PipelinedSims {",
-            // 5WCRWZ T4: the ONE lane walk and its policy/context/result
-            // types move here from solver_dispatch.rs.
-            "pub(crate) fn drive_lane_walk(",
-            "pub(crate) struct LaneArmPolicy",
-            "pub(crate) struct LaneWalkBinPlan",
-            "pub(crate) struct WalkSubmitCtx",
-            "pub(crate) struct LaneWalkReads",
-            "fn stamp_outcome(",
-            "type PathTimeRecord",
-            "static WALK_DENSE_ALERTED",
-            "const SLOWEST_PATHS_K",
-        ];
-        for marker in RETIRED_DEFINITIONS {
-            assert!(
-                !GRAB_FILE.contains(marker),
-            "solver_dispatch.rs still defines: {marker:?} — the lane-walk items must be owned by arb_engine::lane_walk / solve_cycle / inline_sim (5WCRWZ T3)"
-            );
-        }
     }
 }

@@ -241,7 +241,7 @@ machine). Source: `rust/crates/degenbot-ingestion/src/`
   collapsed into one. Owns the two genuine-async-boundary channels retained from
   ADR-006/027: the block clock (`BlockClockPipe`, header ticks, never queued behind
   solver work) and the result batch written at the Published edge.
-- `arb_engine/solver_dispatch.rs` — the detached solve cycle (unconditional
+- `arb_engine/solve_cycle.rs` — the detached solve cycle (unconditional
   since the WFF6MM cutover; the `DEGENBOT_DETACHED_SOLVES` stance retired with
   the in-cycle arm): the solve cycle enqueues and returns, collapsing the
   engine-`Mutex` hold on the solve path to enqueue-end.

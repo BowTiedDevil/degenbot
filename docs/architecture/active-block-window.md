@@ -41,7 +41,7 @@ state clock** (`SolveAnchor::resolve`: max(block, `pool_state_head()`),
 `bot_core/solve_anchor.rs`) because a hop's `update_block` can exceed the
 lagging header clock:
 
-- `solver_dispatch.rs:109` — `solve_block = max(block_number, pool_state_head())`
+- `solve_cycle.rs` — `solve_block = max(block_number, pool_state_head())`
 - `block_pump.rs:609` — verifier `anchor = max(block, pool_state_head())`
 - `dispatch.rs:593` (`degenbot-arbitrage`, the Python-driven sim) —
   `sim_block = max(candidate.solve_block)`
@@ -167,7 +167,7 @@ a backwards-compat layer, and we do not introduce a rival state mirror.
    for `on_drain`/solve/verify in place of the raw header-fed `current_block`
    variable (which is demoted to a liveness/ordering probe only) and the
    one-shot `anchor` at `:609`.
-2. `solver_dispatch.rs:109` — consume the promoted `active_block` (threaded as
+2. `solve_cycle.rs` — consume the promoted `active_block` (threaded as
    the solve anchor) instead of re-deriving `max(block_number, pool_state_head())`.
 3. `solver_state_verifier.rs:297` — anchor to the promoted `active_block`.
 4. `dispatch.rs:593` (`degenbot-arbitrage`) — `sim_block` becomes the

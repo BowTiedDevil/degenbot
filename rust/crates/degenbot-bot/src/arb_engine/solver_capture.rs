@@ -1,43 +1,13 @@
-//! Heavy-path capture diagnostics (from the `solver_dispatch` dissolution,
+//! Heavy-path capture diagnostics (from the retired grab-file dissolution,
 //! ergo epic `5WCRWZ` task 1): the one-shot capture of heavy solver inputs
 //! so the offline replay harnesses can be optimized against real captured
 //! pool state without a full bot run.
 //!
-//! Extracted from `arb_engine/solver_dispatch.rs` (the solve path's grab
-//! file) so the diagnostic corpus stops riding the hot solve-path file:
+//! Extracted from the retired grab file so the diagnostic corpus stops riding the hot solve-path file:
 //! its ~500 lines (writer + variants + tests) churn independently of the
 //! lane walk.
 
 use ::degenbot_solvers::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-
-// ---------------------------------------------------------------------------
-// HONESTY PROBE (5WCRWZ T1 red pin): the capture items are OWNED here, not in
-// the retired grab file. While `solver_dispatch.rs` still defines them, this
-// probe fails; at cutover it passes. Same technique as the grammar-walker
-// shape modules' zero-PlanStep probes.
-// ---------------------------------------------------------------------------
-#[cfg(test)]
-mod ownership_probe {
-    const GRAB_FILE: &str = include_str!("solver_dispatch.rs");
-
-    #[test]
-    fn solver_dispatch_no_longer_defines_the_capture_items() {
-        const RETIRED_DEFINITIONS: [&str; 6] = [
-            "pub(crate) struct HeavyPathCapture",
-            "pub(crate) enum CaptureVariant",
-            "impl CaptureVariant {",
-            "impl HeavyPathCapture {",
-            "fn cl_ranges_json(",
-            "pub(crate) fn gate_capture_from_cfg(",
-        ];
-        for marker in RETIRED_DEFINITIONS {
-            assert!(
-                !GRAB_FILE.contains(marker),
-            "solver_dispatch.rs still defines: {marker:?} — the capture items must be owned by arb_engine::solver_capture (5WCRWZ T1)"
-            );
-        }
-    }
-}
 
 /// Degenerate-path capture config parse (M6776W) — the owner side of the
 /// `capture` config section (the gate itself reads no env). KAHU5W:

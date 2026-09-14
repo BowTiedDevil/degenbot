@@ -56,7 +56,7 @@ pub(crate) fn abort_executor(context: &str, err: &str) -> ! {
     eprintln!("UNRECOVERABLE, aborting (stranded result pipe): {context}: {err}");
     std::process::abort();
 }
-/// Public loud-stop wrapper (ADR-021; used by the `solver_dispatch` submit
+/// Public loud-stop wrapper (ADR-021; used by the solve-path submit
 /// seam for stranded-pipe terminal stops).
 pub(crate) fn abort_loud(context: &str, err: &str) -> ! {
     abort_executor(context, err);
