@@ -1,6 +1,6 @@
 import pytest
 
-from degenbot.calculations.evm_math import next_base_fee
+from degenbot.calculations import next_base_fee
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address
 from degenbot.crypto import keccak256
@@ -189,9 +189,18 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
 
 
 def test_fee_calcs():
+    """Pin EIP-1559 base-fee edge behavior against hand-computed values.
+
+    The canonical formula lives in the Rust core
+    (`degenbot._ffi.eip_1559.next_base_fee`), re-exported through
+    `degenbot.calculations`. Expected values are derived by hand from the
+    EIP-1559 spec (https://eips.ethereum.org/EIPS/eip-1559): elasticity 2 makes
+    the gas target half the gas limit, and the max-change denominator 8 caps the
+    per-block change at 1/8 of the parent base fee.
+    """
     base_fee = 100 * 10**9
 
-    # EIP-1559 target is 50% full blocks, so a 50% full block should return the same base fee
+    # Exactly at target (zero delta): a 50%-full block leaves the fee unchanged.
     assert (
         next_base_fee(
             parent_base_fee=base_fee,
@@ -201,29 +210,59 @@ def test_fee_calcs():
         == base_fee
     )
 
-    # Fee should be higher
+    # Above target: delta is 5M/15M = 1/3 of target; 100 gwei * (1/3) // 8.
     assert (
         next_base_fee(
             parent_base_fee=base_fee,
             parent_gas_used=20_000_000,
             parent_gas_limit=30_000_000,
         )
-        == 104166666666
+        == 104_166_666_666
     )
 
-    # Fee should be lower
+    # Below target: symmetric decrease.
     assert (
         next_base_fee(
             parent_base_fee=base_fee,
             parent_gas_used=10_000_000,
             parent_gas_limit=30_000_000,
         )
-        == 95833333334
+        == 95_833_333_334
+    )
+
+    # Maximum upward change: a full block (delta == target) clamps at +1/8.
+    assert (
+        next_base_fee(
+            parent_base_fee=base_fee,
+            parent_gas_used=30_000_000,
+            parent_gas_limit=30_000_000,
+        )
+        == 112_500_000_000
+    )
+
+    # Maximum downward change: an empty block clamps at -1/8.
+    assert (
+        next_base_fee(
+            parent_base_fee=base_fee,
+            parent_gas_used=0,
+            parent_gas_limit=30_000_000,
+        )
+        == 87_500_000_000
+    )
+
+    # Floor division: 101 // 8 == 12, not rounded up.
+    assert (
+        next_base_fee(
+            parent_base_fee=101,
+            parent_gas_used=30_000_000,
+            parent_gas_limit=30_000_000,
+        )
+        == 113
     )
 
     min_base_fee = 95 * 10**9
 
-    # Enforce minimum fee
+    # Enforce minimum fee: the computed 87.5 gwei is raised to the floor.
     assert (
         next_base_fee(
             parent_base_fee=base_fee,
