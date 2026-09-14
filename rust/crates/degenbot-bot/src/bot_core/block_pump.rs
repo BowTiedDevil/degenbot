@@ -3699,6 +3699,25 @@ mod tests {
     fn run_reorg_stream(capture: ReorgSpanCapture, pump: &mut BlockPump, events: Vec<WsEvent>) {
         use stream::StreamExt;
         use tracing_subscriber::layer::SubscriberExt;
+        // WAJEQP flake fix (BGGTEG): the tracing callsite interest cache is
+        // PROCESS-GLOBAL, and a parallel subscriber-less test (same pump
+        // code, no thread-local default) that executes the shared
+        // `degenbot.epoch.run` macro first registers the callsite as
+        // `never` for every thread — our thread-local capture then never
+        // constructs the span even though the header select-arm ran. Paint
+        // the cache `always` with a best-effort all-enabled global
+        // registry: spans on subscriber-less threads are created and
+        // dropped by the bare registry (no layers: no behavior change for
+        // any other test), while this test's capture stays thread-local.
+        // `let _ =` — if some earlier test already took the once-per-process
+        // slot (an all-enabled registry itself), the paint is already done.
+        // NOT under `--features otel`: there the once-per-process global
+        // slot belongs to the `header_arms_per_block_span...` test's
+        // registry+otel layer (its own `set_global_default` repaints the
+        // interest cache via tracing's rebuild), and a second registry
+        // would mix span-Id spaces across threads.
+        #[cfg(not(feature = "otel"))]
+        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
         let subscriber = tracing_subscriber::registry().with(capture);
         tracing::subscriber::with_default(subscriber, || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -6865,10 +6884,14 @@ mod tests {
     /// observed header, carrying a `block.number` field, parented under the
     /// `run_with_stream` instrument span. In-memory exporter +
     /// `set_global_default` (the repo convention: the thread-local `set_default`
-    /// is unsafe in a parallel test process - stale `DefaultGuard` restores
-    /// corrupt it). No other lib test sets a global subscriber, so this test
-    /// wins the once-per-process slot; the `OTel` layer itself is covered by the
-    /// `otel_plumbing` integration tests.
+    /// is process-unsafe in a parallel test with cross-thread span handles —
+    /// `telemetry::publish_block_context` and the exact-match reparent store
+    /// carry otel span state across threads). No other lib test takes the
+    /// once-per-process global slot (the BGGTEG interest paint is
+    /// `not(otel)`-gated), so this test wins it; its `set_global_default`
+    /// repaints the callsite interest cache exactly like the paint would.
+    /// The `OTel` layer itself is covered by the `otel_plumbing` integration
+    /// tests.
     #[cfg(feature = "otel")]
     #[tokio::test]
     async fn header_arms_per_block_span_with_number_and_parent() {
