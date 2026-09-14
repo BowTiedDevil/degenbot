@@ -1039,7 +1039,8 @@ _Avoid_: "quote", "oracle", "gate" (admission-control connotations),
 
 
 
-### Solve cycle (2026-09 architecture review — decided in grilling, epic TBD)
+### Solve cycle (2026-09 architecture review — decided in grilling; solver_dispatch
+dissolution filed as ergo epic `5WCRWZ` — see the "Lane walk" entry below)
 
 - **Solve cycle** — the per-block dirty-solve unit: affected-path fan-out from
   the EpochDelta keys, admission (draw/shed), (re)resolve, solve, witness,
@@ -1058,6 +1059,18 @@ _Avoid_: "quote", "oracle", "gate" (admission-control connotations),
 _Avoid_: "solve loop" (the pump's block loop), "cycle" bare (ambiguous with
 detached-arm cycle states), "engine cycle" (the engine is registry +
 composition root, not the cycle owner).
+- **Lane walk** — the solve cycle's per-bin body walker: the ONE walk
+  function (formerly `ArbitrageEngine::drive_lane_walk`, a static that never
+  touched the engine) that folds each bin's items — resolve, capacity clamp,
+  inline-sim submit, envelope stamp — into the `SolveLane` result pipe, plus
+  its per-item step (the solve-one-path bin body the fleet's Solver seats
+  execute). Pure over the cycle's `SolveCycleShared`; owns the walk recorders
+  and the LPT workload partitioning it consumes. Lives in
+  `arb_engine::lane_walk` after the solver_dispatch dissolution.
+  Distinct from the fleet's **Lane** (ADR-042: a thread-ownership lane) —
+  the walk's "lane" is the result pipe the arms own.
+_Avoid_: "dispatch" (the retired grab-file name), "run_bin" (the pre-fold
+per-arm closures).
 - **Path registry** — the solve engine's identity module: path_pools, the
   pool_to_paths reverse index, signature dedup, next_id, cap. Deliberately
   SHALLOW: no resolve, no solve, no deps beyond solver value types. The hot
