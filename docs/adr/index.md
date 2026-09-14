@@ -65,6 +65,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [046](ADR-046-stage-handlers-pump-control-split.md) | StageHandlers stays the pure product seam; PumpControl is the driver-facing control seam | accepted |
 | [047](ADR-047-retire-subscriber-bus.md) | Retire the ADR-006 D4 subscriber bus — compile is the guard for retired modules | accepted |
 | [048](ADR-048-fleet-boot-registry.md) | Fleet boot registry — one keyed owner for the pooled roles' boot facts | accepted |
+| [049](ADR-049-engine-stage-driver-seam.md) | The engine's interface is one stage seam — the engine recedes to composition machinery | accepted |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 

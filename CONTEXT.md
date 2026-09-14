@@ -1093,7 +1093,31 @@ per-arm closures).
   registration is the only `&mut` caller. See
   [ADR-045](docs/adr/ADR-045-solve-cycle-extraction.md).
 
-### Engine seam deepening — EngineStages is the one driver seam (2026-09 arch review #11, candidate 2 — decided in grilling; filed as ergo epic `5TBT7L`)
+### Engine seam deepening — EngineStages is the one driver seam (2026-09 arch review #11, candidate 2 — decided in grilling; shipped as ergo epic `5TBT7L`)
+
+**SHIPPED (2026-09-14, epic `5TBT7L`).** The engine's interface is one seam.
+Slice chain: T1 `2NLZE3` red (`c43941f34`) — the one-impl-block census gate +
+the full driver-surface twin probes (today's census: 12 blocks across 8 files);
+T2 `3WI4EO` (`5ff50c3f9`) — the typed `EngineRetune` value
+(`arb_engine/retune.rs`) packs the construction knobs and is applied once at
+construction + per runtime operator retune (`EngineStages::apply_retune`),
+collapsing the setter family; T3 `RS64JJ` (`a1de075bc`) — engine-internal
+callers reach the machines directly, the engine-hop twins die (census 11);
+T4 `5AFSXM` (`d9dbe830c`) — `solve_dirty` dissolves into
+`EngineStages::run_solve_cycle`, `event_routing.rs` is deleted wholesale, the
+lifecycle cursor twins and `PumpControl` pokes go machine-direct (census 10);
+T5 `RPEBMX` (`f265ea872`) — the pyo3 driver re-sources onto `Arc<EngineStages>`
+(`PyArbEngine` holds the stage handle) and `ArbitrageEngine` goes `pub(crate)`,
+the `standalone_consumer` example re-sourcing with it (census 7); T6 `MHLURV`
+(`1e35449b8`) — the `lifecycle` / `delivery_policy` inherent blocks dissolve to
+machine-direct free functions, the five `mod.rs` inherent blocks collapse to
+ONE, and the test shims move to the cfg(test) `arb_engine::test_harness`
+(census 1). The census gate (`just check-engine-impl-blocks`, wired into
+`lint-rust-check` / prek pre-commit / CI) is the standing invariant: exactly ONE
+`impl ArbitrageEngine` block, in `arb_engine/mod.rs`. The symmetric
+degenbot-python census allows exactly one `ArbitrageEngine` mention — the pyclass
+compat string `name = "ArbitrageEngine",` (the Python-visible name is a
+deliberate API-compat exemption; the wrapper type's real name is `PyArbEngine`).
 
 - **Driver seam** — the arb engine's ONE external interface: the stage
   surface (`EngineStages`). Both adapters — the block pump (its
@@ -1102,7 +1126,8 @@ per-arm closures).
   control, and the `core()` handoff all cross it. The raw
   `ArbitrageEngine` is `pub(crate)` machinery: registry + composition
   root holding exactly ONE inherent impl block of real composition work
-  (constructors, pool registration, phase, core handoff).
+  (constructors, the `apply_retune` body, phase state, the `core()` handoff,
+  and the cfg(test) pool-registration helpers).
 _Avoid_: "engine facade" (a facade fronts ANOTHER still-pub surface — the
 whole point is there is no second door), the inherent-twin shape (the same
 method existing on the engine AND its machine).
