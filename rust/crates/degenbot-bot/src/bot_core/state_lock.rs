@@ -420,8 +420,20 @@ pub fn dump_active_holds() -> String {
 /// deadlocks (`a3ab1c676` V3, `decf7cd8a` V4) were exactly this shape.
 /// Scope the first guard explicitly so it drops before the second
 /// acquires; the compiler cannot catch this class.
+///
+/// The positive pattern is a **fused accessor** that takes the lock once and
+/// chains the whole lookup under that guard — see
+/// [`crate::bot_core::registration_lifecycle`]'s
+/// `pool_tick_data_block_by_address` / `pool_tick_data_block_by_v4_key`.
 pub struct StateLock<T> {
     inner: RwLock<T>,
+    /// Test-only read-acquisition counter (see
+    /// [`StateLock::read_acquires_for_tests`]): a regression test asserts
+    /// that a fused lookup takes the lock exactly ONCE, because the
+    /// nested-read self-deadlock class is otherwise observable only by
+    /// hanging (see the `NEVER NEST ACQUISITIONS` note above).
+    #[cfg(test)]
+    read_acquires: AtomicU64,
 }
 
 impl<T> StateLock<T> {
@@ -434,6 +446,8 @@ impl<T> StateLock<T> {
     pub fn new(value: T) -> Self {
         Self {
             inner: RwLock::new(value),
+            #[cfg(test)]
+            read_acquires: AtomicU64::new(0),
         }
     }
 
@@ -446,6 +460,8 @@ impl<T> StateLock<T> {
     #[track_caller]
     pub fn read_at(&self, site: LockSite) -> StateReadGuard<'_, T> {
         let t0 = Instant::now();
+        #[cfg(test)]
+        self.read_acquires.fetch_add(1, Ordering::Relaxed);
         let guard = self.inner.read();
         record_wait(site.label(), "read", t0);
         if !diag_enabled() {
@@ -530,6 +546,15 @@ impl<T> StateLock<T> {
             site,
             acquired: t0,
         }
+    }
+
+    /// Test-only count of `read_at` acquisitions on THIS lock instance —
+    /// the deterministic surface for "the fused lookup takes one read" (the
+    /// alternative is a hang, which cannot be asserted cleanly).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn read_acquires_for_tests(&self) -> u64 {
+        self.read_acquires.load(Ordering::Relaxed)
     }
 
     /// Try to acquire a write guard without blocking (`None` when contended).
