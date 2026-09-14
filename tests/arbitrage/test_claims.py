@@ -418,13 +418,41 @@ def test_thread_adapter_leader_failure_peer_exact_exception_then_retry() -> None
 
 def test_thread_adapter_concurrent_peers_single_winner() -> None:
     """N>2 concurrent seat threads racing one claim: single winner, every
-    peer shares the outcome."""
+    peer shares the outcome.
+
+    Deterministic white-box harness: an instance-local _acquire wrap counts
+    arrivals, and the leader's slow() does not return until all 8 threads have
+    resolved _acquire. Without that, a thread dispatched later than the
+    leader's 20ms window resolves _acquire after the leader's release and
+    legitimately re-claims — the test-side race this pins out.
+    """
     claims = VerifyClaims(ThreadEventWake())
     calls: list[int] = []
     barrier = threading.Barrier(8, timeout=5)
 
+    arrivals = 0
+    arrivals_cv = threading.Condition()
+    original_acquire = claims._acquire
+
+    def counted_acquire(claim_key: str):
+        # Count AFTER the original returns: an arrival is only resolved once
+        # the caller holds its record (leader or peer), so 8 arrivals means no
+        # thread can still be racing to acquire past the leader's release.
+        nonlocal arrivals
+        record = original_acquire(claim_key)
+        with arrivals_cv:
+            arrivals += 1
+            arrivals_cv.notify_all()
+        return record
+
+    claims._acquire = counted_acquire  # instance-local wrap; no global patch
+
     def slow() -> None:
         calls.append(1)
+        with arrivals_cv:
+            assert arrivals_cv.wait_for(lambda: arrivals == 8, timeout=5), (
+                "harness timeout: not all threads resolved _acquire"
+            )
         time.sleep(0.02)
 
     outcomes: list[BaseException | None] = []
