@@ -15,7 +15,7 @@
 //!   `DR_REPLAY_ITERS=25` ...   // more reps for tighter p95 (default 9)
 //!
 //! Re-reads a capture JSONL produced by the live hook
-//! (`solver_dispatch` `DEGENBOT_SOLVER_CAPTURE=1`) or by `cl_capture_gen`, rebuilds
+//! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`) or by `cl_capture_gen`, rebuilds
 //! each Vec<IntV3TickRangeSequence> from the per-range fields, and re-runs
 //! `int_solve_cl_path` — the production all-CL solver (the exact call
 //! `mixed::solve_path` makes, initial input ONE) — OFFLINE, with no bot / RPC /

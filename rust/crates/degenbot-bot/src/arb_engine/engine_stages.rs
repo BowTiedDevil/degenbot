@@ -510,7 +510,7 @@ mod candidate2_seam_pins {
 
     /// Minimal `tracing_subscriber::Layer` that records ERROR events
     /// (target + message). Same pattern as the `ReorgSpanCapture` layer in
-    /// block_pump.rs tests: a real subscriber through
+    /// `block_pump.rs` tests: a real subscriber through
     /// `tracing::subscriber::with_default`, not a mocked logger, so the pin
     /// observes the actual `op_error!` dispatch.
     #[derive(Clone, Default)]

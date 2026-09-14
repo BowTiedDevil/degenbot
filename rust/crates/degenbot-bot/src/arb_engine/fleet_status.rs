@@ -273,7 +273,7 @@ mod tests {
     }
 
     /// candidate4 pin 4 - ADAPTER: GREEN at HEAD and GREEN after T2. It pins
-    /// the runtime_status PRG-5 gate semantics source-independently (both sides
+    /// the `runtime_status` PRG-5 gate semantics source-independently (both sides
     /// must read the same owner after the T2 reroute): the status
     /// `fleet_booted` mirrors the registration-boot latch, the projected
     /// budget co-varies with the resolved binding, and the `tier_refused`

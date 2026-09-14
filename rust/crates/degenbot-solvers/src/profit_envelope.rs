@@ -806,7 +806,7 @@ fn classify_cl_rejection(seq: &IntV3TickRangeSequence) -> String {
 /// degenerate-path capture harness (M6776W). Each range carries the 8
 /// primitive fields the offline replay harness needs to reconstruct an
 /// `IntV3TickRangeSequence` (decimal-string big-ints, matching the
-/// `HeavyPathCapture` JSONL schema in `solver_dispatch.rs`).
+/// `HeavyPathCapture` JSONL schema in `arb_engine/solver_capture.rs`).
 fn cl_seq_to_json(seq: &IntV3TickRangeSequence) -> serde_json::Value {
     serde_json::Value::Array(
         seq.ranges

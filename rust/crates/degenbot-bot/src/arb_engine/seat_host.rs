@@ -3512,7 +3512,7 @@ mod candidate4_seam_pins {
             fn boot_installed(&self, _t: WiringProbeToken) {}
             fn stamped_boot(&self, _t: WiringProbeToken) {}
         }
-        #[allow(dead_code)]
+        #[expect(dead_code)]
         fn wiring_must_stay_off_the_role_modules(
             sim: &FleetSimExecutor,
             registration: &FleetRegistrationExecutor,

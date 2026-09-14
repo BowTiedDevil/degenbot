@@ -62,11 +62,11 @@ use super::inline_sim::SimulatedPathResult;
 use super::path_info::describe_hop;
 use super::path_lifecycle::PathSolveStatus;
 use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry};
+use super::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapture};
 use super::solver_dispatch::{
-    gate_capture_from_cfg, lpt_partition, min_profit_floor, path_cost_proxy, plan_bins,
-    sims_aware_cost, solve_bin_count, CaptureVariant, HeavyPathCapture, LaneArmPolicy,
-    LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut, SolveCycleShared, WalkSubmitCtx,
-    INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
+    lpt_partition, min_profit_floor, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
+    LaneArmPolicy, LaneWalkBinPlan, PathTimesHeap, ResolveChunkOut, SolveCycleShared,
+    WalkSubmitCtx, INLINE_SIM_ENABLED, RESOLVE_CHUNK, RESOLVE_PAR_MIN,
 };
 use super::ArbitrageEngine;
 use super::DeferredReRecordHook;

@@ -24,7 +24,7 @@
 //!
 //! Re-reads a `heavy_mixed_solve_captures.jsonl`-FORMAT capture produced by
 //! the live hook
-//! (`solver_dispatch` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
+//! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`), rebuilds
 //! `IntHopState` per V2 hop + `IntV3TickRangeSequence` per CL hop from the
 //! captured fields, and re-runs `exact_solve_mixed_path_n` — the exact
 //! decomposed call `mixed::solve_mixed_path_int` makes — OFFLINE, with no
