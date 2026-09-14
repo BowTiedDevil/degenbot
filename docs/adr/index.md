@@ -66,6 +66,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [047](ADR-047-retire-subscriber-bus.md) | Retire the ADR-006 D4 subscriber bus — compile is the guard for retired modules | accepted |
 | [048](ADR-048-fleet-boot-registry.md) | Fleet boot registry — one keyed owner for the pooled roles' boot facts | accepted |
 | [049](ADR-049-engine-stage-driver-seam.md) | The engine's interface is one stage seam — the engine recedes to composition machinery | accepted |
+| [050](ADR-050-rust-native-engine-driver.md) | A public `EngineDriver` is the Rust driver seam — the engine stays crate-private behind the one stage seam | accepted |
 
 Numbering note: ADR-037 was assigned twice (engine mutex sharding; swap-simulation gate) — both kept as filed.
 
