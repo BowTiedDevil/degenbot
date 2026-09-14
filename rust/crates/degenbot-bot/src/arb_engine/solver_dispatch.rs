@@ -35,29 +35,7 @@ use super::solve_cycle::SolveCycleShared;
 use crate::arb_engine::executor::{LaneOutcome, SolveOutcome};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use crate::bot_core::BotState;
-use ::degenbot_solvers::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
-
-// FF-T1 (BPHR6F): one loud line for the sticky sim-fleet boot refusal — the
-// materializer surfaces the typed Err on EVERY dispatch; the log rides a
-// once-flag so a refused boot cannot spam the per-block cadence.
-pub(crate) static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// THE one arm-attribution wiring site (cold-start trace): the cycle span is
-/// tagged with `cycle.arm` (`detached` | `skipped_empty` | `shed`; `unset`
-/// before any cycle). Pipeline-free by design: a consumer without the meter
-/// installed is a no-op (pure-Rust/test seams).
-///
-/// ADR-045 T5: the caller drives it with `CycleOutcome::arm_label()` — the
-/// cycle's duration/Mutex hold are observed a frame up, in `EngineStages`,
-/// after `solve_dirty` returns, so the OUTCOME (not a post-hoc engine stash)
-/// is the byte-stable source of the label.
-#[must_use = "returns the label it recorded; callers may name the cycle arm with it"]
-pub(crate) fn record_cycle_arm_telemetry(span: &tracing::Span, arm: &'static str) -> &'static str {
-    span.record("cycle.arm", arm);
-    // Handed back for the caller's per-cycle latch (see the doc above).
-    arm
-}
+use ::degenbot_solvers::mixed::{HopType, MixedPoolRef, SolvePathResult};
 
 impl ArbitrageEngine {
     /// QTZGFL: the capacity-modulated admission budget in KEYS for THIS
@@ -77,179 +55,6 @@ impl ArbitrageEngine {
         self.cycle.admission_budget_keys()
     }
 }
-
-/// 7LV6VN T2: chunked parallel resolve of the affected paths (sharded hop
-/// cache preserves cross-path hit reuse). Default ON; set
-/// `DEGENBOT_SOLVE_RESOLVE_PAR=0` for the serial A/B fallback.
-pub(crate) const RESOLVE_CHUNK: usize = 256;
-pub(crate) const RESOLVE_PAR_MIN: usize = 512;
-
-pub(crate) struct ResolveChunkOut {
-    pub(crate) resolved: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)>,
-    pub(crate) status: Vec<(u64, Vec<crate::bot_core::resolve::HopDeficit>)>,
-    pub(crate) snapshots: Vec<(u64, Vec<u64>)>,
-    pub(crate) same_state: u64,
-    pub(crate) projections: u64,
-    pub(crate) invalid_reasons: HashMap<String, u64>,
-    pub(crate) deferred: Vec<u64>,
-}
-
-/// Pre-solve profitability floor for the profit-envelope gate (SU7MAE).
-/// Precedence: `DEGENBOT_MIN_PROFIT_WEI` (decimal wei) > default 0. Default 0
-/// skips only paths whose rigorous upper bound proves zero-or-negative profit.
-/// The full fee-aware derivation (`gas × base_fee_next + priority_fee`, the
-/// same shape as degenbot-execution's assess rule) replaces this once live
-/// numbers justify it — the solver API needs no change for that.
-/// (T4: parsed once from env at engine construction — see the runtime
-/// stance installer; the fn reads the static, never the environment.)
-pub(crate) fn min_profit_floor() -> U256 {
-    MIN_PROFIT_FLOOR_WEI.get().copied().unwrap_or(U256::ZERO)
-}
-
-static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
-
-/// T3 (epic BXUSGL): `DEGENBOT_STREAMING_DELIVERY` — emit each clamp-passed
-/// above-threshold result as an immediate single-entry `ResultBatch` during the
-/// solve drain instead of waiting for the pump debounce. Parsed ONCE at
-/// engine construction ([`install_engine_env_stances`]); engines copy the
-/// parsed static into their construction field.
-///
-/// **Default flipped ON by epic SRQEK5 T3 (SF3QLP):** with detached cycles the
-/// streaming mode is the intended shipped behaviour — each clamp-passed result
-/// arrives at Python the moment its own solve completes (per-path
-/// micro-batches composed with the end-of-cycle debounce sweep, per the
-/// V6TOMQ coarse proof: 1360 single-candidate batches / 0 errors / 10-min
-/// mainnet). `DEGENBOT_STREAMING_DELIVERY=0` opts out to the debounce sweep
-/// (A/B); any other value (or unset) streams.
-pub(crate) static STREAMING_DELIVERY_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
-
-/// The detached solve cycle (enqueue-and-return with sidecar merge) is THE
-/// ONLY solve arm since the WFF6MM hard cutover: the DRIVEN solve path takes
-/// NO engine-level Mutex — the stage-surface (`EngineStages`) solve hold
-/// collapses to enqueue end (µs) and each result merges on the sidecar under
-/// its own short per-item acquisition (the Q1a stale policy makes that safe).
-/// The `DEGENBOT_DETACHED_SOLVES` stance (and its in-cycle opt-out) retired
-/// with the in-cycle arm; backpressure is the admission draw, not the old
-/// in-flight cap.
-#[cfg(test)]
-mod streaming_stance_tests {
-    /// KAHU5W (presence-gated bools resolved): `pump.streaming_delivery` is
-    /// now a plain schema bool; the env-parse policy matrix above is obsolete
-    /// (the loader owns the words). The static default stays streaming.
-    #[test]
-    fn streaming_delivery_static_default_is_streaming() {
-        assert!(super::STREAMING_DELIVERY_ENABLED.load(std::sync::atomic::Ordering::Relaxed,));
-    }
-
-    // WFF6MM: the detached-solve stance key retired from the schema; there
-    // is no opt-out — the one solve arm is unconditional.
-}
-
-/// KAHU5W: the solver crate's runtime stance is INSTANCE-SCOPED — built
-/// fresh per engine from the typed config and passed down; no `OnceLock`.
-#[must_use]
-pub fn solve_runtime_config_from_cfg(
-    cfg: &::degenbot_config::BotConfig,
-) -> ::degenbot_solvers::runtime::SolveRuntimeConfig {
-    ::degenbot_solvers::runtime::SolveRuntimeConfig {
-        event_solver_legacy: cfg.solve.walk_event_solver_legacy,
-        walk_event_census: cfg.solve.walk_event_census,
-        anchor_sweep: match cfg.solve.walk_anchor_sweep {
-            ::degenbot_config::AnchorSweep::Off => ::degenbot_solvers::runtime::AnchorSweep::Off,
-            ::degenbot_config::AnchorSweep::CenterOnly => {
-                ::degenbot_solvers::runtime::AnchorSweep::CenterOnly
-            }
-            ::degenbot_config::AnchorSweep::Full => ::degenbot_solvers::runtime::AnchorSweep::Full,
-        },
-        max_tangent_lines: cfg.solve.envelope_max_tangent_lines,
-        sampled_compose_lines: cfg.solve.envelope_sampled_compose_lines,
-        memo_on: cfg.solve.solver_walk_memo,
-        memo_stats: cfg.solve.solver_walk_memo_stats,
-    }
-}
-
-/// T4 (KAHU5W): the ONE config parse point for the engine's runtime stances —
-/// called at engine construction with the typed `BotConfig`; hot paths read
-/// the parsed statics. The crate performs ZERO environment reads: every stance
-/// is a schema key (env or TOML loads into it via the degenbot-config loader).
-/// The solver-runtime stance is NOT installed globally anymore — the engine
-/// holds an instance value built by [`solve_runtime_config_from_cfg`] and
-/// threads it down (KAHU5W: the solver `OnceLock` is retired).
-///
-/// YI5NGB: the boots installed here are the CONSTRUCTION-STAMPED values —
-/// the engine derived its own `FleetBoot` from THIS caller cfg and stamped it
-/// (`BootStamp`: engine id + deterministic cfg hash); the per-role fleet
-/// executors courier the identified stamp to the single fleet
-/// materialization, and a divergent-cfg rider is ledgered
-/// (`boot_stamp::record_ride`) instead of silently winning the fleet.
-pub fn install_engine_stances(
-    cfg: &::degenbot_config::BotConfig,
-    boot_stamp: &crate::arb_engine::boot_stamp::BootStamp,
-) {
-    // LW-T9 (no stance, no migration flag): the solve bins ALWAYS ride the
-    // fleet-hosted executor; the typed boot descriptor (quota + overrides +
-    // posture) is parsed here once.
-    // YI5NGB: the engine's OWN construction boot, stamped — each role's
-    // install records the identified ride (first-fleet-wins per role).
-    crate::arb_engine::fleet_solve_executor::install_boot(boot_stamp.clone());
-    // candidate 4 (YUMQU3): the two POOLED roles install through the ONE
-    // registry. Sim installs BEFORE registration, so the registry's
-    // first-wins canonical process boot is sim's (same descriptor value as
-    // registration's — the boot is shared). ADR-042 F4: the SimDriver seat
-    // pool shares the boot descriptor; PRG-3: registration shares it too
-    // (duty-counted PoolStateUpdater slots, Deferrable cordon class).
-    let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
-    registry.install_boot(
-        crate::arb_engine::boot_stamp::BootRole::Sim,
-        boot_stamp.clone(),
-    );
-    registry.install_boot(
-        crate::arb_engine::boot_stamp::BootRole::Registration,
-        boot_stamp.clone(),
-    );
-    STREAMING_DELIVERY_ENABLED.store(
-        cfg.pump.streaming_delivery,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    // J4HN66: streaming/detached stances are per-engine cfg values now
-    // (packed at construction); this install keeps only the statics that
-    // still have non-construction consumers (STREAMING; INLINE_SIM).
-    INLINE_SIM_ENABLED.store(
-        cfg.solve.solve_inline_sim,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    let min_profit = U256::from(cfg.solve.min_profit_wei);
-    let _ = MIN_PROFIT_FLOOR_WEI.set(min_profit);
-    crate::bot_core::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
-    // 7LV6VN T2 (YI5NGB): the chunked parallel resolve stance is an ENGINE
-    // instance value now — packed per construction from
-    // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
-    // trajectory); no installer store remains here.
-}
-
-/// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
-/// The record tuple now lives with the walk (`arb_engine::lane_walk`,
-/// 5WCRWZ T4); T5 retires the heap itself.
-pub(crate) type PathTimesHeap =
-    std::collections::BinaryHeap<std::cmp::Reverse<super::lane_walk::PathTimeRecord>>;
-
-/// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB):
-/// relocate the CL-hop clamp from the engine-Mutex merge site INTO the
-/// per-path solve worker, so the worker can simulate on the clamp-committed
-/// inputs without an engine-lock round-trip (the M1 seam T1/T3 build on).
-/// Parsed ONCE at engine construction.
-///
-/// **Default ON since the T4 mainnet soak** (2026-09-05): payload counts
-/// matched solved paths per cycle, ~99% of sim batches skipped the FFI
-/// dispatch, header→first-payload-render p50 1ms / p90 31ms (vs the option-A
-/// FFI pipeline's ~26ms solve wall + 49ms async sim tail), and the 46-minute
-/// soak ran with zero deadlocks/panics/storage-key incidents through a
-/// 200k-path registration flood. `DEGENBOT_SOLVE_INLINE_SIM=0`/`false`
-/// opts OUT (restores the legacy merge-site clamp for a run); unset keeps
-/// the inline stance. Later 0.7 hardening may remove the env entirely.
-pub(crate) static INLINE_SIM_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
 
 /// SIMPIPE2 T2: the WORKER-side clamp — drive the merge-site-identical
 /// clamp from the solve worker's `to_solve`-aligned pool-ref snapshot, so a
@@ -916,7 +721,8 @@ impl Default for ArbitrageEngine {
 mod profit_clamp_recompute_tests {
     #![expect(clippy::expect_used)] // tests assert recompute invariants
     use super::clamp_result_in_worker;
-    use super::{ArbitrageEngine, BlockMetadata, HashMap, PathTimesHeap, SolvePathResult, U256};
+    use super::{ArbitrageEngine, BlockMetadata, HashMap, SolvePathResult, U256};
+    use crate::arb_engine::solve_cycle::PathTimesHeap;
     use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::bot_core::{TickInfo, V4PoolKey};
     use degenbot_solvers::mixed::MixedPath;
@@ -1507,7 +1313,8 @@ pub(super) mod executor_ab_probe {
     use degenbot_solvers::mobius_v3_int::{build_cl_crossing_table, build_cl_word_profiles};
     use serde_json::Value;
 
-    use super::{BotState, PathTimesHeap};
+    use super::BotState;
+    use crate::arb_engine::solve_cycle::PathTimesHeap;
     use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
     use hashbrown::HashMap;
@@ -1681,12 +1488,12 @@ mod fleet_sim_stance_tests {
     use std::sync::Arc;
 
     use super::executor_ab_probe::load_corpus_fixture;
-    use super::PathTimesHeap;
     use crate::arb_engine::inline_sim::PipelinedSims;
     use crate::arb_engine::inline_sim::{
         AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
         InlineSwapFamily, SimulatedPathResult,
     };
+    use crate::arb_engine::solve_cycle::PathTimesHeap;
     use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::arb_engine::BlockMetadata;
 

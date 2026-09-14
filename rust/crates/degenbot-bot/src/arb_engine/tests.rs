@@ -8757,7 +8757,7 @@ pub(crate) mod test_keys {
     #[test]
     #[expect(clippy::expect_used)]
     fn cycle_arm_span_field_stamps_the_arm() {
-        use crate::arb_engine::solver_dispatch::record_cycle_arm_telemetry;
+        use crate::arb_engine::engine_stages::record_cycle_arm_telemetry;
         use opentelemetry_sdk::trace::InMemorySpanExporter;
         use tracing_subscriber::layer::SubscriberExt;
 

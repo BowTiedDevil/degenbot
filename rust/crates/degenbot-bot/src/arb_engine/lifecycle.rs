@@ -3,6 +3,107 @@
 use super::{Address, ArbitrageEngine, HashMap};
 use ::degenbot_solvers::mixed::{PoolHop, SolvePathResult};
 
+use super::solve_cycle::{INLINE_SIM_ENABLED, MIN_PROFIT_FLOOR_WEI};
+use alloy::primitives::U256;
+
+/// KAHU5W: the solver crate's runtime stance is INSTANCE-SCOPED — built
+/// fresh per engine from the typed config and passed down; no `OnceLock`.
+#[must_use]
+pub(crate) fn solve_runtime_config_from_cfg(
+    cfg: &::degenbot_config::BotConfig,
+) -> ::degenbot_solvers::runtime::SolveRuntimeConfig {
+    ::degenbot_solvers::runtime::SolveRuntimeConfig {
+        event_solver_legacy: cfg.solve.walk_event_solver_legacy,
+        walk_event_census: cfg.solve.walk_event_census,
+        anchor_sweep: match cfg.solve.walk_anchor_sweep {
+            ::degenbot_config::AnchorSweep::Off => ::degenbot_solvers::runtime::AnchorSweep::Off,
+            ::degenbot_config::AnchorSweep::CenterOnly => {
+                ::degenbot_solvers::runtime::AnchorSweep::CenterOnly
+            }
+            ::degenbot_config::AnchorSweep::Full => ::degenbot_solvers::runtime::AnchorSweep::Full,
+        },
+        max_tangent_lines: cfg.solve.envelope_max_tangent_lines,
+        sampled_compose_lines: cfg.solve.envelope_sampled_compose_lines,
+        memo_on: cfg.solve.solver_walk_memo,
+        memo_stats: cfg.solve.solver_walk_memo_stats,
+    }
+}
+
+/// T4 (KAHU5W): the ONE config parse point for the engine's runtime stances —
+/// called at engine construction with the typed `BotConfig`; hot paths read
+/// the parsed statics. The crate performs ZERO environment reads: every stance
+/// is a schema key (env or TOML loads into it via the degenbot-config loader).
+/// The solver-runtime stance is NOT installed globally anymore — the engine
+/// holds an instance value built by [`solve_runtime_config_from_cfg`] and
+/// threads it down (KAHU5W: the solver `OnceLock` is retired).
+///
+/// YI5NGB: the boots installed here are the CONSTRUCTION-STAMPED values —
+/// the engine derived its own `FleetBoot` from THIS caller cfg and stamped it
+/// (`BootStamp`: engine id + deterministic cfg hash); the per-role fleet
+/// executors courier the identified stamp to the single fleet
+/// materialization, and a divergent-cfg rider is ledgered
+/// (`boot_stamp::record_ride`) instead of silently winning the fleet.
+pub(crate) fn install_engine_stances(
+    cfg: &::degenbot_config::BotConfig,
+    boot_stamp: &crate::arb_engine::boot_stamp::BootStamp,
+) {
+    // LW-T9 (no stance, no migration flag): the solve bins ALWAYS ride the
+    // fleet-hosted executor; the typed boot descriptor (quota + overrides +
+    // posture) is parsed here once.
+    // YI5NGB: the engine's OWN construction boot, stamped — each role's
+    // install records the identified ride (first-fleet-wins per role).
+    crate::arb_engine::fleet_solve_executor::install_boot(boot_stamp.clone());
+    // candidate 4 (YUMQU3): the two POOLED roles install through the ONE
+    // registry. Sim installs BEFORE registration, so the registry's
+    // first-wins canonical process boot is sim's (same descriptor value as
+    // registration's — the boot is shared). ADR-042 F4: the SimDriver seat
+    // pool shares the boot descriptor; PRG-3: registration shares it too
+    // (duty-counted PoolStateUpdater slots, Deferrable cordon class).
+    let registry = crate::arb_engine::seat_host::FleetBootRegistry::process();
+    registry.install_boot(
+        crate::arb_engine::boot_stamp::BootRole::Sim,
+        boot_stamp.clone(),
+    );
+    registry.install_boot(
+        crate::arb_engine::boot_stamp::BootRole::Registration,
+        boot_stamp.clone(),
+    );
+    STREAMING_DELIVERY_ENABLED.store(
+        cfg.pump.streaming_delivery,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    // J4HN66: streaming/detached stances are per-engine cfg values now
+    // (packed at construction); this install keeps only the statics that
+    // still have non-construction consumers (STREAMING; INLINE_SIM).
+    INLINE_SIM_ENABLED.store(
+        cfg.solve.solve_inline_sim,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let min_profit = U256::from(cfg.solve.min_profit_wei);
+    let _ = MIN_PROFIT_FLOOR_WEI.set(min_profit);
+    crate::bot_core::resolve::install_projection_memo_stance(cfg.solve.cl_projection_cache);
+    // 7LV6VN T2 (YI5NGB): the chunked parallel resolve stance is an ENGINE
+    // instance value now — packed per construction from
+    // cfg.solve.solve_resolve_par (the KAHU5W construction-stance
+    // trajectory); no installer store remains here.
+}
+
+/// T3 (epic BXUSGL): `DEGENBOT_STREAMING_DELIVERY` — emit each clamp-passed
+/// above-threshold result as an immediate single-entry `ResultBatch` during the
+/// solve drain instead of waiting for the pump debounce. Parsed ONCE at
+/// engine construction ([`install_engine_env_stances`]); engines copy the
+/// parsed static into their construction field.
+///
+/// **Default flipped ON by epic SRQEK5 T3 (SF3QLP):** with detached cycles the
+/// streaming mode is the intended shipped behaviour — each clamp-passed result
+/// arrives at Python the moment its own solve completes (per-path
+/// micro-batches composed with the end-of-cycle debounce sweep, per the
+/// V6TOMQ coarse proof: 1360 single-candidate batches / 0 errors / 10-min
+/// mainnet). `DEGENBOT_STREAMING_DELIVERY=0` opts out to the debounce sweep
+/// (A/B); any other value (or unset) streams.
+static STREAMING_DELIVERY_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
 /// PRG-4 / IRUMXD: `PathRegistrationError` moved to
 /// [`super::path_registry`] (ADR-045 `C4UAFP`); re-exported here at its old
 /// path so the `PyO3` mapper (`degenbot-python`) and white-box tests compile
@@ -264,4 +365,26 @@ impl ArbitrageEngine {
             .read_at(crate::bot_core::state_lock::LockSite::Solver)
             .v4_registered_pool_managers()
     }
+}
+
+/// The detached solve cycle (enqueue-and-return with sidecar merge) is THE
+/// ONLY solve arm since the WFF6MM hard cutover: the DRIVEN solve path takes
+/// NO engine-level Mutex — the stage-surface (`EngineStages`) solve hold
+/// collapses to enqueue end (µs) and each result merges on the sidecar under
+/// its own short per-item acquisition (the Q1a stale policy makes that safe).
+/// The `DEGENBOT_DETACHED_SOLVES` stance (and its in-cycle opt-out) retired
+/// with the in-cycle arm; backpressure is the admission draw, not the old
+/// in-flight cap.
+#[cfg(test)]
+mod streaming_stance_tests {
+    /// KAHU5W (presence-gated bools resolved): `pump.streaming_delivery` is
+    /// now a plain schema bool; the env-parse policy matrix above is obsolete
+    /// (the loader owns the words). The static default stays streaming.
+    #[test]
+    fn streaming_delivery_static_default_is_streaming() {
+        assert!(super::STREAMING_DELIVERY_ENABLED.load(std::sync::atomic::Ordering::Relaxed,));
+    }
+
+    // WFF6MM: the detached-solve stance key retired from the schema; there
+    // is no opt-out — the one solve arm is unconditional.
 }

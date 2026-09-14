@@ -53,6 +53,22 @@ use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
 use super::solve_cycle::CycleOutcome;
 use super::ArbitrageEngine;
 
+/// THE one arm-attribution wiring site (cold-start trace): the cycle span is
+/// tagged with `cycle.arm` (`detached` | `skipped_empty` | `shed`; `unset`
+/// before any cycle). Pipeline-free by design: a consumer without the meter
+/// installed is a no-op (pure-Rust/test seams).
+///
+/// ADR-045 T5: the caller drives it with `CycleOutcome::arm_label()` — the
+/// cycle's duration/Mutex hold are observed a frame up, in `EngineStages`,
+/// after `solve_dirty` returns, so the OUTCOME (not a post-hoc engine stash)
+/// is the byte-stable source of the label.
+#[must_use = "returns the label it recorded; callers may name the cycle arm with it"]
+pub(crate) fn record_cycle_arm_telemetry(span: &tracing::Span, arm: &'static str) -> &'static str {
+    span.record("cycle.arm", arm);
+    // Handed back for the caller's per-cycle latch (see the doc above).
+    arm
+}
+
 /// The arb engine's stage surface: the shared engine + the touched-pool
 /// ledger it solves from + the delivered-to-Python block clock.
 pub struct EngineStages {
@@ -194,10 +210,7 @@ impl EngineStages {
             span.record("cycle.solve_block", engine.results_block());
             // Cold-start trace (ADR-045 T5): attribute the cycle arm from the
             // typed OUTCOME, never a post-hoc engine stash.
-            let _ = super::solver_dispatch::record_cycle_arm_telemetry(
-                &span,
-                cycle_outcome.arm_label(),
-            );
+            let _ = record_cycle_arm_telemetry(&span, cycle_outcome.arm_label());
             // ADR-045 T5: keep the outcome's full typed record live at the
             // consumer seam (the census is the same resolve counts the cycle
             // already emitted; the solved-block is the cycle's anchor).

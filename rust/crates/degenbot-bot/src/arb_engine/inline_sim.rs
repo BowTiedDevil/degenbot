@@ -44,10 +44,15 @@ use degenbot_solvers::mixed::{MixedPoolRef, SolvePathResult};
 
 // 5WCRWZ T3: the pipelined sim scheduler moved here beside `PendingSim` /
 // `SimulatedPathResult`; it takes the cycle context from `solve_cycle` and
-// the once-per-process boot-refusal latch from the grab file.
+// owns the once-per-process boot-refusal latch (5WCRWZ T5).
 use super::solve_cycle::SolveCycleShared;
-use super::solver_dispatch::SIM_BOOT_REFUSAL_LOGGED;
 use degenbot_core::op_error;
+
+// FF-T1 (BPHR6F): one loud line for the sticky sim-fleet boot refusal — the
+// materializer surfaces the typed Err on EVERY dispatch; the log rides a
+// once-flag so a refused boot cannot spam the per-block cadence.
+static SIM_BOOT_REFUSAL_LOGGED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// The engine → simulator request for ONE clamp-admitted path.
 ///

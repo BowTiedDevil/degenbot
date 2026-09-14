@@ -8,15 +8,16 @@
 //! (`SLOWEST_PATHS_K`, `WALK_DENSE_ALERTED`, `PathTimeRecord`).
 //!
 //! Direction of dependency is `lane_walk -> {solve_cycle, solver_dispatch
-//! residue, executor, inline_sim}`: the walk reads the cycle context from
-//! `solve_cycle`, the still-unretired grab-file helpers
-//! (`min_profit_floor`, `clamp_result_in_worker`, `flush_solved_item`) from
+//! residue, executor, inline_sim}`: the walk reads the cycle context and
+//! `min_profit_floor` from `solve_cycle`, the still-unretired grab-file
+//! helpers (`clamp_result_in_worker`, `flush_solved_item`) from
 //! `solver_dispatch`, and the lane/pipelined-sim seams from `executor`/
 //! `inline_sim`. Those grab-file helpers re-point when the later tasks
 //! retire the grab file.
 
+use super::solve_cycle::min_profit_floor;
 use super::solve_cycle::SolveCycleShared;
-use super::solver_dispatch::{clamp_result_in_worker, flush_solved_item, min_profit_floor};
+use super::solver_dispatch::{clamp_result_in_worker, flush_solved_item};
 use super::{BlockMetadata, HashMap};
 use crate::arb_engine::executor::{SolveLane, SolveOutcome};
 use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
@@ -38,8 +39,8 @@ static WALK_DENSE_ALERTED: std::sync::atomic::AtomicBool =
 /// `gate_compose_us`, `gate_search_us`, `path_id`) — lets the completion
 /// event name the cost driver of the slowest routes: gate-envelope bound
 /// composition (with its derive/compose/search phase split) vs the walk
-/// proper, not just wall time. `pub(crate)` because the still-in-grab-file
-/// `PathTimesHeap` aliases it (T5 retires the heap).
+/// proper, not just wall time. `pub(crate)` because `solve_cycle::PathTimesHeap`
+/// aliases it (5WCRWZ T5 relocated the heap; NO re-export shim remains).
 pub(crate) type PathTimeRecord = (u128, u64, u64, u64, u64, u64, u64, u64, u64, u64);
 
 /// Per-path solve + diagnostics (epic BXUSGL T1): the former `solve_fn`

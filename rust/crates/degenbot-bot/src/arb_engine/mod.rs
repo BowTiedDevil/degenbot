@@ -521,11 +521,11 @@ impl ArbitrageEngine {
         // construction hand-off carries the caller's value, identified.
         let fleet_boot_stamp =
             BootStamp::of(degenbot_workers::dispatcher::FleetBoot::from_config(cfg));
-        solver_dispatch::install_engine_stances(cfg, &fleet_boot_stamp);
+        lifecycle::install_engine_stances(cfg, &fleet_boot_stamp);
         let cycle_core = Arc::clone(&core);
         Self {
             cfg: std::sync::Arc::clone(cfg),
-            runtime_cfg: solver_dispatch::solve_runtime_config_from_cfg(cfg),
+            runtime_cfg: lifecycle::solve_runtime_config_from_cfg(cfg),
             core,
             registry: PathRegistry::new(),
             cycle: SolveCycle {
@@ -560,7 +560,7 @@ impl ArbitrageEngine {
                 resolve_par_stance,
                 core: cycle_core,
                 cfg: std::sync::Arc::clone(cfg),
-                runtime_cfg: solver_dispatch::solve_runtime_config_from_cfg(cfg),
+                runtime_cfg: lifecycle::solve_runtime_config_from_cfg(cfg),
                 inline_sim: None,
                 #[cfg(test)]
                 test_solve_delay: None,

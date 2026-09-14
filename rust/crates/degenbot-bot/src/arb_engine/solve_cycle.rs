@@ -64,10 +64,6 @@ use super::path_info::describe_hop;
 use super::path_lifecycle::PathSolveStatus;
 use super::path_registry::{PathRegistration, PathRegistrationError, PathRegistry};
 use super::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapture};
-use super::solver_dispatch::{
-    min_profit_floor, PathTimesHeap, ResolveChunkOut, INLINE_SIM_ENABLED, RESOLVE_CHUNK,
-    RESOLVE_PAR_MIN,
-};
 use super::workload_partition::{
     lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
 };
@@ -79,12 +75,71 @@ use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
 use crate::bot_core::resolve::resolve_hops;
 use crate::bot_core::resolve::HopProjectionCache;
 use crate::bot_core::{BlockMetadata, BotState, EpochDelta};
+use alloy::primitives::U256;
 use degenbot_core::diag;
 use degenbot_core::{op_error, op_info};
 use degenbot_solvers::affected_keys::AffectedKey;
 use degenbot_workers::dispatcher::SeatSurvivesPolicy;
 use degenbot_workers::lane::LaneCtx;
 use std::sync::PoisonError;
+
+// ---------------------------------------------------------------------------
+// 5WCRWZ T5: statics/fns from the retired solver_dispatch grab file, each
+// moved beside its sole production consumer (or its near consumers).
+// ---------------------------------------------------------------------------
+
+/// 7LV6VN T2: chunked parallel resolve of the affected paths (sharded hop
+/// cache preserves cross-path hit reuse). Default ON; set
+/// `DEGENBOT_SOLVE_RESOLVE_PAR=0` for the serial A/B fallback.
+const RESOLVE_CHUNK: usize = 256;
+const RESOLVE_PAR_MIN: usize = 512;
+
+struct ResolveChunkOut {
+    resolved: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)>,
+    status: Vec<(u64, Vec<crate::bot_core::resolve::HopDeficit>)>,
+    snapshots: Vec<(u64, Vec<u64>)>,
+    same_state: u64,
+    projections: u64,
+    invalid_reasons: HashMap<String, u64>,
+    deferred: Vec<u64>,
+}
+
+/// Pre-solve profitability floor for the profit-envelope gate (SU7MAE).
+/// Precedence: `DEGENBOT_MIN_PROFIT_WEI` (decimal wei) > default 0. Default 0
+/// skips only paths whose rigorous upper bound proves zero-or-negative profit.
+/// The full fee-aware derivation (`gas × base_fee_next + priority_fee`, the
+/// same shape as degenbot-execution's assess rule) replaces this once live
+/// numbers justify it — the solver API needs no change for that.
+/// (T4: parsed once from env at engine construction — see the runtime
+/// stance installer; the fn reads the static, never the environment.)
+pub(crate) fn min_profit_floor() -> U256 {
+    MIN_PROFIT_FLOOR_WEI.get().copied().unwrap_or(U256::ZERO)
+}
+
+pub(crate) static MIN_PROFIT_FLOOR_WEI: std::sync::OnceLock<U256> = std::sync::OnceLock::new();
+
+/// Min-heap (via `Reverse`) keeping only the K slowest paths in O(K) memory.
+/// The record tuple now lives with the walk (`arb_engine::lane_walk`,
+/// 5WCRWZ T4); T5 retires the heap itself.
+pub(crate) type PathTimesHeap =
+    std::collections::BinaryHeap<std::cmp::Reverse<super::lane_walk::PathTimeRecord>>;
+
+/// `DEGENBOT_SOLVE_INLINE_SIM` (SIMPIPE2 T2 → T4, task PIRX3W / AK7VJB):
+/// relocate the CL-hop clamp from the engine-Mutex merge site INTO the
+/// per-path solve worker, so the worker can simulate on the clamp-committed
+/// inputs without an engine-lock round-trip (the M1 seam T1/T3 build on).
+/// Parsed ONCE at engine construction.
+///
+/// **Default ON since the T4 mainnet soak** (2026-09-05): payload counts
+/// matched solved paths per cycle, ~99% of sim batches skipped the FFI
+/// dispatch, header→first-payload-render p50 1ms / p90 31ms (vs the option-A
+/// FFI pipeline's ~26ms solve wall + 49ms async sim tail), and the 46-minute
+/// soak ran with zero deadlocks/panics/storage-key incidents through a
+/// 200k-path registration flood. `DEGENBOT_SOLVE_INLINE_SIM=0`/`false`
+/// opts OUT (restores the legacy merge-site clamp for a run); unset keeps
+/// the inline stance. Later 0.7 hardening may remove the env entirely.
+pub(crate) static INLINE_SIM_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
 
 /// Per-cycle shared solve context (epic BXUSGL T1): everything the
 /// per-path dispatch touches besides the resolved snapshot. Bundled once
@@ -2443,5 +2498,41 @@ mod tests {
         assert!(!dedup.created);
         assert!(dedup.resolved.is_none());
         assert_eq!(fresh.path_id, dedup.path_id);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HONESTY PROBE (5WCRWZ T5 red pin): the leftover plumbing items are OWNED by
+// their consuming modules, not in the retired grab file. While
+// `solver_dispatch.rs` still defines them, this probe fails; at cutover it
+// passes. Same technique as T1's capture probe, T2's workload probe, and T3/T4's
+// lane-walk probe.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod dissolution_t5_probe {
+    const GRAB_FILE: &str = include_str!("solver_dispatch.rs");
+
+    #[test]
+    fn solver_dispatch_no_longer_defines_the_statics_ride_consumers_items() {
+        const RETIRED_DEFINITIONS: [&str; 12] = [
+            "pub(crate) static SIM_BOOT_REFUSAL_LOGGED",
+            "pub(crate) fn record_cycle_arm_telemetry(",
+            "pub(crate) const RESOLVE_CHUNK",
+            "pub(crate) const RESOLVE_PAR_MIN",
+            "pub(crate) struct ResolveChunkOut",
+            "pub(crate) fn min_profit_floor(",
+            "static MIN_PROFIT_FLOOR_WEI",
+            "pub(crate) static STREAMING_DELIVERY_ENABLED",
+            "pub fn solve_runtime_config_from_cfg(",
+            "pub fn install_engine_stances(",
+            "pub(crate) type PathTimesHeap",
+            "pub(crate) static INLINE_SIM_ENABLED",
+        ];
+        for marker in RETIRED_DEFINITIONS {
+            assert!(
+                !GRAB_FILE.contains(marker),
+                "solver_dispatch.rs still defines: {marker:?} — the T5 items must be owned by their consuming modules (5WCRWZ T5)"
+            );
+        }
     }
 }

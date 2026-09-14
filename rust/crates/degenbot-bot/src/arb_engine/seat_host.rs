@@ -1435,7 +1435,7 @@ impl<T: 'static> BootSlotView for BootSlot<T> {
 /// two pooled roles' boot facts. Each typed slot carries the role
 /// descriptor + boot/executor couriers; the registry carries the first-wins
 /// canonical process boot (whichever role installs first — sim before
-/// registration in `install_engine_stances`). `fleet_status` and
+/// registration in `lifecycle::install_engine_stances`). `fleet_status` and
 /// `fleet_intake` read THIS, never a role-module static.
 pub(crate) struct FleetBootRegistry {
     sim: BootSlot<FleetSimExecutor>,
