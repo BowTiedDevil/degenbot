@@ -38,6 +38,7 @@ pub mod error;
 pub mod heal;
 pub mod liquidity_updater;
 pub mod migrate;
+pub mod migrations;
 pub mod ops;
 pub mod pathfinding;
 pub mod read;
@@ -69,6 +70,7 @@ pub use liquidity_updater::{
     BlockLog, ComputedLiquidityUpdate, LiquidityUpdateEvent, PoolUpdateState,
 };
 pub use migrate::SchemaState;
+pub use migrations::{apply_rust_migrations, MigrationOutcome, MigrationStep, RUST_MIGRATIONS};
 pub use ops::{
     backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,
     inspect_schema_state, upgrade_database, UpgradeOutcome,
