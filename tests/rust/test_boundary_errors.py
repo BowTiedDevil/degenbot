@@ -8,8 +8,13 @@ import pytest
 
 from degenbot._ffi.abi import decode, decode_single, encode_single
 from degenbot._ffi.contract import encode_function_call
-from degenbot.uniswap.math import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
-from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MAX_TICK, MIN_TICK
+from degenbot.uniswap.math import (
+    MAX_SQRT_RATIO,
+    MAX_TICK,
+    MIN_TICK,
+    get_sqrt_ratio_at_tick,
+    get_tick_at_sqrt_ratio,
+)
 
 
 class TestTickMathBoundaryErrors:

@@ -620,11 +620,10 @@ class TestSharedStateTopologyV3:
         )
 
         bitmap = handle.tick_bitmap_snapshot()
-        from degenbot.calculations.evm_math import evm_divide
-        from degenbot.uniswap.v3_libraries.tick_bitmap import position as _position
+        from degenbot.uniswap.math import get_tick_word_and_bit_position
 
-        word_lower, bit_lower = _position(evm_divide(tick_lower, V3_TICK_SPACING))
-        word_upper, bit_upper = _position(evm_divide(tick_upper, V3_TICK_SPACING))
+        word_lower, bit_lower = get_tick_word_and_bit_position(tick_lower, V3_TICK_SPACING)
+        word_upper, bit_upper = get_tick_word_and_bit_position(tick_upper, V3_TICK_SPACING)
         assert word_lower != word_upper or bit_lower != bit_upper
         assert word_lower in bitmap, "tick_lower word missing"
         assert word_upper in bitmap, "tick_upper word missing"

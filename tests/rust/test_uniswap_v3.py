@@ -14,7 +14,7 @@ from degenbot.uniswap.math import (
     get_sqrt_ratio_at_tick,
     get_tick_at_sqrt_ratio,
 )
-from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK
+from degenbot.uniswap.math import MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK
 
 type Tick = int
 type Ratio = int
@@ -67,9 +67,9 @@ def test_tick_math_constants_exposed_from_rust_seam():
 
     ADR-005 standalone-Rust-core: the canonical home for these constants is
     `degenbot-concentrated-liquidity-math` (Rust core), surfaced through the `degenbot_rs` PyO3
-    seam. The `v3_libraries` package re-exports them, but the seam must own
-    them so a standalone Rust consumer and the Python companion share one
-    source of truth.
+    seam. The `degenbot.uniswap.math` companion re-exports them, but the seam
+    must own them so a standalone Rust consumer and the Python companion share
+    one source of truth.
     """
     assert RS_MIN_TICK == -887272
     assert RS_MAX_TICK == 887272
@@ -78,7 +78,7 @@ def test_tick_math_constants_exposed_from_rust_seam():
 
 
 def test_tick_math_constants_match_package_reexport():
-    """The package re-export and the seam constant are the same object."""
+    """The companion re-export and the seam constant are the same object."""
     assert MIN_TICK is RS_MIN_TICK or MIN_TICK == RS_MIN_TICK
     assert MAX_TICK is RS_MAX_TICK or MAX_TICK == RS_MAX_TICK
     assert MIN_SQRT_RATIO == RS_MIN_SQRT_RATIO

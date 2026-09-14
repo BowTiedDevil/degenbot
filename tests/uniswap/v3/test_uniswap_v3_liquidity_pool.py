@@ -28,13 +28,13 @@ from degenbot.uniswap.deployments import (
     UniswapV3ExchangeDeployment,
 )
 from degenbot.uniswap.math import (
-    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
-)
-from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,
     MIN_TICK,
+)
+from degenbot.uniswap.math import (
+    get_tick_word_and_bit_position as cl_get_tick_word_and_bit_position,
 )
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (

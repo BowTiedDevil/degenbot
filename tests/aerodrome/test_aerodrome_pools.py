@@ -15,7 +15,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotError
 from degenbot.exceptions.pool import ExternalUpdateError
 from degenbot.fork import AnvilFork
-from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.uniswap.math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
 

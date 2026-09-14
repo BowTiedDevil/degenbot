@@ -1364,7 +1364,7 @@ The extension is built automatically during installation using [maturin](https:/
 Uniswap V3 tick-to-price conversions (Q96 fixed point):
 
 ```python
-from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
+from degenbot.uniswap.math import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
 
 # Convert tick to sqrt price (Q96)
 sqrt_price = get_sqrt_ratio_at_tick(253320)
