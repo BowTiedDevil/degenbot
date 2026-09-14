@@ -254,7 +254,6 @@ dev = [
     "ruff",
     "sybil",
     "ty",
-    "vyper",
     "vulture",
 ]
 
