@@ -230,10 +230,8 @@ testpaths = ["tests", "README.md"]
 norecursedirs = ["archive", ".hypothesis"]
 filterwarnings = [
     "error", # Fail on all warnings by default
-    "ignore::DeprecationWarning:websockets.legacy",
 ]
 markers = [
-    "arbitrum: tests requiring an Arbitrum One mainnet RPC",
     "base: tests requiring a Base mainnet RPC",
     "ethereum: tests requiring an Ethereum mainnet RPC",
     "slow: tests that are too slow for routine local runs (e.g. pathfinding)",
